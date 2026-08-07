@@ -550,6 +550,57 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── MEASURED LINE TRACE: "trace/path/connect X to Y" runs the pixel ──
+    // tracer BEFORE the model answers. This is the question the drawing
+    // features exist for, and it used to be unanswerable here: the ask path
+    // had no route to the tracer at all, so "show me the path from V-12 to
+    // E-13" got a retrieval answer stitched from prose — confident, and
+    // blind. Now the route is measured off the sheet's line-work first and
+    // the model is handed the result as trusted fact, including the tagged
+    // components the route passes through. The citation carries both tags,
+    // so clicking it opens the sheet with the path drawn.
+    let traceFacts = "";
+    let traceCitation: { documentId: string; page: number; tags: string[] } | null = null;
+    const TRACE_INTENT_RE =
+      /\b(trace|path|route|flow|line|connect(?:ed|ion|s)?|between|upstream|downstream|from)\b/i;
+    if (TRACE_INTENT_RE.test(question)) {
+      const qTags = extractEquipmentTags(question.toUpperCase()).map((h) => h.tag);
+      const uniqTags = [...new Set(qTags)];
+      if (uniqTags.length >= 2) {
+        try {
+          const { traceTagsAnywhere } = await import("@/lib/traceServer");
+          const t = await traceTagsAnywhere({
+            orgId, userId: user.id, fromTag: uniqTags[0], toTag: uniqTags[1], maxSheets: 3,
+          });
+          if (t.result) {
+            traceFacts =
+              `\n\nMEASURED LINE TRACE — the drawn line between ${uniqTags[0]} and ${uniqTags[1]} was ` +
+              `followed pixel-by-pixel on ${t.result.documentName} page ${t.result.page}. TRUST this over ` +
+              `any prose:\n- Route: CONFIRMED, ${t.result.points.length} waypoints, ${t.result.turns} turn(s).\n` +
+              (t.result.alongRoute.length > 0
+                ? `- Components ON the route, in order from ${uniqTags[0]}: ${t.result.alongRoute.join(", ")}.\n`
+                : "- No tagged components were read along the route.\n") +
+              `- Tell the reader the path is drawn on the cited sheet — clicking the citation shows it.`;
+            traceCitation = {
+              documentId: t.result.documentId, page: t.result.page,
+              tags: [uniqTags[0], uniqTags[1]],
+            };
+          } else if (t.candidates > 0) {
+            traceFacts =
+              `\n\nMEASURED LINE TRACE — attempted between ${uniqTags[0]} and ${uniqTags[1]} on ` +
+              `${t.tried.length} sheet(s); the line-work could not confirm a route:\n` +
+              t.tried.map((r) => `- ${r.documentName} p.${r.page}: ${r.note}`).join("\n") +
+              "\nSay plainly that the drawn route could not be confirmed and why. Do NOT invent a path.";
+          } else {
+            traceFacts =
+              `\n\nMEASURED LINE TRACE — no indexed sheet carries both ${uniqTags[0]} and ${uniqTags[1]} ` +
+              "on the same page, so nothing could be traced. If they should share a sheet, the library " +
+              "may need image indexing and a rebuild. Say so; do NOT invent a path.";
+          }
+        } catch { /* tracing is additive — the answer still stands on retrieval */ }
+      }
+    }
+
     // ── DRAWING FACTS: deterministic layer for P&ID/drawing libraries ────
     // Retrieval finds where something is WRITTEN; it cannot count vessels
     // or audit references. When the library has extracted entities, compute
@@ -1055,7 +1106,7 @@ export async function POST(req: NextRequest) {
       "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts +
+      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + traceFacts +
       tableNote + needsDirective + calcProtocol + fetchDirective;
     const answerUser = `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
@@ -1152,6 +1203,31 @@ export async function POST(req: NextRequest) {
           } : {}),
         };
       });
+
+    // The measured trace gets citation #0 — the one that opens the sheet
+    // with both endpoints ringed and the traced path ready to draw. Without
+    // this, an answer built on a measured route had nothing to click.
+    if (traceCitation) {
+      const already = citations.some(
+        (c) => c.documentId === traceCitation!.documentId && c.page === traceCitation!.page);
+      if (!already) {
+        citations.unshift({
+          n: 0,
+          documentId: traceCitation.documentId,
+          documentName: docName.get(traceCitation.documentId) ?? "Sheet",
+          page: traceCitation.page,
+          section: null,
+          quote: "",
+          tags: traceCitation.tags,
+        });
+      } else {
+        for (const c of citations) {
+          if (c.documentId === traceCitation.documentId && c.page === traceCitation.page) {
+            c.tags = [...new Set([...(c.tags ?? []), ...traceCitation.tags])];
+          }
+        }
+      }
+    }
 
     // ── SHOW-ME GUARANTEE for drawings ────────────────────────────────────
     // Text citations exist only where RETRIEVAL found passages. On a P&ID

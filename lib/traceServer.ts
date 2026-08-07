@@ -44,6 +44,10 @@ export interface SheetTraceResult {
   points: TracePoint[];
   /** Plain-language account of what happened — success or refusal alike. */
   note: string;
+  /** Tagged components sitting ON the traced route, ordered from -> to.
+   *  Read by a vision pass over the path drawn on the sheet, because
+   *  vision-ingested tags carry no coordinates to measure against. */
+  alongRoute: string[];
 }
 
 /** Documents in this org's knowledge layer whose entity index carries BOTH
@@ -95,7 +99,7 @@ export async function traceTagsOnSheet(opts: {
   const { orgId, userId, documentId, page, fromTag, toTag } = opts;
   const fail = (note: string, documentName = ""): SheetTraceResult => ({
     found: false, method: "none", documentId, documentName, page,
-    turns: null, points: [], note,
+    turns: null, points: [], note, alongRoute: [],
   });
 
   const { data: doc } = await supabaseAdmin
@@ -118,10 +122,14 @@ export async function traceTagsOnSheet(opts: {
       const points = cached.from_tag === fromTag
         ? (cached.points as TracePoint[])
         : [...(cached.points as TracePoint[])].reverse();
+      const noteText = (cached.note as string | null) ?? "";
+      const alongMatch = /Along the route: (.+)$/m.exec(noteText);
       return {
         found: true, method: "measured", documentId, documentName: docName, page,
         turns: (cached.turns as number | null) ?? null, points,
-        note: "Measured from the sheet's line-work (cached from an earlier trace).",
+        note: "Measured from the sheet's line-work (cached from an earlier trace)."
+          + (alongMatch ? ` ${alongMatch[0]}` : ""),
+        alongRoute: alongMatch ? alongMatch[1].split(",").map((t) => t.trim()).filter(Boolean) : [],
       };
     }
   } catch { /* cache table optional */ }
@@ -210,16 +218,71 @@ export async function traceTagsOnSheet(opts: {
       + traced.reason, docName);
   }
   const points: TracePoint[] = traced.points.map((p) => ({ nx: p.x, ny: p.y }));
+
+  // What sits ON the route. The question that makes tracing useful is rarely
+  // "are these connected" — it is "what is BETWEEN them": the first PSV, the
+  // block valves, the check valve someone forgot. The route is measured, but
+  // the components along it have no stored coordinates (vision ingestion
+  // reads tags without positions), so this draws the measured path onto the
+  // sheet and has the vision model read the tags it passes through — the one
+  // job vision is reliably good at, reading labels at known locations.
+  let alongRoute: string[] = [];
+  try {
+    const { data: conn2 } = await supabaseAdmin
+      .from("ai_connections").select("provider, model, api_key")
+      .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+    if (conn2 && ALLOWED_PROVIDERS.includes(conn2.provider as AiProviderId)) {
+      const provider = conn2.provider as AiProviderId;
+      const visionModel = VISION_MODEL[provider] ?? (conn2.model as string);
+      const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+      const image = await loadImage(png);
+      const canvas = createCanvas(image.width, image.height);
+      const octx = canvas.getContext("2d");
+      octx.drawImage(image, 0, 0);
+      octx.strokeStyle = "rgba(255, 80, 0, 0.85)";
+      octx.lineWidth = Math.max(6, image.width / 400);
+      octx.lineJoin = "round";
+      octx.beginPath();
+      points.forEach((pt, i) => {
+        const x = pt.nx * image.width, y = pt.ny * image.height;
+        if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+      });
+      octx.stroke();
+      const out = await callAiModel({
+        provider, model: visionModel, apiKey: openAiKey(conn2.api_key as string),
+        system:
+          "You read process drawings. An orange route is drawn on this P&ID. List ONLY the tagged "
+          + "components (valves, PSVs, instruments, equipment) that sit DIRECTLY ON the orange route, "
+          + "in order from the start tag to the end tag. Respond with a comma-separated list of tags "
+          + "and nothing else. If none, respond NONE.",
+        user: `Route from ${fromTag} to ${toTag} on ${docName} page ${page}.`,
+        maxTokens: 300,
+        images: [{ base64: canvas.toBuffer("image/png").toString("base64"), mediaType: "image/png" }],
+        timeoutMs: 30_000,
+      });
+      await recordAskUsage({
+        orgId, userId, provider, model: visionModel, usage: out.usage, ok: true, op: "drawingLocate",
+      });
+      const txt = out.text.trim();
+      if (txt && !/^none/i.test(txt)) {
+        alongRoute = txt.split(",").map((t) => t.trim().toUpperCase())
+          .filter((t) => t.length >= 2 && t.length <= 24 && /\d/.test(t))
+          .slice(0, 30);
+      }
+    }
+  } catch { /* components are a bonus — the measured route stands alone */ }
+
+  const note = `Measured from the sheet's line-work: ${points.length} waypoints, ${traced.turns} turn(s).`
+    + (alongRoute.length > 0 ? `\nAlong the route: ${alongRoute.join(", ")}` : "");
   try {
     await supabaseAdmin.from("knowledge_line_traces").upsert({
       org_id: orgId, document_id: documentId, page,
-      from_tag: fromTag, to_tag: toTag, points, note: null, method: "raster", turns: traced.turns,
+      from_tag: fromTag, to_tag: toTag, points, note, method: "raster", turns: traced.turns,
     }, { onConflict: "document_id,page,from_tag,to_tag" });
   } catch { /* cache best-effort */ }
   return {
     found: true, method: "measured", documentId, documentName: docName, page,
-    turns: traced.turns, points,
-    note: `Measured from the sheet's line-work: ${points.length} waypoints, ${traced.turns} turn(s).`,
+    turns: traced.turns, points, note, alongRoute,
   };
 }
 

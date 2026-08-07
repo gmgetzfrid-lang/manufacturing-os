@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  binarize, extractSegments, buildNetwork, tracePipe, tracePipeOnRaster,
+  binarize, extractSegments, buildNetwork, tracePipe, tracePipeOnRaster, classifySegments,
   dropCollinear, segLength, type Raster,
 } from "../pipeTrace";
 
@@ -343,6 +343,47 @@ describe("dropCollinear", () => {
   it("leaves a two-point line alone", () => {
     const line = [{ x: 0, y: 0 }, { x: 5, y: 5 }];
     expect(dropCollinear(line)).toEqual(line);
+  });
+});
+
+// Measured on the real Kern crude-unit sheet: of 771 extracted strokes only
+// ~207 were pipe. The rest — border, title block, letter bars, bubble chords
+// — were all first-class citizens of the network, and a border stroke is a
+// 2,700px superhighway connecting everything to everything. Classification
+// is what makes real-sheet traces stop wandering through the revision table.
+describe("classifySegments", () => {
+  const seg = (id, horizontal, a, b, c) => ({ id, horizontal, a, b, c, thickness: 2 });
+
+  it("removes edge-to-edge frame strokes but keeps a long pipe", () => {
+    const border = seg(0, true, 10, 990, 20);          // spans the full sheet
+    const pipe = seg(1, true, 150, 850, 400);          // long, but starts inside
+    const { pipe: kept, frame } = classifySegments([border, pipe], 1000, 800);
+    expect(frame).toBe(1);
+    expect(kept.map((s) => s.id)).toEqual([1]);
+  });
+
+  it("drops title-block strokes inside a bordered sheet, not on a bare one", () => {
+    const borderTop = seg(0, true, 10, 990, 10);
+    const borderBottom = seg(1, true, 10, 990, 780);
+    const titleRule = seg(2, true, 500, 900, 760);     // inside the bottom strip
+    const pipeRun = seg(3, true, 100, 600, 400);
+    const bordered = classifySegments([borderTop, borderBottom, titleRule, pipeRun], 1000, 800);
+    expect(bordered.margin).toBe(1);
+    expect(bordered.pipe.map((s) => s.id)).toEqual([3]);
+    // Same title-height stroke on a borderless raster is just a pipe.
+    const bare = classifySegments([titleRule, pipeRun], 1000, 800);
+    expect(bare.margin).toBe(0);
+    expect(bare.pipe).toHaveLength(2);
+  });
+
+  it("drops a short stray but keeps a short stroke that continues", () => {
+    const strayLetterBar = seg(0, true, 100, 118, 200);   // 18px, alone
+    const pipeBefore = seg(1, true, 300, 500, 400);
+    const shortAfterValve = seg(2, true, 530, 550, 400);  // 20px, same line as 1
+    const { pipe, stray } = classifySegments(
+      [strayLetterBar, pipeBefore, shortAfterValve], 1000, 800, { alignTolerance: 4, maxGap: 220 });
+    expect(stray).toBe(1);
+    expect(pipe.map((s) => s.id).sort()).toEqual([1, 2]);
   });
 });
 

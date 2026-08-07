@@ -18,7 +18,7 @@
 //
 // Built on the same react-pdf + self-hosted worker the document viewers use.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -114,6 +114,20 @@ export default function CitedPageViewer({
     setTraceFrom(tags?.[0] ?? "");
     setTraceTo(tags?.[1] ?? "");
   }, [tags]);
+
+  // Opened with exactly two tags — from a trace answer's citation — the
+  // path draws ITSELF. The ask already measured this route server-side, so
+  // this is a cache hit; making the person re-type both tags and press the
+  // button to see a line the system has already computed would be theater.
+  const autoTraced = useRef<string | null>(null);
+  useEffect(() => {
+    if (!orgId || !view.documentId || tags?.length !== 2) return;
+    const key = `${view.documentId}#${pageNumber}#${tags[0]}#${tags[1]}`;
+    if (autoTraced.current === key) return;
+    autoTraced.current = key;
+    void runTrace(tags[0].toUpperCase(), tags[1].toUpperCase());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, view.documentId, pageNumber, tags]);
 
   /** What the vectorizer saw, when asked to show its work. */
   const [lineWork, setLineWork] = useState<{

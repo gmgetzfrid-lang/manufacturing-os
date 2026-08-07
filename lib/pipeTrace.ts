@@ -794,6 +794,94 @@ export function scaledOptions(width: number, opts: TraceOptions = {}): TraceOpti
   };
 }
 
+/** Separate PIPE from everything else that survives stroke extraction.
+ *
+ *  Measured on a real refinery P&ID (Kern crude unit, sheet 9): of 771
+ *  extracted strokes only ~207 are pipe. The rest are the sheet frame, the
+ *  title block and revision table, and fragments of instrument bubbles and
+ *  lettering. Every one of those is a place the tracer can wander into —
+ *  a route that ducks through the revision table LOOKS like a valid path to
+ *  A*, and a border stroke is a 2,700px superhighway connecting everything
+ *  to everything. Most "mystery" failures on real sheets are this.
+ *
+ *  Three deterministic rules, cheapest evidence first:
+ *
+ *  frame — a stroke spanning most of the sheet. No pipe crosses an entire
+ *  drawing edge to edge; borders, zone rules and table frames do.
+ *
+ *  margin — everything OUTSIDE the drawn border, plus the title strip along
+ *  the bottom edge. The border is found from the frame strokes themselves,
+ *  so a sheet with no border loses nothing.
+ *
+ *  stray — a short stroke with no collinear continuation anywhere. Real
+ *  pipe is long, or short BETWEEN interruptions — a valve gap implies more
+ *  pipe further along the same centre line. Letter bars and bubble chords
+ *  have no continuation; this is what deletes them.
+ */
+export function classifySegments(
+  segments: Segment[], width: number, height: number, opts: TraceOptions = {},
+): { pipe: Segment[]; excluded: Segment[]; frame: number; margin: number; stray: number } {
+  const tol = opts.alignTolerance ?? DEFAULTS.alignTolerance;
+  const maxGap = opts.maxGap ?? DEFAULTS.maxGap;
+
+  // A frame stroke runs EDGE TO EDGE — that is what a border is. A long
+  // pipe can span 70% of a sheet, but it starts and ends inside the border,
+  // not at the paper's edge.
+  const isFrame = (s: Segment) => {
+    const span = s.horizontal ? width : height;
+    return segLength(s) > span * 0.55 && s.a <= span * 0.06 && s.b >= span * 0.94;
+  };
+  const frames = segments.filter(isFrame);
+
+  // The drawing area: inside the outermost frame strokes. Falls back to the
+  // whole sheet when no border is drawn.
+  // A frame stroke bounds the drawing only from the side it actually sits
+  // on — a sheet with just a top rule must not collapse to zero height.
+  const hFrames = frames.filter((f) => f.horizontal).map((f) => f.c).sort((a, b) => a - b);
+  const vFrames = frames.filter((f) => !f.horizontal).map((f) => f.c).sort((a, b) => a - b);
+  const top = hFrames.find((c) => c < height * 0.3) ?? 0;
+  const bottom = [...hFrames].reverse().find((c) => c > height * 0.7) ?? height;
+  const left = vFrames.find((c) => c < width * 0.3) ?? 0;
+  const right = [...vFrames].reverse().find((c) => c > width * 0.7) ?? width;
+  // Title block and revision table live in a strip along the border's bottom
+  // edge. 12% of the drawing area's height covers every layout seen so far
+  // without reaching the lowest real pipe runs (~70% height on the sheet
+  // this was measured against).
+  // No border found means no title block either — a bare synthetic raster
+  // or a cropped detail. The strip only exists inside a real border.
+  const hasBottomBorder = hFrames.some((c) => c > height * 0.7);
+  const stripTop = hasBottomBorder ? bottom - (bottom - top) * 0.12 : Infinity;
+
+  const inMargin = (s: Segment) => {
+    const x1 = s.horizontal ? s.a : s.c, x2 = s.horizontal ? s.b : s.c;
+    const y1 = s.horizontal ? s.c : s.a, y2 = s.horizontal ? s.c : s.b;
+    if (x2 < left + 2 || x1 > right - 2 || y2 < top + 2 || y1 > bottom - 2) return true;
+    return y1 > stripTop;                            // entirely inside the title strip
+  };
+
+  // A short stroke earns its place only by continuing: another stroke on the
+  // same centre line, close enough that a gap-jump could reach it.
+  const shortLimit = Math.max(24, width * 0.013);
+  const continues = (s: Segment) =>
+    segments.some((o) =>
+      o.id !== s.id && o.horizontal === s.horizontal
+      && Math.abs(o.c - s.c) <= tol
+      && (Math.min(s.b, o.b) >= Math.max(s.a, o.a)   // overlapping
+        || Math.max(s.a - o.b, o.a - s.b) <= maxGap) // or within jumping reach
+      && segLength(o) > shortLimit);
+
+  const pipe: Segment[] = [];
+  const excluded: Segment[] = [];
+  let frame = 0, margin = 0, stray = 0;
+  for (const s of segments) {
+    if (isFrame(s)) { frame++; excluded.push(s); continue; }
+    if (inMargin(s)) { margin++; excluded.push(s); continue; }
+    if (segLength(s) <= shortLimit && !continues(s)) { stray++; excluded.push(s); continue; }
+    pipe.push(s);
+  }
+  return { pipe, excluded, frame, margin, stray };
+}
+
 export function tracePipeOnRaster(
   raster: Raster,
   startFrac: Point,
@@ -813,12 +901,17 @@ export function tracePipeOnRaster(
       reason: "No pipe-like line-work found on this page — if the sheet is a scan, it may be too low-resolution to follow.",
     };
   }
-  const network = buildNetwork(segments, opts);
+  // Keep the frame, title block and annotation fragments OUT of the
+  // network. A border stroke is a 2,700px superhighway connecting
+  // everything to everything, and a route through the revision table looks
+  // perfectly valid to the search. Most real-sheet failures were this.
+  const classified = classifySegments(segments, raster.width, raster.height, opts);
+  const network = buildNetwork(classified.pipe, opts);
   const result = tracePipe(network, toPx(startFrac), toPx(goalFrac), opts);
   return {
     ...result,
-    segments: segments.length,
-    lineWork: segments,
+    segments: classified.pipe.length,
+    lineWork: classified.pipe,
     points: result.points.map((p) => ({ x: p.x / raster.width, y: p.y / raster.height })),
   };
 }
