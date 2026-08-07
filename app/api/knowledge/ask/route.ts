@@ -561,6 +561,10 @@ export async function POST(req: NextRequest) {
     // so clicking it opens the sheet with the path drawn.
     let traceFacts = "";
     let traceCitations: Array<{ documentId: string; page: number; tags: string[] }> = [];
+    // The status strip the UI shows VERBATIM. The model paraphrases; this
+    // does not — which is what makes 'did the trace even run' answerable
+    // from a screenshot instead of a debugging session.
+    let traceStatus: { attempted: boolean; found: boolean; note: string } | null = null;
     const TRACE_INTENT_RE =
       /\b(trace|path|route|flow|line|connect(?:ed|ion|s)?|between|upstream|downstream|from)\b/i;
     if (TRACE_INTENT_RE.test(question)) {
@@ -585,6 +589,9 @@ export async function POST(req: NextRequest) {
               documentId: t.result.documentId, page: t.result.page,
               tags: [uniqTags[0], uniqTags[1]],
             }];
+            traceStatus = { attempted: true, found: true,
+              note: `Measured on ${t.result.documentName} p.${t.result.page} — `
+                + `${t.result.points.length} waypoints, ${t.result.turns} turn(s). Click the citation to see it drawn.` };
           } else if (t.cross?.found) {
             // The line LEAVES its sheet. Drafting's own mechanism for that
             // is the off-page connector, and the trace followed it: leg 1
@@ -603,6 +610,10 @@ export async function POST(req: NextRequest) {
               ).join("\n") +
               `\n- Tell the reader the route continues across sheets via connector ` +
               `${t.cross.connectors.join(", ")}, and each cited sheet shows its own leg drawn.`;
+            traceStatus = { attempted: true, found: true,
+              note: `Measured across sheets via connector ${t.cross.connectors.join(", ")} — `
+                + legs.map((l) => `${l.documentName} p.${l.page}`).join(" → ")
+                + ". Each citation shows its own leg drawn." };
             traceCitations = legs.map((l, i) => ({
               documentId: l.documentId, page: l.page,
               tags: i === 0
@@ -613,12 +624,15 @@ export async function POST(req: NextRequest) {
             traceFacts =
               `\n\nMEASURED LINE TRACE — ${t.cross.note}\n` +
               "Say so plainly. Do NOT invent a path.";
+            traceStatus = { attempted: true, found: false, note: t.cross.note };
           } else if (t.candidates > 0) {
             traceFacts =
               `\n\nMEASURED LINE TRACE — attempted between ${uniqTags[0]} and ${uniqTags[1]} on ` +
               `${t.tried.length} sheet(s); the line-work could not confirm a route:\n` +
               t.tried.map((r) => `- ${r.documentName} p.${r.page}: ${r.note}`).join("\n") +
               "\nSay plainly that the drawn route could not be confirmed and why. Do NOT invent a path.";
+            traceStatus = { attempted: true, found: false,
+              note: t.tried.map((r) => `${r.documentName} p.${r.page}: ${r.note}`).join(" | ") };
           } else {
             traceFacts =
               `\n\nMEASURED LINE TRACE — no indexed sheet carries both ${uniqTags[0]} and ${uniqTags[1]} ` +
@@ -633,6 +647,8 @@ export async function POST(req: NextRequest) {
             `\n\nMEASURED LINE TRACE — attempted between ${uniqTags[0]} and ${uniqTags[1]} but the ` +
             `trace machinery errored: ${(e as Error).message}. Tell the reader the measured trace ` +
             "failed with this exact error so it can be fixed. Do NOT invent a path.";
+          traceStatus = { attempted: true, found: false,
+            note: `Trace machinery errored: ${(e as Error).message}` };
         }
       }
     }
@@ -1345,6 +1361,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer, citations, provider, model, mode: "library", missingDocs, budget: budget(),
+      ...(traceStatus ? { trace: traceStatus } : {}),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and
       // still does well. What must never happen is an answer that LOOKS like

@@ -105,6 +105,9 @@ export interface KnowledgeAnswer {
   missingDocs?: string[];
   /** Month spend after this ask vs the asker's cap (governed workspaces). */
   budget?: { spentUsd: number; capUsd: number };
+  /** Set when the question asked for a line trace: what the MEASURED tracer
+   *  did, verbatim from code — never the model's paraphrase. */
+  trace?: { attempted: boolean; found: boolean; note: string };
   /** How the passages were found. "keyword" is not a degraded state — it's
    *  what this product has always done, and it's excellent at exact tags.
    *  It's stated so an answer can never IMPLY a meaning-based search that
