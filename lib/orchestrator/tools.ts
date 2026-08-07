@@ -262,11 +262,69 @@ const checkAuditHistory: ToolDef = {
   },
 };
 
+// The pixel tracer, askable. Until this existed the only door to the real
+// line-follower was clicking two tags in the sheet viewer; asking the same
+// question in words fell through to sheet-level co-occurrence and the answer
+// pretended less than the software could actually do.
+const traceLineOnDrawing: ToolDef = {
+  name: "trace_line_on_drawing",
+  description:
+    "Follow the DRAWN LINE between two tags on a P&ID sheet, pixel by pixel, and report the "
+    + "measured route (which sheet, how many turns). Use for 'trace the line from X to Y', "
+    + "'are X and Y physically connected', 'follow the pipe from X'. Finds the right sheet "
+    + "itself. Honest by design: it answers 'measured' or it refuses — a refusal means the "
+    + "geometry could not be certain, which beats a guess.",
+  params: [
+    { name: "from_tag", type: "string", required: true, description: "Tag to start from, e.g. V-16." },
+    { name: "to_tag", type: "string", required: true, description: "Tag to reach, e.g. P-58." },
+  ],
+  async run(args, ctx) {
+    const fromTag = normalizeTag(String(args.from_tag));
+    const toTag = normalizeTag(String(args.to_tag));
+    const { traceTagsAnywhere } = await import("@/lib/traceServer");
+    const { result, tried, candidates } = await traceTagsAnywhere({
+      orgId: ctx.orgId, userId: ctx.userId, fromTag, toTag,
+    });
+    if (result) {
+      return {
+        data: {
+          found: true, method: "measured",
+          sheet: result.documentName, page: result.page,
+          turns: result.turns, waypoints: result.points.length,
+          note: result.note,
+          basis: "Measured by following the sheet's actual drawn line-work — not inferred from tags sharing a page.",
+        },
+      };
+    }
+    if (candidates === 0) {
+      return {
+        data: {
+          found: false,
+          note: `No sheet's index carries both ${fromTag} and ${toTag} on the same page. `
+            + "If the drawings are CAD exports or scans, the library may need image indexing "
+            + "turned on and a rebuild before tags exist to trace between. "
+            + "For a multi-sheet route, trace_pid_lines can follow off-page references instead.",
+        },
+      };
+    }
+    return {
+      data: {
+        found: false,
+        sheets_tried: tried.map((t) => ({ sheet: t.documentName, page: t.page, reason: t.note })),
+        note: "The line-work was read on each candidate sheet but no route could be confirmed. "
+          + "These refusals are deliberate: a confident wrong pipe is the one unacceptable answer.",
+      },
+    };
+  },
+};
+
 const tracePidLines: ToolDef = {
   name: "trace_pid_lines",
   description:
-    "Trace the connection between two pieces of equipment across drawings, and report "
-    + "which sheets the route crosses. Answers 'what connects X to Y'.",
+    "SHEET-LEVEL connectivity: which drawings connect two pieces of equipment, following "
+    + "off-page references across sheets. Use for multi-drawing routes and 'which sheets is "
+    + "this line on'. For following the drawn line itself on one sheet, use "
+    + "trace_line_on_drawing — that one measures pixels; this one only knows co-occurrence.",
   params: [
     { name: "start_tag", type: "string", required: true, description: "Equipment tag to start from." },
     { name: "end_tag", type: "string", description: "Equipment tag to reach. Omit to list neighbours." },
@@ -492,7 +550,7 @@ const logAuditCompletion: ToolDef = {
 
 export const TOOLS: readonly ToolDef[] = [
   findDocuments, searchDocuments, queryEquipmentByUnit, equipmentMentions,
-  checkPermissions, checkAuditHistory, tracePidLines,
+  checkPermissions, checkAuditHistory, traceLineOnDrawing, tracePidLines,
   checkoutDocument, notifyPersonnel, logAuditCompletion,
 ];
 
