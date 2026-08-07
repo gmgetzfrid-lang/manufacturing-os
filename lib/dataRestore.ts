@@ -313,8 +313,14 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "project_parties",
   "cost_accounts", "cost_documents", "cost_entries",
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources",
-  "knowledge_documents", "knowledge_chunks", "knowledge_page_entities",
-  "knowledge_questions",
+  "knowledge_documents", "knowledge_chunks",
+  // Vocabularies before page entities: a kind='symbol' entity carries an FK
+  // to the legend entry that named it, so the entry has to exist first.
+  "knowledge_vocabularies", "knowledge_vocabulary_sources",
+  "knowledge_vocabulary_bindings", "knowledge_vocabulary_entries",
+  "knowledge_vocabulary_gaps",
+  "knowledge_page_entities",
+  "knowledge_questions", "knowledge_profile_history",
   "output_templates", "output_generations",
 ];
 
