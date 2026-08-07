@@ -341,6 +341,57 @@ async function pagesWith(
   return out;
 }
 
+/** Resolve a requested tag against what the index ACTUALLY stores.
+ *
+ *  Live failure this exists for: the strip said "X-35 and V-3 appear on no
+ *  indexed sheet" while the same answer quoted X-35's equipment title from
+ *  the transcript. When exact match fails, the difference between "the
+ *  index is empty", "the index stores these tags spelled differently", and
+ *  "these two tags are simply missing" decides the fix — so instead of one
+ *  refusal string, look for near-spellings (unicode hyphens, dropped
+ *  separators, X-35 vs X35) and, failing that, report what the index DOES
+ *  hold so the next screenshot is a diagnosis. */
+async function resolveTag(
+  orgId: string, tag: string,
+): Promise<{ resolved: string | null; diagnosis: string }> {
+  const squash = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const exact = await supabaseAdmin
+    .from("knowledge_page_entities").select("tag")
+    .eq("org_id", orgId).eq("tag", tag).eq("kind", "equipment").limit(1).maybeSingle();
+  if (exact.data) return { resolved: tag, diagnosis: "" };
+
+  // Same letters+digits under a different spelling?
+  const m = /^([A-Z]+)[^A-Z0-9]*(\d.*)$/i.exec(tag);
+  if (m) {
+    const { data } = await supabaseAdmin
+      .from("knowledge_page_entities").select("tag")
+      .eq("org_id", orgId).eq("kind", "equipment")
+      .ilike("tag", `${m[1]}%`).limit(2000);
+    const stored = [...new Set(((data ?? []) as Array<{ tag: string }>).map((r) => r.tag))];
+    const hit = stored.find((t) => squash(t) === squash(tag));
+    if (hit) return { resolved: hit, diagnosis: `${tag} is stored as ${hit}` };
+    if (stored.length > 0) {
+      return {
+        resolved: null,
+        diagnosis: `${tag} is not in the tag index; nearest stored ${m[1]}-tags: `
+          + stored.sort().slice(0, 8).join(", "),
+      };
+    }
+  }
+  // Nothing with this prefix at all — say how big the index even is.
+  const { count } = await supabaseAdmin
+    .from("knowledge_page_entities").select("id", { count: "exact", head: true })
+    .eq("org_id", orgId).eq("kind", "equipment");
+  return {
+    resolved: null,
+    diagnosis: `${tag} is not in the tag index (the index holds ${count ?? 0} equipment `
+      + "tag entries in total"
+      + ((count ?? 0) === 0
+        ? " — a rebuild with image indexing ON has not completed for this library)"
+        : ")"),
+  };
+}
+
 export interface CrossSheetTrace {
   found: boolean;
   /** Each leg is one sheet's measured route; leg N ends at the off-page
@@ -428,6 +479,16 @@ export async function traceTagsAnywhere(opts: {
   result: SheetTraceResult | null; tried: SheetTraceResult[]; candidates: number;
   cross?: CrossSheetTrace;
 }> {
+  const [rf, rt] = await Promise.all([
+    resolveTag(opts.orgId, opts.fromTag), resolveTag(opts.orgId, opts.toTag)]);
+  if (!rf.resolved || !rt.resolved) {
+    const notes = [rf, rt].map((r) => r.diagnosis).filter(Boolean).join(" ");
+    return {
+      result: null, tried: [], candidates: 0,
+      cross: { found: false, legs: [], connectors: [], note: notes },
+    };
+  }
+  opts = { ...opts, fromTag: rf.resolved, toTag: rt.resolved };
   const sheets = await sheetsCarryingBoth(opts.orgId, opts.fromTag, opts.toTag);
   const tried: SheetTraceResult[] = [];
   for (const s of sheets.slice(0, opts.maxSheets ?? 3)) {
