@@ -1,6 +1,6 @@
 // /api/knowledge/trace — follow a pipe run on a drawing sheet.
 //
-//   POST { orgId, documentId, page, fromTag, toTag, lineNumber? }
+//   POST { orgId, documentId, page, fromTag, toTag }
 //        → { found, points: [{nx, ny}...], note, method, source }
 //
 // TWO WAYS TO ANSWER, AND THEY ARE NOT EQUAL:
@@ -32,8 +32,10 @@ import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
-import { TRACE_SYSTEM, buildTraceUser, parseTraceResponse, type TracePoint } from "@/lib/drawingTrace";
-import { LOCATE_SYSTEM, buildLocateUser, parseLocateResponse } from "@/lib/drawingLocate";
+import type { TracePoint } from "@/lib/drawingTrace";
+import {
+  LOCATE_SYSTEM, buildLocateUser, buildRelocateUser, parseLocateResponse,
+} from "@/lib/drawingLocate";
 import { binarize, tracePipeOnRaster } from "@/lib/pipeTrace";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -73,7 +75,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     orgId?: string; documentId?: string; page?: number;
-    fromTag?: string; toTag?: string; lineNumber?: string;
+    fromTag?: string; toTag?: string;
     /** Return the vectorized line-work so the viewer can draw what the
      *  tracer actually sees. Tuning a vectorizer against drawings nobody
      *  can look at is guesswork; this makes a failure visible in one
@@ -86,7 +88,6 @@ export async function POST(req: NextRequest) {
   const page = Number(body.page ?? 0);
   const fromTag = canonical(String(body.fromTag ?? ""));
   const toTag = canonical(String(body.toTag ?? ""));
-  const lineNumber = String(body.lineNumber ?? "").trim() || null;
   const debug = body.debug === true;
   if (!orgId || !documentId || !page || !fromTag || !toTag) {
     return bad("orgId, documentId, page, fromTag and toTag are required");
@@ -216,6 +217,8 @@ export async function POST(req: NextRequest) {
 
   // ── The real trace: follow the drawn line ─────────────────────────────
   let rasterNote: string | null = null;
+  let rasterCached: import("@/lib/pipeTrace").Raster | null = null;
+  let lastDiag: { startCandidates: number; goalCandidates: number } | null = null;
   /** Populated on a debug run: every stroke the vectorizer found, as page
    *  fractions, plus the counts behind whatever happened. */
   let debugPayload: {
@@ -239,11 +242,13 @@ export async function POST(req: NextRequest) {
     const pixels = ctx.getImageData(0, 0, img.width, img.height);
     const raster = binarize(pixels.data as unknown as Uint8ClampedArray, img.width, img.height);
 
+    rasterCached = raster;
     const traced = tracePipeOnRaster(
       raster,
       { x: from.nx, y: from.ny },
       { x: to.nx, y: to.ny },
     );
+    lastDiag = traced.diagnostics;
     if (debug) {
       const shown = traced.lineWork.slice(0, DEBUG_SEGMENT_CAP);
       debugPayload = {
@@ -284,48 +289,61 @@ export async function POST(req: NextRequest) {
     rasterNote = `Couldn't read the sheet's line-work: ${(e as Error).message}`;
   }
 
-  // ── Fallback: the model's estimate, labeled as exactly that ───────────
-  if (!hasKey || !budgetOk) {
-    return NextResponse.json({
-      found: false, points: [], method: "none", source: "live",
-      debug: debugPayload,
-      note: rasterNote ?? "Couldn't follow that line on this sheet.",
-    });
-  }
-  try {
-    const out = await callAiModel({
-      provider: provider!, model: visionModel!, apiKey: openAiKey(conn!.api_key as string),
-      system: TRACE_SYSTEM,
-      user: buildTraceUser({ fromTag, toTag, lineNumber, documentName: doc.name as string, page }),
-      maxTokens: 1500,
-      images: [{ base64: b64, mediaType: "image/png" }],
-      timeoutMs: Math.max(5_000, startedAt + TRACE_BUDGET_MS - Date.now()),
-    });
-    await recordAskUsage({
-      orgId, userId: user.id, provider: provider!, model: visionModel!,
-      usage: out.usage, ok: true, op: "drawingTrace",
-    });
-    const guess = parseTraceResponse(out.text);
-    if (!guess.found) {
-      return NextResponse.json({
-        found: false, points: [], method: "none", source: "live",
-      debug: debugPayload,
-        note: rasterNote ?? guess.note ?? "Couldn't follow that line on this sheet.",
+  // ── One relocate retry, then an HONEST refusal ────────────────────────
+  //
+  // The vision waypoint fallback is gone, deliberately. It was the original
+  // approach, and the header of pipeTrace.ts records the verdict: spatial
+  // coordinate regression over thin line-work is the thing vision models
+  // are worst at. In production it drew a confident wrong path on a real
+  // drawing — "Estimated, not followed" labels notwithstanding, a drawn
+  // stroke gets read as the route. A refusal with reasons is the only
+  // honest failure.
+  //
+  // What vision IS still used for: pointing at a tag. And when the raster
+  // trace reports ZERO pipe ends near one endpoint, the position was wrong
+  // — the observed case put a tag in the equipment summary row, a spot with
+  // no pipes — so one more locate round with that feedback often fixes it.
+  if (hasKey && budgetOk && lastDiag
+    && (lastDiag.startCandidates === 0 || lastDiag.goalCandidates === 0)) {
+    try {
+      const suspect: Record<string, [number, number]> = {};
+      if (lastDiag.startCandidates === 0) suspect[fromTag] = [from.nx, from.ny];
+      if (lastDiag.goalCandidates === 0) suspect[toTag] = [to.nx, to.ny];
+      const out = await callAiModel({
+        provider: provider!, model: visionModel!, apiKey: openAiKey(conn!.api_key as string),
+        system: LOCATE_SYSTEM,
+        user: buildRelocateUser(Object.keys(suspect), doc.name as string, page, suspect),
+        maxTokens: 400,
+        images: [{ base64: b64, mediaType: "image/png" }],
+        timeoutMs: Math.max(5_000, startedAt + TRACE_BUDGET_MS - Date.now()),
       });
-    }
-    const note = [rasterNote, guess.note].filter(Boolean).join(" ") || null;
-    await cacheTrace(orgId, documentId, page, fromTag, toTag, guess.points, note, "vision", null);
-    return NextResponse.json({
-      found: true, points: guess.points, note, method: "vision", source: "live",
-      debug: debugPayload,
-    });
-  } catch (e) {
-    return NextResponse.json({
-      found: false, points: [], method: "none", source: "live",
-      debug: debugPayload,
-      note: rasterNote ?? `Couldn't trace that line: ${(e as Error).message}`,
-    });
+      await recordAskUsage({
+        orgId, userId: user.id, provider: provider!, model: visionModel!,
+        usage: out.usage, ok: true, op: "drawingLocate",
+      });
+      for (const p of parseLocateResponse(out.text, Object.keys(suspect))) {
+        ends.set(p.tag, { nx: p.nx, ny: p.ny });
+      }
+      const f2 = ends.get(fromTag)!, t2 = ends.get(toTag)!;
+      const retraced = tracePipeOnRaster(rasterCached!, { x: f2.nx, y: f2.ny }, { x: t2.nx, y: t2.ny });
+      if (retraced.ok) {
+        const points: TracePoint[] = retraced.points.map((p) => ({ nx: p.x, ny: p.y }));
+        await cacheTrace(orgId, documentId, page, fromTag, toTag, points, null, "raster", retraced.turns);
+        return NextResponse.json({
+          found: true, points, note: null, method: "raster", turns: retraced.turns, source: "live",
+          debug: debugPayload,
+        });
+      }
+      rasterNote = retraced.reason
+        + ` (after re-locating ${Object.keys(suspect).join(", ")} — the first position had no pipe near it)`;
+    } catch { /* fall through to the refusal */ }
   }
+
+  return NextResponse.json({
+    found: false, points: [], method: "none", source: "live",
+    debug: debugPayload,
+    note: rasterNote ?? "Couldn't follow that line on this sheet.",
+  });
 }
 
 /** Best-effort — the cache table (and its method column) may not exist yet;

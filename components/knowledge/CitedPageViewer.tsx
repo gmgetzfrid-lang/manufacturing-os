@@ -484,7 +484,7 @@ export default function CitedPageViewer({
                       stroke={trace.method === "raster"
                         ? "rgba(250, 204, 21, 0.55)"
                         : "rgba(251, 146, 60, 0.35)"}
-                      strokeWidth={trace.method === "raster" ? 9 : 16}
+                      strokeWidth={trace.method === "raster" ? 4 : 6}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeDasharray={trace.method === "raster" ? undefined : "14 10"}

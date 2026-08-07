@@ -24,7 +24,7 @@ import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
-import { LOCATE_SYSTEM, buildLocateUser, parseLocateResponse } from "@/lib/drawingLocate";
+import { LOCATE_SYSTEM, buildLocateUser, buildRelocateUser, parseLocateResponse } from "@/lib/drawingLocate";
 import { binarize, tracePipeOnRaster } from "@/lib/pipeTrace";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -211,7 +211,44 @@ export async function traceTagsOnSheet(opts: {
   }
 
   const raster = binarize(pixels, width, height);
-  const traced = tracePipeOnRaster(raster, { x: from.nx, y: from.ny }, { x: to.nx, y: to.ny });
+  let traced = tracePipeOnRaster(raster, { x: from.nx, y: from.ny }, { x: to.nx, y: to.ny });
+
+  // ZERO pipe ends near a tag means its position is wrong, not that the
+  // pipe is missing — seen live when a locate answer pointed at the
+  // equipment summary row along the top of the sheet, a spot with no pipes
+  // at all. One more locate round, telling the model exactly what was wrong
+  // with its first answer, fixes precisely that case.
+  if (!traced.ok
+    && (traced.diagnostics.startCandidates === 0 || traced.diagnostics.goalCandidates === 0)) {
+    const suspect: Record<string, [number, number]> = {};
+    if (traced.diagnostics.startCandidates === 0) suspect[fromTag] = [from.nx, from.ny];
+    if (traced.diagnostics.goalCandidates === 0) suspect[toTag] = [to.nx, to.ny];
+    const { data: conn3 } = await supabaseAdmin
+      .from("ai_connections").select("provider, model, api_key")
+      .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+    if (conn3 && ALLOWED_PROVIDERS.includes(conn3.provider as AiProviderId)) {
+      try {
+        const provider = conn3.provider as AiProviderId;
+        const visionModel = VISION_MODEL[provider] ?? (conn3.model as string);
+        const out = await callAiModel({
+          provider, model: visionModel, apiKey: openAiKey(conn3.api_key as string),
+          system: LOCATE_SYSTEM,
+          user: buildRelocateUser(Object.keys(suspect), docName, page, suspect),
+          maxTokens: 400,
+          images: [{ base64: png.toString("base64"), mediaType: "image/png" }],
+          timeoutMs: 30_000,
+        });
+        await recordAskUsage({
+          orgId, userId, provider, model: visionModel, usage: out.usage, ok: true, op: "drawingLocate",
+        });
+        for (const pos of parseLocateResponse(out.text, Object.keys(suspect))) {
+          ends.set(pos.tag, { nx: pos.nx, ny: pos.ny });
+        }
+        const f2 = ends.get(fromTag)!, t2 = ends.get(toTag)!;
+        traced = tracePipeOnRaster(raster, { x: f2.nx, y: f2.ny }, { x: t2.nx, y: t2.ny });
+      } catch { /* keep the first refusal */ }
+    }
+  }
   if (!traced.ok) {
     return fail(
       `Followed the line-work on ${docName} page ${page} but couldn't connect ${fromTag} to ${toTag}: `
@@ -286,12 +323,111 @@ export async function traceTagsOnSheet(opts: {
   };
 }
 
+/** Sheets where a tag of ANY kind appears — equipment for vessel tags,
+ *  opc for connector box numbers. */
+async function pagesWith(
+  orgId: string, tag: string, kinds: string[],
+): Promise<Array<{ documentId: string; page: number }>> {
+  const { data } = await supabaseAdmin
+    .from("knowledge_page_entities")
+    .select("document_id, page")
+    .eq("org_id", orgId).eq("tag", tag).in("kind", kinds).limit(500);
+  const seen = new Set<string>();
+  const out: Array<{ documentId: string; page: number }> = [];
+  for (const r of (data ?? []) as Array<{ document_id: string; page: number }>) {
+    const k = `${r.document_id}#${r.page}`;
+    if (!seen.has(k)) { seen.add(k); out.push({ documentId: r.document_id, page: r.page }); }
+  }
+  return out;
+}
+
+export interface CrossSheetTrace {
+  found: boolean;
+  /** Each leg is one sheet's measured route; leg N ends at the off-page
+   *  connector that leg N+1 starts from. */
+  legs: SheetTraceResult[];
+  /** Connector box number(s) the route hops through, in order. */
+  connectors: string[];
+  note: string;
+}
+
+/** A line that leaves the sheet does it through an OFF-PAGE CONNECTOR — a
+ *  numbered box at the sheet edge, with the same number printed on the
+ *  continuation sheet. That is drafting's own mechanism for multi-sheet
+ *  routes, and following it is what the human eye does: trace to the
+ *  pennant, find the matching pennant, keep going. One hop supported —
+ *  fromTag's sheet -> shared connector -> toTag's sheet. */
+export async function traceAcrossSheets(opts: {
+  orgId: string; userId: string; fromTag: string; toTag: string;
+}): Promise<CrossSheetTrace> {
+  const { orgId, userId, fromTag, toTag } = opts;
+  const [fromPages, toPages] = await Promise.all([
+    pagesWith(orgId, fromTag, ["equipment"]),
+    pagesWith(orgId, toTag, ["equipment"]),
+  ]);
+  if (fromPages.length === 0 || toPages.length === 0) {
+    const missing = [fromPages.length === 0 ? fromTag : null, toPages.length === 0 ? toTag : null]
+      .filter(Boolean).join(" and ");
+    return { found: false, legs: [], connectors: [],
+      note: `${missing} appears on no indexed sheet, so there is nothing to trace from.` };
+  }
+
+  // Connector numbers on each side's page, then the intersection: a box
+  // number printed on BOTH sheets is drafting saying "this line continues".
+  const opcsOn = async (documentId: string, page: number): Promise<Set<string>> => {
+    const { data } = await supabaseAdmin
+      .from("knowledge_page_entities")
+      .select("tag")
+      .eq("document_id", documentId).eq("page", page).eq("kind", "opc").limit(300);
+    return new Set(((data ?? []) as Array<{ tag: string }>).map((r) => r.tag));
+  };
+
+  const attempts: string[] = [];
+  for (const fp of fromPages.slice(0, 2)) {
+    for (const tp of toPages.slice(0, 2)) {
+      const [fromOpcs, toOpcs] = await Promise.all([
+        opcsOn(fp.documentId, fp.page), opcsOn(tp.documentId, tp.page)]);
+      const shared = [...fromOpcs].filter((c) => toOpcs.has(c));
+      if (shared.length === 0) continue;
+      for (const connector of shared.slice(0, 3)) {
+        const leg1 = await traceTagsOnSheet({
+          orgId, userId, documentId: fp.documentId, page: fp.page,
+          fromTag, toTag: connector,
+        });
+        if (!leg1.found) { attempts.push(`${leg1.documentName} p.${leg1.page} (${fromTag}->box ${connector}): ${leg1.note}`); continue; }
+        const leg2 = await traceTagsOnSheet({
+          orgId, userId, documentId: tp.documentId, page: tp.page,
+          fromTag: connector, toTag,
+        });
+        if (!leg2.found) { attempts.push(`${leg2.documentName} p.${leg2.page} (box ${connector}->${toTag}): ${leg2.note}`); continue; }
+        return {
+          found: true, legs: [leg1, leg2], connectors: [connector],
+          note: `The line leaves ${leg1.documentName} page ${leg1.page} through off-page connector `
+            + `${connector} and continues on ${leg2.documentName} page ${leg2.page}. Both legs are `
+            + "measured from the drawn line-work.",
+        };
+      }
+    }
+  }
+  return {
+    found: false, legs: [], connectors: [],
+    note: attempts.length > 0
+      ? `Cross-sheet route attempted via shared off-page connectors but no complete path was confirmed:\n`
+        + attempts.slice(0, 4).map((a) => `- ${a}`).join("\n")
+      : `${fromTag} and ${toTag} share no page and their sheets share no off-page connector number, `
+        + "so no continuation could be followed.",
+  };
+}
+
 /** The ask-time entry: tags only, no sheet required. Tries every sheet whose
  *  entity index carries both tags (capped), returns the first measured route
  *  plus an honest account of the sheets that refused. */
 export async function traceTagsAnywhere(opts: {
   orgId: string; userId: string; fromTag: string; toTag: string; maxSheets?: number;
-}): Promise<{ result: SheetTraceResult | null; tried: SheetTraceResult[]; candidates: number }> {
+}): Promise<{
+  result: SheetTraceResult | null; tried: SheetTraceResult[]; candidates: number;
+  cross?: CrossSheetTrace;
+}> {
   const sheets = await sheetsCarryingBoth(opts.orgId, opts.fromTag, opts.toTag);
   const tried: SheetTraceResult[] = [];
   for (const s of sheets.slice(0, opts.maxSheets ?? 3)) {
@@ -303,5 +439,8 @@ export async function traceTagsAnywhere(opts: {
     tried.push(r);
     if (r.found) return { result: r, tried, candidates: sheets.length };
   }
-  return { result: null, tried, candidates: sheets.length };
+  // No single sheet worked — the line may LEAVE its sheet. Follow the
+  // off-page connectors, the way the drawing itself says to.
+  const cross = await traceAcrossSheets(opts);
+  return { result: null, tried, candidates: sheets.length, cross };
 }

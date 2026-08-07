@@ -560,7 +560,7 @@ export async function POST(req: NextRequest) {
     // components the route passes through. The citation carries both tags,
     // so clicking it opens the sheet with the path drawn.
     let traceFacts = "";
-    let traceCitation: { documentId: string; page: number; tags: string[] } | null = null;
+    let traceCitations: Array<{ documentId: string; page: number; tags: string[] }> = [];
     const TRACE_INTENT_RE =
       /\b(trace|path|route|flow|line|connect(?:ed|ion|s)?|between|upstream|downstream|from)\b/i;
     if (TRACE_INTENT_RE.test(question)) {
@@ -581,10 +581,38 @@ export async function POST(req: NextRequest) {
                 ? `- Components ON the route, in order from ${uniqTags[0]}: ${t.result.alongRoute.join(", ")}.\n`
                 : "- No tagged components were read along the route.\n") +
               `- Tell the reader the path is drawn on the cited sheet — clicking the citation shows it.`;
-            traceCitation = {
+            traceCitations = [{
               documentId: t.result.documentId, page: t.result.page,
               tags: [uniqTags[0], uniqTags[1]],
-            };
+            }];
+          } else if (t.cross?.found) {
+            // The line LEAVES its sheet. Drafting's own mechanism for that
+            // is the off-page connector, and the trace followed it: leg 1
+            // ends at the numbered box, leg 2 picks up at the matching box
+            // on the continuation sheet. One citation per leg, each opening
+            // with its own segment of the path drawn.
+            const legs = t.cross.legs;
+            traceFacts =
+              `\n\nMEASURED LINE TRACE — the line between ${uniqTags[0]} and ${uniqTags[1]} crosses ` +
+              `sheets through off-page connector ${t.cross.connectors.join(", ")}. Both legs were ` +
+              `followed pixel-by-pixel. TRUST this over any prose:\n` +
+              legs.map((l, i) =>
+                `- Leg ${i + 1}: ${l.documentName} page ${l.page}, ${l.points.length} waypoints, ` +
+                `${l.turns} turn(s).` +
+                (l.alongRoute.length > 0 ? ` Components on this leg, in order: ${l.alongRoute.join(", ")}.` : "")
+              ).join("\n") +
+              `\n- Tell the reader the route continues across sheets via connector ` +
+              `${t.cross.connectors.join(", ")}, and each cited sheet shows its own leg drawn.`;
+            traceCitations = legs.map((l, i) => ({
+              documentId: l.documentId, page: l.page,
+              tags: i === 0
+                ? [uniqTags[0], t.cross!.connectors[0]]
+                : [t.cross!.connectors[t.cross!.connectors.length - 1], uniqTags[1]],
+            }));
+          } else if (t.cross && !t.cross.found && t.candidates === 0) {
+            traceFacts =
+              `\n\nMEASURED LINE TRACE — ${t.cross.note}\n` +
+              "Say so plainly. Do NOT invent a path.";
           } else if (t.candidates > 0) {
             traceFacts =
               `\n\nMEASURED LINE TRACE — attempted between ${uniqTags[0]} and ${uniqTags[1]} on ` +
@@ -1215,25 +1243,23 @@ export async function POST(req: NextRequest) {
     // The measured trace gets citation #0 — the one that opens the sheet
     // with both endpoints ringed and the traced path ready to draw. Without
     // this, an answer built on a measured route had nothing to click.
-    if (traceCitation) {
-      const already = citations.some(
-        (c) => c.documentId === traceCitation!.documentId && c.page === traceCitation!.page);
-      if (!already) {
+    for (const tc of [...traceCitations].reverse()) {
+      const existing = citations.find((c) => c.documentId === tc.documentId && c.page === tc.page);
+      if (existing) {
+        // The trace's tag PAIR must survive verbatim — the viewer auto-draws
+        // only when it gets exactly two tags, so merging in extra page tags
+        // here would silently disable the drawn path.
+        existing.tags = tc.tags;
+      } else {
         citations.unshift({
           n: 0,
-          documentId: traceCitation.documentId,
-          documentName: docName.get(traceCitation.documentId) ?? "Sheet",
-          page: traceCitation.page,
+          documentId: tc.documentId,
+          documentName: docName.get(tc.documentId) ?? "Sheet",
+          page: tc.page,
           section: null,
           quote: "",
-          tags: traceCitation.tags,
+          tags: tc.tags,
         });
-      } else {
-        for (const c of citations) {
-          if (c.documentId === traceCitation.documentId && c.page === traceCitation.page) {
-            c.tags = [...new Set([...(c.tags ?? []), ...traceCitation.tags])];
-          }
-        }
       }
     }
 

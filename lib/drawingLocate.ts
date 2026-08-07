@@ -33,8 +33,13 @@ export const LOCATE_SYSTEM =
   "Rules:\n" +
   "- Omit any tag you cannot actually see. A guess is worse than an absence — it sends someone " +
   "hunting the wrong corner of a very large sheet.\n" +
-  "- If a tag appears more than once, give the position of the EQUIPMENT symbol's label, not a " +
-  "mention in a note or the title block.\n" +
+  "- If a tag appears more than once, give the position of the DRAWN EQUIPMENT SYMBOL's label in " +
+  "the drawing area — NEVER a mention in the equipment summary row along the top of the sheet, a " +
+  "table, a note, the legend, or the title block. The summary row lists every vessel with its " +
+  "duty; pointing there instead of at the drawn vessel sends a line-tracer to a spot with no " +
+  "pipes at all.\n" +
+  "- Off-page connector boxes (a number in a small box or pennant at the sheet edge) count as " +
+  "locatable tags — give the box's position.\n" +
   "- No markdown, no code fence, no commentary.";
 
 /** Ask for these tags, in the model's words. */
@@ -89,4 +94,22 @@ export function parseLocateResponse(text: string, requested: string[]): TagPosit
     out.push({ tag: original, nx, ny });
   }
   return out;
+}
+
+/** Feedback for a second locate attempt after the first position turned out
+ *  to have no pipe line-work anywhere near it — the classic symptom of
+ *  pointing at the equipment summary row instead of the drawn vessel. */
+export function buildRelocateUser(
+  tags: string[], documentName: string, page: number,
+  wrong: Record<string, [number, number]>,
+): string {
+  const wrongList = Object.entries(wrong)
+    .map(([t, [x, y]]) => `${t} at [${x.toFixed(2)}, ${y.toFixed(2)}]`).join("; ")
+  return (
+    `Sheet: ${documentName}, page ${page}. Locate: ${tags.join(", ")}.\n` +
+    `A previous attempt placed ${wrongList} — but there is NO pipe line-work near ` +
+    "there, so that was almost certainly the equipment summary row, a table, or a note. " +
+    "Find where each item is actually DRAWN in the diagram — the vessel/exchanger symbol " +
+    "with pipes connecting to it — and give THAT position."
+  );
 }
