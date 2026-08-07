@@ -590,6 +590,9 @@ export const TEXTLESS_PAGE_MAX_CHARS = 60;
 
 /** Below this, a page is "thin": too little text to be prose. */
 const THIN_PAGE_MAX_CHARS = 1200;
+/** Tags a THIN page must carry before its text layer is believed. One is
+ *  what a title block alone produces — the sheet's own drawing number. */
+export const MIN_TAGS_THIN_PAGE = 3;
 
 /** Decide whether a page needs AI vision to be readable.
  *
@@ -606,8 +609,27 @@ const THIN_PAGE_MAX_CHARS = 1200;
 export function pageNeedsVision(pageText: string, tagsFound: number): boolean {
   const text = pageText.trim();
   if (text.length < TEXTLESS_PAGE_MAX_CHARS) return true;
-  if (tagsFound > 0) return false;
-  if (text.length > THIN_PAGE_MAX_CHARS) return false;
+
+  // On a page with barely any text, ONE tag is not evidence that the text
+  // layer works — and this is not a hypothetical.
+  //
+  // A P&ID exported from AutoCAD with SHX fonts draws every tag, every
+  // instrument bubble and every line number as STROKED GEOMETRY. The only
+  // real text on the sheet is the TrueType title block, which parses to
+  // about 170 characters and yields exactly one drawing reference: the
+  // sheet's OWN number. Counting that as a tag says "the text layer is
+  // fine", vision is skipped, and the sheet is indexed as its title block
+  // and nothing else.
+  //
+  // Nothing errors. The equipment census comes back empty, the reference
+  // audit comes back empty, and search finds title blocks — across an
+  // ENTIRE drawing set, with no failure anywhere to explain it. A sheet
+  // whose text layer genuinely carries its tags yields dozens of them, so
+  // requiring a handful on a thin page separates the two cases cleanly and
+  // costs nothing on drawings that were readable all along.
+  const thin = text.length <= THIN_PAGE_MAX_CHARS;
+  if (tagsFound >= (thin ? MIN_TAGS_THIN_PAGE : 1)) return false;
+  if (!thin) return false;
   // Sentence enders are the prose signal — drawings are labels, not prose.
   const sentences = (text.match(/[.!?](\s|$)/g) ?? []).length;
   return sentences <= 2;

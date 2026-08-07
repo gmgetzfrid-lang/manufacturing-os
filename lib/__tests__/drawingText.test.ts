@@ -8,6 +8,8 @@ import {
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
   pageNeedsVision, refSeries, extractTitleBlock, parseUnitMap, unitOfRef, parseOpcBoxes,
   matchEquipmentListIntent, parsePrefixMap,
+  TEXTLESS_PAGE_MAX_CHARS,
+  MIN_TAGS_THIN_PAGE
 } from "../drawingText";
 
 describe("isDrawingLikePage", () => {
@@ -456,5 +458,35 @@ describe("buildEquipmentCensus — owner labels", () => {
     expect(census.categories.find((c) => c.prefix === "X")!.label).toBe("Exchanger");
     expect(census.categories.find((c) => c.prefix === "E")!.label).toBe("Exchangers");
     expect(census.categories.find((c) => c.prefix === "ZZ")!.label).toBe("Sample station");
+  });
+});
+
+// Regression: a real Kern Energy P&ID (AutoCAD SHX export) whose entire text
+// layer is its TrueType title block. Measured from the actual PDF: 168
+// characters, zero equipment tags, and ONE drawing ref — the sheet's own
+// number. Before this, that single self-reference was read as "the text
+// layer works", vision was skipped, and the sheet indexed as a title block
+// and nothing else — across a whole drawing set, with no error to explain
+// the empty census.
+describe("SHX drawings whose only text is the title block", () => {
+  const TITLE_BLOCK_ONLY = [
+    "W:\\2000 CRUDE UNIT\\02-P&ID\\2002-D 2001_SHT09_R39_12-31-24.dwg",
+    "of",
+    "PIPING & INSTRUMENTATION DIAGRAM",
+    "CRUDE UNIT",
+    "KERN ENERGY",
+    "BAKERSFIELD,CA. 93307",
+    "N.T.S 2002-D 2001 9 16 39",
+  ].join("\n");
+
+  it("still reads the sheet with vision when its own number is the only tag", () => {
+    expect(TITLE_BLOCK_ONLY.trim().length).toBeGreaterThan(TEXTLESS_PAGE_MAX_CHARS);
+    expect(extractEquipmentTags(TITLE_BLOCK_ONLY)).toHaveLength(0);
+    expect(extractDrawingRefs(TITLE_BLOCK_ONLY).length).toBe(1);
+    expect(pageNeedsVision(TITLE_BLOCK_ONLY, 1)).toBe(true);
+  });
+
+  it("does not spend vision on a thin page that really did carry its tags", () => {
+    expect(pageNeedsVision(TITLE_BLOCK_ONLY, MIN_TAGS_THIN_PAGE)).toBe(false);
   });
 });
