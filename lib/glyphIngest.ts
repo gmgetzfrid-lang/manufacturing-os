@@ -56,7 +56,109 @@ export function projection(raster: Raster, box: Box, axis: "row" | "col"): numbe
   return out;
 }
 
-/** Runs of inked lines separated by gutters of at least `minGutter` blank
+/** A profile built from COMPONENT EXTENTS rather than raw ink.
+ *
+ *  Two things ruin a raw-ink profile on a real sheet, and the review found
+ *  both by running this module rather than reading it:
+ *
+ *    · a single stray pixel in a gutter — a speck, a dot of an interrupted
+ *      leader, a scanning artefact — makes that gutter non-blank and welds
+ *      two cells into one. One speck destroyed a clean six-entry sheet.
+ *    · a RULED legend, or any legend inside a drawing border. A ruling runs
+ *      the full width of the region, so every gutter it crosses has ink in
+ *      it and the whole table collapses to a single "cell".
+ *
+ *  Both are fixed the same way: build the profile from surviving components
+ *  after specks are dropped and full-span rulings are pulled out. The
+ *  rulings are not discarded — a ruled legend is telling us exactly where
+ *  its cells are, which is better information than whitespace. */
+export interface SheetStructure {
+  /** Components that are content, speckles and rulings removed. */
+  content: Component[];
+  /** Full-span rules, as cell boundaries along each axis. */
+  ruleRows: number[];
+  ruleCols: number[];
+  /** True when the region is ruled enough to cut on rules rather than gutters. */
+  ruled: boolean;
+}
+
+export function analyzeStructure(
+  raster: Raster, box: Box, detectRules = true,
+): SheetStructure {
+  const comps = components(raster, box);
+  const content: Component[] = [];
+  const ruleRows: number[] = [];
+  const ruleCols: number[] = [];
+  for (const c of comps) {
+    // A speck carries no shape and no caption; it only ever corrupts a gutter.
+    if (c.pixels <= 2) continue;
+    if (!detectRules) { content.push(c); continue; }
+    const spansWidth = c.box.w >= box.w * 0.85;
+    const spansHeight = c.box.h >= box.h * 0.85;
+    // A ruling (or a border side) is long in one axis and hairline in the
+    // other. A real symbol that wide would also be tall.
+    if (spansWidth && c.box.h <= Math.max(4, box.h * 0.02)) {
+      ruleRows.push(Math.round(c.box.y + c.box.h / 2));
+      continue;
+    }
+    if (spansHeight && c.box.w <= Math.max(4, box.w * 0.02)) {
+      ruleCols.push(Math.round(c.box.x + c.box.w / 2));
+      continue;
+    }
+    // A border or table frame is a large HOLLOW rectangle: it dominates the
+    // region but almost none of it is inked. Recognising it by shape rather
+    // than by an exact span threshold matters, because a frame inset from
+    // the paper edge covers whatever fraction the drafter chose — and if it
+    // is treated as content, its extents blanket every gutter and the whole
+    // sheet reads as one entry. The legend is INSIDE it; keep looking there.
+    const large = c.box.w >= box.w * 0.5 && c.box.h >= box.h * 0.5;
+    const hollow = c.pixels / Math.max(1, c.box.w * c.box.h) < 0.1;
+    if ((spansWidth && spansHeight) || (large && hollow)) {
+      const inner: Box = {
+        x: c.box.x + 2, y: c.box.y + 2,
+        w: Math.max(1, c.box.w - 4), h: Math.max(1, c.box.h - 4),
+      };
+      const nested = analyzeStructure(raster, clampBox(inner, raster));
+      content.push(...nested.content);
+      ruleRows.push(...nested.ruleRows);
+      ruleCols.push(...nested.ruleCols);
+      continue;
+    }
+    content.push(c);
+  }
+  return {
+    content, ruleRows: [...new Set(ruleRows)].sort((a, b) => a - b),
+    ruleCols: [...new Set(ruleCols)].sort((a, b) => a - b),
+    ruled: ruleRows.length + ruleCols.length >= 2,
+  };
+}
+
+/** Keep a region inside the page. An out-of-range box reads undefined —
+ *  which is falsy, so it silently looks like blank paper. */
+export function clampBox(box: Box, raster: Raster): Box {
+  const x = Math.max(0, Math.min(box.x, raster.width - 1));
+  const y = Math.max(0, Math.min(box.y, raster.height - 1));
+  return {
+    x, y,
+    w: Math.max(1, Math.min(box.w, raster.width - x)),
+    h: Math.max(1, Math.min(box.h, raster.height - y)),
+  };
+}
+
+/** Occupancy profile from component extents: 1 where any content component
+ *  covers that line, 0 where none does. */
+function occupancy(content: Component[], box: Box, axis: "row" | "col"): number[] {
+  const n = axis === "row" ? box.h : box.w;
+  const out = new Array<number>(n).fill(0);
+  for (const c of content) {
+    const from = axis === "row" ? c.box.y - box.y : c.box.x - box.x;
+    const to = axis === "row" ? boxBottom(c.box) - box.y : boxRight(c.box) - box.x;
+    for (let i = Math.max(0, from); i < Math.min(n, to); i++) out[i] = 1;
+  }
+  return out;
+}
+
+/** Runs of occupied lines separated by gutters of at least `minGutter` blank
  *  ones. A legend's rows and columns are exactly this: content separated by
  *  deliberate whitespace, ruled or not. */
 export function bands(profile: number[], minGutter: number): Array<{ from: number; to: number }> {
@@ -65,7 +167,6 @@ export function bands(profile: number[], minGutter: number): Array<{ from: numbe
   let blank = 0;
   for (let i = 0; i < profile.length; i++) {
     if (profile[i] > 0) {
-      if (start < 0) start = i - Math.min(blank, 0);
       if (start < 0) start = i;
       blank = 0;
     } else if (start >= 0) {
@@ -136,6 +237,33 @@ export function cellOptionsFor(width: number, opts: CellOptions = {}): Required<
   };
 }
 
+/** Merge bands that are too small to be an entry into the next one.
+ *
+ *  A symbol and its caption are separated by white space, and when a sheet
+ *  has only ONE row of entries there is no wider row-gutter to contrast it
+ *  against — so the gutter chooser cannot tell "inside a cell" from "between
+ *  cells" and splits every symbol away from its own name. A 3px-tall band is
+ *  not an entry; it is part of one. */
+export function coalesce(
+  spans: Array<{ from: number; to: number }>, minSize: number,
+): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = [];
+  for (const b of spans) {
+    const prev = out[out.length - 1];
+    if (prev && prev.to - prev.from + 1 < minSize) prev.to = b.to;
+    else out.push({ ...b });
+  }
+  // A trailing runt merges backwards rather than being dropped.
+  if (out.length > 1) {
+    const last = out[out.length - 1];
+    if (last.to - last.from + 1 < minSize) {
+      out[out.length - 2].to = last.to;
+      out.pop();
+    }
+  }
+  return out;
+}
+
 /** Split a reference sheet into its entry cells.
  *
  *  Rows first, then columns WITHIN each row — not a global column split. A
@@ -144,24 +272,68 @@ export function cellOptionsFor(width: number, opts: CellOptions = {}): Required<
  *  together and every downstream pairing inherits the error. */
 export function findCells(raster: Raster, region?: Box, opts: CellOptions = {}): Box[] {
   const { minGutter, minCell } = cellOptionsFor(raster.width, opts);
-  const area: Box = region ?? { x: 0, y: 0, w: raster.width, h: raster.height };
+  const area: Box = clampBox(
+    region ?? { x: 0, y: 0, w: raster.width, h: raster.height }, raster);
+  const structure = analyzeStructure(raster, area);
+  if (structure.content.length === 0) return [];
+
+  /** Cut lines along one axis: the rules if this sheet is ruled, otherwise
+   *  the blank gutters between content. A ruled legend states where its
+   *  cells are — that is better evidence than whitespace, and it is the
+   *  layout raw projection collapsed into a single meaningless entry. */
+  const cuts = (axis: "row" | "col"): Array<{ from: number; to: number }> => {
+    const rules = axis === "row" ? structure.ruleRows : structure.ruleCols;
+    const origin = axis === "row" ? area.y : area.x;
+    const extent = axis === "row" ? area.h : area.w;
+    if (structure.ruled && rules.length >= 2) {
+      const marks = [origin, ...rules, origin + extent].sort((a, b) => a - b);
+      const out: Array<{ from: number; to: number }> = [];
+      for (let i = 1; i < marks.length; i++) {
+        const from = marks[i - 1] - origin + 1;
+        const to = marks[i] - origin - 1;
+        if (to - from + 1 >= minCell) out.push({ from, to });
+      }
+      if (out.length > 0) return out;
+    }
+    const prof = occupancy(structure.content, area, axis);
+    return coalesce(bands(prof, chooseGutter(prof, minGutter)), minCell);
+  };
+
   const cells: Box[] = [];
-  const rowProfile = projection(raster, area, "row");
-  for (const row of bands(rowProfile, chooseGutter(rowProfile, minGutter))) {
+  for (const row of cuts("row")) {
     const rowBox: Box = {
       x: area.x, y: area.y + row.from,
       w: area.w, h: row.to - row.from + 1,
     };
     if (rowBox.h < minCell) continue;
-    const colProfile = projection(raster, rowBox, "col");
-    const cols = bands(colProfile, chooseGutter(colProfile, minGutter));
+    const inRow = structure.content.filter((c) =>
+      c.box.y < boxBottom(rowBox) && boxBottom(c.box) > rowBox.y);
+    if (inRow.length === 0) continue;
+    const rules = structure.ruleCols;
+    let cols: Array<{ from: number; to: number }>;
+    if (structure.ruled && rules.length >= 2) {
+      const marks = [area.x, ...rules, area.x + area.w].sort((a, b) => a - b);
+      cols = [];
+      for (let i = 1; i < marks.length; i++) {
+        const from = marks[i - 1] - area.x + 1;
+        const to = marks[i] - area.x - 1;
+        if (to - from + 1 >= minCell) cols.push({ from, to });
+      }
+    } else {
+      const prof = occupancy(inRow, rowBox, "col");
+      cols = coalesce(bands(prof, chooseGutter(prof, minGutter)), minCell);
+    }
     for (const col of cols) {
       const cell: Box = {
         x: rowBox.x + col.from, y: rowBox.y,
         w: col.to - col.from + 1, h: rowBox.h,
       };
       if (cell.w < minCell || cell.h < minCell) continue;
-      cells.push(cell);
+      // A ruled grid produces empty cells; an entry needs content in it.
+      const has = structure.content.some((c) =>
+        c.box.x < boxRight(cell) && boxRight(c.box) > cell.x
+        && c.box.y < boxBottom(cell) && boxBottom(c.box) > cell.y);
+      if (has) cells.push(cell);
     }
   }
   return cells;
@@ -235,17 +407,27 @@ export interface CellParts {
  *  which matters because on an SHX export there is no text layer to consult
  *  and running OCR to find text you are about to crop anyway is backwards. */
 export function splitCell(raster: Raster, cell: Box): CellParts {
-  const comps = components(raster, cell);
+  const comps = analyzeStructure(raster, clampBox(cell, raster), false).content;
   if (comps.length === 0) return { cell, glyph: null, caption: null };
 
-  // Character-sized components: small, and small RELATIVE to the cell.
+  // A letterform is roughly as tall as it is wide and no taller than a line
+  // of type. LINE-WORK is not: a dash in a line-style key is wide and
+  // hairline, and the earlier height-only rule classified a row of dashes as
+  // a word — so the caption came back as the drawn line and the "glyph" came
+  // back as the printed name, exactly inverted. Aspect separates them, and
+  // it does so for any alphabet and any drafting font.
   const heights = comps.map((c) => c.box.h).sort((a, b) => a - b);
   const medianH = heights[Math.floor(heights.length / 2)];
-  const textLike = comps.filter((c) =>
-    c.box.h <= Math.max(medianH * 1.6, cell.h * 0.42) && c.box.w <= cell.w * 0.30);
+  const textLike = comps.filter((c) => {
+    const aspect = c.box.w / Math.max(1, c.box.h);
+    if (aspect > 2.5) return false;                    // a dash, a rule, a stroke
+    if (c.box.h < 3) return false;                     // hairline
+    return c.box.h <= Math.max(medianH * 1.6, cell.h * 0.42) && c.box.w <= cell.w * 0.30;
+  });
 
-  // A caption is a RUN of such components sharing a baseline. Two stray marks
-  // are not a word, and a single wide component is a drawing.
+  // A caption is a RUN of such components on a shared baseline. Two is
+  // enough — "FC" and "PG" are real captions, and demanding three folded
+  // them into the glyph.
   const byBaseline = new Map<number, Component[]>();
   const tol = Math.max(2, Math.round(cell.h * 0.12));
   for (const c of textLike) {
@@ -254,7 +436,7 @@ export function splitCell(raster: Raster, cell: Box): CellParts {
   }
   let caption: Component[] = [];
   for (const group of byBaseline.values()) {
-    if (group.length >= 3 && group.length > caption.length) caption = group;
+    if (group.length >= 2 && group.length > caption.length) caption = group;
   }
 
   const captionSet = new Set(caption);

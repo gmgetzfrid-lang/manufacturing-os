@@ -26,10 +26,17 @@ function hRun(r: Raster, y: number, x1: number, x2: number, thick = 2) {
     for (let x = x1; x <= x2; x++) r.ink[(y + t) * r.width + x] = 1;
   }
 }
-/** A caption: a run of small same-height blobs on a shared baseline. */
+function vRun(r: Raster, x: number, y1: number, y2: number, thick = 2) {
+  for (let t = 0; t < thick; t++) {
+    for (let y = y1; y <= y2; y++) r.ink[y * r.width + (x + t)] = 1;
+  }
+}
+/** A caption: small blobs of VARYING width on a shared baseline, the way
+ *  real letterforms sit — uniform blocks would be indistinguishable from a
+ *  dash chain and would make the tests easier than the drawings. */
 function word(r: Raster, x: number, y: number, letters = 6) {
   for (let i = 0; i < letters; i++) {
-    rect(r, { x: x + i * 7, y, w: 4, h: 8 }, true);
+    rect(r, { x: x + i * 7, y, w: 3 + (i % 3), h: 8 }, true);
   }
 }
 
@@ -166,6 +173,94 @@ describe("describeGlyph", () => {
     expect(d.symmetryH).toBeCloseTo(1, 1);
     expect(d.symmetryV).toBeCloseTo(1, 1);
     expect(d.aspect).toBeCloseTo(1, 1);
+  });
+});
+
+// Every case below is one the adversarial review produced by RUNNING the
+// first version, not reading it. Each returned one plausible-looking entry
+// instead of an error, which is the worst shape a failure can take.
+describe("layouts that broke the first version", () => {
+  /** A legend drawn as a ruled table — the common case, and the one that
+   *  collapsed to a single meaningless entry because a ruling puts ink in
+   *  every gutter it crosses. */
+  function ruledLegend(): Raster {
+    const r = board(620, 380);
+    rect(r, { x: 30, y: 30, w: 560, h: 320 });          // table frame
+    for (let i = 1; i < 2; i++) hRun(r, 30 + i * 160, 30, 589, 1);
+    for (let i = 1; i < 3; i++) vRun(r, 30 + i * 186, 30, 349, 1);
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col < 3; col++) {
+        const x = 60 + col * 186, y = 60 + row * 160;
+        hRun(r, y + 15, x, x + 70, 3);
+        word(r, x, y + 60);
+      }
+    }
+    return r;
+  }
+
+  it("reads a RULED legend as its cells instead of one blob", () => {
+    const cells = findCells(ruledLegend(), undefined, { minGutter: 10, minCell: 20 });
+    expect(cells.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("sees inside a drawing border instead of calling the sheet one entry", () => {
+    const r = board(620, 380);
+    rect(r, { x: 10, y: 10, w: 600, h: 360 });          // sheet border only
+    for (let col = 0; col < 3; col++) {
+      const x = 60 + col * 180;
+      hRun(r, 90, x, x + 70, 3);
+      word(r, x, 130);
+    }
+    const cells = findCells(r, undefined, { minGutter: 10, minCell: 20 });
+    expect(cells.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // One speck in a gutter used to weld the sheet into a single cell and
+  // drop every entry.
+  it("survives a stray speck in a gutter", () => {
+    for (const [sx, sy] of [[300, 60], [45, 200], [590, 300]] as const) {
+      const r = board(600, 400);
+      for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < 3; col++) {
+          const x = 40 + col * 180, y = 40 + row * 160;
+          hRun(r, y + 20, x, x + 60, 3);
+          word(r, x, y + 60);
+        }
+      }
+      r.ink[sy * r.width + sx] = 1;                     // the speck
+      const cells = findCells(r, undefined, { minGutter: 12, minCell: 20 });
+      expect(cells.length, `speck at ${sx},${sy}`).toBe(6);
+    }
+  });
+
+  // The inversion: a row of dashes read as a word, so the caption came back
+  // as the drawn line and the glyph as the printed name.
+  it("does not mistake a dashed line for a caption", () => {
+    const r = board(400, 160);
+    for (let i = 0; i < 8; i++) hRun(r, 40, 25 + i * 20, 25 + i * 20 + 12, 3);
+    word(r, 25, 90, 4);
+    const parts = splitCell(r, { x: 15, y: 20, w: 360, h: 120 });
+    expect(parts.glyph).toBeTruthy();
+    expect(parts.caption).toBeTruthy();
+    // The glyph is the wide dashed run; the caption is the short word.
+    expect(parts.glyph!.w).toBeGreaterThan(parts.caption!.w);
+    expect(parts.glyph!.y).toBeLessThan(parts.caption!.y);
+  });
+
+  it("keeps a two-letter caption out of the glyph", () => {
+    const r = board(300, 220);
+    rect(r, { x: 40, y: 30, w: 50, h: 40 });
+    word(r, 40, 110, 2);                                 // "FC"
+    const parts = splitCell(r, { x: 20, y: 20, w: 260, h: 160 });
+    expect(parts.caption).toBeTruthy();
+    expect(parts.glyph!.h).toBeLessThan(60);             // not stretched to the caption
+  });
+
+  it("clamps a region that runs off the page instead of reading blanks", () => {
+    const r = board(100, 100);
+    hRun(r, 50, 10, 90, 3);
+    expect(() => findCells(r, { x: 0, y: 0, w: 100, h: 200 })).not.toThrow();
+    expect(() => findCells(r, { x: -50, y: -50, w: 400, h: 400 })).not.toThrow();
   });
 });
 
