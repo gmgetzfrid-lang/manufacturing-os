@@ -2,6 +2,8 @@
 //
 // POST { orgId, libraryId }        → embed the next batch, report what's left
 // POST { orgId, libraryId, action:"status" } → coverage only, spends nothing
+// POST { orgId, libraryId, action:"reset" }  → clear vectors so the next
+//        build re-embeds everything under current chunking and model
 //
 // RESUMABLE BY DESIGN. Free-tier serverless kills a request at 60 seconds, so
 // this never tries to finish: it embeds what it can inside a budget, commits,
@@ -87,6 +89,37 @@ export async function POST(req: NextRequest) {
 
   if (!principal.isController) {
     return bad("Only Admin or Doc Control can build the meaning index.", 403);
+  }
+
+  // Clear every vector so the next build re-embeds from scratch.
+  //
+  // This is not a convenience. Vectors are only as good as the chunking and
+  // the model that produced them, and BOTH change: chunk boundaries move
+  // when ingestion improves, and an embedding model gets swapped for a
+  // better one. Without a reset those upgrades reach only documents added
+  // afterwards, so a library ends up half-indexed under two different
+  // regimes with nothing on screen saying so — the retrieval quietly gets
+  // worse and no button exists to fix it. The build path only ever fills
+  // rows where embedding IS NULL, which is exactly why emptying them is the
+  // whole of a rebuild.
+  if (body.action === "reset") {
+    const { error } = await supabaseAdmin
+      .from("knowledge_chunks")
+      .update({ embedding: null, embedding_model: null })
+      .eq("org_id", orgId)
+      .eq("library_id", libraryId)
+      .not("embedding", "is", null);
+    if (error) return bad(`Couldn't clear the existing vectors: ${error.message}`, 500);
+    const after = await coverage(orgId, libraryId);
+    return NextResponse.json({
+      embedded: 0,
+      total: after?.total ?? stats.total,
+      coveredNow: after?.embedded ?? 0,
+      remaining: (after?.total ?? stats.total) - (after?.embedded ?? 0),
+      done: false,
+      error: null,
+      spentThisRun: 0,
+    });
   }
 
   const { data: conn } = await supabaseAdmin

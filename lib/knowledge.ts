@@ -776,6 +776,17 @@ export async function semanticStatus(orgId: string, libraryId: string): Promise<
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "status" });
 }
 
+/** Clear every vector in a library so the next build re-embeds from scratch.
+ *
+ *  Needed whenever the thing that PRODUCED the vectors changes — better
+ *  chunking at ingestion, a different embedding model. The build only fills
+ *  passages whose vector is null, so without this an upgrade reaches only
+ *  documents added afterwards and the library sits half-indexed under two
+ *  regimes at once. */
+export async function resetSemanticIndex(orgId: string, libraryId: string): Promise<SemanticProgress> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "reset" });
+}
+
 /** Embed one batch. The server stops on a time budget rather than trying to
  *  finish, so callers LOOP until `done` — every committed batch is permanent,
  *  which is what makes this survivable on a platform that can kill a request

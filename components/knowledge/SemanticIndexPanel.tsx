@@ -21,10 +21,13 @@
 // resumes exactly where it stopped.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, Loader2, AlertTriangle, Check, Square } from "lucide-react";
+import { Brain, Loader2, AlertTriangle, Check, Square, RefreshCw } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
-import { semanticStatus, buildSemanticIndex, type SemanticProgress } from "@/lib/knowledge";
+import {
+  semanticStatus, buildSemanticIndex, resetSemanticIndex, type SemanticProgress,
+} from "@/lib/knowledge";
 
 /** Rough, deliberately rounded UP so nobody is surprised by their provider's
  *  invoice. Embedding rates are a fraction of chat rates at every provider;
@@ -65,8 +68,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const status = ready ? state.status : null;
   const unavailable = ready ? state.unavailable : null;
 
-  const build = async () => {
-    setBuilding(true);
+  const build = async ({ keepBuildingState = false } = {}) => {
+    if (!keepBuildingState) setBuilding(true);
     setBuildNote(null);
     stopRef.current = false;
     try {
@@ -103,6 +106,29 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     }
   };
 
+  const rebuild = async () => {
+    const ok = await appConfirm({
+      title: "Rebuild the meaning index?",
+      message:
+        `This clears all ${status?.total.toLocaleString()} vectors and re-embeds every passage `
+        + `on your key — roughly ${fullCents}¢. Do it after ingestion or the embedding model `
+        + "changes, so older documents are indexed the same way as new ones. "
+        + "Meaning-based search is degraded until the rebuild finishes; keyword search is unaffected.",
+      confirmLabel: "Rebuild",
+    });
+    if (!ok) return;
+    setBuildNote(null);
+    setBuilding(true);
+    try {
+      await resetSemanticIndex(orgId, libraryId);
+      await load();
+      await build({ keepBuildingState: true });
+    } catch (e) {
+      setBuildNote({ tone: "err", text: (e as Error).message });
+      setBuilding(false);
+    }
+  };
+
   if (unavailable) {
     // Only the migration case is worth a visible strip; anything else means
     // this library simply has nothing indexed yet.
@@ -120,6 +146,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const pct = status.total > 0 ? Math.round((covered / status.total) * 100) : 0;
   const complete = status.remaining === 0;
   const estCents = Math.ceil((status.remaining / 1000) * CENTS_PER_1K_PASSAGES);
+  const fullCents = Math.ceil((status.total / 1000) * CENTS_PER_1K_PASSAGES);
 
   return (
     <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -136,10 +163,20 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
             </div>
           </div>
         </div>
-        {isController && !complete && (
+        {isController && (
           building ? (
             <Button size="sm" variant="secondary" onClick={() => { stopRef.current = true; }}>
               <Square className="w-3.5 h-3.5" /> Stop
+            </Button>
+          ) : complete ? (
+            // A finished index is not a permanent one. Chunking changes when
+            // ingestion improves and models get swapped; without this the
+            // upgrade would reach only documents added afterwards and the
+            // library would sit half-indexed under two regimes with nothing
+            // on screen saying so.
+            <Button size="sm" variant="secondary" onClick={() => void rebuild()}>
+              <RefreshCw className="w-3.5 h-3.5" /> Rebuild index
+              {fullCents > 0 && <span className="opacity-70"> (~{fullCents}¢)</span>}
             </Button>
           ) : (
             <Button size="sm" variant="secondary" onClick={() => void build()}>
