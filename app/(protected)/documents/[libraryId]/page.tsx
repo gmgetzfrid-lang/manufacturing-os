@@ -393,7 +393,11 @@ export default function LibraryExplorerPage() {
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragOver(true);
+    // The upload overlay is for FILES from the OS. Internal drags (a folder
+    // tile, a document row) carry their own MIME keys and their own drop
+    // targets — flashing "Drop files to upload" over them reads as the app
+    // asking you to re-upload the thing you're organizing.
+    if (e.dataTransfer.types.includes("Files")) setIsDragOver(true);
   };
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false);
@@ -1379,6 +1383,30 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error(e);
       setError("Failed to rename folder.");
+    }
+  };
+
+  // Drag-and-drop moves. Same server calls the ⋯ menu's Move modal makes —
+  // the gesture is the only thing that's new. Folders refresh themselves via
+  // the live subscription; a doc moved out of this folder leaves the list
+  // locally so the row disappears under the cursor instead of a beat later.
+  const dropMoveFolder = async (dragId: string, targetId: string) => {
+    try {
+      await moveFolderAndDescendants({ collectionId: dragId, newParentId: targetId });
+    } catch (e) {
+      console.error(e);
+      setError("Couldn't move that folder.");
+    }
+  };
+  const dropMoveDoc = async (docId: string, folderId: string) => {
+    try {
+      const { error } = await supabase.from("documents")
+        .update({ collection_id: folderId, updated_by: uid }).eq("id", docId);
+      if (error) throw error;
+      setDocuments((prev) => prev.filter((d) => d.id !== docId || folderId === currentFolderId));
+    } catch (e) {
+      console.error(e);
+      setError("Couldn't move that document.");
     }
   };
 
@@ -2519,6 +2547,8 @@ export default function LibraryExplorerPage() {
                     onAckPolicy={isController ? (id) => setAckPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onMoveInto={isController ? (dragId, targetId) => void dropMoveFolder(dragId, targetId) : undefined}
+                    onDocDrop={isController ? (docId, folderId) => void dropMoveDoc(docId, folderId) : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2775,6 +2805,11 @@ export default function LibraryExplorerPage() {
                             return (
                               <tr
                                 key={docRecord.id}
+                                draggable={isController}
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData("application/x-doc-id", docRecord.id!);
+                                  e.dataTransfer.effectAllowed = "move";
+                                }}
                                 onClick={() => setSelectedDoc(docRecord)}
                                 className={`group cursor-pointer transition-colors relative ${
                                   isRowSelected

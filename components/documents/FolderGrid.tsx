@@ -29,6 +29,11 @@ interface FolderGridProps {
   onAckPolicy?: (id: string) => void;
   onReviewControl?: (id: string) => void;
   onRetention?: (id: string) => void;
+  /** Drop a dragged FOLDER onto this folder. The grid refuses self and
+   *  descendants before calling — a folder cannot live inside itself. */
+  onMoveInto?: (dragId: string, targetId: string) => void;
+  /** Drop a dragged DOCUMENT row onto this folder. */
+  onDocDrop?: (docId: string, folderId: string) => void;
   isController: boolean;
 }
 
@@ -38,6 +43,8 @@ export default function FolderGrid({
   onOpen,
   onRename,
   onMove,
+  onMoveInto,
+  onDocDrop,
   onPermissions,
   onCustomize,
   onReviewCycle,
@@ -121,18 +128,65 @@ export default function FolderGrid({
   const subCount = (id?: string) =>
     allFolders && id ? allFolders.filter((f) => f.parentId === id).length : null;
 
+  // Drag-and-drop moving. These MIME keys are how a drop distinguishes a
+  // folder tile from a document row from the OS dropping files — and why
+  // dragging a tile can never trigger the page's file-upload overlay.
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  /** targetId inside dragId's own subtree? Walk up the parent chain. */
+  const isDescendant = (dragId: string, targetId: string): boolean => {
+    if (dragId === targetId) return true;
+    let cur = allFolders?.find((f) => f.id === targetId);
+    for (let hops = 0; cur && hops < 100; hops++) {
+      if (cur.parentId === dragId) return true;
+      cur = allFolders?.find((f) => f.id === cur!.parentId);
+    }
+    return false;
+  };
+
+  const acceptsDrag = (e: React.DragEvent) =>
+    e.dataTransfer.types.includes("application/x-folder-id")
+    || e.dataTransfer.types.includes("application/x-doc-id");
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
       {folders.map(folder => {
         const kids = subCount(folder.id);
         return (
-        <div 
+        <div
           key={folder.id}
           onClick={() => onOpen(folder.id!)}
           onContextMenu={(e) => handleContextMenu(e, folder.id!)}
+          draggable={isController && !!onMoveInto}
+          onDragStart={(e) => {
+            e.dataTransfer.setData("application/x-folder-id", folder.id!);
+            e.dataTransfer.effectAllowed = "move";
+          }}
+          onDragOver={(e) => {
+            if (!acceptsDrag(e)) return;
+            e.preventDefault();
+            e.stopPropagation();          // the upload overlay must not fire
+            setDropTargetId(folder.id!);
+          }}
+          onDragLeave={() => setDropTargetId((cur) => (cur === folder.id ? null : cur))}
+          onDrop={(e) => {
+            if (!acceptsDrag(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setDropTargetId(null);
+            const dragFolder = e.dataTransfer.getData("application/x-folder-id");
+            const dragDoc = e.dataTransfer.getData("application/x-doc-id");
+            if (dragFolder && onMoveInto && !isDescendant(dragFolder, folder.id!)) {
+              onMoveInto(dragFolder, folder.id!);
+            } else if (dragDoc && onDocDrop) {
+              onDocDrop(dragDoc, folder.id!);
+            }
+          }}
           className={`
             group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
-            ${(menuOpenId === folder.id || contextMenu?.id === folder.id)
+            ${dropTargetId === folder.id
+              ? 'bg-blue-50/80 dark:bg-blue-950/30 border-blue-400 ring-2 ring-blue-300'
+              : (menuOpenId === folder.id || contextMenu?.id === folder.id)
               ? 'bg-[var(--color-accent-soft)]/60 border-[var(--color-accent)]/50 shadow-md ring-1 ring-[var(--color-accent)]/30'
               : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-accent)]/50'}
           `}
