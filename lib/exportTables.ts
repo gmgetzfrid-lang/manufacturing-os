@@ -122,19 +122,6 @@ export const ORG_SCOPED_TABLES = [
   "knowledge_chunks",
   "knowledge_page_entities",
   "knowledge_questions",
-  // The purpose interview's answers and every later edit to them. Small,
-  // and it is the only record of what a human taught the library about
-  // itself — the UI reads it for the "you changed this" badges.
-  "knowledge_profile_history",
-  // Compiled reference vocabularies (symbol keys, line keys, abbreviation
-  // lists, schedules). The compile is re-runnable, but the REVIEW is not:
-  // every confirmed/corrected entry is a human decision over a legend cell,
-  // and gap dismissals are decisions too. Backed up in full.
-  "knowledge_vocabularies",
-  "knowledge_vocabulary_sources",
-  "knowledge_vocabulary_bindings",
-  "knowledge_vocabulary_entries",
-  "knowledge_vocabulary_gaps",
 
   // Output templates (document production: template + example + fill spec)
   "output_templates",
