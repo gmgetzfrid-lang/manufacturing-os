@@ -209,12 +209,16 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               <input type="checkbox" checked={visionAllPages} onChange={(e) => setVisionAllPages(e.target.checked)}
                 className="accent-orange-600 w-4 h-4 mt-0.5" />
               <span className="min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)]">Index every page with AI vision</span>
+                <span className="block text-xs font-bold text-[var(--color-text)]">
+                  These are CAD exports or scans — read every page as an image
+                </span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  Instead of only reading pages whose text layer is unusable, have the AI read
-                  <b> every</b> page during indexing. For drawings (AutoCAD SHX fonts leave tags
-                  invisible even when the title block extracts) and for scans of any document. Costs
-                  a few cents per page on your key — then hit Rebuild index.
+                  Turn this on when the documents have <b>no real text</b>: AutoCAD drawings exported
+                  with SHX fonts, or scans. On those sheets every tag, bubble and line number is
+                  line-work rather than text, and the only thing that extracts is the TrueType title
+                  block — so without this the library indexes to almost nothing and looks empty for
+                  no visible reason. Costs a few cents per page on your key. Turn it on, then
+                  <b> Rebuild index</b>.
                 </span>
               </span>
             </label>
