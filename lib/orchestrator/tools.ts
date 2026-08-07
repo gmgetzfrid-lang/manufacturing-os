@@ -282,9 +282,24 @@ const traceLineOnDrawing: ToolDef = {
     const fromTag = normalizeTag(String(args.from_tag));
     const toTag = normalizeTag(String(args.to_tag));
     const { traceTagsAnywhere } = await import("@/lib/traceServer");
-    const { result, tried, candidates } = await traceTagsAnywhere({
+    const { result, tried, candidates, cross } = await traceTagsAnywhere({
       orgId: ctx.orgId, userId: ctx.userId, fromTag, toTag,
     });
+    if (!result && cross?.found) {
+      return {
+        data: {
+          found: true, method: "measured", crosses_sheets: true,
+          connector: cross.connectors.join(", "),
+          legs: cross.legs.map((l) => ({
+            sheet: l.documentName, page: l.page, turns: l.turns,
+            waypoints: l.points.length, components_on_leg: l.alongRoute,
+          })),
+          note: cross.note,
+          basis: "Measured by following the drawn line-work on each sheet and hopping through the "
+            + "off-page connector both sheets print — drafting's own continuation mechanism.",
+        },
+      };
+    }
     if (result) {
       return {
         data: {
