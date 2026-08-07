@@ -129,18 +129,44 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     }
   };
 
+  // A panel that renders NOTHING is indistinguishable from a feature that was
+  // never built — and this one used to disappear in three different ways: on
+  // any non-migration error, and whenever the library had no passages at all.
+  //
+  // That second case is the one that matters. A library of AutoCAD SHX
+  // exports indexes to almost nothing until image reading is switched on, so
+  // total is 0, so the panel vanished — exactly when the person needed it to
+  // explain itself. Say the state out loud instead, and name the fix.
+  const strip = (tone: "warn" | "muted", body: React.ReactNode) => (
+    <div className={`mt-4 rounded-2xl border px-4 py-3 text-[11px] flex items-start gap-2 ${
+      tone === "warn"
+        ? "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200"
+        : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
+      {tone === "warn"
+        ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+        : <Brain className="w-4 h-4 shrink-0 mt-0.5 opacity-60" />}
+      <span className="min-w-0">{body}</span>
+    </div>
+  );
+
   if (unavailable) {
-    // Only the migration case is worth a visible strip; anything else means
-    // this library simply has nothing indexed yet.
-    if (!/migration/i.test(unavailable)) return null;
-    return (
-      <div className="mt-4 rounded-2xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
-        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
-        <span><b>Meaning-based search is waiting on a database migration:</b> {unavailable}</span>
-      </div>
-    );
+    return /migration/i.test(unavailable)
+      ? strip("warn", <><b>Meaning-based search is waiting on a database migration:</b> {unavailable}</>)
+      : strip("warn", <><b>Meaning-based search couldn&apos;t report its status:</b> {unavailable}</>);
   }
-  if (!status || status.total === 0) return null;
+  if (!status) return strip("muted", "Checking the meaning index…");
+  if (status.total === 0) {
+    return strip("muted", (
+      <>
+        <b className="text-[var(--color-text)]">Meaning-based search has nothing to index yet.</b>{" "}
+        This library has no indexed passages. If the documents are already uploaded, they were
+        read as having almost no text — the usual cause is an AutoCAD export drawn with SHX fonts,
+        or a scan, where every tag is line-work rather than text. Turn on{" "}
+        <b>&ldquo;These are CAD exports or scans&rdquo;</b> in Library AI setup, run{" "}
+        <b>Rebuild index</b> under Drawing intelligence, then come back here.
+      </>
+    ));
+  }
 
   const covered = status.coveredNow ?? 0;
   const pct = status.total > 0 ? Math.round((covered / status.total) * 100) : 0;
