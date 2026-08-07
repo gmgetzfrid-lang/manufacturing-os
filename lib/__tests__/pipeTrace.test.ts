@@ -352,7 +352,8 @@ describe("dropCollinear", () => {
 // 2,700px superhighway connecting everything to everything. Classification
 // is what makes real-sheet traces stop wandering through the revision table.
 describe("classifySegments", () => {
-  const seg = (id, horizontal, a, b, c) => ({ id, horizontal, a, b, c, thickness: 2 });
+  const seg = (id: number, horizontal: boolean, a: number, b: number, c: number) =>
+    ({ id, horizontal, a, b, c, thickness: 2 });
 
   it("removes edge-to-edge frame strokes but keeps a long pipe", () => {
     const border = seg(0, true, 10, 990, 20);          // spans the full sheet

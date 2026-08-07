@@ -344,12 +344,32 @@ const tracePidLines: ToolDef = {
       return { data: { start: args.start_tag, connected: near, basis } };
     }
     const r = tracePath(edges, String(args.start_tag), String(args.end_tag));
+    // When both tags sit on ONE sheet, co-occurrence has nothing to add —
+    // the drawn line is right there and the pixel tracer can follow it.
+    // Say so in the result, in imperative terms, because the alternative
+    // was observed in production: the model reported 'the connection must
+    // be read off the drawing itself' while holding the tool that reads
+    // drawings, and stopped.
+    let sameSheet: Array<{ sheet: string; page: number }> = [];
+    try {
+      const { sheetsCarryingBoth } = await import("@/lib/traceServer");
+      sameSheet = (await sheetsCarryingBoth(
+        ctx.orgId, normalizeTag(String(args.start_tag)), normalizeTag(String(args.end_tag)),
+      )).map((x) => ({ sheet: x.documentName, page: x.page }));
+    } catch { /* advisory only */ }
     return {
       data: {
         found: r.found, path: r.path, drawings: r.drawings,
         crosses_sheets: r.steps.some((s) => s.offPage),
         components: r.components,
         reason: r.reason, basis,
+        ...(sameSheet.length > 0 ? {
+          same_sheet: sameSheet,
+          next_step:
+            "Both tags are drawn on the SAME sheet. Do not answer yet: call "
+            + "trace_line_on_drawing with these tags — it follows the actual drawn line "
+            + "and reports the components on it. Only answer from co-occurrence if that call refuses.",
+        } : {}),
       },
     };
   },

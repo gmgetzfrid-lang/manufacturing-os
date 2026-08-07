@@ -597,7 +597,15 @@ export async function POST(req: NextRequest) {
               "on the same page, so nothing could be traced. If they should share a sheet, the library " +
               "may need image indexing and a rebuild. Say so; do NOT invent a path.";
           }
-        } catch { /* tracing is additive — the answer still stands on retrieval */ }
+        } catch (e) {
+          // NEVER silent. A swallowed failure here produces a prose answer
+          // with no hint the measured trace was even attempted — which was
+          // observed in production and reads as the feature not existing.
+          traceFacts =
+            `\n\nMEASURED LINE TRACE — attempted between ${uniqTags[0]} and ${uniqTags[1]} but the ` +
+            `trace machinery errored: ${(e as Error).message}. Tell the reader the measured trace ` +
+            "failed with this exact error so it can be fixed. Do NOT invent a path.";
+        }
       }
     }
 
