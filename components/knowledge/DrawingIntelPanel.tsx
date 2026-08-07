@@ -396,6 +396,16 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                     <li key={s.id} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 text-[11px] items-center">
                       <span className="min-w-0">
                         <span className="block truncate font-bold text-[var(--color-text)]" title={s.error ?? s.name}>{s.name}</span>
+                        {(s.gapPages?.length ?? 0) > 0 && s.status === "ready" && (
+                          // The exact pages the index knows nothing about.
+                          // Without this line, a skipped page surfaces days
+                          // later as "X-35 is not in the tag index" on a
+                          // trace, with no visible reason anywhere.
+                          <span className="block truncate text-[9px] font-bold text-rose-600"
+                            title={`No tags extracted from page(s) ${s.gapPages!.join(", ")} — vision indexing did not complete. Rebuild the index and keep this tab open until it finishes.`}>
+                            ⚠ {s.gapPages!.length} page(s) unread: {s.gapPages!.slice(0, 8).join(", ")}{s.gapPages!.length > 8 ? "…" : ""}
+                          </span>
+                        )}
                         {s.declared && (
                           <span className="block truncate font-mono text-[9px] text-[var(--color-text-muted)]"
                             title="Read from this sheet's own title block">

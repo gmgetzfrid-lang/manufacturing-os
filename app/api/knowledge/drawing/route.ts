@@ -298,12 +298,25 @@ export async function GET(req: NextRequest) {
     const selfTags = selfByDoc.get(d.id) ?? [];
     const base = selfTags.filter((t) => !/-SH\d+$/.test(t)).sort((a, b) => a.length - b.length)[0] ?? null;
     const sheetsDeclared = selfTags.filter((t) => /-SH\d+$/.test(t)).length;
+    // Pages the entity index has NOTHING for. On a drawing set this is the
+    // fingerprint of an interrupted vision rebuild: the transcripts that DID
+    // run produced tags, and the skipped pages produced silence — which then
+    // surfaces far away as 'X-35 is not in the tag index' on a trace, with
+    // no visible reason. Naming the exact pages turns that mystery into a
+    // one-line instruction: rebuild, and let it finish.
+    const covered = new Set(
+      entities.filter((e) => e.document_id === d.id).map((e) => e.page));
+    const gapPages: number[] = [];
+    for (let pg = 1; pg <= Number(d.page_count ?? 0); pg++) {
+      if (!covered.has(pg)) gapPages.push(pg);
+    }
     return {
       id: d.id,
       name: d.name,
       status: d.status,
       pages: Number(d.page_count ?? 0),
       pagesIndexed: Number(d.pages_indexed ?? 0),
+      gapPages: gapPages.slice(0, 24),
       chars, tags, visionPages, verdict,
       // What the title block itself says this sheet is.
       declared: base ? (sheetsDeclared > 1 ? `${base} (${sheetsDeclared} sh)` : base) : null,

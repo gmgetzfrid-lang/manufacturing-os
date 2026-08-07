@@ -729,6 +729,9 @@ export interface DrawingIntel {
   /** Per-sheet fact table — what each drawing actually produced. */
   sheets?: Array<{
     id: string; name: string; status: string;
+    /** Pages the entity index holds NOTHING for — the fingerprint of an
+     *  interrupted vision rebuild. Empty when every page produced tags. */
+    gapPages?: number[];
     pages: number; pagesIndexed: number;
     chars: number; tags: number; visionPages: number;
     verdict: "text" | "vision" | "text-no-tags" | "empty" | "indexing" | "error";
