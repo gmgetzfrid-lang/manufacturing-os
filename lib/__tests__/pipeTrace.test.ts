@@ -301,6 +301,39 @@ describe("the break-at-crossing convention", () => {
   });
 });
 
+// THE wrong-pipe scenario, and the one the user named first: tight clustered
+// lines. A pipe interrupted by a valve, with an unrelated neighbour running
+// 12px away. If endpoint bridging is allowed to connect any two stroke ends
+// that happen to be close, the search steps off the traced pipe onto its
+// neighbour for free and returns a confident straight route down the WRONG
+// line. Refusing is the correct answer here; a confident wrong answer is the
+// one outcome this module exists to prevent.
+describe("clustered parallel lines", () => {
+  const opts = { minRun: 10, alignTolerance: 4 };
+
+  it("will not hop onto a neighbouring pipe through a valve gap", () => {
+    const r = board(600, 300);
+    hLine(r, 100, 20, 200);          // pipe A, first half
+    hLine(r, 100, 230, 400);         // pipe A, second half (30px valve gap)
+    hLine(r, 112, 210, 480);         // pipe B — a different line, 12px away
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    const out = tracePipe(net, { x: 25, y: 101 }, { x: 470, y: 113 }, opts);
+    expect(out.ok).toBe(false);
+  });
+
+  it("still follows its own pipe through the same valve gap", () => {
+    const r = board(600, 300);
+    hLine(r, 100, 20, 200);
+    hLine(r, 100, 230, 400);
+    hLine(r, 112, 210, 480);
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    const out = tracePipe(net, { x: 25, y: 101 }, { x: 395, y: 101 }, opts);
+    expect(out.ok).toBe(true);
+    expect(out.turns).toBe(0);
+    for (const p of out.points) expect(p.y).toBeCloseTo(100.5, 0);
+  });
+});
+
 describe("dropCollinear", () => {
   it("keeps only real corners", () => {
     expect(dropCollinear([

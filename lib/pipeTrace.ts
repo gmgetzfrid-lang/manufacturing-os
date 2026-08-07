@@ -233,11 +233,6 @@ interface Edge {
   to: number;
   cost: number;
   horizontal: boolean;
-  /** A hop across something that isn't drawn as an orthogonal stroke —
-   *  through a valve body, around a reducer, over a 45° jog. Direction is
-   *  carried through unchanged, so crossing one is not a "turn": the pipe
-   *  didn't turn, the draftsman just stopped drawing it as a straight line. */
-  neutral?: boolean;
 }
 
 export interface Network {
@@ -249,6 +244,8 @@ export interface Network {
   crossingStyle: "break" | "unknown";
   /** Crossing breaks detected — the evidence behind crossingStyle. */
   crossingBreaks: number;
+  /** Tightest parallel-run spacing measured on this sheet. */
+  minPitch: number;
 }
 
 const keyOf = (x: number, y: number) => `${Math.round(x)},${Math.round(y)}`;
@@ -256,7 +253,10 @@ const keyOf = (x: number, y: number) => `${Math.round(x)},${Math.round(y)}`;
 /** Build the junction network: where strokes meet, what kind of meeting it
  *  is, and the pipe stretches between meetings. */
 export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Network {
-  const tol = opts.alignTolerance ?? DEFAULTS.alignTolerance;
+  // Two pipes running 8px apart must never be merged by a 4px tolerance or
+  // joined by a 34px bridge. Clamp both to what this sheet actually does.
+  const pitch = measurePitch(segments);
+  const tol = Math.min(opts.alignTolerance ?? DEFAULTS.alignTolerance, Math.max(1, pitch * 0.4));
   const maxGap = opts.maxGap ?? DEFAULTS.maxGap;
   const breakGapMax = opts.crossingBreakMaxGap ?? DEFAULTS.crossingBreakMaxGap;
 
@@ -376,10 +376,10 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
   }
 
   const edges: Edge[][] = nodes.map(() => []);
-  const link = (from: number, to: number, cost: number, horizontal: boolean, neutral = false) => {
+  const link = (from: number, to: number, cost: number, horizontal: boolean) => {
     if (from === to) return;
-    edges[from].push({ to, cost, horizontal, neutral });
-    edges[to].push({ to: from, cost, horizontal, neutral });
+    edges[from].push({ to, cost, horizontal });
+    edges[to].push({ to: from, cost, horizontal });
   };
 
   // Thread each segment's points into a chain of pipe stretches.
@@ -412,23 +412,46 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
     }
   }
 
-  // Endpoint bridges. A pipe run is not one unbroken orthogonal stroke: it
-  // passes THROUGH things — a valve body, a reducer, an instrument, a 45°
-  // jog, the wall of an equipment symbol — none of which the stroke extractor
-  // sees as pipe. Without these the network shatters into disconnected
-  // fragments and the search reports "no continuous run" on a drawing whose
-  // line is plainly continuous to the eye. Spatially hashed, so this stays
-  // linear rather than comparing every endpoint to every other.
-  const bridgeRadius = opts.bridgeRadius ?? DEFAULTS.bridgeRadius;
+  // Endpoint bridges — SAME LINE ONLY.
+  //
+  // A pipe run passes through things the stroke extractor cannot see as pipe:
+  // a valve body, a reducer, an instrument, the wall of an equipment symbol.
+  // Bridging the resulting break is what keeps the run connected.
+  //
+  // The first version bridged ANY two stroke ends within a radius, in any
+  // direction, and exempted the result from every penalty. On a drawing with
+  // tight parallel runs — a pipe rack, a header bank, the normal case — that
+  // is a free wormhole from a pipe onto its NEIGHBOUR, and the search takes
+  // it, because it is cheaper than going around. It then draws a confident
+  // straight highlighter stroke down a line that has nothing to do with the
+  // question. Of every failure mode in this module that is the worst, because
+  // the output looks exactly like a correct answer.
+  //
+  // So a bridge now has to be the same line continuing: same axis, same
+  // centre line within tolerance, and forward past the end it left. Anything
+  // else is not a continuation — it is a different pipe, and reaching it must
+  // cost a real turn through a real junction or not happen at all.
+  const bridgeRadius = Math.min(
+    opts.bridgeRadius ?? DEFAULTS.bridgeRadius, Math.max(2, pitch * 2));
   const cell = Math.max(1, bridgeRadius);
   const buckets = new Map<string, number[]>();
-  const ends: Array<{ node: number; x: number; y: number; seg: number }> = [];
+  interface EndPoint {
+    node: number; x: number; y: number; seg: number;
+    horizontal: boolean; c: number; at: number;
+    /** True for the far end of the stroke (b), false for the near end (a). */
+    tail: boolean;
+  }
+  const ends: EndPoint[] = [];
   for (const s of segments) {
-    for (const p of [segStart(s), segEnd(s)]) {
+    for (const tail of [false, true]) {
+      const p = tail ? segEnd(s) : segStart(s);
       const node = byKey.get(keyOf(p.x, p.y));
       if (node === undefined) continue;
       const idx = ends.length;
-      ends.push({ node, x: p.x, y: p.y, seg: s.id });
+      ends.push({
+        node, x: p.x, y: p.y, seg: s.id,
+        horizontal: s.horizontal, c: s.c, at: tail ? s.b : s.a, tail,
+      });
       const bk = `${Math.floor(p.x / cell)},${Math.floor(p.y / cell)}`;
       buckets.set(bk, [...(buckets.get(bk) ?? []), idx]);
     }
@@ -442,15 +465,51 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
           if (j <= i) continue;
           const o = ends[j];
           if (o.seg === e.seg) continue;
-          const d = Math.hypot(o.x - e.x, o.y - e.y);
-          if (d > bridgeRadius) continue;
-          link(e.node, o.node, d * gapCost, true, true);
+          if (o.horizontal !== e.horizontal) continue;        // not the same axis
+          if (Math.abs(o.c - e.c) > tol) continue;            // not the same centre line
+          if (e.tail === o.tail) continue;                    // both ends face the same way
+          // The tail of one must sit BEFORE the head of the other: the run
+          // carries on past the break rather than doubling back over it.
+          const [from, to] = e.tail ? [e, o] : [o, e];
+          const gap = to.at - from.at;
+          if (gap <= 0 || gap > bridgeRadius) continue;
+          link(e.node, o.node, gap * gapCost, e.horizontal);
         }
       }
     }
   }
 
-  return { nodes, edges, crossingStyle, crossingBreaks };
+  return { nodes, edges, crossingStyle, crossingBreaks, minPitch: pitch };
+}
+
+/** The tightest spacing between parallel runs on this sheet.
+ *
+ *  Every proximity constant in this module is a guess about how far apart two
+ *  DIFFERENT pipes can be. On a pipe rack that distance is 6-8px at working
+ *  resolution — smaller than the defaults. Measuring it means the tolerances
+ *  adapt to a congested sheet instead of merging its lines. Uses a low
+ *  percentile rather than the minimum so one pair of near-touching strokes
+ *  cannot collapse the whole sheet's tolerances. */
+export function measurePitch(segments: Segment[]): number {
+  const gaps: number[] = [];
+  for (const horizontal of [true, false]) {
+    const group = segments.filter((s) => s.horizontal === horizontal)
+      .sort((p, q) => p.c - q.c);
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const a = group[i], b = group[j];
+        const d = b.c - a.c;
+        if (d <= 0.5) continue;
+        if (d > 400) break;                       // sorted by c — no neighbours left
+        // Only strokes that actually run alongside each other.
+        if (Math.min(a.b, b.b) - Math.max(a.a, b.a) < 20) continue;
+        gaps.push(d);
+      }
+    }
+  }
+  if (gaps.length === 0) return Infinity;
+  gaps.sort((x, y) => x - y);
+  return gaps[Math.floor(gaps.length * 0.05)];
 }
 
 /** Every node within reach of a tag's marker, with how far it sits.
@@ -528,6 +587,8 @@ export interface PipeTraceResult {
     /** Whether the drawing's crossing convention was recognized. */
     crossingStyle: "break" | "unknown";
     crossingBreaks: number;
+    /** Tightest parallel-run spacing found; tolerances are clamped to it. */
+    minPitch: number;
   };
 }
 
@@ -557,6 +618,7 @@ export function tracePipe(
     goalCandidates: goals.length,
     crossingStyle: network.crossingStyle,
     crossingBreaks: network.crossingBreaks,
+    minPitch: network.minPitch,
   };
   const fail = (reason: string): PipeTraceResult =>
     ({ ok: false, points: [], turns: 0, reason, diagnostics });
@@ -630,10 +692,8 @@ export function tracePipe(
 
     for (const e of network.edges[node]) {
       let step = e.cost;
-      // A neutral hop carries the direction through: passing through a valve
-      // body is not the pipe turning.
-      const nextHoriz = e.neutral ? arrivedHoriz : e.horizontal;
-      if (!e.neutral && e.horizontal !== arrivedHoriz) {
+      const nextHoriz = e.horizontal;
+      if (e.horizontal !== arrivedHoriz) {
         step += turnPenalty;
         // Turning where two pipes merely cross means leaving the pipe we are
         // following for one that has nothing to do with it — and on a drawing
@@ -670,6 +730,21 @@ export function tracePipe(
     if (!cameFrom.has(s)) break;
   }
   chain.reverse();
+
+  // Arriving 70px from the tag when a pipe passes 10px from it does not mean
+  // we reached that pipe — it means we reached a DIFFERENT one and stopped.
+  // On tightly spaced runs that is precisely how a confident stroke gets
+  // drawn down the neighbouring line, so the finish has to be nearly as close
+  // to the tag as the closest pipe to it.
+  const finishNode = goalState >> 1 === VIRTUAL ? (cameFrom.get(goalState)! >> 1) : goalState >> 1;
+  const finishDist = goalDist.get(finishNode);
+  const nearest = goals[0].dist;
+  if (finishDist !== undefined && finishDist > Math.max(nearest * 2.5, nearest + 24)) {
+    return fail(
+      "Followed the line-work but never reached the run at the second tag — the path arrived "
+      + "at a different line nearby. On closely spaced pipes that is a wrong-pipe answer, so it is refused.",
+    );
+  }
 
   const raw = chain.map((id) => ({ x: network.nodes[id].x, y: network.nodes[id].y }));
   const points = dropCollinear(raw);
@@ -712,8 +787,10 @@ export function scaledOptions(width: number, opts: TraceOptions = {}): TraceOpti
     bridgeRadius: opts.bridgeRadius ?? scale(DEFAULTS.bridgeRadius),
     turnPenalty: opts.turnPenalty ?? scale(DEFAULTS.turnPenalty),
     searchRadius: opts.searchRadius ?? scale(DEFAULTS.searchRadius),
+    crossingBreakMaxGap: opts.crossingBreakMaxGap ?? scale(DEFAULTS.crossingBreakMaxGap),
     gapCostMultiplier: opts.gapCostMultiplier ?? DEFAULTS.gapCostMultiplier,
     crossingPenalty: opts.crossingPenalty ?? DEFAULTS.crossingPenalty,
+    anchorCostMultiplier: opts.anchorCostMultiplier ?? DEFAULTS.anchorCostMultiplier,
   };
 }
 
@@ -731,7 +808,7 @@ export function tracePipeOnRaster(
       ok: false, points: [], turns: 0, segments: 0, lineWork: [],
       diagnostics: {
         nodes: 0, startCandidates: 0, goalCandidates: 0,
-        crossingStyle: "unknown" as const, crossingBreaks: 0,
+        crossingStyle: "unknown" as const, crossingBreaks: 0, minPitch: Infinity,
       },
       reason: "No pipe-like line-work found on this page — if the sheet is a scan, it may be too low-resolution to follow.",
     };
