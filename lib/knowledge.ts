@@ -778,6 +778,15 @@ export interface SemanticProgress {
 }
 
 /** Coverage only — spends nothing, so it's safe to call on page load. */
+/** Tell the knowledge layer a doc-control library's contents changed —
+ *  upload, move, restructure — so any AI library watching it re-syncs NOW
+ *  instead of at the next cron heartbeat. Fire-and-forget by design: filing
+ *  a document must never fail because the mirror hiccuped. */
+export function nudgeKnowledgeSources(orgId: string, dcLibraryId: string): void {
+  void apiPost("/api/knowledge/sources", { orgId, libraryId: "-", action: "dc-changed", dcLibraryId })
+    .catch(() => { /* the cron remains the backstop */ });
+}
+
 export async function semanticStatus(orgId: string, libraryId: string): Promise<SemanticProgress> {
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "status" });
 }

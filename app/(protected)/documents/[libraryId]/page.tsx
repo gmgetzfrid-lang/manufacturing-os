@@ -1,5 +1,6 @@
 "use client";
 
+import { nudgeKnowledgeSources } from "@/lib/knowledge";
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -1417,6 +1418,7 @@ export default function LibraryExplorerPage() {
   const dropMoveFolder = async (dragId: string, targetId: string | null) => {
     try {
       await moveFolderAndDescendants({ collectionId: dragId, newParentId: targetId });
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
       setError("Couldn't move that folder.");
@@ -1437,6 +1439,7 @@ export default function LibraryExplorerPage() {
         for (const id of docIds) next.delete(id);
         return next;
       });
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
       setError(docIds.length === 1 ? "Couldn't move that document." : "Couldn't move those documents.");
@@ -1447,6 +1450,7 @@ export default function LibraryExplorerPage() {
     if (!renameFolderId) return;
     try {
       await moveFolderAndDescendants({ collectionId: renameFolderId, newParentId: targetId ?? null });
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
       setShowMoveModal(false);
       setRenameFolderId(null);
     } catch (e) {
@@ -1464,6 +1468,7 @@ export default function LibraryExplorerPage() {
         updated_by: uid ?? null,
       }).eq("id", selectedDoc.id);
       setShowMoveDocModal(false);
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
       setError("Failed to move document.");
@@ -1690,6 +1695,9 @@ export default function LibraryExplorerPage() {
         setError(`Uploaded ${landed} of ${resolved.length}. ${notes.join(" ")}`);
       } else {
         setShowStagingModal(false);
+        // A file just landed in doc control — any AI library watching this
+        // one picks it up NOW, not at the next cron pass.
+        nudgeKnowledgeSources(activeOrgId!, libraryId);
         setPendingUploadFiles([]);
         if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
       }

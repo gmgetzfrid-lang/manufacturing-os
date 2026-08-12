@@ -13,6 +13,7 @@
 // PDFs. Useful for backfilling legacy registers or pre-populating
 // a library structure before files exist.
 
+import { nudgeKnowledgeSources } from "@/lib/knowledge";
 import React, { useMemo, useState } from "react";
 import {
   X, FileText, Loader2, AlertTriangle, CheckCircle2, Upload, ChevronRight, ArrowLeft,
@@ -187,7 +188,12 @@ export default function CsvImportModal({
     setResult({ ok, failed });
     setStep("done");
     setBusy(false);
-    if (ok > 0) onImported?.(ok);
+    if (ok > 0) {
+      onImported?.(ok);
+      // Imported rows are new doc-control content — AI libraries watching
+      // this library mirror them now rather than at the next cron pass.
+      nudgeKnowledgeSources(orgId, library.id!);
+    }
   };
 
   return (

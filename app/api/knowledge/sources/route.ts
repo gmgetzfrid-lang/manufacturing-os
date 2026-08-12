@@ -124,6 +124,48 @@ export async function POST(req: NextRequest) {
   if (!user) return bad("Unauthorized", 401);
   const principal = await loadPrincipal(orgId, user.id);
   if (!principal) return bad("Not a member of this workspace", 403);
+
+  // ── "Something changed in doc control" — the auto-update nudge ─────────
+  //
+  // A file added to a folder the AI watches used to appear in the knowledge
+  // library whenever the maintenance cron next came around — which reads as
+  // "the link is broken" to the person who just filed it. Upload and move
+  // actions now fire this immediately. Membership is enough: it names no
+  // documents and grants nothing, it only asks the server to run the same
+  // idempotent reconcile the cron runs, for the libraries whose sources
+  // watch the changed DC library.
+  if (body.action === "dc-changed") {
+    const dcLibraryId = String((body as { dcLibraryId?: string }).dcLibraryId ?? "").trim();
+    if (!dcLibraryId) return bad("dcLibraryId is required");
+    const { data: srcRows } = await supabaseAdmin
+      .from("knowledge_sources")
+      .select("library_id, source_type, source_id")
+      .eq("org_id", orgId).limit(500);
+    const sources = (srcRows ?? []) as Array<{ library_id: string; source_type: string; source_id: string }>;
+    const folderIds = sources.filter((x) => x.source_type === "folder").map((x) => x.source_id);
+    const folderLib = new Map<string, string>();
+    if (folderIds.length > 0) {
+      const { data: cols } = await supabaseAdmin
+        .from("collections").select("id, library_id").in("id", folderIds);
+      for (const c of (cols ?? []) as Array<{ id: string; library_id: string }>) {
+        folderLib.set(c.id, c.library_id);
+      }
+    }
+    const affected = [...new Set(sources
+      .filter((x) => x.source_type === "library"
+        ? x.source_id === dcLibraryId
+        : folderLib.get(x.source_id) === dcLibraryId)
+      .map((x) => x.library_id))];
+    let added = 0, refreshed = 0, removed = 0;
+    for (const kl of affected.slice(0, 8)) {
+      try {
+        const r = await syncKnowledgeLibrarySources(kl);
+        added += r.added; refreshed += r.refreshed; removed += r.removed;
+      } catch { /* one bad library must not block the rest */ }
+    }
+    return NextResponse.json({ affectedLibraries: affected.length, added, refreshed, removed });
+  }
+
   if (!principal.isController) {
     return bad("Only Admin or Doc Control can manage knowledge sources.", 403);
   }
@@ -201,6 +243,7 @@ export async function DELETE(req: NextRequest) {
   if (!user) return bad("Unauthorized", 401);
   const principal = await loadPrincipal(orgId, user.id);
   if (!principal) return bad("Not a member of this workspace", 403);
+
   if (!principal.isController) {
     return bad("Only Admin or Doc Control can manage knowledge sources.", 403);
   }
