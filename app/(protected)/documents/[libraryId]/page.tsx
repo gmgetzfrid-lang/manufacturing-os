@@ -1052,6 +1052,11 @@ export default function LibraryExplorerPage() {
     [buildFolderChain, folderMap, library?.acl]
   );
 
+  // Explorer behaviour: changing folders drops the selection. Carrying
+  // checked-but-invisible rows across navigation means the next bulk action
+  // silently includes documents the person can no longer see.
+  useEffect(() => { setSelectedDocIds(new Set()); }, [currentFolderId]);
+
   const visibleFolders = useMemo(() => {
     if (!currentFolderId) {
       // Root shows top-level folders PLUS any folder whose ancestry is
@@ -1409,7 +1414,7 @@ export default function LibraryExplorerPage() {
   // the gesture is the only thing that's new. Folders refresh themselves via
   // the live subscription; a doc moved out of this folder leaves the list
   // locally so the row disappears under the cursor instead of a beat later.
-  const dropMoveFolder = async (dragId: string, targetId: string) => {
+  const dropMoveFolder = async (dragId: string, targetId: string | null) => {
     try {
       await moveFolderAndDescendants({ collectionId: dragId, newParentId: targetId });
     } catch (e) {
@@ -2223,6 +2228,10 @@ export default function LibraryExplorerPage() {
             },
           ] : []}
           onNavigate={(id) => setCurrentFolderId(id)}
+          onDropItems={isController ? (targetId, payload) => {
+            if (payload.folderId) void dropMoveFolder(payload.folderId, targetId);
+            else if (payload.docIds) void dropMoveDocs(payload.docIds, targetId);
+          } : undefined}
         />
 
         <div className="flex-1" />

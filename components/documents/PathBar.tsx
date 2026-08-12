@@ -34,11 +34,15 @@ function Tile({ icon, color, className = "w-4 h-4" }: {
 
 const Sep = () => <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] mx-0.5 shrink-0" />;
 
-export default function PathBar({ library, segments, onNavigate }: {
+export default function PathBar({ library, segments, onNavigate, onDropItems }: {
   library: { name: string; icon?: string | null; color?: string | null };
   /** Ancestors first, CURRENT node last. Empty = at the library root. */
   segments: PathSegment[];
   onNavigate: (folderId: string | null) => void;
+  /** Dropping dragged folder/document(s) onto a crumb moves them THERE —
+   *  which is how "move up a level" and "move to root" work without a
+   *  dialog, the way every desktop file manager does it. */
+  onDropItems?: (targetId: string | null, payload: { folderId?: string; docIds?: string[] }) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -63,12 +67,40 @@ export default function PathBar({ library, segments, onNavigate }: {
     "flex items-center gap-1.5 px-1.5 py-1 rounded-lg transition-colors shrink-0 " +
     "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]";
 
+  const [dropOn, setDropOn] = useState<string | "root" | null>(null);
+  const acceptsDrag = (e: React.DragEvent) =>
+    !!onDropItems && (e.dataTransfer.types.includes("application/x-folder-id")
+      || e.dataTransfer.types.includes("application/x-doc-ids"));
+  const dropProps = (targetId: string | null, key: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!acceptsDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDropOn(key);
+    },
+    onDragLeave: () => setDropOn((cur) => (cur === key ? null : cur)),
+    onDrop: (e: React.DragEvent) => {
+      if (!acceptsDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDropOn(null);
+      const folderId = e.dataTransfer.getData("application/x-folder-id") || undefined;
+      const raw = e.dataTransfer.getData("application/x-doc-ids");
+      let docIds: string[] | undefined;
+      try { docIds = raw ? (JSON.parse(raw) as string[]) : undefined; } catch { docIds = undefined; }
+      if (folderId || (docIds && docIds.length > 0)) onDropItems!(targetId, { folderId, docIds });
+    },
+  });
+  const dropRing = (key: string) =>
+    dropOn === key ? " bg-blue-50/80 dark:bg-blue-950/40 ring-2 ring-blue-400 text-[var(--color-text)]" : "";
+
   return (
     <nav className="flex items-center text-xs font-medium text-[var(--color-text-muted)] overflow-hidden min-w-0" aria-label="Folder path">
       {/* Library root */}
       <button
         onClick={() => onNavigate(null)}
-        className={`${chip} ${atRoot ? "text-[var(--color-text)] font-bold" : ""}`}
+        {...dropProps(null, "root")}
+        className={`${chip} ${atRoot ? "text-[var(--color-text)] font-bold" : ""}${dropRing("root")}`}
         title={library.name}
       >
         {library.color || library.icon
@@ -113,7 +145,8 @@ export default function PathBar({ library, segments, onNavigate }: {
       {visibleAncestors.map((seg) => (
         <React.Fragment key={seg.id}>
           <Sep />
-          <button onClick={() => onNavigate(seg.id)} className={`${chip} min-w-0`} title={seg.name}>
+          <button onClick={() => onNavigate(seg.id)} {...dropProps(seg.id, seg.id)}
+            className={`${chip} min-w-0${dropRing(seg.id)}`} title={seg.name}>
             <Tile icon={seg.icon} color={seg.color} />
             <span className="truncate max-w-[9rem]">{seg.name}</span>
           </button>

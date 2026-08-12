@@ -133,6 +133,10 @@ export default function FolderGrid({
   // folder tile from a document row from the OS dropping files — and why
   // dragging a tile can never trigger the page's file-upload overlay.
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  /** The folder currently being dragged FROM this grid — known here (unlike
+   *  in dataTransfer, unreadable during dragover), so an invalid target can
+   *  show the browser's not-allowed cursor instead of a welcoming ring. */
+  const [draggingId, setDraggingId] = useState<string | null>(null);
 
   /** targetId inside dragId's own subtree? Walk up the parent chain. */
   const isDescendant = (dragId: string, targetId: string): boolean => {
@@ -162,9 +166,15 @@ export default function FolderGrid({
           onDragStart={(e) => {
             e.dataTransfer.setData("application/x-folder-id", folder.id!);
             e.dataTransfer.effectAllowed = "move";
+            setDraggingId(folder.id!);
           }}
+          onDragEnd={() => setDraggingId(null)}
           onDragOver={(e) => {
             if (!acceptsDrag(e)) return;
+            // Dropping a folder into itself or its own subtree is refused on
+            // drop anyway — but showing a welcoming ring and then doing
+            // nothing reads as a bug. No preventDefault = not-allowed cursor.
+            if (draggingId && isDescendant(draggingId, folder.id!)) return;
             e.preventDefault();
             e.stopPropagation();          // the upload overlay must not fire
             setDropTargetId(folder.id!);
