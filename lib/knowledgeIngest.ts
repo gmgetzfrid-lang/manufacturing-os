@@ -334,13 +334,32 @@ export async function ingestKnowledgeDocBatch(
     await supabaseAdmin.from("knowledge_chunks")
       .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", reached)
       .then(() => undefined, () => undefined);
-    let { error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(rows);
-    if (insErr && (insErr.code === "PGRST204" || /section/.test(insErr.message))) {
-      // Pre-20260914 DB: retry without the section column.
-      ({ error: insErr } = await supabaseAdmin.from("knowledge_chunks")
-        .insert(rows.map(({ section: _s, ...rest }) => rest)));
+    // BOUNDED sub-batches, not one statement. Every inserted row computes
+    // two weighted tsvectors (20261007) and updates a GIN index, and three
+    // ingest workers now run concurrently — a single 50-page INSERT blew
+    // Postgres's statement_timeout in production ('canceling statement due
+    // to statement timeout'), taking the serverless invocation down with it
+    // as a 502. Small statements keep each one comfortably inside the
+    // timeout; a timeout that still slips through halves the batch and
+    // retries rather than failing the page range.
+    const insertChunks = async (batch: typeof rows): Promise<void> => {
+      let { error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(batch);
+      if (insErr && (insErr.code === "PGRST204" || /section/.test(insErr.message))) {
+        // Pre-20260914 DB: retry without the section column.
+        ({ error: insErr } = await supabaseAdmin.from("knowledge_chunks")
+          .insert(batch.map(({ section: _s, ...rest }) => rest)));
+      }
+      if (insErr && /statement timeout/i.test(insErr.message) && batch.length > 1) {
+        const mid = Math.ceil(batch.length / 2);
+        await insertChunks(batch.slice(0, mid));
+        await insertChunks(batch.slice(mid));
+        return;
+      }
+      if (insErr) throw new Error(`chunk insert failed: ${insErr.message}`);
+    };
+    for (let i = 0; i < rows.length; i += 30) {
+      await insertChunks(rows.slice(i, i + 30));
     }
-    if (insErr) throw new Error(`chunk insert failed: ${insErr.message}`);
   }
 
   // Drawing entities: same idempotent shape as chunks (clear the page range,
