@@ -9,7 +9,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
-  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2, Eye,
+  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2, Eye, MessageSquare,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -594,6 +594,11 @@ export default function KnowledgeLibraryPage() {
   const [lastQuestion, setLastQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
+  // The conversation: prior turns render in full above the latest answer,
+  // and every new ask carries them as context. threadId groups the turns in
+  // knowledge_questions so a conversation can be reopened tomorrow.
+  const [thread, setThread] = useState<Array<{ question: string; answer: KnowledgeAnswer }>>([]);
+  const [threadId, setThreadId] = useState<string | null>(null);
   // Org Playbooks visibility: how many standing instructions ride on asks.
   const [instructionCount, setInstructionCount] = useState(0);
   useEffect(() => {
@@ -775,7 +780,7 @@ export default function KnowledgeLibraryPage() {
   const ask = async (focusArg?: string[], questionOverride?: string, inputsArg?: string, skipMemory?: boolean) => {
     const q = (questionOverride ?? question).trim();
     if (!activeOrgId || !q) return;
-    if (!skipMemory && mode === "library" && priorDismissedRef.current !== q) {
+    if (!skipMemory && thread.length === 0 && mode === "library" && priorDismissedRef.current !== q) {
       try {
         const { searchAskHistory } = await import("@/lib/knowledge");
         const past = await searchAskHistory(activeOrgId, q, 3);
@@ -790,7 +795,12 @@ export default function KnowledgeLibraryPage() {
     setLastQuestion(q);
     setAsking(true); setAskError(null); setAnswer(null); setClarify(null); setNeed(null);
     try {
-      const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg, inputsArg);
+      const tid = threadId ?? crypto.randomUUID();
+      const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg, inputsArg,
+        {
+          history: thread.slice(-4).map((t) => ({ question: t.question, answer: t.answer.answer })),
+          threadId: tid,
+        });
       let res: KnowledgeAnswer;
       try {
         res = await run();
@@ -823,11 +833,35 @@ export default function KnowledgeLibraryPage() {
         setNeed({ prompt: needPrompt, forQuestion: q, focus: focusArg, priorInputs: inputsArg });
       } else {
         setAnswer(res);
+        setThread((prev) => [...prev, { question: q, answer: res }]);
+        setThreadId(tid);
         setHistory(await listKnowledgeQuestions(libraryId));
       }
     } catch (e) {
       setAskError((e as Error).message);
     } finally { setAsking(false); }
+  };
+
+  /** Reopen a past conversation IN FULL and make it continuable — the way
+   *  every chat product works. Rows sharing a thread_id load together in
+   *  order; pre-thread history rows load as single-turn conversations. */
+  const openConversation = (rows: KnowledgeQuestion[]) => {
+    const ordered = [...rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const turns = ordered.map((q) => ({
+      question: q.question,
+      answer: {
+        answer: q.answer ?? "",
+        citations: q.citations,
+        provider: "memory", model: "past answer",
+        mode: q.mode,
+      } as KnowledgeAnswer,
+    }));
+    setThread(turns);
+    setThreadId(ordered[0]?.threadId ?? crypto.randomUUID());
+    setAnswer(turns[turns.length - 1]?.answer ?? null);
+    setLastQuestion(turns[turns.length - 1]?.question ?? "");
+    setPriorAsks(null); setClarify(null); setNeed(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const onFiles = async (files: FileList | null) => {
@@ -1018,11 +1052,16 @@ export default function KnowledgeLibraryPage() {
                   </div>
                   <button
                     onClick={() => {
-                      setAnswer({
+                      const past: KnowledgeAnswer = {
                         answer: pa.answer,
                         citations: (Array.isArray(pa.citations) ? pa.citations : []) as KnowledgeCitation[],
                         provider: "memory", model: "past answer", mode: "library",
-                      });
+                      };
+                      setAnswer(past);
+                      // Seed the conversation so the next question CONTINUES
+                      // from this answer instead of starting cold.
+                      setThread([{ question: pa.question, answer: past }]);
+                      setThreadId(crypto.randomUUID());
                       setLastQuestion(pa.question);
                       setPriorAsks(null);
                     }}
@@ -1061,6 +1100,24 @@ export default function KnowledgeLibraryPage() {
               need.priorInputs ? `${need.priorInputs}; ${values}` : values,
             )}
           />
+        )}
+        {thread.length > 1 && !asking && (
+          <div className="space-y-6 mb-2">
+            {thread.slice(0, -1).map((t, i) => (
+              <div key={i} className="opacity-90">
+                <AnswerExperience question={t.question} answer={t.answer} onCite={openCitation} />
+              </div>
+            ))}
+          </div>
+        )}
+        {thread.length > 0 && !asking && (
+          <div className="flex justify-end -mb-2">
+            <button
+              onClick={() => { setThread([]); setThreadId(null); setAnswer(null); setLastQuestion(""); }}
+              className="text-[11px] font-black px-2.5 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+              + New conversation
+            </button>
+          </div>
         )}
         {answer && !asking && (
           answer.mode === "internet" ? (
@@ -1201,36 +1258,58 @@ export default function KnowledgeLibraryPage() {
           )}
         </div>
 
-        {/* ── Recent questions ───────────────────────────────────────────── */}
+        {/* ── Conversations ──────────────────────────────────────────────── */}
+        {/* One compact row per CONVERSATION — click to reopen it in full up
+            in the answer area and keep asking. The old design stacked
+            ever-growing preview cards nobody could reopen or continue,
+            which is a history of dead ends, not a history. */}
         <div>
           <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-2 flex items-center gap-1.5">
-            <History className="w-3.5 h-3.5" /> Recent questions ({history.length})
+            <History className="w-3.5 h-3.5" /> Conversations ({(() => {
+              const seen = new Set<string>();
+              for (const q of history) seen.add(q.threadId ?? q.id);
+              return seen.size;
+            })()})
           </h2>
           {history.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
-              Questions and their cited answers land here for the whole team.
+              Questions and their cited answers land here for the whole team — click one to reopen and continue it.
             </div>
           ) : (
-            <ul className="space-y-2">
-              {history.map((q) => (
-                <li key={q.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5">
-                  <div className="text-xs font-black text-[var(--color-text)] flex items-start gap-1.5">
-                    {q.mode === "internet" && (
-                      <span title="Internet answer — not from the library" className="shrink-0 mt-0.5">
-                        <Globe className="w-3 h-3 text-sky-600" />
-                      </span>
-                    )}
-                    <span>{q.question}</span>
-                  </div>
-                  {q.answer && (
-                    <div className="mt-1.5 text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap line-clamp-4">{q.answer}</div>
-                  )}
-                  <CitationChips citations={q.citations} onOpen={openCitation} />
-                  <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
-                    {q.userName ?? "Someone"} · {new Date(q.createdAt).toLocaleString()}
-                  </div>
-                </li>
-              ))}
+            <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              {(() => {
+                const groups = new Map<string, KnowledgeQuestion[]>();
+                for (const q of history) {
+                  const key = q.threadId ?? q.id;
+                  groups.set(key, [...(groups.get(key) ?? []), q]);
+                }
+                return [...groups.values()].map((rows) => {
+                  const first = [...rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+                  const last = [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+                  return (
+                    <li key={first.threadId ?? first.id}>
+                      <button
+                        onClick={() => openConversation(rows)}
+                        className="w-full text-left px-3.5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2.5 group"
+                      >
+                        {first.mode === "internet"
+                          ? <Globe className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                          : <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-bold text-[var(--color-text)] truncate">{first.question}</span>
+                          <span className="block text-[10px] text-[var(--color-text-muted)]">
+                            {rows.length > 1 ? `${rows.length} turns · ` : ""}
+                            {last.userName ?? "Someone"} · {new Date(last.createdAt).toLocaleString()}
+                          </span>
+                        </span>
+                        <span className="text-[10px] font-black text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          Reopen →
+                        </span>
+                      </button>
+                    </li>
+                  );
+                });
+              })()}
             </ul>
           )}
         </div>

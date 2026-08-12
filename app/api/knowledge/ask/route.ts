@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
   let body: {
     orgId?: string; libraryId?: string; question?: string; mode?: string;
     focus?: unknown; inputs?: unknown;
+    history?: unknown; threadId?: unknown;
   };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
@@ -81,6 +82,21 @@ export async function POST(req: NextRequest) {
   // "internet": the provider's live web tool (or model knowledge where the
   // provider has none) — clearly labeled, never mixed with library citations.
   const mode = body.mode === "internet" ? "internet" : "library";
+  // Prior turns of THIS conversation — what makes "what about 1 inch?"
+  // answerable. Capped hard: 4 turns, answers truncated, because the
+  // passages must stay the star of the context window.
+  const history = (Array.isArray(body.history) ? body.history : [])
+    .filter((t): t is { question: string; answer: string } =>
+      !!t && typeof (t as { question?: unknown }).question === "string"
+      && typeof (t as { answer?: unknown }).answer === "string")
+    .slice(-4)
+    .map((t) => ({ question: t.question.slice(0, 500), answer: t.answer.slice(0, 1200) }));
+  const threadId = typeof body.threadId === "string" && /^[0-9a-f-]{36}$/i.test(body.threadId)
+    ? body.threadId : null;
+  const conversationBlock = history.length > 0
+    ? "CONVERSATION SO FAR (the question may refer back to it):\n"
+      + history.map((t) => `Q: ${t.question}\nA: ${t.answer}`).join("\n---\n") + "\n\n"
+    : "";
   if (!orgId || !libraryId || !question) return bad("orgId, libraryId and question are required");
 
   const { data: member } = await supabaseAdmin
@@ -327,6 +343,10 @@ export async function POST(req: NextRequest) {
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. No prose, no code fence — just the JSON array.',
       user: [
+        history.length > 0
+          ? `(Follow-up in a conversation. Previous question: "${history[history.length - 1].question}" — ` +
+            "resolve pronouns and ellipsis against it when writing queries.)"
+          : "",
         question,
         focus.length > 0 ? `(The user narrowed this to: ${focus.join(", ")} — target the queries there.)` : "",
         inputs ? `(User-provided inputs: ${inputs} — include queries for the tables/values these imply.)` : "",
@@ -1154,7 +1174,7 @@ export async function POST(req: NextRequest) {
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
       precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + needsDirective + calcProtocol + fetchDirective;
-    const answerUser = `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
+    const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
     //    (one round). The tool does the reading — the user is never sent to
@@ -1335,9 +1355,10 @@ export async function POST(req: NextRequest) {
       org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
       question, answer, citations, provider, model, mode: "library",
       missing_docs: missingDocs.length > 0 ? missingDocs : null,
+      thread_id: threadId,
     }).then(async (r) => {
-      // Pre-migration DBs lack mode/missing_docs — retry with the core set.
-      if (r.error?.code === "PGRST204" || /mode|missing_docs/.test(r.error?.message ?? "")) {
+      // Pre-migration DBs lack mode/missing_docs/thread_id — retry with the core set.
+      if (r.error?.code === "PGRST204" || /mode|missing_docs|thread_id/.test(r.error?.message ?? "")) {
         await supabaseAdmin.from("knowledge_questions").insert({
           org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
           question, answer, citations, provider, model,

@@ -142,6 +142,8 @@ export interface EquipmentTable {
 
 export interface KnowledgeQuestion {
   id: string;
+  /** Conversation this ask belongs to; null for pre-thread history. */
+  threadId?: string | null;
   question: string;
   answer: string | null;
   citations: KnowledgeCitation[];
@@ -452,11 +454,14 @@ export async function deleteKnowledgeDocument(id: string): Promise<void> {
 export async function askKnowledgeLibrary(
   orgId: string, libraryId: string, question: string, mode: AskMode = "library",
   focus?: string[], inputs?: string,
+  /** Conversation continuation: prior turns + the thread they belong to. */
+  thread?: { history: Array<{ question: string; answer: string }>; threadId: string },
 ): Promise<KnowledgeAnswer> {
   return apiPost<KnowledgeAnswer>("/api/knowledge/ask", {
     orgId, libraryId, question, mode,
     ...(focus && focus.length > 0 ? { focus } : {}),
     ...(inputs ? { inputs } : {}),
+    ...(thread ? { history: thread.history, threadId: thread.threadId } : {}),
   });
 }
 
@@ -510,6 +515,7 @@ export async function listKnowledgeQuestions(
   if (error) return [];
   return (data ?? []).map((r: Record<string, unknown>) => ({
     id: r.id as string,
+    threadId: (r.thread_id as string | null) ?? null,
     question: r.question as string,
     answer: (r.answer as string | null) ?? null,
     citations: Array.isArray(r.citations) ? (r.citations as KnowledgeCitation[]) : [],
