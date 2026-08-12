@@ -35,6 +35,9 @@ interface FolderGridProps {
   /** Drop dragged DOCUMENT row(s) onto this folder — the array is however
    *  many rows were checked when the drag started. */
   onDocsDrop?: (docIds: string[], folderId: string) => void;
+  /** Drop a dragged folder on a tile's EDGE: place it before/after the
+   *  target among its siblings — how folders get ordered by hand. */
+  onReorder?: (dragId: string, targetId: string, position: "before" | "after") => void;
   isController: boolean;
 }
 
@@ -46,6 +49,7 @@ export default function FolderGrid({
   onMove,
   onMoveInto,
   onDocsDrop,
+  onReorder,
   onPermissions,
   onCustomize,
   onReviewCycle,
@@ -129,7 +133,7 @@ export default function FolderGrid({
   // Drag-and-drop moving. These MIME keys are how a drop distinguishes a
   // folder tile from a document row from the OS dropping files — and why
   // dragging a tile can never trigger the page's file-upload overlay.
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; zone: "into" | "before" | "after" } | null>(null);
   /** The folder currently being dragged FROM this grid — known here (unlike
    *  in dataTransfer, unreadable during dragover), so an invalid target can
    *  show the browser's not-allowed cursor instead of a welcoming ring. */
@@ -168,23 +172,36 @@ export default function FolderGrid({
           onDragEnd={() => setDraggingId(null)}
           onDragOver={(e) => {
             if (!acceptsDrag(e)) return;
-            // Dropping a folder into itself or its own subtree is refused on
-            // drop anyway — but showing a welcoming ring and then doing
-            // nothing reads as a bug. No preventDefault = not-allowed cursor.
-            if (draggingId && isDescendant(draggingId, folder.id!)) return;
+            const isFolderDrag = e.dataTransfer.types.includes("application/x-folder-id");
+            // Edge quarters reorder among siblings; the middle moves INSIDE.
+            // Windows/macOS both use this split, and it is the only way one
+            // drag gesture can mean two things without a mode switch.
+            const r = e.currentTarget.getBoundingClientRect();
+            const frac = (e.clientX - r.left) / Math.max(1, r.width);
+            const zone: "into" | "before" | "after" =
+              isFolderDrag && onReorder && frac < 0.25 ? "before"
+              : isFolderDrag && onReorder && frac > 0.75 ? "after"
+              : "into";
+            // Self/descendant can still be dropped BESIDE itself for
+            // reorder; only "into" is forbidden.
+            if (zone === "into" && draggingId && isDescendant(draggingId, folder.id!)) return;
+            if (zone !== "into" && draggingId === folder.id) return;
             e.preventDefault();
             e.stopPropagation();          // the upload overlay must not fire
-            setDropTargetId(folder.id!);
+            setDropTarget({ id: folder.id!, zone });
           }}
-          onDragLeave={() => setDropTargetId((cur) => (cur === folder.id ? null : cur))}
+          onDragLeave={() => setDropTarget((cur) => (cur?.id === folder.id ? null : cur))}
           onDrop={(e) => {
             if (!acceptsDrag(e)) return;
             e.preventDefault();
             e.stopPropagation();
-            setDropTargetId(null);
+            const zone = (dropTarget && dropTarget.id === folder.id) ? dropTarget.zone : "into";
+            setDropTarget(null);
             const dragFolder = e.dataTransfer.getData("application/x-folder-id");
             const dragDocs = e.dataTransfer.getData("application/x-doc-ids");
-            if (dragFolder && onMoveInto && !isDescendant(dragFolder, folder.id!)) {
+            if (dragFolder && zone !== "into" && onReorder && dragFolder !== folder.id) {
+              onReorder(dragFolder, folder.id!, zone);
+            } else if (dragFolder && onMoveInto && !isDescendant(dragFolder, folder.id!)) {
               onMoveInto(dragFolder, folder.id!);
             } else if (dragDocs && onDocsDrop) {
               try {
@@ -195,8 +212,12 @@ export default function FolderGrid({
           }}
           className={`
             group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
-            ${dropTargetId === folder.id
+            ${(dropTarget && dropTarget.id === folder.id && dropTarget.zone === "into")
               ? 'bg-blue-50/80 dark:bg-blue-950/30 border-blue-400 ring-2 ring-blue-300'
+              : (dropTarget && dropTarget.id === folder.id && dropTarget.zone === "before")
+              ? 'border-l-4 border-l-blue-500 border-[var(--color-border)]'
+              : (dropTarget && dropTarget.id === folder.id && dropTarget.zone === "after")
+              ? 'border-r-4 border-r-blue-500 border-[var(--color-border)]'
               : contextMenu?.id === folder.id
               ? 'bg-[var(--color-accent-soft)]/60 border-[var(--color-accent)]/50 shadow-md ring-1 ring-[var(--color-accent)]/30'
               : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-accent)]/50'}
@@ -246,19 +267,24 @@ export default function FolderGrid({
             </span>
           </div>
 
-          {/* Custom Context Menu Overlay */}
-          {contextMenu?.id === folder.id && (
-            <div 
-              className="fixed z-[100]" 
-              style={{ top: contextMenu?.y, left: contextMenu?.x }}
-              onClick={(e) => e.stopPropagation()} // Prevent closing immediately
-            >
-              {renderMenu(folder.id!)}
-            </div>
-          )}
         </div>
         );
       })}
+
+      {/* The one menu overlay, rendered at the GRID ROOT. It must never sit
+          inside a tile: tiles lift on hover with a CSS transform, and
+          position:fixed inside a transformed ancestor resolves against the
+          TILE, not the viewport — the menu teleported off-screen whenever
+          the cursor was over the card and reappeared on mouse-out. */}
+      {contextMenu && (
+        <div
+          className="fixed z-[100]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {renderMenu(contextMenu.id)}
+        </div>
+      )}
     </div>
   );
 }

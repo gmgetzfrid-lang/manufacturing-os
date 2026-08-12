@@ -325,6 +325,15 @@ export async function moveFolderAndDescendants(params: {
   }
 }
 
+/** Persist a manual order for SIBLING folders (same parent). Index in the
+ *  array becomes sort_order. Best-effort per row — one failed write must
+ *  not scramble the rest. */
+export async function reorderFolders(orderedIds: string[]): Promise<void> {
+  await Promise.all(orderedIds.map((id, i) =>
+    supabase.from(TABLE).update({ sort_order: i }).eq("id", id)
+      .then(() => undefined, () => undefined)));
+}
+
 export async function deleteFolder(collectionId: string, opts?: { cascade?: boolean }) {
   // Without cascade, everything INSIDE the folder must survive the folder.
   // Children used to keep a parent_id pointing at the deleted row — matching
@@ -363,11 +372,21 @@ export function listenLibraryFolders(
   let alive = true;
 
   const fetch = async () => {
-    let q = supabase.from(TABLE).select("*").eq("library_id", libraryId).order("name");
-    if (opts?.orgId) q = q.eq("org_id", opts.orgId);
-    if (opts?.hideHidden) q = q.eq("visibility", "normal");
-
-    const { data, error } = await q;
+    // Manual order first (NULLs last, so untouched folders stay A-Z), name
+    // as the tiebreak. A DB that hasn't run 20261009 yet errors on the
+    // column — retry by name so folders never vanish over an ORDER BY.
+    const build = (withOrder: boolean) => {
+      let q = supabase.from(TABLE).select("*").eq("library_id", libraryId);
+      if (withOrder) q = q.order("sort_order", { ascending: true, nullsFirst: false });
+      q = q.order("name");
+      if (opts?.orgId) q = q.eq("org_id", opts.orgId);
+      if (opts?.hideHidden) q = q.eq("visibility", "normal");
+      return q;
+    };
+    let { data, error } = await build(true);
+    if (error && /sort_order|column/i.test(error.message)) {
+      ({ data, error } = await build(false));
+    }
     if (error) { opts?.onError?.(error.message); return; }
     if (alive) cb((data || []).map((r) => fromDb(r as Record<string, unknown>)));
   };

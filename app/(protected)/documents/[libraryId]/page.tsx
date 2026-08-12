@@ -81,6 +81,7 @@ import {
   listenLibraryFolders,
   moveFolderAndDescendants,
   renameFolderAndDescendants,
+  reorderFolders,
   updateCollectionAppearance,
   updateCollectionHomeConfig,
 } from "@/lib/libraryCollections";
@@ -1424,6 +1425,33 @@ export default function LibraryExplorerPage() {
       setError("Couldn't move that folder.");
     }
   };
+  /** Place dragId before/after targetId among the target's siblings. A drag
+   *  from another parent moves there first, then takes its slot — one
+   *  gesture, both effects, like every desktop file manager. */
+  const dropReorderFolder = async (dragId: string, targetId: string, position: "before" | "after") => {
+    const target = folderMap.get(targetId);
+    const dragged = folderMap.get(dragId);
+    if (!target || !dragged) return;
+    try {
+      if ((dragged.parentId ?? null) !== (target.parentId ?? null)) {
+        await moveFolderAndDescendants({ collectionId: dragId, newParentId: target.parentId ?? null });
+      }
+      // Sibling order as currently DISPLAYED, minus the dragged folder,
+      // with it re-inserted at the drop slot.
+      const siblings = folders
+        .filter((f) => (f.parentId ?? null) === (target.parentId ?? null) && f.id !== dragId)
+        .map((f) => f.id!) ;
+      const at = siblings.indexOf(targetId);
+      const insert = position === "before" ? at : at + 1;
+      siblings.splice(insert < 0 ? siblings.length : insert, 0, dragId);
+      await reorderFolders(siblings);
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
+    } catch (e) {
+      console.error(e);
+      setError("Couldn't reorder that folder.");
+    }
+  };
+
   const dropMoveDocs = async (docIds: string[], folderId: string | null) => {
     if (docIds.length === 0) return;
     try {
@@ -2594,6 +2622,7 @@ export default function LibraryExplorerPage() {
                     onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onMoveInto={isController ? (dragId, targetId) => void dropMoveFolder(dragId, targetId) : undefined}
                     onDocsDrop={isController ? (docIds, folderId) => void dropMoveDocs(docIds, folderId) : undefined}
+                    onReorder={isController ? (dragId, targetId, pos) => void dropReorderFolder(dragId, targetId, pos) : undefined}
                     isController={isController}
                   />
                 </div>
