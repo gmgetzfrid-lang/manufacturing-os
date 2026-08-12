@@ -30,6 +30,7 @@ import {
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
   type KnowledgeLibraryLink,
+  rebuildDrawingIndex,
 } from "@/lib/knowledge";
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
@@ -1164,6 +1165,35 @@ export default function KnowledgeLibraryPage() {
               {docsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
               Documents ({readyDocs}/{docs.length} indexed{indexingDocs > 0 ? ` · ${indexingDocs} in progress` : ""})
             </button>
+            {/* Re-index lives HERE, with the documents — not inside Drawing
+                Intelligence, where gating that panel to drawing sets briefly
+                made rebuilding unreachable for every prose library. The
+                action was always general; now its home is too. */}
+            {isController && docs.length > 0 && (
+              <button
+                onClick={async () => {
+                  const ok = await appConfirm({
+                    title: "Re-index all documents?",
+                    message:
+                      "Every document re-reads from scratch — text, tables, tags, and anchors. "
+                      + "Do this after an ingestion upgrade or when indexing missed things. "
+                      + "Runs in the background; you can leave this page.",
+                    confirmLabel: "Re-index",
+                  });
+                  if (!ok || !activeOrgId) return;
+                  try {
+                    const res = await rebuildDrawingIndex(activeOrgId, libraryId);
+                    showToast({ type: "success", title: `${res.docs} document(s) queued — indexing starts now.` });
+                    void refresh();
+                  } catch (e) {
+                    showToast({ type: "error", title: (e as Error).message });
+                  }
+                }}
+                className="text-[10px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors mr-auto ml-3"
+              >
+                Re-index all
+              </button>
+            )}
             {isController && (
               <>
                 <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple hidden
