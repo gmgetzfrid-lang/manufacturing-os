@@ -100,8 +100,9 @@ export default function FolderRail({
 }: FolderRailProps) {
   const [hovered, setHovered] = useState(false);
   const rootFolders = folders.filter((f) => !f.parentId);
-  const topVisible = rootFolders.slice(0, 7);
-  const overflow = rootFolders.length - topVisible.length;
+  // Icon rail shows every root folder and scrolls — a hidden folder reads
+  // as a missing folder.
+  const topVisible = rootFolders;
 
   return (
     <div
@@ -110,7 +111,7 @@ export default function FolderRail({
       className="group/rail relative z-30 h-full shrink-0"
     >
       {/* COLLAPSED RAIL — always visible, theme-toned */}
-      <div className={`w-12 h-full bg-[var(--color-surface-2)] border-r flex flex-col items-center py-2 gap-1 transition-colors ${hovered ? "border-[var(--color-accent)]/40" : "border-[var(--color-border)]"}`}>
+      <div className={`w-12 h-full bg-[var(--color-surface-2)] border-r flex flex-col items-center py-2 gap-1 overflow-y-auto transition-colors ${hovered ? "border-[var(--color-accent)]/40" : "border-[var(--color-border)]"}`}>
         {/* Discoverability: an obvious "open folders" affordance at the top. */}
         <div
           className={`flex flex-col items-center gap-1 mb-1 transition-colors ${hovered ? "text-[var(--color-accent)]" : "text-[var(--color-text-faint)]"}`}
@@ -154,10 +155,6 @@ export default function FolderRail({
             </button>
           );
         })}
-
-        {overflow > 0 && (
-          <div className="text-[9px] font-bold text-[var(--color-text-faint)] mt-0.5">+{overflow}</div>
-        )}
 
         <div className="flex-1" />
 

@@ -350,5 +350,9 @@ function pickFolders(rootFolders: LibraryCollection[], ids?: string[]): LibraryC
     const map = new Map(rootFolders.map((f) => [f.id, f]));
     return ids.map((id) => map.get(id)).filter(Boolean) as LibraryCollection[];
   }
-  return rootFolders.slice(0, 8);
+  // No cap. This used to slice(0, 8): create a tenth folder and it simply
+  // never rendered — indistinguishable from data loss to the person who
+  // just made it. The grid wraps; more folders means more rows, which is
+  // what a file manager does.
+  return rootFolders;
 }

@@ -54,7 +54,6 @@ export default function FolderGrid({
   onRetention,
   isController
 }: FolderGridProps) {
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -62,8 +61,7 @@ export default function FolderGrid({
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpenId(null);
-        setContextMenu(null);
+                setContextMenu(null);
       }
     };
     document.addEventListener("mousedown", handleClick);
@@ -73,8 +71,7 @@ export default function FolderGrid({
   const handleContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     setContextMenu({ id, x: e.clientX, y: e.clientY });
-    setMenuOpenId(null);
-  };
+      };
 
   const renderMenu = (id: string) => (
     <div 
@@ -83,42 +80,42 @@ export default function FolderGrid({
       className="absolute z-50 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
       style={contextMenu?.id === id ? { top: 0, left: 0, position: 'relative' } : { top: '100%', right: 0 }}
     >
-      <button onClick={() => { onOpen(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+      <button onClick={() => { onOpen(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
         <FolderOpen className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Open
       </button>
       {isController && (
         <>
           <div className="h-px bg-[var(--color-surface-2)] my-1" />
-          <button onClick={() => { onRename?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <button onClick={() => { onRename?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
             <Pencil className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Rename
           </button>
-          <button onClick={() => { onMove?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <button onClick={() => { onMove?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
             <ArrowRight className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Move
           </button>
-          <button onClick={() => { onCustomize?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <button onClick={() => { onCustomize?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
             <Palette className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Customize
           </button>
           {onReviewCycle && (
-            <button onClick={() => { onReviewCycle(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onReviewCycle(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
               <CalendarClock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Review cycle
             </button>
           )}
           {onAckPolicy && (
-            <button onClick={() => { onAckPolicy(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onAckPolicy(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
               <ClipboardCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Read &amp; understood
             </button>
           )}
           {onReviewControl && (
-            <button onClick={() => { onReviewControl(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onReviewControl(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
               <ShieldCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Pre-publish review
             </button>
           )}
           {onRetention && (
-            <button onClick={() => { onRetention(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onRetention(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
               <Archive className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Retention
             </button>
           )}
-          <button onClick={() => { onPermissions?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <button onClick={() => { onPermissions?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
             <Lock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Permissions
           </button>
         </>
@@ -200,7 +197,7 @@ export default function FolderGrid({
             group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
             ${dropTargetId === folder.id
               ? 'bg-blue-50/80 dark:bg-blue-950/30 border-blue-400 ring-2 ring-blue-300'
-              : (menuOpenId === folder.id || contextMenu?.id === folder.id)
+              : contextMenu?.id === folder.id
               ? 'bg-[var(--color-accent-soft)]/60 border-[var(--color-accent)]/50 shadow-md ring-1 ring-[var(--color-accent)]/30'
               : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-accent)]/50'}
           `}
@@ -215,12 +212,22 @@ export default function FolderGrid({
 
             <div className="relative">
               <button
-                onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === folder.id ? null : folder.id!); setContextMenu(null); }}
-                className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${(menuOpenId === folder.id) ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100'}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Anchor the menu to the button, but render it FIXED at
+                  // the top level — inside the tile it inherits the tile's
+                  // hover transform, which makes a new stacking context and
+                  // leaves the dropdown flickering under the next section's
+                  // header. Same path the right-click menu already uses.
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  setContextMenu(contextMenu?.id === folder.id
+                    ? null
+                    : { id: folder.id!, x: Math.max(8, r.right - 208), y: r.bottom + 4 });
+                                  }}
+                className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${contextMenu?.id === folder.id ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100'}`}
               >
                 <MoreVertical className="w-4 h-4" />
               </button>
-              {menuOpenId === folder.id && renderMenu(folder.id!)}
             </div>
           </div>
 
