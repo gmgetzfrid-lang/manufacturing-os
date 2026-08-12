@@ -58,10 +58,10 @@ export async function POST(req: NextRequest) {
     .from("collections").delete().eq("id", collectionId);
   if (delErr) return bad(`Couldn't delete the folder: ${delErr.message}`, 500);
 
-  await supabaseAdmin.from("audit_log").insert({
+  await supabaseAdmin.from("audit_logs").insert({
     action: "FOLDER_DELETED",
     resource_type: "collection", resource_id: collectionId,
-    org_id: orgId, user_id: user.id,
+    org_id: orgId, user_id: user.id, user_email: user.email ?? null,
     details: { name: node.name, contentsMovedTo: heirParent },
   }).then(() => undefined, () => undefined);
 
