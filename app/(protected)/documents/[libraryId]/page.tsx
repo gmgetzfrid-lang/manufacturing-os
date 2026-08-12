@@ -1469,7 +1469,7 @@ export default function LibraryExplorerPage() {
     });
     if (!ok) return;
     try {
-      await deleteFolder(id);
+      await deleteFolder(id, activeOrgId!);
       if (currentFolderId === id) setCurrentFolderId(f.parentId ?? null);
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {

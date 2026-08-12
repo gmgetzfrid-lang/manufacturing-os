@@ -334,34 +334,23 @@ export async function reorderFolders(orderedIds: string[]): Promise<void> {
       .then(() => undefined, () => undefined)));
 }
 
-export async function deleteFolder(collectionId: string, opts?: { cascade?: boolean }) {
-  // Without cascade, everything INSIDE the folder must survive the folder.
-  // Children used to keep a parent_id pointing at the deleted row — matching
-  // no root and no visible parent, they vanished from every listing. Same
-  // for documents. Both now step up to the deleted folder's own parent.
-  if (!opts?.cascade) {
-    const node = await getCollectionById(collectionId);
-    const heirParent = node?.parentId ?? null;
-    await supabase.from(TABLE)
-      .update({ parent_id: heirParent })
-      .eq("parent_id", collectionId);
-    await supabase.from("documents")
-      .update({ collection_id: heirParent })
-      .eq("collection_id", collectionId);
-  }
-  if (opts?.cascade) {
-    const { data: descendants } = await supabase
-      .from(TABLE)
-      .select("id")
-      .filter("path_ids", "cs", `{${collectionId}}`);
-
-    if (descendants?.length) {
-      const ids = (descendants as { id: string }[]).map((d) => d.id);
-      await supabase.from(TABLE).delete().in("id", ids);
-    }
-  }
-
-  await supabase.from(TABLE).delete().eq("id", collectionId);
+export async function deleteFolder(collectionId: string, orgId: string): Promise<void> {
+  // NOT a client-side supabase call, deliberately. collections carries a
+  // RESTRICTIVE delete policy with no permissive one, so an anon-key DELETE
+  // matches zero rows and reports success — a Delete that visibly does
+  // nothing (shipped once; reported within the hour). The server route runs
+  // on the service role behind the same controller check, and steps the
+  // folder's contents up a level before the row goes.
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in.");
+  const res = await fetch("/api/collections/delete", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ orgId, collectionId }),
+  });
+  const out = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(out?.error ?? "Couldn't delete the folder.");
 }
 
 export function listenLibraryFolders(
