@@ -153,12 +153,14 @@ export async function POST(req: NextRequest) {
 
   while (Date.now() - startedAt < BUDGET_MS) {
     const { data: chunks, error } = await supabaseAdmin
-      .from("knowledge_chunks").select("id, content")
+      .from("knowledge_chunks").select("id, content, section, page, document_id")
       .eq("org_id", orgId).eq("library_id", libraryId)
       .is("embedding", null)
       .limit(batchSize);
     if (error) { lastError = error.message; break; }
-    const batch = (chunks ?? []) as Array<{ id: string; content: string }>;
+    const batch = (chunks ?? []) as Array<{
+      id: string; content: string; section: string | null; page: number; document_id: string;
+    }>;
     if (batch.length === 0) {
       // Coverage says passages lack vectors, yet the fetch returned none —
       // the classic symptom of a stale PostgREST schema cache after the
@@ -174,9 +176,28 @@ export async function POST(req: NextRequest) {
 
     let vectors: number[][];
     try {
+      // Contextual prefix: the pipeline KNOWS the document name, the section
+      // in force, and the page — and used to embed the bare text anyway, so
+      // "§5.3 Pipe Supports" was invisible to the vector space. Prepending
+      // the metadata line is the cheapest retrieval upgrade in the audit:
+      // zero extra calls, and the heading often names the concept better
+      // than any sentence in the chunk does.
+      const docNames = new Map<string, string>();
+      {
+        const ids = [...new Set(batch.map((c) => c.document_id))];
+        const { data: docs } = await supabaseAdmin
+          .from("knowledge_documents").select("id, name").in("id", ids);
+        for (const d of (docs ?? []) as Array<{ id: string; name: string }>) {
+          docNames.set(d.id, d.name);
+        }
+      }
       const out = await embedPassages({
         provider: embedding.provider, model: embedding.model, apiKey: embedding.apiKey,
-        passages: batch.map((c) => c.content),
+        passages: batch.map((c) => {
+          const head = [docNames.get(c.document_id), c.section, `p.${c.page}`]
+            .filter(Boolean).join(" — ");
+          return head ? `${head}\n${c.content}` : c.content;
+        }),
         // The corpus side of an asymmetric retrieval pair.
         kind: "document",
       });

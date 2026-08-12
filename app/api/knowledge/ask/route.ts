@@ -33,8 +33,8 @@ import {
 } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
-  parseSearchQueries, parseFollowupPlan, extractCitationNumbers, mergeRetrieved,
-  type RetrievedChunk,
+  parseSearchQueries, parseFollowupPlan, extractCitationNumbers,
+  type RetrievedChunk, mergeRetrievedRRF,
 } from "@/lib/knowledgeText";
 import { fuseRankings } from "@/lib/hybridRank";
 import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
@@ -342,33 +342,42 @@ export async function POST(req: NextRequest) {
       ...linkedLibraries.map((l) => ({ id: l.id, tier: "reference" as const })),
     ];
     const runSearches = async (qs: string[]): Promise<RetrievedChunk[][]> => {
-      const out: RetrievedChunk[][] = [];
-      for (const lib of searchLibraries) {
-        for (const q of qs) {
-          let { data } = await supabaseAdmin.rpc("knowledge_search", {
-            p_org: orgId, p_library: lib.id, p_query: q,
-            p_limit: lib.tier === "governing" ? 10 : 6,
+      // Every (library × query) pair is independent — 3 libraries × 4
+      // queries used to be 12 SERIAL round trips, doubled by retries. The
+      // fan-out now runs concurrently; latency is the slowest single search.
+      const jobs = searchLibraries.flatMap((lib) => qs.map((q) => ({ lib, q })));
+      const out = await Promise.all(jobs.map(async ({ lib, q }) => {
+        // Over-fetch 3× the slot count: AI-excluded documents are filtered
+        // HERE, after the database already applied its LIMIT — at exactly
+        // the slot count, a user whose top-ranked docs are excluded got a
+        // silently starved passage set and an empty-state message blaming
+        // their phrasing.
+        const limit = (lib.tier === "governing" ? 10 : 6) * 3;
+        let { data } = await supabaseAdmin.rpc("knowledge_search", {
+          p_org: orgId, p_library: lib.id, p_query: q, p_limit: limit,
+        });
+        // websearch syntax ANDs every term: "crude preheat exchanger"
+        // misses a chunk that says "CRUDE HEAT EXCHANGER" because it lacks
+        // "preheat". A multi-word query that comes back THIN — not just
+        // empty; one weak hit is not coverage — retries OR-ed, and the two
+        // result sets merge rather than the retry replacing the original.
+        if ((!Array.isArray(data) || data.length < 3) && /\s/.test(q.trim())) {
+          const ored = q.trim().split(/\s+/).filter(Boolean).join(" or ");
+          const { data: more } = await supabaseAdmin.rpc("knowledge_search", {
+            p_org: orgId, p_library: lib.id, p_query: ored, p_limit: limit,
           });
-          // websearch syntax ANDs every term: "crude preheat exchanger"
-          // misses a chunk that says "CRUDE HEAT EXCHANGER" because it lacks
-          // "preheat". A multi-word query that finds NOTHING gets one retry
-          // OR-ed, so partial matches surface ranked instead of vanishing.
-          if ((!Array.isArray(data) || data.length === 0) && /\s/.test(q.trim())) {
-            const ored = q.trim().split(/\s+/).filter(Boolean).join(" or ");
-            ({ data } = await supabaseAdmin.rpc("knowledge_search", {
-              p_org: orgId, p_library: lib.id, p_query: ored,
-              p_limit: lib.tier === "governing" ? 10 : 6,
-            }));
-          }
-          if (Array.isArray(data)) {
-            out.push(
-              (data as RetrievedChunk[])
-                .filter((c) => !excludedDocIds.has(c.document_id))
-                .map((c) => ({ ...c, libraryId: lib.id, tier: lib.tier })),
-            );
+          if (Array.isArray(more)) {
+            const seen = new Set((Array.isArray(data) ? data : []).map((c: RetrievedChunk) => c.id));
+            data = [...(Array.isArray(data) ? data : []),
+              ...(more as RetrievedChunk[]).filter((c) => !seen.has(c.id))];
           }
         }
-      }
+        if (!Array.isArray(data)) return [] as RetrievedChunk[];
+        return (data as RetrievedChunk[])
+          .filter((c) => !excludedDocIds.has(c.document_id))
+          .slice(0, lib.tier === "governing" ? 10 : 6)
+          .map((c) => ({ ...c, libraryId: lib.id, tier: lib.tier }));
+      }));
       return out;
     };
     type TieredChunk = RetrievedChunk & { libraryId?: string; tier?: "governing" | "reference" };
@@ -384,7 +393,7 @@ export async function POST(req: NextRequest) {
     // Unavailable is a normal state, not an error: no OpenAI key, no
     // migration, or nothing embedded yet all mean keyword search alone, which
     // is exactly what this product did yesterday.
-    const runSemantic = async (): Promise<TieredChunk[]> => {
+    const runSemantic = async (extraQueries: string[] = []): Promise<TieredChunk[]> => {
       // The EMBEDDING key, not the chat key. A Claude user with a Voyage key
       // gets meaning-based retrieval; a Claude user with no embedding key gets
       // keyword search, which is what this route always did.
@@ -404,19 +413,28 @@ export async function POST(req: NextRequest) {
           .limit(1).maybeSingle();
         const corpusModel = (stamped?.embedding_model as string | null) ?? embedding.model;
         const { embedQuery, toVectorLiteral } = await import("@/lib/ai/embeddings");
-        const vector = await embedQuery(
-          embedding.provider, corpusModel, embedding.apiKey, question,
-        );
-        const literal = toVectorLiteral(vector);
+        // The raw question, plus any refine-round queries: each gets its own
+        // nearest-neighbour list, and the union feeds the fusion the same way
+        // multiple keyword queries do.
+        const texts = extraQueries.length > 0 ? extraQueries : [question];
+        const literals: string[] = [];
+        for (const t of texts.slice(0, 3)) {
+          literals.push(toVectorLiteral(
+            await embedQuery(embedding.provider, corpusModel, embedding.apiKey, t)));
+        }
         const found: TieredChunk[] = [];
-        for (const lib of searchLibraries) {
-          const { data, error } = await supabaseAdmin.rpc("semantic_search", {
+        const jobs: Array<{ lib: typeof searchLibraries[number]; literal: string }> = [];
+        for (const lib of searchLibraries) for (const literal of literals) jobs.push({ lib, literal });
+        const results = await Promise.all(jobs.map(({ lib, literal }) =>
+          supabaseAdmin.rpc("semantic_search", {
             p_org_id: orgId, p_library_id: lib.id, p_embedding: literal,
             p_limit: lib.tier === "governing" ? 12 : 6,
             // Only compare against vectors from the same model — a corpus
             // embedded by another provider lives in a different space.
             p_model: corpusModel,
-          });
+          }).then((r) => ({ lib, r }))));
+        for (const { lib, r } of results) {
+          const { data, error } = r;
           if (error || !Array.isArray(data)) continue;
           for (const row of data as Array<{
             chunk_id: string; document_id: string; page: number; content: string; similarity: number;
@@ -447,19 +465,40 @@ export async function POST(req: NextRequest) {
     const fuseTier = (
       keyword: TieredChunk[], meaning: TieredChunk[], cap: number,
     ): TieredChunk[] => {
-      if (meaning.length === 0) return keyword.slice(0, cap);
-      return fuseRankings<TieredChunk>(
+      // Fill slots with a per-document cap: without it, nothing stopped all
+      // 14 governing slots landing on one document — adjacent overlapping
+      // chunks of the same page are mutually high-ranking by construction.
+      // 3 per document, then backfill from the remainder if slots are left.
+      const diversify = (ranked: TieredChunk[]): TieredChunk[] => {
+        const picked: TieredChunk[] = [];
+        const perDoc = new Map<string, number>();
+        const overflow: TieredChunk[] = [];
+        for (const c of ranked) {
+          if (picked.length >= cap) break;
+          const n = perDoc.get(c.document_id) ?? 0;
+          if (n >= 3) { overflow.push(c); continue; }
+          perDoc.set(c.document_id, n + 1);
+          picked.push(c);
+        }
+        for (const c of overflow) {
+          if (picked.length >= cap) break;
+          picked.push(c);
+        }
+        return picked;
+      };
+      if (meaning.length === 0) return diversify(keyword);
+      return diversify(fuseRankings<TieredChunk>(
         [{ source: "keyword", items: keyword }, { source: "meaning", items: meaning }],
         (c) => c.id,
-      ).slice(0, cap).map((f) => f.item);
+      ).map((f) => f.item));
     };
     // Governing passages keep the bigger share of the context budget.
     const mergeTiered = (batches: TieredChunk[][]): TieredChunk[] => {
       const flat = batches;
-      const governing = mergeRetrieved(
+      const governing = mergeRetrievedRRF(
         flat.map((b) => b.filter((c) => (c as TieredChunk).tier !== "reference")), 14,
       ) as TieredChunk[];
-      const reference = mergeRetrieved(
+      const reference = mergeRetrievedRRF(
         flat.map((b) => b.filter((c) => (c as TieredChunk).tier === "reference")), 8,
       ) as TieredChunk[];
       return [...governing, ...reference];
@@ -538,8 +577,30 @@ export async function POST(req: NextRequest) {
         });
       }
       if (plan.queries.length > 0) {
-        const more = (await runSearches(plan.queries)) as TieredChunk[][];
-        chunks = mergeTiered([...batches, ...more]);
+        // Round 2 must not undo round 1. This line used to rebuild `chunks`
+        // from the keyword batches alone — throwing the semantic half away
+        // on every non-trivial question while the response still reported
+        // "hybrid". The refine queries also run through the vector index
+        // now: "per STD-205" follow-ups were the one genuinely multi-hop
+        // path in the system, and they were keyword-only.
+        const [more, semantic2] = await Promise.all([
+          runSearches(plan.queries) as Promise<TieredChunk[][]>,
+          runSemantic(plan.queries.slice(0, 2)),
+        ]);
+        const keyword2 = mergeTiered([...batches, ...more]);
+        const meaning = [...semantic, ...semantic2];
+        chunks = [
+          ...fuseTier(
+            keyword2.filter((c) => c.tier !== "reference"),
+            meaning.filter((c) => c.tier !== "reference"),
+            14,
+          ),
+          ...fuseTier(
+            keyword2.filter((c) => c.tier === "reference"),
+            meaning.filter((c) => c.tier === "reference"),
+            8,
+          ),
+        ];
       }
       // Validate claimed-missing docs: if a search for the designation hits
       // real passages in ANY reachable library, it isn't missing.
@@ -1093,12 +1154,28 @@ export async function POST(req: NextRequest) {
         });
       }
     }
-    const answer = answerOut.text;
+    let answer = answerOut.text;
 
     // Citations the answer actually used, in order of first use — each
     // carries the VERBATIM passage so the UI can show exactly what the
     // answer was built from (expand → read the source text → open the page).
-    const used = extractCitationNumbers(answer);
+    let used = extractCitationNumbers(answer);
+    {
+      // A [17] the model invented used to be dropped from the citation
+      // PAYLOAD and left in the answer TEXT — the reader sees a marker,
+      // clicks nothing, and gets no signal the claim is uncited. Strip
+      // out-of-range markers from the text itself and say one line about it.
+      const invented = used.filter((n) => n < 1 || n > chunks.length);
+      if (invented.length > 0) {
+        for (const n of new Set(invented)) {
+          answer = answer.split(`[${n}]`).join("");
+        }
+        answer +=
+          "\n\n! One or more citation markers pointed at no retrieved passage and were removed — " +
+          "treat any adjacent claim as uncited.";
+        used = extractCitationNumbers(answer);
+      }
+    }
 
     // Which equipment tags does the ANSWER talk about? On a drawing, that's
     // what the viewer points at — highlighting a quoted passage is useless

@@ -18,14 +18,13 @@
 //
 // Built on the same react-pdf + self-hosted worker the document viewers use.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import {
   X, ChevronLeft, ChevronRight, ExternalLink, Loader2, AlertTriangle, Crosshair, Search,
-  Highlighter,
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
 import { locateTagsOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
