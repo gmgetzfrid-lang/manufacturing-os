@@ -210,14 +210,16 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                 className="accent-orange-600 w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">
-                  These are CAD exports or scans — read every page as an image
+                  Text doesn&apos;t extract from these files — index every page as an image
                 </span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  Turn this on when the documents have <b>no real text</b>: AutoCAD drawings exported
-                  with SHX fonts, or scans. On those sheets every tag, bubble and line number is
-                  line-work rather than text, and the only thing that extracts is the TrueType title
-                  block — so without this the library indexes to almost nothing and looks empty for
-                  no visible reason. Costs a few cents per page on your key. Turn it on, then
+                  For documents whose PDF text layer is missing or useless: scans, photos of
+                  paper, CAD drawings exported with SHX fonts, image-only PDFs. Without this, such
+                  a library indexes to almost nothing and looks empty for no visible reason.
+                  <b> Leave it OFF for normal PDFs</b> — standards, specs and manuals with real
+                  text extract fine, and their tables and figures are already handled (tables
+                  index intact, and referenced figures are read from the page image at answer
+                  time). Costs a few cents per page on your key. Turn it on, then
                   <b> Rebuild index</b>.
                 </span>
               </span>
