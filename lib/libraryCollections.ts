@@ -389,6 +389,16 @@ export function listenLibraryFolders(
       { event: "*", schema: "public", table: TABLE, filter: `library_id=eq.${libraryId}` },
       () => { if (alive) fetch(); }
     )
+    .on(
+      "postgres_changes",
+      // DELETE events carry ONLY the old row's primary key — never
+      // library_id — so the filtered listener above can not match them and
+      // a deleted folder sat on screen until reload. Deletes are rare;
+      // refetching this library's list on ANY collections delete is cheap
+      // and keeps every viewer's tree honest, not just the deleter's.
+      { event: "DELETE", schema: "public", table: TABLE },
+      () => { if (alive) fetch(); }
+    )
     .subscribe();
 
   return () => {

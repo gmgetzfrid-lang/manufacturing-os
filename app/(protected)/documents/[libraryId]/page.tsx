@@ -1470,6 +1470,14 @@ export default function LibraryExplorerPage() {
     if (!ok) return;
     try {
       await deleteFolder(id, activeOrgId!);
+      // The server confirmed; the screen must not wait for a realtime event
+      // that (for deletes) may never arrive. Remove the folder and step its
+      // children up a level locally — exactly what the server just did.
+      setFolders((prev) => prev
+        .filter((x) => x.id !== id)
+        .map((x) => (x.parentId === id ? { ...x, parentId: f.parentId ?? null } : x)));
+      setDocuments((prev) => prev.map((d) =>
+        d.collectionId === id ? { ...d, collectionId: f.parentId ?? null } : d));
       if (currentFolderId === id) setCurrentFolderId(f.parentId ?? null);
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
