@@ -12,7 +12,7 @@ import {
   ClipboardCheck,
   ShieldCheck,
   Archive,
-} from "lucide-react";
+  Trash2,} from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
 
@@ -38,6 +38,7 @@ interface FolderGridProps {
   /** Drop a dragged folder on a tile's EDGE: place it before/after the
    *  target among its siblings — how folders get ordered by hand. */
   onReorder?: (dragId: string, targetId: string, position: "before" | "after") => void;
+  onDelete?: (id: string) => void;
   isController: boolean;
 }
 
@@ -50,6 +51,7 @@ export default function FolderGrid({
   onMoveInto,
   onDocsDrop,
   onReorder,
+  onDelete,
   onPermissions,
   onCustomize,
   onReviewCycle,
@@ -122,6 +124,14 @@ export default function FolderGrid({
           <button onClick={() => { onPermissions?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
             <Lock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Permissions
           </button>
+          {onDelete && (
+            <>
+              <div className="h-px bg-[var(--color-surface-2)] my-1" />
+              <button onClick={() => { onDelete(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center font-medium">
+                <Trash2 className="w-4 h-4 mr-2" /> Delete
+              </button>
+            </>
+          )}
         </>
       )}
     </div>

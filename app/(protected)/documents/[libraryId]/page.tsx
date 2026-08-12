@@ -82,6 +82,7 @@ import {
   moveFolderAndDescendants,
   renameFolderAndDescendants,
   reorderFolders,
+  deleteFolder,
   updateCollectionAppearance,
   updateCollectionHomeConfig,
 } from "@/lib/libraryCollections";
@@ -1452,6 +1453,31 @@ export default function LibraryExplorerPage() {
     }
   };
 
+  const handleDeleteFolder = async (id: string) => {
+    const f = folderMap.get(id);
+    if (!f) return;
+    const childCount = folders.filter((x) => x.parentId === id).length;
+    const ok = await appConfirm({
+      title: `Delete "${f.name}"?`,
+      message:
+        "Only the folder is deleted — nothing inside is lost. Its documents"
+        + (childCount > 0 ? ` and ${childCount} subfolder${childCount === 1 ? "" : "s"}` : "")
+        + " move up one level. If an AI knowledge library watches this specific folder, its"
+        + " contents leave that library's scope.",
+      confirmLabel: "Delete folder",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await deleteFolder(id);
+      if (currentFolderId === id) setCurrentFolderId(f.parentId ?? null);
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
+    } catch (e) {
+      console.error(e);
+      setError("Couldn't delete that folder.");
+    }
+  };
+
   const dropMoveDocs = async (docIds: string[], folderId: string | null) => {
     if (docIds.length === 0) return;
     try {
@@ -2623,6 +2649,7 @@ export default function LibraryExplorerPage() {
                     onMoveInto={isController ? (dragId, targetId) => void dropMoveFolder(dragId, targetId) : undefined}
                     onDocsDrop={isController ? (docIds, folderId) => void dropMoveDocs(docIds, folderId) : undefined}
                     onReorder={isController ? (dragId, targetId, pos) => void dropReorderFolder(dragId, targetId, pos) : undefined}
+                    onDelete={isController ? (id) => void handleDeleteFolder(id) : undefined}
                     isController={isController}
                   />
                 </div>
