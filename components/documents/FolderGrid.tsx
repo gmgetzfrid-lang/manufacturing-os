@@ -32,8 +32,9 @@ interface FolderGridProps {
   /** Drop a dragged FOLDER onto this folder. The grid refuses self and
    *  descendants before calling — a folder cannot live inside itself. */
   onMoveInto?: (dragId: string, targetId: string) => void;
-  /** Drop a dragged DOCUMENT row onto this folder. */
-  onDocDrop?: (docId: string, folderId: string) => void;
+  /** Drop dragged DOCUMENT row(s) onto this folder — the array is however
+   *  many rows were checked when the drag started. */
+  onDocsDrop?: (docIds: string[], folderId: string) => void;
   isController: boolean;
 }
 
@@ -44,7 +45,7 @@ export default function FolderGrid({
   onRename,
   onMove,
   onMoveInto,
-  onDocDrop,
+  onDocsDrop,
   onPermissions,
   onCustomize,
   onReviewCycle,
@@ -146,7 +147,7 @@ export default function FolderGrid({
 
   const acceptsDrag = (e: React.DragEvent) =>
     e.dataTransfer.types.includes("application/x-folder-id")
-    || e.dataTransfer.types.includes("application/x-doc-id");
+    || e.dataTransfer.types.includes("application/x-doc-ids");
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -175,11 +176,14 @@ export default function FolderGrid({
             e.stopPropagation();
             setDropTargetId(null);
             const dragFolder = e.dataTransfer.getData("application/x-folder-id");
-            const dragDoc = e.dataTransfer.getData("application/x-doc-id");
+            const dragDocs = e.dataTransfer.getData("application/x-doc-ids");
             if (dragFolder && onMoveInto && !isDescendant(dragFolder, folder.id!)) {
               onMoveInto(dragFolder, folder.id!);
-            } else if (dragDoc && onDocDrop) {
-              onDocDrop(dragDoc, folder.id!);
+            } else if (dragDocs && onDocsDrop) {
+              try {
+                const ids = JSON.parse(dragDocs) as string[];
+                if (Array.isArray(ids) && ids.length > 0) onDocsDrop(ids, folder.id!);
+              } catch { /* malformed payload — ignore the drop */ }
             }
           }}
           className={`

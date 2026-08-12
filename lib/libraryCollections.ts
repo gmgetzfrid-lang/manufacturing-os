@@ -257,11 +257,28 @@ export async function moveFolderAndDescendants(params: {
   let parentPathIds: string[] = [];
 
   if (nextParentId) {
+    if (nextParentId === collectionId) throw new Error("A folder can't be moved into itself.");
     const parent = await getCollectionById(nextParentId);
     if (!parent) throw new Error("Destination folder not found.");
     if (parent.libraryId !== node.libraryId) throw new Error("Destination folder belongs to a different library.");
     parentPathNames = normalizePathNames(parent);
     parentPathIds = normalizePathIds(parent);
+    // THE guard that keeps folders findable. Moving a folder into its own
+    // subtree detaches the whole branch from the root: nothing lists it,
+    // nothing can navigate to it, and to the person who owns it the folder
+    // has simply ceased to exist — which is exactly how it was reported.
+    // path_ids can be stale, so the parent CHAIN is walked as well.
+    if (parentPathIds.includes(collectionId)) {
+      throw new Error("That folder is inside this one — moving it there would orphan both.");
+    }
+    let cursor = parent;
+    for (let hops = 0; cursor?.parentId && hops < 100; hops++) {
+      if (cursor.parentId === collectionId) {
+        throw new Error("That folder is inside this one — moving it there would orphan both.");
+      }
+      cursor = (await getCollectionById(cursor.parentId))!;
+      if (!cursor) break;
+    }
   }
 
   const oldPathNames = normalizePathNames(node);
@@ -309,6 +326,20 @@ export async function moveFolderAndDescendants(params: {
 }
 
 export async function deleteFolder(collectionId: string, opts?: { cascade?: boolean }) {
+  // Without cascade, everything INSIDE the folder must survive the folder.
+  // Children used to keep a parent_id pointing at the deleted row — matching
+  // no root and no visible parent, they vanished from every listing. Same
+  // for documents. Both now step up to the deleted folder's own parent.
+  if (!opts?.cascade) {
+    const node = await getCollectionById(collectionId);
+    const heirParent = node?.parentId ?? null;
+    await supabase.from(TABLE)
+      .update({ parent_id: heirParent })
+      .eq("parent_id", collectionId);
+    await supabase.from("documents")
+      .update({ collection_id: heirParent })
+      .eq("collection_id", collectionId);
+  }
   if (opts?.cascade) {
     const { data: descendants } = await supabase
       .from(TABLE)

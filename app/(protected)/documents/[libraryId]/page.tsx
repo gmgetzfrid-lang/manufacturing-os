@@ -135,7 +135,7 @@ import {
   Briefcase,
   CheckSquare,
   Hash,
-  Save,
+  Save, ArrowRight,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -497,6 +497,7 @@ export default function LibraryExplorerPage() {
 
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [showMoveDocModal, setShowMoveDocModal] = useState(false);
+  const [showBulkMoveModal, setShowBulkMoveModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
   const [showLibraryPerms, setShowLibraryPerms] = useState(false);
@@ -1053,7 +1054,25 @@ export default function LibraryExplorerPage() {
 
   const visibleFolders = useMemo(() => {
     if (!currentFolderId) {
-      return folders.filter((f) => !f.parentId);
+      // Root shows top-level folders PLUS any folder whose ancestry is
+      // broken — parent deleted, or a cycle from a bad move. A folder that
+      // matches no listing anywhere has, to its owner, simply vanished
+      // (reported in production after a drag session). Unreachable means
+      // recovered-to-root, never invisible.
+      const byId = new Map(folders.map((f) => [f.id, f]));
+      const reachesRoot = (f: LibraryCollection): boolean => {
+        const seen = new Set<string>();
+        let cur: LibraryCollection | undefined = f;
+        while (cur?.parentId) {
+          if (seen.has(cur.parentId)) return false;      // cycle
+          seen.add(cur.parentId);
+          cur = byId.get(cur.parentId);
+          if (!cur) return false;                        // parent gone
+        }
+        return true;
+      };
+      return folders.filter((f) => !f.parentId
+        || (f.parentId && (!byId.has(f.parentId) || !reachesRoot(f))));
     }
     return folders.filter((f) => f.parentId === currentFolderId);
   }, [folders, currentFolderId]);
@@ -1398,15 +1417,24 @@ export default function LibraryExplorerPage() {
       setError("Couldn't move that folder.");
     }
   };
-  const dropMoveDoc = async (docId: string, folderId: string) => {
+  const dropMoveDocs = async (docIds: string[], folderId: string | null) => {
+    if (docIds.length === 0) return;
     try {
       const { error } = await supabase.from("documents")
-        .update({ collection_id: folderId, updated_by: uid }).eq("id", docId);
+        .update({ collection_id: folderId, updated_by: uid }).in("id", docIds);
       if (error) throw error;
-      setDocuments((prev) => prev.filter((d) => d.id !== docId || folderId === currentFolderId));
+      const moved = new Set(docIds);
+      if (folderId !== currentFolderId) {
+        setDocuments((prev) => prev.filter((d) => !moved.has(d.id!)));
+      }
+      setSelectedDocIds((prev) => {
+        const next = new Set(prev);
+        for (const id of docIds) next.delete(id);
+        return next;
+      });
     } catch (e) {
       console.error(e);
-      setError("Couldn't move that document.");
+      setError(docIds.length === 1 ? "Couldn't move that document." : "Couldn't move those documents.");
     }
   };
 
@@ -2548,7 +2576,7 @@ export default function LibraryExplorerPage() {
                     onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onMoveInto={isController ? (dragId, targetId) => void dropMoveFolder(dragId, targetId) : undefined}
-                    onDocDrop={isController ? (docId, folderId) => void dropMoveDoc(docId, folderId) : undefined}
+                    onDocsDrop={isController ? (docIds, folderId) => void dropMoveDocs(docIds, folderId) : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2807,8 +2835,24 @@ export default function LibraryExplorerPage() {
                                 key={docRecord.id}
                                 draggable={isController}
                                 onDragStart={(e) => {
-                                  e.dataTransfer.setData("application/x-doc-id", docRecord.id!);
+                                  // Dragging a CHECKED row drags the whole
+                                  // selection — anything else silently moves
+                                  // one file of ten and reads as data loss.
+                                  const ids = isRowSelected && selectedDocIds.size > 1
+                                    ? [...selectedDocIds]
+                                    : [docRecord.id!];
+                                  e.dataTransfer.setData("application/x-doc-ids", JSON.stringify(ids));
                                   e.dataTransfer.effectAllowed = "move";
+                                  if (ids.length > 1) {
+                                    const ghost = document.createElement("div");
+                                    ghost.textContent = `${ids.length} documents`;
+                                    ghost.style.cssText =
+                                      "position:absolute;top:-1000px;padding:6px 12px;background:#1e293b;color:#fff;"
+                                      + "border-radius:10px;font-size:12px;font-weight:700;";
+                                    document.body.appendChild(ghost);
+                                    e.dataTransfer.setDragImage(ghost, 12, 12);
+                                    setTimeout(() => ghost.remove(), 0);
+                                  }
                                 }}
                                 onClick={() => setSelectedDoc(docRecord)}
                                 className={`group cursor-pointer transition-colors relative ${
@@ -3096,6 +3140,13 @@ export default function LibraryExplorerPage() {
             className="px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
           >
             Deselect
+          </button>
+          <button
+            onClick={() => setShowBulkMoveModal(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-blue-500 hover:bg-blue-600 rounded-lg transition-all active:scale-95"
+            title="Move all selected documents to a folder"
+          >
+            <ArrowRight className="w-3 h-3" /> Move to…
           </button>
           <button
             onClick={handleStageSelected}
@@ -3397,6 +3448,20 @@ export default function LibraryExplorerPage() {
           collections={folders}
           currentId={renameFolderId ?? undefined}
           title="Move Folder"
+          allowRoot
+        />
+      )}
+
+      {showBulkMoveModal && (
+        <MoveModal
+          isOpen={showBulkMoveModal}
+          onClose={() => setShowBulkMoveModal(false)}
+          onConfirm={(targetId) => {
+            void dropMoveDocs([...selectedDocIds], targetId ?? null);
+            setShowBulkMoveModal(false);
+          }}
+          collections={folders}
+          title={`Move ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}`}
           allowRoot
         />
       )}
