@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  tracePath, traceNeighbourhood, findBrokenConnectors, normalizeTag,
+  tracePath, traceNeighbourhood, normalizeTag,
   type LineEdge,
 } from "@/lib/pidTrace";
 
@@ -129,25 +129,3 @@ describe("traceNeighbourhood", () => {
   });
 });
 
-describe("findBrokenConnectors", () => {
-  it("finds a continuation that nothing catches on the receiving sheet", () => {
-    // L-44-098 leaves for C-301, and C-301 is the source of no other run.
-    const broken = findBrokenConnectors(LINES);
-    expect(broken).toHaveLength(1);
-    expect(broken[0].lineId).toBe("L-44-098");
-    expect(broken[0].danglingAt).toBe("C-301");
-  });
-
-  it("is quiet when the continuation lands", () => {
-    const complete: LineEdge[] = [
-      ...LINES,
-      { lineId: "L-44-099", from: "C-301", to: "D-401", drawingId: "PID-44-013" },
-    ];
-    expect(findBrokenConnectors(complete)).toEqual([]);
-  });
-
-  it("ignores runs that never leave the sheet", () => {
-    const onSheet: LineEdge[] = [{ lineId: "L-1", from: "A-1", to: "B-2" }];
-    expect(findBrokenConnectors(onSheet)).toEqual([]);
-  });
-});

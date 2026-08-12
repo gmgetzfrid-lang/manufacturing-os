@@ -550,109 +550,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── MEASURED LINE TRACE: "trace/path/connect X to Y" runs the pixel ──
-    // tracer BEFORE the model answers. This is the question the drawing
-    // features exist for, and it used to be unanswerable here: the ask path
-    // had no route to the tracer at all, so "show me the path from V-12 to
-    // E-13" got a retrieval answer stitched from prose — confident, and
-    // blind. Now the route is measured off the sheet's line-work first and
-    // the model is handed the result as trusted fact, including the tagged
-    // components the route passes through. The citation carries both tags,
-    // so clicking it opens the sheet with the path drawn.
-    let traceFacts = "";
-    let traceCitations: Array<{ documentId: string; page: number; tags: string[] }> = [];
-    // The status strip the UI shows VERBATIM. The model paraphrases; this
-    // does not — which is what makes 'did the trace even run' answerable
-    // from a screenshot instead of a debugging session.
-    let traceStatus: { attempted: boolean; found: boolean; note: string } | null = null;
-    const TRACE_INTENT_RE =
-      /\b(trace|path|route|flow|line|connect(?:ed|ion|s)?|between|upstream|downstream|from)\b/i;
-    if (TRACE_INTENT_RE.test(question)) {
-      const qTags = extractEquipmentTags(question.toUpperCase()).map((h) => h.tag);
-      const uniqTags = [...new Set(qTags)];
-      if (uniqTags.length >= 2) {
-        try {
-          const { traceTagsAnywhere } = await import("@/lib/traceServer");
-          const t = await traceTagsAnywhere({
-            orgId, userId: user.id, fromTag: uniqTags[0], toTag: uniqTags[1], maxSheets: 3,
-          });
-          if (t.result) {
-            traceFacts =
-              `\n\nMEASURED LINE TRACE — the drawn line between ${uniqTags[0]} and ${uniqTags[1]} was ` +
-              `followed pixel-by-pixel on ${t.result.documentName} page ${t.result.page}. TRUST this over ` +
-              `any prose:\n- Route: CONFIRMED, ${t.result.points.length} waypoints, ${t.result.turns} turn(s).\n` +
-              (t.result.alongRoute.length > 0
-                ? `- Components ON the route, in order from ${uniqTags[0]}: ${t.result.alongRoute.join(", ")}.\n`
-                : "- No tagged components were read along the route.\n") +
-              `- Tell the reader the path is drawn on the cited sheet — clicking the citation shows it.`;
-            traceCitations = [{
-              documentId: t.result.documentId, page: t.result.page,
-              tags: [uniqTags[0], uniqTags[1]],
-            }];
-            traceStatus = { attempted: true, found: true,
-              note: `Measured on ${t.result.documentName} p.${t.result.page} — `
-                + `${t.result.points.length} waypoints, ${t.result.turns} turn(s). Click the citation to see it drawn.` };
-          } else if (t.cross?.found) {
-            // The line LEAVES its sheet. Drafting's own mechanism for that
-            // is the off-page connector, and the trace followed it: leg 1
-            // ends at the numbered box, leg 2 picks up at the matching box
-            // on the continuation sheet. One citation per leg, each opening
-            // with its own segment of the path drawn.
-            const legs = t.cross.legs;
-            traceFacts =
-              `\n\nMEASURED LINE TRACE — the line between ${uniqTags[0]} and ${uniqTags[1]} crosses ` +
-              `sheets through off-page connector ${t.cross.connectors.join(", ")}. Both legs were ` +
-              `followed pixel-by-pixel. TRUST this over any prose:\n` +
-              legs.map((l, i) =>
-                `- Leg ${i + 1}: ${l.documentName} page ${l.page}, ${l.points.length} waypoints, ` +
-                `${l.turns} turn(s).` +
-                (l.alongRoute.length > 0 ? ` Components on this leg, in order: ${l.alongRoute.join(", ")}.` : "")
-              ).join("\n") +
-              `\n- Tell the reader the route continues across sheets via connector ` +
-              `${t.cross.connectors.join(", ")}, and each cited sheet shows its own leg drawn.`;
-            traceStatus = { attempted: true, found: true,
-              note: `Measured across sheets via connector ${t.cross.connectors.join(", ")} — `
-                + legs.map((l) => `${l.documentName} p.${l.page}`).join(" → ")
-                + ". Each citation shows its own leg drawn." };
-            traceCitations = legs.map((l, i) => ({
-              documentId: l.documentId, page: l.page,
-              tags: i === 0
-                ? [uniqTags[0], t.cross!.connectors[0]]
-                : [t.cross!.connectors[t.cross!.connectors.length - 1], uniqTags[1]],
-            }));
-          } else if (t.cross && !t.cross.found && t.candidates === 0) {
-            traceFacts =
-              `\n\nMEASURED LINE TRACE — ${t.cross.note}\n` +
-              "Say so plainly. Do NOT invent a path.";
-            traceStatus = { attempted: true, found: false, note: t.cross.note };
-          } else if (t.candidates > 0) {
-            traceFacts =
-              `\n\nMEASURED LINE TRACE — attempted between ${uniqTags[0]} and ${uniqTags[1]} on ` +
-              `${t.tried.length} sheet(s); the line-work could not confirm a route:\n` +
-              t.tried.map((r) => `- ${r.documentName} p.${r.page}: ${r.note}`).join("\n") +
-              "\nSay plainly that the drawn route could not be confirmed and why. Do NOT invent a path.";
-            traceStatus = { attempted: true, found: false,
-              note: t.tried.map((r) => `${r.documentName} p.${r.page}: ${r.note}`).join(" | ") };
-          } else {
-            traceFacts =
-              `\n\nMEASURED LINE TRACE — no indexed sheet carries both ${uniqTags[0]} and ${uniqTags[1]} ` +
-              "on the same page, so nothing could be traced. If they should share a sheet, the library " +
-              "may need image indexing and a rebuild. Say so; do NOT invent a path.";
-          }
-        } catch (e) {
-          // NEVER silent. A swallowed failure here produces a prose answer
-          // with no hint the measured trace was even attempted — which was
-          // observed in production and reads as the feature not existing.
-          traceFacts =
-            `\n\nMEASURED LINE TRACE — attempted between ${uniqTags[0]} and ${uniqTags[1]} but the ` +
-            `trace machinery errored: ${(e as Error).message}. Tell the reader the measured trace ` +
-            "failed with this exact error so it can be fixed. Do NOT invent a path.";
-          traceStatus = { attempted: true, found: false,
-            note: `Trace machinery errored: ${(e as Error).message}` };
-        }
-      }
-    }
-
     // ── DRAWING FACTS: deterministic layer for P&ID/drawing libraries ────
     // Retrieval finds where something is WRITTEN; it cannot count vessels
     // or audit references. When the library has extracted entities, compute
@@ -1158,7 +1055,7 @@ export async function POST(req: NextRequest) {
       "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + traceFacts +
+      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts +
       tableNote + needsDirective + calcProtocol + fetchDirective;
     const answerUser = `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
@@ -1209,6 +1106,16 @@ export async function POST(req: NextRequest) {
     const answerTags = new Set(extractEquipmentTags(answer).map((t) => t.tag));
     const questionTags = extractEquipmentTags(question).map((t) => t.tag);
     for (const t of questionTags) answerTags.add(t);
+    // People type X35 / x 35 / X‑35-with-a-unicode-hyphen; the index stores
+    // one spelling. Resolve each question tag to the index's own form so
+    // citations and sheet pointing survive the difference.
+    try {
+      const { resolveTagAgainstIndex } = await import("@/lib/knowledgeTagResolve");
+      for (const t of questionTags.slice(0, 6)) {
+        const r = await resolveTagAgainstIndex(orgId, t);
+        if (r.resolved && r.resolved !== t) answerTags.add(r.resolved);
+      }
+    } catch { /* resolution is additive */ }
     const citedPageTags = new Map<string, string[]>();
     if (answerTags.size > 0 && used.length > 0) {
       const pages = used
@@ -1255,29 +1162,6 @@ export async function POST(req: NextRequest) {
           } : {}),
         };
       });
-
-    // The measured trace gets citation #0 — the one that opens the sheet
-    // with both endpoints ringed and the traced path ready to draw. Without
-    // this, an answer built on a measured route had nothing to click.
-    for (const tc of [...traceCitations].reverse()) {
-      const existing = citations.find((c) => c.documentId === tc.documentId && c.page === tc.page);
-      if (existing) {
-        // The trace's tag PAIR must survive verbatim — the viewer auto-draws
-        // only when it gets exactly two tags, so merging in extra page tags
-        // here would silently disable the drawn path.
-        existing.tags = tc.tags;
-      } else {
-        citations.unshift({
-          n: 0,
-          documentId: tc.documentId,
-          documentName: docName.get(tc.documentId) ?? "Sheet",
-          page: tc.page,
-          section: null,
-          quote: "",
-          tags: tc.tags,
-        });
-      }
-    }
 
     // ── SHOW-ME GUARANTEE for drawings ────────────────────────────────────
     // Text citations exist only where RETRIEVAL found passages. On a P&ID
@@ -1361,7 +1245,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer, citations, provider, model, mode: "library", missingDocs, budget: budget(),
-      ...(traceStatus ? { trace: traceStatus } : {}),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and
       // still does well. What must never happen is an answer that LOOKS like

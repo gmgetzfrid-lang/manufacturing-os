@@ -215,29 +215,3 @@ export function traceNeighbourhood(
     .sort((a, b) => a.hops - b.hops || a.tag.localeCompare(b.tag));
 }
 
-/**
- * Off-page connectors that go nowhere.
- *
- * A continuation that names a destination drawing which has no matching
- * inbound run is a broken reference: the line leaves the sheet and nothing
- * catches it. This is the audit that finds drawing sets which look complete
- * and aren't.
- */
-export function findBrokenConnectors(
-  edges: readonly LineEdge[],
-): Array<{ lineId: string; drawingId?: string; from: string; danglingAt: string }> {
-  const seenAsSource = new Set<string>();
-  for (const e of edges) seenAsSource.add(normalizeTag(e.from));
-
-  const broken: Array<{ lineId: string; drawingId?: string; from: string; danglingAt: string }> = [];
-  for (const e of edges) {
-    if (!e.offPage) continue;
-    const dest = normalizeTag(e.to);
-    // An off-page run whose destination never appears as the source of any
-    // other run has no continuation on the receiving sheet.
-    if (!seenAsSource.has(dest)) {
-      broken.push({ lineId: e.lineId, drawingId: e.drawingId, from: e.from, danglingAt: e.to });
-    }
-  }
-  return broken;
-}

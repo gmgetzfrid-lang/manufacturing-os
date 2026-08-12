@@ -396,21 +396,6 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
             <div className="text-[9px] font-black uppercase tracking-[0.2em] text-orange-600">Answer</div>
             <CopyButton text={answer.answer} label="Copy answer" />
           </div>
-          {answer.trace && (
-            // What the MEASURED tracer did, verbatim from the server — never
-            // the model's paraphrase. This line existing at all proves the
-            // trace ran; its absence on a trace question means the deployed
-            // code predates the feature.
-            <div className={`mb-3 rounded-xl border px-3 py-2 text-[11px] flex items-start gap-2 ${
-              answer.trace.found
-                ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-200"
-                : "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200"}`}>
-              <span className="font-black uppercase tracking-wider text-[9px] mt-0.5 shrink-0">
-                {answer.trace.found ? "Line traced" : "Trace refused"}
-              </span>
-              <span className="min-w-0">{answer.trace.note}</span>
-            </div>
-          )}
           {hero ? (
             <div className="text-lg font-bold text-[var(--color-text)] leading-snug">
               <InlineAnswer text={hero.text} citations={answer.citations} onCite={onCite} />

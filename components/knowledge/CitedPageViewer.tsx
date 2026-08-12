@@ -28,7 +28,7 @@ import {
   Highlighter,
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
-import { locateTagsOnPage, traceLineOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
+import { locateTagsOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -98,77 +98,6 @@ export default function CitedPageViewer({
   const canLocate = !!orgId && !!view.documentId;
 
   // ── Tracing a pipe run — the highlighter stroke ──────────────────────
-  const [trace, setTrace] = useState<{
-    from: string; to: string; points: Array<{ nx: number; ny: number }>;
-    method: "raster" | "vision" | "none"; turns?: number | null;
-  } | null>(null);
-  const [tracing, setTracing] = useState(false);
-  const [traceNote, setTraceNote] = useState<string | null>(null);
-  // Seed the trace inputs with the answer's own tags — the usual ask is
-  // "show me the run the answer just described", not a fresh pair.
-  const [traceFrom, setTraceFrom] = useState(() => tags?.[0] ?? "");
-  const [traceTo, setTraceTo] = useState(() => tags?.[1] ?? "");
-  // A different citation opens with different tags; re-seed rather than
-  // leaving the previous answer's pair sitting in the boxes.
-  useEffect(() => {
-    setTraceFrom(tags?.[0] ?? "");
-    setTraceTo(tags?.[1] ?? "");
-  }, [tags]);
-
-  // Opened with exactly two tags — from a trace answer's citation — the
-  // path draws ITSELF. The ask already measured this route server-side, so
-  // this is a cache hit; making the person re-type both tags and press the
-  // button to see a line the system has already computed would be theater.
-  const autoTraced = useRef<string | null>(null);
-  useEffect(() => {
-    if (!orgId || !view.documentId || tags?.length !== 2) return;
-    const key = `${view.documentId}#${pageNumber}#${tags[0]}#${tags[1]}`;
-    if (autoTraced.current === key) return;
-    autoTraced.current = key;
-    void runTrace(tags[0].toUpperCase(), tags[1].toUpperCase());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, view.documentId, pageNumber, tags]);
-
-  /** What the vectorizer saw, when asked to show its work. */
-  const [lineWork, setLineWork] = useState<{
-    lines: Array<{ x1: number; y1: number; x2: number; y2: number }>;
-    segments: number;
-    diagnostics: {
-      nodes: number; startCandidates: number; goalCandidates: number;
-      crossingStyle: "break" | "unknown"; crossingBreaks: number;
-    };
-  } | null>(null);
-
-  const runTrace = useCallback(async (from: string, to: string, debug = false) => {
-    if (!orgId || !view.documentId || !from || !to) return;
-    setTracing(true);
-    setTraceNote(null);
-    if (debug) setLineWork(null);
-    try {
-      const res = await traceLineOnPage({
-        orgId, documentId: view.documentId, page: pageNumber, fromTag: from, toTag: to, debug,
-      });
-      if (res.found) {
-        setTrace({ from, to, points: res.points, method: res.method, turns: res.turns });
-        setTraceNote(res.note);
-      } else {
-        setTrace(null);
-        setTraceNote(res.note ?? "Couldn't follow that line on this sheet.");
-      }
-      if (res.debug) {
-        setLineWork({
-          lines: res.debug.lineWork,
-          segments: res.debug.segments,
-          diagnostics: res.debug.diagnostics,
-        });
-      }
-    } catch (e) {
-      setTrace(null);
-      setTraceNote((e as Error).message);
-    } finally {
-      setTracing(false);
-    }
-  }, [orgId, view.documentId, pageNumber]);
 
   const locate = useCallback(async (wanted: string[], announce: boolean) => {
     if (!orgId || !view.documentId || wanted.length === 0) return;
@@ -206,9 +135,6 @@ export default function CitedPageViewer({
     setMarks([]);
     setLocateNote(null);
     setElsewhere([]);
-    // A trace belongs to exactly one sheet face — never carry it across.
-    setTrace(null);
-    setTraceNote(null);
     if (canLocate && view.documentId === documentId && pageNumber === page && (tags?.length ?? 0) > 0) {
       void locate(tags!, false);
     }
@@ -265,7 +191,6 @@ export default function CitedPageViewer({
                 ? `jumped here from ${title.replace(/\.pdf$/i, "")}`
                 : `${section ? `${section} · ` : ""}cited page ${page}${
                     pageNumber !== page ? ` · viewing page ${pageNumber}`
-                    : trace ? ` · ${trace.from} → ${trace.to} traced`
                     : marks.length > 0 ? " · tags marked" : " · passage highlighted"}`}
             </div>
           </div>
@@ -285,7 +210,6 @@ export default function CitedPageViewer({
             {(pageNumber !== page || view.documentId !== documentId) && (
               <button onClick={() => {
                   setMarks([]); setElsewhere([]); setLocateNote(null);
-                  setTrace(null); setTraceNote(null);
                   if (view.fileKey !== fileKey) {
                     setNumPages(null);
                     setView({ fileKey, title, documentId });
@@ -326,84 +250,6 @@ export default function CitedPageViewer({
                 Point at it
               </button>
             </form>
-            {/* Trace a pipe run — the drawing's yellow highlighter. */}
-            <form className="flex items-center gap-1.5"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const from = traceFrom.trim().toUpperCase();
-                const to = traceTo.trim().toUpperCase();
-                if (from && to) {
-                  void runTrace(from, to);
-                  // Ring both ends too, so the stroke visibly connects them.
-                  void locate([from, to], false);
-                }
-              }}>
-              <input value={traceFrom} onChange={(e) => setTraceFrom(e.target.value)}
-                placeholder="From (P-32)"
-                className="w-24 px-2 py-1 rounded-lg text-[11px] font-mono border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
-              <span className="text-[10px] text-[var(--color-text-muted)]">→</span>
-              <input value={traceTo} onChange={(e) => setTraceTo(e.target.value)}
-                placeholder="To (X-32)"
-                className="w-24 px-2 py-1 rounded-lg text-[11px] font-mono border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
-              <button type="submit" disabled={tracing || !traceFrom.trim() || !traceTo.trim()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 disabled:opacity-40 transition-colors">
-                {tracing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Highlighter className="w-3.5 h-3.5" />}
-                Trace line
-              </button>
-            </form>
-            {/* Show the vectorized line-work. If the yellow route looks wrong,
-                this answers WHY in one glance: either the tracer found your
-                pipes and chose badly, or it never saw them at all. */}
-            <button
-              onClick={() => {
-                if (lineWork) { setLineWork(null); return; }
-                const f = traceFrom.trim().toUpperCase(), t = traceTo.trim().toUpperCase();
-                if (f && t) void runTrace(f, t, true);
-              }}
-              disabled={tracing || !traceFrom.trim() || !traceTo.trim()}
-              className="text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline disabled:opacity-40">
-              {lineWork ? "hide line-work" : "show line-work"}
-            </button>
-            {trace && (
-              <button onClick={() => { setTrace(null); setTraceNote(null); }}
-                className="text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">
-                clear trace
-              </button>
-            )}
-            {lineWork && (
-              <span className="text-[10px] text-cyan-700 dark:text-cyan-400">
-                {lineWork.segments.toLocaleString()} strokes · {lineWork.diagnostics.nodes.toLocaleString()} junctions ·
-                {" "}{lineWork.diagnostics.startCandidates}/{lineWork.diagnostics.goalCandidates} pipe ends near the two tags ·
-                {" "}{lineWork.diagnostics.crossingStyle === "break"
-                  ? `${lineWork.diagnostics.crossingBreaks} broken crossings read`
-                  : "crossing breaks NOT detected"}
-              </span>
-            )}
-            {marks.length > 0 && (
-              <button onClick={() => { setMarks([]); setLocateNote(null); }}
-                className="text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">
-                clear {marks.length} marker{marks.length === 1 ? "" : "s"}
-              </button>
-            )}
-            {traceNote && (
-              <span className="text-[10px] text-amber-700 dark:text-amber-400">{traceNote}</span>
-            )}
-            {trace && (
-              // A followed line and a guessed line must never look alike on a
-              // drawing someone might isolate a pipe from.
-              trace.method === "raster" ? (
-                <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
-                  Followed the drawn line {trace.from} → {trace.to}
-                  {typeof trace.turns === "number" && <> · {trace.turns} turn{trace.turns === 1 ? "" : "s"}</>}
-                  {" "}· still confirm the line number before isolation work.
-                </span>
-              ) : (
-                <span className="text-[10px] text-amber-700 dark:text-amber-400">
-                  <b>Estimated, not followed.</b> The line-work couldn&apos;t be read on this sheet, so this
-                  is the model&apos;s guess at {trace.from} → {trace.to} — treat it as a hint, not a route.
-                </span>
-              )
-            )}
             {marks.some((m) => m.source === "vision") && (
               <span className="text-[10px] text-sky-700 dark:text-sky-400">
                 Blue swipes are approximate — this sheet was read by AI, not extracted.
@@ -449,57 +295,6 @@ export default function CitedPageViewer({
                   className="shadow-xl"
                   loading={<div className="py-16 text-center"><Loader2 className="w-5 h-5 animate-spin inline text-[var(--color-text-muted)]" /></div>}
                 />
-                {/* What the vectorizer extracted, drawn over the page. Cyan
-                    where it thinks pipe is; if your line has no cyan on it,
-                    the tracer never saw it and no amount of search tuning
-                    would have helped. */}
-                {lineWork && (
-                  <svg className="absolute inset-0 w-full h-full pointer-events-none"
-                    viewBox="0 0 100 100" preserveAspectRatio="none">
-                    {lineWork.lines.map((l, i) => (
-                      <line key={i}
-                        x1={(l.x1 * 100).toFixed(3)} y1={(l.y1 * 100).toFixed(3)}
-                        x2={(l.x2 * 100).toFixed(3)} y2={(l.y2 * 100).toFixed(3)}
-                        stroke="rgba(6, 182, 212, 0.75)" strokeWidth={2}
-                        vectorEffect="non-scaling-stroke" />
-                    ))}
-                  </svg>
-                )}
-                {/* The highlighter stroke: wide, translucent, over the page —
-                    forgiving of waypoint error the way a real highlighter is
-                    forgiving of a shaky hand. non-scaling-stroke keeps the
-                    width honest even though the viewBox stretches. */}
-                {trace && trace.points.length >= 2 && (
-                  <svg
-                    className="absolute inset-0 w-full h-full pointer-events-none"
-                    viewBox="0 0 100 100"
-                    preserveAspectRatio="none"
-                  >
-                    <polyline
-                      points={trace.points.map((p) => `${(p.nx * 100).toFixed(2)},${(p.ny * 100).toFixed(2)}`).join(" ")}
-                      fill="none"
-                      // A followed route can be drawn tight over the actual
-                      // line-work; an estimate has to stay wide and vague,
-                      // because a crisp stroke in the wrong place is a lie.
-                      stroke={trace.method === "raster"
-                        ? "rgba(250, 204, 21, 0.55)"
-                        : "rgba(251, 146, 60, 0.35)"}
-                      strokeWidth={trace.method === "raster" ? 4 : 6}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeDasharray={trace.method === "raster" ? undefined : "14 10"}
-                      vectorEffect="non-scaling-stroke"
-                    />
-                  </svg>
-                )}
-                {trace && trace.points.length >= 2 && [trace.points[0], trace.points[trace.points.length - 1]].map((p, i) => (
-                  <div key={`trace-end-${i}`}
-                    className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
-                    style={{ left: `${p.nx * 100}%`, top: `${p.ny * 100}%` }}>
-                    <span className={`block w-3 h-3 rounded-full border-2 border-white shadow ${
-                      trace.method === "raster" ? "bg-amber-500" : "bg-orange-400"}`} />
-                  </div>
-                ))}
                 {/* A marker is a HIGHLIGHTER SWIPE over the tag, not a vague
                     ring around a neighborhood: engineers mark up drawings by
                     swiping the label, and a swipe reads as "this text" while

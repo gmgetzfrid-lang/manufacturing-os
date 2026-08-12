@@ -25,8 +25,6 @@ const TABLE = 'from("knowledge_page_entities")';
 const EXEMPT: Record<string, string> = {
   "app/api/knowledge/locate/route.ts":
     "narrowed to one document+page+tag list — bounded by the caller's tags, never a slab",
-  "app/api/knowledge/trace/route.ts":
-    "narrowed to one document+page and two named tags",
   "lib/equipmentBridgeServer.ts": 'already filters .eq("kind", "equipment")',
   "lib/linkProposerServer.ts": 'already filters .in("kind", ["opc", "ref"])',
   "lib/knowledgeIngest.ts": "writes rows (insert/delete), never bulk-reads them",

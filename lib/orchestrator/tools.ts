@@ -262,77 +262,6 @@ const checkAuditHistory: ToolDef = {
   },
 };
 
-// The pixel tracer, askable. Until this existed the only door to the real
-// line-follower was clicking two tags in the sheet viewer; asking the same
-// question in words fell through to sheet-level co-occurrence and the answer
-// pretended less than the software could actually do.
-const traceLineOnDrawing: ToolDef = {
-  name: "trace_line_on_drawing",
-  description:
-    "Follow the DRAWN LINE between two tags on a P&ID sheet, pixel by pixel, and report the "
-    + "measured route (which sheet, how many turns). Use for 'trace the line from X to Y', "
-    + "'are X and Y physically connected', 'follow the pipe from X'. Finds the right sheet "
-    + "itself. Honest by design: it answers 'measured' or it refuses — a refusal means the "
-    + "geometry could not be certain, which beats a guess.",
-  params: [
-    { name: "from_tag", type: "string", required: true, description: "Tag to start from, e.g. V-16." },
-    { name: "to_tag", type: "string", required: true, description: "Tag to reach, e.g. P-58." },
-  ],
-  async run(args, ctx) {
-    const fromTag = normalizeTag(String(args.from_tag));
-    const toTag = normalizeTag(String(args.to_tag));
-    const { traceTagsAnywhere } = await import("@/lib/traceServer");
-    const { result, tried, candidates, cross } = await traceTagsAnywhere({
-      orgId: ctx.orgId, userId: ctx.userId, fromTag, toTag,
-    });
-    if (!result && cross?.found) {
-      return {
-        data: {
-          found: true, method: "measured", crosses_sheets: true,
-          connector: cross.connectors.join(", "),
-          legs: cross.legs.map((l) => ({
-            sheet: l.documentName, page: l.page, turns: l.turns,
-            waypoints: l.points.length, components_on_leg: l.alongRoute,
-          })),
-          note: cross.note,
-          basis: "Measured by following the drawn line-work on each sheet and hopping through the "
-            + "off-page connector both sheets print — drafting's own continuation mechanism.",
-        },
-      };
-    }
-    if (result) {
-      return {
-        data: {
-          found: true, method: "measured",
-          sheet: result.documentName, page: result.page,
-          turns: result.turns, waypoints: result.points.length,
-          note: result.note,
-          basis: "Measured by following the sheet's actual drawn line-work — not inferred from tags sharing a page.",
-        },
-      };
-    }
-    if (candidates === 0) {
-      return {
-        data: {
-          found: false,
-          note: `No sheet's index carries both ${fromTag} and ${toTag} on the same page. `
-            + "If the drawings are CAD exports or scans, the library may need image indexing "
-            + "turned on and a rebuild before tags exist to trace between. "
-            + "For a multi-sheet route, trace_pid_lines can follow off-page references instead.",
-        },
-      };
-    }
-    return {
-      data: {
-        found: false,
-        sheets_tried: tried.map((t) => ({ sheet: t.documentName, page: t.page, reason: t.note })),
-        note: "The line-work was read on each candidate sheet but no route could be confirmed. "
-          + "These refusals are deliberate: a confident wrong pipe is the one unacceptable answer.",
-      },
-    };
-  },
-};
-
 const tracePidLines: ToolDef = {
   name: "trace_pid_lines",
   description:
@@ -359,18 +288,35 @@ const tracePidLines: ToolDef = {
       return { data: { start: args.start_tag, connected: near, basis } };
     }
     const r = tracePath(edges, String(args.start_tag), String(args.end_tag));
-    // When both tags sit on ONE sheet, co-occurrence has nothing to add —
-    // the drawn line is right there and the pixel tracer can follow it.
-    // Say so in the result, in imperative terms, because the alternative
-    // was observed in production: the model reported 'the connection must
-    // be read off the drawing itself' while holding the tool that reads
-    // drawings, and stopped.
+    // When both tags sit on ONE sheet, say so and point at the viewer —
+    // that is where a human reads the drawn connection. (An automated
+    // line-follower was tried, in several revisions, against real SHX
+    // drawings; endpoint location plus dense line-work kept it below the
+    // reliability an engineer can act on, and it was retired deliberately.)
     let sameSheet: Array<{ sheet: string; page: number }> = [];
     try {
-      const { sheetsCarryingBoth } = await import("@/lib/traceServer");
-      sameSheet = (await sheetsCarryingBoth(
-        ctx.orgId, normalizeTag(String(args.start_tag)), normalizeTag(String(args.end_tag)),
-      )).map((x) => ({ sheet: x.documentName, page: x.page }));
+      const a = normalizeTag(String(args.start_tag));
+      const b = normalizeTag(String(args.end_tag));
+      const { data: entRows } = await supabaseAdmin
+        .from("knowledge_page_entities")
+        .select("document_id, page, tag")
+        .eq("org_id", ctx.orgId).in("tag", [a, b]).eq("kind", "equipment").limit(4000);
+      const byPage = new Map<string, Set<string>>();
+      for (const row of (entRows ?? []) as Array<{ document_id: string; page: number; tag: string }>) {
+        const k = `${row.document_id}#${row.page}`;
+        byPage.set(k, (byPage.get(k) ?? new Set()).add(row.tag));
+      }
+      const hits = [...byPage].filter(([, tags]) => tags.size === 2).map(([k]) => k);
+      if (hits.length > 0) {
+        const ids = [...new Set(hits.map((k) => k.split("#")[0]))];
+        const { data: docs } = await supabaseAdmin
+          .from("knowledge_documents").select("id, name").in("id", ids);
+        const names = new Map(((docs ?? []) as Array<{ id: string; name: string }>).map((d) => [d.id, d.name]));
+        sameSheet = hits.map((k) => {
+          const [documentId, page] = k.split("#");
+          return { sheet: names.get(documentId) ?? "Sheet", page: Number(page) };
+        }).filter((x) => x.sheet !== "Sheet" || true);
+      }
     } catch { /* advisory only */ }
     return {
       data: {
@@ -380,10 +326,10 @@ const tracePidLines: ToolDef = {
         reason: r.reason, basis,
         ...(sameSheet.length > 0 ? {
           same_sheet: sameSheet,
-          next_step:
-            "Both tags are drawn on the SAME sheet. Do not answer yet: call "
-            + "trace_line_on_drawing with these tags — it follows the actual drawn line "
-            + "and reports the components on it. Only answer from co-occurrence if that call refuses.",
+          note:
+            "Both tags are drawn on the SAME sheet — tell the reader which sheet and page, and that "
+            + "the drawn connection is read off the sheet itself (the viewer rings both tags). Do not "
+            + "invent the routing between them.",
         } : {}),
       },
     };
@@ -585,7 +531,7 @@ const logAuditCompletion: ToolDef = {
 
 export const TOOLS: readonly ToolDef[] = [
   findDocuments, searchDocuments, queryEquipmentByUnit, equipmentMentions,
-  checkPermissions, checkAuditHistory, traceLineOnDrawing, tracePidLines,
+  checkPermissions, checkAuditHistory, tracePidLines,
   checkoutDocument, notifyPersonnel, logAuditCompletion,
 ];
 

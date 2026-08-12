@@ -105,9 +105,6 @@ export interface KnowledgeAnswer {
   missingDocs?: string[];
   /** Month spend after this ask vs the asker's cap (governed workspaces). */
   budget?: { spentUsd: number; capUsd: number };
-  /** Set when the question asked for a line trace: what the MEASURED tracer
-   *  did, verbatim from code — never the model's paraphrase. */
-  trace?: { attempted: boolean; found: boolean; note: string };
   /** How the passages were found. "keyword" is not a degraded state — it's
    *  what this product has always done, and it's excellent at exact tags.
    *  It's stated so an answer can never IMPLY a meaning-based search that
@@ -915,38 +912,6 @@ export async function locateTagsOnPage(input: {
   return apiPost("/api/knowledge/locate", input);
 }
 
-/** Follow a pipe run between two tags on a drawing sheet — returns ordered
- *  waypoints the viewer strokes over the page like a yellow highlighter.
- *  First trace costs one vision call; cached traces are free and instant. */
-export async function traceLineOnPage(input: {
-  orgId: string; documentId: string; page: number;
-  fromTag: string; toTag: string; lineNumber?: string;
-  /** Also return the vectorized line-work, so the viewer can draw what the
-   *  tracer sees. Skips the cache — the point is to re-read the sheet. */
-  debug?: boolean;
-}): Promise<{
-  found: boolean;
-  points: Array<{ nx: number; ny: number }>;
-  note: string | null;
-  /** "raster" = followed the drawn line-work (corners are real corners).
-   *  "vision" = the model's estimate — a hint, never a route. */
-  method: "raster" | "vision" | "none";
-  turns?: number | null;
-  source: "cache" | "live";
-  debug?: {
-    lineWork: Array<{ x1: number; y1: number; x2: number; y2: number }>;
-    segments: number;
-    truncated: boolean;
-    diagnostics: {
-      nodes: number; startCandidates: number; goalCandidates: number;
-      crossingStyle: "break" | "unknown"; crossingBreaks: number;
-    };
-    from: { nx: number; ny: number };
-    to: { nx: number; ny: number };
-  } | null;
-}> {
-  return apiPost("/api/knowledge/trace", input);
-}
 
 /** Download the equipment register as CSV (opens straight into Excel). */
 export async function downloadEquipmentRegister(orgId: string, libraryId: string): Promise<void> {
