@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { ALL_ROLES } from "@/types/schema";
 
 // Bounded lookup of an auth user by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -39,6 +40,14 @@ export async function POST(req: NextRequest) {
 
   if (!email?.trim()) {
     return NextResponse.json({ error: "Email is required" }, { status: 400 });
+  }
+
+  // Only real roles may be granted. Without this, `role` is a free string
+  // written straight to org_members.role/roles — a typo silently strands a
+  // member with rights nothing recognizes, and it's an unvalidated write on
+  // a service-role (RLS-bypassing) path.
+  if (!(ALL_ROLES as string[]).includes(String(role))) {
+    return NextResponse.json({ error: `Invalid role: ${String(role)}` }, { status: 400 });
   }
 
   // Verify caller is Admin or DocCtrl in the target org
@@ -101,10 +110,19 @@ export async function POST(req: NextRequest) {
   // member just (re)activates them with the chosen role instead of erroring.
   const { data: existingMember } = await supabaseAdmin
     .from("org_members")
-    .select("uid")
+    .select("uid, role")
     .eq("org_id", orgId)
     .eq("uid", userId)
     .maybeSingle();
+
+  // "Add member" doubles as a role-change on the re-add path (it upserts the
+  // role). That means a DocCtrl could re-add an existing Admin at a lower
+  // role and silently demote them — an unintended privilege change that the
+  // Admin-only guard above doesn't catch because the NEW role isn't Admin.
+  // Only an Admin may alter an existing Admin's membership.
+  if (existingMember && String(existingMember.role) === "Admin" && (callerMember.role as string) !== "Admin") {
+    return NextResponse.json({ error: "Only an Admin can change an existing Admin's role" }, { status: 403 });
+  }
 
   if (existingMember) {
     const { error: updateError } = await supabaseAdmin

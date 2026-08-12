@@ -159,4 +159,6 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "deployment-wide settings (hosting-plan storage ceilings) — not org data; re-set on the storage page after a restore",
   knowledge_line_traces:
     "cached AI line traces over drawing sheets — regenerated on demand from the drawings themselves; no authored data lives here",
+  signup_attempts:
+    "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
 };

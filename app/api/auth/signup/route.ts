@@ -3,11 +3,50 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 const TRIAL_DAYS = 60;
 
+// Public, unauthenticated endpoint — cap attempts per source IP per hour so
+// nobody can loop it to enumerate accounts or burn trial orgs. Best-effort:
+// if the attempt table isn't present yet (pre-migration) the check no-ops
+// rather than blocking real signups.
+const SIGNUP_MAX_PER_HOUR = 8;
+
+function clientIp(req: NextRequest): string {
+  const fwd = req.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0].trim();
+  return req.headers.get("x-real-ip")?.trim() || "unknown";
+}
+
+/** Returns true when the caller is over the limit and should be turned away. */
+async function signupRateLimited(ip: string): Promise<boolean> {
+  if (ip === "unknown") return false; // don't punish everyone if IP is missing
+  const since = new Date(Date.now() - 3600_000).toISOString();
+  const { count, error } = await supabaseAdmin
+    .from("signup_attempts")
+    .select("id", { count: "exact", head: true })
+    .eq("ip", ip)
+    .gte("created_at", since);
+  if (error) return false; // table absent / transient — fail open
+  return (count ?? 0) >= SIGNUP_MAX_PER_HOUR;
+}
+
+async function recordSignupAttempt(ip: string, email: string | null, outcome: string): Promise<void> {
+  await supabaseAdmin.from("signup_attempts").insert({ ip, email, outcome })
+    .then(() => undefined, () => undefined);
+}
+
 export async function POST(req: NextRequest) {
+  const ip = clientIp(req);
   try {
+    if (await signupRateLimited(ip)) {
+      return NextResponse.json(
+        { error: "Too many signup attempts from this network. Please wait a while and try again." },
+        { status: 429 },
+      );
+    }
+
     const { email, password, displayName, companyName } = await req.json();
 
     if (!email || !password || !displayName || !companyName) {
+      await recordSignupAttempt(ip, null, "error");
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
     }
 
@@ -15,6 +54,10 @@ export async function POST(req: NextRequest) {
     if (trimmedOrgName.length < 2) {
       return NextResponse.json({ error: "Organization name is too short." }, { status: 400 });
     }
+
+    // Log every well-formed attempt so probing (repeated 409s) counts toward
+    // the per-IP window, not just successful signups.
+    await recordSignupAttempt(ip, String(email), "attempt");
 
     // 1. Check if org name already exists (case-insensitive)
     const { data: existingOrg } = await supabaseAdmin
