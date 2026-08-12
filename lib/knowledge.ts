@@ -36,6 +36,12 @@ export interface KnowledgeAiFeatures {
    *  Crude Unit…"). Unit pairs are machine-read; the rest goes to the
    *  model verbatim. */
   decoder?: string;
+  /** This library is a DRAWING SET — show the Drawing Intelligence panel
+   *  (equipment census, reference audit, register export). Off by default:
+   *  a standards library mentioning document numbers is not a drawing set,
+   *  and unrequested drawing tooling on it reads as the app deciding what
+   *  the library is. */
+  drawingIntel?: boolean;
   /** Legend / symbols / line-key documents (ids from THIS library) whose
    *  content rides along with every question. Max 3. */
   legendDocIds?: string[];

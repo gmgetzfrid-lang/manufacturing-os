@@ -588,6 +588,9 @@ export default function KnowledgeLibraryPage() {
   const [library, setLibrary] = useState<KnowledgeLibrary | null>(null);
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [history, setHistory] = useState<KnowledgeQuestion[]>([]);
+  // The per-document status list is bookkeeping, not the point of the page —
+  // collapsed by default, live counts always in the header.
+  const [docsOpen, setDocsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [question, setQuestion] = useState("");
@@ -945,6 +948,7 @@ export default function KnowledgeLibraryPage() {
   }
 
   const readyDocs = docs.filter((d) => d.status === "ready").length;
+  const indexingDocs = docs.filter((d) => d.status === "indexing" || d.status === "pending" || d.status === "stale").length;
 
   return (
     <PageShell>
@@ -1155,7 +1159,11 @@ export default function KnowledgeLibraryPage() {
               isController={isController} onChanged={() => void refresh()} />
           )}
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Documents ({docs.length})</h2>
+            <button onClick={() => setDocsOpen((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+              {docsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              Documents ({readyDocs}/{docs.length} indexed{indexingDocs > 0 ? ` · ${indexingDocs} in progress` : ""})
+            </button>
             {isController && (
               <>
                 <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple hidden
@@ -1198,7 +1206,7 @@ export default function KnowledgeLibraryPage() {
             </div>
           )}
 
-          {docs.length === 0 && !uploadState ? (
+          {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
               <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
               {isController ? "Drop your standards and practice PDFs here to build the shelf." : "No documents yet — Admin or Doc Control can add PDFs."}
@@ -1248,7 +1256,7 @@ export default function KnowledgeLibraryPage() {
               ))}
             </ul>
           )}
-          {activeOrgId && (
+          {activeOrgId && library.aiFeatures?.drawingIntel === true && (
             <DrawingIntelPanel orgId={activeOrgId} libraryId={libraryId}
               isController={isController} refreshKey={readyDocs}
               onRebuilt={() => void refresh()} />

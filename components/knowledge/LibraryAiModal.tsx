@@ -34,6 +34,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const [clarifyFacets, setClarifyFacets] = useState(library.aiFeatures?.clarifyFacets === true);
   const [visionPages, setVisionPages] = useState(library.aiFeatures?.visionPages !== false);
   const [visionAllPages, setVisionAllPages] = useState(library.aiFeatures?.visionAllPages === true);
+  const [drawingIntel, setDrawingIntel] = useState(library.aiFeatures?.drawingIntel === true);
   const [decoder, setDecoder] = useState(library.aiFeatures?.decoder ?? "");
   const [legendDocIds, setLegendDocIds] = useState<Set<string>>(
     new Set(library.aiFeatures?.legendDocIds ?? []));
@@ -49,6 +50,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setClarifyFacets(library.aiFeatures?.clarifyFacets === true);
     setVisionPages(library.aiFeatures?.visionPages !== false);
     setVisionAllPages(library.aiFeatures?.visionAllPages === true);
+    setDrawingIntel(library.aiFeatures?.drawingIntel === true);
     setDecoder(library.aiFeatures?.decoder ?? "");
     setLegendDocIds(new Set(library.aiFeatures?.legendDocIds ?? []));
     let cancelled = false;
@@ -221,6 +223,21 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                   index intact, and referenced figures are read from the page image at answer
                   time). Costs a few cents per page on your key. Turn it on, then
                   <b> Rebuild index</b>.
+                </span>
+              </span>
+            </label>
+            <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+              <input type="checkbox" checked={drawingIntel} onChange={(e) => setDrawingIntel(e.target.checked)}
+                className="accent-orange-600 w-4 h-4 mt-0.5" />
+              <span className="min-w-0">
+                <span className="block text-xs font-bold text-[var(--color-text)]">
+                  This is a drawing set — enable Drawing Intelligence
+                </span>
+                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  Adds the drawing tools to this library&apos;s page: equipment census, off-page
+                  reference audit, register export, per-sheet tag index. For P&amp;IDs, isometrics,
+                  loop sheets. Leave OFF for standards and manuals — they don&apos;t need drawing
+                  tooling just because they mention document numbers.
                 </span>
               </span>
             </label>
