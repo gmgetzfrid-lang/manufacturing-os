@@ -46,7 +46,10 @@ const VISION_SYSTEM =
   "    TITLE: <drawing title>\n" +
   "  (read these from the border's own fields — never infer them from elsewhere);\n" +
   "- all notes, legends, and callouts, in reading order;\n" +
-  "- table contents row by row, keeping columns aligned with ' | ' separators.\n\n" +
+  "- table contents row by row, keeping columns aligned with ' | ' separators. Put the table's " +
+  "caption (e.g. 'TABLE 3 — BOLT TORQUE') on its own line DIRECTLY above its first row, and start " +
+  "the rows with the header row. For figures/charts, transcribe the caption line, then describe " +
+  "the figure in one sentence and list any values it presents.\n\n" +
   "Preserve exact alphanumerics — a tag transcribed wrong is worse than one omitted. " +
   "If a region is genuinely illegible, write [illegible] rather than guessing.";
 

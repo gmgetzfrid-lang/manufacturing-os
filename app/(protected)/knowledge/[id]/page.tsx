@@ -708,33 +708,54 @@ export default function KnowledgeLibraryPage() {
     const attempted = new Set<string>();
     (async () => {
       try {
-        for (;;) {
+        // THREE documents in flight, not one. Each document's ingest is its
+        // own chain of serverless invocations, so a hundred-file library
+        // used to be a hundred SEQUENTIAL chains — the single biggest wall
+        // in indexing time. Three concurrent chains cut it to roughly a
+        // third; the cap stays modest because vision pages bill the same
+        // per-user key and providers rate-limit per minute.
+        const CONCURRENCY = 3;
+        const active = new Map<string, string>();      // id -> name
+        let remaining = 0;
+        const report = (progress?: { visionPages?: number; visionSkipReason?: string | null }) => {
           if (!mountedRef.current) return;
-          const list = await listKnowledgeDocuments(libraryId);
-          if (!mountedRef.current) return;
-          setDocs(list);
-          const queue = list.filter((d) =>
-            (d.status === "pending" || d.status === "stale" || d.status === "indexing") &&
-            !attempted.has(d.id));
-          const next = queue[0];
-          if (!next) break;
-          attempted.add(next.id);
-          setAutoIndexing({ name: next.name, remaining: queue.length });
-          try {
-            await ingestKnowledgeDocument(next.id, (_i, _t, progress) => {
-              if (mountedRef.current && progress) {
-                setAutoIndexing({
-                  name: next.name, remaining: queue.length,
-                  visionPages: progress.visionPages,
-                  visionSkipReason: progress.visionSkipReason,
+          const names = [...active.values()];
+          setAutoIndexing({
+            name: names.length > 1 ? `${names[0]} (+${names.length - 1} more)` : names[0] ?? "",
+            remaining,
+            ...(progress ? {
+              visionPages: progress.visionPages,
+              visionSkipReason: progress.visionSkipReason,
+            } : {}),
+          });
+        };
+        const worker = async (): Promise<void> => {
+          for (;;) {
+            if (!mountedRef.current) return;
+            const list = await listKnowledgeDocuments(libraryId);
+            if (!mountedRef.current) return;
+            setDocs(list);
+            const queue = list.filter((d) =>
+              (d.status === "pending" || d.status === "stale" || d.status === "indexing") &&
+              !attempted.has(d.id) && !active.has(d.id));
+            remaining = queue.length + active.size;
+            const next = queue[0];
+            if (!next) return;
+            attempted.add(next.id);
+            active.set(next.id, next.name);
+            report();
+            try {
+              await ingestKnowledgeDocument(next.id, (_i, _t, progress) => {
+                if (progress) report(progress);
+                void listKnowledgeDocuments(libraryId).then((ds) => {
+                  if (mountedRef.current) setDocs(ds);
                 });
-              }
-              void listKnowledgeDocuments(libraryId).then((ds) => {
-                if (mountedRef.current) setDocs(ds);
               });
-            });
-          } catch { /* row is marked errored server-side; move on */ }
-        }
+            } catch { /* row is marked errored server-side; move on */ }
+            finally { active.delete(next.id); report(); }
+          }
+        };
+        await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
       } finally {
         autoIndexRef.current = false;
         if (mountedRef.current) {

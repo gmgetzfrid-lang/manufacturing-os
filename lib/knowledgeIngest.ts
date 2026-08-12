@@ -15,7 +15,8 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
-import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills } from "@/lib/knowledgeText";
+import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
+} from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
   parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS,
@@ -283,6 +284,25 @@ export async function ingestKnowledgeDocBatch(
         self(tb.drawingNumber);
         if (tb.sheetNumber) self(`${tb.drawingNumber}-SH${tb.sheetNumber}`);
       }
+    }
+
+    // ── Caption anchors: TABLE 3 / FIGURE 5-1 become addressable ──────
+    // Standards constantly say "see Table 3" — and until now "Table 3" was
+    // just two words in some chunk. Recording where each caption LIVES lets
+    // the ask route pull the actual table (text and page image) whenever
+    // prose points at it, instead of hoping retrieval stumbles onto it.
+    for (const line of lines) {
+      const cap = CAPTION_RE.exec(line);
+      if (!cap) continue;
+      const kindWord = cap[1].toUpperCase().startsWith("FIG") ? "FIGURE"
+        : cap[1].toUpperCase() === "CHART" ? "CHART"
+        : cap[1].toUpperCase() === "DETAIL" ? "DETAIL" : "TABLE";
+      entityRows.push({
+        org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+        page: p, kind: "anchor", tag: `${kindWord} ${cap[2].toUpperCase()}`,
+        raw: line.trim().slice(0, 160), x: null, y: null,
+        nx: null, ny: null, pos_source: null,
+      });
     }
 
     lastCompletedPage = p;

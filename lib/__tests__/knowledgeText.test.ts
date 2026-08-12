@@ -254,3 +254,58 @@ describe("ensurePdfPolyfills", () => {
     expect(sum([2, 2])).toBe(4);
   });
 });
+
+// Tables used to be destroyed BEFORE chunking: all whitespace collapsed to
+// single spaces, turning a stress table into an undelimited number soup the
+// answer prompt had to disclaim. These pin the new contract: a table is one
+// chunk, rows intact, caption attached — because "see Table 3" in prose is
+// only answerable if a chunk exists that IS Table 3.
+describe("table-aware chunking", () => {
+  const TABLE = [
+    "TABLE 3 — BOLT TORQUE",
+    "Size | Torque | Lubricant",
+    '1/2" | 30 ft-lb | dry',
+    '3/4" | 100 ft-lb | dry',
+    '1" | 245 ft-lb | moly',
+  ].join("\n");
+
+  it("keeps a table as ONE chunk with rows and caption intact", () => {
+    const prose = "Bolting shall follow the torques given. ".repeat(40);
+    const chunks = chunkPageText(`${prose}\n${TABLE}\n${prose}`);
+    const tableChunk = chunks.find((c) => c.includes("TABLE 3"));
+    expect(tableChunk).toBeTruthy();
+    expect(tableChunk).toContain('3/4" | 100 ft-lb');
+    expect(tableChunk!.split("\n").length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("re-heads each part of an oversized table with caption + header row", () => {
+    const rows = Array.from({ length: 200 }, (_, i) => `${i} | value-${i} | note-${i}`);
+    const big = ["TABLE 9 — LONG", "id | value | note", ...rows].join("\n");
+    const chunks = chunkPageText(big);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.startsWith("TABLE 9 — LONG")).toBe(true);
+      expect(c.split("\n")[1]).toBe("id | value | note");
+    }
+  });
+
+  it("column-aligned text-layer tables are detected too", () => {
+    const t = [
+      "FIGURE 5-1  SPAN LIMITS",
+      "NPS 2      3.0 m      2.1 m",
+      "NPS 4      4.3 m      3.0 m",
+      "NPS 6      5.2 m      3.7 m",
+    ].join("\n");
+    const chunks = chunkPageText(`intro text that is long enough to matter here\n${t}`);
+    const tc = chunks.find((c) => c.includes("FIGURE 5-1"));
+    expect(tc).toBeTruthy();
+    expect(tc).toContain("NPS 4");
+  });
+
+  it("plain prose still chunks exactly as before", () => {
+    const prose = "This is a sentence about pipe supports. ".repeat(120);
+    const chunks = chunkPageText(prose);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(c.includes("\n")).toBe(false);
+  });
+});

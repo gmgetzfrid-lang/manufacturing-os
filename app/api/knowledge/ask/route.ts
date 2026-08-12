@@ -953,6 +953,7 @@ export async function POST(req: NextRequest) {
       return out;
     };
 
+    let anchorFacts = "";
     let pageImages: Array<{ base64: string; mediaType: string; page: number; documentId: string }> = [];
     if (visionEnabled && chunks.length > 0) {
       const targets: Array<{ documentId: string; page: number }> = [];
@@ -963,17 +964,52 @@ export async function POST(req: NextRequest) {
       };
       // (a) top-ranked passage pages
       for (const c of chunks.slice(0, 3)) addTarget(c.document_id, c.page);
-      // (b) hunted table/figure pages
+      // (b) referenced table/figure pages. Ingestion records where every
+      // caption LIVES (kind 'anchor'), so "see Table 3" resolves by lookup
+      // — deterministic, zero extra search — with the old text hunt kept as
+      // the fallback for corpora indexed before anchors existed.
       const refCounts = new Map<string, number>();
-      for (const c of chunks) {
-        for (const m of c.content.matchAll(/\b(?:Table|Fig(?:ure)?\.?)\s+[A-Z0-9][A-Z0-9.\-]{0,10}/gi)) {
+      for (const c of [...chunks, { content: question } as { content: string }]) {
+        for (const m of c.content.matchAll(/\b(?:Table|Fig(?:ure)?\.?|Chart|Detail)\s+[A-Z0-9][A-Z0-9.\-]{0,10}/gi)) {
           const label = m[0].replace(/\s+/g, " ").trim();
           refCounts.set(label, (refCounts.get(label) ?? 0) + 1);
         }
       }
-      const topRefs = [...refCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      const topRefs = [...refCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const normalizeLabel = (l: string) => l.toUpperCase()
+        .replace(/^FIG\.?\s/, "FIGURE ").replace(/\s+/g, " ").trim();
+      const wantedAnchors = [...new Set(topRefs.map(([l]) => normalizeLabel(l)))];
+      const anchorHits: Array<{ tag: string; document_id: string; page: number }> = [];
+      if (wantedAnchors.length > 0) {
+        try {
+          const libIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+          const { data: aRows } = await supabaseAdmin
+            .from("knowledge_page_entities")
+            .select("tag, document_id, page")
+            .in("library_id", libIds).eq("kind", "anchor").in("tag", wantedAnchors)
+            .limit(200);
+          const retrievedDocs = new Set(chunks.map((c) => c.document_id));
+          for (const tag of wantedAnchors) {
+            const rows = ((aRows ?? []) as typeof anchorHits).filter((r) => r.tag === tag);
+            // The Table 3 in the SAME document the prose came from, not a
+            // namesake in another standard.
+            const best = rows.find((r) => retrievedDocs.has(r.document_id)) ?? rows[0];
+            if (best && !excludedDocIds.has(best.document_id)) anchorHits.push(best);
+          }
+        } catch { /* anchors are additive */ }
+      }
+      const resolved = new Set(anchorHits.map((a) => a.tag));
+      for (const a of anchorHits) addTarget(a.document_id, a.page);
       for (const [label] of topRefs) {
+        if (resolved.has(normalizeLabel(label))) continue;
         for (const hit of await findPagesByText([label], 2)) addTarget(hit.documentId, hit.page);
+      }
+      if (anchorHits.length > 0) {
+        anchorFacts =
+          "\n\nREFERENCED TABLES & FIGURES — recorded at indexing, where each one lives:\n" +
+          anchorHits.map((a) =>
+            `- ${a.tag} → ${docName.get(a.document_id) ?? "document"} p.${a.page}` +
+            " (its page image is attached — read values from the IMAGE, not from prose about it)").join("\n");
       }
       pageImages = await renderTargets(targets, MAX_DEEP_READ_PAGES);
     }
@@ -1116,7 +1152,7 @@ export async function POST(req: NextRequest) {
       "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts +
+      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + needsDirective + calcProtocol + fetchDirective;
     const answerUser = `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
