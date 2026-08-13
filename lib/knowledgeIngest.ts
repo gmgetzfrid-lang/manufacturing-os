@@ -16,6 +16,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
+  sanitizeStorageText,
 } from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
@@ -133,6 +134,11 @@ export async function ingestKnowledgeDocBatch(
       else buf += " ";
     }
     if (buf.trim()) lines.push(buf.trim());
+    // Broken font CMaps put LONE SURROGATES / control bytes in the text
+    // layer; unsanitized they reach the chunk insert and Postgres refuses
+    // the whole batch ("invalid input syntax for type json"). Scrub at the
+    // source so every consumer (chunks, tags, captions) gets clean text.
+    lines = lines.map(sanitizeStorageText);
 
     // ── VISION FALLBACK: this page can't be read from its text layer.
     //    AutoCAD SHX text plots as LINE-WORK (tags exist as strokes, not
@@ -172,7 +178,8 @@ export async function ingestKnowledgeDocBatch(
           visionLeft--;
           const transcript = out.text.trim();
           if (transcript.length >= TEXTLESS_PAGE_MAX_CHARS) {
-            lines = transcript.split("\n").map((l) => l.trim()).filter(Boolean);
+            lines = transcript.split("\n")
+              .map((l) => sanitizeStorageText(l.trim())).filter(Boolean);
             visionRead = true;
             visionPages++;
           }
@@ -354,6 +361,18 @@ export async function ingestKnowledgeDocBatch(
         await insertChunks(batch.slice(0, mid));
         await insertChunks(batch.slice(mid));
         return;
+      }
+      // Encoding poison (lone surrogates / NUL from a bad PDF text layer):
+      // lines are sanitized at extraction, but text already in flight — or a
+      // path this misses — must degrade to a scrubbed retry, never to a
+      // failed rebuild.
+      if (insErr && /invalid input syntax for type json|unsupported unicode|invalid byte sequence/i.test(insErr.message)) {
+        const scrubbed = batch.map((r) => ({
+          ...r,
+          content: sanitizeStorageText(String(r.content ?? "")),
+          section: r.section == null ? r.section : sanitizeStorageText(String(r.section)),
+        }));
+        ({ error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(scrubbed));
       }
       if (insErr) throw new Error(`chunk insert failed: ${insErr.message}`);
     };

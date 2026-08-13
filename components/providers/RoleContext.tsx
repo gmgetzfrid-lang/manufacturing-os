@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
@@ -47,14 +47,21 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  // Hydrate from localStorage synchronously so a hard refresh restores the
-  // workspace on the very first render — otherwise pages keyed on activeOrgId
-  // (e.g. /documents) may render in a transient null state and hang on their
-  // initial loading=true.
-  const [activeOrgId, _setActiveOrgId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try { return window.localStorage.getItem(LS_ORG_KEY); } catch { return null; }
-  });
+  // Restore the workspace BEFORE FIRST PAINT, not in the initializer. The
+  // synchronous initializer read localStorage on the client but the server
+  // pre-render had null — every signed-in user's first client render
+  // disagreed with the server HTML across the whole protected tree, which
+  // is the React #418 hydration error that kept appearing in production.
+  // A layout effect runs after hydration but before the browser paints, so
+  // the org is back for the first visible frame (no flash, no hang on a
+  // transient-null loading state) and both hydration renders start null.
+  const [activeOrgId, _setActiveOrgId] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    try {
+      const v = window.localStorage.getItem(LS_ORG_KEY);
+      if (v) _setActiveOrgId((cur) => cur ?? v);
+    } catch { /* private mode — boot resolves the org from the profile */ }
+  }, []);
   const [activeRole, setActiveRole] = useState<Role>("Viewer");
   const [roles, setRoles] = useState<Role[]>([]);
   const [member, setMember] = useState<OrgMember | null>(null);

@@ -7,7 +7,7 @@
 // interruption. Once dismissed, never returns — per the directive's
 // "don't interrupt experienced users" rule.
 
-import React, { useState } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import { Info, X } from "lucide-react";
 
 interface FirstRunHintProps {
@@ -21,24 +21,33 @@ interface FirstRunHintProps {
 
 const STORAGE_PREFIX = "first_run_hint:";
 
+const subscribeNever = () => () => {};
+
 export default function FirstRunHint({ storageKey, children, tone = "info" }: FirstRunHintProps) {
-  // Lazy initial state reads localStorage exactly once on mount.
-  // Sidesteps the React-19 "setState in effect body" cascading-render
-  // anti-pattern and avoids a wasted re-render. SSR-safe (returns true
-  // when window is undefined so the banner doesn't flash).
-  const [hidden, setHidden] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    try { return window.localStorage.getItem(STORAGE_PREFIX + storageKey) === "1"; }
-    catch { return true; }
-  });
+  // Hydration-safe localStorage read (same pattern as CiteCoachMark). The
+  // old lazy useState initializer returned hidden=true on the server but
+  // read the real value on the client — so an undismissed banner existed in
+  // the client's first render and not in the server HTML, and React threw
+  // hydration error #418 on every page that mounts a hint. With
+  // useSyncExternalStore the hydration pass uses the server snapshot
+  // (hidden) on both sides, then React re-renders with the client value.
+  const stored = useSyncExternalStore(
+    subscribeNever,
+    () => {
+      try { return window.localStorage.getItem(STORAGE_PREFIX + storageKey) === "1"; }
+      catch { return true; }
+    },
+    () => true,
+  );
+  const [dismissed, setDismissed] = useState(false);
 
   const dismiss = () => {
     try { window.localStorage.setItem(STORAGE_PREFIX + storageKey, "1"); }
     catch { /* noop */ }
-    setHidden(true);
+    setDismissed(true);
   };
 
-  if (hidden) return null;
+  if (stored || dismissed) return null;
 
   const toneClass = tone === "warning"
     ? "bg-amber-50 border-amber-200 text-amber-900"
