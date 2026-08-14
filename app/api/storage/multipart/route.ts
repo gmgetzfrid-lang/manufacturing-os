@@ -15,6 +15,7 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { assertSafeStorageKey } from "@/lib/storageKey";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
   const action = String(body.action ?? "");
   const path = String(body.path ?? "");
   if (!path) return bad("path is required");
+  try { assertSafeStorageKey(path); } catch { return bad("Invalid path"); }
 
   // Same key-level authorization as upload-url: org-prefixed keys demand
   // active membership in that org.

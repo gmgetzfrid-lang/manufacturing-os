@@ -13,26 +13,32 @@
 // an interaction, it gets a line here too — this is the contract that
 // keeps the field user from being lost.
 
-import React, { useState } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import {
   HelpCircle, X as XIcon, GripVertical, ChevronRight, ChevronLeft,
   CalendarRange, ListTree, CalendarDays, MousePointerClick,
 } from "lucide-react";
 
 const SEEN_KEY = "exec.guide.seen.v1";
+const subscribeNever = () => () => {};
 
 export default function ExecutionGuide() {
   const [open, setOpen] = useState(false);
   // First-run: show the banner until the user has opened the guide or
-  // dismissed it once.
-  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    try { return window.localStorage.getItem(SEEN_KEY) === "1"; } catch { return true; }
-  });
+  // dismissed it once. Hydration-safe read (server snapshot: seen) — a lazy
+  // useState initializer here made the client's first render disagree with
+  // the server HTML for anyone who hadn't dismissed it (React #418).
+  const seen = useSyncExternalStore(
+    subscribeNever,
+    () => { try { return window.localStorage.getItem(SEEN_KEY) === "1"; } catch { return true; } },
+    () => true,
+  );
+  const [sessionDismissed, setSessionDismissed] = useState(false);
+  const bannerDismissed = seen || sessionDismissed;
 
   const markSeen = () => {
     try { window.localStorage.setItem(SEEN_KEY, "1"); } catch { /* noop */ }
-    setBannerDismissed(true);
+    setSessionDismissed(true);
   };
 
   return (

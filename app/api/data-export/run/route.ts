@@ -35,6 +35,38 @@ interface RunBody {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
+/** Bell-icon alert to every OTHER Admin/DocCtrl that a full export just ran. */
+async function alertAdminsOfExport(
+  admin: import("@supabase/supabase-js").SupabaseClient,
+  info: { orgId: string; actorUserId: string; actorEmail: string; destination: string },
+): Promise<void> {
+  const { data: admins } = await admin
+    .from("org_members")
+    .select("uid")
+    .eq("org_id", info.orgId)
+    .eq("status", "active")
+    .in("role", ["Admin", "DocCtrl"]);
+  const recipients = ((admins ?? []) as Array<{ uid: string }>)
+    .map((m) => m.uid)
+    .filter((uid) => uid && uid !== info.actorUserId);
+  if (recipients.length === 0) return;
+  const when = new Date().toISOString();
+  await admin.from("notifications").insert(
+    recipients.map((uid) => ({
+      org_id: info.orgId,
+      user_id: uid,
+      kind: "security_export",
+      title: "Full workspace export was run",
+      body: `${info.actorEmail} exported the entire workspace (${info.destination}). If this wasn't expected, review the account immediately.`,
+      link: "/admin/data-export",
+      resource_type: "export",
+      actor_user_id: info.actorUserId,
+      actor_name: info.actorEmail,
+      metadata: { destination: info.destination, at: when },
+    })),
+  );
+}
+
 export async function POST(req: NextRequest) {
   let body: RunBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
@@ -96,6 +128,20 @@ export async function POST(req: NextRequest) {
         ? { kind: "destination", destination: dest }
         : { kind: "inline" },
     });
+
+    // OUT-OF-BAND ALERT (finding: compromised-admin exfiltration). A full-org
+    // export is the single highest-impact action in the app — it packages
+    // every table + file into one downloadable ZIP. A silent success is
+    // exactly what a phished-credential attacker wants; a stolen admin login
+    // shouldn't be able to drain the workspace without the real admins
+    // seeing it. Notify every OTHER Admin/DocCtrl the moment a run completes,
+    // so an unexpected export surfaces on their bell within seconds. This is
+    // detection, not prevention (the actor is already authorized), but it
+    // collapses the window between exfiltration and discovery.
+    await alertAdminsOfExport(auth.admin, {
+      orgId, actorUserId: auth.userId, actorEmail: auth.email,
+      destination: dest ? (dest.destination_type as string) : "inline download",
+    }).catch(() => undefined);
 
     const completedAt = new Date().toISOString();
     const duration = Date.parse(completedAt) - Date.parse(startedAt);

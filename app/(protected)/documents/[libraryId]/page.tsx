@@ -911,6 +911,21 @@ export default function LibraryExplorerPage() {
   // without itself triggering one.
   const folderDocsCache = useRef<Map<string, DocumentRecord[]>>(new Map());
 
+  // Realtime doc changes bump this; the fetch effect below re-runs on it.
+  // The channel lives in its OWN effect keyed only on libraryId — it used to
+  // live inside the fetch effect, which re-runs on every folder click, so
+  // each click tore the socket down mid-connect and the console filled with
+  // "WebSocket is closed before the connection is established".
+  const [docsRefreshTick, setDocsRefreshTick] = useState(0);
+  useEffect(() => {
+    if (!libraryId) return;
+    const channel = supabase.channel(`docs-lib-${libraryId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `library_id=eq.${libraryId}` },
+        () => setDocsRefreshTick((t) => t + 1))
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [libraryId]);
+
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
     let alive = true;
@@ -949,13 +964,9 @@ export default function LibraryExplorerPage() {
     };
 
     fetchDocs();
-    const channel = supabase.channel(`docs-lib-${libraryId}-${currentFolderId ?? "root"}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `library_id=eq.${libraryId}` },
-        () => { if (alive) fetchDocs(); })
-      .subscribe();
 
-    return () => { alive = false; supabase.removeChannel(channel); };
-  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docFetchLimit]);
+    return () => { alive = false; };
+  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docFetchLimit, docsRefreshTick]);
 
   // Read-&-understood completion for the visible docs — one grouped query per
   // page, recomputed from the roster (never a cached count), so the Ack pill/

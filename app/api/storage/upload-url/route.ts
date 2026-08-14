@@ -3,6 +3,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { assertSafeStorageKey } from "@/lib/storageKey";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -22,6 +23,7 @@ export async function POST(req: NextRequest) {
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
+  try { assertSafeStorageKey(path); } catch { return NextResponse.json({ error: "Invalid path" }, { status: 400 }); }
 
   // Authorize the KEY, not just the session. Every sensitive R2 key is
   // orgs/<orgId>/… — require the caller to be an active member of that org, or

@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
-  parseAnswerBlocks, ensurePdfPolyfills, type RetrievedChunk,
+  parseAnswerBlocks, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -307,5 +307,39 @@ describe("table-aware chunking", () => {
     const chunks = chunkPageText(prose);
     expect(chunks.length).toBeGreaterThan(1);
     for (const c of chunks) expect(c.includes("\n")).toBe(false);
+  });
+});
+
+describe("sanitizeStorageText", () => {
+  // Characters are built with fromCharCode so this source file itself stays
+  // free of control bytes and lone surrogates.
+  const NUL = String.fromCharCode(0);
+  const LONE_HIGH = String.fromCharCode(0xd835);
+  const LONE_LOW = String.fromCharCode(0xdd53);
+
+  it("drops the lone surrogates a broken PDF CMap emits", () => {
+    // This is the exact poison behind 'chunk insert failed: invalid input
+    // syntax for type json' — an unpaired \udXXX escape in the insert body.
+    expect(sanitizeStorageText(`V-101${LONE_HIGH} relief header`)).toBe("V-101 relief header");
+    expect(sanitizeStorageText(`${LONE_LOW}see Table 3`)).toBe("see Table 3");
+  });
+
+  it("keeps a properly paired surrogate (real astral character)", () => {
+    const bold = LONE_HIGH + LONE_LOW; // U+1D553 as a valid pair
+    expect(sanitizeStorageText(`x${bold}y`)).toBe(`x${bold}y`);
+  });
+
+  it("drops NUL and control bytes but keeps newlines and tabs", () => {
+    const dirty = `line one${NUL}\nline${String.fromCharCode(8)} two\tend`;
+    expect(sanitizeStorageText(dirty)).toBe("line one\nline two\tend");
+  });
+
+  it("survives round-tripping through JSON like the insert body does", () => {
+    const dirty = `PSV-12${LONE_HIGH}${NUL} set at 250 psig`;
+    const clean = sanitizeStorageText(dirty);
+    // JSON.parse(JSON.stringify(...)) is what PostgREST effectively does —
+    // clean text must make it through without an unpaired escape.
+    expect(JSON.parse(JSON.stringify(clean))).toBe("PSV-12 set at 250 psig");
+    expect(clean.includes(NUL)).toBe(false);
   });
 });

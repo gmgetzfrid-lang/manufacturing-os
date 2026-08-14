@@ -281,14 +281,27 @@ export async function buildAndDeliverExport(params: {
         const signingSecret = dest.webhook_secret_encrypted
           ? decryptSecret(dest.webhook_secret_encrypted)
           : "";
+        // Integrity over the PAYLOAD, not the filename. The old signature
+        // covered only `filename`, so a MITM (or a compromised relay) could
+        // swap the ZIP body and still verify, and any past delivery could be
+        // replayed byte-for-byte. Sign `<timestamp>.<sha256(zip)>`: the
+        // receiver recomputes sha256 of the body, rebuilds the string with
+        // the X-MOS-Timestamp header, HMACs it with the shared secret, and
+        // rejects a stale timestamp to kill replays. The content hash is
+        // published in its own header so the receiver can also check
+        // at-rest integrity without recomputing the HMAC.
+        const bodyHash = createHash("sha256").update(zipBytes).digest("hex");
+        const timestamp = new Date().toISOString();
         const headers: Record<string, string> = {
           "Content-Type": "application/zip",
           "X-MOS-Export-Filename": filename,
           "X-MOS-Export-Org-Id": dest.org_id,
           "X-MOS-Export-Bytes": String(zipBytes.byteLength),
+          "X-MOS-Content-SHA256": bodyHash,
+          "X-MOS-Timestamp": timestamp,
         };
         if (signingSecret) {
-          headers["X-MOS-Signature"] = "sha256=" + hmacSign(signingSecret, filename);
+          headers["X-MOS-Signature"] = "sha256=" + hmacSign(signingSecret, `${timestamp}.${bodyHash}`);
         }
         // zipBytes is a Uint8Array; cast through unknown to BodyInit so
         // Next.js 16's stricter fetch typing accepts it.

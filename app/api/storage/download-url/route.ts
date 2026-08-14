@@ -4,6 +4,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { canDiscover } from "@/lib/permissions";
+import { assertSafeStorageKey } from "@/lib/storageKey";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 export async function GET(req: NextRequest) {
@@ -22,6 +23,10 @@ export async function GET(req: NextRequest) {
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
+  // Refuse traversal / control-byte keys before the org-prefix gate reasons
+  // about them — a key like orgs/<mine>/../../orgs/<other>/x would otherwise
+  // authorize against my prefix while naming something else.
+  try { assertSafeStorageKey(path); } catch { return NextResponse.json({ error: "Invalid path" }, { status: 400 }); }
 
   // Authorize the KEY, not just the session. Every sensitive R2 key is
   // orgs/<orgId>/… — require the caller to be an active member of that org, or

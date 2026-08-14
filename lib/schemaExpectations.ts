@@ -99,6 +99,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "push_subscriptions", migration: "20260804_push_subscriptions.sql" },
   { table: "recently_viewed_docs", migration: "20260806_intelligence_layer.sql" },
   { table: "revision_branches", migration: "20260823_publish_contract.sql" },
+  { table: "signup_attempts", migration: "20261010_signup_rate_limit.sql" },
   { table: "sla_defaults", migration: "20260529_phase_b_notifications.sql" },
   { table: "statements", migration: "20260819_orphan_tables_backfill.sql" },
   { table: "subscriptions", migration: "20260622_subscriptions.sql" },

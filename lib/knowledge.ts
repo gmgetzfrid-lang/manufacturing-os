@@ -104,6 +104,10 @@ export interface KnowledgeAnswer {
   provider: string;
   model: string;
   mode: AskMode;
+  /** Saved history row id — the handle a thumbs-up/down rating attaches to. */
+  questionId?: string | null;
+  /** Documents present in the library whose index is incomplete. */
+  partialDocs?: string[];
   /** Internet mode only: whether a LIVE web tool ran (vs model knowledge). */
   liveWeb?: boolean;
   /** Documents the passages referenced that no linked library contains —
@@ -448,6 +452,12 @@ async function ingestLoop(
     }
   }
   throw new Error("Indexing did not finish — reopen the library to resume.");
+}
+
+/** Thumbs-up/down on an answer. 1 = useful (its cited pages will seed
+ *  retrieval for similar future questions), -1 = wrong/missed, 0 = clear. */
+export async function rateKnowledgeAnswer(questionId: string, rating: 1 | -1 | 0): Promise<void> {
+  await apiPost("/api/knowledge/feedback", { questionId, rating });
 }
 
 export async function deleteKnowledgeDocument(id: string): Promise<void> {

@@ -54,7 +54,8 @@ export type NotificationKind =
   | "legal_hold_placed"          // (to Admin/DocCtrl + owner) a legal hold was placed on a record
   | "legal_hold_released"        // (to Admin/DocCtrl + owner) a legal hold was released
   | "access_recert_due"          // (to owner/Admin/DocCtrl) a library's access needs recertification
-  | "orchestrator_message";      // a colleague sent this via the document-controller assistant
+  | "orchestrator_message"       // a colleague sent this via the document-controller assistant
+  | "security_export";           // (to other Admins/DocCtrl) a full workspace export was run
 
 export interface NotificationInput {
   orgId: string;
