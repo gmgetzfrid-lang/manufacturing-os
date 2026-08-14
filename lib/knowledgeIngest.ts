@@ -16,7 +16,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
-  sanitizeStorageText,
+  sanitizeStorageText, truncateSafe,
 } from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
@@ -216,14 +216,14 @@ export async function ingestKnowledgeDocBatch(
         for (const hit of extractEquipmentTags(line)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "equipment", tag: hit.tag, raw: line.slice(0, 160), x: null, y: null,
+            page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(line, 160), x: null, y: null,
             nx: null, ny: null, pos_source: null,
           });
         }
         for (const ref of extractDrawingRefs(line)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "ref", tag: ref, raw: line.slice(0, 160), x: null, y: null,
+            page: p, kind: "ref", tag: ref, raw: truncateSafe(line, 160), x: null, y: null,
             nx: null, ny: null, pos_source: null,
           });
         }
@@ -247,14 +247,14 @@ export async function ingestKnowledgeDocBatch(
         for (const hit of extractEquipmentTags(str)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "equipment", tag: hit.tag, raw: str.slice(0, 160), x, y,
+            page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(str, 160), x, y,
             nx, ny, pos_source: nx === null ? null : "text",
           });
         }
         for (const ref of extractDrawingRefs(str)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "ref", tag: ref, raw: str.slice(0, 160), x, y,
+            page: p, kind: "ref", tag: ref, raw: truncateSafe(str, 160), x, y,
             nx, ny, pos_source: nx === null ? null : "text",
           });
         }
@@ -273,16 +273,16 @@ export async function ingestKnowledgeDocBatch(
         for (const box of parseOpcBoxes(line)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "opc", tag: box, raw: line.slice(0, 160), x: null, y: null,
+            page: p, kind: "opc", tag: box, raw: truncateSafe(line, 160), x: null, y: null,
             nx: null, ny: null, pos_source: null,
           });
         }
       }
       const tb = extractTitleBlock(pageText);
       if (tb.drawingNumber) {
-        const raw = (`DWG ${tb.drawingNumber}` +
+        const raw = truncateSafe(`DWG ${tb.drawingNumber}` +
           (tb.sheetNumber ? ` SH ${tb.sheetNumber}` : "") +
-          (tb.rev ? ` REV ${tb.rev}` : "")).slice(0, 160);
+          (tb.rev ? ` REV ${tb.rev}` : ""), 160);
         const self = (tag: string) => entityRows.push({
           org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
           page: p, kind: "self", tag, raw, x: null, y: null,
@@ -307,7 +307,7 @@ export async function ingestKnowledgeDocBatch(
       entityRows.push({
         org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
         page: p, kind: "anchor", tag: `${kindWord} ${cap[2].toUpperCase()}`,
-        raw: line.trim().slice(0, 160), x: null, y: null,
+        raw: truncateSafe(line.trim(), 160), x: null, y: null,
         nx: null, ny: null, pos_source: null,
       });
     }
@@ -349,7 +349,19 @@ export async function ingestKnowledgeDocBatch(
     // as a 502. Small statements keep each one comfortably inside the
     // timeout; a timeout that still slips through halves the batch and
     // retries rather than failing the page range.
-    const insertChunks = async (batch: typeof rows): Promise<void> => {
+    const insertChunks = async (rawBatch: typeof rows): Promise<void> => {
+      // LAST LINE OF DEFENSE, on EVERY insert — not a retry. Extraction
+      // sanitizes lines, but the CHUNKER slices at arbitrary indices and a
+      // cut through a surrogate pair re-creates the exact poison sanitize
+      // removed (proven by reproduction: astral-dense pages poisoned 3 of 5
+      // chunks AFTER clean sanitization). Chunking is pair-safe now too,
+      // but nothing unstorable reaches the wire regardless of what any
+      // future upstream code produces. Cost: microseconds per chunk.
+      const batch = rawBatch.map((r) => ({
+        ...r,
+        content: sanitizeStorageText(String(r.content ?? "")),
+        section: r.section == null ? r.section : sanitizeStorageText(String(r.section)),
+      }));
       let { error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(batch);
       if (insErr && (insErr.code === "PGRST204" || /section/.test(insErr.message))) {
         // Pre-20260914 DB: retry without the section column.
@@ -362,17 +374,17 @@ export async function ingestKnowledgeDocBatch(
         await insertChunks(batch.slice(mid));
         return;
       }
-      // Encoding poison (lone surrogates / NUL from a bad PDF text layer):
-      // lines are sanitized at extraction, but text already in flight — or a
-      // path this misses — must degrade to a scrubbed retry, never to a
-      // failed rebuild.
-      if (insErr && /invalid input syntax for type json|unsupported unicode|invalid byte sequence/i.test(insErr.message)) {
-        const scrubbed = batch.map((r) => ({
-          ...r,
-          content: sanitizeStorageText(String(r.content ?? "")),
-          section: r.section == null ? r.section : sanitizeStorageText(String(r.section)),
-        }));
-        ({ error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(scrubbed));
+      // Residual encoding rejects — Postgres's wording ("invalid input
+      // syntax for type json", "unsupported Unicode escape", "invalid byte
+      // sequence") AND PostgREST's own parse failure ("Empty or invalid
+      // json", PGRST102): retry once per-row so one bad row can't take 29
+      // good ones down with it.
+      if (insErr && /invalid input syntax for type json|unsupported unicode|invalid byte sequence|empty or invalid json/i.test(insErr.message)) {
+        insErr = null;
+        for (const row of batch) {
+          const { error: rowErr } = await supabaseAdmin.from("knowledge_chunks").insert(row);
+          if (rowErr && !/duplicate/i.test(rowErr.message)) insErr = rowErr;
+        }
       }
       if (insErr) throw new Error(`chunk insert failed: ${insErr.message}`);
     };

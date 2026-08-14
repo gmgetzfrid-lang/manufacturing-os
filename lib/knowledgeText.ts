@@ -126,6 +126,17 @@ export function chunkPageText(raw: string, target = 1400, overlap = 160): string
   return chunkProse(raw, target, overlap);
 }
 
+/** Slice boundaries must never land INSIDE a surrogate pair. A cut through
+ *  an astral character turns its two valid halves into two lone surrogates —
+ *  text that sanitizeStorageText already passed becomes JSON-unstorable
+ *  AFTER chunking, and the insert dies with "invalid input syntax for type
+ *  json". Found by reproduction: astral-dense pages (broken PDF fonts map
+ *  glyphs to Plane-1 codepoints) poisoned 3 of 5 chunks. */
+const alignEnd = (s: string, i: number): number =>
+  i > 0 && s.charCodeAt(i - 1) >= 0xd800 && s.charCodeAt(i - 1) <= 0xdbff ? i - 1 : i;
+const alignStart = (s: string, i: number): number =>
+  i < s.length && s.charCodeAt(i) >= 0xdc00 && s.charCodeAt(i) <= 0xdfff ? i + 1 : i;
+
 function chunkProse(raw: string, target = 1400, overlap = 160): string[] {
   const text = raw.replace(/\s+/g, " ").trim();
   if (text.length < 40) return [];            // page furniture / stray marks
@@ -141,11 +152,20 @@ function chunkProse(raw: string, target = 1400, overlap = 160): string[] {
       const lastStop = window.lastIndexOf(". ");
       if (lastStop > 0) end = start + Math.floor(target * 0.6) + lastStop + 1;
     }
+    end = alignEnd(text, end);
     chunks.push(text.slice(start, end).trim());
     if (end >= text.length) break;
-    start = Math.max(end - overlap, start + 1);
+    start = alignStart(text, Math.max(end - overlap, start + 1));
   }
   return chunks.filter((c) => c.length >= 40);
+}
+
+/** Truncate without ever leaving half a surrogate pair at the cut. Use for
+ *  every slice(0, n) whose result lands in a DB row or a provider JSON
+ *  body — a plain slice can poison both. */
+export function truncateSafe(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return s.slice(0, alignEnd(s, n));
 }
 
 /** Pull a JSON array of strings out of model output that may be wrapped in

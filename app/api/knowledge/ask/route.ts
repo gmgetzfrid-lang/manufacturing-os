@@ -33,7 +33,7 @@ import {
 } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
-  parseSearchQueries, parseFollowupPlan, extractCitationNumbers,
+  parseSearchQueries, parseFollowupPlan, extractCitationNumbers, sanitizeStorageText, truncateSafe,
   type RetrievedChunk, mergeRetrievedRRF,
 } from "@/lib/knowledgeText";
 import { fuseRankings } from "@/lib/hybridRank";
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const libraryId = String(body.libraryId ?? "").trim();
-  const question = String(body.question ?? "").trim().slice(0, 2000);
+  const question = truncateSafe(sanitizeStorageText(String(body.question ?? "").trim()), 2000);
   // Aspects the asker picked from a clarify round ("Safety", "Design"…) —
   // when present the answer narrows to them and no new clarify is proposed.
   const focus = Array.isArray(body.focus)
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     : [];
   // Values the asker supplied after a **Need:** round ("test temperature =
   // 150°F") — calculation inputs the documents can't know.
-  const inputs = typeof body.inputs === "string" ? body.inputs.trim().slice(0, 1000) : "";
+  const inputs = typeof body.inputs === "string" ? truncateSafe(sanitizeStorageText(body.inputs.trim()), 1000) : "";
   // "library" (default): answers ONLY from the indexed documents, page-cited.
   // "internet": the provider's live web tool (or model knowledge where the
   // provider has none) — clearly labeled, never mixed with library citations.
@@ -349,7 +349,7 @@ export async function POST(req: NextRequest) {
         history.length > 0
           ? "(Follow-up in a conversation. Recent turns:\n" +
             history.slice(-2).map((t) =>
-              `Q: ${t.question}\nA (abridged): ${t.answer.slice(0, 240)}`).join("\n---\n") +
+              `Q: ${t.question}\nA (abridged): ${truncateSafe(t.answer, 240)}`).join("\n---\n") +
             "\nResolve pronouns and ellipsis against these turns; carry forward the equipment, " +
             "documents, and constraints they establish when writing queries.)"
           : "",
@@ -650,7 +650,7 @@ export async function POST(req: NextRequest) {
       const preview = chunks.length === 0
         ? "(nothing matched the first-round queries)"
         : chunks.slice(0, 14).map((c, i) =>
-            `[${i + 1}] (${libNameById.get(c.libraryId ?? libraryId) ?? "library"}) p.${c.page}: ${c.content.slice(0, 180)}`).join("\n");
+            `[${i + 1}] (${libNameById.get(c.libraryId ?? libraryId) ?? "library"}) p.${c.page}: ${truncateSafe(c.content, 180)}`).join("\n");
       const refineOut = await call({
         system:
           'You review passages retrieved from technical document libraries to answer a question. These ' +
@@ -1375,7 +1375,7 @@ export async function POST(req: NextRequest) {
         const parts: string[] = [];
         for (const c of (legendChunks ?? []) as Array<{ content: string }>) {
           if (budgetLeft <= 0) break;
-          const piece = c.content.slice(0, budgetLeft);
+          const piece = truncateSafe(c.content, budgetLeft);
           parts.push(piece);
           budgetLeft -= piece.length;
         }
@@ -1602,7 +1602,7 @@ export async function POST(req: NextRequest) {
           documentName: docName.get(c.document_id) ?? "Document",
           page: c.page,
           section: c.section ?? null,
-          quote: c.content.slice(0, 1600),
+          quote: truncateSafe(c.content, 1600),
           ...(pageTags.length > 0 ? { tags: pageTags.slice(0, 12) } : {}),
           ...(hasLinks ? {
             libraryName: libNameById.get(c.libraryId ?? libraryId) ?? "Library",
