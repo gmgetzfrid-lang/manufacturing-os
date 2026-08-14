@@ -552,6 +552,10 @@ export async function POST(req: NextRequest) {
     //    the answer follows the spaghetti instead of stopping at one strand;
     //    (b) declare documents that are referenced but apparently absent.
     const missingDocs: string[] = [];
+    // Documents that ARE in the library but can't answer: zero or partial
+    // indexed pages. Named in the answer so "bad results" become "re-index
+    // EP 5-1-1" instead of a silent gap.
+    const partialDocs: string[] = [];
     {
       const preview = chunks.length === 0
         ? "(nothing matched the first-round queries)"
@@ -622,12 +626,98 @@ export async function POST(req: NextRequest) {
           ),
         ];
       }
-      // Validate claimed-missing docs: if a search for the designation hits
-      // real passages in ANY reachable library, it isn't missing.
+      // ── PULL BY NAME: chunk search finds text INSIDE pages, so a document
+      //    whose pages don't repeat its own designation is unfindable by
+      //    content even though it sits in the library — the exact failure
+      //    behind "EP 5-1-1 is not in the loaded passages at all" while
+      //    EP 5-1-1 was right there in the Documents list. Designations from
+      //    the model's plan AND the question are matched against DOCUMENT
+      //    NAMES across every reachable library; matched documents contribute
+      //    reserved passages that bypass ranking entirely.
+      const squashName = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const designations = new Set<string>();
+      for (const src of [...plan.missingDocs, ...plan.queries, question]) {
+        for (const m of src.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
+          const sq = squashName(m[0]);
+          if (sq.length >= 4 && /\d/.test(sq) && /[A-Z]/.test(sq)) designations.add(m[0].trim());
+        }
+      }
+      const matchedDesignations = new Set<string>();
+      if (designations.size > 0) {
+        const reachableLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+        const { data: allDocs } = await supabaseAdmin
+          .from("knowledge_documents")
+          .select("id, name, library_id, status, page_count, pages_indexed")
+          .in("library_id", reachableLibIds);
+        type DocRow = {
+          id: string; name: string; library_id: string;
+          status: string | null; page_count: number | null; pages_indexed: number | null;
+        };
+        const docRows = ((allDocs ?? []) as DocRow[]).filter((d) => !excludedDocIds.has(d.id));
+        const targets: Array<{ doc: DocRow; designation: string }> = [];
+        for (const des of designations) {
+          const sq = squashName(des);
+          for (const d of docRows) {
+            if (!squashName(d.name).includes(sq)) continue;
+            matchedDesignations.add(des);
+            if (!targets.some((t) => t.doc.id === d.id)) targets.push({ doc: d, designation: des });
+          }
+        }
+        // The TOPIC behind the designation: the refine query that mentioned
+        // it, minus the designation itself ("EP 5-1-1 suction line sizing" →
+        // "suction line sizing"); the raw question when there isn't one.
+        const topicFor = (des: string): string => {
+          const q = plan.queries.find((x) => squashName(x).includes(squashName(des)));
+          const stripped = (q ?? "").split(des).join(" ").replace(/\s+/g, " ").trim();
+          return stripped.length >= 6 ? stripped : question;
+        };
+        const pulls = await Promise.all(targets.slice(0, 3).map(async ({ doc, designation }) => {
+          let rows: RetrievedChunk[] = [];
+          const { data, error } = await supabaseAdmin.rpc("knowledge_search_document", {
+            p_org: orgId, p_document: doc.id, p_query: topicFor(designation), p_limit: 5,
+          });
+          if (!error && Array.isArray(data)) rows = data as RetrievedChunk[];
+          if (rows.length === 0) {
+            // Pre-migration DB (no RPC yet): the document's first pages —
+            // scope and definitions — still beat returning nothing.
+            const { data: front } = await supabaseAdmin
+              .from("knowledge_chunks").select("id, document_id, page, content, section")
+              .eq("org_id", orgId).eq("document_id", doc.id)
+              .order("page", { ascending: true }).order("seq", { ascending: true })
+              .limit(4);
+            rows = ((front ?? []) as RetrievedChunk[]).map((c) => ({ ...c, rank: 0 }));
+          }
+          // The most actionable diagnosis this route can make: the document
+          // IS here but its index can't answer for it.
+          if (rows.length === 0) {
+            partialDocs.push(`${doc.name} — 0 indexed pages; re-index it`);
+          } else if (doc.page_count && (doc.pages_indexed ?? 0) < doc.page_count && doc.status !== "indexing") {
+            partialDocs.push(`${doc.name} — only ${doc.pages_indexed ?? 0} of ${doc.page_count} pages indexed; re-index it`);
+          }
+          return rows.map((c) => ({ ...c, libraryId: doc.library_id, tier: "governing" as const }));
+        }));
+        const targeted = pulls.flat();
+        const have = new Set(chunks.map((c) => c.id));
+        for (const c of targeted.slice(0, 10)) {
+          if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
+        }
+      }
+      // Validate claimed-missing docs. A NAME match above proves presence. A
+      // content probe that hits real passages proves it too — and those
+      // passages now JOIN the pool instead of being thrown away (they used
+      // to be discarded after counting, so the route could prove a document
+      // existed and still answer without it).
       for (const docRef of plan.missingDocs.slice(0, 4)) {
+        const sqRef = squashName(docRef);
+        if ([...matchedDesignations].some((d) =>
+          sqRef.includes(squashName(d)) || squashName(d).includes(sqRef))) continue;
         const probes = await runSearches([docRef]);
-        const hits = probes.flat().length;
-        if (hits < 2) missingDocs.push(docRef);
+        const flat = probes.flat();
+        if (flat.length < 2) { missingDocs.push(docRef); continue; }
+        const have = new Set(chunks.map((c) => c.id));
+        for (const c of flat.slice(0, 3)) {
+          if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
+        }
       }
     }
 
@@ -887,7 +977,8 @@ export async function POST(req: NextRequest) {
         : "**Answer:** Nothing in " + (hasLinks ? "this library or its linked libraries" : "this library") +
           " matches the question. It may not be covered by the indexed documents, or it may use different " +
           "terminology — try rephrasing with the exact terms the standard would use." +
-          (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} — not in your libraries.` : "");
+          (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} — not in your libraries.` : "") +
+          (partialDocs.length > 0 ? `\n! Indexing gap: ${partialDocs.join("; ")}.` : "");
       await supabaseAdmin.from("knowledge_questions").insert({
         org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
         question, answer, citations: [], provider, model,
@@ -1086,10 +1177,15 @@ export async function POST(req: NextRequest) {
         ? `\n\nP&ID LEGEND / DECODER SHEETS (owner-attached — authoritative for symbols, line ` +
           `codes, and abbreviations on these drawings):\n${legendBlock}`
         : "");
-    const missing = missingDocs.length > 0
+    const missing = (missingDocs.length > 0
       ? `\n\nKNOWN GAPS: the passages reference these documents, which are NOT in the libraries: ${missingDocs.join(", ")}. ` +
         "Where part of the answer depends on one, say so with an \"! \" line — do not guess its content."
-      : "";
+      : "") + (partialDocs.length > 0
+      ? `\n\nINDEXING GAPS: these documents ARE in the libraries but their search index is incomplete, so ` +
+        `passages from them may be missing: ${partialDocs.join("; ")}. If the answer seems thin on one of ` +
+        `them, add an "! " line telling the user to re-index that document — do not blame the library for ` +
+        `lacking it.`
+      : "");
     const focusDirective = focus.length > 0 && !scopeFocused
       ? `\n\nFOCUS: the user was asked which aspects they want and chose: ${focus.join(", ")}. ` +
         "Answer ONLY those aspects. If another aspect contains something safety-critical they must not " +
@@ -1378,7 +1474,7 @@ export async function POST(req: NextRequest) {
     await meter(true);
 
     return NextResponse.json({
-      answer, citations, provider, model, mode: "library", missingDocs, budget: budget(),
+      answer, citations, provider, model, mode: "library", missingDocs, partialDocs, budget: budget(),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and
       // still does well. What must never happen is an answer that LOOKS like
