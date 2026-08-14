@@ -10,6 +10,7 @@ import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2, Eye, MessageSquare,
+  ThumbsUp, ThumbsDown,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -507,6 +508,38 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
   );
 }
 
+/** Thumbs on an answer — the loop that makes retrieval smarter with use.
+ *  A 👍 stores the verdict on the answer's history row; future similar
+ *  questions pull that answer's cited pages into the passage pool first. */
+function AnswerFeedback({ questionId }: { questionId: string }) {
+  const [state, setState] = useState<1 | -1 | 0>(0);
+  const rate = async (r: 1 | -1) => {
+    const next = state === r ? 0 : r;    // clicking again clears the rating
+    setState(next);
+    try {
+      const { rateKnowledgeAnswer } = await import("@/lib/knowledge");
+      await rateKnowledgeAnswer(questionId, next);
+    } catch { /* best-effort — never interrupt reading the answer */ }
+  };
+  const btn = (active: boolean) =>
+    `p-1.5 rounded-lg border transition-colors ${active
+      ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/10"
+      : "border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
+  return (
+    <div className="mt-2 flex items-center justify-end gap-2 text-[11px] text-[var(--color-text-muted)]">
+      {state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved — similar questions will start from these pages.</span>}
+      {state === -1 && <span className="font-bold">Noted — this answer will not guide future retrieval.</span>}
+      {state === 0 && <span className="font-bold">Did this answer it?</span>}
+      <button onClick={() => void rate(1)} className={btn(state === 1)} title="Right answer — teach retrieval these pages">
+        <ThumbsUp className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={() => void rate(-1)} className={btn(state === -1)} title="Wrong or missed the point">
+        <ThumbsDown className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
 /** One-time coach mark: nobody clicked the orange numbers because nothing
  *  said they were buttons. Says it once, dismisses forever. Hydration-safe
  *  via useSyncExternalStore (server snapshot: hidden). */
@@ -603,6 +636,41 @@ export default function KnowledgeLibraryPage() {
   // knowledge_questions so a conversation can be reopened tomorrow.
   const [thread, setThread] = useState<Array<{ question: string; answer: KnowledgeAnswer }>>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
+  // Conversations survive reloads. Thread state used to live only in this
+  // component — any reload, navigation, or crash silently reset the chat to
+  // zero while looking identical, which read as "my chats are one-shot".
+  // The active thread mirrors to sessionStorage per library; restore runs in
+  // an effect (never an initializer) so hydration stays consistent.
+  const threadStoreKey = `kl-active-thread-${libraryId}`;
+  const threadRestoredRef = useRef(false);
+  useEffect(() => {
+    if (threadRestoredRef.current) return;
+    threadRestoredRef.current = true;
+    try {
+      const raw = window.sessionStorage.getItem(threadStoreKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as {
+        threadId: string | null;
+        turns: Array<{ question: string; answer: KnowledgeAnswer }>;
+      };
+      if (saved?.turns?.length) {
+        setThread(saved.turns);
+        setThreadId(saved.threadId);
+        const last = saved.turns[saved.turns.length - 1];
+        setAnswer(last.answer);
+        setLastQuestion(last.question);
+      }
+    } catch { /* corrupted or absent — start fresh */ }
+  }, [threadStoreKey]);
+  useEffect(() => {
+    try {
+      if (thread.length === 0) { window.sessionStorage.removeItem(threadStoreKey); return; }
+      window.sessionStorage.setItem(
+        threadStoreKey,
+        JSON.stringify({ threadId, turns: thread.slice(-6) }),
+      );
+    } catch { /* storage full — chat still works, it just won't survive a reload */ }
+  }, [thread, threadId, threadStoreKey]);
   // Org Playbooks visibility: how many standing instructions ride on asks.
   const [instructionCount, setInstructionCount] = useState(0);
   useEffect(() => {
@@ -1138,6 +1206,7 @@ export default function KnowledgeLibraryPage() {
               </div>
             </div>
           ) : (
+            <>
             <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation}
               onOpenTag={(documentId, page, tag, documentName) => {
                 const doc = docs.find((d) => d.id === documentId);
@@ -1148,6 +1217,10 @@ export default function KnowledgeLibraryPage() {
                   documentId, tags: [tag],
                 });
               }} />
+              {answer.questionId ? (
+                <AnswerFeedback key={answer.questionId} questionId={answer.questionId} />
+              ) : null}
+            </>
           )
         )}
       </div>

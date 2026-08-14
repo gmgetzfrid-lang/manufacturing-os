@@ -343,9 +343,15 @@ export async function POST(req: NextRequest) {
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. No prose, no code fence — just the JSON array.',
       user: [
+        // Follow-ups arrive as fragments ("what about at the boiler?") —
+        // the retrieval queries must be written against the CONVERSATION,
+        // not the fragment, or every follow-up searches for nothing.
         history.length > 0
-          ? `(Follow-up in a conversation. Previous question: "${history[history.length - 1].question}" — ` +
-            "resolve pronouns and ellipsis against it when writing queries.)"
+          ? "(Follow-up in a conversation. Recent turns:\n" +
+            history.slice(-2).map((t) =>
+              `Q: ${t.question}\nA (abridged): ${t.answer.slice(0, 240)}`).join("\n---\n") +
+            "\nResolve pronouns and ellipsis against these turns; carry forward the equipment, " +
+            "documents, and constraints they establish when writing queries.)"
           : "",
         question,
         focus.length > 0 ? `(The user narrowed this to: ${focus.join(", ")} — target the queries there.)` : "",
@@ -546,6 +552,42 @@ export async function POST(req: NextRequest) {
       ),
     ];
 
+    // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
+    //    similar question was answered before and a human confirmed the
+    //    answer was right, the pages it cited get seats in the pool before
+    //    any ranking — the closest thing RAG has to learning from use.
+    try {
+      const { data: proven } = await supabaseAdmin
+        .from("knowledge_questions")
+        .select("citations")
+        .eq("library_id", libraryId).eq("rating", 1)
+        .textSearch("question", question, { type: "websearch", config: "english" })
+        .order("created_at", { ascending: false })
+        .limit(2);
+      const pairs: Array<{ documentId: string; page: number }> = [];
+      for (const row of (proven ?? []) as Array<{ citations: Array<{ documentId?: string; page?: number }> | null }>) {
+        for (const c of row.citations ?? []) {
+          if (c.documentId && typeof c.page === "number" && !excludedDocIds.has(c.documentId)) {
+            pairs.push({ documentId: c.documentId, page: c.page });
+          }
+        }
+      }
+      if (pairs.length > 0) {
+        const have = new Set(chunks.map((c) => c.id));
+        for (const p of pairs.slice(0, 6)) {
+          const { data: pc } = await supabaseAdmin
+            .from("knowledge_chunks").select("id, document_id, page, content, section")
+            .eq("org_id", orgId).eq("document_id", p.documentId).eq("page", p.page)
+            .limit(2);
+          for (const c of (pc ?? []) as RetrievedChunk[]) {
+            if (have.has(c.id)) continue;
+            have.add(c.id);
+            chunks.push({ ...c, rank: 1, libraryId, tier: "governing" });
+          }
+        }
+      }
+    } catch { /* pre-20261013 DB (no rating column) — retrieval unchanged */ }
+
     // ── Reference-chasing round: the model reviews what came back and can
     //    (a) issue NEW queries — different vocabulary, or NAMING a document
     //    the passages reference ("per STD-205", "as required by B31.3") so
@@ -556,6 +598,9 @@ export async function POST(req: NextRequest) {
     // indexed pages. Named in the answer so "bad results" become "re-index
     // EP 5-1-1" instead of a silent gap.
     const partialDocs: string[] = [];
+    // Documents the question NAMED (matched by designation against document
+    // names) — candidates for whole-document reading below.
+    const namedDocs: Array<{ id: string; name: string; libraryId: string }> = [];
     {
       const preview = chunks.length === 0
         ? "(nothing matched the first-round queries)"
@@ -671,6 +716,9 @@ export async function POST(req: NextRequest) {
           const stripped = (q ?? "").split(des).join(" ").replace(/\s+/g, " ").trim();
           return stripped.length >= 6 ? stripped : question;
         };
+        for (const t of targets.slice(0, 3)) {
+          namedDocs.push({ id: t.doc.id, name: t.doc.name, libraryId: t.doc.library_id });
+        }
         const pulls = await Promise.all(targets.slice(0, 3).map(async ({ doc, designation }) => {
           let rows: RetrievedChunk[] = [];
           const { data, error } = await supabaseAdmin.rpc("knowledge_search_document", {
@@ -718,6 +766,49 @@ export async function POST(req: NextRequest) {
         for (const c of flat.slice(0, 3)) {
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
         }
+      }
+    }
+
+    // ── WHOLE-DOCUMENT MODE: read named documents COVER TO COVER ─────────
+    // The single biggest quality gap vs pasting a PDF into a chat window:
+    // there the model reads the ENTIRE document; here it got ~22 snippets.
+    // For synthesis questions ("what does EP-5-1-1 require for…") snippets
+    // lose — the answer is assembled across sections the ranking never
+    // surfaced. So when the question NAMES documents and they're small
+    // enough to fit, their scattered snippets are replaced with the full
+    // text in page order. Scale stays safe: this only fires for named
+    // documents, at most two, within a hard character budget.
+    const wholeDocIds = new Set<string>();
+    if (namedDocs.length > 0) {
+      const WHOLE_DOC_MAX_CHUNKS = 130;      // per document
+      const WHOLE_DOC_CHAR_BUDGET = 170_000; // across all whole docs (~42k tokens)
+      let charBudget = WHOLE_DOC_CHAR_BUDGET;
+      for (const nd of namedDocs.slice(0, 2)) {
+        if (charBudget <= 0) break;
+        try {
+          const { count } = await supabaseAdmin
+            .from("knowledge_chunks").select("id", { count: "exact", head: true })
+            .eq("document_id", nd.id);
+          if (!count || count === 0 || count > WHOLE_DOC_MAX_CHUNKS) continue;
+          const { data: full } = await supabaseAdmin
+            .from("knowledge_chunks")
+            .select("id, document_id, page, seq, content, section")
+            .eq("org_id", orgId).eq("document_id", nd.id)
+            .order("page", { ascending: true }).order("seq", { ascending: true })
+            .limit(WHOLE_DOC_MAX_CHUNKS);
+          if (!full || full.length === 0) continue;
+          const ordered: TieredChunk[] = [];
+          for (const row of full as Array<RetrievedChunk & { seq: number }>) {
+            if (charBudget - row.content.length < 0) break;
+            charBudget -= row.content.length;
+            ordered.push({ ...row, rank: 1, libraryId: nd.libraryId, tier: "governing" });
+          }
+          if (ordered.length < (full.length ?? 0) * 0.8) continue; // most of it or none of it
+          wholeDocIds.add(nd.id);
+          // Full text replaces this document's scattered snippets, grouped
+          // in reading order at the FRONT of the passage list.
+          chunks = [...ordered, ...chunks.filter((c) => c.document_id !== nd.id)];
+        } catch { /* snippets still cover this doc */ }
       }
     }
 
@@ -1135,8 +1226,16 @@ export async function POST(req: NextRequest) {
           const tierLabel = hasLinks
             ? `${c.tier === "reference" ? "REFERENCE" : "GOVERNING"} — ${libNameById.get(c.libraryId ?? libraryId) ?? "library"} | `
             : "";
-          return `[${i + 1}] (${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
+          const wholeTag = wholeDocIds.has(c.document_id) ? "FULL TEXT | " : "";
+          return `[${i + 1}] (${wholeTag}${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
         }).join("\n\n");
+    const wholeDocNote = wholeDocIds.size > 0
+      ? "\n\nFULL DOCUMENTS LOADED: passages marked FULL TEXT are the COMPLETE text of " +
+        [...wholeDocIds].map((id) => `**${docName.get(id) ?? "a document"}**`).join(" and ") +
+        " in page order — you are reading the whole document, not excerpts. Synthesize across its " +
+        "sections the way you would reading it cover to cover; nothing from it is missing, so never " +
+        "say its content 'was not retrieved'."
+      : "";
 
     const precedence = hasLinks
       ? "\n\nPRECEDENCE: passages are labeled GOVERNING (the asked library — site standards) or " +
@@ -1267,9 +1366,15 @@ export async function POST(req: NextRequest) {
       "was retrieved (a referenced appendix, a continued table), END with an \"! \" line saying what " +
       "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
-      "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
+      "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers.\n\n" +
+      "RELEVANCE — answer THE question, not the topic area: before writing, identify what the asker " +
+      "is actually trying to decide or do, and lead with exactly that. Passages are a haystack you " +
+      "were handed, not an outline to summarize — leave out anything that doesn't change the asker's " +
+      "decision, even when it's from the right document. The one exception: a safety-critical fact " +
+      "they didn't ask about but cannot act without gets ONE \"! \" line. An answer that buries the " +
+      "point under adjacent material is a WRONG answer here." +
       precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
-      tableNote + needsDirective + calcProtocol + fetchDirective;
+      tableNote + wholeDocNote + needsDirective + calcProtocol + fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
@@ -1447,20 +1552,26 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* entity layer absent (pre-20260921) — text citations only */ }
 
-    await supabaseAdmin.from("knowledge_questions").insert({
-      org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
-      question, answer, citations, provider, model, mode: "library",
-      missing_docs: missingDocs.length > 0 ? missingDocs : null,
-      thread_id: threadId,
-    }).then(async (r) => {
+    // The row id comes back so the client can attach a thumbs-up/down to
+    // THIS answer (the feedback that trains future retrieval).
+    let questionId: string | null = null;
+    {
+      const r = await supabaseAdmin.from("knowledge_questions").insert({
+        org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
+        question, answer, citations, provider, model, mode: "library",
+        missing_docs: missingDocs.length > 0 ? missingDocs : null,
+        thread_id: threadId,
+      }).select("id").maybeSingle();
+      questionId = (r.data?.id as string | undefined) ?? null;
       // Pre-migration DBs lack mode/missing_docs/thread_id — retry with the core set.
       if (r.error?.code === "PGRST204" || /mode|missing_docs|thread_id/.test(r.error?.message ?? "")) {
-        await supabaseAdmin.from("knowledge_questions").insert({
+        const r2 = await supabaseAdmin.from("knowledge_questions").insert({
           org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
           question, answer, citations, provider, model,
-        });
+        }).select("id").maybeSingle();
+        questionId = (r2.data?.id as string | undefined) ?? null;
       }
-    });
+    }
     await supabaseAdmin.from("audit_logs").insert({
       action: "KNOWLEDGE_ASKED",
       resource_type: "knowledge_library", resource_id: libraryId,
@@ -1474,7 +1585,7 @@ export async function POST(req: NextRequest) {
     await meter(true);
 
     return NextResponse.json({
-      answer, citations, provider, model, mode: "library", missingDocs, partialDocs, budget: budget(),
+      answer, citations, provider, model, mode: "library", missingDocs, partialDocs, questionId, budget: budget(),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and
       // still does well. What must never happen is an answer that LOOKS like
