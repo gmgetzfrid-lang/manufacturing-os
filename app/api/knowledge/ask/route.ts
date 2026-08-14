@@ -361,6 +361,33 @@ export async function POST(req: NextRequest) {
     });
     const queries = parseSearchQueries(queryText.text, question);
 
+    // ── ALIAS RESOLUTION: the graph's nickname layer feeds retrieval ─────
+    // People ask about "the boiler"; the index stores B-101. asset_aliases
+    // records that equivalence (taught once on the asset page) — but until
+    // now only the document-search box consulted it; the AI ask path never
+    // did. Any alias the question uses now resolves to its canonical tag,
+    // and the tag becomes a search query of its own.
+    try {
+      const { data: aliasRows } = await supabaseAdmin
+        .from("asset_aliases").select("alias, asset_id")
+        .eq("org_id", orgId).limit(500);
+      const qLower = ` ${question.toLowerCase()} `;
+      const hitAssetIds = [...new Set(
+        ((aliasRows ?? []) as Array<{ alias: string; asset_id: string }>)
+          .filter((a) => a.alias && a.alias.length >= 3 && qLower.includes(` ${a.alias.toLowerCase()}`))
+          .map((a) => a.asset_id),
+      )].slice(0, 4);
+      if (hitAssetIds.length > 0) {
+        const { data: aliasAssets } = await supabaseAdmin
+          .from("assets").select("tag").in("id", hitAssetIds);
+        for (const a of (aliasAssets ?? []) as Array<{ tag: string }>) {
+          if (a.tag && !queries.some((q) => q.toUpperCase().includes(a.tag.toUpperCase()))) {
+            queries.push(a.tag);
+          }
+        }
+      }
+    } catch { /* alias layer absent — retrieval unchanged */ }
+
     // Search the asked library first (governing) then each linked library
     // (reference) — governing gets the deeper cut, links a smaller one.
     const searchLibraries: Array<{ id: string; tier: "governing" | "reference" }> = [
@@ -552,6 +579,24 @@ export async function POST(req: NextRequest) {
       ),
     ];
 
+    // One roster of every reachable document — reused by proven-ground,
+    // pull-by-name, whole-document mode, and the graph hop, so designation
+    // resolution is one fetch instead of four.
+    type ReachableDoc = {
+      id: string; name: string; library_id: string;
+      status: string | null; page_count: number | null; pages_indexed: number | null;
+    };
+    const squashDes = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    let reachableDocs: ReachableDoc[] = [];
+    {
+      const reachableLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+      const { data } = await supabaseAdmin
+        .from("knowledge_documents")
+        .select("id, name, library_id, status, page_count, pages_indexed")
+        .in("library_id", reachableLibIds);
+      reachableDocs = ((data ?? []) as ReachableDoc[]).filter((d) => !excludedDocIds.has(d.id));
+    }
+
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
     //    similar question was answered before and a human confirmed the
     //    answer was right, the pages it cited get seats in the pool before
@@ -679,7 +724,7 @@ export async function POST(req: NextRequest) {
       //    the model's plan AND the question are matched against DOCUMENT
       //    NAMES across every reachable library; matched documents contribute
       //    reserved passages that bypass ranking entirely.
-      const squashName = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const squashName = squashDes;
       const designations = new Set<string>();
       for (const src of [...plan.missingDocs, ...plan.queries, question]) {
         for (const m of src.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
@@ -689,17 +734,8 @@ export async function POST(req: NextRequest) {
       }
       const matchedDesignations = new Set<string>();
       if (designations.size > 0) {
-        const reachableLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
-        const { data: allDocs } = await supabaseAdmin
-          .from("knowledge_documents")
-          .select("id, name, library_id, status, page_count, pages_indexed")
-          .in("library_id", reachableLibIds);
-        type DocRow = {
-          id: string; name: string; library_id: string;
-          status: string | null; page_count: number | null; pages_indexed: number | null;
-        };
-        const docRows = ((allDocs ?? []) as DocRow[]).filter((d) => !excludedDocIds.has(d.id));
-        const targets: Array<{ doc: DocRow; designation: string }> = [];
+        const docRows = reachableDocs;
+        const targets: Array<{ doc: ReachableDoc; designation: string }> = [];
         for (const des of designations) {
           const sq = squashName(des);
           for (const d of docRows) {
@@ -811,6 +847,76 @@ export async function POST(req: NextRequest) {
         } catch { /* snippets still cover this doc */ }
       }
     }
+
+    // ── GRAPH HOP: follow the reference edges the index already knows ────
+    // The knowledge graph records, at ingest time, that document X page P
+    // says "CONT ON DWG 025-A-1001" (entity kind 'ref') — and prose
+    // standards cite each other by designation right in the passage text.
+    // Until now those edges were drawn on the graph page and audited, but
+    // retrieval never WALKED them: the answer stopped at one document
+    // unless the model happened to name the next one. This makes the hop
+    // deterministic — every retrieved passage's outbound references are
+    // resolved against document names and the neighbors contribute
+    // passages, no model in the loop.
+    const graphHops: Array<{ from: string; to: string; via: string }> = [];
+    try {
+      const retrievedDocIds = [...new Set(chunks.map((c) => c.document_id))];
+      const retrievedPages = new Set(chunks.map((c) => `${c.document_id}:${c.page}`));
+      // (a) ref entities on the exact retrieved pages
+      const refCandidates = new Map<string, { via: string; fromDocId: string }>();
+      if (retrievedDocIds.length > 0) {
+        const { data: refs } = await supabaseAdmin
+          .from("knowledge_page_entities")
+          .select("document_id, page, tag")
+          .in("document_id", retrievedDocIds.slice(0, 12))
+          .eq("kind", "ref")
+          .limit(400);
+        for (const r of (refs ?? []) as Array<{ document_id: string; page: number; tag: string }>) {
+          if (!retrievedPages.has(`${r.document_id}:${r.page}`)) continue;
+          const key = squashDes(r.tag);
+          if (key.length >= 4 && !refCandidates.has(key)) {
+            refCandidates.set(key, { via: r.tag, fromDocId: r.document_id });
+          }
+        }
+      }
+      // (b) designations written in the retrieved passages' own text
+      for (const c of chunks.slice(0, 30)) {
+        for (const m of c.content.slice(0, 3000).matchAll(/\b[A-Za-z]{1,8}[- ]\d+(?:[-.]\d+)+[A-Za-z]?\b/g)) {
+          const key = squashDes(m[0]);
+          if (key.length >= 5 && !refCandidates.has(key)) {
+            refCandidates.set(key, { via: m[0].trim(), fromDocId: c.document_id });
+          }
+        }
+      }
+      // Resolve against document names; docs already in the pool don't need
+      // a hop — the point is reaching documents ranking never surfaced.
+      const inPool = new Set(retrievedDocIds);
+      const neighborPulls: Array<{ doc: ReachableDoc; via: string; fromDocId: string }> = [];
+      for (const [key, cand] of refCandidates) {
+        if (neighborPulls.length >= 3) break;
+        const hit = reachableDocs.find((d) => !inPool.has(d.id) && squashDes(d.name).includes(key));
+        if (hit && !neighborPulls.some((n) => n.doc.id === hit.id)) {
+          neighborPulls.push({ doc: hit, via: cand.via, fromDocId: cand.fromDocId });
+        }
+      }
+      if (neighborPulls.length > 0) {
+        const have = new Set(chunks.map((c) => c.id));
+        const pulled = await Promise.all(neighborPulls.map(async ({ doc, via, fromDocId }) => {
+          const { data, error } = await supabaseAdmin.rpc("knowledge_search_document", {
+            p_org: orgId, p_document: doc.id, p_query: question, p_limit: 3,
+          });
+          const rows = (!error && Array.isArray(data) ? data : []) as RetrievedChunk[];
+          if (rows.length > 0) graphHops.push({ from: fromDocId, to: doc.name, via });
+          return rows.map((c) => ({
+            ...c, libraryId: doc.library_id,
+            tier: (doc.library_id === libraryId ? "governing" : "reference") as "governing" | "reference",
+          }));
+        }));
+        for (const c of pulled.flat().slice(0, 9)) {
+          if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
+        }
+      }
+    } catch { /* the graph hop is a bonus — retrieval stands without it */ }
 
     // ── DRAWING FACTS: deterministic layer for P&ID/drawing libraries ────
     // Retrieval finds where something is WRITTEN; it cannot count vessels
@@ -1229,6 +1335,14 @@ export async function POST(req: NextRequest) {
           const wholeTag = wholeDocIds.has(c.document_id) ? "FULL TEXT | " : "";
           return `[${i + 1}] (${wholeTag}${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
         }).join("\n\n");
+    const graphHopNote = graphHops.length > 0
+      ? "\n\nGRAPH HOPS: some passages were pulled by FOLLOWING REFERENCES found in the retrieved " +
+        "pages — the document graph resolved these edges automatically:\n" +
+        graphHops.map((h) =>
+          `- ${docName.get(h.from) ?? "a retrieved document"} references "${h.via}" → passages from ${h.to} were attached`).join("\n") +
+        "\nWhen a hopped document supplies part of the answer, SAY the chain in Basis (\"§X points to " +
+        "**" + "the referenced document" + "** [n]\") — the reader should see the trail, not just the destination."
+      : "";
     const wholeDocNote = wholeDocIds.size > 0
       ? "\n\nFULL DOCUMENTS LOADED: passages marked FULL TEXT are the COMPLETE text of " +
         [...wholeDocIds].map((id) => `**${docName.get(id) ?? "a document"}**`).join(" and ") +
@@ -1374,7 +1488,7 @@ export async function POST(req: NextRequest) {
       "they didn't ask about but cannot act without gets ONE \"! \" line. An answer that buries the " +
       "point under adjacent material is a WRONG answer here." +
       precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
-      tableNote + wholeDocNote + needsDirective + calcProtocol + fetchDirective;
+      tableNote + wholeDocNote + graphHopNote + needsDirective + calcProtocol + fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
@@ -1586,6 +1700,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs, questionId, budget: budget(),
+      graphHops: graphHops.map((h) => ({ from: docName.get(h.from) ?? "retrieved document", to: h.to, via: h.via })),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and
       // still does well. What must never happen is an answer that LOOKS like

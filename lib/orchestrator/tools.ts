@@ -134,12 +134,34 @@ const searchDocuments: ToolDef = {
       p_org_id: ctx.orgId, p_query: String(args.query), p_limit: limit,
     });
     if (error) return { data: { error: "Text search isn't installed yet.", passages: [] } };
+    // graph_ask runs on the service role here, so the ai_excluded boundary
+    // (documents.ai_excluded, the per-document "keep AI out" carve-out that
+    // every other AI surface honors) must be applied at this layer — the
+    // RPC itself doesn't know about it. Map excluded doc-control documents
+    // to their knowledge mirrors via source_document_id.
+    const excluded = new Set<string>();
+    try {
+      const { data: exDocs } = await supabaseAdmin
+        .from("documents").select("id")
+        .eq("org_id", ctx.orgId).eq("ai_excluded", true).limit(2000);
+      const exIds = new Set(((exDocs ?? []) as Array<{ id: string }>).map((r) => r.id));
+      if (exIds.size > 0) {
+        const { data: mirrors } = await supabaseAdmin
+          .from("knowledge_documents").select("id, source_document_id")
+          .eq("org_id", ctx.orgId).not("source_document_id", "is", null).limit(4000);
+        for (const m of (mirrors ?? []) as Array<{ id: string; source_document_id: string }>) {
+          if (exIds.has(m.source_document_id)) excluded.add(m.id);
+        }
+      }
+    } catch { /* columns absent on old schemas — nothing to exclude */ }
     return {
       data: {
-        passages: (data ?? []).map((r: Record<string, unknown>) => ({
-          document: r.document_name, page: r.page,
-          text: String(r.snippet ?? "").replace(/<\/?b>/g, ""),
-        })),
+        passages: (data ?? [])
+          .filter((r: Record<string, unknown>) => !excluded.has(String(r.knowledge_document_id)))
+          .map((r: Record<string, unknown>) => ({
+            document: r.document_name, page: r.page,
+            text: String(r.snippet ?? "").replace(/<\/?b>/g, ""),
+          })),
       },
     };
   },
@@ -267,8 +289,8 @@ const tracePidLines: ToolDef = {
   description:
     "SHEET-LEVEL connectivity: which drawings connect two pieces of equipment, following "
     + "off-page references across sheets. Use for multi-drawing routes and 'which sheets is "
-    + "this line on'. For following the drawn line itself on one sheet, use "
-    + "trace_line_on_drawing — that one measures pixels; this one only knows co-occurrence.",
+    + "this line on'. This knows co-occurrence, not drawn geometry — when both tags share a "
+    + "sheet, the result names it so a human can read the drawn connection in the viewer.",
   params: [
     { name: "start_tag", type: "string", required: true, description: "Equipment tag to start from." },
     { name: "end_tag", type: "string", description: "Equipment tag to reach. Omit to list neighbours." },
@@ -315,7 +337,7 @@ const tracePidLines: ToolDef = {
         sameSheet = hits.map((k) => {
           const [documentId, page] = k.split("#");
           return { sheet: names.get(documentId) ?? "Sheet", page: Number(page) };
-        }).filter((x) => x.sheet !== "Sheet" || true);
+        });
       }
     } catch { /* advisory only */ }
     return {

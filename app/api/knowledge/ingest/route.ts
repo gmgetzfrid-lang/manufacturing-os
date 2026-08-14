@@ -148,6 +148,25 @@ export async function POST(req: NextRequest) {
         org_id: doc.org_id, user_id: user.id,
         details: { name: doc.name, pages: res.pageCount, visionPages: res.visionPages },
       }).then(() => undefined, () => undefined);
+
+      // Feed the GRAPH the moment indexing finishes. The mention indexer —
+      // which draws every document↔equipment edge on the graph page — had
+      // no automatic trigger at all: its API route had zero callers, so
+      // the graph only knew about documents someone manually indexed.
+      // Best-effort with a hard time cap; a slow scan never fails ingest.
+      try {
+        const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
+        const dict = await loadAliasDictionary(String(doc.org_id));
+        if (dict.length > 0) {
+          await Promise.race([
+            indexDocumentMentions(
+              String(doc.org_id), String(doc.id), dict,
+              (doc.source_document_id as string | null) ?? null,
+            ),
+            new Promise((r) => setTimeout(r, 8_000)),
+          ]);
+        }
+      } catch { /* mention edges are a bonus — never block ingestion */ }
     }
 
     return NextResponse.json({
