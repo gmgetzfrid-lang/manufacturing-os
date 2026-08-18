@@ -680,6 +680,10 @@ export default function KnowledgeLibraryPage() {
   }, [activeOrgId]);
 
   const [askError, setAskError] = useState<string | null>(null);
+  // Amber "provider busy" notice — transient overloads get a calm card and
+  // an automatic retry, never the red failure banner.
+  const [busyNotice, setBusyNotice] = useState<string | null>(null);
+  const overloadRetriedRef = useRef(false);
   // Pending clarify round: the AI asked which aspects to answer.
   const [clarify, setClarify] = useState<{ question: string; options: string[]; forQuestion: string } | null>(null);
   // Pending Need round: a calculation wants user-specific input values.
@@ -865,7 +869,7 @@ export default function KnowledgeLibraryPage() {
     }
     setPriorAsks(null);
     setLastQuestion(q);
-    setAsking(true); setAskError(null); setAnswer(null); setClarify(null); setNeed(null);
+    setAsking(true); setAskError(null); setBusyNotice(null); setAnswer(null); setClarify(null); setNeed(null);
     try {
       const tid = threadId ?? crypto.randomUUID();
       const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg, inputsArg,
@@ -910,8 +914,31 @@ export default function KnowledgeLibraryPage() {
         setHistory(await listKnowledgeQuestions(libraryId));
       }
     } catch (e) {
-      setAskError((e as Error).message);
-    } finally { setAsking(false); }
+      const msg = (e as Error).message || "The question failed.";
+      // Provider briefly overloaded (Anthropic 529 etc.): this heals itself
+      // in seconds, so it deserves a calm auto-retry — not the red alarm
+      // banner and a manual re-ask. One automatic retry; if the provider is
+      // still down after that, the amber notice hands over a Retry button.
+      if (/overloaded/i.test(msg) && !overloadRetriedRef.current) {
+        overloadRetriedRef.current = true;
+        setBusyNotice("The AI provider is briefly overloaded — retrying automatically in a few seconds…");
+        setTimeout(() => {
+          setBusyNotice(null);
+          void ask(focusArg, q, inputsArg, true);
+        }, 6_000);
+        return; // the spinner keeps running through the wait
+      }
+      overloadRetriedRef.current = false;
+      if (/overloaded/i.test(msg)) {
+        setBusyNotice(msg); // amber card with a Retry button — see render
+      } else {
+        setAskError(msg);
+      }
+      setAsking(false);
+      return;
+    }
+    overloadRetriedRef.current = false;
+    setAsking(false);
   };
 
   /** Reopen a past conversation IN FULL and make it continuable — the way
@@ -1154,6 +1181,21 @@ export default function KnowledgeLibraryPage() {
         {askError && (
           <div className="mt-3 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {askError}
+          </div>
+        )}
+        {busyNotice && (
+          <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 px-3 py-2.5 text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2 animate-rise">
+            {asking
+              ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+              : <AlertTriangle className="w-4 h-4 shrink-0" />}
+            <span className="flex-1">{busyNotice}</span>
+            {!asking && lastQuestion && (
+              <button
+                onClick={() => { setBusyNotice(null); void ask(undefined, lastQuestion); }}
+                className="shrink-0 px-2.5 py-1 rounded-lg border border-amber-400 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 font-black">
+                Retry now
+              </button>
+            )}
           </div>
         )}
         {asking && <AskProgress />}
