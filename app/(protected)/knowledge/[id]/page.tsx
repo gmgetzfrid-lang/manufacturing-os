@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import { parseAnswerBlocks } from "@/lib/knowledgeText";
+import { parseAnswerBlocks, extractCitationNumbers } from "@/lib/knowledgeText";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
@@ -60,11 +60,11 @@ function InlineAnswer({ text, citations, onCite }: {
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
 }) {
-  const parts = text.split(/(\[\d{1,2}\]|\*\*[^*]+\*\*|`[^`]+`)/g);
+  const parts = text.split(/(\[\d{1,3}\]|\*\*[^*]+\*\*|`[^`]+`)/g);
   return (
     <>
       {parts.map((part, i) => {
-        const cite = part.match(/^\[(\d{1,2})\]$/);
+        const cite = part.match(/^\[(\d{1,3})\]$/);
         if (cite) {
           const c = citations.find((x) => x.n === Number(cite[1]));
           if (c && !c.url) {
@@ -384,6 +384,46 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
   const libraryCitations = answer.citations.filter((c) => !c.url);
   const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
 
+  // PRIORITY ORDER, everywhere. The order the ANSWER cites things is the
+  // order the reader needs them — not citation-number order, which is just
+  // retrieval order. The direct answer's own sources surface first as
+  // named-document buttons in the hero; the source pile below groups by
+  // document, most-load-bearing document first, collapsed past the top.
+  const citeByN = new Map(libraryCitations.map((c) => [c.n, c]));
+  const answerOrder = extractCitationNumbers(answer.answer);
+  const heroSources = (() => {
+    if (!hero) return [] as KnowledgeCitation[];
+    const seen = new Set<string>();
+    const out: KnowledgeCitation[] = [];
+    for (const n of extractCitationNumbers(hero.text)) {
+      const c = citeByN.get(n);
+      const key = c?.documentName ?? "";
+      if (c && !seen.has(key)) { seen.add(key); out.push(c); }
+      if (out.length >= 4) break;
+    }
+    return out;
+  })();
+  const sourceGroups = (() => {
+    const rank = new Map<number, number>();
+    answerOrder.forEach((n, i) => rank.set(n, i));
+    const byDoc = new Map<string, KnowledgeCitation[]>();
+    for (const c of libraryCitations) {
+      const key = c.documentName ?? "Document";
+      byDoc.set(key, [...(byDoc.get(key) ?? []), c]);
+    }
+    const groups = [...byDoc.entries()].map(([doc, cites]) => ({
+      doc,
+      cites: [...cites].sort((a, b) =>
+        (rank.get(a.n) ?? 9999) - (rank.get(b.n) ?? 9999)),
+      first: Math.min(...cites.map((c) => rank.get(c.n) ?? 9999)),
+    }));
+    groups.sort((a, b) => a.first - b.first);
+    return groups;
+  })();
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [allSources, setAllSources] = useState(false);
+  const visibleGroups = allSources ? sourceGroups : sourceGroups.slice(0, 4);
+
   return (
     <div className="mt-4 space-y-3">
       <div className="text-[11px] text-[var(--color-text-muted)] animate-rise">
@@ -406,6 +446,23 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
             <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
           )}
 
+          {/* THE documents behind the direct answer — named, ordered by use,
+              one tap from the page itself. The reader's first question after
+              any answer is "says who?" — this answers it above the fold. */}
+          {heroSources.length > 0 && (
+            <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)]">Based on</span>
+              {heroSources.map((c) => (
+                <button key={c.n} onClick={() => onCite(c)}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-800 text-orange-800 dark:text-orange-200 hover:bg-orange-100 dark:hover:bg-orange-900/40 transition-colors">
+                  <FileText className="w-3 h-3" />
+                  {c.documentName ?? "Document"}
+                  <span className="font-bold text-orange-600/80">p.{c.page}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Imperatives always visible — safety never hides behind a click */}
           {hero && importantBlocks.length > 0 && (
             <div className="mt-3 space-y-2">
@@ -420,7 +477,15 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
             <div className="mt-4 space-y-2 animate-rise">
               {detailBlocks.map((b, i) => {
                 if (b.type === "label") {
-                  return <div key={i} className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] pt-1">{b.text}</div>;
+                  // Real section headers, not whisper-labels: a long Basis is
+                  // only scannable if its group names visually break the wall.
+                  return (
+                    <div key={i} className="flex items-center gap-2 pt-4 first:pt-0">
+                      <span className="w-1 h-4 rounded-full bg-orange-500 shrink-0" />
+                      <span className="text-[13px] font-black text-[var(--color-text)]">{b.text}</span>
+                      <span className="flex-1 h-px bg-[var(--color-border)]" />
+                    </div>
+                  );
                 }
                 if (b.type === "bullet") {
                   return (
@@ -491,17 +556,58 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
         </div>
       )}
 
-      {/* Source cards — every quote its own card */}
-      {libraryCitations.length > 0 && (
+      {/* Sources, GROUPED BY DOCUMENT and ordered by how load-bearing each
+          document is for THIS answer (first use wins). A 60-citation answer
+          used to render 60 equal flat cards — a pile nobody could
+          prioritize. Now: the top documents lead, each group opens on tap,
+          and the long tail waits behind "Show all". */}
+      {sourceGroups.length > 0 && (
         <>
           <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
-            Sources — tap a row for the exact wording, or the page itself
+            Sources — most load-bearing documents first; tap a document to see its passages
           </div>
           <div className="space-y-1.5">
-            {libraryCitations.map((c, i) => (
-              <SourceCard key={c.n} citation={c} onOpen={onCite} delay={i * 50} />
-            ))}
+            {visibleGroups.map((g) => {
+              const open = openGroups.has(g.doc);
+              return (
+                <div key={g.doc} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+                  <button
+                    onClick={() => setOpenGroups((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(g.doc)) next.delete(g.doc); else next.add(g.doc);
+                      return next;
+                    })}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors">
+                    <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+                    <FileText className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                    <span className="text-xs font-black text-[var(--color-text)] truncate">{g.doc}</span>
+                    <span className="ml-auto shrink-0 text-[10px] font-black px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-300">
+                      {g.cites.length} passage{g.cites.length === 1 ? "" : "s"}
+                    </span>
+                  </button>
+                  {open && (
+                    <div className="px-2 pb-2 space-y-1.5 border-t border-[var(--color-border)]">
+                      {g.cites.map((c, i) => (
+                        <SourceCard key={c.n} citation={c} onOpen={onCite} delay={i * 30} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
+          {sourceGroups.length > visibleGroups.length && (
+            <button onClick={() => setAllSources(true)}
+              className="text-[11px] font-black px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+              Show all {sourceGroups.length} documents ({libraryCitations.length} passages)
+            </button>
+          )}
+          {allSources && sourceGroups.length > 4 && (
+            <button onClick={() => { setAllSources(false); setOpenGroups(new Set()); }}
+              className="text-[11px] font-black px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+              Show fewer
+            </button>
+          )}
         </>
       )}
     </div>

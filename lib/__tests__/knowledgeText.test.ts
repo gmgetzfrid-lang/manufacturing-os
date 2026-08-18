@@ -93,8 +93,9 @@ describe("extractCitationNumbers", () => {
     expect(extractCitationNumbers("Per [2], torque is 250 ft-lb [2][1]. See also [3].")).toEqual([2, 1, 3]);
   });
 
-  it("ignores zero and huge numbers", () => {
-    expect(extractCitationNumbers("[0] [999] no citations here")).toEqual([]);
+  it("ignores zero and 4-digit numbers, keeps 3-digit markers", () => {
+    expect(extractCitationNumbers("[0] [1234] no citations here")).toEqual([]);
+    expect(extractCitationNumbers("per [117] and [187]")).toEqual([117, 187]);
   });
 
   it("handles answers with no citations", () => {

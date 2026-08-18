@@ -261,13 +261,17 @@ export function parseFollowupPlan(modelOutput: string): FollowupPlan {
   return { queries: parseRefineQueries(modelOutput), missingDocs: [], clarify: null };
 }
 
-/** Which [n] citation markers does the answer actually use? Ordered, deduped. */
+/** Which [n] citation markers does the answer actually use? Ordered, deduped.
+ *  Three digits: whole-document mode routinely numbers past [100], and a
+ *  two-digit pattern silently dropped every high marker — the chips died and
+ *  the citation hygiene stopped seeing them. 1-999 with n>=1; callers bound
+ *  against the real citation count. */
 export function extractCitationNumbers(answer: string): number[] {
   const seen = new Set<number>();
   const out: number[] = [];
-  for (const m of answer.matchAll(/\[(\d{1,2})\]/g)) {
+  for (const m of answer.matchAll(/\[(\d{1,3})\]/g)) {
     const n = Number(m[1]);
-    if (n >= 1 && !seen.has(n)) { seen.add(n); out.push(n); }
+    if (n >= 1 && n <= 999 && !seen.has(n)) { seen.add(n); out.push(n); }
   }
   return out;
 }
@@ -338,6 +342,16 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
     const label = line.match(/^\*{0,2}([A-Z][A-Za-z ]{2,24}):\*{0,2}\s*(.*)$/);
     if (label && !line.startsWith("-") && label[2].length === 0) {
       blocks.push({ type: "label", text: label[1].trim() });
+      continue;
+    }
+    // Group headings inside a long Basis: the model writes them as a line
+    // that is ENTIRELY bold ("**Governing documents (which wins)**") or a
+    // markdown heading. These used to fall through to plain text — every
+    // section header of a big answer rendered at body size, which is what
+    // turned rich answers into an unscannable wall.
+    const boldHeading = line.match(/^\*\*([^*]{3,70})\*\*$/) ?? line.match(/^#{1,4}\s+(.{3,70})$/);
+    if (boldHeading) {
+      blocks.push({ type: "label", text: boldHeading[1].replace(/:$/, "").trim() });
       continue;
     }
     const bullet = line.match(/^[-*•]\s+(.+)$/);
