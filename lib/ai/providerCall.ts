@@ -53,7 +53,36 @@ function friendly(provider: AiProviderId, status: number, detail: string): AiCal
   if (status === 404) {
     return new AiCallError(`${who} doesn't recognize that model — check the model name in AI settings.`, 400);
   }
+  if (status === 529 || status === 503) {
+    // Anthropic's documented "overloaded_error" and generic service
+    // unavailability: their side, not the request. Reached only after the
+    // automatic retries below already failed.
+    return new AiCallError(
+      `${who} is overloaded right now — this is on their side, not yours. Wait a few seconds and ask again.`,
+      503,
+    );
+  }
   return new AiCallError(`${who} call failed (${status}): ${detail.slice(0, 300)}`, 502);
+}
+
+/** POST with automatic backoff on provider-side transient failures (529
+ *  overloaded, 500/502/503). These are explicitly retryable per provider
+ *  docs — a 529 surfaced to the user as a dead ask when a 1.5s-later retry
+ *  would have answered. Respects the caller's abort budget: an aborted
+ *  signal ends the retries immediately. */
+const TRANSIENT_STATUS = new Set([500, 502, 503, 529]);
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  const signal = (init.signal as AbortSignal | null | undefined) ?? undefined;
+  let last: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+      if (signal?.aborted) break;
+    }
+    last = await fetch(url, init);
+    if (!TRANSIENT_STATUS.has(last.status)) return last;
+  }
+  return last!;
 }
 
 export interface WebSource {
@@ -148,7 +177,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     } = {};
     const usage = { inputTokens: 0, outputTokens: 0 };
     for (let round = 0; round < 4; round++) {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "x-api-key": apiKey,
@@ -203,7 +232,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   }
 
   if (provider === "openai") {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
@@ -245,7 +274,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   }
 
   // gemini
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
       method: "POST",
