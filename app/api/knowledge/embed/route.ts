@@ -32,7 +32,11 @@ export const maxDuration = 60;
 
 /** Stop well short of the platform's kill so the last batch commits and the
  *  response is a real answer rather than a 504 the client has to guess at. */
-const BUDGET_MS = 40_000;
+const BUDGET_MS = 35_000;
+/** Absolute ceiling for the in-flight embed call: whatever is running gets
+ *  aborted by this point (elapsed ms), leaving time to commit and respond
+ *  inside maxDuration=60. */
+const EMBED_HARD_STOP_MS = 48_000;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -191,6 +195,12 @@ export async function POST(req: NextRequest) {
           docNames.set(d.id, d.name);
         }
       }
+      // HARD-BOUNDED: the budget used to be checked only BETWEEN batches,
+      // so an iteration starting at t=39s ran an unbounded provider call
+      // plus ~96 sequential writes straight past the platform's 60s kill —
+      // a 504 that threw away the whole invocation's uncommitted work. The
+      // embed call now aborts in time to commit what's done and return.
+      const callBudget = Math.max(5_000, EMBED_HARD_STOP_MS - (Date.now() - startedAt));
       const out = await embedPassages({
         provider: embedding.provider, model: embedding.model, apiKey: embedding.apiKey,
         passages: batch.map((c) => {
@@ -200,6 +210,7 @@ export async function POST(req: NextRequest) {
         }),
         // The corpus side of an asymmetric retrieval pair.
         kind: "document",
+        signal: AbortSignal.timeout(callBudget),
       });
       vectors = out.vectors;
       usage.inputTokens += out.usage.inputTokens;
@@ -208,22 +219,30 @@ export async function POST(req: NextRequest) {
       // window and continues with a smaller batch. Everything committed so
       // far stays committed either way.
       if (e instanceof AiCallError && e.status === 429) { rateLimited = true; break; }
+      // Ran out of clock, not out of luck: return committed progress; the
+      // client just calls again.
+      const name = (e as { name?: string })?.name ?? "";
+      if (name === "TimeoutError" || name === "AbortError") break;
       // Anything else: report and stop — hammering a rejected key or an
       // exhausted quota helps nobody.
       lastError = e instanceof AiCallError ? e.message : "Embedding failed.";
       break;
     }
 
-    // One update per chunk. Slower than a bulk upsert, but an upsert on this
-    // table would need every NOT NULL column echoed back, and getting that
-    // wrong rewrites page text from a stale read.
-    for (let i = 0; i < batch.length; i++) {
-      const { error: writeError } = await supabaseAdmin
-        .from("knowledge_chunks")
-        .update({ embedding: toVectorLiteral(vectors[i]), embedding_model: embedding.model })
-        .eq("id", batch[i].id);
-      if (writeError) { lastError = writeError.message; break; }
-      embedded += 1;
+    // Write-back in small parallel groups. Sequential updates cost ~50-80ms
+    // each — 96 of them was 5-8 seconds of pure round-trip latency per
+    // batch, a third of the whole time budget. Updates by primary key are
+    // independent; 8 in flight cuts it to under a second.
+    for (let i = 0; i < batch.length && !lastError; i += 8) {
+      const group = batch.slice(i, i + 8);
+      const results = await Promise.all(group.map((c, j) =>
+        supabaseAdmin.from("knowledge_chunks")
+          .update({ embedding: toVectorLiteral(vectors[i + j]), embedding_model: embedding.model })
+          .eq("id", c.id)));
+      for (const r of results) {
+        if (r.error) { lastError = r.error.message; break; }
+        embedded += 1;
+      }
     }
     if (lastError) break;
   }

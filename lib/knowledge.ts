@@ -856,7 +856,26 @@ export async function buildSemanticIndex(
     }
   };
 
-  let last = await embedBatch(orgId, libraryId);
+  // Gateway hiccups (a 504 from an invocation the platform killed, a cold
+  // start answering 502) are the WEATHER on serverless, not the build
+  // failing — every committed batch is already permanent, so the only
+  // correct response is to wait a moment and call again.
+  let transientFailures = 0;
+  const embedBatchWithRetry = async (batch?: number): Promise<SemanticProgress> => {
+    for (;;) {
+      try {
+        const out = await embedBatch(orgId, libraryId, batch);
+        transientFailures = 0;
+        return out;
+      } catch (e) {
+        const transient = (e as { transient?: boolean }).transient;
+        if (!transient || ++transientFailures > 5 || shouldStop?.()) throw e;
+        await sleepUnlessStopped(3_000 * transientFailures);
+      }
+    }
+  };
+
+  let last = await embedBatchWithRetry();
   onProgress?.(last);
   for (;;) {
     if (last.done || last.error || shouldStop?.()) break;
@@ -871,7 +890,7 @@ export async function buildSemanticIndex(
       // what happened rather than spinning forever.
       break;
     }
-    last = await embedBatch(orgId, libraryId, paced ? RATE_LIMITED_BATCH : undefined);
+    last = await embedBatchWithRetry(paced ? RATE_LIMITED_BATCH : undefined);
     onProgress?.(last);
   }
   return last;
