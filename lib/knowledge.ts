@@ -108,6 +108,10 @@ export interface KnowledgeAnswer {
   questionId?: string | null;
   /** Documents present in the library whose index is incomplete. */
   partialDocs?: string[];
+  /** Documents the answer text NAMES (matched by designation against the
+   *  reachable roster) — each becomes a clickable open-the-document chip
+   *  inline in the answer, even when no [n] cites it. */
+  mentionedDocs?: Array<{ id: string; name: string; fileKey: string; page: number; mention: string }>;
   /** Internet mode only: whether a LIVE web tool ran (vs model knowledge). */
   liveWeb?: boolean;
   /** Documents the passages referenced that no linked library contains —
