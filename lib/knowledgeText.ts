@@ -325,9 +325,80 @@ export interface AnswerBlock {
   text: string;
 }
 
+/** Split on a separator only where it sits at paren/bracket depth zero, so
+ *  "joint type (butt weld, socket weld), Field Fit Welds" cuts after the
+ *  close-paren, never inside it. */
+function splitTopLevel(text: string, sep: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+    else if (depth === 0 && text.startsWith(sep, i)) {
+      out.push(text.slice(start, i));
+      start = i + sep.length;
+      i += sep.length - 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/** Carve an over-long clause into bullet-sized facts at top-level commas.
+ *  Fragments under 30 chars glue back onto their neighbor so a trailing
+ *  "socket weld only where permitted" never strands alone. */
+function carveClause(piece: string): string[] {
+  if (piece.length <= 200) return [piece];
+  const parts = splitTopLevel(piece, ", ");
+  if (parts.length < 2) return [piece];
+  const out: string[] = [];
+  for (const p of parts) {
+    const t = p.replace(/^(?:and|plus|but|or)\s+/i, "").trim();
+    if (t.length < 30 && out.length > 0) out[out.length - 1] += `, ${t}`;
+    else out.push(t);
+  }
+  return out;
+}
+
+const RUN_ON_MAX = 260;
+
+/** A hero (or bare paragraph) past ~260 chars is not a direct answer — it's
+ *  the whole answer crammed into one breath, the exact wall of text this
+ *  parser exists to prevent. Explode it: the lead sentence/clause stays the
+ *  headline, the rest becomes bullets, and a trailing Note:/Caution:/Gap:
+ *  escalates to the important tier. Returns null when the text is short
+ *  enough, or genuinely unsplittable, to leave alone. */
+export function explodeRunOn(text: string): AnswerBlock[] | null {
+  if (text.length <= RUN_ON_MAX) return null;
+  const notes: string[] = [];
+  let body = text.trim();
+  const note = body.match(/(?:^|\s)\*{0,2}(?:Note|Caution|Gap)s?:\*{0,2}\s[\s\S]+$/);
+  if (note) {
+    notes.push(note[0].trim().replace(/^\*{0,2}(?:Note|Caution|Gap)s?:\*{0,2}\s*/, ""));
+    body = body.slice(0, body.length - note[0].length).trim();
+  }
+  // Sentences first; a true run-on often has none, so fall back to em-dash
+  // clauses, then semicolons.
+  let pieces = body.split(/(?<=[.!?])\s+(?=[A-Z0-9"“(`*])/).map((s) => s.trim()).filter(Boolean);
+  if (pieces.length === 1) pieces = splitTopLevel(body, " — ");
+  if (pieces.length === 1) pieces = splitTopLevel(body, " – ");
+  if (pieces.length === 1) pieces = splitTopLevel(body, "; ");
+  const lead = carveClause(pieces[0] ?? body);
+  const hero = lead[0] ?? body;
+  const bullets = [...lead.slice(1), ...pieces.slice(1).flatMap(carveClause)];
+  if (bullets.length === 0 && notes.length === 0) return null;
+  const blocks: AnswerBlock[] = [{ type: "hero", text: hero }];
+  if (bullets.length > 0) blocks.push({ type: "label", text: "Key points" });
+  for (const b of bullets) blocks.push({ type: "bullet", text: b });
+  for (const n of notes) blocks.push({ type: "important", text: n });
+  return blocks;
+}
+
 /** Parse the model's structured answer into renderable blocks:
  *  "**Answer:** …" → hero; "**Basis:**" / "**Check:**" → label;
- *  "- …" → bullet; "! …" (or IMPORTANT:/WARNING:/MUST:) → important —
+ *  "- …" → bullet; "! …" (or IMPORTANT:/WARNING:/MUST:/Note:) → important —
  *  the draw-your-eyes-here emphasis tier; anything else → text. Never
  *  throws — a model that ignores the format degrades to text blocks. */
 export function parseAnswerBlocks(answer: string): AnswerBlock[] {
@@ -337,7 +408,7 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
     if (!line) continue;
     const hero = line.match(/^\*{0,2}Answer:?\*{0,2}:?\s*(.+)$/i);
     if (hero && blocks.length === 0) { blocks.push({ type: "hero", text: hero[1].trim() }); continue; }
-    const important = line.match(/^(?:!\s+|[-*•]\s+!\s+|\*{0,2}(?:IMPORTANT|WARNING|MUST|CRITICAL):?\*{0,2}:?\s+)(.+)$/);
+    const important = line.match(/^(?:!\s+|[-*•]\s+!\s+|\*{0,2}(?:IMPORTANT|WARNING|MUST|CRITICAL):?\*{0,2}:?\s+|\*{0,2}(?:Note|NOTE|Caution|CAUTION|Gap|GAP)s?:\*{0,2}\s*)(.+)$/);
     if (important) { blocks.push({ type: "important", text: important[1].trim() }); continue; }
     const label = line.match(/^\*{0,2}([A-Z][A-Za-z0-9 /&()'.’-]{2,58}?):\*{0,2}\s*(.*)$/);
     if (label && !line.startsWith("-") && label[2].length === 0) {
@@ -357,6 +428,24 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
     const bullet = line.match(/^[-*•]\s+(.+)$/) ?? line.match(/^\d{1,2}[.)]\s+(.+)$/);
     if (bullet) { blocks.push({ type: "bullet", text: bullet[1].trim() }); continue; }
     blocks.push({ type: "text", text: line });
+  }
+  // Run-on pass: a hero — or a bare paragraph — long past what a "direct
+  // answer in two sentences" can be gets exploded into headline + bullets
+  // + escalated note, so a model that crams everything into one breath
+  // still renders sectioned.
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.type !== "hero" && !(b.type === "text" && b.text.length > 320)) continue;
+    const parts = explodeRunOn(b.text);
+    if (!parts) continue;
+    if (b.type === "text") {
+      // Mid-answer paragraph: keep the lead as prose, skip the "Key points"
+      // label — the bullets alone break the wall.
+      parts[0] = { ...parts[0], type: "text" };
+      blocks.splice(i, 1, ...parts.filter((p) => p.type !== "label"));
+    } else {
+      blocks.splice(i, 1, ...parts);
+    }
   }
   // Post-pass: a short citation-free line with no sentence-ending punctuation
   // sitting right above a bullet run is a heading the model wrote as plain

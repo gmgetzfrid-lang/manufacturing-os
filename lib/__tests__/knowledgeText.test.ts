@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
-  parseAnswerBlocks, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
+  parseAnswerBlocks, explodeRunOn, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -239,6 +239,11 @@ describe("parseAnswerBlocks", () => {
     expect(blocks[1].type).toBe("bullet");
   });
 
+  it("escalates Note:/Caution:/Gap: lines to the important tier", () => {
+    const blocks = parseAnswerBlocks("**Answer:** 7 ft [1].\nNote: table extraction can jumble numbers.");
+    expect(blocks[1]).toEqual({ type: "important", text: "table extraction can jumble numbers." });
+  });
+
   it("does NOT promote real sentences or cited lines to labels", () => {
     // ends with a period → real prose, even above bullets
     const a = parseAnswerBlocks("The weld failed inspection.\n- reject code UT-4 [1]");
@@ -376,5 +381,72 @@ describe("sanitizeStorageText", () => {
     // clean text must make it through without an unpaired escape.
     expect(JSON.parse(JSON.stringify(clean))).toBe("PSV-12 set at 250 psig");
     expect(clean.includes(NUL)).toBe(false);
+  });
+});
+
+describe("explodeRunOn — the wall-of-text killer", () => {
+  // The exact answer a user reported as "an ugly wall of text all ran
+  // together": one 600-char sentence plus a trailing Note. It must come
+  // apart into a short headline, scannable bullets, and an escalated note.
+  const RUN_ON =
+    "For a pump suction line, welding is governed by EP 5-5-1 (fabrication) plus its mandatory " +
+    "welding supplement EP 5-5-2, with rotating-equipment-specific requirements in EP 5-6-2 — and " +
+    "the pump-specific drivers are joint type (butt weld for vibration/fatigue/cyclic service, " +
+    "socket weld only where permitted), Field Fit Welds at the pump so spools can be aligned " +
+    "without field cutting, GTAW root pass with argon back purge on all compressor piping and " +
+    "low-alloy/stainless tie-ins, and flange-face alignment to EP 5-6-2 rather than the looser " +
+    "code tolerance. Note: the retrieved passages do not include the body of EP 5-6-2 (only " +
+    "excerpts on NPSH), so its exact flange-alignment values and any additional pump-piping weld " +
+    "rules are not in hand.";
+
+  it("splits the reported run-on into hero + bullets + escalated note", () => {
+    const blocks = explodeRunOn(RUN_ON)!;
+    expect(blocks).not.toBeNull();
+    expect(blocks[0].type).toBe("hero");
+    expect(blocks[0].text.length).toBeLessThan(220);
+    expect(blocks[0].text).toContain("EP 5-5-1");
+    expect(blocks[1]).toEqual({ type: "label", text: "Key points" });
+    const bullets = blocks.filter((b) => b.type === "bullet");
+    expect(bullets.length).toBeGreaterThanOrEqual(4);
+    expect(bullets.some((b) => b.text.includes("GTAW root pass"))).toBe(true);
+    // The paren list survives intact — commas inside parens never split.
+    expect(bullets.some((b) => b.text.includes("(butt weld for vibration/fatigue/cyclic service, socket weld only where permitted)"))).toBe(true);
+    const important = blocks.filter((b) => b.type === "important");
+    expect(important).toHaveLength(1);
+    expect(important[0].text).toContain("EP 5-6-2");
+    expect(important[0].text.startsWith("Note:")).toBe(false);
+  });
+
+  it("leaves short answers and unsplittable text alone", () => {
+    expect(explodeRunOn("Maximum span is 7 ft [2].")).toBeNull();
+    expect(explodeRunOn("x".repeat(400))).toBeNull();
+  });
+
+  it("splits multi-sentence walls on sentence boundaries", () => {
+    const text =
+      "The governing spec is EP 4-2-1 for all carbon steel lines in this service. " +
+      "Preheat to 200F applies for wall thickness over 25mm per Table 3. " +
+      "Hydrotest at 1.5 times design pressure is a hold point requiring inspector signoff. " +
+      "PWHT is required above 19mm nominal thickness in sour service per the supplement.";
+    const blocks = explodeRunOn(text)!;
+    expect(blocks[0].type).toBe("hero");
+    expect(blocks[0].text).toContain("EP 4-2-1");
+    expect(blocks.filter((b) => b.type === "bullet").length).toBe(3);
+  });
+
+  it("is applied by parseAnswerBlocks to run-on heroes", () => {
+    const blocks = parseAnswerBlocks(`**Answer:** ${RUN_ON}`);
+    expect(blocks[0].type).toBe("hero");
+    expect(blocks[0].text.length).toBeLessThan(220);
+    expect(blocks.some((b) => b.type === "label" && b.text === "Key points")).toBe(true);
+    expect(blocks.filter((b) => b.type === "bullet").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("is applied by parseAnswerBlocks to giant bare paragraphs, without the Key points label", () => {
+    const blocks = parseAnswerBlocks(RUN_ON);
+    expect(blocks[0].type).toBe("text");
+    expect(blocks.some((b) => b.type === "label")).toBe(false);
+    expect(blocks.filter((b) => b.type === "bullet").length).toBeGreaterThanOrEqual(4);
+    expect(blocks.filter((b) => b.type === "important")).toHaveLength(1);
   });
 });

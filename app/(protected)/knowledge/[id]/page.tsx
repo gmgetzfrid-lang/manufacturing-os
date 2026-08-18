@@ -4,7 +4,7 @@
 // whole point), the shelf of PDFs below it with live indexing progress, and
 // the recent Q&A so the team benefits from each other's questions.
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
@@ -53,14 +53,35 @@ interface ViewerTarget {
   tags?: string[];
 }
 
-/** Inline renderer for answer text: **bold** spans, and [n] markers become
- *  clickable badges that open the cited page directly. */
+/** A document the answer NAMES, clickable in place. "per EP 5-6-2" with no
+ *  [n] used to be a dead end — the reader was told a document matters and
+ *  given no way to open it. Provided per-answer by AnswerExperience; the
+ *  default (no links, no opener) leaves older saved answers unchanged. */
+type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
+const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
+
+/** Inline renderer for answer text: **bold** spans, [n] markers as clickable
+ *  citation badges, `values` as chips, and named documents as show-me
+ *  buttons that open the document itself. */
 function InlineAnswer({ text, citations, onCite }: {
   text: string;
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
 }) {
-  const parts = text.split(/(\[\d{1,3}\]|\*\*[^*]+\*\*|`[^`]+`)/g);
+  const { links, open } = React.useContext(DocLinkContext);
+  // Longest mention first so "EP 5-5-1" never half-matches as "EP 5-5".
+  const mentionAlt = links
+    .map((d) => d.mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  const parts = text.split(new RegExp(`(\\[\\d{1,3}\\]|\\*\\*[^*]+\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "g"));
+  const linkFor = (s: string) => links.find((d) => d.mention === s);
+  const docChip = (d: DocLink, label: string, key: number) => (
+    <button key={key} onClick={() => open?.(d)} title={`Open ${d.name} · p.${d.page}`}
+      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200 font-bold text-[0.85em] leading-none hover:bg-orange-100 dark:hover:bg-orange-900/50 hover:border-orange-500 transition-colors cursor-pointer">
+      <FileText className="w-3 h-3 shrink-0" />{label}
+    </button>
+  );
   return (
     <>
       {parts.map((part, i) => {
@@ -79,16 +100,23 @@ function InlineAnswer({ text, citations, onCite }: {
           return <span key={i} className="text-[10px] font-black text-orange-700">{part}</span>;
         }
         if (part.startsWith("**") && part.endsWith("**")) {
-          return <b key={i} className="font-black">{part.slice(2, -2)}</b>;
+          // Recurse so a doc mention INSIDE a bold span still gets its chip —
+          // the prompt bolds every identifier, so most mentions live here.
+          return <b key={i} className="font-black"><InlineAnswer text={part.slice(2, -2)} citations={citations} onCite={onCite} /></b>;
         }
         if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+          const inner = part.slice(1, -1);
+          const dl = open ? linkFor(inner) : undefined;
+          if (dl) return docChip(dl, inner, i);
           // Value chip — exact values, designations, table refs pop out.
           return (
             <code key={i} className="mx-0.5 px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 border border-orange-200 dark:border-orange-900 text-orange-900 dark:text-orange-200 font-mono font-bold text-[0.92em]">
-              {part.slice(1, -1)}
+              {inner}
             </code>
           );
         }
+        const dl = open ? linkFor(part) : undefined;
+        if (dl) return docChip(dl, part, i);
         return <React.Fragment key={i}>{part}</React.Fragment>;
       })}
     </>
@@ -374,21 +402,29 @@ function SourceCard({ citation, onOpen, delay }: {
 
 /** The full answer experience: question echo → hero answer card → basis →
  *  check callout → source cards. Cards, air, hierarchy — never a wall. */
-function AnswerExperience({ question, answer, onCite, onOpenTag }: {
+function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
   question: string;
   answer: KnowledgeAnswer;
   onCite: (c: KnowledgeCitation) => void;
   /** Open a sheet in the viewer with a tag ringed (equipment table rows). */
   onOpenTag?: (documentId: string, page: number, tag: string, documentName: string) => void;
+  /** Open a document the answer names (show-me chips). */
+  onOpenDoc?: (d: DocLink) => void;
 }) {
   const blocks = parseAnswerBlocks(answer.answer);
   const hero = blocks.find((b) => b.type === "hero");
   const rest = blocks.filter((b) => b !== hero);
   // Imperatives (! lines) stay visible even collapsed — never hide a MUST or
-  // a hold point behind a button. Everything else waits for "Elaborate".
+  // a hold point behind a button.
   const importantBlocks = rest.filter((b) => b.type === "important");
   const detailBlocks = rest.filter((b) => b.type !== "important");
-  const [elaborated, setElaborated] = useState(false);
+  // The sectioned detail IS the answer for checklist questions — it shows
+  // by default; the button collapses it for readers who only want the hero.
+  const [elaborated, setElaborated] = useState(true);
+  const docLinkCtx = useMemo(
+    () => ({ links: answer.mentionedDocs ?? [], open: onOpenDoc ?? null }),
+    [answer.mentionedDocs, onOpenDoc],
+  );
   const libraryCitations = answer.citations.filter((c) => !c.url);
   const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
 
@@ -433,6 +469,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
   const visibleGroups = allSources ? sourceGroups : sourceGroups.slice(0, 4);
 
   return (
+    <DocLinkContext.Provider value={docLinkCtx}>
     <div className="mt-4 space-y-3">
       <div className="text-[11px] text-[var(--color-text-muted)] animate-rise">
         You asked: <i>&ldquo;{question}&rdquo;</i>
@@ -525,7 +562,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
               <button onClick={() => setElaborated((e) => !e)}
                 className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-lg border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-500/10 transition-colors">
                 <ChevronDown className={`w-3 h-3 transition-transform ${elaborated ? "rotate-180" : ""}`} />
-                {elaborated ? "Less" : "Elaborate"}
+                {elaborated ? "Hide detail" : "Show detail"}
               </button>
             )}
             <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
@@ -619,6 +656,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag }: {
         </>
       )}
     </div>
+    </DocLinkContext.Provider>
   );
 }
 
@@ -852,6 +890,13 @@ export default function KnowledgeLibraryPage() {
       tags: c.tags,
     });
   }, [docs, showToast]);
+
+  // Show-me chips: open a document the answer NAMED. The server sends the
+  // fileKey with each mention, so this works even for docs in linked
+  // libraries that this page's own docs list doesn't hold.
+  const openMentionedDoc = useCallback((d: DocLink) => {
+    setViewer({ fileKey: d.fileKey, page: d.page, quote: null, title: d.name, section: null, documentId: d.id });
+  }, []);
 
   // ── Deep link straight to a page: ?doc=<id>&page=<n>&quote=<text> ───────
   //
@@ -1339,7 +1384,7 @@ export default function KnowledgeLibraryPage() {
           <div className="space-y-6 mb-2">
             {thread.slice(0, -1).map((t, i) => (
               <div key={i} className="opacity-90">
-                <AnswerExperience question={t.question} answer={t.answer} onCite={openCitation} />
+                <AnswerExperience question={t.question} answer={t.answer} onCite={openCitation} onOpenDoc={openMentionedDoc} />
               </div>
             ))}
           </div>
@@ -1368,7 +1413,7 @@ export default function KnowledgeLibraryPage() {
             </div>
           ) : (
             <>
-            <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation}
+            <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation} onOpenDoc={openMentionedDoc}
               onOpenTag={(documentId, page, tag, documentName) => {
                 const doc = docs.find((d) => d.id === documentId);
                 if (!doc) { showToast({ type: "error", title: "That sheet is no longer in the library." }); return; }

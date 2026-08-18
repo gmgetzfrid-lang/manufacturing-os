@@ -583,7 +583,7 @@ export async function POST(req: NextRequest) {
     // pull-by-name, whole-document mode, and the graph hop, so designation
     // resolution is one fetch instead of four.
     type ReachableDoc = {
-      id: string; name: string; library_id: string;
+      id: string; name: string; library_id: string; file_key: string | null;
       status: string | null; page_count: number | null; pages_indexed: number | null;
     };
     const squashDes = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -592,7 +592,7 @@ export async function POST(req: NextRequest) {
       const reachableLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
       const { data } = await supabaseAdmin
         .from("knowledge_documents")
-        .select("id, name, library_id, status, page_count, pages_indexed")
+        .select("id, name, library_id, file_key, status, page_count, pages_indexed")
         .in("library_id", reachableLibIds);
       reachableDocs = ((data ?? []) as ReachableDoc[]).filter((d) => !excludedDocIds.has(d.id));
     }
@@ -1463,7 +1463,10 @@ export async function POST(req: NextRequest) {
       "You are the reference-library assistant for a refinery document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
       "OUTPUT FORMAT — follow it exactly, no deviations, no preamble, no restating the question:\n" +
-      "**Answer:** the direct answer in one or two sentences with its [n] markers. Mandatory, first.\n" +
+      "**Answer:** the direct answer in ONE or two SHORT sentences (45 words MAX) with its [n] " +
+      "markers. Mandatory, first. NEVER pack an enumeration into the Answer line — lists of " +
+      "requirements, drivers, or steps ALWAYS go in Basis bullets, and the Answer line just says " +
+      "what governs and points down.\n" +
       "**Basis:**\n" +
       "- bullets, one fact each, with its [n] marker and the section/table name when the passage " +
       "label shows one (e.g. \"per §5.3 Pipe Supports [2]\").\n" +
@@ -1670,6 +1673,34 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* entity layer absent (pre-20260921) — text citations only */ }
 
+    // Every document the ANSWER names becomes a click. "per EP 5-6-2" with
+    // no [n] behind it used to be a dead reference — the reader was told a
+    // document matters and given no way to open it. Designations in the
+    // final answer text are matched against the reachable roster; the client
+    // renders each as an open-the-document chip (best cited page, else p.1).
+    const mentionedDocs: Array<{ id: string; name: string; fileKey: string; page: number; mention: string }> = [];
+    try {
+      const bestPage = new Map<string, number>();
+      for (const c of citations) {
+        if (c.documentId && typeof c.page === "number" && !bestPage.has(c.documentId)) {
+          bestPage.set(c.documentId, c.page);
+        }
+      }
+      const seen = new Set<string>();
+      for (const m of answer.match(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g) ?? []) {
+        const key = squashDes(m);
+        if (key.length < 4 || seen.has(key)) continue;
+        seen.add(key);
+        const doc = reachableDocs.find((d) => d.file_key && squashDes(d.name).includes(key));
+        if (!doc) continue;
+        mentionedDocs.push({
+          id: doc.id, name: doc.name, fileKey: doc.file_key as string,
+          page: bestPage.get(doc.id) ?? 1, mention: m,
+        });
+        if (mentionedDocs.length >= 12) break;
+      }
+    } catch { /* link decoration must never break an answer */ }
+
     // The row id comes back so the client can attach a thumbs-up/down to
     // THIS answer (the feedback that trains future retrieval).
     let questionId: string | null = null;
@@ -1710,6 +1741,7 @@ export async function POST(req: NextRequest) {
       // still does well. What must never happen is an answer that LOOKS like
       // it searched by meaning when it didn't.
       retrieval: semanticUsed ? "hybrid" : "keyword",
+      ...(mentionedDocs.length > 0 ? { mentionedDocs } : {}),
       ...(equipmentTable ? { equipmentTable } : {}),
     });
   } catch (e) {
