@@ -40,19 +40,47 @@ export default function IntelligencePage() {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // SUB-500ms CONTRACT, in three moves. The old load rendered NOTHING until
+  // all seven queries finished — the page was as slow as the SLOWEST one
+  // (the admin schema probe walks ~100 tables). Now:
+  //   1. Last known status paints from sessionStorage instantly (<50ms).
+  //   2. The FAST core (key status, head counts, recent asks — one quick
+  //      round trip each, in parallel) replaces it as soon as it lands.
+  //   3. The two SLOW extras (org-wide vector coverage, admin schema probe)
+  //      PATCH the status whenever they arrive — they never gate the page.
+  //      Schema gaps only change when a migration runs, so that result is
+  //      also cached for an hour.
   useEffect(() => {
     if (!activeOrgId) return;
     let cancelled = false;
+    const snapKey = `intel-status-${activeOrgId}`;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        const cached = window.sessionStorage.getItem(snapKey);
+        if (cached) setStatus((prev) => prev ?? (JSON.parse(cached) as Status));
+      } catch { /* no snapshot — skeleton it is */ }
+    });
+
+    const patch = (p: Partial<Status>) => {
+      if (cancelled) return;
+      setStatus((prev) => {
+        const next = { ...(prev ?? {
+          chatKey: null, embeddingKey: null, libraries: 0, docs: 0,
+          chunksTotal: 0, chunksEmbedded: 0, pendingProposals: 0,
+          schemaGaps: null, recentAsks: [],
+        }), ...p } as Status;
+        try { window.sessionStorage.setItem(snapKey, JSON.stringify(next)); } catch { /* quota */ }
+        return next;
+      });
+    };
+
     (async () => {
       try {
-        const [conns, libsRes, docsRes, coverage, pending, asks, gaps] = await Promise.all([
+        const [conns, libsRes, docsRes, pending, asks] = await Promise.all([
           getAiConnections(activeOrgId).catch(() => null),
           supabase.from("knowledge_libraries").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId),
           supabase.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId),
-          supabase.rpc("semantic_coverage", { p_org_id: activeOrgId }).then(
-            (r) => (r.data?.[0] as { total?: number; embedded?: number } | undefined) ?? null,
-            () => null,
-          ),
           countPendingProposals(activeOrgId),
           supabase.from("knowledge_questions")
             .select("id, question, user_name, library_id, created_at")
@@ -60,28 +88,13 @@ export default function IntelligencePage() {
             .order("created_at", { ascending: false })
             .limit(5)
             .then((r) => r.data ?? [], () => []),
-          isAdmin
-            ? (async () => {
-                const { data: { session } } = await supabase.auth.getSession();
-                const res = await fetch(`/api/admin/schema-health?orgId=${encodeURIComponent(activeOrgId)}`, {
-                  headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
-                });
-                if (!res.ok) return null;
-                const j = await res.json();
-                return (j.missingTables?.length ?? 0) + (j.missingColumns?.length ?? 0);
-              })().catch(() => null)
-            : Promise.resolve(null),
         ]);
-        if (cancelled) return;
-        setStatus({
+        patch({
           chatKey: conns?.personal?.keyLast4 ?? null,
           embeddingKey: conns?.personal?.embeddingKeyLast4 ?? null,
           libraries: libsRes.count ?? 0,
           docs: docsRes.count ?? 0,
-          chunksTotal: Number(coverage?.total ?? 0),
-          chunksEmbedded: Number(coverage?.embedded ?? 0),
           pendingProposals: pending,
-          schemaGaps: gaps,
           recentAsks: (asks as Array<Record<string, unknown>>).map((a) => ({
             id: String(a.id), question: String(a.question),
             userName: (a.user_name as string) ?? null,
@@ -93,6 +106,39 @@ export default function IntelligencePage() {
         if (!cancelled) setError((e as Error).message);
       }
     })();
+
+    void supabase.rpc("semantic_coverage", { p_org_id: activeOrgId }).then(
+      (r) => {
+        const row = (r.data?.[0] as { total?: number; embedded?: number } | undefined) ?? null;
+        if (row) patch({ chunksTotal: Number(row.total ?? 0), chunksEmbedded: Number(row.embedded ?? 0) });
+      },
+      () => undefined,
+    );
+
+    if (isAdmin) {
+      void (async () => {
+        const gapsKey = `schema-gaps-${activeOrgId}`;
+        try {
+          const cached = window.sessionStorage.getItem(gapsKey);
+          if (cached) {
+            const { gaps, at } = JSON.parse(cached) as { gaps: number; at: number };
+            if (Date.now() - at < 3600_000) { patch({ schemaGaps: gaps }); return; }
+          }
+        } catch { /* recheck */ }
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch(`/api/admin/schema-health?orgId=${encodeURIComponent(activeOrgId)}`, {
+            headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          });
+          if (!res.ok) return;
+          const j = await res.json();
+          const gaps = (j.missingTables?.length ?? 0) + (j.missingColumns?.length ?? 0);
+          patch({ schemaGaps: gaps });
+          try { window.sessionStorage.setItem(gapsKey, JSON.stringify({ gaps, at: Date.now() })); } catch { /* quota */ }
+        } catch { /* badge just stays unknown */ }
+      })();
+    }
+
     return () => { cancelled = true; };
   }, [activeOrgId, isAdmin]);
 
