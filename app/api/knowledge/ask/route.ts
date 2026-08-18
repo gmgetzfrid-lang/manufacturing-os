@@ -1467,6 +1467,10 @@ export async function POST(req: NextRequest) {
       "**Basis:**\n" +
       "- bullets, one fact each, with its [n] marker and the section/table name when the passage " +
       "label shows one (e.g. \"per §5.3 Pipe Supports [2]\").\n" +
+      "STRUCTURE IS NOT OPTIONAL: every line under Basis is a \"- \" bullet, a \"### \" heading, or " +
+      "a \"! \" warning — NEVER a paragraph. Whenever Basis has more than 5 bullets, group them " +
+      "under short \"### \" headings (e.g. \"### Preheat requirements\"). No paragraph anywhere in " +
+      "the answer may exceed two sentences — break longer thoughts into bullets.\n" +
       "! lines starting with \"! \" are ESCALATED VISUALLY as big warnings — use one for anything " +
       "imperative: a MUST, a hold point, a verification the reader cannot skip, or a gap.\n" +
       "**Check:** (when needed) what to verify on the cited page — REQUIRED whenever a value comes " +

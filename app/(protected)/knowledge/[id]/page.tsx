@@ -134,7 +134,15 @@ function AnswerView({ answer, citations, onCite }: {
           );
         }
         if (b.type === "label") {
-          return <div key={i} className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] pt-1">{b.text}</div>;
+          // Same real-header treatment as the Elaborate path — a 9px whisper
+          // cap can't break up a long answer; these have to catch the eye.
+          return (
+            <div key={i} className="flex items-center gap-2 pt-4 first:pt-0">
+              <span className="w-1 h-4 rounded-full bg-orange-500 shrink-0" />
+              <span className="text-[13px] font-black text-[var(--color-text)]">{b.text}</span>
+              <span className="flex-1 h-px bg-[var(--color-border)]" />
+            </div>
+          );
         }
         if (b.type === "important") {
           return <ImportantCallout key={i} text={b.text} citations={citations} onCite={onCite} />;
