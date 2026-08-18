@@ -143,11 +143,64 @@ export async function POST(req: NextRequest) {
     usage: run.usage, ok: !run.stoppedBecause, op: "orchestrator",
   });
 
+  // Show-me chips: every document the answer NAMES becomes a click — the
+  // same designation squash-match the knowledge ask route uses. Checked
+  // against the doc-control registry first (number, then title), then the
+  // knowledge libraries (mirrors of AI-excluded documents skipped). An
+  // answer citing "EP 5-6-2" with nothing to click is a dead end.
+  const mentionedDocs: Array<{ id: string; number: string | null; title: string; mention: string; openUrl: string }> = [];
+  try {
+    const squash = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const designations = [...new Set(run.answer.match(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g) ?? [])].slice(0, 24);
+    if (designations.length > 0) {
+      const [{ data: ctrlDocs }, { data: kDocs }, { data: exDocs }] = await Promise.all([
+        supabaseAdmin.from("documents")
+          .select("id, document_number, title, library_id")
+          .eq("org_id", orgId).eq("ai_excluded", false).neq("status", "Archived").limit(3000),
+        supabaseAdmin.from("knowledge_documents")
+          .select("id, name, library_id, source_document_id")
+          .eq("org_id", orgId).limit(3000),
+        supabaseAdmin.from("documents").select("id")
+          .eq("org_id", orgId).eq("ai_excluded", true).limit(2000),
+      ]);
+      const excludedSrc = new Set(((exDocs ?? []) as Array<{ id: string }>).map((r) => r.id));
+      const seen = new Set<string>();
+      for (const m of designations) {
+        const key = squash(m);
+        if (key.length < 4 || seen.has(key)) continue;
+        seen.add(key);
+        const ctrl = ((ctrlDocs ?? []) as Array<Record<string, unknown>>).find((d) => {
+          const num = squash(String(d.document_number ?? ""));
+          const title = squash(String(d.title ?? ""));
+          return (num.length >= 4 && num.includes(key)) || (key.length >= 5 && title.includes(key));
+        });
+        if (ctrl) {
+          mentionedDocs.push({
+            id: String(ctrl.id), number: (ctrl.document_number as string | null) ?? null,
+            title: String(ctrl.title ?? ""), mention: m,
+            openUrl: `/documents/${ctrl.library_id}?doc=${ctrl.id}`,
+          });
+        } else {
+          const kd = ((kDocs ?? []) as Array<Record<string, unknown>>).find((d) =>
+            !excludedSrc.has(String(d.source_document_id ?? "")) && squash(String(d.name ?? "")).includes(key));
+          if (kd) {
+            mentionedDocs.push({
+              id: String(kd.id), number: null, title: String(kd.name ?? ""), mention: m,
+              openUrl: `/knowledge/${kd.library_id}?doc=${kd.id}&page=1`,
+            });
+          }
+        }
+        if (mentionedDocs.length >= 12) break;
+      }
+    }
+  } catch { /* chips are decoration — never block the answer */ }
+
   return NextResponse.json({
     answer: run.answer,
     steps: run.steps,
     pending: run.pending,
     stoppedBecause: run.stoppedBecause ?? null,
+    ...(mentionedDocs.length > 0 ? { mentionedDocs } : {}),
     provider, model,
     budget: {
       spentUsd: Math.round((monthSoFar.spentUsd + estimateCostUsd(model, run.usage)) * 100) / 100,

@@ -23,11 +23,23 @@ export interface PendingAction {
   href?: string;
 }
 
+/** A document the answer names, resolved to something clickable. */
+export interface MentionedDoc {
+  id: string;
+  number: string | null;
+  title: string;
+  /** The exact designation string as it appears in the answer text. */
+  mention: string;
+  openUrl: string;
+}
+
 export interface OrchestratorReply {
   answer: string;
   steps: RunStep[];
   pending: PendingAction[];
   stoppedBecause: string | null;
+  /** Documents the answer names — rendered as inline show-me chips. */
+  mentionedDocs?: MentionedDoc[];
   provider: string;
   model: string;
   budget: { spentUsd: number; capUsd: number };

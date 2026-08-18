@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
+import AssistantAnswer from "@/components/assistant/AssistantAnswer";
 import {
   askOrchestrator, executeAction, describeTool,
   type OrchestratorReply, type PendingAction, type RunStep,
@@ -227,9 +228,7 @@ function ExchangeView({
 
       {reply && (
         <div className="ml-9 space-y-3">
-          <div className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
-            {reply.answer}
-          </div>
+          <AssistantAnswer answer={reply.answer} mentionedDocs={reply.mentionedDocs} />
 
           {reply.stoppedBecause && (
             <p className="text-xs text-amber-700">
