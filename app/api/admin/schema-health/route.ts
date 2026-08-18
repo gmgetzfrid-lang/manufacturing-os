@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 
   // Probe in parallel chunks — HEAD selects, zero rows transferred.
   const tableResults: Array<{ table: string; migration: string; ok: boolean }> = [];
-  const CHUNK = 15;
+  const CHUNK = 40; // head-selects are tiny; wide bursts beat serialized chunks
   for (let i = 0; i < EXPECTED_TABLES.length; i += CHUNK) {
     await Promise.all(EXPECTED_TABLES.slice(i, i + CHUNK).map(async (t) => {
       const { error: e } = await supabaseAdmin

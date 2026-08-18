@@ -95,8 +95,25 @@ function GraphPageInner() {
   React.useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
+    // Stale-while-revalidate: the graph is a dozen parallel table pulls —
+    // fast, but never instant. The LAST BUILT graph paints immediately from
+    // sessionStorage (the layout starts settling right away), and the fresh
+    // build swaps in when it lands. Oversized graphs skip the cache rather
+    // than fight the storage quota.
+    const snapKey = `org-graph-${activeOrgId}`;
+    try {
+      const cached = window.sessionStorage.getItem(snapKey);
+      if (cached) setGraph(JSON.parse(cached) as OrgGraph);
+    } catch { /* no snapshot */ }
     buildOrgGraph(activeOrgId)
-      .then((g) => { if (alive) setGraph(g); })
+      .then((g) => {
+        if (!alive) return;
+        setGraph(g);
+        try {
+          const s = JSON.stringify(g);
+          if (s.length < 2_000_000) window.sessionStorage.setItem(snapKey, s);
+        } catch { /* quota — fresh build still rendered */ }
+      })
       .catch((e) => { if (alive) setError((e as Error).message); });
     listPendingPairs(activeOrgId)
       .then((pairs) => {
