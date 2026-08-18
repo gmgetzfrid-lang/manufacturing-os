@@ -220,14 +220,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       setMembershipState("none");
     }
 
-    // Upsert user profile
-    try {
-      await supabase.from("users").upsert({
-        id: userId,
-        email: email ?? null,
-        updated_at: new Date().toISOString(),
-      });
-    } catch {}
+    // Upsert user profile — pure bookkeeping, so it must never hold the
+    // boot: awaiting this write kept every hard page load on the
+    // "Authenticating…" spinner for an extra database round trip.
+    void supabase.from("users").upsert({
+      id: userId,
+      email: email ?? null,
+      updated_at: new Date().toISOString(),
+    }).then(() => undefined, () => undefined);
   };
 
   useEffect(() => {
@@ -266,6 +266,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setMember(null);
         setMembershipState("resolving");
         setLoading(false);
+        // Status snapshots persist in localStorage for instant paints —
+        // they must not outlive the account that fetched them.
+        try {
+          const doomed: string[] = [];
+          for (let i = 0; i < window.localStorage.length; i++) {
+            const k = window.localStorage.key(i);
+            if (k && (k.startsWith("intel-status-") || k.startsWith("schema-gaps-"))) doomed.push(k);
+          }
+          doomed.forEach((k) => window.localStorage.removeItem(k));
+        } catch { /* private mode */ }
         window.location.replace("/");
         return;
       }

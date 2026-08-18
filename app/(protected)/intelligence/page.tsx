@@ -13,7 +13,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Gauge,
-  CheckCircle2, XCircle, ArrowRight, Sparkles, MessageSquare, Loader2,
+  CheckCircle2, XCircle, ArrowRight, Sparkles, MessageSquare,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -32,7 +32,20 @@ interface Status {
   pendingProposals: number;
   schemaGaps: number | null;       // null = not admin / unknown
   recentAsks: Array<{ id: string; question: string; userName: string | null; libraryId: string; at: string }>;
+  /** Per-source arrival flags: a card shows a shimmer until ITS data has
+   *  landed (from snapshot or network) — never a default that reads as a
+   *  false "No key saved". */
+  keysKnown?: boolean;
+  countsKnown?: boolean;
+  coverageKnown?: boolean;
 }
+
+const EMPTY_STATUS: Status = {
+  chatKey: null, embeddingKey: null, libraries: 0, docs: 0,
+  chunksTotal: 0, chunksEmbedded: 0, pendingProposals: 0,
+  schemaGaps: null, recentAsks: [],
+  keysKnown: false, countsKnown: false, coverageKnown: false,
+};
 
 export default function IntelligencePage() {
   const { activeOrgId, activeRole } = useRole();
@@ -40,16 +53,17 @@ export default function IntelligencePage() {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // SUB-500ms CONTRACT, in three moves. The old load rendered NOTHING until
-  // all seven queries finished — the page was as slow as the SLOWEST one
-  // (the admin schema probe walks ~100 tables). Now:
-  //   1. Last known status paints from sessionStorage instantly (<50ms).
-  //   2. The FAST core (key status, head counts, recent asks — one quick
-  //      round trip each, in parallel) replaces it as soon as it lands.
-  //   3. The two SLOW extras (org-wide vector coverage, admin schema probe)
-  //      PATCH the status whenever they arrive — they never gate the page.
-  //      Schema gaps only change when a migration runs, so that result is
-  //      also cached for an hour.
+  // SUB-500ms CONTRACT. What actually made this page "take forever":
+  //   (a) the WHOLE page (even static cards) waited on one Promise.all,
+  //   (b) that Promise.all included the key check — a serverless function
+  //       that can COLD-START for seconds — so five fast queries were
+  //       gated by the one slow one, and
+  //   (c) the snapshot lived in sessionStorage, which is per-tab: every
+  //       new tab was a cold load.
+  // Now: the scaffold renders unconditionally; each data source patches
+  // ONLY its own cards the moment it lands (per-card shimmer until then);
+  // the snapshot lives in localStorage so any tab on this device paints
+  // the last known status instantly.
   useEffect(() => {
     if (!activeOrgId) return;
     let cancelled = false;
@@ -57,28 +71,42 @@ export default function IntelligencePage() {
     queueMicrotask(() => {
       if (cancelled) return;
       try {
-        const cached = window.sessionStorage.getItem(snapKey);
-        if (cached) setStatus((prev) => prev ?? (JSON.parse(cached) as Status));
-      } catch { /* no snapshot — skeleton it is */ }
+        // sessionStorage fallback reads snapshots written before the move.
+        const cached = window.localStorage.getItem(snapKey) ?? window.sessionStorage.getItem(snapKey);
+        if (cached) {
+          const snap = JSON.parse(cached) as Status;
+          // A snapshot IS known data (last known) — no shimmer over it.
+          setStatus((prev) => prev ?? { ...snap, keysKnown: true, countsKnown: true, coverageKnown: true });
+          return;
+        }
+      } catch { /* no snapshot */ }
+      setStatus((prev) => prev ?? { ...EMPTY_STATUS });
     });
 
     const patch = (p: Partial<Status>) => {
       if (cancelled) return;
       setStatus((prev) => {
-        const next = { ...(prev ?? {
-          chatKey: null, embeddingKey: null, libraries: 0, docs: 0,
-          chunksTotal: 0, chunksEmbedded: 0, pendingProposals: 0,
-          schemaGaps: null, recentAsks: [],
-        }), ...p } as Status;
-        try { window.sessionStorage.setItem(snapKey, JSON.stringify(next)); } catch { /* quota */ }
+        const next = { ...(prev ?? EMPTY_STATUS), ...p } as Status;
+        try { window.localStorage.setItem(snapKey, JSON.stringify(next)); } catch { /* quota */ }
         return next;
       });
     };
 
-    (async () => {
+    // Key status rides a serverless function (possible multi-second cold
+    // start) — it patches its two cards whenever it answers, gating nothing.
+    void getAiConnections(activeOrgId).then(
+      (conns) => patch({
+        chatKey: conns?.personal?.keyLast4 ?? null,
+        embeddingKey: conns?.personal?.embeddingKeyLast4 ?? null,
+        keysKnown: true,
+      }),
+      () => patch({ keysKnown: true }),
+    );
+
+    // Direct-to-database head counts + recent asks: quick, parallel.
+    void (async () => {
       try {
-        const [conns, libsRes, docsRes, pending, asks] = await Promise.all([
-          getAiConnections(activeOrgId).catch(() => null),
+        const [libsRes, docsRes, pending, asks] = await Promise.all([
           supabase.from("knowledge_libraries").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId),
           supabase.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId),
           countPendingProposals(activeOrgId),
@@ -90,8 +118,6 @@ export default function IntelligencePage() {
             .then((r) => r.data ?? [], () => []),
         ]);
         patch({
-          chatKey: conns?.personal?.keyLast4 ?? null,
-          embeddingKey: conns?.personal?.embeddingKeyLast4 ?? null,
           libraries: libsRes.count ?? 0,
           docs: docsRes.count ?? 0,
           pendingProposals: pending,
@@ -101,6 +127,7 @@ export default function IntelligencePage() {
             libraryId: String(a.library_id),
             at: String(a.created_at),
           })),
+          countsKnown: true,
         });
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
@@ -110,7 +137,7 @@ export default function IntelligencePage() {
     void supabase.rpc("semantic_coverage", { p_org_id: activeOrgId }).then(
       (r) => {
         const row = (r.data?.[0] as { total?: number; embedded?: number } | undefined) ?? null;
-        if (row) patch({ chunksTotal: Number(row.total ?? 0), chunksEmbedded: Number(row.embedded ?? 0) });
+        if (row) patch({ chunksTotal: Number(row.total ?? 0), chunksEmbedded: Number(row.embedded ?? 0), coverageKnown: true });
       },
       () => undefined,
     );
@@ -119,7 +146,7 @@ export default function IntelligencePage() {
       void (async () => {
         const gapsKey = `schema-gaps-${activeOrgId}`;
         try {
-          const cached = window.sessionStorage.getItem(gapsKey);
+          const cached = window.localStorage.getItem(gapsKey) ?? window.sessionStorage.getItem(gapsKey);
           if (cached) {
             const { gaps, at } = JSON.parse(cached) as { gaps: number; at: number };
             if (Date.now() - at < 3600_000) { patch({ schemaGaps: gaps }); return; }
@@ -134,7 +161,7 @@ export default function IntelligencePage() {
           const j = await res.json();
           const gaps = (j.missingTables?.length ?? 0) + (j.missingColumns?.length ?? 0);
           patch({ schemaGaps: gaps });
-          try { window.sessionStorage.setItem(gapsKey, JSON.stringify({ gaps, at: Date.now() })); } catch { /* quota */ }
+          try { window.localStorage.setItem(gapsKey, JSON.stringify({ gaps, at: Date.now() })); } catch { /* quota */ }
         } catch { /* badge just stays unknown */ }
       })();
     }
@@ -144,8 +171,8 @@ export default function IntelligencePage() {
 
   if (!activeOrgId) return <div className="p-8 text-sm text-slate-500">Select a workspace to continue.</div>;
 
-  const s = status;
-  const coveragePct = s && s.chunksTotal > 0 ? Math.round((s.chunksEmbedded / s.chunksTotal) * 100) : 0;
+  const s = status ?? EMPTY_STATUS;
+  const coveragePct = s.chunksTotal > 0 ? Math.round((s.chunksEmbedded / s.chunksTotal) * 100) : 0;
 
   return (
     <PageShell>
@@ -160,13 +187,11 @@ export default function IntelligencePage() {
         <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>
       )}
 
-      {!s ? (
-        <div className="py-16 text-center"><Loader2 className="w-6 h-6 animate-spin inline text-[var(--color-text-faint)]" /></div>
-      ) : (
-        <div className="space-y-4">
+      <div className="space-y-4">
           {/* ── Is the machine on? ── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <StatusCard
+              pending={!s.keysKnown}
               ok={!!s.chatKey}
               title="Chat key"
               okText={`Claude/OpenAI key active · ····${s.chatKey}`}
@@ -174,6 +199,7 @@ export default function IntelligencePage() {
               href="/intelligence/setup" cta="Add key"
             />
             <StatusCard
+              pending={!s.keysKnown}
               ok={!!s.embeddingKey}
               title="Embeddings key"
               okText={`Meaning-based search enabled · ····${s.embeddingKey}`}
@@ -181,6 +207,7 @@ export default function IntelligencePage() {
               href="/intelligence/setup" cta="Add key"
             />
             <StatusCard
+              pending={!s.countsKnown}
               ok={s.docs > 0}
               title="Knowledge"
               okText={`${s.docs} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}`}
@@ -197,6 +224,7 @@ export default function IntelligencePage() {
               />
             ) : (
               <StatusCard
+                pending={!s.coverageKnown}
                 ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true}
                 title="Meaning index"
                 okText={s.chunksTotal > 0 ? `${coveragePct}% of passages embedded` : "Builds after your first uploads"}
@@ -214,7 +242,11 @@ export default function IntelligencePage() {
                   <GitPullRequest className="w-3.5 h-3.5" /> Waiting on you
                 </div>
               </div>
-              {s.pendingProposals > 0 ? (
+              {!s.countsKnown ? (
+                <div className="space-y-2 animate-pulse">
+                  <div className="h-10 rounded-xl bg-[var(--color-surface-2)]" />
+                </div>
+              ) : s.pendingProposals > 0 ? (
                 <Link href="/admin/proposed-links" className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 p-3 hover:border-amber-300 transition-colors">
                   <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-black">{s.pendingProposals > 99 ? "99+" : s.pendingProposals}</span>
                   <div className="flex-1">
@@ -242,7 +274,13 @@ export default function IntelligencePage() {
               <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1.5 mb-3">
                 <MessageSquare className="w-3.5 h-3.5" /> Recent questions
               </div>
-              {s.recentAsks.length === 0 ? (
+              {!s.countsKnown ? (
+                <div className="space-y-2 animate-pulse">
+                  <div className="h-8 rounded-lg bg-[var(--color-surface-2)]" />
+                  <div className="h-8 rounded-lg bg-[var(--color-surface-2)]" />
+                  <div className="h-8 rounded-lg bg-[var(--color-surface-2)] w-3/4" />
+                </div>
+              ) : s.recentAsks.length === 0 ? (
                 <p className="text-xs text-[var(--color-text-muted)]">
                   Nobody has asked anything yet. <Link className="font-bold text-violet-700 hover:underline" href="/assistant">Ask the first question</Link> — try &ldquo;what do we have on E-101?&rdquo;
                 </p>
@@ -269,14 +307,27 @@ export default function IntelligencePage() {
             <JumpCard href="/intelligence/setup" icon={Settings2} title="Setup" body="Keys, usage caps, playbooks, codebook — all configuration." />
           </div>
         </div>
-      )}
     </PageShell>
   );
 }
 
-function StatusCard({ ok, title, okText, fixText, href, cta }: {
+function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
   ok: boolean; title: string; okText: string; fixText: string; href: string; cta: string;
+  /** Data for this card hasn't arrived yet — shimmer instead of a default
+   *  that would read as a false "No key saved". */
+  pending?: boolean;
 }) {
+  if (pending) {
+    return (
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <span className="w-4 h-4 rounded-full bg-[var(--color-surface-2)] animate-pulse" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
+        </div>
+        <div className="h-3 w-3/4 rounded bg-[var(--color-surface-2)] animate-pulse" />
+      </div>
+    );
+  }
   return (
     <div className={`rounded-2xl border p-4 ${ok
       ? "border-[var(--color-border)] bg-[var(--color-surface)]"
