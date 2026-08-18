@@ -810,6 +810,24 @@ export async function semanticStatus(orgId: string, libraryId: string): Promise<
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "status" });
 }
 
+/** Fire-and-forget: ask the server to continue any pending meaning-index
+ *  build in the background (up to ~4 minutes of server-side embedding).
+ *  Called on library page load so merely OPENING the app advances a large
+ *  build — the browser tab stopped being the engine. Never awaited, never
+ *  surfaces errors: the hourly cron covers whatever this misses. */
+export function nudgeEmbedDrain(): void {
+  void (async () => {
+    try {
+      const token = await authToken();
+      void fetch("/api/cron/embed-drain", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => undefined);
+    } catch { /* signed out — nothing to nudge */ }
+  })();
+}
+
 /** Clear every vector in a library so the next build re-embeds from scratch.
  *
  *  Needed whenever the thing that PRODUCED the vectors changes — better

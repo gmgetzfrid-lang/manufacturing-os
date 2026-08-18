@@ -643,6 +643,11 @@ export default function KnowledgeLibraryPage() {
   // an effect (never an initializer) so hydration stays consistent.
   const threadStoreKey = `kl-active-thread-${libraryId}`;
   const threadRestoredRef = useRef(false);
+  // Opening the library quietly advances any pending meaning-index build
+  // server-side (fire-and-forget) — large builds no longer depend on a tab.
+  useEffect(() => {
+    void import("@/lib/knowledge").then((m) => m.nudgeEmbedDrain());
+  }, []);
   useEffect(() => {
     if (threadRestoredRef.current) return;
     threadRestoredRef.current = true;
