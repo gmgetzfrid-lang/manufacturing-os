@@ -339,7 +339,7 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
     if (hero && blocks.length === 0) { blocks.push({ type: "hero", text: hero[1].trim() }); continue; }
     const important = line.match(/^(?:!\s+|[-*•]\s+!\s+|\*{0,2}(?:IMPORTANT|WARNING|MUST|CRITICAL):?\*{0,2}:?\s+)(.+)$/);
     if (important) { blocks.push({ type: "important", text: important[1].trim() }); continue; }
-    const label = line.match(/^\*{0,2}([A-Z][A-Za-z ]{2,24}):\*{0,2}\s*(.*)$/);
+    const label = line.match(/^\*{0,2}([A-Z][A-Za-z0-9 /&()'.’-]{2,58}?):\*{0,2}\s*(.*)$/);
     if (label && !line.startsWith("-") && label[2].length === 0) {
       blocks.push({ type: "label", text: label[1].trim() });
       continue;
@@ -354,9 +354,27 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
       blocks.push({ type: "label", text: boldHeading[1].replace(/:$/, "").trim() });
       continue;
     }
-    const bullet = line.match(/^[-*•]\s+(.+)$/);
+    const bullet = line.match(/^[-*•]\s+(.+)$/) ?? line.match(/^\d{1,2}[.)]\s+(.+)$/);
     if (bullet) { blocks.push({ type: "bullet", text: bullet[1].trim() }); continue; }
     blocks.push({ type: "text", text: line });
+  }
+  // Post-pass: a short citation-free line with no sentence-ending punctuation
+  // sitting right above a bullet run is a heading the model wrote as plain
+  // prose ("Preheat requirements" then the bullets). Left as text it renders
+  // at body size and the sections blur into one wall — promote it to label.
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    const next = blocks[i + 1];
+    if (
+      b.type === "text" && next &&
+      (next.type === "bullet" || next.type === "label") &&
+      b.text.length <= 60 &&
+      !/\[\d/.test(b.text) &&
+      !/[.!?;,]$/.test(b.text.replace(/\*+$/, "")) &&
+      !/^(and|or|but|so|because|however|note)\b/i.test(b.text)
+    ) {
+      blocks[i] = { type: "label", text: b.text.replace(/\*+/g, "").replace(/:$/, "").trim() };
+    }
   }
   return blocks;
 }

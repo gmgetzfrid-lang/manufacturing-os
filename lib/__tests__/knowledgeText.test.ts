@@ -213,6 +213,40 @@ describe("parseAnswerBlocks", () => {
     expect(blocks.every((b) => b.type === "text")).toBe(true);
     expect(blocks).toHaveLength(2);
   });
+
+  it("treats numbered list items as bullets", () => {
+    const blocks = parseAnswerBlocks("1. Verify preheat [1]\n2) Record interpass temp [2]");
+    expect(blocks[0]).toEqual({ type: "bullet", text: "Verify preheat [1]" });
+    expect(blocks[1]).toEqual({ type: "bullet", text: "Record interpass temp [2]" });
+    // "1.5 NPS" is a designation, not a list item — needs the space after the dot
+    expect(parseAnswerBlocks("1.5 NPS pipe requires support [1].")[0].type).toBe("text");
+  });
+
+  it("parses markdown and fully-bold headings as labels", () => {
+    const blocks = parseAnswerBlocks("### Preheat requirements\n- 200F minimum [1]\n**Governing documents (which wins)**\n- Spec beats code [2]");
+    expect(blocks[0]).toEqual({ type: "label", text: "Preheat requirements" });
+    expect(blocks[2]).toEqual({ type: "label", text: "Governing documents (which wins)" });
+  });
+
+  it("accepts wider label lines — digits, parens, slashes", () => {
+    const blocks = parseAnswerBlocks("**Table 121.5 limits (SA-106/B):**\n- 7 ft max [1]");
+    expect(blocks[0]).toEqual({ type: "label", text: "Table 121.5 limits (SA-106/B)" });
+  });
+
+  it("promotes a plain-text heading sitting above bullets to a label", () => {
+    const blocks = parseAnswerBlocks("Preheat requirements\n- 200F minimum for P-No 4 [1]\n- verify with contact pyrometer [2]");
+    expect(blocks[0]).toEqual({ type: "label", text: "Preheat requirements" });
+    expect(blocks[1].type).toBe("bullet");
+  });
+
+  it("does NOT promote real sentences or cited lines to labels", () => {
+    // ends with a period → real prose, even above bullets
+    const a = parseAnswerBlocks("The weld failed inspection.\n- reject code UT-4 [1]");
+    expect(a[0].type).toBe("text");
+    // carries a citation → it's a fact, not a heading
+    const b = parseAnswerBlocks("Preheat is 200F [1]\n- applies to P-No 4 [1]");
+    expect(b[0].type).toBe("text");
+  });
 });
 
 describe("mergeRetrieved", () => {
