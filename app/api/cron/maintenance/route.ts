@@ -34,6 +34,7 @@ import { scanAccessRecerts } from "@/lib/accessRecert";
 import { scanDistributionAcks } from "@/lib/distributionAcks";
 import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
+import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
 
 export const runtime = "nodejs";
@@ -69,6 +70,7 @@ async function handler(req: NextRequest) {
     knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
     knowledgeIngest?: { docs: number; pages: number; completed: number };
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
+    embedDrain?: { libraries: number; embedded: number };
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -257,6 +259,22 @@ async function handler(req: NextRequest) {
     result.platformStorage = { r2Pct: status.r2.pct, dbPct: status.db.pct, alerts };
   } catch (e) {
     result.errors.push(`platform-storage: ${(e as Error).message}`);
+  }
+
+  // 10. MEANING-INDEX DRAIN — advance consented embedding builds. This rides
+  //     the maintenance cron BECAUSE it must not have a cron of its own: a
+  //     third (or hourly) vercel.json cron entry fails every deployment on
+  //     this plan — production silently froze for a day the last time one
+  //     was added. Page loads nudge the drain far more often; this is the
+  //     nobody-opened-the-app backstop.
+  try {
+    const drainOut = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 100_000 });
+    result.embedDrain = {
+      libraries: drainOut.drained.length,
+      embedded: drainOut.drained.reduce((n, d) => n + d.embedded, 0),
+    };
+  } catch (e) {
+    result.errors.push(`embed-drain: ${(e as Error).message}`);
   }
 
   return NextResponse.json(result);
