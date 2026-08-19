@@ -396,6 +396,53 @@ export function explodeRunOn(text: string): AnswerBlock[] | null {
   return blocks;
 }
 
+// ── Proof highlighting ──────────────────────────────────────────────────────
+//
+// The verification moment: a reader clicks a citation and must see, inside
+// the quoted source passage, THE TERMS THAT BACK THE CLAIM — identifiers,
+// values, and content words — marked. That is what "the interpretation is
+// correct" looks like at a glance: the claim's own words, in the source.
+
+const PROOF_STOPWORDS = new Set([
+  "the", "this", "that", "with", "from", "have", "been", "will", "when",
+  "where", "which", "their", "there", "these", "those", "than", "then",
+  "each", "every", "under", "over", "into", "only", "also", "after",
+  "before", "should", "would", "could", "between", "during", "against",
+  "within", "without", "other", "same", "such", "more", "less", "least",
+  "about", "above", "below", "being", "does", "must", "shall", "required",
+  "requirement", "requirements", "applies", "apply", "used", "using",
+]);
+
+/** The words in a claim worth finding in its source passage. Designations
+ *  and numeric values are the strongest anchors; content words fill in. */
+export function proofTerms(claim: string): string[] {
+  const out = new Set<string>();
+  for (const m of claim.match(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g) ?? []) out.add(m);
+  // Values, with their unit glued on ("200F", "6.4mm", "150%") — a bare \d+
+  // regex misses digit-then-letter tokens entirely, and the unit is half
+  // the proof.
+  for (const m of claim.match(/\b\d+(?:\.\d+)?[A-Za-z%°/]{0,4}\b/g) ?? []) { if (m.length >= 2) out.add(m); }
+  for (const m of claim.toLowerCase().match(/[a-z][a-z-]{3,}/g) ?? []) {
+    if (!PROOF_STOPWORDS.has(m)) out.add(m);
+  }
+  return [...out].slice(0, 24);
+}
+
+/** Split a source quote into plain and highlighted segments per proofTerms.
+ *  Pure so it's testable; the client wraps `hit: true` segments in <mark>. */
+export function highlightQuote(quote: string, terms: string[]): Array<{ text: string; hit: boolean }> {
+  if (!quote) return [];
+  if (terms.length === 0) return [{ text: quote, hit: false }];
+  const escaped = terms
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .sort((a, b) => b.length - a.length);
+  const splitter = new RegExp(`(${escaped.join("|")})`, "gi");
+  const isHit = new RegExp(`^(?:${escaped.join("|")})$`, "i");
+  return quote.split(splitter)
+    .filter((p) => p.length > 0)
+    .map((p) => ({ text: p, hit: isHit.test(p) }));
+}
+
 /** Parse the model's structured answer into renderable blocks:
  *  "**Answer:** …" → hero; "**Basis:**" / "**Check:**" → label;
  *  "- …" → bullet; "! …" (or IMPORTANT:/WARNING:/MUST:/Note:) → important —
@@ -445,6 +492,17 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
       blocks.splice(i, 1, ...parts.filter((p) => p.type !== "label"));
     } else {
       blocks.splice(i, 1, ...parts);
+    }
+  }
+  // Last-resort structure: several paragraphs with NO headings and NO
+  // bullets is still a wall even when each paragraph is short. Keep the
+  // lead as prose, present the rest as bullets — each paragraph is a
+  // claim, and the dot gives the eye a place to land.
+  if (!blocks.some((b) => b.type === "label" || b.type === "bullet")) {
+    const textIdx = blocks.map((b, i) => (b.type === "text" ? i : -1)).filter((i) => i >= 0);
+    const totalLen = textIdx.reduce((n, i) => n + blocks[i].text.length, 0);
+    if (textIdx.length >= 3 && totalLen > 400) {
+      for (const i of textIdx.slice(1)) blocks[i] = { ...blocks[i], type: "bullet" };
     }
   }
   // Post-pass: a short citation-free line with no sentence-ending punctuation
