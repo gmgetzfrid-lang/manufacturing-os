@@ -531,16 +531,23 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
       blocks.splice(i, 1, ...parts);
     }
   }
-  // Last-resort structure: several paragraphs with NO headings and NO
-  // bullets is still a wall even when each paragraph is short. Keep the
-  // lead as prose, present the rest as bullets — each paragraph is a
-  // claim, and the dot gives the eye a place to land.
-  if (!blocks.some((b) => b.type === "label" || b.type === "bullet")) {
-    const textIdx = blocks.map((b, i) => (b.type === "text" ? i : -1)).filter((i) => i >= 0);
-    const totalLen = textIdx.reduce((n, i) => n + blocks[i].text.length, 0);
-    if (textIdx.length >= 3 && totalLen > 400) {
-      for (const i of textIdx.slice(1)) blocks[i] = { ...blocks[i], type: "bullet" };
+  // Paragraph runs: two-plus CONSECUTIVE prose paragraphs are a wall even
+  // when bullets exist elsewhere in the answer — models often write a
+  // multi-paragraph intro above their "### " groups, and that intro was
+  // slipping through every other pass. Keep the first paragraph of each
+  // run as prose; the rest become bullets.
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].type !== "text") continue;
+    let j = i;
+    let runLen = blocks[i].text.length;
+    while (j + 1 < blocks.length && blocks[j + 1].type === "text") {
+      j++;
+      runLen += blocks[j].text.length;
     }
+    if (j > i && runLen > 240) {
+      for (let k = i + 1; k <= j; k++) blocks[k] = { ...blocks[k], type: "bullet" };
+    }
+    i = j;
   }
   // Post-pass: a short citation-free line with no sentence-ending punctuation
   // sitting right above a bullet run is a heading the model wrote as plain
