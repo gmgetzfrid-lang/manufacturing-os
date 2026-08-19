@@ -60,6 +60,7 @@ interface ViewerTarget {
 type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
 
+<<<<<<< HEAD
 // ── Instant proof ───────────────────────────────────────────────────────────
 //
 // The verification moment, WHERE THE READER IS. Clicking a citation used to
@@ -152,6 +153,8 @@ function ProofCard({ proof, onClose, onOpenPage }: {
   );
 }
 
+=======
+>>>>>>> origin/master
 /** Inline renderer for answer text: **bold** spans, [n] markers as clickable
  *  citation badges, `values` as chips, and named documents as show-me
  *  buttons that open the document itself. */
@@ -161,7 +164,10 @@ function InlineAnswer({ text, citations, onCite }: {
   onCite: (c: KnowledgeCitation) => void;
 }) {
   const { links, open } = React.useContext(DocLinkContext);
+<<<<<<< HEAD
   const { show: showProof } = React.useContext(ProofContext);
+=======
+>>>>>>> origin/master
   // Longest mention first so "EP 5-5-1" never half-matches as "EP 5-5".
   const mentionAlt = links
     .map((d) => d.mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
@@ -542,6 +548,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
     () => ({ links: answer.mentionedDocs ?? [], open: onOpenDoc ?? null }),
     [answer.mentionedDocs, onOpenDoc],
   );
+<<<<<<< HEAD
   const [proof, setProof] = useState<ProofState | null>(null);
   const proofCtx = useMemo(() => ({
     show: (c: KnowledgeCitation, context: string, anchor: DOMRect) => {
@@ -556,6 +563,8 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
       });
     },
   }), []);
+=======
+>>>>>>> origin/master
   const libraryCitations = answer.citations.filter((c) => !c.url);
   const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
 
@@ -601,6 +610,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
 
   return (
     <DocLinkContext.Provider value={docLinkCtx}>
+<<<<<<< HEAD
     <ProofContext.Provider value={proofCtx}>
     {proof && (
       <ProofCard
@@ -609,6 +619,8 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
         onOpenPage={(c) => { setProof(null); onCite(c); }}
       />
     )}
+=======
+>>>>>>> origin/master
     <div className="mt-4 space-y-3">
       <div className="text-[11px] text-[var(--color-text-muted)] animate-rise">
         You asked: <i>&ldquo;{question}&rdquo;</i>
@@ -799,7 +811,10 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
         </>
       )}
     </div>
+<<<<<<< HEAD
     </ProofContext.Provider>
+=======
+>>>>>>> origin/master
     </DocLinkContext.Provider>
   );
 }
