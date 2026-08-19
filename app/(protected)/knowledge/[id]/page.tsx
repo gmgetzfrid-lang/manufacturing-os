@@ -264,15 +264,37 @@ function factNumbers(blocks: AnswerBlock[]): number[] {
   });
 }
 
-/** A real section heading: bigger than body text, gradient accent bar,
+/** Per-section accent colors. One orange everything IS the wall — color is
+ *  how the eye tells "Joint type" from "Alignment" from "Hold points" at a
+ *  glance. Full class strings (Tailwind can't build them dynamically). */
+const SECTION_ACCENTS = [
+  { bar: "bg-gradient-to-b from-orange-500 to-amber-500", pill: "bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300", num: "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-900 text-orange-700 dark:text-orange-300", hover: "hover:border-orange-300 dark:hover:border-orange-800" },
+  { bar: "bg-gradient-to-b from-violet-500 to-purple-500", pill: "bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300", num: "bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-900 text-violet-700 dark:text-violet-300", hover: "hover:border-violet-300 dark:hover:border-violet-800" },
+  { bar: "bg-gradient-to-b from-sky-500 to-cyan-500", pill: "bg-sky-100 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300", num: "bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-900 text-sky-700 dark:text-sky-300", hover: "hover:border-sky-300 dark:hover:border-sky-800" },
+  { bar: "bg-gradient-to-b from-emerald-500 to-teal-500", pill: "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300", num: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300", hover: "hover:border-emerald-300 dark:hover:border-emerald-800" },
+  { bar: "bg-gradient-to-b from-rose-500 to-pink-500", pill: "bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300", num: "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300", hover: "hover:border-rose-300 dark:hover:border-rose-800" },
+  { bar: "bg-gradient-to-b from-amber-500 to-yellow-500", pill: "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300", num: "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300", hover: "hover:border-amber-300 dark:hover:border-amber-800" },
+];
+
+/** Which section (0-based) each block belongs to — drives the accent cycle. */
+function sectionIndexes(blocks: AnswerBlock[]): number[] {
+  let cur = -1;
+  return blocks.map((b) => {
+    if (b.type === "label") cur += 1;
+    return Math.max(0, cur);
+  });
+}
+
+/** A real section heading: 17px black on 14px body, colored accent bar,
  *  fact-count pill, fading rule. The hierarchy IS the readability. */
-function SectionHeader({ text, count }: { text: string; count: number }) {
+function SectionHeader({ text, count, accent }: { text: string; count: number; accent: number }) {
+  const a = SECTION_ACCENTS[accent % SECTION_ACCENTS.length];
   return (
-    <div className="flex items-center gap-2.5 pt-5 first:pt-1">
-      <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-orange-500 to-amber-500 shrink-0" />
-      <span className="text-[15px] font-black tracking-tight text-[var(--color-text)]">{text}</span>
+    <div className="flex items-center gap-3 pt-6 first:pt-1 pb-0.5">
+      <span className={`w-2 h-7 rounded-full shrink-0 ${a.bar}`} />
+      <span className="text-[17px] font-black tracking-tight text-[var(--color-text)] leading-tight">{text}</span>
       {count > 0 && (
-        <span className="shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300">
+        <span className={`shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full ${a.pill}`}>
           {count} fact{count === 1 ? "" : "s"}
         </span>
       )}
@@ -284,13 +306,14 @@ function SectionHeader({ text, count }: { text: string; count: number }) {
 /** One FACT presented like one: numbered, carded, its sources visible as
  *  buttons on the card (document · page → instant proof passage) — not a
  *  microscopic dot in front of 13px prose. */
-function FactCard({ n, text, citations, onCite }: {
+function FactCard({ n, text, citations, onCite, accent }: {
   n: number;
   text: string;
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
+  accent: number;
 }) {
-  const { show: showProof } = React.useContext(ProofContext);
+  const a = SECTION_ACCENTS[accent % SECTION_ACCENTS.length];
   // This fact's own sources, deduped by document+page.
   const seen = new Set<string>();
   const sources: KnowledgeCitation[] = [];
@@ -304,8 +327,8 @@ function FactCard({ n, text, citations, onCite }: {
     if (sources.length >= 4) break;
   }
   return (
-    <div className="group flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 hover:border-orange-300 dark:hover:border-orange-800 hover:shadow-sm transition-all">
-      <span className="mt-0.5 shrink-0 w-6 h-6 rounded-lg bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-900 text-orange-700 dark:text-orange-300 text-[10px] font-mono font-black flex items-center justify-center">
+    <div className={`group flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 ${a.hover} hover:shadow-sm transition-all`}>
+      <span className={`mt-0.5 shrink-0 w-6 h-6 rounded-lg border text-[10px] font-mono font-black flex items-center justify-center ${a.num}`}>
         {String(n).padStart(2, "0")}
       </span>
       <div className="flex-1 min-w-0">
@@ -314,16 +337,16 @@ function FactCard({ n, text, citations, onCite }: {
         </div>
         {sources.length > 0 && (
           <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+            {/* These open the DOCUMENT ITSELF, at the cited page, passage
+                highlighted — the real paper is the proof. The inline [n]
+                chips remain the quick in-place passage peek. */}
             {sources.map((c) => (
               <button key={c.n}
-                onClick={(e) => {
-                  if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect());
-                  else onCite(c);
-                }}
-                title="See the exact source passage, with this fact's terms highlighted"
+                onClick={() => onCite(c)}
+                title={`Open ${c.documentName ?? "the document"} at page ${c.page} — passage highlighted`}
                 className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-orange-400 hover:text-orange-700 dark:hover:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30 transition-colors">
-                <FileText className="w-3 h-3 shrink-0" />
-                {(c.documentName ?? "Source").slice(0, 26)} · p.{c.page}
+                <Eye className="w-3 h-3 shrink-0" />
+                {(c.documentName ?? "Source").replace(/\.pdf$/i, "").slice(0, 26)} · p.{c.page}
               </button>
             ))}
           </div>
@@ -343,6 +366,7 @@ function AnswerView({ answer, citations, onCite }: {
   const blocks = parseAnswerBlocks(answer);
   const counts = sectionFactCounts(blocks);
   const nums = factNumbers(blocks);
+  const secs = sectionIndexes(blocks);
   return (
     <div className="space-y-2.5">
       {blocks.map((b, i) => {
@@ -357,13 +381,13 @@ function AnswerView({ answer, citations, onCite }: {
           );
         }
         if (b.type === "label") {
-          return <SectionHeader key={i} text={b.text} count={counts[i]} />;
+          return <SectionHeader key={i} text={b.text} count={counts[i]} accent={secs[i]} />;
         }
         if (b.type === "important") {
           return <ImportantCallout key={i} text={b.text} citations={citations} onCite={onCite} />;
         }
         if (b.type === "bullet") {
-          return <FactCard key={i} n={nums[i]} text={b.text} citations={citations} onCite={onCite} />;
+          return <FactCard key={i} n={nums[i]} text={b.text} citations={citations} onCite={onCite} accent={secs[i]} />;
         }
         return (
           <p key={i} className="text-sm text-[var(--color-text)] leading-relaxed">
@@ -625,6 +649,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
   const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
   const detailCounts = sectionFactCounts(detailBlocks);
   const detailNums = factNumbers(detailBlocks);
+  const detailSecs = sectionIndexes(detailBlocks);
 
   // PRIORITY ORDER, everywhere. The order the ANSWER cites things is the
   // order the reader needs them — not citation-number order, which is just
@@ -742,10 +767,10 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
             <div className="mt-4 space-y-2 animate-rise">
               {detailBlocks.map((b, i) => {
                 if (b.type === "label") {
-                  return <SectionHeader key={i} text={b.text} count={detailCounts[i]} />;
+                  return <SectionHeader key={i} text={b.text} count={detailCounts[i]} accent={detailSecs[i]} />;
                 }
                 if (b.type === "bullet") {
-                  return <FactCard key={i} n={detailNums[i]} text={b.text} citations={answer.citations} onCite={onCite} />;
+                  return <FactCard key={i} n={detailNums[i]} text={b.text} citations={answer.citations} onCite={onCite} accent={detailSecs[i]} />;
                 }
                 if (isCheck(b.text)) {
                   return (
