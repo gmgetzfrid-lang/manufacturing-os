@@ -614,6 +614,20 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
         You asked: <i>&ldquo;{question}&rdquo;</i>
       </div>
 
+      {/* A REPLAYED answer must never masquerade as a fresh run. The subtle
+          "memory · past answer" footer was missed for days while a stale
+          record kept answering a repeated question — say it loudly. */}
+      {answer.provider === "memory" && (
+        <div className="rounded-xl border-2 border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 px-3.5 py-2.5 text-[11px] font-bold text-violet-800 dark:text-violet-300 flex items-center gap-2">
+          <History className="w-4 h-4 shrink-0" />
+          <span>
+            <b className="font-black">Replayed from your team&apos;s record</b> — this is a PAST answer, shown
+            without a new AI run. Its wording and formatting are whatever was saved at the time. Use
+            &ldquo;Ask fresh anyway&rdquo; on the asked-before card for a new run.
+          </span>
+        </div>
+      )}
+
       {/* Hero answer card */}
       <div className="rounded-2xl border-2 border-orange-400 dark:border-orange-700 bg-[var(--color-surface)] shadow-lg overflow-hidden animate-pop">
         <div className="h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />
