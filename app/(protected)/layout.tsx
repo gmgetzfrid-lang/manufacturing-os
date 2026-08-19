@@ -20,6 +20,7 @@ import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost"
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
+import UpdatePill from "@/components/system/UpdatePill";
 import { Spinner } from "@/components/ui/Spinner";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
@@ -56,6 +57,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <TopBar onOpenMobileNav={openMobileNav} />
           <main className="flex-1 overflow-auto relative">
             <NotificationListener />
+            <UpdatePill />
             <CornerDock />
             <UploadIndicator />
             <BackupIndicator />

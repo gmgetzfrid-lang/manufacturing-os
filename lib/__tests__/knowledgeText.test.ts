@@ -417,9 +417,13 @@ describe("explodeRunOn — the wall-of-text killer", () => {
     expect(important[0].text.startsWith("Note:")).toBe(false);
   });
 
-  it("leaves short answers and unsplittable text alone", () => {
+  it("leaves short answers alone; even punctuation-less monsters get hard-wrapped", () => {
     expect(explodeRunOn("Maximum span is 7 ft [2].")).toBeNull();
-    expect(explodeRunOn("x".repeat(400))).toBeNull();
+    // No sentence stops, no dashes, no commas, no spaces — the invariant
+    // still holds: nothing leaves as one giant block.
+    const blocks = explodeRunOn("x".repeat(900))!;
+    expect(blocks).not.toBeNull();
+    for (const b of blocks) expect(b.text.length).toBeLessThanOrEqual(320);
   });
 
   it("splits multi-sentence walls on sentence boundaries", () => {
@@ -494,5 +498,53 @@ describe("parseAnswerBlocks — multi-paragraph wall fallback", () => {
     expect(short.every((b) => b.type === "text")).toBe(true);
     const structured = parseAnswerBlocks("Intro line one [1].\n- already a bullet [1]\nTrailing note line for the reader here [2].");
     expect(structured.filter((b) => b.type === "bullet").length).toBe(1);
+  });
+});
+
+describe("parseAnswerBlocks — no-wall invariant", () => {
+  // The exact answer a user reported rendering as one unbroken block.
+  const REPORTED =
+    "For piping welded at/around pumps, the governing site document is EP 5-5-2 (Welding " +
+    "Requirements for Piping Constructed to ASME B31.3), invoked by the piping standard EP 5-2-1 " +
+    "§8.2.1 [143] — plus two pump-specific overlays: all compressor and pump tie-in piping in " +
+    "low-alloy/stainless P-numbers must have a GTAW root with an argon backside purge per " +
+    "EP 5-5-1 §15.15 [142], and for HTM pump service auxiliary piping in contact with the pumped " +
+    "fluid must be butt welded and flanged or socket welded and flanged, with butt welds full " +
+    "penetration per EP 6-1-5 §5.15 [141]. Below is the complete requirement set from the loaded " +
+    "documents; some items (line class, AES designation, PWHT temperatures) live in documents " +
+    "not retrieved and are named at the end.";
+
+  const NASTY_INPUTS = [
+    `**Answer:** ${REPORTED}\n**Basis:**\n- item [1]`,
+    REPORTED,
+    `**Answer:**\n${REPORTED}`,
+    // Punctuation-less monster: no sentence stops, no dashes, no commas.
+    Array.from({ length: 120 }, (_, i) => `word${i}`).join(" "),
+    // Space-less monster (OCR/base64 junk).
+    "x".repeat(900),
+  ];
+
+  it("never emits a block longer than 420 chars, whatever the model does", () => {
+    for (const input of NASTY_INPUTS) {
+      const blocks = parseAnswerBlocks(input);
+      for (const b of blocks) {
+        expect(b.text.length, `block "${b.text.slice(0, 40)}…" from input "${input.slice(0, 40)}…"`)
+          .toBeLessThanOrEqual(420);
+      }
+      expect(blocks.length).toBeGreaterThan(1);
+    }
+  });
+
+  it("handles the bare **Answer:** marker line — next line becomes the hero", () => {
+    const blocks = parseAnswerBlocks("**Answer:**\nMaximum span is 7 ft [2].\n**Basis:**\n- per §5.3 [2]");
+    expect(blocks[0]).toEqual({ type: "hero", text: "Maximum span is 7 ft [2]." });
+    expect(blocks.some((b) => b.text === "*" || b.text === "")).toBe(false);
+  });
+
+  it("explodes the reported answer into hero + bullets in the **Answer:** form", () => {
+    const blocks = parseAnswerBlocks(`**Answer:** ${REPORTED}`);
+    expect(blocks[0].type).toBe("hero");
+    expect(blocks[0].text.length).toBeLessThan(320);
+    expect(blocks.filter((b) => b.type === "bullet").length).toBeGreaterThanOrEqual(4);
   });
 });

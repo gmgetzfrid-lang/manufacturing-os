@@ -362,6 +362,25 @@ function carveClause(piece: string): string[] {
   return out;
 }
 
+/** Hard-wrap at word boundaries — the last resort for text with no
+ *  punctuation to split on (table soup, OCR runs). Arbitrary rows beat one
+ *  unbroken slab. A single space-less monster gets sliced outright. */
+function hardWrap(text: string, width: number): string[] {
+  const rows: string[] = [];
+  let buf = "";
+  for (const w of text.split(" ")) {
+    if (buf && buf.length + w.length + 1 > width) { rows.push(buf); buf = w; }
+    else buf = buf ? `${buf} ${w}` : w;
+  }
+  if (buf) rows.push(buf);
+  if (rows.length === 1 && rows[0].length > width * 1.5) {
+    const sliced: string[] = [];
+    for (let i = 0; i < text.length; i += width) sliced.push(text.slice(i, i + width));
+    return sliced;
+  }
+  return rows;
+}
+
 const RUN_ON_MAX = 260;
 
 /** A hero (or bare paragraph) past ~260 chars is not a direct answer — it's
@@ -386,8 +405,16 @@ export function explodeRunOn(text: string): AnswerBlock[] | null {
   if (pieces.length === 1) pieces = splitTopLevel(body, " – ");
   if (pieces.length === 1) pieces = splitTopLevel(body, "; ");
   const lead = carveClause(pieces[0] ?? body);
-  const hero = lead[0] ?? body;
+  let hero = lead[0] ?? body;
   const bullets = [...lead.slice(1), ...pieces.slice(1).flatMap(carveClause)];
+  // INVARIANT: nothing longer than ~320 chars leaves this function as a
+  // single block. A lead that no punctuation could split gets hard-wrapped —
+  // arbitrary breaks still beat the wall this function exists to prevent.
+  if (hero.length > 320) {
+    const rows = hardWrap(hero, 240);
+    hero = rows[0];
+    bullets.unshift(...rows.slice(1));
+  }
   if (bullets.length === 0 && notes.length === 0) return null;
   const blocks: AnswerBlock[] = [{ type: "hero", text: hero }];
   if (bullets.length > 0) blocks.push({ type: "label", text: "Key points" });
@@ -450,9 +477,19 @@ export function highlightQuote(quote: string, terms: string[]): Array<{ text: st
  *  throws — a model that ignores the format degrades to text blocks. */
 export function parseAnswerBlocks(answer: string): AnswerBlock[] {
   const blocks: AnswerBlock[] = [];
+  // "**Answer:**" alone on its own line, direct answer on the NEXT line — a
+  // shape models produce constantly. Without this flag the marker line
+  // parsed as junk (a one-char "*" hero) and the real answer fell through
+  // as plain text.
+  let heroPending = false;
   for (const raw of answer.split("\n")) {
     const line = raw.trim();
     if (!line) continue;
+    if (blocks.length === 0 && /^\*{0,2}Answer:?\*{0,2}:?\s*$/i.test(line)) { heroPending = true; continue; }
+    if (heroPending) {
+      heroPending = false;
+      if (!/^[-*•#!]/.test(line)) { blocks.push({ type: "hero", text: line }); continue; }
+    }
     const hero = line.match(/^\*{0,2}Answer:?\*{0,2}:?\s*(.+)$/i);
     if (hero && blocks.length === 0) { blocks.push({ type: "hero", text: hero[1].trim() }); continue; }
     const important = line.match(/^(?:!\s+|[-*•]\s+!\s+|\*{0,2}(?:IMPORTANT|WARNING|MUST|CRITICAL):?\*{0,2}:?\s+|\*{0,2}(?:Note|NOTE|Caution|CAUTION|Gap|GAP)s?:\*{0,2}\s*)(.+)$/);
