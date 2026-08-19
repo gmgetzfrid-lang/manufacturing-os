@@ -25,6 +25,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import {
   X, ChevronLeft, ChevronRight, ExternalLink, Loader2, AlertTriangle, Crosshair, Search,
+  ZoomIn, ZoomOut,
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
 import { locateTagsOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
@@ -56,7 +57,13 @@ export default function CitedPageViewer({
   const [error, setError] = useState<string | null>(null);
   const [pageNumber, setPageNumber] = useState(page);
   const [numPages, setNumPages] = useState<number | null>(null);
-  const [width, setWidth] = useState(760);
+  // Reading a page is spatial work: zoom rides Ctrl+scroll, movement rides a
+  // grab-and-drag — never the scrollbar two-step.
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const [baseWidth, setBaseWidth] = useState(760);
+  const [zoom, setZoom] = useState(1);
+  const [panning, setPanning] = useState(false);
+  const dragRef = React.useRef<{ x: number; y: number; sl: number; st: number; moved: boolean } | null>(null);
   // The sheet currently on screen. Starts as the cited one; a jump chip can
   // swap it for a sibling sheet where the wanted tag actually lives.
   const [view, setView] = useState({ fileKey, title, documentId });
@@ -71,12 +78,57 @@ export default function CitedPageViewer({
     return () => { cancelled = true; };
   }, [view.fileKey]);
 
+  // Fit-to-width baseline: the page fills the modal at 100%; zoom multiplies.
   useEffect(() => {
-    const measure = () => setWidth(Math.min(860, window.innerWidth - 48));
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setBaseWidth(Math.max(280, el.clientWidth - 48));
     measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
+
+  // Ctrl/Cmd + scroll = zoom (native listener — React's is passive, and
+  // preventDefault must stop the browser's own page zoom). Plain scroll
+  // still scrolls.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setZoom((z) => Math.min(5, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Grab-and-drag panning. A 4px threshold keeps ordinary clicks (buttons,
+  // jump chips) working; past it, the pointer drags the page like paper.
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, a, input")) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop, moved: false };
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    const el = scrollRef.current;
+    if (!d || !el) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved && Math.hypot(dx, dy) < 4) return;
+    if (!d.moved) {
+      d.moved = true;
+      setPanning(true);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    el.scrollLeft = d.sl - dx;
+    el.scrollTop = d.st - dy;
+  };
+  const endPan = () => { dragRef.current = null; setPanning(false); };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -178,8 +230,10 @@ export default function CitedPageViewer({
   );
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 flex items-stretch justify-end" onClick={onClose}>
-      <div className="w-full max-w-4xl h-full bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl flex flex-col"
+    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-[2px] flex items-center justify-center" onClick={onClose}>
+      {/* Centered proof stage: 75% of the viewport each way (full-bleed on
+          phones), so the document reads like a document — not a sidebar. */}
+      <div className="w-[75vw] h-[75vh] max-md:w-[96vw] max-md:h-[92vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-pop"
         onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0">
@@ -191,6 +245,7 @@ export default function CitedPageViewer({
                 : `${section ? `${section} · ` : ""}cited page ${page}${
                     pageNumber !== page ? ` · viewing page ${pageNumber}`
                     : marks.length > 0 ? " · tags marked" : " · passage highlighted"}`}
+              {" · Ctrl+scroll zooms · drag to pan"}
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -205,6 +260,20 @@ export default function CitedPageViewer({
               disabled={numPages !== null && pageNumber >= numPages}
               className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Next page">
               <ChevronRight className="w-4 h-4" />
+            </button>
+            <span className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
+            <button onClick={() => setZoom((z) => Math.max(0.4, z / 1.2))}
+              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Zoom out (Ctrl+scroll)">
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <button onClick={() => setZoom(1)}
+              className="text-[10px] font-black tabular-nums px-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
+              title="Reset to fit width">
+              {Math.round(zoom * 100)}%
+            </button>
+            <button onClick={() => setZoom((z) => Math.min(5, z * 1.2))}
+              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Zoom in (Ctrl+scroll)">
+              <ZoomIn className="w-4 h-4" />
             </button>
             {(pageNumber !== page || view.documentId !== documentId) && (
               <button onClick={() => {
@@ -269,7 +338,13 @@ export default function CitedPageViewer({
         )}
 
         {/* Page */}
-        <div className="flex-1 overflow-auto bg-slate-200 dark:bg-slate-950 flex items-start justify-center p-4">
+        <div
+          ref={scrollRef}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endPan}
+          onPointerCancel={endPan}
+          className={`flex-1 overflow-auto bg-slate-200 dark:bg-slate-950 p-4 ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}>
           {error ? (
             <div className="mt-16 text-center text-sm text-rose-600 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4" /> {error}
@@ -285,10 +360,10 @@ export default function CitedPageViewer({
             >
               {/* The wrapper hugs the rendered page exactly, so a marker at
                   (0.42, 0.18) lands where it does on paper at any zoom. */}
-              <div className="relative inline-block">
+              <div className="relative inline-block mx-auto" style={{ display: "table" }}>
                 <Page
                   pageNumber={pageNumber}
-                  width={width}
+                  width={Math.round(baseWidth * zoom)}
                   customTextRenderer={textRenderer}
                   renderAnnotationLayer={false}
                   className="shadow-xl"
