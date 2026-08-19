@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
-  parseAnswerBlocks, explodeRunOn, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
+  parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -448,5 +448,51 @@ describe("explodeRunOn — the wall-of-text killer", () => {
     expect(blocks.some((b) => b.type === "label")).toBe(false);
     expect(blocks.filter((b) => b.type === "bullet").length).toBeGreaterThanOrEqual(4);
     expect(blocks.filter((b) => b.type === "important")).toHaveLength(1);
+  });
+});
+
+describe("proofTerms + highlightQuote — the verification moment", () => {
+  it("extracts designations, values, and content words; drops glue", () => {
+    const terms = proofTerms("Preheat to **200F** minimum per `EP 5-5-2` for P-No 4 material [3]");
+    expect(terms).toContain("EP 5-5-2");
+    expect(terms).toContain("200F");
+    expect(terms).toContain("preheat");
+    expect(terms).toContain("minimum");
+    expect(terms).not.toContain("the");
+    expect(terms).not.toContain("must");
+  });
+
+  it("marks the claim's terms inside the source quote", () => {
+    const segs = highlightQuote(
+      "Preheating of P-No 4 materials shall reach 200F before the first pass.",
+      proofTerms("Preheat to 200F minimum for P-No 4 [1]"),
+    );
+    const marked = segs.filter((s) => s.hit).map((s) => s.text.toLowerCase());
+    expect(marked).toContain("200f");
+    expect(marked.some((t) => t.startsWith("preheat"))).toBe(true);
+    // Round trip: segments reassemble to the exact quote.
+    expect(segs.map((s) => s.text).join("")).toBe("Preheating of P-No 4 materials shall reach 200F before the first pass.");
+  });
+
+  it("handles empty quotes and no terms without throwing", () => {
+    expect(highlightQuote("", ["x"])).toEqual([]);
+    expect(highlightQuote("some text", [])).toEqual([{ text: "some text", hit: false }]);
+  });
+});
+
+describe("parseAnswerBlocks — multi-paragraph wall fallback", () => {
+  it("bulletizes paragraphs 2+ when an answer has zero structure", () => {
+    const p = (s: string) => `${s} and the requirement applies to every line class in this service group [1].`;
+    const wall = [p("First topic covers scope"), p("Second topic covers preheat"), p("Third topic covers hydrotest"), p("Fourth topic covers PWHT")].join("\n");
+    const blocks = parseAnswerBlocks(wall);
+    expect(blocks[0].type).toBe("text");
+    expect(blocks.filter((b) => b.type === "bullet").length).toBe(3);
+  });
+
+  it("leaves short unstructured answers and structured answers alone", () => {
+    const short = parseAnswerBlocks("Not covered.\nTry rephrasing.\nOr upload the document.");
+    expect(short.every((b) => b.type === "text")).toBe(true);
+    const structured = parseAnswerBlocks("Intro line one [1].\n- already a bullet [1]\nTrailing note line for the reader here [2].");
+    expect(structured.filter((b) => b.type === "bullet").length).toBe(1);
   });
 });

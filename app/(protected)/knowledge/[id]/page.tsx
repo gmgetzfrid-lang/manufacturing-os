@@ -10,7 +10,7 @@ import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2, Eye, MessageSquare,
-  ThumbsUp, ThumbsDown,
+  ThumbsUp, ThumbsDown, X,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import { parseAnswerBlocks, extractCitationNumbers } from "@/lib/knowledgeText";
+import { parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, type AnswerBlock } from "@/lib/knowledgeText";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
@@ -60,6 +60,98 @@ interface ViewerTarget {
 type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
 
+// ── Instant proof ───────────────────────────────────────────────────────────
+//
+// The verification moment, WHERE THE READER IS. Clicking a citation used to
+// jump straight into the full page viewer — a context switch just to check
+// one number. Now the first click opens a proof card floating at the
+// citation: the exact quoted passage with the claim's own terms marked
+// inside it (the at-a-glance evidence that the interpretation matches the
+// source), and one tap from there opens the page with the passage
+// highlighted for the deep check.
+interface ProofState {
+  citation: KnowledgeCitation;
+  /** The claim text this citation backs — its terms get marked in the quote. */
+  context: string;
+  x: number;
+  y: number;
+  /** Anchor was low on screen — the card opens upward. */
+  up: boolean;
+}
+const ProofContext = React.createContext<{
+  show: ((c: KnowledgeCitation, context: string, anchor: DOMRect) => void) | null;
+}>({ show: null });
+
+const PROOF_W = 440;
+
+function ProofCard({ proof, onClose, onOpenPage }: {
+  proof: ProofState;
+  onClose: () => void;
+  onOpenPage: (c: KnowledgeCitation) => void;
+}) {
+  const { citation: c, context } = proof;
+  const segs = useMemo(() => highlightQuote(c.quote ?? "", proofTerms(context)), [c.quote, context]);
+  const hits = segs.filter((s) => s.hit).length;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    // Scrolling moves the anchor out from under a fixed card — close rather
+    // than drift.
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onClose, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onClose, true);
+    };
+  }, [onClose]);
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div
+        role="dialog" aria-label="Source proof"
+        className="fixed z-50 animate-pop rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+        style={{ left: proof.x, width: Math.min(PROOF_W, typeof window !== "undefined" ? window.innerWidth - 24 : PROOF_W), ...(proof.up ? { bottom: proof.y } : { top: proof.y }) }}
+      >
+        <div className="h-1 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />
+        <div className="px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <FileText className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+            <span className="text-xs font-black text-[var(--color-text)] truncate">{c.documentName ?? "Document"}</span>
+            <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">
+              p.{c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}
+            </span>
+            <button onClick={onClose} aria-label="Close proof"
+              className="ml-auto shrink-0 p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {c.quote ? (
+            <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto">
+              {segs.map((s, i) => s.hit
+                ? <mark key={i} className="rounded px-0.5 bg-orange-200 dark:bg-orange-800/70 text-inherit font-bold">{s.text}</mark>
+                : <React.Fragment key={i}>{s.text}</React.Fragment>)}
+            </blockquote>
+          ) : (
+            <p className="text-[11px] italic text-[var(--color-text-muted)]">
+              The passage text wasn&apos;t stored for this answer — open the page to read it in the document.
+            </p>
+          )}
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            <button onClick={() => onOpenPage(c)}
+              className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors">
+              <Eye className="w-3.5 h-3.5" /> Open the page — highlighted
+            </button>
+            {hits > 0 && (
+              <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> {hits} claim term{hits === 1 ? "" : "s"} found in this passage
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /** Inline renderer for answer text: **bold** spans, [n] markers as clickable
  *  citation badges, `values` as chips, and named documents as show-me
  *  buttons that open the document itself. */
@@ -69,6 +161,7 @@ function InlineAnswer({ text, citations, onCite }: {
   onCite: (c: KnowledgeCitation) => void;
 }) {
   const { links, open } = React.useContext(DocLinkContext);
+  const { show: showProof } = React.useContext(ProofContext);
   // Longest mention first so "EP 5-5-1" never half-matches as "EP 5-5".
   const mentionAlt = links
     .map((d) => d.mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
@@ -90,8 +183,14 @@ function InlineAnswer({ text, citations, onCite }: {
           const c = citations.find((x) => x.n === Number(cite[1]));
           if (c && !c.url) {
             return (
-              <button key={i} onClick={() => onCite(c)}
-                title={`${c.documentName ?? "Document"} · page ${c.page} — open with the passage highlighted`}
+              <button key={i}
+                onClick={(e) => {
+                  // First click: the proof card, right here — evidence without
+                  // the context switch. The full viewer is one tap further.
+                  if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect());
+                  else onCite(c);
+                }}
+                title={`${c.documentName ?? "Document"} · page ${c.page} — see the exact passage`}
                 className="inline-flex items-center justify-center align-baseline text-[10px] font-black min-w-[1.35rem] px-1 py-0.5 rounded-md bg-orange-600 text-white shadow-sm ring-1 ring-orange-700/40 hover:bg-orange-700 hover:scale-110 transition-all mx-0.5 cursor-pointer">
                 {cite[1]}
               </button>
@@ -140,6 +239,20 @@ function ImportantCallout({ text, citations, onCite }: {
   );
 }
 
+/** Bullets under each section header, so a header can announce its count
+ *  ("Preheat requirements · 4") — the organized-register feel a compliance
+ *  checklist deserves. */
+function sectionFactCounts(blocks: AnswerBlock[]): number[] {
+  return blocks.map((b, i) => {
+    if (b.type !== "label") return 0;
+    let n = 0;
+    for (let j = i + 1; j < blocks.length && blocks[j].type !== "label"; j++) {
+      if (blocks[j].type === "bullet") n++;
+    }
+    return n;
+  });
+}
+
 /** Structured answer: the Answer line as a hero callout, Basis/Check as
  *  compact labeled sections — never a wall of text. */
 function AnswerView({ answer, citations, onCite }: {
@@ -148,6 +261,7 @@ function AnswerView({ answer, citations, onCite }: {
   onCite: (c: KnowledgeCitation) => void;
 }) {
   const blocks = parseAnswerBlocks(answer);
+  const counts = sectionFactCounts(blocks);
   return (
     <div className="space-y-2.5">
       {blocks.map((b, i) => {
@@ -168,6 +282,9 @@ function AnswerView({ answer, citations, onCite }: {
             <div key={i} className="flex items-center gap-2 pt-4 first:pt-0">
               <span className="w-1 h-4 rounded-full bg-orange-500 shrink-0" />
               <span className="text-[13px] font-black text-[var(--color-text)]">{b.text}</span>
+              {counts[i] > 0 && (
+                <span className="shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300">{counts[i]}</span>
+              )}
               <span className="flex-1 h-px bg-[var(--color-border)]" />
             </div>
           );
@@ -177,7 +294,7 @@ function AnswerView({ answer, citations, onCite }: {
         }
         if (b.type === "bullet") {
           return (
-            <div key={i} className="flex items-start gap-2 text-[13px] text-[var(--color-text)] leading-relaxed">
+            <div key={i} className="flex items-start gap-2 text-[13px] text-[var(--color-text)] leading-relaxed rounded-lg px-2 -mx-2 py-1 hover:bg-[var(--color-surface-2)]/70 transition-colors">
               <span className="mt-[7px] w-1 h-1 rounded-full bg-orange-500 shrink-0" />
               <span><InlineAnswer text={b.text} citations={citations} onCite={onCite} /></span>
             </div>
@@ -425,6 +542,20 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
     () => ({ links: answer.mentionedDocs ?? [], open: onOpenDoc ?? null }),
     [answer.mentionedDocs, onOpenDoc],
   );
+  const [proof, setProof] = useState<ProofState | null>(null);
+  const proofCtx = useMemo(() => ({
+    show: (c: KnowledgeCitation, context: string, anchor: DOMRect) => {
+      const w = Math.min(PROOF_W, window.innerWidth - 24);
+      const up = anchor.bottom > window.innerHeight - 340;
+      setProof({
+        citation: c,
+        context,
+        x: Math.min(Math.max(12, anchor.left), window.innerWidth - w - 12),
+        y: up ? window.innerHeight - anchor.top + 8 : anchor.bottom + 8,
+        up,
+      });
+    },
+  }), []);
   const libraryCitations = answer.citations.filter((c) => !c.url);
   const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
 
@@ -470,6 +601,14 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
 
   return (
     <DocLinkContext.Provider value={docLinkCtx}>
+    <ProofContext.Provider value={proofCtx}>
+    {proof && (
+      <ProofCard
+        proof={proof}
+        onClose={() => setProof(null)}
+        onOpenPage={(c) => { setProof(null); onCite(c); }}
+      />
+    )}
     <div className="mt-4 space-y-3">
       <div className="text-[11px] text-[var(--color-text-muted)] animate-rise">
         You asked: <i>&ldquo;{question}&rdquo;</i>
@@ -520,21 +659,25 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
           {/* The reasoning waits for "Elaborate" — unnecessary until it isn't */}
           {hero && detailBlocks.length > 0 && elaborated && (
             <div className="mt-4 space-y-2 animate-rise">
-              {detailBlocks.map((b, i) => {
+              {detailBlocks.map((b, i, all) => {
                 if (b.type === "label") {
                   // Real section headers, not whisper-labels: a long Basis is
                   // only scannable if its group names visually break the wall.
+                  const count = sectionFactCounts(all)[i];
                   return (
                     <div key={i} className="flex items-center gap-2 pt-4 first:pt-0">
                       <span className="w-1 h-4 rounded-full bg-orange-500 shrink-0" />
                       <span className="text-[13px] font-black text-[var(--color-text)]">{b.text}</span>
+                      {count > 0 && (
+                        <span className="shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300">{count}</span>
+                      )}
                       <span className="flex-1 h-px bg-[var(--color-border)]" />
                     </div>
                   );
                 }
                 if (b.type === "bullet") {
                   return (
-                    <div key={i} className="flex items-start gap-2 text-[13px] text-[var(--color-text)] leading-relaxed">
+                    <div key={i} className="flex items-start gap-2 text-[13px] text-[var(--color-text)] leading-relaxed rounded-lg px-2 -mx-2 py-1 hover:bg-[var(--color-surface-2)]/70 transition-colors">
                       <span className="mt-[7px] w-1 h-1 rounded-full bg-orange-500 shrink-0" />
                       <span><InlineAnswer text={b.text} citations={answer.citations} onCite={onCite} /></span>
                     </div>
@@ -656,6 +799,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
         </>
       )}
     </div>
+    </ProofContext.Provider>
     </DocLinkContext.Provider>
   );
 }

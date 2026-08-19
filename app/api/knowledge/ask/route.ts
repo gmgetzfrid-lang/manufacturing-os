@@ -1481,6 +1481,9 @@ export async function POST(req: NextRequest) {
       "EMPHASIS: wrap every key identifier — document numbers, section refs, specific values and " +
       "limits — in **bold**. Put exact values/designations in `backticks` (rendered as value chips): " +
       "`250 ft-lb`, `ASME B31.3`, `Table 121.5`.\n\n" +
+      "PRIORITY ORDER: within Basis and within each ### group, order bullets by what the reader " +
+      "must act on first — binding requirements (shall/must, hold points, safety limits) first, " +
+      "specific values and limits next, supporting context last. The reader works top-down.\n\n" +
       "COMPLETENESS: for checklist/what-do-I-need questions, completeness BEATS brevity — enumerate " +
       "EVERY requirement found across ALL passages, grouped under short **bold** group names; never " +
       "stop at the first passage's list. If the passages suggest more requirements exist beyond what " +
