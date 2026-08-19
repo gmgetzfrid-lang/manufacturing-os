@@ -711,6 +711,11 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
             <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
             <span>·</span>
             <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below</span>
+            <span>·</span>
+            {/* Version beacon: which renderer produced this card. If a report
+                of bad formatting comes without this tag on screen, the tab is
+                serving pre-fmt5 code — a fact, not a guess. */}
+            <span className="font-black text-orange-600/70" title="Answer renderer version">fmt5</span>
           </div>
         </div>
       </div>

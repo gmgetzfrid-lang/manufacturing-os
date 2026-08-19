@@ -548,3 +548,26 @@ describe("parseAnswerBlocks — no-wall invariant", () => {
     expect(blocks.filter((b) => b.type === "bullet").length).toBeGreaterThanOrEqual(4);
   });
 });
+
+describe("parseAnswerBlocks — paragraph runs above structure", () => {
+  it("bulletizes a multi-paragraph intro even when bullets exist below", () => {
+    const input = [
+      "The governing document for this service is EP 5-5-2 as invoked by EP 5-2-1 for all B31.3 piping in the unit [1].",
+      "Two overlays add pump-specific requirements on top of the base welding standard for this class of service [2].",
+      "The alignment tolerances come from the rotating equipment standard rather than the code default values [3].",
+      "### Requirements",
+      "- GTAW root with argon purge [2]",
+    ].join("\n");
+    const blocks = parseAnswerBlocks(input);
+    expect(blocks[0].type).toBe("text");
+    expect(blocks[1].type).toBe("bullet");
+    expect(blocks[2].type).toBe("bullet");
+    expect(blocks[3]).toEqual({ type: "label", text: "Requirements" });
+  });
+
+  it("leaves a single paragraph next to structure alone", () => {
+    const blocks = parseAnswerBlocks("One intro paragraph with a citation [1].\n- a bullet [1]");
+    expect(blocks[0].type).toBe("text");
+    expect(blocks[1].type).toBe("bullet");
+  });
+});
