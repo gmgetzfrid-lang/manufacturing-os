@@ -185,18 +185,21 @@ function InlineAnswer({ text, citations, onCite }: {
             return (
               <button key={i}
                 onClick={(e) => {
-                  // First click: the proof card, right here — evidence without
+                  // First tap: the proof card, right here — evidence without
                   // the context switch. The full viewer is one tap further.
                   if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect());
                   else onCite(c);
                 }}
                 title={`${c.documentName ?? "Document"} · page ${c.page} — see the exact passage`}
-                className="inline-flex items-center justify-center align-baseline text-[11px] font-black min-w-[1.5rem] px-1.5 py-0.5 rounded-md bg-orange-600 text-white shadow-sm ring-1 ring-orange-700/40 hover:bg-orange-700 hover:scale-110 transition-all mx-0.5 cursor-pointer">
+                // Minimal superscript anchor, not a filled badge: a solid
+                // chip on every line cluttered the reading flow (design
+                // review). p-1.5/-m-1 keeps a real tap target.
+                className="align-super text-[10px] font-black text-orange-600 dark:text-orange-400 underline decoration-dotted decoration-orange-400/70 underline-offset-2 hover:text-orange-800 dark:hover:text-orange-300 p-1.5 -m-1 cursor-pointer">
                 {cite[1]}
               </button>
             );
           }
-          return <span key={i} className="text-[10px] font-black text-orange-700">{part}</span>;
+          return <span key={i} className="align-super text-[10px] font-black text-orange-700/80">{cite[1]}</span>;
         }
         if (part.startsWith("**") && part.endsWith("**")) {
           // Recurse so a doc mention INSIDE a bold span still gets its chip —
@@ -207,12 +210,9 @@ function InlineAnswer({ text, citations, onCite }: {
           const inner = part.slice(1, -1);
           const dl = open ? linkFor(inner) : undefined;
           if (dl) return docChip(dl, inner, i);
-          // Value chip — exact values, designations, table refs pop out.
-          return (
-            <code key={i} className="mx-0.5 px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 border border-orange-200 dark:border-orange-900 text-orange-900 dark:text-orange-200 font-mono font-bold text-[0.92em]">
-              {inner}
-            </code>
-          );
+          // Value chip — exact values pop out, and TAP COPIES the value so a
+          // field user grabs "250 ft-lb" without selecting a paragraph.
+          return <CopyChip key={i} value={inner} />;
         }
         const dl = open ? linkFor(part) : undefined;
         if (dl) return docChip(dl, part, i);
@@ -239,31 +239,6 @@ function ImportantCallout({ text, citations, onCite }: {
   );
 }
 
-/** Bullets under each section header, so a header can announce its count
- *  ("Preheat requirements · 4") — the organized-register feel a compliance
- *  checklist deserves. */
-function sectionFactCounts(blocks: AnswerBlock[]): number[] {
-  return blocks.map((b, i) => {
-    if (b.type !== "label") return 0;
-    let n = 0;
-    for (let j = i + 1; j < blocks.length && blocks[j].type !== "label"; j++) {
-      if (blocks[j].type === "bullet") n++;
-    }
-    return n;
-  });
-}
-
-/** Per-section fact numbers (01, 02, …) — a compliance register numbers its
- *  requirements; so do we. Resets at each section header. */
-function factNumbers(blocks: AnswerBlock[]): number[] {
-  let n = 0;
-  return blocks.map((b) => {
-    if (b.type === "label") { n = 0; return 0; }
-    if (b.type === "bullet") { n += 1; return n; }
-    return 0;
-  });
-}
-
 /** Per-section accent colors. One orange everything IS the wall — color is
  *  how the eye tells "Joint type" from "Alignment" from "Hold points" at a
  *  glance. Full class strings (Tailwind can't build them dynamically). */
@@ -276,43 +251,44 @@ const SECTION_ACCENTS = [
   { band: "bg-amber-100/80 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900", text: "text-amber-950 dark:text-amber-200", bar: "bg-amber-600", pill: "bg-amber-600 text-white", num: "bg-amber-600 text-white border-transparent", hover: "hover:border-amber-300 dark:hover:border-amber-800" },
 ];
 
-/** Which section (0-based) each block belongs to — drives the accent cycle. */
-function sectionIndexes(blocks: AnswerBlock[]): number[] {
-  let cur = -1;
-  return blocks.map((b) => {
-    if (b.type === "label") cur += 1;
-    return Math.max(0, cur);
-  });
-}
-
-/** A real section heading: 17px black on 14px body, colored accent bar,
- *  fact-count pill, fading rule. The hierarchy IS the readability. */
-function SectionHeader({ text, count, accent }: { text: string; count: number; accent: number }) {
-  const a = SECTION_ACCENTS[accent % SECTION_ACCENTS.length];
+/** A value chip you can TAKE with you: tap copies the exact value (torque,
+ *  pressure, clause number) for field notes — no paragraph selection. */
+function CopyChip({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <div className={`mt-4 first:mt-0 flex items-center gap-2.5 rounded-xl px-3 py-2 ${a.band}`}>
-      <span className={`w-1.5 h-5 rounded-full shrink-0 ${a.bar}`} />
-      <span className={`text-[16px] sm:text-[17px] font-black tracking-tight leading-tight ${a.text}`}>{text}</span>
-      {count > 0 && (
-        <span className={`ml-auto shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full ${a.pill}`}>
-          {count}
-        </span>
-      )}
-    </div>
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+      title="Tap to copy"
+      className={`mx-0.5 px-1.5 py-0.5 rounded-md border font-mono font-bold text-[0.92em] transition-colors cursor-pointer ${copied
+        ? "bg-emerald-100 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"
+        : "bg-orange-100 dark:bg-orange-950/50 border-orange-200 dark:border-orange-900 text-orange-900 dark:text-orange-200 hover:border-orange-400"}`}
+    >
+      {copied ? "copied ✓" : value}
+    </button>
   );
 }
+
+/** Section titles that read as deep-reference material — these default
+ *  COLLAPSED (everything else stays open, tap any header to toggle). */
+const DEEP_SECTION = /further|ancillary|reference|missing|not retrieved|beyond|background/i;
 
 /** One FACT presented like one: numbered, carded, its sources visible as
  *  buttons on the card (document · page → instant proof passage) — not a
  *  microscopic dot in front of 13px prose. */
-function FactCard({ n, text, citations, onCite, accent }: {
+function FactCard({ n, alt, text, citations, onCite }: {
   n: number;
+  /** Alternating row tint — soft separation instead of a border per fact. */
+  alt: boolean;
   text: string;
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
-  accent: number;
 }) {
-  const a = SECTION_ACCENTS[accent % SECTION_ACCENTS.length];
   // This fact's own sources, deduped by document+page.
   const seen = new Set<string>();
   const sources: KnowledgeCitation[] = [];
@@ -326,8 +302,8 @@ function FactCard({ n, text, citations, onCite, accent }: {
     if (sources.length >= 4) break;
   }
   return (
-    <div className={`group flex items-start gap-2.5 sm:gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-3.5 py-2.5 ${a.hover} hover:shadow-sm transition-all`}>
-      <span className={`mt-0.5 shrink-0 w-6 h-6 rounded-lg border text-[10px] font-mono font-black flex items-center justify-center ${a.num}`}>
+    <div className={`flex items-start gap-2.5 rounded-lg px-3 py-2.5 ${alt ? "bg-[var(--color-surface-2)]/50" : ""}`}>
+      <span className="mt-1 shrink-0 w-5 text-right font-mono text-[10px] font-bold text-[var(--color-text-faint)] tabular-nums">
         {String(n).padStart(2, "0")}
       </span>
       <div className="flex-1 min-w-0">
@@ -337,20 +313,111 @@ function FactCard({ n, text, citations, onCite, accent }: {
         {sources.length > 0 && (
           <div className="mt-2 flex items-center gap-1.5 flex-wrap">
             {/* These open the DOCUMENT ITSELF, at the cited page, passage
-                highlighted — the real paper is the proof. The inline [n]
-                chips remain the quick in-place passage peek. */}
+                highlighted — the real paper is the proof. The superscript
+                anchors remain the quick in-place passage peek. */}
             {sources.map((c) => (
               <button key={c.n}
                 onClick={() => onCite(c)}
                 title={`Open ${c.documentName ?? "the document"} at page ${c.page} — passage highlighted`}
-                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-orange-400 hover:text-orange-700 dark:hover:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30 transition-colors">
-                <Eye className="w-3 h-3 shrink-0" />
+                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1.5 sm:py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] shadow-sm hover:border-orange-400 hover:text-orange-700 dark:hover:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30 active:scale-[0.98] transition-all">
+                <Eye className="w-3 h-3 shrink-0 text-orange-600" />
                 {(c.documentName ?? "Source").replace(/\.pdf$/i, "").slice(0, 26)} · p.{c.page}
               </button>
             ))}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Grouped, collapsible answer sections — the shared renderer for both the
+ *  detail area and the no-hero fallback. Soft typographic headers (colored
+ *  dot, hairline, chevron) instead of a bordered band per section; facts as
+ *  alternating tinted rows instead of a box per line; deep-reference
+ *  sections start collapsed, everything toggles. */
+function SectionedBlocks({ blocks, citations, onCite }: {
+  blocks: AnswerBlock[];
+  citations: KnowledgeCitation[];
+  onCite: (c: KnowledgeCitation) => void;
+}) {
+  const sections = useMemo(() => {
+    const out: Array<{ label: string | null; accent: number; items: AnswerBlock[] }> = [];
+    let cur: { label: string | null; accent: number; items: AnswerBlock[] } = { label: null, accent: 0, items: [] };
+    let accent = -1;
+    for (const b of blocks) {
+      if (b.type === "label") {
+        if (cur.label !== null || cur.items.length > 0) out.push(cur);
+        accent += 1;
+        cur = { label: b.text, accent: Math.max(0, accent), items: [] };
+      } else {
+        cur.items.push(b);
+      }
+    }
+    if (cur.label !== null || cur.items.length > 0) out.push(cur);
+    return out;
+  }, [blocks]);
+  const [closed, setClosed] = useState<Set<number>>(() => {
+    const s = new Set<number>();
+    sections.forEach((sec, i) => { if (sec.label && DEEP_SECTION.test(sec.label)) s.add(i); });
+    return s;
+  });
+  const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
+  const renderItems = (items: AnswerBlock[]) => {
+    let n = 0;
+    return items.map((b, i) => {
+      if (b.type === "important") {
+        return <ImportantCallout key={i} text={b.text} citations={citations} onCite={onCite} />;
+      }
+      if (b.type === "bullet") {
+        n += 1;
+        return <FactCard key={i} n={n} alt={n % 2 === 0} text={b.text} citations={citations} onCite={onCite} />;
+      }
+      if (isCheck(b.text)) {
+        return (
+          <div key={i} className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[13px] text-amber-800 dark:text-amber-300">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span><InlineAnswer text={b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "")} citations={citations} onCite={onCite} /></span>
+          </div>
+        );
+      }
+      return (
+        <p key={i} className="text-sm text-[var(--color-text)] leading-relaxed px-3">
+          <InlineAnswer text={b.text} citations={citations} onCite={onCite} />
+        </p>
+      );
+    });
+  };
+  return (
+    <div className="space-y-1.5">
+      {sections.map((sec, si) => {
+        if (sec.label === null) {
+          return <div key={si} className="space-y-1.5">{renderItems(sec.items)}</div>;
+        }
+        const facts = sec.items.filter((b) => b.type === "bullet").length;
+        const open = !closed.has(si);
+        const a = SECTION_ACCENTS[sec.accent % SECTION_ACCENTS.length];
+        return (
+          <div key={si}>
+            <button
+              type="button"
+              onClick={() => setClosed((prev) => {
+                const next = new Set(prev);
+                if (next.has(si)) next.delete(si); else next.add(si);
+                return next;
+              })}
+              className="w-full flex items-center gap-2.5 pt-5 pb-1.5 text-left"
+            >
+              <span className={`w-2 h-2 rounded-full shrink-0 ${a.bar}`} />
+              <span className="text-[16px] sm:text-[17px] font-black tracking-tight leading-tight text-[var(--color-text)]">{sec.label}</span>
+              {facts > 0 && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-faint)]">· {facts}</span>}
+              <span className="flex-1 h-px bg-[var(--color-border)]/70" />
+              <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+            </button>
+            {open && <div className="space-y-1.5">{renderItems(sec.items)}</div>}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -363,37 +430,19 @@ function AnswerView({ answer, citations, onCite }: {
   onCite: (c: KnowledgeCitation) => void;
 }) {
   const blocks = parseAnswerBlocks(answer);
-  const counts = sectionFactCounts(blocks);
-  const nums = factNumbers(blocks);
-  const secs = sectionIndexes(blocks);
+  const hero = blocks[0]?.type === "hero" ? blocks[0] : null;
+  const rest = hero ? blocks.slice(1) : blocks;
   return (
     <div className="space-y-2.5">
-      {blocks.map((b, i) => {
-        if (b.type === "hero") {
-          return (
-            <div key={i} className="rounded-xl border-l-4 border-orange-500 bg-orange-50 dark:bg-orange-950/30 px-4 py-3">
-              <div className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-600 mb-1">Answer</div>
-              <div className="text-base font-bold text-[var(--color-text)] leading-snug">
-                <InlineAnswer text={b.text} citations={citations} onCite={onCite} />
-              </div>
-            </div>
-          );
-        }
-        if (b.type === "label") {
-          return <SectionHeader key={i} text={b.text} count={counts[i]} accent={secs[i]} />;
-        }
-        if (b.type === "important") {
-          return <ImportantCallout key={i} text={b.text} citations={citations} onCite={onCite} />;
-        }
-        if (b.type === "bullet") {
-          return <FactCard key={i} n={nums[i]} text={b.text} citations={citations} onCite={onCite} accent={secs[i]} />;
-        }
-        return (
-          <p key={i} className="text-sm text-[var(--color-text)] leading-relaxed">
-            <InlineAnswer text={b.text} citations={citations} onCite={onCite} />
-          </p>
-        );
-      })}
+      {hero && (
+        <div className="rounded-xl border-l-4 border-orange-500 bg-orange-50 dark:bg-orange-950/30 px-4 py-3">
+          <div className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-600 mb-1">Answer</div>
+          <div className="text-base font-bold text-[var(--color-text)] leading-snug">
+            <InlineAnswer text={hero.text} citations={citations} onCite={onCite} />
+          </div>
+        </div>
+      )}
+      <SectionedBlocks key={answer} blocks={rest} citations={citations} onCite={onCite} />
     </div>
   );
 }
@@ -647,10 +696,6 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
     },
   }), []);
   const libraryCitations = answer.citations.filter((c) => !c.url);
-  const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
-  const detailCounts = sectionFactCounts(detailBlocks);
-  const detailNums = factNumbers(detailBlocks);
-  const detailSecs = sectionIndexes(detailBlocks);
 
   // PRIORITY ORDER, everywhere. The order the ANSWER cites things is the
   // order the reader needs them — not citation-number order, which is just
@@ -663,7 +708,12 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
     if (!hero) return [] as KnowledgeCitation[];
     const seen = new Set<string>();
     const out: KnowledgeCitation[] = [];
-    for (const n of extractCitationNumbers(hero.text)) {
+    // The run-on explosion can move every [n] out of the headline into the
+    // Key-points bullets — which silently ERASED the Sources strip. The
+    // strip must survive that: fall back to the answer's first-used
+    // citations whenever the headline itself carries none.
+    const heroNs = extractCitationNumbers(hero.text);
+    for (const n of (heroNs.length > 0 ? heroNs : answerOrder)) {
       const c = citeByN.get(n);
       const key = c?.documentName ?? "";
       if (c && !seen.has(key)) { seen.add(key); out.push(c); }
@@ -724,18 +774,18 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
       {/* Hero answer card */}
       <div className="rounded-2xl border-2 border-orange-400 dark:border-orange-700 bg-[var(--color-surface)] shadow-lg overflow-hidden animate-pop">
         <div className="h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />
-        {/* THE ANSWER PLAQUE — dark, high contrast, unmissable. Orange-on-
-            white blended into the page; white-on-slate with orange accents
-            is the block the eye lands on first. */}
+        {/* THE ANSWER — a light frosted band with an orange spine. The dark
+            plaque read as a harsh speedbump (design review); separation now
+            comes from tone + the accent border, not a black block. */}
         <div className={hero
-          ? "px-4 sm:px-5 py-4 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800"
+          ? "px-4 sm:px-5 py-4 border-l-4 border-orange-500 bg-[var(--color-surface-2)]/60 backdrop-blur-sm"
           : "px-4 sm:px-5 pt-4"}>
           <div className="flex items-center justify-between gap-2 mb-2">
-            <div className={`text-[10px] font-black uppercase tracking-[0.2em] ${hero ? "text-orange-400" : "text-orange-600"}`}>Answer</div>
-            <CopyButton text={answer.answer} label="Copy answer" onDark={!!hero} />
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">Answer</div>
+            <CopyButton text={answer.answer} label="Copy answer" />
           </div>
           {hero ? (
-            <div className="text-[17px] font-black text-white leading-snug">
+            <div className="text-[17px] font-black text-[var(--color-text)] leading-relaxed">
               <InlineAnswer text={hero.text} citations={answer.citations} onCite={onCite} />
             </div>
           ) : (
@@ -747,13 +797,13 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
               "says who?" — this answers it above the fold. */}
           {heroSources.length > 0 && (
             <div className="mt-3.5 flex items-center gap-1.5 flex-wrap">
-              <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 w-full sm:w-auto">Sources · tap to open</span>
+              <span className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] w-full sm:w-auto">Sources · tap to open</span>
               {heroSources.map((c) => (
                 <button key={c.n} onClick={() => onCite(c)}
-                  className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/25 text-white shadow-sm hover:bg-white/20 hover:border-white/40 active:scale-[0.98] transition-all">
-                  <Eye className="w-3.5 h-3.5 text-orange-400" />
+                  className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-surface)] border border-orange-300 dark:border-orange-800 text-[var(--color-text)] shadow-sm hover:bg-orange-50 dark:hover:bg-orange-950/30 hover:border-orange-500 active:scale-[0.98] transition-all">
+                  <Eye className="w-3.5 h-3.5 text-orange-600" />
                   {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
-                  <span className="font-bold text-orange-300">p.{c.page}</span>
+                  <span className="font-bold text-orange-600">p.{c.page}</span>
                 </button>
               ))}
             </div>
@@ -772,28 +822,8 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
 
           {/* The reasoning waits for "Elaborate" — unnecessary until it isn't */}
           {hero && detailBlocks.length > 0 && elaborated && (
-            <div className="mt-4 space-y-2 animate-rise">
-              {detailBlocks.map((b, i) => {
-                if (b.type === "label") {
-                  return <SectionHeader key={i} text={b.text} count={detailCounts[i]} accent={detailSecs[i]} />;
-                }
-                if (b.type === "bullet") {
-                  return <FactCard key={i} n={detailNums[i]} text={b.text} citations={answer.citations} onCite={onCite} accent={detailSecs[i]} />;
-                }
-                if (isCheck(b.text)) {
-                  return (
-                    <div key={i} className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[13px] text-amber-800 dark:text-amber-300">
-                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                      <span><InlineAnswer text={b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "")} citations={answer.citations} onCite={onCite} /></span>
-                    </div>
-                  );
-                }
-                return (
-                  <p key={i} className="text-sm text-[var(--color-text)] leading-relaxed">
-                    <InlineAnswer text={b.text} citations={answer.citations} onCite={onCite} />
-                  </p>
-                );
-              })}
+            <div className="mt-4 animate-rise">
+              <SectionedBlocks key={answer.answer} blocks={detailBlocks} citations={answer.citations} onCite={onCite} />
             </div>
           )}
 
