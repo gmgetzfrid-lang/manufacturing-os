@@ -164,7 +164,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
   const confirmed = (flows ?? []).filter((f) => f.status === "confirmed");
 
   return (
-    <div className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5"
+    <div id="area-flow-panel" className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <Waypoints className="w-4 h-4 text-cyan-600 shrink-0" />

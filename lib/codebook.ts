@@ -45,7 +45,13 @@ export interface CodebookEntry {
   label: string;
   /** kind-specific extras. equipment_type: tagPrefixes (["E"] or ["EA","E"]).
    *  unit: links (libraries/folders pinned to the unit's hub page). */
-  meta: { tagPrefixes?: string[]; links?: UnitResourceLink[] };
+  meta: {
+    tagPrefixes?: string[];
+    links?: UnitResourceLink[];
+    /** unit: the AI knowledge library bound to this operating area — the
+     *  shelf its drawings feed and its questions answer from. */
+    knowledgeLibraryId?: string;
+  };
   sort: number;
   origin: "manual" | "import";
 }
@@ -366,6 +372,26 @@ export async function saveUnitLinks(orgId: string, unitCode: string, links: Unit
   if (error) throw new Error(error.message);
   if (!data) throw new Error(`Unit ${unitCode} isn't in the Site Codebook.`);
   const meta = { ...((data.meta as Record<string, unknown>) ?? {}), links };
+  const { error: upErr } = await supabase
+    .from("codebook_entries")
+    .update({ meta, updated_at: new Date().toISOString() })
+    .eq("id", data.id as string);
+  if (upErr) throw new Error(upErr.message);
+}
+
+/** Bind (or unbind, with null) an operating area's knowledge library —
+ *  read-modify-write on the unit's meta, same contract as saveUnitLinks. */
+export async function setUnitKnowledgeLibrary(
+  orgId: string, unitCode: string, knowledgeLibraryId: string | null,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("codebook_entries").select("id, meta")
+    .eq("org_id", orgId).eq("kind", "unit").eq("code", unitCode).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`Unit ${unitCode} isn't in the Site Codebook.`);
+  const meta = { ...((data.meta as Record<string, unknown>) ?? {}) };
+  if (knowledgeLibraryId) meta.knowledgeLibraryId = knowledgeLibraryId;
+  else delete meta.knowledgeLibraryId;
   const { error: upErr } = await supabase
     .from("codebook_entries")
     .update({ meta, updated_at: new Date().toISOString() })

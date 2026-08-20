@@ -34,6 +34,7 @@ import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollecti
 import { getDocumentsForAssetsHydrated } from "@/lib/operationalGraph";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import { CategorizeBanner, FlowPanel } from "@/components/assets/UnitOpsPanels";
+import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
@@ -403,6 +404,19 @@ function AssetsPageInner() {
               />
             )}
           </div>
+        )}
+
+        {/* This area's knowledge: setup path, live state, and drift review —
+            the order of operations lives ON the unit page. */}
+        {currentUnit && !loading && uid && activeOrgId && (
+          <AreaKnowledgePanel
+            orgId={activeOrgId}
+            userId={uid}
+            userName={userEmail ?? "Member"}
+            unit={{ code: currentUnit.code, label: currentUnit.label || `Unit ${currentUnit.code}` }}
+            unitAssetIds={unitAssetIds}
+            onChanged={() => { invalidateAssetCache(); void refresh(); }}
+          />
         )}
 
         {/* The Site Codebook already knows the taxonomy — put it to work. */}
