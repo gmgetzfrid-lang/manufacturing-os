@@ -62,7 +62,11 @@ export async function seedBuiltinRules(orgId: string, userId: string): Promise<v
   const have = new Set(((data as Array<{ builtin_key: string }>) ?? []).map((r) => r.builtin_key));
   const want = BUILTIN_SKILLS.filter((b) => !have.has(b.builtin_key));
   if (want.length === 0) return;
-  await supabase.from("link_rules").upsert(
+  // Plain insert of the missing rows — the unique (org_id, builtin_key)
+  // index is PARTIAL, which ON CONFLICT can't infer through the API, so an
+  // upsert here fails wholesale. A concurrent seeder makes this insert 23505;
+  // the rows exist either way, which is the goal.
+  await supabase.from("link_rules").insert(
     want.map((b) => ({
       org_id: orgId,
       builtin_key: b.builtin_key,
@@ -74,7 +78,6 @@ export async function seedBuiltinRules(orgId: string, userId: string): Promise<v
       visibility: "org",
       created_by: userId,
     })),
-    { onConflict: "org_id,builtin_key", ignoreDuplicates: true },
   );
 }
 
