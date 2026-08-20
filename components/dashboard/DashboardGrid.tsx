@@ -77,18 +77,28 @@ export default function DashboardGrid() {
   const greeting = useSyncExternalStore(subscribeNever, greetingNow, () => "Welcome back");
   const dateLine = useSyncExternalStore(subscribeNever, dateLineNow, () => "");
 
-  const gridRef = useRef<HTMLDivElement | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  const roRef = useRef<ResizeObserver | null>(null);
 
-  useEffect(() => {
-    const el = gridRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 0;
-      setGridWidth((prev) => (Math.abs(prev - w) > 0.5 ? w : prev));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
+  // CALLBACK ref, not ref+effect: the old []-deps effect ran once during the
+  // loading-spinner commit — before the grid div existed — found null, and
+  // never re-ran. gridWidth stayed 0 forever, isMobile stayed false, and
+  // PHONES GOT THE DESKTOP 12-COLUMN GRID: every widget a ~60px sliver.
+  // A callback ref fires when the node actually mounts (and React runs it
+  // before paint), so the first painted layout is already the right branch.
+  const gridRef = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
+    if (!el) return;
+    setGridWidth(el.getBoundingClientRect().width);
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver((entries) => {
+        const w = entries[0]?.contentRect.width ?? 0;
+        setGridWidth((prev) => (Math.abs(prev - w) > 0.5 ? w : prev));
+      });
+      ro.observe(el);
+      roRef.current = ro;
+    }
   }, []);
 
   useEffect(() => {
@@ -292,7 +302,9 @@ export default function DashboardGrid() {
             {greeting}{firstName ? <>, <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--brand-gradient)" }}>{firstName}</span></> : ""}
           </h1>
           <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
-            {editing ? "Drag widgets anywhere · pull a corner to resize · ＋ adds more" : "Here’s your workspace at a glance."}
+            {editing
+              ? (isMobile ? "＋ adds widgets · ✕ removes · arrange and resize on a larger screen" : "Drag widgets anywhere · pull a corner to resize · ＋ adds more")
+              : "Here’s your workspace at a glance."}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -321,7 +333,12 @@ export default function DashboardGrid() {
       {editing && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text)]" style={{ animation: "rise 0.25s var(--ease-fluid) both" }}>
           <Sparkles className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
-          <span className="flex-1 min-w-0">You’re customizing — grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go.</span>
+          <span className="flex-1 min-w-0">
+            {isMobile
+              // Phones can't drag or resize — telling them to reads as broken.
+              ? "You’re customizing — ✕ removes a card, ⚙ opens its settings, Tidy compacts. Arrange and resize on a larger screen."
+              : "You’re customizing — grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go."}
+          </span>
           <button
             type="button"
             onClick={tidyLayout}
