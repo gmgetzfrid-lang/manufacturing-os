@@ -287,8 +287,9 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "org_ai_instructions", "library_numbering",
   "document_related_resources", "recently_viewed_docs",   "project_intake_links",
   // Link discovery: aliases hang off assets, proposals off documents —
-  // both already restored above.
-  "asset_aliases", "proposed_links",
+  // both already restored above. Connection Skills only reference the org,
+  // so anywhere works; they ride with their consumers.
+  "asset_aliases", "proposed_links", "link_rules",
   // Mentions reference BOTH an asset and a document (controlled or
   // knowledge), so they can only land once both sides exist. Audit memory
   // hangs off documents alone.

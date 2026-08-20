@@ -24,7 +24,7 @@ import {
 } from "@/lib/relatedResources";
 import {
   listProposalsForDocument, approveProposal, dismissProposal,
-  PROPOSER_LABELS, type LinkProposal,
+  proposerLabel, type LinkProposal,
 } from "@/lib/linkProposals";
 import { findRelatedDocuments, type RelatedDocument } from "@/lib/search";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
@@ -265,7 +265,7 @@ export default function RelatedPanel({
                 {p.target?.document_number || p.target?.title || "Document"}
               </Link>
               <div className="text-[10px] text-[var(--color-text-muted)]">
-                {p.evidence?.summary} · {PROPOSER_LABELS[p.proposer]}
+                {p.evidence?.summary} · {proposerLabel(p.proposer, p.evidence)}
               </div>
               {canManage && (
                 <div className="flex items-center gap-1.5">

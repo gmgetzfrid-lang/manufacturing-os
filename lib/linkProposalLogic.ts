@@ -15,7 +15,9 @@
 //   Ambiguity never auto-applies. One resolution = provable; two = strong;
 //   a haystack = say nothing.
 
-export type ProposerKind = "opc" | "tag" | "alias" | "semantic";
+/** Built-in proposer keys, plus `rule:<id>` for org-authored Connection
+ *  Skills — the engine stopped being a closed set of detectors. */
+export type ProposerKind = "opc" | "tag" | "alias" | "semantic" | "co_citation" | (string & {});
 export type ProposalTier = "provable" | "strong" | "inferred";
 
 export interface ProposalDraft {
@@ -24,7 +26,7 @@ export interface ProposalDraft {
   proposer: ProposerKind;
   tier: ProposalTier;
   confidence: number;
-  evidence: { summary: string; detail?: string; tags?: string[]; page?: number };
+  evidence: { summary: string; detail?: string; tags?: string[]; page?: number; rule?: string };
   sourceRev?: string | null;
 }
 
@@ -176,6 +178,203 @@ export function proposeSharedEquipment(occurrences: TagOccurrence[]): ProposalDr
           ? `Matched through alias${entry.aliases.length > 1 ? "es" : ""}: ${entry.aliases.join(", ")}`
           : tagList.slice(0, 8).join(", "),
         tags: tagList.slice(0, 12),
+      },
+    });
+  }
+  return out;
+}
+
+// ── Built-in skills ──────────────────────────────────────────────────────
+//
+// The engine's own detectors, expressed as seedable Connection Skills so
+// nothing about them is privileged: an org can rename, disable, or reason
+// about them like any skill it authors. Wording is industry-neutral — the
+// engine ships MECHANICS; the org's paperwork conventions are data.
+
+export interface BuiltinSkillDef {
+  builtin_key: string;
+  name: string;
+  description: string;
+  kind: "reference" | "shared_entity" | "co_citation";
+  config: { patterns?: string[]; minCoCitations?: number };
+}
+
+export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
+  {
+    builtin_key: "opc_continuity",
+    name: "Drawing cross-reference continuity",
+    description:
+      "Follows references extracted from drawings — continuation callouts, off-page connectors, " +
+      "referenced sheet numbers — to the document that owns the referenced number. A reference " +
+      "resolving to exactly one document applies itself; anything ambiguous queues for review.",
+    kind: "reference",
+    config: {},
+  },
+  {
+    builtin_key: "shared_equipment",
+    name: "Shared equipment",
+    description:
+      "Connects documents linked to the same registry asset (directly or through an alias). " +
+      "Two documents about the same physical thing usually relate; several shared items make " +
+      "the case strong. Nothing here auto-applies — relating is a human call.",
+    kind: "shared_entity",
+    config: {},
+  },
+  {
+    builtin_key: "co_citation",
+    name: "Answered together",
+    description:
+      "Watches your team's questions: when answers repeatedly cite the same pair of documents, " +
+      "that pair is proposed as related — with the questions as evidence. Your usage of the " +
+      "knowledge base becomes connective tissue.",
+    kind: "co_citation",
+    config: { minCoCitations: 2 },
+  },
+];
+
+// ── Custom cross-reference skills ────────────────────────────────────────
+//
+// The generalization of off-page continuity: ANY identifier convention —
+// work orders, permits, ISO sheets, SOP numbers, whatever the facility
+// writes — expressed as a pattern by the org, matched against indexed
+// document text, resolved against document numbers. The engine supplies
+// the mechanics; the org supplies the industry knowledge.
+
+export interface TextOccurrence {
+  /** Controlled document whose indexed text this is. */
+  documentId: string;
+  text: string;
+  page?: number;
+  sourceRev?: string | null;
+}
+
+/** Compile user-authored patterns defensively: bad regex or absurd length
+ *  is reported, never thrown mid-run. Patterns that can match empty text
+ *  are rejected — they'd hit everywhere and mean nothing. */
+export function compileSkillPatterns(patterns: string[]): {
+  regexes: RegExp[]; errors: string[];
+} {
+  const regexes: RegExp[] = [];
+  const errors: string[] = [];
+  for (const raw of patterns) {
+    const p = (raw ?? "").trim();
+    if (!p) continue;
+    if (p.length > 200) { errors.push(`Pattern too long: ${p.slice(0, 40)}…`); continue; }
+    try {
+      const re = new RegExp(p, "gi");
+      if (re.test("")) { errors.push(`Pattern matches empty text: ${p}`); continue; }
+      regexes.push(new RegExp(p, "gi"));
+    } catch (e) {
+      errors.push(`Invalid pattern ${p}: ${(e as Error).message}`);
+    }
+  }
+  return { regexes, errors };
+}
+
+const MAX_MATCHES_PER_TEXT = 20;
+
+/** Run one custom reference skill over indexed text. A match becomes a link
+ *  only when the matched identifier resolves to a real document number —
+ *  so a sloppy pattern produces nothing, not garbage. Custom skills never
+ *  reach the 'provable' tier: they queue for review, always. */
+export function proposeCustomReferences(
+  rule: { id: string; name: string; regexes: RegExp[] },
+  occurrences: TextOccurrence[],
+  identityIndex: Map<string, string[]>,
+): ProposalDraft[] {
+  const best = new Map<string, ProposalDraft>();
+  for (const occ of occurrences) {
+    const seen = new Set<string>();
+    for (const re of rule.regexes) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      let count = 0;
+      while ((m = re.exec(occ.text)) !== null && count < MAX_MATCHES_PER_TEXT) {
+        count += 1;
+        // Zero-width safety: never loop in place.
+        if (m.index === re.lastIndex) re.lastIndex += 1;
+        const matched = m[0];
+        const key = refKey(matched);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const owners = identityIndex.get(key);
+        if (!owners || owners.length === 0 || owners.length > 2) continue;
+        for (const target of owners) {
+          if (target === occ.documentId) continue;
+          const [a, b] = orderPair(occ.documentId, target);
+          const pairKey = `${a}|${b}`;
+          const unique = owners.length === 1;
+          const draft: ProposalDraft = {
+            documentId: a,
+            targetDocumentId: b,
+            proposer: `rule:${rule.id}`,
+            tier: unique ? "strong" : "inferred",
+            confidence: unique ? 0.75 : 0.45,
+            evidence: {
+              summary: `Text references “${matched}”`,
+              detail: unique
+                ? `Found by the “${rule.name}” skill.`
+                : `Found by the “${rule.name}” skill — ${owners.length} documents carry this number.`,
+              page: occ.page,
+              rule: rule.name,
+            },
+            sourceRev: occ.sourceRev ?? null,
+          };
+          const existing = best.get(pairKey);
+          if (!existing || draft.confidence > existing.confidence) best.set(pairKey, draft);
+        }
+      }
+    }
+  }
+  return [...best.values()];
+}
+
+// ── Co-citation: questions answered from two documents together ──────────
+//
+// The knowledge base's own usage is evidence: when people's questions keep
+// being answered from the same pair of documents, those documents relate —
+// in whatever industry. The question itself is the evidence a reviewer sees.
+
+export interface CoCitationRow {
+  question: string;
+  /** Controlled document ids the answer cited (deduped). */
+  docIds: string[];
+}
+
+export function proposeCoCitations(
+  rows: CoCitationRow[],
+  opts?: { minCoCitations?: number },
+): ProposalDraft[] {
+  const min = Math.max(1, opts?.minCoCitations ?? 2);
+  const pairs = new Map<string, { count: number; questions: string[] }>();
+  for (const row of rows) {
+    const ids = [...new Set(row.docIds)];
+    // A question citing a dozen documents is a survey, not a relationship.
+    if (ids.length < 2 || ids.length > 6) continue;
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const [a, b] = orderPair(ids[i], ids[j]);
+        const key = `${a}|${b}`;
+        const entry = pairs.get(key) ?? { count: 0, questions: [] };
+        entry.count += 1;
+        if (entry.questions.length < 2 && row.question) entry.questions.push(row.question);
+        pairs.set(key, entry);
+      }
+    }
+  }
+  const out: ProposalDraft[] = [];
+  for (const [key, entry] of pairs) {
+    if (entry.count < min) continue;
+    const [documentId, targetDocumentId] = key.split("|");
+    out.push({
+      documentId, targetDocumentId,
+      proposer: "co_citation",
+      tier: entry.count >= 3 ? "strong" : "inferred",
+      confidence: Math.min(0.85, 0.3 + entry.count * 0.15),
+      evidence: {
+        summary: `Answered ${entry.count} question${entry.count === 1 ? "" : "s"} together`,
+        detail: entry.questions.length > 0 ? `e.g. “${entry.questions[0].slice(0, 140)}”` : undefined,
+        rule: "Answered together",
       },
     });
   }
