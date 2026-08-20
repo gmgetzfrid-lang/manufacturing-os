@@ -1,72 +1,76 @@
 // lib/flowsBrowse.ts — pure assembly for the PFD picker's browse model.
 //
-// The "Read flows from a document" picker used to show a flat, newest-first,
-// 50-row list of knowledge documents — which read as "folders" to anyone
-// whose mental map is their document-control structure, and silently hid
-// everything past row 50. This module builds the TRUE hierarchy instead:
+// The picker shows the user's OWN filing map: the document-control tree,
+// exactly as it looks on the Documents side —
 //
-//   AI knowledge library
-//     └─ the document-control container each mirrored doc came from
-//        (DC library / folder path), or "Uploaded directly"
-//          └─ every document, no caps
+//   Document library
+//     └─ folder
+//         └─ sub-folder
+//             └─ every controlled document, no caps
 //
-// And — the part that kills support tickets — a document visible in doc
-// control but absent here is ALWAYS explained by name. The four ways a file
-// stays invisible to the AI, each reported separately:
+// — and EVERY document appears, each carrying its AI status. A file the AI
+// can read is a "Read flows" row; a file it can't is still THERE, with the
+// reason and the fix printed on it:
 //
-//   unwatched     — its container isn't linked to ANY knowledge library
-//                   (org-wide panel: "the AI can't see this folder at all")
-//   missing       — this KL watches some folders of its DC library but not
-//                   this one (per-library: "never linked, not lost")
-//   pendingSync   — watched and readable, mirror just hasn't run (Sync now)
-//   notPdf / held — watched, but the current revision isn't a PDF, or the
-//                   AI boundary blocks it (not current / no file / held back)
+//   ready         — mirrored into a knowledge library, readable now
+//   pending_sync  — watched by a knowledge library, mirror hasn't run (Sync)
+//   unwatched     — no knowledge library watches its folder (link it)
+//   not_pdf       — current revision isn't a PDF (the AI reads PDFs only)
+//   not_current   — superseded / void / archived
+//   no_file       — no current file attached yet
+//   held_back     — a controller excluded it from AI
+//
+// The new folder that "went missing" can't go missing here: it's a node in
+// the tree the moment it holds a document, whatever that document's state.
 //
 // Pure and testable: the API route feeds it plain data, no I/O here.
 
-export interface FlowsBrowseDoc {
-  id: string;
+export type DcDocState =
+  | "ready" | "pending_sync" | "unwatched" | "not_pdf"
+  | "not_current" | "no_file" | "held_back";
+
+export interface DcDocRow {
+  dcDocId: string;
   name: string;
+  state: DcDocState;
+  /** Set when mirrored into a knowledge library — the id the flow reader
+   *  takes. */
+  kdocId: string | null;
   pageCount: number | null;
-  status: string | null;
 }
 
-export interface FlowsBrowseGroup {
-  /** Stable key for React lists. */
-  key: string;
-  /** "North Library / PFDs / Unit 20" or "Uploaded directly". */
-  label: string;
-  docs: FlowsBrowseDoc[];
-}
-
-export interface FlowsBrowseMissing {
-  label: string;
-  docCount: number;
-}
-
-export interface FlowsBrowseLibrary {
+export interface DcFolderNode {
   id: string;
   name: string;
-  docCount: number;
-  groups: FlowsBrowseGroup[];
-  /** DC containers with documents this library's sources don't watch
-   *  (folder-scoped sources leaving siblings dark). */
-  missing: FlowsBrowseMissing[];
-  /** Watched, readable documents the mirror hasn't picked up yet — a Sync
-   *  fixes exactly these. */
-  pendingSync: number;
-  /** Watched documents whose current revision isn't a PDF — the AI reads
-   *  PDFs only, no Sync will ever add them. */
-  notPdf: number;
-  /** Watched documents the AI boundary blocks, tallied by reason. */
-  held: Array<{ reason: "held_back" | "not_current" | "no_file"; count: number }>;
+  /** Some knowledge library watches this folder. */
+  watched: boolean;
+  docs: DcDocRow[];
+  folders: DcFolderNode[];
+  /** Docs here plus in every descendant folder. */
+  totalDocs: number;
+}
+
+export interface DcLibraryNode {
+  id: string;
+  name: string;
+  watched: boolean;
+  /** Docs filed at the library root (no folder). */
+  docs: DcDocRow[];
+  folders: DcFolderNode[];
+  totalDocs: number;
+}
+
+export interface FlowsBrowseUploadGroup {
+  knowledgeLibraryId: string;
+  knowledgeLibraryName: string;
+  docs: Array<{ kdocId: string; name: string; pageCount: number | null }>;
 }
 
 export interface FlowsBrowseResult {
-  libraries: FlowsBrowseLibrary[];
-  /** Containers with readable documents that NO knowledge library watches —
-   *  the org-wide answer to "I can see it in Documents but the AI can't". */
-  unwatched: FlowsBrowseMissing[];
+  /** The document-control tree, mirrored. */
+  tree: DcLibraryNode[];
+  /** PDFs uploaded straight into an AI knowledge library (no DC origin). */
+  uploads: FlowsBrowseUploadGroup[];
 }
 
 export interface FlowsBrowseInputs {
@@ -83,38 +87,19 @@ export interface FlowsBrowseInputs {
   }>;
   /** DC library id → name. */
   dcLibraryNames: Map<string, string>;
-  /** DC folder (collection) id → shape. pathNames is root-first. */
+  /** DC folder (collection) id → shape. */
   dcFolders: Map<string, {
     name: string; libraryId: string;
     parentId: string | null; pathNames: string[];
   }>;
-  /** Mirrored DC doc id → where it lives in doc control. */
-  dcDocContainers: Map<string, { libraryId: string | null; collectionId: string | null }>;
-  /** Every AI-readable controlled doc in the org (status/version/exclusion
-   *  gates already applied by the route). */
-  dcCountableDocs: Array<{ id: string; libraryId: string; collectionId: string | null }>;
-  /** Controlled docs the AI boundary blocks, with the reason. */
-  dcHeldDocs: Array<{
-    libraryId: string; collectionId: string | null;
-    reason: "held_back" | "not_current" | "no_file";
+  /** EVERY controlled document in the org, with its AI-boundary block (null
+   *  when the boundary allows it). */
+  dcDocs: Array<{
+    id: string; name: string; libraryId: string; collectionId: string | null;
+    block: "held_back" | "not_current" | "no_file" | null;
   }>;
-  /** Among covered-but-unmirrored readable docs: those whose current
-   *  revision is not an ingestable PDF. */
+  /** Readable docs whose current revision is not an ingestable PDF. */
   nonPdfDocIds: Set<string>;
-}
-
-const UPLOADS_LABEL = "Uploaded directly";
-
-function folderLabel(
-  folderId: string,
-  dcFolders: FlowsBrowseInputs["dcFolders"],
-  dcLibraryNames: Map<string, string>,
-): string {
-  const f = dcFolders.get(folderId);
-  if (!f) return "Folder (removed from document control)";
-  const lib = dcLibraryNames.get(f.libraryId) ?? "Library";
-  const path = f.pathNames.length > 0 ? f.pathNames : [f.name];
-  return `${lib} / ${path.join(" / ")}`;
 }
 
 /** Folder ids in the subtree rooted at folderId (inclusive), via parent
@@ -139,8 +124,7 @@ function subtree(folderId: string, dcFolders: FlowsBrowseInputs["dcFolders"]): S
 }
 
 /** What a set of sources watches: whole DC libraries, folder subtrees, and
- *  which DC libraries are touched at all. Exported so the route can pick
- *  candidates for the (bounded) PDF check with the same rule. */
+ *  which DC libraries are touched at all. */
 export function sourceCoverage(
   sources: Array<{ sourceType: "library" | "folder"; sourceId: string }>,
   dcFolders: FlowsBrowseInputs["dcFolders"],
@@ -167,149 +151,130 @@ export function isCovered(
   return !!doc.collectionId && cov.coveredFolders.has(doc.collectionId);
 }
 
-const containerKey = (d: { libraryId: string; collectionId: string | null }) =>
-  d.collectionId ? `f:${d.collectionId}` : `lr:${d.libraryId}`;
-
-function containerLabelFromKey(
-  key: string,
-  dcFolders: FlowsBrowseInputs["dcFolders"],
-  dcLibraryNames: Map<string, string>,
-): string {
-  return key.startsWith("f:")
-    ? folderLabel(key.slice(2), dcFolders, dcLibraryNames)
-    : `${dcLibraryNames.get(key.slice(3)) ?? "Library"} / (library root)`;
-}
+const byName = <T extends { name: string }>(a: T, b: T) =>
+  a.name.localeCompare(b.name, undefined, { numeric: true });
 
 export function assembleFlowsBrowse(inputs: FlowsBrowseInputs): FlowsBrowseResult {
   const {
     knowledgeLibraries, knowledgeDocs, sources,
-    dcLibraryNames, dcFolders, dcDocContainers,
-    dcCountableDocs, dcHeldDocs, nonPdfDocIds,
+    dcLibraryNames, dcFolders, dcDocs, nonPdfDocIds,
   } = inputs;
 
-  const docsByLib = new Map<string, FlowsBrowseInputs["knowledgeDocs"]>();
-  for (const d of knowledgeDocs) {
-    const list = docsByLib.get(d.libraryId) ?? [];
-    list.push(d);
-    docsByLib.set(d.libraryId, list);
-  }
-  const sourcesByLib = new Map<string, FlowsBrowseInputs["sources"]>();
-  for (const s of sources) {
-    const list = sourcesByLib.get(s.knowledgeLibraryId) ?? [];
-    list.push(s);
-    sourcesByLib.set(s.knowledgeLibraryId, list);
+  const union = sourceCoverage(sources, dcFolders);
+
+  // Which knowledge doc mirrors each DC doc (prefer a ready mirror).
+  const mirrorByDc = new Map<string, FlowsBrowseInputs["knowledgeDocs"][number]>();
+  for (const k of knowledgeDocs) {
+    if (!k.sourceDocumentId) continue;
+    const prev = mirrorByDc.get(k.sourceDocumentId);
+    if (!prev || (prev.status !== "ready" && k.status === "ready")) {
+      mirrorByDc.set(k.sourceDocumentId, k);
+    }
   }
 
-  const libraries = knowledgeLibraries.map((kl) => {
-    // ── Group this library's docs by their DC container ──────────────────
-    const groups = new Map<string, FlowsBrowseGroup>();
-    const push = (key: string, label: string, doc: FlowsBrowseDoc) => {
-      const g = groups.get(key) ?? { key, label, docs: [] };
-      g.docs.push(doc);
-      groups.set(key, g);
+  // ── Every controlled doc becomes a row with its state ─────────────────
+  const rowsByContainer = new Map<string, DcDocRow[]>(); // "lib:<id>" | "folder:<id>"
+  const libsWithDocs = new Set<string>();
+  for (const d of dcDocs) {
+    const mirror = mirrorByDc.get(d.id);
+    const state: DcDocState = mirror
+      ? "ready"
+      : d.block
+        ? d.block
+        : !isCovered(d, union)
+          ? "unwatched"
+          : nonPdfDocIds.has(d.id)
+            ? "not_pdf"
+            : "pending_sync";
+    const row: DcDocRow = {
+      dcDocId: d.id,
+      name: mirror?.name ?? d.name,
+      state,
+      kdocId: mirror?.id ?? null,
+      pageCount: mirror?.pageCount ?? null,
     };
-    const mirroredDcIds = new Set<string>();
-    for (const d of docsByLib.get(kl.id) ?? []) {
-      const doc: FlowsBrowseDoc = { id: d.id, name: d.name, pageCount: d.pageCount, status: d.status };
-      if (!d.sourceDocumentId) {
-        push("__uploads", UPLOADS_LABEL, doc);
-        continue;
-      }
-      mirroredDcIds.add(d.sourceDocumentId);
-      const at = dcDocContainers.get(d.sourceDocumentId);
-      if (at?.collectionId) {
-        push(`f:${at.collectionId}`, folderLabel(at.collectionId, dcFolders, dcLibraryNames), doc);
-      } else if (at?.libraryId) {
-        const lib = dcLibraryNames.get(at.libraryId) ?? "Library";
-        push(`lr:${at.libraryId}`, `${lib} / (library root)`, doc);
-      } else {
-        push("__dc", "From document control", doc);
-      }
-    }
-    const sortedGroups = [...groups.values()]
-      .sort((a, b) => {
-        // Uploads sink to the bottom; controlled containers sort by path.
-        const au = a.key === "__uploads" ? 1 : 0;
-        const bu = b.key === "__uploads" ? 1 : 0;
-        if (au !== bu) return au - bu;
-        return a.label.localeCompare(b.label, undefined, { numeric: true });
-      });
-    for (const g of sortedGroups) {
-      g.docs.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-    }
+    const key = d.collectionId ? `folder:${d.collectionId}` : `lib:${d.libraryId}`;
+    const list = rowsByContainer.get(key) ?? [];
+    list.push(row);
+    rowsByContainer.set(key, list);
+    libsWithDocs.add(d.libraryId);
+  }
 
-    // ── Coverage: which DC containers do this library's sources watch? ───
-    const libSources = sourcesByLib.get(kl.id) ?? [];
-    const cov = sourceCoverage(libSources, dcFolders);
-
-    // A library-scoped source covers everything in it — nothing can be
-    // missing there. Folder-scoped sources leave siblings (and the library
-    // root) dark: count the documents sitting in those dark corners.
-    const missingCount = new Map<string, number>();
-    // Watched docs that aren't mirrored yet split three ways: sync just
-    // hasn't run (fixable NOW), current revision isn't a PDF (never will),
-    // or the AI boundary holds them (reported by reason).
-    let pendingSync = 0;
-    let notPdf = 0;
-    for (const d of dcCountableDocs) {
-      if (isCovered(d, cov)) {
-        if (mirroredDcIds.has(d.id)) continue;
-        if (nonPdfDocIds.has(d.id)) notPdf += 1;
-        else pendingSync += 1;
-        continue;
-      }
-      if (!cov.touchedLibs.has(d.libraryId) || cov.wholeLibs.has(d.libraryId)) continue;
-      const key = containerKey(d);
-      missingCount.set(key, (missingCount.get(key) ?? 0) + 1);
+  // ── Fold folders into trees per DC library ────────────────────────────
+  const childFolders = new Map<string, string[]>(); // parent folder id → children
+  const rootFolders = new Map<string, string[]>();  // dc library id → root folder ids
+  for (const [id, f] of dcFolders) {
+    if (f.parentId && dcFolders.has(f.parentId)) {
+      const list = childFolders.get(f.parentId) ?? [];
+      list.push(id);
+      childFolders.set(f.parentId, list);
+    } else {
+      const list = rootFolders.get(f.libraryId) ?? [];
+      list.push(id);
+      rootFolders.set(f.libraryId, list);
     }
-    const heldCount = new Map<"held_back" | "not_current" | "no_file", number>();
-    for (const h of dcHeldDocs) {
-      if (!isCovered(h, cov)) continue;
-      heldCount.set(h.reason, (heldCount.get(h.reason) ?? 0) + 1);
-    }
-    const missing: FlowsBrowseMissing[] = [...missingCount.entries()]
-      .map(([key, docCount]) => ({
-        label: containerLabelFromKey(key, dcFolders, dcLibraryNames),
-        docCount,
-      }))
-      .sort((a, b) => b.docCount - a.docCount)
-      .slice(0, 6);
+  }
 
+  const buildFolder = (folderId: string): DcFolderNode | null => {
+    const f = dcFolders.get(folderId);
+    if (!f) return null;
+    const docs = (rowsByContainer.get(`folder:${folderId}`) ?? []).sort(byName);
+    const folders = (childFolders.get(folderId) ?? [])
+      .map(buildFolder)
+      .filter((n): n is DcFolderNode => n !== null)
+      .sort(byName);
+    const totalDocs = docs.length + folders.reduce((s, n) => s + n.totalDocs, 0);
+    // Empty subtrees fold away — the tree shows where documents LIVE.
+    if (totalDocs === 0) return null;
     return {
-      id: kl.id,
-      name: kl.name,
-      docCount: (docsByLib.get(kl.id) ?? []).length,
-      groups: sortedGroups,
-      missing,
-      pendingSync,
-      notPdf,
-      held: [...heldCount.entries()].map(([reason, count]) => ({ reason, count })),
+      id: folderId,
+      name: f.name,
+      watched: isCovered({ libraryId: f.libraryId, collectionId: folderId }, union),
+      docs, folders, totalDocs,
     };
-  });
+  };
 
-  // ── Org-wide: containers NO knowledge library watches at all ───────────
-  // The single most common "it's missing" cause: a new DC folder that was
-  // never linked anywhere. Only meaningful once at least one knowledge
-  // library exists.
-  const unwatched: FlowsBrowseMissing[] = [];
-  if (knowledgeLibraries.length > 0) {
-    const union = sourceCoverage(sources, dcFolders);
-    const count = new Map<string, number>();
-    for (const d of dcCountableDocs) {
-      if (isCovered(d, union)) continue;
-      const key = containerKey(d);
-      count.set(key, (count.get(key) ?? 0) + 1);
-    }
-    unwatched.push(
-      ...[...count.entries()]
-        .map(([key, docCount]) => ({
-          label: containerLabelFromKey(key, dcFolders, dcLibraryNames),
-          docCount,
-        }))
-        .sort((a, b) => b.docCount - a.docCount)
-        .slice(0, 8),
-    );
+  const tree: DcLibraryNode[] = [];
+  const allLibIds = new Set<string>([...dcLibraryNames.keys(), ...libsWithDocs]);
+  for (const libId of allLibIds) {
+    const docs = (rowsByContainer.get(`lib:${libId}`) ?? []).sort(byName);
+    const folders = (rootFolders.get(libId) ?? [])
+      .map(buildFolder)
+      .filter((n): n is DcFolderNode => n !== null)
+      .sort(byName);
+    const totalDocs = docs.length + folders.reduce((s, n) => s + n.totalDocs, 0);
+    if (totalDocs === 0) continue;
+    const anyFolderWatched = (function anyWatched(nodes: DcFolderNode[]): boolean {
+      return nodes.some((n) => n.watched || anyWatched(n.folders));
+    })(folders);
+    tree.push({
+      id: libId,
+      name: dcLibraryNames.get(libId) ?? "Library",
+      watched: union.wholeLibs.has(libId) || anyFolderWatched,
+      docs, folders, totalDocs,
+    });
   }
+  tree.sort(byName);
 
-  return { libraries, unwatched };
+  // ── Direct uploads: PDFs living only on the AI side ───────────────────
+  const klName = new Map(knowledgeLibraries.map((l) => [l.id, l.name]));
+  const knownDc = new Set(dcDocs.map((d) => d.id));
+  const uploadsByKl = new Map<string, FlowsBrowseUploadGroup>();
+  for (const k of knowledgeDocs) {
+    // No DC origin — or an origin doc control no longer has: either way the
+    // file exists only on the AI side, and it must not vanish from view.
+    if (k.sourceDocumentId && knownDc.has(k.sourceDocumentId)) continue;
+    const g = uploadsByKl.get(k.libraryId) ?? {
+      knowledgeLibraryId: k.libraryId,
+      knowledgeLibraryName: klName.get(k.libraryId) ?? "Knowledge library",
+      docs: [],
+    };
+    g.docs.push({ kdocId: k.id, name: k.name, pageCount: k.pageCount });
+    uploadsByKl.set(k.libraryId, g);
+  }
+  const uploads = [...uploadsByKl.values()]
+    .sort((a, b) => a.knowledgeLibraryName.localeCompare(b.knowledgeLibraryName));
+  for (const g of uploads) g.docs.sort(byName);
+
+  return { tree, uploads };
 }

@@ -1,136 +1,119 @@
 import { describe, it, expect } from "vitest";
 import { assembleFlowsBrowse, type FlowsBrowseInputs } from "@/lib/flowsBrowse";
 
-// The picker's promise: the hierarchy the user actually filed things into
-// (DC library / folder), with nothing silently hidden — and a NAMED answer
-// for every way a document can be invisible: unwatched container, unlinked
-// sibling folder, sync not run yet, not a PDF, or held by the AI boundary.
+// The picker's promise: the DOCUMENT-CONTROL tree, exactly as filed —
+// libraries, nested folders, every controlled document — with a named AI
+// state on each row. A new folder can never "go missing": the moment it
+// holds a document it is a node in the tree, whatever the doc's state.
 
 const base = (): FlowsBrowseInputs => ({
   knowledgeLibraries: [{ id: "kl1", name: "Refinery Reference" }],
   knowledgeDocs: [],
   sources: [],
-  dcLibraryNames: new Map([["dl1", "North Library"]]),
+  dcLibraryNames: new Map([["dl1", "Drawings"]]),
   dcFolders: new Map([
     ["fA", { name: "PFDs", libraryId: "dl1", parentId: null, pathNames: ["PFDs"] }],
     ["fA1", { name: "Unit 20", libraryId: "dl1", parentId: "fA", pathNames: ["PFDs", "Unit 20"] }],
     ["fB", { name: "P&IDs", libraryId: "dl1", parentId: null, pathNames: ["P&IDs"] }],
   ]),
-  dcDocContainers: new Map(),
-  dcCountableDocs: [],
-  dcHeldDocs: [],
+  dcDocs: [],
   nonPdfDocIds: new Set(),
 });
 
-describe("assembleFlowsBrowse", () => {
-  it("groups docs under their DC library / folder path, uploads last", () => {
+describe("assembleFlowsBrowse — the DC tree with AI states", () => {
+  it("nests folders exactly as document control files them", () => {
     const inputs = base();
-    inputs.knowledgeDocs = [
-      { id: "k1", name: "PFD Book", libraryId: "kl1", pageCount: 12, status: "ready", sourceDocumentId: "d1" },
-      { id: "k2", name: "Direct upload", libraryId: "kl1", pageCount: 2, status: "ready", sourceDocumentId: null },
-      { id: "k3", name: "Root doc", libraryId: "kl1", pageCount: 1, status: "ready", sourceDocumentId: "d2" },
+    inputs.dcDocs = [
+      { id: "d1", name: "PFD Book", libraryId: "dl1", collectionId: "fA1", block: null },
+      { id: "d2", name: "Root doc", libraryId: "dl1", collectionId: null, block: null },
     ];
-    inputs.dcDocContainers = new Map([
-      ["d1", { libraryId: "dl1", collectionId: "fA1" }],
-      ["d2", { libraryId: "dl1", collectionId: null }],
-    ]);
-    const { libraries: [lib] } = assembleFlowsBrowse(inputs);
-    expect(lib.docCount).toBe(3);
-    expect(lib.groups.map((g) => g.label)).toEqual([
-      "North Library / (library root)",
-      "North Library / PFDs / Unit 20",
-      "Uploaded directly",
-    ]);
+    const { tree } = assembleFlowsBrowse(inputs);
+    expect(tree).toHaveLength(1);
+    const lib = tree[0];
+    expect(lib.name).toBe("Drawings");
+    expect(lib.totalDocs).toBe(2);
+    expect(lib.docs.map((d) => d.name)).toEqual(["Root doc"]);
+    // PFDs → Unit 20 → PFD Book, nested; empty P&IDs folder folds away.
+    expect(lib.folders.map((f) => f.name)).toEqual(["PFDs"]);
+    expect(lib.folders[0].folders[0].name).toBe("Unit 20");
+    expect(lib.folders[0].folders[0].docs[0].name).toBe("PFD Book");
   });
 
-  it("names folders a folder-scoped source leaves uncovered — the missing folder is explained, not lost", () => {
+  it("a brand-new folder with an unlinked doc APPEARS, state 'unwatched' — never missing", () => {
     const inputs = base();
-    // The knowledge library watches only the PFDs folder…
+    inputs.dcFolders.set("fNew", { name: "New PFDs", libraryId: "dl1", parentId: null, pathNames: ["New PFDs"] });
+    // The knowledge library watches only the old PFDs folder.
     inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "folder", sourceId: "fA" }];
-    // …but the DC library also holds P&IDs and root-level docs.
-    inputs.dcCountableDocs = [
-      { id: "x1", libraryId: "dl1", collectionId: "fB" },
-      { id: "x2", libraryId: "dl1", collectionId: "fB" },
-      { id: "x3", libraryId: "dl1", collectionId: null },
-    ];
-    const { libraries: [lib] } = assembleFlowsBrowse(inputs);
-    expect(lib.missing).toEqual([
-      { label: "North Library / P&IDs", docCount: 2 },
-      { label: "North Library / (library root)", docCount: 1 },
-    ]);
+    inputs.dcDocs = [{ id: "n1", name: "New PFD", libraryId: "dl1", collectionId: "fNew", block: null }];
+    const { tree } = assembleFlowsBrowse(inputs);
+    const folder = tree[0].folders.find((f) => f.name === "New PFDs");
+    expect(folder).toBeDefined();
+    expect(folder!.watched).toBe(false);
+    expect(folder!.docs[0].state).toBe("unwatched");
   });
 
-  it("reports nothing missing when a whole DC library is the source, but counts pendingSync until mirrored", () => {
-    const inputs = base();
-    inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "library", sourceId: "dl1" }];
-    inputs.dcCountableDocs = [
-      { id: "x1", libraryId: "dl1", collectionId: "fB" },
-      { id: "x2", libraryId: "dl1", collectionId: null },
-    ];
-    const { libraries: [lib], unwatched } = assembleFlowsBrowse(inputs);
-    expect(lib.missing).toEqual([]);
-    // Watched + readable + not mirrored yet = a Sync fixes exactly these.
-    expect(lib.pendingSync).toBe(2);
-    expect(unwatched).toEqual([]);
-  });
-
-  it("mirrored docs don't count as pendingSync; non-PDF revisions are their own bucket", () => {
+  it("mirrored docs are 'ready' with the knowledge doc id the reader needs", () => {
     const inputs = base();
     inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "library", sourceId: "dl1" }];
     inputs.knowledgeDocs = [
-      { id: "k1", name: "PFD Book", libraryId: "kl1", pageCount: 12, status: "ready", sourceDocumentId: "d1" },
+      { id: "k1", name: "PFD Book (mirror)", libraryId: "kl1", pageCount: 12, status: "ready", sourceDocumentId: "d1" },
     ];
-    inputs.dcDocContainers = new Map([["d1", { libraryId: "dl1", collectionId: "fA" }]]);
-    inputs.dcCountableDocs = [
-      { id: "d1", libraryId: "dl1", collectionId: "fA" }, // mirrored
-      { id: "d2", libraryId: "dl1", collectionId: "fA" }, // native CAD, no PDF
-      { id: "d3", libraryId: "dl1", collectionId: "fA" }, // waiting on sync
+    inputs.dcDocs = [{ id: "d1", name: "PFD Book", libraryId: "dl1", collectionId: "fA", block: null }];
+    const { tree } = assembleFlowsBrowse(inputs);
+    const row = tree[0].folders[0].docs[0];
+    expect(row.state).toBe("ready");
+    expect(row.kdocId).toBe("k1");
+    expect(row.pageCount).toBe(12);
+    expect(tree[0].watched).toBe(true);
+  });
+
+  it("watched-but-unmirrored splits into pending_sync vs not_pdf; boundary blocks keep their reason", () => {
+    const inputs = base();
+    inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "library", sourceId: "dl1" }];
+    inputs.dcDocs = [
+      { id: "d1", name: "Waiting", libraryId: "dl1", collectionId: "fA", block: null },
+      { id: "d2", name: "Native CAD", libraryId: "dl1", collectionId: "fA", block: null },
+      { id: "d3", name: "Old rev", libraryId: "dl1", collectionId: "fA", block: "not_current" },
+      { id: "d4", name: "Secret", libraryId: "dl1", collectionId: "fA", block: "held_back" },
     ];
     inputs.nonPdfDocIds = new Set(["d2"]);
-    const { libraries: [lib] } = assembleFlowsBrowse(inputs);
-    expect(lib.pendingSync).toBe(1);
-    expect(lib.notPdf).toBe(1);
+    const { tree } = assembleFlowsBrowse(inputs);
+    const states = Object.fromEntries(tree[0].folders[0].docs.map((d) => [d.name, d.state]));
+    expect(states).toEqual({
+      Waiting: "pending_sync",
+      "Native CAD": "not_pdf",
+      "Old rev": "not_current",
+      Secret: "held_back",
+    });
   });
 
-  it("tallies AI-boundary holds by reason for watched containers only", () => {
+  it("watching a parent folder covers its children (subtree rule)", () => {
     const inputs = base();
     inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "folder", sourceId: "fA" }];
-    inputs.dcHeldDocs = [
-      { libraryId: "dl1", collectionId: "fA1", reason: "no_file" },
-      { libraryId: "dl1", collectionId: "fA", reason: "not_current" },
-      { libraryId: "dl1", collectionId: "fA", reason: "not_current" },
-      { libraryId: "dl1", collectionId: "fB", reason: "held_back" }, // unwatched → not this KL's story
+    inputs.dcDocs = [{ id: "d1", name: "Deep doc", libraryId: "dl1", collectionId: "fA1", block: null }];
+    const { tree } = assembleFlowsBrowse(inputs);
+    const unit20 = tree[0].folders[0].folders[0];
+    expect(unit20.watched).toBe(true);
+    expect(unit20.docs[0].state).toBe("pending_sync");
+  });
+
+  it("direct AI uploads (and mirrors whose DC doc vanished) group under their knowledge library", () => {
+    const inputs = base();
+    inputs.knowledgeDocs = [
+      { id: "k1", name: "Uploaded PFD", libraryId: "kl1", pageCount: 3, status: "ready", sourceDocumentId: null },
+      { id: "k2", name: "Orphan mirror", libraryId: "kl1", pageCount: 1, status: "ready", sourceDocumentId: "gone" },
     ];
-    const { libraries: [lib] } = assembleFlowsBrowse(inputs);
-    expect(lib.held).toEqual(expect.arrayContaining([
-      { reason: "no_file", count: 1 },
-      { reason: "not_current", count: 2 },
-    ]));
-    expect(lib.held).toHaveLength(2);
+    const { uploads } = assembleFlowsBrowse(inputs);
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0].knowledgeLibraryName).toBe("Refinery Reference");
+    expect(uploads[0].docs.map((d) => d.name)).toEqual(["Orphan mirror", "Uploaded PFD"]);
   });
 
-  it("org-wide unwatched: a container no knowledge library watches is named — the 'new folder is missing' answer", () => {
+  it("libraries with no documents anywhere fold away", () => {
     const inputs = base();
-    inputs.dcLibraryNames.set("dl2", "Drawings");
-    inputs.dcFolders.set("fNew", { name: "New PFDs", libraryId: "dl2", parentId: null, pathNames: ["New PFDs"] });
-    // kl1 watches North Library's PFDs folder; the whole Drawings library
-    // (with the user's brand-new folder) is linked NOWHERE.
-    inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "folder", sourceId: "fA" }];
-    inputs.dcCountableDocs = [
-      { id: "n1", libraryId: "dl2", collectionId: "fNew" },
-      { id: "n2", libraryId: "dl2", collectionId: "fNew" },
-      { id: "n3", libraryId: "dl1", collectionId: "fA1" }, // watched → not unwatched
-    ];
-    const { unwatched } = assembleFlowsBrowse(inputs);
-    expect(unwatched).toEqual([{ label: "Drawings / New PFDs", docCount: 2 }]);
-  });
-
-  it("subtree coverage: watching a parent folder covers its children", () => {
-    const inputs = base();
-    inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "folder", sourceId: "fA" }];
-    inputs.dcCountableDocs = [{ id: "x1", libraryId: "dl1", collectionId: "fA1" }];
-    const { libraries: [lib], unwatched } = assembleFlowsBrowse(inputs);
-    expect(lib.missing).toEqual([]);
-    expect(unwatched).toEqual([]);
+    inputs.dcLibraryNames.set("dl2", "Empty Library");
+    inputs.dcDocs = [{ id: "d1", name: "Doc", libraryId: "dl1", collectionId: null, block: null }];
+    const { tree } = assembleFlowsBrowse(inputs);
+    expect(tree.map((l) => l.name)).toEqual(["Drawings"]);
   });
 });
