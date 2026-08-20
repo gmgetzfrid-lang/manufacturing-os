@@ -404,17 +404,33 @@ export function explodeRunOn(text: string): AnswerBlock[] | null {
   if (pieces.length === 1) pieces = splitTopLevel(body, " — ");
   if (pieces.length === 1) pieces = splitTopLevel(body, " – ");
   if (pieces.length === 1) pieces = splitTopLevel(body, "; ");
-  const lead = carveClause(pieces[0] ?? body);
-  let hero = lead[0] ?? body;
-  const bullets = [...lead.slice(1), ...pieces.slice(1).flatMap(carveClause)];
-  // INVARIANT: nothing longer than ~320 chars leaves this function as a
-  // single block. A lead that no punctuation could split gets hard-wrapped —
-  // arbitrary breaks still beat the wall this function exists to prevent.
-  if (hero.length > 320) {
-    const rows = hardWrap(hero, 240);
-    hero = rows[0];
-    bullets.unshift(...rows.slice(1));
+  const first = pieces[0] ?? body;
+  let hero: string;
+  let leadRest: string[] = [];
+  if (first.length <= 420) {
+    // A COMPLETE first sentence beats a fragment, even a long one — a
+    // headline cut mid-thought reads broken.
+    hero = first;
+  } else {
+    const lead = carveClause(first);
+    hero = lead[0] ?? first;
+    leadRest = lead.slice(1);
+    if (hero.length > 320) {
+      const rows = hardWrap(hero, 240);
+      hero = rows[0];
+      leadRest = [...rows.slice(1), ...leadRest];
+    }
+    // When the headline genuinely had to be cut, make the cut read
+    // intentional: trail the hero and lead the continuation with ellipses.
+    if (leadRest.length > 0) {
+      hero = `${hero} …`;
+      leadRest[0] = `… ${leadRest[0]}`;
+    }
   }
+  const bullets = [...leadRest, ...pieces.slice(1).flatMap(carveClause)];
+  // INVARIANT: no single block leaves this function longer than 420 chars —
+  // a complete sentence up to that length stays whole (a headline cut
+  // mid-thought reads broken); anything past it was carved/wrapped above.
   if (bullets.length === 0 && notes.length === 0) return null;
   const blocks: AnswerBlock[] = [{ type: "hero", text: hero }];
   if (bullets.length > 0) blocks.push({ type: "label", text: "Key points" });
