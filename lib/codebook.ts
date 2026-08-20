@@ -45,7 +45,13 @@ export interface CodebookEntry {
   label: string;
   /** kind-specific extras. equipment_type: tagPrefixes (["E"] or ["EA","E"]).
    *  unit: links (libraries/folders pinned to the unit's hub page). */
-  meta: { tagPrefixes?: string[]; links?: UnitResourceLink[] };
+  meta: {
+    tagPrefixes?: string[];
+    links?: UnitResourceLink[];
+    /** unit: the AI knowledge library bound to this operating area — the
+     *  shelf its drawings feed and its questions answer from. */
+    knowledgeLibraryId?: string;
+  };
   sort: number;
   origin: "manual" | "import";
 }
@@ -372,6 +378,13 @@ export async function saveUnitLinks(orgId: string, unitCode: string, links: Unit
     .eq("id", data.id as string);
   if (upErr) throw new Error(upErr.message);
 }
+
+// NOTE: binding a unit to its knowledge library happens SERVER-SIDE
+// (POST /api/area/knowledge-status) — the codebook RLS write policy checks
+// only the headline role column, so a client-side update could silently
+// affect zero rows for a member whose DocCtrl authority lives in the
+// additive roles[] array. The route uses the same controller bar as the
+// rest of the knowledge stack.
 
 export async function saveConfig(orgId: string, patch: {
   drawingNumber?: DrawingNumberConfig | null;
