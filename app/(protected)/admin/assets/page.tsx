@@ -16,12 +16,12 @@ import {
   Image as ImageIcon, MapPin, AlertTriangle,
   Lock, X, Save, Edit3, Trash2, Factory,
   FileText, Upload, QrCode, BookMarked, ArrowRight,
-  FolderOpen, Link2, ArrowLeft, Waypoints,
+  FolderOpen, Link2, ArrowLeft, Waypoints, ChevronDown, BookMarked as BookMarkedIcon,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
-  listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset,
+  listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset, createAssetType,
   updateAsset, deleteAsset, listAssetPhotos, deletePhoto, updatePhoto,
   invalidateAssetCache, photoAgeCategory,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus,
@@ -88,6 +88,15 @@ function AssetsPageInner() {
 
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [creating, setCreating] = useState(false);
+  // Where you stand decides what "new" means: root → operating area,
+  // unit → category, category → asset (preset lands in the drawer).
+  const [createPreset, setCreatePreset] = useState<{ typeId?: string; unitCode?: string } | null>(null);
+  const [addUnitOpen, setAddUnitOpen] = useState(false);
+  const [addCategoryOpen, setAddCategoryOpen] = useState(false);
+  const openCreate = useCallback((preset?: { typeId?: string; unitCode?: string }) => {
+    setCreatePreset(preset ?? null);
+    setCreating(true);
+  }, []);
   const [carouselOpenFor, setCarouselOpenFor] = useState<Asset | null>(null);
   const [uploaderOpenFor, setUploaderOpenFor] = useState<Asset | null>(null);
   const [csvOpen, setCsvOpen] = useState(false);
@@ -160,6 +169,9 @@ function AssetsPageInner() {
   const groupedByType = useMemo(() => {
     if (!unitFilter) return null;
     const groups = new Map<string, Asset[]>();
+    // Every category exists as a section even when empty — a category you
+    // just created must be a real place you can step into and fill.
+    for (const t of types) groups.set(t.id, []);
     for (const a of filtered) {
       const key = a.type_id ?? "__none";
       const list = groups.get(key) ?? [];
@@ -172,8 +184,11 @@ function AssetsPageInner() {
         name: typeId === "__none" ? "Uncategorized" : (types.find((t) => t.id === typeId)?.name ?? "Uncategorized"),
         list: list.sort((x, y) => x.tag.localeCompare(y.tag, undefined, { numeric: true })),
       }))
+      .filter((g) => g.list.length > 0 || g.typeId !== "__none")
       .sort((x, y) => x.name.localeCompare(y.name));
   }, [unitFilter, filtered, types]);
+  // Accordion state per category; everything starts open.
+  const [closedTypes, setClosedTypes] = useState<Set<string>>(new Set());
 
   // Landing cards: everything a unit card says about itself — equipment
   // count, the top types inside, photo debt, pinned resources.
@@ -270,12 +285,31 @@ function AssetsPageInner() {
               >
                 <Upload className="w-4 h-4" /> Import CSV
               </button>
-              <button
-                onClick={() => setCreating(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
-              >
-                <Plus className="w-4 h-4" /> New Asset
-              </button>
+              {!unitFilter ? (
+                // The root IS the site — the primary act here is defining an
+                // operating area, not dropping a loose asset.
+                <button
+                  onClick={() => setAddUnitOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
+                >
+                  <Plus className="w-4 h-4" /> New operating area
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setAddCategoryOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
+                  >
+                    <Plus className="w-4 h-4" /> New category
+                  </button>
+                  <button
+                    onClick={() => openCreate({ unitCode: unitFilter === "__unassigned" ? undefined : unitFilter })}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
+                  >
+                    <Plus className="w-4 h-4" /> New asset
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -406,12 +440,44 @@ function AssetsPageInner() {
                 <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
               )
             ) : (
-              groupedByType?.map((g) => (
+              groupedByType?.map((g) => {
+                const open = !closedTypes.has(g.typeId);
+                return (
                 <div key={g.typeId}>
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-black text-[var(--color-text)]">{g.name}</span>
-                    <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{g.list.length}</span>
+                    <button type="button"
+                      onClick={() => setClosedTypes((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(g.typeId)) next.delete(g.typeId); else next.add(g.typeId);
+                        return next;
+                      })}
+                      className="flex items-center gap-2 text-left">
+                      <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform ${open ? "" : "-rotate-90"}`} />
+                      <span className="text-xs font-black text-[var(--color-text)]">{g.name}</span>
+                      <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{g.list.length}</span>
+                    </button>
+                    <span className="flex-1 h-px bg-[var(--color-border)]/60" />
+                    {isAdmin && (
+                      <button type="button"
+                        onClick={() => openCreate({
+                          typeId: g.typeId === "__none" ? undefined : g.typeId,
+                          unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
+                        })}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-purple-700 hover:border-purple-400">
+                        <Plus className="w-3 h-3" /> Asset
+                      </button>
+                    )}
                   </div>
+                  {open && (g.list.length === 0 ? (
+                    <button type="button"
+                      onClick={() => isAdmin && openCreate({
+                        typeId: g.typeId === "__none" ? undefined : g.typeId,
+                        unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
+                      })}
+                      className="w-full rounded-xl border-2 border-dashed border-[var(--color-border)] py-5 text-xs font-bold text-[var(--color-text-faint)] hover:border-purple-400 hover:text-purple-700">
+                      No {g.name.toLowerCase()} in this area yet{isAdmin ? " — add the first" : ""}
+                    </button>
+                  ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {g.list.map((a) => {
                       const type = types.find((t) => t.id === a.type_id);
@@ -424,8 +490,10 @@ function AssetsPageInner() {
                       );
                     })}
                   </div>
+                  ))}
                 </div>
-              ))
+                );
+              })
             )}
             {unitAssetIds.length > 0 && <UnitDocuments assetIds={unitAssetIds} assets={filtered} />}
             {unitFilter && unitFilter !== "__unassigned" && uid && (
@@ -491,9 +559,37 @@ function AssetsPageInner() {
       </div>
 
       {/* Modals */}
+      {addUnitOpen && isAdmin && (
+        <AddUnitModal
+          orgId={activeOrgId}
+          userId={uid || ""}
+          existingCodes={book.units.map((u) => u.code)}
+          onClose={() => setAddUnitOpen(false)}
+          onCreated={(code) => {
+            setAddUnitOpen(false);
+            void loadCodebook(activeOrgId).then(setBook);
+            setUnitFilter(code);
+          }}
+        />
+      )}
+      {addCategoryOpen && isAdmin && (
+        <AddCategoryModal
+          orgId={activeOrgId}
+          userId={uid || ""}
+          existingTypeCodes={book.equipmentTypes.map((t) => t.code)}
+          onClose={() => setAddCategoryOpen(false)}
+          onCreated={() => {
+            setAddCategoryOpen(false);
+            void loadCodebook(activeOrgId).then(setBook);
+            invalidateAssetCache();
+            void refresh();
+          }}
+        />
+      )}
       {(creating || selectedAsset) && (
         <AssetEditDrawer
           asset={creating ? null : selectedAsset}
+          preset={creating ? createPreset ?? undefined : undefined}
           orgId={activeOrgId}
           userId={uid || ""}
           userEmail={userEmail ?? undefined}
@@ -1098,10 +1194,12 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
 // ─── Edit / Create drawer ──────────────────────────────────
 
 function AssetEditDrawer({
-  asset, orgId, userId, userEmail, types, canEdit, book,
+  asset, preset, orgId, userId, userEmail, types, canEdit, book,
   onClose, onSaved, onOpenCarousel, onOpenUploader,
 }: {
   asset: Asset | null;
+  /** Creation context: the category and operating area you were standing in. */
+  preset?: { typeId?: string; unitCode?: string };
   orgId: string;
   userId: string;
   userEmail?: string;
@@ -1115,10 +1213,10 @@ function AssetEditDrawer({
 }) {
   const isCreate = !asset;
   const [tag, setTag] = useState(asset?.tag ?? "");
-  const [typeId, setTypeId] = useState(asset?.type_id ?? "");
+  const [typeId, setTypeId] = useState(asset?.type_id ?? preset?.typeId ?? "");
   const [description, setDescription] = useState(asset?.description ?? "");
   const [location, setLocation] = useState(asset?.location ?? "");
-  const [unitCode, setUnitCode] = useState(asset?.unit_code ?? "");
+  const [unitCode, setUnitCode] = useState(asset?.unit_code ?? preset?.unitCode ?? "");
   const [siteCode, setSiteCode] = useState(asset?.code ?? "");
   // Auto-derive the site code (E-22 + unit 20 → 2030.22) whenever tag/unit
   // change and the user hasn't typed their own — the codebook does the math.
@@ -1498,6 +1596,152 @@ function AssetEditDrawer({
               </button>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Hierarchy modals: the site grows where you stand ───────────────────────
+//
+// Adding an operating area WRITES THE SITE CODEBOOK — the same single truth
+// the whole app decodes through — never a parallel list. Adding a category
+// creates the registry group and, when you give it the prefix, teaches the
+// codebook at the same time so auto-categorize and every future asset
+// benefit. No numbering system yet? Both forms work standalone and say so.
+
+function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
+  orgId: string;
+  userId: string;
+  existingCodes: string[];
+  onClose: () => void;
+  onCreated: (code: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    const c = code.trim();
+    if (!c) { setError("Give the area its number/code (e.g. 20)."); return; }
+    if (existingCodes.includes(c)) { setError(`Unit ${c} already exists.`); return; }
+    setBusy(true); setError(null);
+    const { error: e } = await supabase.from("codebook_entries").insert({
+      org_id: orgId, kind: "unit", code: c, label: label.trim() || `Unit ${c}`,
+      meta: {}, sort: existingCodes.length, origin: "manual", created_by: userId,
+    });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    onCreated(c);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2">
+          <Factory className="w-4 h-4 text-purple-600" />
+          <div className="flex-1">
+            <div className="text-sm font-black text-[var(--color-text)]">New operating area</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">
+              Written into your Site Codebook — the one place the whole app decodes units from.
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="flex items-center gap-2">
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (20)"
+            className="w-28 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name (Crude Unit)"
+            className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+        </div>
+        {error && <div className="text-[11px] text-rose-600">{error}</div>}
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/admin/codebook" className="text-[10px] font-bold text-violet-700 hover:underline inline-flex items-center gap-1">
+            <BookMarkedIcon className="w-3 h-3" /> Full codebook (AI import, decoder)
+          </Link>
+          <button onClick={() => void save()} disabled={busy}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create area
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated }: {
+  orgId: string;
+  userId: string;
+  existingTypeCodes: string[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [prefixes, setPrefixes] = useState("");
+  const [typeCode, setTypeCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    const n = name.trim();
+    if (!n) { setError("Name the category (Pump, Exchanger…)."); return; }
+    setBusy(true); setError(null);
+    try {
+      await createAssetType({ orgId, name: n });
+      // Teaching moment: prefixes + code make the codebook smarter, which
+      // makes auto-categorize and every FUTURE asset smarter. Optional —
+      // no numbering system is required to organize manually.
+      const px = prefixes.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
+      const tc = typeCode.trim();
+      if (px.length > 0 && tc && !existingTypeCodes.includes(tc)) {
+        await supabase.from("codebook_entries").insert({
+          org_id: orgId, kind: "equipment_type", code: tc, label: n,
+          meta: { tagPrefixes: px }, sort: existingTypeCodes.length,
+          origin: "manual", created_by: userId,
+        });
+      }
+      onCreated();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2">
+          <Tag className="w-4 h-4 text-purple-600" />
+          <div className="flex-1">
+            <div className="text-sm font-black text-[var(--color-text)]">New equipment category</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">
+              Becomes a section in every operating area. Add the tag prefix and it also teaches
+              your Site Codebook — future assets categorize themselves.
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Exchanger)"
+          className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+        <div className="flex items-center gap-2">
+          <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} placeholder="Tag prefixes (E, EA) — optional"
+            className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
+          <input value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="Code (02)"
+            className="w-24 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
+        </div>
+        <p className="text-[10px] text-[var(--color-text-faint)]">
+          No numbering system? Leave prefixes blank and organize manually — you can teach the
+          codebook later and auto-categorize will catch up.
+        </p>
+        {error && <div className="text-[11px] text-rose-600">{error}</div>}
+        <div className="flex items-center justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          <button onClick={() => void save()} disabled={busy}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create category
+          </button>
         </div>
       </div>
     </div>
