@@ -226,7 +226,9 @@ function GraphPageInner() {
   // ── Deep link ?focus=<docId> ──────────────────────────────────────────
   React.useEffect(() => {
     if (!focusParam || !view) return;
-    const id = `doc:${focusParam}`;
+    // Namespaced ids ("asset:…", "cbunit:20") focus any node kind; a bare id
+    // keeps the historical meaning of a document.
+    const id = focusParam.includes(":") ? focusParam : `doc:${focusParam}`;
     const node = view.nodes.find((n) => n.id === id);
     if (node) {
       setSelected(node);
@@ -311,15 +313,38 @@ function GraphPageInner() {
     const ka = kindOf(from.id), kb = kindOf(target.id);
     const docDoc = ka === "doc" && kb === "doc";
     const docAsset = (ka === "doc" && kb === "asset") || (ka === "asset" && kb === "doc");
-    if (!docDoc && !docAsset) {
+    // Same-kind operational pairs are FLOWS — directional: from FEEDS target.
+    // Unit endpoints resolve to the Site Codebook code (cbunit nodes carry it
+    // in the id; legacy unit rows carry it in the sub line).
+    const unitCode = (n: GraphNode): string | null =>
+      n.id.startsWith("cbunit:") ? n.id.slice(7)
+        : n.id.startsWith("unit:") ? (n.sub ?? null)
+        : null;
+    const assetAsset = ka === "asset" && kb === "asset";
+    const unitUnit = unitCode(from) !== null && unitCode(target) !== null;
+    if (!docDoc && !docAsset && !assetAsset && !unitUnit) {
       setConnect((c) => c && ({
         ...c, status: "picking",
-        error: "Draw connections between two documents, or a document and equipment. Unit, library and project ties are derived from the registry and filing.",
+        error: "Draw a link between two documents or a document and equipment — or a FLOW between two equipment items or two units (the first one feeds the second). Library and project ties are derived from filing.",
       }));
       return;
     }
     setConnect((c) => c && ({ ...c, status: "saving", error: undefined }));
     try {
+      if (assetAsset || unitUnit) {
+        const { createManualFlow } = await import("@/lib/processFlows");
+        await createManualFlow({
+          orgId: activeOrgId,
+          fromKind: assetAsset ? "asset" : "unit",
+          fromRef: assetAsset ? rawId(from.id) : unitCode(from)!,
+          toKind: assetAsset ? "asset" : "unit",
+          toRef: assetAsset ? rawId(target.id) : unitCode(target)!,
+          userId: uid, userName: userEmail ?? undefined,
+        });
+        setGraph((g) => g ? { ...g, edges: [...g.edges, { a: from.id, b: target.id, type: "flow" }] } : g);
+        setConnect({ from, status: "picking", done: { a: from.label, b: `${target.label} (flow)` } });
+        return;
+      }
       if (docDoc) {
         const { addRelatedResource } = await import("@/lib/relatedResources");
         await addRelatedResource({
@@ -398,6 +423,19 @@ function GraphPageInner() {
 
   const focusNode = focusId ? view?.nodes.find((n) => n.id === focusId) ?? null : null;
 
+  // ── Lenses: one map, several PIVOTS. Each lens is a saved way of seeing —
+  // the plant as flow, the paper as a web, or everything at once.
+  const LENSES: Array<{ key: string; label: string; hidden: GraphNodeType[]; libEdges: boolean; title: string }> = [
+    { key: "all", label: "Everything", hidden: [], libEdges: false, title: "Every entity and relationship the org knows" },
+    { key: "process", label: "Process", hidden: ["document", "library", "project"], libEdges: false, title: "Units and equipment only — the plant as flow. Draw flows with Connect; read them off a PFD in the unit hub." },
+    { key: "equipment", label: "Equipment ↔ Docs", hidden: ["unit", "plant", "project", "library"], libEdges: false, title: "Equipment and the documents that govern it" },
+    { key: "documents", label: "Documents", hidden: ["asset", "unit", "plant"], libEdges: true, title: "The paper web — documents, libraries, projects" },
+  ];
+  const activeLens = LENSES.find((l) =>
+    l.hidden.length === settings.hiddenTypes.length &&
+    l.hidden.every((t) => settings.hiddenTypes.includes(t)) &&
+    l.libEdges === settings.showLibraryEdges)?.key ?? null;
+
   return (
     <div className="h-full min-h-0 flex flex-col">
       {/* Top bar */}
@@ -443,6 +481,19 @@ function GraphPageInner() {
           }`}>
           <Route className="w-3.5 h-3.5" /> Connection path
         </button>
+
+        {/* Pivot the whole map with one tap. */}
+        <div className="hidden sm:flex items-center rounded-full border border-[var(--color-border-strong)] overflow-hidden">
+          {LENSES.map((l) => (
+            <button key={l.key} title={l.title}
+              onClick={() => patchSettings({ hiddenTypes: l.hidden, showLibraryEdges: l.libEdges })}
+              className={`px-2.5 py-1.5 text-[10px] font-black transition-colors ${activeLens === l.key
+                ? "bg-violet-600 text-white"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              {l.label}
+            </button>
+          ))}
+        </div>
 
         {focusNode && (
           <button onClick={() => setFocusId(null)}
@@ -796,8 +847,8 @@ function GraphPageInner() {
                   </div>
                 )}
                 <div className="text-[10px] text-[var(--color-text-faint)]">
-                  Document ↔ document, or document ↔ equipment. The link is yours: it appears in the
-                  document&apos;s Related panel and can be removed there.
+                  Document ↔ document or document ↔ equipment makes a LINK. Equipment ↔ equipment or
+                  unit ↔ unit makes a FLOW — the first feeds the second, drawn on the Process lens.
                 </div>
               </div>
             )}
@@ -817,7 +868,7 @@ function GraphPageInner() {
                 onGoOut={() => { setFocusId(null); setHighlight({ ids: [selected.id], nonce: Date.now() }); }}
                 onOpen={() => open(selected)}
                 onPath={() => { setPathMode(true); setPathEnds({ from: selected, to: null }); }}
-                onConnect={selected.id.startsWith("doc:") || selected.id.startsWith("asset:")
+                onConnect={["doc:", "asset:", "cbunit:", "unit:"].some((pre) => selected.id.startsWith(pre))
                   ? () => { setConnect({ from: selected, status: "picking" }); setSelected(null); setTrail([]); }
                   : undefined}
                 onClose={() => { setSelected(null); setTrail([]); setHighlight(null); }}

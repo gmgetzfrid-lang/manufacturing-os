@@ -42,7 +42,7 @@ import {
   ScrollText, Activity, MailPlus, BookMarked, FileOutput,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore,
+  Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -248,6 +248,7 @@ export default function Sidebar({
         : workAll;
 
     const admin: NavLeaf[] = isAdmin ? [
+      { label: 'Facility setup',    href: '/setup',             icon: Compass,    tone: 'violet'  },
       { label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'blue'    },
       { label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'cyan'    },
       { label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'indigo'  },
