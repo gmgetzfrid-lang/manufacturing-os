@@ -290,6 +290,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // both already restored above. Connection Skills only reference the org,
   // so anywhere works; they ride with their consumers.
   "asset_aliases", "proposed_links", "link_rules", "answer_skills",
+  // Flows may reference knowledge documents (source PFD), restored earlier.
+  "process_flows",
   // Mentions reference BOTH an asset and a document (controlled or
   // knowledge), so they can only land once both sides exist. Audit memory
   // hangs off documents alone.

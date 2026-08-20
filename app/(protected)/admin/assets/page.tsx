@@ -16,7 +16,7 @@ import {
   Image as ImageIcon, MapPin, AlertTriangle,
   Lock, X, Save, Edit3, Trash2, Factory,
   FileText, Upload, QrCode, BookMarked, ArrowRight,
-  FolderOpen, Link2, ArrowLeft,
+  FolderOpen, Link2, ArrowLeft, Waypoints,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -33,6 +33,8 @@ import {
 import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { getDocumentsForAssetsHydrated } from "@/lib/operationalGraph";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
+import { CategorizeBanner, FlowPanel } from "@/components/assets/UnitOpsPanels";
+import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
 import WatchButton from "@/components/ui/WatchButton";
@@ -351,6 +353,12 @@ function AssetsPageInner() {
           </div>
         )}
 
+        {/* The Site Codebook already knows the taxonomy — put it to work. */}
+        {isAdmin && !loading && uid && activeOrgId && (
+          <CategorizeBanner orgId={activeOrgId} userId={uid} assets={assets} types={types} book={book}
+            onDone={() => { invalidateAssetCache(); void refresh(); }} />
+        )}
+
         {/* Search + filters */}
         <div className="mb-4 flex items-center gap-2 flex-wrap">
           <div className="relative flex-1 min-w-[200px]">
@@ -420,6 +428,10 @@ function AssetsPageInner() {
               ))
             )}
             {unitAssetIds.length > 0 && <UnitDocuments assetIds={unitAssetIds} assets={filtered} />}
+            {unitFilter && unitFilter !== "__unassigned" && uid && (
+              <FlowPanel orgId={activeOrgId!} userId={uid} userName={userEmail ?? undefined}
+                isAdmin={isAdmin} unitCode={unitFilter} unitAssets={filtered} />
+            )}
           </div>
         ) : book.units.length > 0 && !searchActive ? (
           // ── The landing page IS the site: one card per operating area.
@@ -1120,12 +1132,42 @@ function AssetEditDrawer({
   const [hasTagConflict, setHasTagConflict] = useState(false);
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
   const [linkedDocs, setLinkedDocs] = useState<AssetDocumentRow[] | null>(null);
+  const [docPickerOpen, setDocPickerOpen] = useState(false);
+
+  const refreshDocs = useCallback(() => {
+    if (!asset) return;
+    getDocumentsForAssetHydrated(asset.id).then(setLinkedDocs).catch(() => setLinkedDocs([]));
+  }, [asset]);
 
   useEffect(() => {
     if (!asset) return;
     listAssetPhotos(asset.id).then(setPhotos).catch(() => {});
-    getDocumentsForAssetHydrated(asset.id).then(setLinkedDocs).catch(() => setLinkedDocs([]));
-  }, [asset]);
+    refreshDocs();
+  }, [asset, refreshDocs]);
+
+  const linkDocument = async (documentId: string) => {
+    if (!asset) return;
+    const { error: e } = await supabase.from("document_assets").insert({
+      org_id: orgId, document_id: documentId, asset_id: asset.id,
+      tag_text: asset.tag, source: "manual",
+    });
+    if (e && e.code !== "23505") { setError(e.message); return; }
+    setDocPickerOpen(false);
+    refreshDocs();
+  };
+
+  const unlinkDocument = async (documentId: string) => {
+    if (!asset) return;
+    const ok = await appConfirm({
+      title: "Unlink this document?",
+      message: "The document stays; only its link to this equipment is removed. A future sweep can re-link it if the document still carries the tag.",
+      confirmLabel: "Unlink",
+    });
+    if (!ok) return;
+    await supabase.from("document_assets").delete()
+      .eq("document_id", documentId).eq("asset_id", asset.id);
+    refreshDocs();
+  };
 
   const save = async () => {
     if (!tag.trim()) { setError("Tag required"); return; }
@@ -1354,12 +1396,33 @@ function AssetEditDrawer({
             </div>
           )}
 
+          {docPickerOpen && asset && (
+            <DocumentLinkPicker
+              orgId={orgId}
+              userId={userId}
+              excludeIds={(linkedDocs ?? []).map((d) => d.documentId)}
+              onPick={linkDocument}
+              onClose={() => setDocPickerOpen(false)}
+            />
+          )}
+
           {/* Linked documents (edit mode only) */}
           {!isCreate && asset && (
             <div>
               <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> Linked documents
                 {linkedDocs && <span className="text-[var(--color-text-faint)] font-bold">({linkedDocs.length})</span>}
+                <span className="flex-1" />
+                <Link href={`/graph?focus=${encodeURIComponent(`asset:${asset.id}`)}`}
+                  className="inline-flex items-center gap-1 normal-case tracking-normal text-[10px] font-black text-violet-700 hover:text-violet-600">
+                  <Waypoints className="w-3 h-3" /> See on graph
+                </Link>
+                {canEdit && (
+                  <button type="button" onClick={() => setDocPickerOpen(true)}
+                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)]">
+                    <Plus className="w-3 h-3" /> Link document
+                  </button>
+                )}
               </div>
               {linkedDocs === null ? (
                 <div className="text-[11px] text-[var(--color-text-faint)] italic py-2">Loading…</div>
@@ -1370,11 +1433,18 @@ function AssetEditDrawer({
               ) : (
                 <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-56 overflow-auto">
                   {linkedDocs.map((d) => (
-                    <li key={d.documentId}>
+                    <li key={d.documentId} className="relative group/docrow">
+                      {canEdit && (
+                        <button type="button" title="Unlink from this equipment"
+                          onClick={() => void unlinkDocument(d.documentId)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-600 opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       <Link
                         href={`/documents/${d.libraryId}?doc=${d.documentId}`}
                         onClick={onClose}
-                        className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)]"
+                        className="flex items-center gap-2 px-3 py-2 pr-9 hover:bg-[var(--color-surface-2)]"
                       >
                         <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                         <div className="flex-1 min-w-0">

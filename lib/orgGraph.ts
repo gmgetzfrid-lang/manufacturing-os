@@ -30,7 +30,8 @@ export type GraphEdgeType =
   | "related"      // curated pin
   | "supersession"
   | "proposed"     // discovered, awaiting review — drawn as a ghost
-  | "mention";     // the document's text names the equipment, quote attached
+  | "mention"      // the document's text names the equipment, quote attached
+  | "flow";        // process flow: from FEEDS to (directional in meaning)
 
 export interface GraphNode {
   id: string;            // namespaced: "doc:<id>", "asset:<id>", "cbunit:<code>", …
@@ -97,7 +98,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   const [
     codebook,
     unitsRes, plantsRes, libsRes, projectsRes, docsRes, assetsRes,
-    docAssets, projectDocs, related, supersessions, mentions, kdocMirrors,
+    docAssets, projectDocs, related, supersessions, mentions, flows, kdocMirrors,
   ] = await Promise.all([
     loadCodebook(orgId).catch(() => null),
     supabase.from("units").select("id, name, code, plant_id").eq("org_id", orgId).eq("archived", false),
@@ -126,6 +127,10 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     // fewer edges, never a broken page.
     pageRows<{ asset_id: string; document_id: string | null; knowledge_document_id: string | null }>(
       "entity_mentions", "asset_id, document_id, knowledge_document_id", orgId, EDGE_CAP),
+    // Confirmed process flows — the plant's topology. A pre-migration org
+    // contributes nothing (pageRows tolerates the missing table).
+    pageRows<{ from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>(
+      "process_flows", "from_kind, from_ref, to_kind, to_ref, status", orgId, EDGE_CAP),
     // Knowledge documents aren't graph nodes; the CONTROLLED document they
     // mirror is. Without this map every mention found in an indexed PDF would
     // be dropped on the floor.
@@ -253,6 +258,15 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   }
   for (const r of supersessions.rows) {
     addEdge(`doc:${r.superseded_doc_id}`, `doc:${r.replacement_doc_id}`, "supersession");
+  }
+
+  // Process flows: asset endpoints are registry uuids; unit endpoints are
+  // Site Codebook unit CODES (the cbunit nodes above).
+  const flowNodeId = (kind: string, ref: string) =>
+    kind === "asset" ? `asset:${ref}` : `cbunit:${ref}`;
+  for (const f of flows.rows) {
+    if (f.status !== "confirmed") continue;
+    addEdge(flowNodeId(f.from_kind, f.from_ref), flowNodeId(f.to_kind, f.to_ref), "flow");
   }
 
   // Mentions. Drawn as their own edge type rather than folded into "tag",

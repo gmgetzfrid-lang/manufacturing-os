@@ -31,6 +31,8 @@ export const ORG_SCOPED_TABLES = [
   // human knowledge (names, patterns, packs, sharing); not re-derivable.
   "link_rules",
   "answer_skills",
+  // The plant's flow topology — human-confirmed edges; not re-derivable.
+  "process_flows",
   // Mentions are mostly re-derivable by re-running the indexer, but not all
   // of them: is_explicit rows are human decisions, and a restore that
   // silently dropped them would lose links nobody can reconstruct.
