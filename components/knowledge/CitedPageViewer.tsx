@@ -104,31 +104,59 @@ export default function CitedPageViewer({
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // Grab-and-drag panning. A 4px threshold keeps ordinary clicks (buttons,
-  // jump chips) working; past it, the pointer drags the page like paper.
+  // Grab-and-drag panning (mouse AND one finger), pinch-to-zoom (two
+  // fingers). touch-action is disabled on the container so the browser
+  // never fights these gestures with its own scrolling/zooming — which is
+  // exactly what made mobile feel finicky. A 4px threshold keeps ordinary
+  // taps (buttons, jump chips) working.
+  const pointersRef = React.useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = React.useRef<{ dist: number; zoom: number } | null>(null);
+  const pinchDist = () => {
+    const pts = [...pointersRef.current.values()];
+    return pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0;
+  };
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, a, input")) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (pointersRef.current.size === 2) {
+      // Second finger down: switch from pan to pinch.
+      dragRef.current = null;
+      pinchRef.current = { dist: pinchDist(), zoom };
+      return;
+    }
     const el = scrollRef.current;
     if (!el) return;
     dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop, moved: false };
   };
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (pinchRef.current && pointersRef.current.size >= 2) {
+      const d0 = pinchRef.current.dist;
+      const d1 = pinchDist();
+      if (d0 > 0 && d1 > 0) {
+        setZoom(Math.min(5, Math.max(0.4, pinchRef.current.zoom * (d1 / d0))));
+      }
+      return;
+    }
     const d = dragRef.current;
     const el = scrollRef.current;
     if (!d || !el) return;
     const dx = e.clientX - d.x;
     const dy = e.clientY - d.y;
     if (!d.moved && Math.hypot(dx, dy) < 4) return;
-    if (!d.moved) {
-      d.moved = true;
-      setPanning(true);
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }
+    if (!d.moved) { d.moved = true; setPanning(true); }
     el.scrollLeft = d.sl - dx;
     el.scrollTop = d.st - dy;
   };
-  const endPan = () => { dragRef.current = null; setPanning(false); };
+  const endPan = (e: React.PointerEvent<HTMLDivElement>) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 0) { dragRef.current = null; setPanning(false); }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -144,6 +172,9 @@ export default function CitedPageViewer({
   const [locating, setLocating] = useState(false);
   const [locateNote, setLocateNote] = useState<string | null>(null);
   const [findTag, setFindTag] = useState("");
+  // The applied find term — highlighted sky in the text layer on EVERY
+  // document (the tag-locate API additionally marks drawings).
+  const [findApplied, setFindApplied] = useState("");
   // A tag to point at as soon as a jump lands on its page.
   const [pendingFind, setPendingFind] = useState<string | null>(null);
   const canLocate = !!orgId && !!view.documentId;
@@ -212,21 +243,39 @@ export default function CitedPageViewer({
     setPendingFind(e.tag);
   };
 
-  // Highlight any text-layer item whose (normalized) text appears in the
-  // quoted passage. The quote IS this page's extracted text, so the cited
-  // region lights up; ambient words that echo elsewhere stay unlit thanks
-  // to the length floor.
+  // Significant words of the quote — the fallback matcher for FRAGMENTED
+  // text layers, where each item is a word or two and the old ≥10-char
+  // containment test never fired, so "highlighted" pages showed nothing.
+  const quoteWords = useMemo(() => {
+    const set = new Set<string>();
+    if (quote) for (const w of normalize(quote).split(" ")) { if (w.length >= 4) set.add(w); }
+    return set;
+  }, [quote]);
+  const searchNorm = useMemo(() => normalize(findApplied), [findApplied]);
+
+  // Highlight any text-layer item that belongs to the quoted passage
+  // (yellow), and any item matching the find box (sky) — the find works on
+  // EVERY document, not just drawings with a tag index.
   const textRenderer = useCallback(
     ({ str }: { str: string }) => {
       const safe = escapeHtml(str);
-      if (!quoteNorm || pageNumber !== page) return safe;
       const norm = normalize(str);
+      if (searchNorm && norm.includes(searchNorm)) {
+        return `<mark style="background: rgba(56, 189, 248, 0.55); color: transparent; border-radius: 2px;">${safe}</mark>`;
+      }
+      if (!quoteNorm || pageNumber !== page) return safe;
       if (norm.length >= 10 && quoteNorm.includes(norm)) {
         return `<mark style="background: rgba(250, 204, 21, 0.55); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
+      // Fragmented layer: mark items whose significant words ALL come from
+      // the quote (and at least one is ≥5 chars, to keep ambient noise out).
+      const words = norm.split(" ").filter((w) => w.length >= 4);
+      if (words.length > 0 && words.some((w) => w.length >= 5) && words.every((w) => quoteWords.has(w))) {
+        return `<mark style="background: rgba(250, 204, 21, 0.45); color: transparent; border-radius: 2px;">${safe}</mark>`;
+      }
       return safe;
     },
-    [quoteNorm, pageNumber, page],
+    [quoteNorm, quoteWords, searchNorm, pageNumber, page],
   );
 
   return (
@@ -236,8 +285,8 @@ export default function CitedPageViewer({
       <div className="w-[75vw] h-[75vh] max-md:w-[96vw] max-md:h-[92vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-pop"
         onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0">
-          <div className="min-w-0 flex-1">
+        <div className="px-3 sm:px-4 py-2.5 sm:py-3 border-b border-[var(--color-border)] flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
+          <div className="min-w-0 flex-1 basis-40">
             <div className="text-sm font-black text-[var(--color-text)] truncate">{view.title.replace(/\.pdf$/i, "")}</div>
             <div className="text-[10px] text-[var(--color-text-muted)] truncate">
               {view.documentId !== documentId
@@ -248,7 +297,7 @@ export default function CitedPageViewer({
               {" · Ctrl+scroll zooms · drag to pan"}
             </div>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap justify-end max-w-full">
             <button onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber <= 1}
               className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Previous page">
               <ChevronLeft className="w-4 h-4" />
@@ -290,7 +339,7 @@ export default function CitedPageViewer({
             )}
             {url && (
               <a href={`${url}#page=${pageNumber}`} target="_blank" rel="noopener noreferrer"
-                className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Open the full PDF in a new tab">
+                className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] hidden sm:block" title="Open the full PDF in a new tab">
                 <ExternalLink className="w-4 h-4" />
               </a>
             )}
@@ -300,23 +349,35 @@ export default function CitedPageViewer({
           </div>
         </div>
 
-        {/* Find a tag on this sheet — the drawing equivalent of Ctrl-F,
-            which does nothing on an SHX export because there's no text. */}
-        {canLocate && (
+        {/* Find on this page — works on EVERY document: the term lights up
+            sky-blue in the text layer; on drawings the tag-locate API also
+            marks the sheet (text layers on SHX exports are empty). */}
+        {(
           <div className="px-4 py-2 border-b border-[var(--color-border)] shrink-0 flex items-center gap-2 flex-wrap">
-            <form className="flex items-center gap-1.5"
-              onSubmit={(e) => { e.preventDefault(); const t = findTag.trim().toUpperCase(); if (t) void locate([t], true); }}>
-              <div className="relative">
+            <form className="flex items-center gap-1.5 min-w-0"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const t = findTag.trim();
+                setFindApplied(t);
+                if (t && canLocate) void locate([t.toUpperCase()], true);
+              }}>
+              <div className="relative min-w-0">
                 <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
                 <input value={findTag} onChange={(e) => setFindTag(e.target.value)}
-                  placeholder="Find a tag on this sheet (V-3, P-101A…)"
-                  className="w-64 pl-7 pr-2 py-1 rounded-lg text-[11px] font-mono border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
+                  placeholder="Find on this page (a value, tag, phrase…)"
+                  className="w-56 max-w-[55vw] pl-7 pr-2 py-1 rounded-lg text-[11px] font-mono border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
               </div>
               <button type="submit" disabled={locating || !findTag.trim()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 shrink-0">
                 {locating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Crosshair className="w-3.5 h-3.5" />}
-                Point at it
+                Find
               </button>
+              {findApplied && (
+                <button type="button" onClick={() => { setFindApplied(""); setFindTag(""); }}
+                  className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
+                  Clear
+                </button>
+              )}
             </form>
             {marks.some((m) => m.source === "vision") && (
               <span className="text-[10px] text-sky-700 dark:text-sky-400">
@@ -344,6 +405,7 @@ export default function CitedPageViewer({
           onPointerMove={onPointerMove}
           onPointerUp={endPan}
           onPointerCancel={endPan}
+          style={{ touchAction: "none" }}
           className={`flex-1 overflow-auto bg-slate-200 dark:bg-slate-950 p-4 ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}>
           {error ? (
             <div className="mt-16 text-center text-sm text-rose-600 flex items-center gap-2">

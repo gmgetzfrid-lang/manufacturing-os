@@ -268,12 +268,12 @@ function factNumbers(blocks: AnswerBlock[]): number[] {
  *  how the eye tells "Joint type" from "Alignment" from "Hold points" at a
  *  glance. Full class strings (Tailwind can't build them dynamically). */
 const SECTION_ACCENTS = [
-  { bar: "bg-gradient-to-b from-orange-500 to-amber-500", pill: "bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300", num: "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-900 text-orange-700 dark:text-orange-300", hover: "hover:border-orange-300 dark:hover:border-orange-800" },
-  { bar: "bg-gradient-to-b from-violet-500 to-purple-500", pill: "bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300", num: "bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-900 text-violet-700 dark:text-violet-300", hover: "hover:border-violet-300 dark:hover:border-violet-800" },
-  { bar: "bg-gradient-to-b from-sky-500 to-cyan-500", pill: "bg-sky-100 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300", num: "bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-900 text-sky-700 dark:text-sky-300", hover: "hover:border-sky-300 dark:hover:border-sky-800" },
-  { bar: "bg-gradient-to-b from-emerald-500 to-teal-500", pill: "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300", num: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300", hover: "hover:border-emerald-300 dark:hover:border-emerald-800" },
-  { bar: "bg-gradient-to-b from-rose-500 to-pink-500", pill: "bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300", num: "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300", hover: "hover:border-rose-300 dark:hover:border-rose-800" },
-  { bar: "bg-gradient-to-b from-amber-500 to-yellow-500", pill: "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300", num: "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300", hover: "hover:border-amber-300 dark:hover:border-amber-800" },
+  { band: "bg-orange-100/80 dark:bg-orange-950/50 border border-orange-200 dark:border-orange-900", text: "text-orange-950 dark:text-orange-200", bar: "bg-orange-600", pill: "bg-orange-600 text-white", num: "bg-orange-600 text-white border-transparent", hover: "hover:border-orange-300 dark:hover:border-orange-800" },
+  { band: "bg-violet-100/80 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-900", text: "text-violet-950 dark:text-violet-200", bar: "bg-violet-600", pill: "bg-violet-600 text-white", num: "bg-violet-600 text-white border-transparent", hover: "hover:border-violet-300 dark:hover:border-violet-800" },
+  { band: "bg-sky-100/80 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-900", text: "text-sky-950 dark:text-sky-200", bar: "bg-sky-600", pill: "bg-sky-600 text-white", num: "bg-sky-600 text-white border-transparent", hover: "hover:border-sky-300 dark:hover:border-sky-800" },
+  { band: "bg-emerald-100/80 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900", text: "text-emerald-950 dark:text-emerald-200", bar: "bg-emerald-600", pill: "bg-emerald-600 text-white", num: "bg-emerald-600 text-white border-transparent", hover: "hover:border-emerald-300 dark:hover:border-emerald-800" },
+  { band: "bg-rose-100/80 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900", text: "text-rose-950 dark:text-rose-200", bar: "bg-rose-600", pill: "bg-rose-600 text-white", num: "bg-rose-600 text-white border-transparent", hover: "hover:border-rose-300 dark:hover:border-rose-800" },
+  { band: "bg-amber-100/80 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900", text: "text-amber-950 dark:text-amber-200", bar: "bg-amber-600", pill: "bg-amber-600 text-white", num: "bg-amber-600 text-white border-transparent", hover: "hover:border-amber-300 dark:hover:border-amber-800" },
 ];
 
 /** Which section (0-based) each block belongs to — drives the accent cycle. */
@@ -290,15 +290,14 @@ function sectionIndexes(blocks: AnswerBlock[]): number[] {
 function SectionHeader({ text, count, accent }: { text: string; count: number; accent: number }) {
   const a = SECTION_ACCENTS[accent % SECTION_ACCENTS.length];
   return (
-    <div className="flex items-center gap-3 pt-6 first:pt-1 pb-0.5">
-      <span className={`w-2 h-7 rounded-full shrink-0 ${a.bar}`} />
-      <span className="text-[17px] font-black tracking-tight text-[var(--color-text)] leading-tight">{text}</span>
+    <div className={`mt-4 first:mt-0 flex items-center gap-2.5 rounded-xl px-3 py-2 ${a.band}`}>
+      <span className={`w-1.5 h-5 rounded-full shrink-0 ${a.bar}`} />
+      <span className={`text-[16px] sm:text-[17px] font-black tracking-tight leading-tight ${a.text}`}>{text}</span>
       {count > 0 && (
-        <span className={`shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full ${a.pill}`}>
-          {count} fact{count === 1 ? "" : "s"}
+        <span className={`ml-auto shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full ${a.pill}`}>
+          {count}
         </span>
       )}
-      <span className="flex-1 h-px bg-gradient-to-r from-[var(--color-border)] to-transparent" />
     </div>
   );
 }
@@ -327,7 +326,7 @@ function FactCard({ n, text, citations, onCite, accent }: {
     if (sources.length >= 4) break;
   }
   return (
-    <div className={`group flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 ${a.hover} hover:shadow-sm transition-all`}>
+    <div className={`group flex items-start gap-2.5 sm:gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-3.5 py-2.5 ${a.hover} hover:shadow-sm transition-all`}>
       <span className={`mt-0.5 shrink-0 w-6 h-6 rounded-lg border text-[10px] font-mono font-black flex items-center justify-center ${a.num}`}>
         {String(n).padStart(2, "0")}
       </span>
@@ -524,7 +523,7 @@ function NeedCard({ prompt, onProvide }: {
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+function CopyButton({ text, label, onDark }: { text: string; label: string; onDark?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -535,7 +534,9 @@ function CopyButton({ text, label }: { text: string; label: string }) {
         });
       }}
       title={label}
-      className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+      className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border transition-colors ${onDark
+        ? "border-white/25 text-slate-300 hover:text-white hover:bg-white/10"
+        : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />} {copied ? "Copied" : label}
     </button>
   );
@@ -723,35 +724,42 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
       {/* Hero answer card */}
       <div className="rounded-2xl border-2 border-orange-400 dark:border-orange-700 bg-[var(--color-surface)] shadow-lg overflow-hidden animate-pop">
         <div className="h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />
-        <div className="p-5">
+        {/* THE ANSWER PLAQUE — dark, high contrast, unmissable. Orange-on-
+            white blended into the page; white-on-slate with orange accents
+            is the block the eye lands on first. */}
+        <div className={hero
+          ? "px-4 sm:px-5 py-4 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800"
+          : "px-4 sm:px-5 pt-4"}>
           <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="text-[9px] font-black uppercase tracking-[0.2em] text-orange-600">Answer</div>
-            <CopyButton text={answer.answer} label="Copy answer" />
+            <div className={`text-[10px] font-black uppercase tracking-[0.2em] ${hero ? "text-orange-400" : "text-orange-600"}`}>Answer</div>
+            <CopyButton text={answer.answer} label="Copy answer" onDark={!!hero} />
           </div>
           {hero ? (
-            <div className="text-[17px] font-black text-[var(--color-text)] leading-snug">
+            <div className="text-[17px] font-black text-white leading-snug">
               <InlineAnswer text={hero.text} citations={answer.citations} onCite={onCite} />
             </div>
           ) : (
             <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
           )}
 
-          {/* THE documents behind the direct answer — named, ordered by use,
-              one tap from the page itself. The reader's first question after
-              any answer is "says who?" — this answers it above the fold. */}
+          {/* THE documents behind the direct answer — real buttons that open
+              the real paper. The reader's first question after any answer is
+              "says who?" — this answers it above the fold. */}
           {heroSources.length > 0 && (
-            <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-              <span className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)]">Based on</span>
+            <div className="mt-3.5 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 w-full sm:w-auto">Sources · tap to open</span>
               {heroSources.map((c) => (
                 <button key={c.n} onClick={() => onCite(c)}
-                  className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-800 text-orange-800 dark:text-orange-200 hover:bg-orange-100 dark:hover:bg-orange-900/40 transition-colors">
-                  <FileText className="w-3 h-3" />
-                  {c.documentName ?? "Document"}
-                  <span className="font-bold text-orange-600/80">p.{c.page}</span>
+                  className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/25 text-white shadow-sm hover:bg-white/20 hover:border-white/40 active:scale-[0.98] transition-all">
+                  <Eye className="w-3.5 h-3.5 text-orange-400" />
+                  {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
+                  <span className="font-bold text-orange-300">p.{c.page}</span>
                 </button>
               ))}
             </div>
           )}
+        </div>
+        <div className="px-4 sm:px-5 pb-4 pt-3">
 
           {/* Imperatives always visible — safety never hides behind a click */}
           {hero && importantBlocks.length > 0 && (
