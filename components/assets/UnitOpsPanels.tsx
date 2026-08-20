@@ -16,6 +16,7 @@
 // printed pages and proposes connections only between entities that exist.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   Wand2, Loader2, AlertTriangle, ArrowRight, Check, X, Waypoints,
@@ -249,30 +250,63 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
   );
 }
 
-/** Pick the PFD, run the reader. The list is the org's knowledge documents —
- *  the indexed PDFs the AI can actually render and read. */
+/** Pick the PFD, run the reader. Browse BY LIBRARY (a unit's PFD book lives
+ *  in a specific knowledge library), target the exact sheets of a multi-page
+ *  book, and if the drawing isn't indexed yet the door to upload it is one
+ *  click away. Portaled to <body> so no ancestor transform can trap or clip
+ *  the sheet. */
 function ReadFlowsModal({ orgId, onClose, onDone }: {
   orgId: string;
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
+  const [libraries, setLibraries] = useState<Array<{ id: string; name: string }>>([]);
+  const [libraryId, setLibraryId] = useState<string>("");
   const [query, setQuery] = useState("");
-  const [docs, setDocs] = useState<Array<{ id: string; name: string }> | null>(null);
+  const [pagesRaw, setPagesRaw] = useState("");
+  const [docs, setDocs] = useState<Array<{ id: string; name: string; library_id: string; page_count: number | null }> | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
+    supabase.from("knowledge_libraries").select("id, name").eq("org_id", orgId).order("name")
+      .then(({ data }) => { if (alive) setLibraries((data as Array<{ id: string; name: string }>) ?? []); });
+    return () => { alive = false; };
+  }, [orgId]);
+
+  useEffect(() => {
+    let alive = true;
     (async () => {
       let q = supabase.from("knowledge_documents")
-        .select("id, name").eq("org_id", orgId)
-        .order("created_at", { ascending: false }).limit(30);
+        .select("id, name, library_id, page_count").eq("org_id", orgId)
+        .order("created_at", { ascending: false }).limit(50);
+      if (libraryId) q = q.eq("library_id", libraryId);
       if (query.trim()) q = q.ilike("name", `%${query.trim()}%`);
       const { data } = await q;
-      if (alive) setDocs((data as Array<{ id: string; name: string }>) ?? []);
+      if (alive) setDocs((data as Array<{ id: string; name: string; library_id: string; page_count: number | null }>) ?? []);
     })();
     return () => { alive = false; };
-  }, [orgId, query]);
+  }, [orgId, libraryId, query]);
+
+  const libName = useMemo(() => new Map(libraries.map((l) => [l.id, l.name])), [libraries]);
+
+  // "1-4", "2,5,9", "3" → up to 6 page numbers. Empty = first pages.
+  const parsePages = (raw: string): number[] => {
+    const out = new Set<number>();
+    for (const part of raw.split(",").map((x) => x.trim()).filter(Boolean)) {
+      const range = part.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (range) {
+        const a = parseInt(range[1], 10), b = parseInt(range[2], 10);
+        for (let n = Math.min(a, b); n <= Math.max(a, b) && out.size < 6; n++) if (n >= 1) out.add(n);
+      } else {
+        const n = parseInt(part, 10);
+        if (Number.isInteger(n) && n >= 1 && out.size < 6) out.add(n);
+      }
+    }
+    return [...out].sort((x, y) => x - y);
+  };
+  const pages = parsePages(pagesRaw);
 
   const run = async (docId: string) => {
     setRunningId(docId); setError(null);
@@ -284,7 +318,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token ?? ""}`,
         },
-        body: JSON.stringify({ orgId, knowledgeDocumentId: docId }),
+        body: JSON.stringify({ orgId, knowledgeDocumentId: docId, ...(pages.length > 0 ? { pages } : {}) }),
         signal: AbortSignal.timeout(115_000),
       });
       const json = await res.json();
@@ -296,55 +330,84 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
     finally { setRunningId(null); }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md max-h-[85vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+  const sheet = (
+    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
           <ScanSearch className="w-4 h-4 text-cyan-600" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Read flows from a document</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Pick a PFD or block diagram from your knowledge libraries. The AI reads the printed
-              pages and proposes flows — only between equipment and units that exist here.
+              Pick a PFD or block diagram from any knowledge library. The AI reads the printed pages
+              and proposes flows — only between equipment and units that exist here.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="p-3 shrink-0">
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by document name…"
-              className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+
+        <div className="p-3 space-y-2 shrink-0 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-2 flex-wrap">
+            <select value={libraryId} onChange={(e) => setLibraryId(e.target.value)}
+              className="flex-1 min-w-[10rem] px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm">
+              <option value="">All knowledge libraries</option>
+              {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+            <div className="relative flex-1 min-w-[10rem]">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name…"
+                className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input value={pagesRaw} onChange={(e) => setPagesRaw(e.target.value)}
+              placeholder="Pages (optional): 1-4 or 2,5,9 — up to 6 per read"
+              className="flex-1 px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-mono" />
+            {pages.length > 0 && (
+              <span className="text-[10px] font-black text-cyan-700 shrink-0">reads p. {pages.join(", ")}</span>
+            )}
           </div>
           {error && (
-            <div className="mt-2 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1 min-h-0">
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-0">
           {docs === null ? (
             <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
           ) : docs.length === 0 ? (
-            <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6">
-              No knowledge documents match — index the PFD into a knowledge library first.
+            <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6 space-y-1">
+              <div>No indexed documents match{libraryId ? " in this library" : ""}.</div>
             </div>
           ) : docs.map((d) => (
             <button key={d.id} onClick={() => void run(d.id)} disabled={runningId !== null}
               className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] hover:border-cyan-400 text-left disabled:opacity-50">
               <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-              <span className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] truncate">{d.name}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-xs font-bold text-[var(--color-text)] truncate">{d.name}</span>
+                <span className="block text-[10px] text-[var(--color-text-faint)] truncate">
+                  {libName.get(d.library_id) ?? "Library"}{d.page_count ? ` · ${d.page_count} page${d.page_count === 1 ? "" : "s"}` : ""}
+                </span>
+              </span>
               {runningId === d.id
-                ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
-                : <span className="text-[10px] font-black text-cyan-700">Read</span>}
+                ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
+                : <span className="text-[10px] font-black text-cyan-700 shrink-0">Read{pages.length > 0 ? ` p.${pages[0]}${pages.length > 1 ? "…" : ""}` : ""}</span>}
             </button>
           ))}
+        </div>
+
+        {/* The PFD isn't indexed yet? The door is one click away, not a maze. */}
+        <div className="px-3 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] shrink-0">
+          Don&apos;t see your PFD book? <Link href="/knowledge" className="font-black text-cyan-700 hover:text-cyan-600 underline">Upload it to a knowledge library</Link> first — once indexed it appears here.
         </div>
       </div>
     </div>
   );
+
+  return typeof document === "undefined" ? sheet : createPortal(sheet, document.body);
 }
