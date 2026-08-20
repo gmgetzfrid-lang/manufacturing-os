@@ -21,11 +21,17 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { createLinkRule, testSkillPatterns, type LinkRuleVisibility } from "@/lib/linkRules";
+import { createAnswerSkill } from "@/lib/answerSkills";
 
-export default function SkillStudio({ orgId, userId, userName, onClose, onCreated }: {
+export type StudioKind = "connection" | "reasoning";
+
+export default function SkillStudio({ orgId, userId, userName, kind = "connection", onClose, onCreated }: {
   orgId: string;
   userId: string;
   userName?: string;
+  /** connection = pattern detector the engine runs; reasoning = instruction
+   *  pack the AI carries when answering. */
+  kind?: StudioKind;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -36,6 +42,7 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [instructions, setInstructions] = useState("");
   const [patternsRaw, setPatternsRaw] = useState("");
   const [sample, setSample] = useState("");
   const [visibility, setVisibility] = useState<LinkRuleVisibility>("org");
@@ -61,13 +68,18 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token ?? ""}`,
         },
-        body: JSON.stringify({ orgId, description: describeText }),
+        body: JSON.stringify({ orgId, description: describeText, kind }),
         signal: AbortSignal.timeout(45_000),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Drafting failed.");
       setName(json.name || "");
       setDescription(json.description || "");
+      if (kind === "reasoning") {
+        setInstructions(json.instructions || "");
+        setPhase("edit");
+        return;
+      }
       setPatternsRaw((json.patterns as string[]).join("\n"));
       setSample(((json.samples as string[]) ?? []).join("\n"));
       if (json.dropped > 0) {
@@ -81,7 +93,11 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
   const save = async () => {
     setSaving(true); setError(null);
     try {
-      await createLinkRule({ orgId, name, description, patterns, visibility, userId, userName });
+      if (kind === "reasoning") {
+        await createAnswerSkill({ orgId, name, description, instructions, visibility, userId, userName });
+      } else {
+        await createLinkRule({ orgId, name, description, patterns, visibility, userId, userName });
+      }
       onCreated();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
@@ -102,12 +118,18 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
           <Sparkles className="w-4 h-4 text-violet-600" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">
-              {phase === "describe" ? "New connection skill" : "Prove it, then publish"}
+              {phase === "describe"
+                ? (kind === "reasoning" ? "New reasoning skill" : "New connection skill")
+                : (kind === "reasoning" ? "Refine it, then publish" : "Prove it, then publish")}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
               {phase === "describe"
-                ? "Teach the engine how YOUR facility's documents reference each other."
-                : "The tester runs the exact compiler the engine runs — what matches here is what it will match."}
+                ? (kind === "reasoning"
+                  ? "Teach the AI a discipline for HOW it answers — when it applies, and what it must do."
+                  : "Teach the engine how YOUR facility's documents reference each other.")
+                : (kind === "reasoning"
+                  ? "The pack must open with APPLIES WHEN — it rides every question and gates itself."
+                  : "The tester runs the exact compiler the engine runs — what matches here is what it will match.")}
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
@@ -121,7 +143,9 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
               value={describeText}
               onChange={(e) => setDescribeText(e.target.value)}
               rows={4}
-              placeholder={'Describe the connection in your own words…\n\ne.g. "Our maintenance procedures reference work orders like WO-48122, and inspection reports cite permits written as PTW-2024-0113."'}
+              placeholder={kind === "reasoning"
+                ? 'Describe the discipline in your own words…\n\ne.g. "When someone asks about torque values, always state the lubrication condition the value assumes and warn if the passage does not say."'
+                : 'Describe the connection in your own words…\n\ne.g. "Our maintenance procedures reference work orders like WO-48122, and inspection reports cite permits written as PTW-2024-0113."'}
               className="w-full px-3 py-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed"
             />
             {error && (
@@ -156,11 +180,34 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
                 className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
             </div>
             <div>
-              <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">What it finds</label>
+              <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                {kind === "reasoning" ? "What it does" : "What it finds"}
+              </label>
               <input value={description} onChange={(e) => setDescription(e.target.value)}
-                placeholder="Documents that call out a work order number connect to that work order's record."
+                placeholder={kind === "reasoning"
+                  ? "Torque answers always state the lubrication condition the value assumes."
+                  : "Documents that call out a work order number connect to that work order's record."}
                 className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
             </div>
+
+            {kind === "reasoning" && (
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                  The discipline — must open with when it applies
+                </label>
+                <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
+                  placeholder={"APPLIES WHEN the question asks about torque values. Otherwise ignore this skill.\n- State the lubrication condition the value assumes.\n- Warn when the passage does not say."}
+                  rows={7}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed" />
+                {instructions.trim().length > 0 && !/applies when/i.test(instructions) && (
+                  <div className="mt-1 text-[11px] text-amber-700">
+                    Start with &ldquo;APPLIES WHEN …&rdquo; — the pack rides every question and must gate itself.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {kind === "connection" && (
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                 Patterns — one per line (regular expressions)
@@ -173,7 +220,9 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
                 <div className="mt-1 text-[11px] text-rose-600">{test.errors[0]}</div>
               )}
             </div>
+            )}
 
+            {kind === "connection" && (
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-3">
               <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
                 <FlaskConical className="w-3.5 h-3.5 text-violet-600" /> Prove it on real text
@@ -195,6 +244,7 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
                 </div>
               )}
             </div>
+            )}
 
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sharing</label>
@@ -213,7 +263,9 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
                 </button>
               </div>
               <p className="mt-1 text-[10px] text-[var(--color-text-faint)]">
-                Either way its findings only ever QUEUE for review — custom skills never apply links by themselves.
+                {kind === "reasoning"
+                  ? "Org-wide rides every member's questions; private rides only yours. It shapes reasoning and reporting — never the citation or safety rules."
+                  : "Either way its findings only ever QUEUE for review — custom skills never apply links by themselves."}
               </p>
             </div>
 
@@ -228,7 +280,9 @@ export default function SkillStudio({ orgId, userId, userName, onClose, onCreate
                 Cancel
               </button>
               <button onClick={() => void save()}
-                disabled={saving || !name.trim() || patterns.length === 0 || test.errors.length > 0}
+                disabled={saving || !name.trim() || (kind === "reasoning"
+                  ? instructions.trim().length < 40
+                  : patterns.length === 0 || test.errors.length > 0)}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50">
                 {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                 Publish skill

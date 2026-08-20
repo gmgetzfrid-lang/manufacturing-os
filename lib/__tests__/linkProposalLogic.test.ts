@@ -286,3 +286,34 @@ describe("Connection Skills — co-citation", () => {
     expect(out[0].tier).toBe("strong");
   });
 });
+
+describe("Reasoning Skills — built-ins and prompt block", () => {
+  it("built-in packs are well-formed: unique keys, self-gating, non-trivial", async () => {
+    const { BUILTIN_ANSWER_SKILLS } = await import("@/lib/answerSkillsData");
+    const keys = new Set(BUILTIN_ANSWER_SKILLS.map((b) => b.builtin_key));
+    expect(keys.size).toBe(BUILTIN_ANSWER_SKILLS.length);
+    expect(BUILTIN_ANSWER_SKILLS.length).toBe(6);
+    for (const b of BUILTIN_ANSWER_SKILLS) {
+      expect(b.name.length).toBeGreaterThan(3);
+      expect(b.instructions).toMatch(/APPLIES WHEN/);
+      expect(b.instructions).toMatch(/ignore this skill/i);
+      expect(b.instructions.length).toBeGreaterThan(200);
+    }
+  });
+
+  it("block includes org skills and the asker's private ones, never a teammate's", async () => {
+    const { buildAnswerSkillsBlock } = await import("@/lib/answerSkillsServer");
+    const rows = [
+      { builtin_key: "x", name: "Org skill", instructions: "APPLIES WHEN a. Otherwise ignore this skill.", enabled: true, visibility: "org", created_by: null },
+      { builtin_key: null, name: "My private", instructions: "APPLIES WHEN b. Otherwise ignore this skill.", enabled: true, visibility: "private", created_by: "me" },
+      { builtin_key: null, name: "Their private", instructions: "APPLIES WHEN c. Otherwise ignore this skill.", enabled: true, visibility: "private", created_by: "them" },
+      { builtin_key: null, name: "Disabled", instructions: "APPLIES WHEN d. Otherwise ignore this skill.", enabled: false, visibility: "org", created_by: null },
+    ];
+    const block = buildAnswerSkillsBlock(rows, "me");
+    expect(block).toContain("Org skill");
+    expect(block).toContain("My private");
+    expect(block).not.toContain("Their private");
+    expect(block).not.toContain("Disabled");
+    expect(buildAnswerSkillsBlock([], "me")).toBe("");
+  });
+});

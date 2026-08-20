@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
+import { loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
 import {
   ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText,
@@ -1457,10 +1458,15 @@ export async function POST(req: NextRequest) {
         "specifically asked about — the table does the enumeration."
       : "";
     // Org Playbooks: standing instructions this org taught its AI ("our
-    // transmittals cite the PO number") ride on every ask.
-    const orgInstructions = await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge");
+    // transmittals cite the PO number") ride on every ask. Reasoning Skills
+    // ride with them — self-gating disciplines (Basis of Design, Change
+    // Impact Review, …) the workspace switched on, plus the asker's own
+    // private ones.
+    const orgInstructions =
+      (await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge")) +
+      (await loadAnswerSkillsBlock(supabaseAdmin, orgId, user.id));
     const baseAnswerSystem =
-      "You are the reference-library assistant for a refinery document control system. Answer the " +
+      "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
       "OUTPUT FORMAT — follow it exactly, no deviations, no preamble, no restating the question:\n" +
       "**Answer:** the direct answer in ONE or two SHORT sentences (45 words MAX) with its [n] " +
