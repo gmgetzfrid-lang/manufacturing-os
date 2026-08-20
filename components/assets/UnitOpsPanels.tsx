@@ -29,7 +29,7 @@ import type { Codebook } from "@/lib/codebook";
 import { planCategorization, applyCategorization, type CategorizationResult } from "@/lib/assetCategorize";
 import { listProcessFlows, decideFlow, deleteFlow, type ProcessFlow } from "@/lib/processFlows";
 import { syncKnowledgeSources } from "@/lib/knowledge";
-import type { FlowsBrowseLibrary } from "@/lib/flowsBrowse";
+import type { FlowsBrowseLibrary, FlowsBrowseMissing } from "@/lib/flowsBrowse";
 
 // ─── Auto-categorize ───────────────────────────────────────────────────────
 
@@ -266,7 +266,9 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
-  const [model, setModel] = useState<{ libraries: FlowsBrowseLibrary[]; canSync: boolean } | null>(null);
+  const [model, setModel] = useState<{
+    libraries: FlowsBrowseLibrary[]; unwatched: FlowsBrowseMissing[]; canSync: boolean;
+  } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [libraryId, setLibraryId] = useState<string>("");
   const [query, setQuery] = useState("");
@@ -284,7 +286,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Couldn't load the libraries.");
-      setModel(json as { libraries: FlowsBrowseLibrary[]; canSync: boolean });
+      setModel(json as { libraries: FlowsBrowseLibrary[]; unwatched: FlowsBrowseMissing[]; canSync: boolean });
       setLoadError(null);
     } catch (e) { setLoadError((e as Error).message); }
   }, [orgId]);
@@ -435,11 +437,40 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
             <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {loadError}
             </div>
-          ) : view.length === 0 ? (
-            <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6">
-              {q ? "No documents match that search." : "No knowledge libraries yet."}
-            </div>
-          ) : view.map((l) => (
+          ) : (
+            <>
+            {/* Org-wide blind spot: containers NO knowledge library watches.
+                This is THE "my new folder is missing" answer — the folder is
+                fine in doc control, the AI was simply never pointed at it. */}
+            {!q && (model?.unwatched.length ?? 0) > 0 && (
+              <div className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2.5 text-[11px] text-amber-900 dark:text-amber-300">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="font-black">
+                      The AI can&apos;t see these document-control locations — no knowledge library watches them:
+                    </div>
+                    {model!.unwatched.map((m) => (
+                      <div key={m.label} className="flex items-center gap-1.5">
+                        <FolderOpen className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{m.label}</span>
+                        <span className="font-bold shrink-0">· {m.docCount} doc{m.docCount === 1 ? "" : "s"}</span>
+                      </div>
+                    ))}
+                    <div>
+                      Open a knowledge library on the{" "}
+                      <Link href="/knowledge" className="font-black underline hover:text-amber-950 dark:hover:text-amber-200">Knowledge tab</Link>,
+                      link the folder (or its whole library) under <b>Sources</b>, and its documents appear here.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {view.length === 0 ? (
+              <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6">
+                {q ? "No documents match that search." : "No knowledge libraries yet."}
+              </div>
+            ) : view.map((l) => (
             <div key={l.id}>
               <div className="flex items-center gap-2 mb-1.5">
                 <BookOpen className="w-3.5 h-3.5 text-orange-600 shrink-0" />
@@ -478,6 +509,36 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                 </div>
               )}
 
+              {/* Watched but not showing — each reason by name, because
+                  "it's missing" without a why is a support ticket. */}
+              {!q && (l.pendingSync > 0 || l.notPdf > 0 || l.held.length > 0) && (
+                <div className="mb-2 rounded-lg border border-sky-200 dark:border-sky-900 bg-sky-50/70 dark:bg-sky-950/30 px-2.5 py-2 text-[11px] text-sky-800 dark:text-sky-300 space-y-0.5">
+                  {l.pendingSync > 0 && (
+                    <div className="font-bold">
+                      {l.pendingSync} watched document{l.pendingSync === 1 ? " isn't" : "s aren't"} mirrored yet —{" "}
+                      {model?.canSync
+                        ? <>press <b>Sync</b> above to pull {l.pendingSync === 1 ? "it" : "them"} in now.</>
+                        : "ask an Admin or Doc Control to press Sync."}
+                    </div>
+                  )}
+                  {l.notPdf > 0 && (
+                    <div>
+                      {l.notPdf} watched document{l.notPdf === 1 ? " has" : "s have"} no PDF current revision — the AI reads PDFs only.
+                    </div>
+                  )}
+                  {l.held.map((h) => (
+                    <div key={h.reason}>
+                      {h.count} watched document{h.count === 1 ? " is" : "s are"}{" "}
+                      {h.reason === "not_current"
+                        ? "superseded, void, or archived — only current revisions are read"
+                        : h.reason === "no_file"
+                          ? "missing a current file to read"
+                          : "held back from AI by a controller"}.
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {l.groups.length === 0 ? (
                 <div className="text-[11px] text-[var(--color-text-muted)] px-1 py-1.5">No indexed documents in this library yet.</div>
               ) : l.groups.map((g) => (
@@ -490,7 +551,9 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                 </div>
               ))}
             </div>
-          ))}
+            ))}
+            </>
+          )}
         </div>
 
         {/* The PFD isn't indexed yet? The door is one click away, not a maze. */}
