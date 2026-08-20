@@ -7,7 +7,8 @@
 
 import { supabase } from "@/lib/supabase";
 
-export type ProposerKind = "opc" | "tag" | "alias" | "semantic";
+/** Built-in keys plus `rule:<id>` for org-authored Connection Skills. */
+export type ProposerKind = "opc" | "tag" | "alias" | "semantic" | "co_citation" | (string & {});
 export type ProposalTier = "provable" | "strong" | "inferred";
 
 export interface ProposalEvidence {
@@ -15,6 +16,8 @@ export interface ProposalEvidence {
   detail?: string;
   tags?: string[];
   page?: number;
+  /** Name of the Connection Skill that found it, for display. */
+  rule?: string;
 }
 
 export interface LinkProposal {
@@ -41,12 +44,19 @@ export interface DocStub {
 const missing = (e: { code?: string; message?: string } | null) =>
   !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
 
-export const PROPOSER_LABELS: Record<ProposerKind, string> = {
-  opc: "Off-page connector",
+export const PROPOSER_LABELS: Record<string, string> = {
+  opc: "Drawing cross-reference",
   tag: "Shared equipment",
   alias: "Equipment alias",
   semantic: "Similar content",
+  co_citation: "Answered together",
 };
+
+/** Display name for whichever skill found a proposal — built-in key or an
+ *  org-authored Connection Skill (whose name rides in the evidence). */
+export function proposerLabel(proposer: string, evidence?: ProposalEvidence | null): string {
+  return PROPOSER_LABELS[proposer] ?? evidence?.rule ?? "Custom skill";
+}
 
 export const TIER_LABELS: Record<ProposalTier, string> = {
   provable: "Provable",

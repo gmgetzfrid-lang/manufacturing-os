@@ -18,13 +18,31 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractDrawingRefs } from "@/lib/drawingText";
 import { normalizeTag } from "@/lib/codebook";
 import {
-  proposeOpcContinuity, proposeSharedEquipment, mergeDrafts, filterDrafts,
-  splitByAutoApply, refKey, orderPair,
+  proposeOpcContinuity, proposeSharedEquipment, proposeCustomReferences,
+  proposeCoCitations, compileSkillPatterns, mergeDrafts, filterDrafts,
+  splitByAutoApply, refKey, orderPair, BUILTIN_SKILLS,
   type ProposalDraft, type OpcOccurrence, type TagOccurrence,
+  type TextOccurrence, type CoCitationRow,
 } from "@/lib/linkProposalLogic";
 
 const BATCH = 400;
 const CHUNK = 150;
+const CHUNK_SCAN_CAP = 2400;
+
+/** What each skill had to work with — so "found nothing" can explain
+ *  itself instead of looking broken. Zeroes here ARE the diagnosis. */
+export interface ProposerInputs {
+  documents: number;
+  withNumbers: number;
+  mirroredDocs: number;
+  extractedRefs: number;
+  registryAssets: number;
+  equipmentLinks: number;
+  citedQuestions: number;
+  customSkills: number;
+  chunksScanned: number;
+  skillsInstalled: boolean;
+}
 
 export interface ProposerRun {
   scanned: number;
@@ -35,6 +53,61 @@ export interface ProposerRun {
   evidenceLost: number;
   more: boolean;
   notes: string[];
+  inputs: ProposerInputs;
+}
+
+interface RuleRow {
+  id: string;
+  builtin_key: string | null;
+  name: string;
+  kind: string;
+  config: { patterns?: string[]; minCoCitations?: number } | null;
+  enabled: boolean;
+  visibility: string;
+}
+
+/** Load the org's Connection Skills, seeding any missing built-ins. Returns
+ *  null when the migration hasn't run — the engine then behaves exactly as
+ *  it did before skills existed. */
+async function loadRules(
+  admin: SupabaseClient, orgId: string, notes: string[],
+): Promise<RuleRow[] | null> {
+  const res = await admin
+    .from("link_rules")
+    .select("id, builtin_key, name, kind, config, enabled, visibility")
+    .eq("org_id", orgId)
+    .limit(200);
+  if (res.error) {
+    notes.push("Connection Skills not installed — run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults.");
+    return null;
+  }
+  const rows = (res.data as RuleRow[]) ?? [];
+  const have = new Set(rows.filter((r) => r.builtin_key).map((r) => r.builtin_key));
+  const toSeed = BUILTIN_SKILLS.filter((b) => !have.has(b.builtin_key));
+  if (toSeed.length > 0) {
+    const { error } = await admin.from("link_rules").upsert(
+      toSeed.map((b) => ({
+        org_id: orgId,
+        builtin_key: b.builtin_key,
+        name: b.name,
+        description: b.description,
+        kind: b.kind,
+        config: b.config,
+        enabled: true,
+        visibility: "org",
+      })),
+      { onConflict: "org_id,builtin_key", ignoreDuplicates: true },
+    );
+    if (!error) {
+      for (const b of toSeed) {
+        rows.push({
+          id: `seed:${b.builtin_key}`, builtin_key: b.builtin_key, name: b.name,
+          kind: b.kind, config: b.config, enabled: true, visibility: "org",
+        });
+      }
+    }
+  }
+  return rows;
 }
 
 /** Page a large `in` filter without blowing the URL length. */
@@ -54,6 +127,22 @@ export async function runLinkProposers(
   orgId: string,
 ): Promise<ProposerRun> {
   const notes: string[] = [];
+
+  // ── The org's rulebook. Built-ins seed themselves; a disabled skill is
+  // simply skipped. Pre-migration orgs run the classic defaults.
+  const rules = await loadRules(admin, orgId, notes);
+  const builtinEnabled = (key: string): boolean =>
+    rules === null ? true : (rules.find((r) => r.builtin_key === key)?.enabled ?? true);
+  const customRules = (rules ?? []).filter((r) =>
+    !r.builtin_key && r.kind === "reference" && r.enabled &&
+    (r.config?.patterns?.length ?? 0) > 0);
+
+  const inputs: ProposerInputs = {
+    documents: 0, withNumbers: 0, mirroredDocs: 0, extractedRefs: 0,
+    registryAssets: 0, equipmentLinks: 0, citedQuestions: 0,
+    customSkills: customRules.length, chunksScanned: 0,
+    skillsInstalled: rules !== null,
+  };
 
   // ── Controlled documents: identity index + revision, excluding anything
   // carved out of AI reading. ai_excluded is a young column; if it isn't
@@ -76,8 +165,9 @@ export async function runLinkProposers(
     docRows = ((withFlag.data as Array<{ id: string; document_number: string | null; rev: string | null; ai_excluded: boolean }>) ?? [])
       .map(({ id, document_number, rev }) => ({ id, document_number, rev }));
   }
+  inputs.documents = docRows.length;
   if (docRows.length === 0) {
-    return { scanned: 0, proposed: 0, autoApplied: 0, skipped: 0, evidenceLost: 0, more: false, notes };
+    return { scanned: 0, proposed: 0, autoApplied: 0, skipped: 0, evidenceLost: 0, more: false, notes, inputs };
   }
 
   const revById = new Map(docRows.map((d) => [d.id, d.rev]));
@@ -88,6 +178,7 @@ export async function runLinkProposers(
     if (!key) continue;
     (identityIndex.get(key) ?? identityIndex.set(key, []).get(key)!).push(d.id);
   }
+  inputs.withNumbers = identityIndex.size;
   const allowed = new Set(docRows.map((d) => d.id));
 
   // ── Off-page connector occurrences. Entities hang off knowledge_documents,
@@ -101,10 +192,11 @@ export async function runLinkProposers(
     .limit(BATCH * 2);
   const mirrorRows = (kdocs.data as Array<{ id: string; source_document_id: string }> | null) ?? [];
   const sourceByKdoc = new Map(mirrorRows.map((k) => [k.id, k.source_document_id]));
+  inputs.mirroredDocs = mirrorRows.length;
 
   if (kdocs.error) {
     notes.push("Drawing entities unavailable — off-page continuity skipped.");
-  } else if (mirrorRows.length > 0) {
+  } else if (mirrorRows.length > 0 && builtinEnabled("opc_continuity")) {
     const entities = await inChunks<{ document_id: string; kind: string; tag: string; raw: string | null; page: number }>(
       mirrorRows.map((k) => k.id),
       async (slice) => {
@@ -145,6 +237,12 @@ export async function runLinkProposers(
     .eq("org_id", orgId)
     .limit(20000);
   const links = (linkRows as Array<{ document_id: string; asset_id: string; tag_text: string | null }> | null) ?? [];
+  inputs.equipmentLinks = links.length;
+  {
+    const { count } = await admin
+      .from("assets").select("id", { count: "exact", head: true }).eq("org_id", orgId);
+    inputs.registryAssets = count ?? 0;
+  }
 
   // Canonical tag per asset, plus every alias pointing at it.
   const assetIds = [...new Set(links.map((l) => l.asset_id))];
@@ -186,10 +284,79 @@ export async function runLinkProposers(
     });
   }
 
+  inputs.extractedRefs = opcOccurrences.length;
+
+  // ── Custom cross-reference skills: scan indexed text ──────────────────
+  // The generalization of drawing continuity: ANY identifier convention the
+  // org authored as a skill, matched against the indexed text of controlled
+  // documents. Bounded per pass, and only fetched when a skill needs it.
+  const textOccurrences: TextOccurrence[] = [];
+  if (customRules.length > 0 && mirrorRows.length > 0) {
+    let capped = false;
+    for (let i = 0; i < mirrorRows.length && !capped; i += 25) {
+      const slice = mirrorRows.slice(i, i + 25);
+      const { data, error } = await admin
+        .from("knowledge_chunks")
+        .select("document_id, page, content")
+        .in("document_id", slice.map((k) => k.id))
+        .limit(CHUNK_SCAN_CAP - inputs.chunksScanned);
+      if (error) { notes.push("Indexed text unavailable — custom skills skipped this pass."); break; }
+      for (const c of (data as Array<{ document_id: string; page: number; content: string }>) ?? []) {
+        const src = sourceByKdoc.get(c.document_id);
+        if (!src || !allowed.has(src)) continue;
+        textOccurrences.push({
+          documentId: src, text: c.content, page: c.page,
+          sourceRev: revById.get(src) ?? null,
+        });
+      }
+      inputs.chunksScanned += (data ?? []).length;
+      if (inputs.chunksScanned >= CHUNK_SCAN_CAP) capped = true;
+    }
+    if (capped) notes.push(`Custom skills scanned the first ${CHUNK_SCAN_CAP} indexed pages this pass.`);
+  }
+  const customDrafts: ProposalDraft[] = [];
+  for (const rule of customRules) {
+    const { regexes, errors } = compileSkillPatterns(rule.config?.patterns ?? []);
+    if (errors.length > 0) notes.push(`Skill “${rule.name}”: ${errors[0]}`);
+    if (regexes.length === 0) continue;
+    customDrafts.push(...proposeCustomReferences(
+      { id: rule.id, name: rule.name, regexes }, textOccurrences, identityIndex));
+  }
+
+  // ── Co-citation: the team's own questions as evidence ─────────────────
+  let coDrafts: ProposalDraft[] = [];
+  if (builtinEnabled("co_citation")) {
+    const coRule = (rules ?? []).find((r) => r.builtin_key === "co_citation");
+    const minCo = coRule?.config?.minCoCitations ?? 2;
+    const { data: qs } = await admin
+      .from("knowledge_questions")
+      .select("question, citations")
+      .eq("org_id", orgId)
+      .not("citations", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(400);
+    const coRows: CoCitationRow[] = [];
+    for (const q of (qs as Array<{ question: string | null; citations: unknown }>) ?? []) {
+      const cites = Array.isArray(q.citations) ? q.citations : [];
+      const ids = new Set<string>();
+      for (const c of cites) {
+        const kd = (c as { documentId?: string }).documentId;
+        if (!kd) continue;
+        const src = sourceByKdoc.get(kd);
+        if (src && allowed.has(src)) ids.add(src);
+      }
+      if (ids.size >= 2) coRows.push({ question: q.question ?? "", docIds: [...ids] });
+    }
+    inputs.citedQuestions = coRows.length;
+    coDrafts = proposeCoCitations(coRows, { minCoCitations: minCo });
+  }
+
   // ── Reason ────────────────────────────────────────────────────────────
   const drafts = mergeDrafts([
     ...proposeOpcContinuity(opcOccurrences, identityIndex),
-    ...proposeSharedEquipment(tagOccurrences),
+    ...(builtinEnabled("shared_equipment") ? proposeSharedEquipment(tagOccurrences) : []),
+    ...customDrafts,
+    ...coDrafts,
   ]);
 
   // Already linked, or already decided (including dismissals — a rejected
@@ -274,6 +441,7 @@ export async function runLinkProposers(
     evidenceLost,
     more: fresh.length > capped.length,
     notes,
+    inputs,
   };
 }
 

@@ -16,7 +16,7 @@
 import React from "react";
 import {
   X, ArrowUpRight, ArrowLeft, Focus, Crosshair, Quote, Loader2,
-  CornerDownLeft, Layers, FileText,
+  CornerDownLeft, Layers, FileText, Link2,
 } from "lucide-react";
 import type { GraphNode } from "@/lib/orgGraph";
 import { mentionsForAsset, mentionsForDocument, type MentionEvidence } from "@/lib/mentions";
@@ -38,12 +38,15 @@ export interface NodePeekProps {
   onGoOut: () => void;
   onOpen: () => void;
   onPath: () => void;
+  /** Start drawing a manual connection from this node (documents and
+   *  equipment only — other ties are derived from the registry). */
+  onConnect?: () => void;
   onClose: () => void;
 }
 
 export default function NodePeek({
   node, orgId, connections, focused, historyDepth,
-  colorFor, labelFor, onSelect, onBack, onGoIn, onGoOut, onOpen, onPath, onClose,
+  colorFor, labelFor, onSelect, onBack, onGoIn, onGoOut, onOpen, onPath, onConnect, onClose,
 }: NodePeekProps) {
   const [evidence, setEvidence] = React.useState<MentionEvidence[] | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -171,6 +174,12 @@ export default function NodePeek({
             className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-cyan-700 border border-cyan-300 dark:border-cyan-800 rounded-lg px-2 py-1.5 hover:bg-cyan-50 dark:hover:bg-cyan-950/40">
             <Crosshair className="w-3.5 h-3.5" />
           </button>
+          {onConnect && (
+            <button onClick={onConnect} title="Draw a connection from this node — click it, then click the other node"
+              className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-emerald-700 border border-emerald-300 dark:border-emerald-800 rounded-lg px-2 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40">
+              <Link2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
         <button onClick={onOpen}
           className="w-full inline-flex items-center justify-center gap-1 text-[11px] font-black text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-2 py-1.5">

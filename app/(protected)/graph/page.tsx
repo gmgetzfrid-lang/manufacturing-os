@@ -19,7 +19,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Loader2, Search, Waypoints, X, ArrowUpRight, Info, Lightbulb,
-  CircleDashed, Flame, Spline, Sparkles, Route, Maximize2, CornerDownLeft, Quote,
+  CircleDashed, Flame, Spline, Sparkles, Route, Maximize2, CornerDownLeft, Quote, Link2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
@@ -57,7 +57,7 @@ interface GraphAsk {
 }
 
 function GraphPageInner() {
-  const { activeOrgId } = useRole();
+  const { activeOrgId, uid, userEmail } = useRole();
   const router = useRouter();
   const params = useSearchParams();
   const focusParam = params.get("focus");
@@ -74,6 +74,13 @@ function GraphPageInner() {
   const [focusId, setFocusId] = React.useState<string | null>(null);
   const [pathEnds, setPathEnds] = React.useState<{ from: GraphNode | null; to: GraphNode | null }>({ from: null, to: null });
   const [pathMode, setPathMode] = React.useState(false);
+  // Drawing a connection BY HAND, right on the map: pick the source in the
+  // peek, click the target, the edge is written and drawn. Documents and
+  // equipment only — every other tie is derived from the registry.
+  const [connect, setConnect] = React.useState<{
+    from: GraphNode; status: "picking" | "saving";
+    done?: { a: string; b: string }; error?: string;
+  } | null>(null);
 
   // Asking the graph a question. The label filter stays — it's the right tool
   // for "where is E-22" — but it can never answer "any standards about pipe
@@ -287,13 +294,64 @@ function GraphPageInner() {
     }
   }, [activeOrgId, rawQuery, asking]);
 
-  const open = React.useCallback((n: GraphNode) => { router.push(n.href); }, [router]);
+  // `from=graph` lets the destination page offer a way back that restores
+  // this exact map (layout and settings persist per-org already).
+  const open = React.useCallback((n: GraphNode) => {
+    router.push(`${n.href}${n.href.includes("?") ? "&" : "?"}from=graph`);
+  }, [router]);
 
   // Walking the web needs a back stack. Following four links and having no
   // way back to where you started is how a graph becomes a maze.
   const [trail, setTrail] = React.useState<GraphNode[]>([]);
 
+  const completeConnect = React.useCallback(async (from: GraphNode, target: GraphNode) => {
+    if (from.id === target.id || !activeOrgId || !uid) return;
+    const kindOf = (id: string) => id.slice(0, id.indexOf(":"));
+    const rawId = (id: string) => id.slice(id.indexOf(":") + 1);
+    const ka = kindOf(from.id), kb = kindOf(target.id);
+    const docDoc = ka === "doc" && kb === "doc";
+    const docAsset = (ka === "doc" && kb === "asset") || (ka === "asset" && kb === "doc");
+    if (!docDoc && !docAsset) {
+      setConnect((c) => c && ({
+        ...c, status: "picking",
+        error: "Draw connections between two documents, or a document and equipment. Unit, library and project ties are derived from the registry and filing.",
+      }));
+      return;
+    }
+    setConnect((c) => c && ({ ...c, status: "saving", error: undefined }));
+    try {
+      if (docDoc) {
+        const { addRelatedResource } = await import("@/lib/relatedResources");
+        await addRelatedResource({
+          orgId: activeOrgId, documentId: rawId(from.id), kind: "document",
+          targetDocumentId: rawId(target.id), label: "Linked on the graph",
+          userId: uid, userName: userEmail ?? undefined,
+        });
+      } else {
+        const doc = ka === "doc" ? from : target;
+        const asset = ka === "asset" ? from : target;
+        const { supabase } = await import("@/lib/supabase");
+        const { error } = await supabase.from("document_assets").insert({
+          org_id: activeOrgId, document_id: rawId(doc.id), asset_id: rawId(asset.id),
+          tag_text: asset.label, source: "manual",
+        });
+        // 23505 = already linked — the edge the user wanted already exists.
+        if (error && error.code !== "23505") throw new Error(error.message);
+      }
+      // Draw it now — the row is real, the rebuild would only rediscover it.
+      const type: GraphEdge["type"] = docDoc ? "related" : "tag";
+      setGraph((g) => g ? { ...g, edges: [...g.edges, { a: from.id, b: target.id, type }] } : g);
+      setConnect({ from, status: "picking", done: { a: from.label, b: target.label } });
+    } catch (e) {
+      setConnect((c) => c && ({ ...c, status: "picking", error: (e as Error).message }));
+    }
+  }, [activeOrgId, uid, userEmail]);
+
   const handleSelect = React.useCallback((n: GraphNode | null) => {
+    if (connect?.status === "picking" && n) {
+      void completeConnect(connect.from, n);
+      return;
+    }
     if (pathMode && n) {
       setPathEnds((prev) => (!prev.from || prev.to ? { from: n, to: null } : { ...prev, to: n }));
       return;
@@ -305,7 +363,7 @@ function GraphPageInner() {
       return n;
     });
     if (!n) setHighlight(null);
-  }, [pathMode]);
+  }, [pathMode, connect, completeConnect]);
 
   const peekBack = React.useCallback(() => {
     setTrail((t) => {
@@ -709,7 +767,42 @@ function GraphPageInner() {
                 card here told you the node's type and then made you leave the
                 map to learn anything else, which is why the graph felt like a
                 picture instead of a tool. */}
-            {selected && !pathMode && activeOrgId && (
+            {/* Connect panel — the manual edge, drawn where the map is. */}
+            {connect && (
+              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-emerald-300 dark:border-emerald-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
+                <div className="flex items-center gap-1.5">
+                  <Link2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Draw a connection</span>
+                  <button onClick={() => setConnect(null)} aria-label="Done connecting"
+                    className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {connect.done && (
+                  <div className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+                    Connected {connect.done.a} ↔ {connect.done.b} ✓
+                  </div>
+                )}
+                {connect.error && (
+                  <div className="text-[11px] text-rose-600 leading-snug">{connect.error}</div>
+                )}
+                {connect.status === "saving" ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Writing the link…
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
+                    From <b className="text-[var(--color-text)]">{connect.from.label}</b> — click the node to connect it to.
+                  </div>
+                )}
+                <div className="text-[10px] text-[var(--color-text-faint)]">
+                  Document ↔ document, or document ↔ equipment. The link is yours: it appears in the
+                  document&apos;s Related panel and can be removed there.
+                </div>
+              </div>
+            )}
+
+            {selected && !pathMode && !connect && activeOrgId && (
               <NodePeek
                 node={selected}
                 orgId={activeOrgId}
@@ -724,6 +817,9 @@ function GraphPageInner() {
                 onGoOut={() => { setFocusId(null); setHighlight({ ids: [selected.id], nonce: Date.now() }); }}
                 onOpen={() => open(selected)}
                 onPath={() => { setPathMode(true); setPathEnds({ from: selected, to: null }); }}
+                onConnect={selected.id.startsWith("doc:") || selected.id.startsWith("asset:")
+                  ? () => { setConnect({ from: selected, status: "picking" }); setSelected(null); setTrail([]); }
+                  : undefined}
                 onClose={() => { setSelected(null); setTrail([]); setHighlight(null); }}
               />
             )}

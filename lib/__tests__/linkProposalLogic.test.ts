@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   refKey, orderPair, proposeOpcContinuity, proposeSharedEquipment,
   mergeDrafts, filterDrafts, splitByAutoApply,
+  compileSkillPatterns, proposeCustomReferences, proposeCoCitations,
   type ProposalDraft,
 } from "@/lib/linkProposalLogic";
 
@@ -199,5 +200,89 @@ describe("mergeDrafts / filterDrafts / splitByAutoApply", () => {
     ]);
     expect(autoApply).toHaveLength(1);
     expect(queue).toHaveLength(2);
+  });
+});
+
+describe("Connection Skills — custom cross-reference patterns", () => {
+  const idx = new Map<string, string[]>([
+    [refKey2("WO-10023"), ["doc-wo"]],
+    [refKey2("SOP-771"), ["doc-sop-a", "doc-sop-b"]],
+    [refKey2("PRM-9"), ["x", "y", "z"]],
+  ]);
+  function refKey2(s: string) { return s.toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+
+  it("compiles good patterns and reports bad ones without throwing", () => {
+    const { regexes, errors } = compileSkillPatterns(["\\bWO-\\d{5}\\b", "([bad", "a*"]);
+    expect(regexes).toHaveLength(1);
+    expect(errors).toHaveLength(2);
+    expect(errors.some((e) => e.includes("empty"))).toBe(true);
+  });
+
+  it("resolves a matched identifier to the owning document — queue tier, never provable", () => {
+    const { regexes } = compileSkillPatterns(["\\bWO-\\d{5}\\b"]);
+    const out = proposeCustomReferences(
+      { id: "r1", name: "Work orders", regexes },
+      [{ documentId: "doc-src", text: "Repairs per WO-10023 completed and signed." }],
+      idx,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].tier).toBe("strong");
+    expect(out[0].proposer).toBe("rule:r1");
+    expect(out[0].evidence.rule).toBe("Work orders");
+    expect(out[0].evidence.summary).toContain("WO-10023");
+    const pair = [out[0].documentId, out[0].targetDocumentId].sort();
+    expect(pair).toEqual(["doc-src", "doc-wo"]);
+  });
+
+  it("demotes ambiguous matches and says nothing for haystacks or misses", () => {
+    const { regexes } = compileSkillPatterns(["\\bSOP-\\d+\\b", "\\bPRM-\\d+\\b", "\\bZZZ-\\d+\\b"]);
+    const out = proposeCustomReferences(
+      { id: "r2", name: "Procedures", regexes },
+      [{ documentId: "doc-src", text: "See SOP-771, PRM-9 and ZZZ-4." }],
+      idx,
+    );
+    // SOP resolves to two docs → inferred, both proposed; PRM has 3 owners → dropped; ZZZ unknown → dropped.
+    expect(out).toHaveLength(2);
+    for (const d of out) expect(d.tier).toBe("inferred");
+  });
+
+  it("never links a document to itself", () => {
+    const { regexes } = compileSkillPatterns(["\\bWO-\\d{5}\\b"]);
+    const out = proposeCustomReferences(
+      { id: "r3", name: "Self", regexes },
+      [{ documentId: "doc-wo", text: "This is WO-10023 itself." }],
+      idx,
+    );
+    expect(out).toHaveLength(0);
+  });
+});
+
+describe("Connection Skills — co-citation", () => {
+  it("proposes pairs cited together at least the minimum number of times", () => {
+    const out = proposeCoCitations([
+      { question: "What preheat applies to P-101 suction?", docIds: ["a", "b"] },
+      { question: "Hydrotest pressure for that line?", docIds: ["a", "b", "c"] },
+      { question: "One-off broad question", docIds: ["c", "d"] },
+    ]);
+    const ab = out.find((d) => d.documentId === "a" && d.targetDocumentId === "b");
+    expect(ab).toBeTruthy();
+    expect(ab!.proposer).toBe("co_citation");
+    expect(ab!.evidence.summary).toContain("2 questions");
+    expect(ab!.evidence.detail).toContain("preheat");
+    expect(out.find((d) => d.documentId === "c" && d.targetDocumentId === "d")).toBeUndefined();
+  });
+
+  it("ignores survey questions citing many documents and single-citation answers", () => {
+    const out = proposeCoCitations([
+      { question: "everything about the unit", docIds: ["a", "b", "c", "d", "e", "f", "g"] },
+      { question: "narrow", docIds: ["a"] },
+    ]);
+    expect(out).toHaveLength(0);
+  });
+
+  it("reaches strong tier at three co-citations", () => {
+    const rows = Array.from({ length: 3 }, (_, i) => ({ question: `q${i}`, docIds: ["a", "b"] }));
+    const out = proposeCoCitations(rows);
+    expect(out[0].tier).toBe("strong");
   });
 });

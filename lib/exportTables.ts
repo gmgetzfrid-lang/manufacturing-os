@@ -27,6 +27,9 @@ export const ORG_SCOPED_TABLES = [
   // equipment nicknames a normalizer can't derive.
   "proposed_links",
   "asset_aliases",
+  // Connection Skills — the org's authored detectors. Pure human knowledge
+  // (names, patterns, sharing choices); nothing here can be re-derived.
+  "link_rules",
   // Mentions are mostly re-derivable by re-running the indexer, but not all
   // of them: is_explicit rows are human decisions, and a restore that
   // silently dropped them would lose links nobody can reconstruct.

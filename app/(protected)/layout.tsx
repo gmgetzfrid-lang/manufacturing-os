@@ -17,6 +17,7 @@ import KnowledgeIndexIndicator from "@/components/providers/KnowledgeIndexIndica
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
 import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost";
+import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
@@ -64,6 +65,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <KnowledgeIndexIndicator />
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>
+            <BackToGraphChip />
             <RelationshipGraphHost />
             <SignatureCaptureHost />
             <DialogHost />

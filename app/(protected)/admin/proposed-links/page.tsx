@@ -23,11 +23,12 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
   listProposals, approveProposal, dismissProposal,
-  PROPOSER_LABELS, TIER_LABELS,
+  proposerLabel, TIER_LABELS,
   type LinkProposal, type ProposalTier,
 } from "@/lib/linkProposals";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
+import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
 
 const TIER_STYLE: Record<ProposalTier, string> = {
   provable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
@@ -35,9 +36,47 @@ const TIER_STYLE: Record<ProposalTier, string> = {
   inferred: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
 };
 
+/** Mirrors ProposerInputs from the engine — what each skill had to work with. */
+interface RunInputs {
+  documents: number; withNumbers: number; mirroredDocs: number;
+  extractedRefs: number; registryAssets: number; equipmentLinks: number;
+  citedQuestions: number; customSkills: number; chunksScanned: number;
+  skillsInstalled: boolean;
+}
+
 interface RunResult {
   scanned: number; proposed: number; autoApplied: number;
   evidenceLost: number; more: boolean; notes: string[];
+  inputs?: RunInputs;
+}
+
+/** Zero findings must explain themselves: each empty input maps to the
+ *  concrete next step that would feed it. This is the difference between
+ *  "the feature is broken" and "the registry is empty". */
+function diagnose(inputs: RunInputs): string[] {
+  const out: string[] = [];
+  if (inputs.withNumbers === 0) {
+    out.push("No documents carry document numbers yet — references can't resolve to anything. Fill in numbers (the title-block ingest wizard reads them automatically).");
+  }
+  if (inputs.registryAssets === 0) {
+    out.push("The equipment registry is empty, so the Shared equipment skill has nothing to compare. Add assets under Admin → Assets, or run the registry sweep.");
+  } else if (inputs.equipmentLinks === 0) {
+    out.push("No documents are linked to equipment yet — run an Equipment sweep on a library to bridge them.");
+  }
+  if (inputs.mirroredDocs === 0) {
+    out.push("No knowledge documents mirror controlled documents. Link a document-control library as a knowledge source so extraction can read the real files.");
+  } else if (inputs.extractedRefs === 0) {
+    out.push("Extraction hasn't found cross-references in the mirrored documents yet (they may not be drawings, or haven't been indexed).");
+  }
+  if (inputs.citedQuestions === 0) {
+    out.push("No answered questions cite two controlled documents yet — the Answered-together skill grows with use.");
+  }
+  if (inputs.customSkills === 0 && inputs.skillsInstalled) {
+    out.push("No custom skills yet — teach the engine your facility's own numbering conventions above.");
+  } else if (inputs.customSkills > 0 && inputs.chunksScanned === 0) {
+    out.push("Custom skills had no indexed text to scan — index the source documents into a knowledge library first.");
+  }
+  return out;
 }
 
 export default function ProposedLinksPage() {
@@ -84,6 +123,7 @@ export default function ProposedLinksPage() {
           evidenceLost: (last?.evidenceLost ?? 0) + (json.evidenceLost ?? 0),
           more: !!json.more,
           notes: json.notes ?? [],
+          inputs: json.inputs ?? last?.inputs,
         };
         if (!json.more) break;
       }
@@ -127,6 +167,8 @@ export default function ProposedLinksPage() {
         ) : undefined}
       />
 
+      <ConnectionSkillsPanel />
+
       {error && (
         <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 p-3">
           <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
@@ -149,6 +191,26 @@ export default function ProposedLinksPage() {
               <Info className="w-3 h-3" /> {n}
             </div>
           ))}
+          {/* Zero findings explain themselves — which input was empty and
+              what feeds it. Silence here reads as "broken"; this is the
+              honest answer instead. */}
+          {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
+            <div className="pt-1.5 mt-1 border-t border-[var(--color-border)] space-y-1">
+              <div className="text-[11px] font-black text-[var(--color-text)]">
+                Why nothing was found
+              </div>
+              {diagnose(lastRun.inputs).map((d) => (
+                <div key={d} className="text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5">
+                  <span className="mt-1 w-1 h-1 rounded-full bg-amber-500 shrink-0" /> {d}
+                </div>
+              ))}
+              {diagnose(lastRun.inputs).length === 0 && (
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  The inputs look healthy — everything discoverable is likely already linked or was previously decided.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -192,7 +254,7 @@ export default function ProposedLinksPage() {
                       {TIER_LABELS[p.tier]}
                     </span>
                     <span className="text-[10px] font-bold text-[var(--color-text-muted)]">
-                      {PROPOSER_LABELS[p.proposer]}
+                      {proposerLabel(p.proposer, p.evidence)}
                     </span>
                     {p.source_rev && (
                       <span className="text-[10px] text-[var(--color-text-faint)]">from rev {p.source_rev}</span>
