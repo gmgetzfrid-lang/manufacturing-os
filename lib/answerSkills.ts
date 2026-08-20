@@ -53,7 +53,11 @@ export async function seedBuiltinAnswerSkills(orgId: string, userId: string): Pr
   const have = new Set(((data as Array<{ builtin_key: string }>) ?? []).map((r) => r.builtin_key));
   const want = BUILTIN_ANSWER_SKILLS.filter((b) => !have.has(b.builtin_key));
   if (want.length === 0) return;
-  await supabase.from("answer_skills").upsert(
+  // Plain insert of the missing rows — the unique (org_id, builtin_key)
+  // index is PARTIAL, which ON CONFLICT can't infer through the API, so an
+  // upsert here fails wholesale. A concurrent seeder makes this insert 23505;
+  // the rows exist either way, which is the goal.
+  await supabase.from("answer_skills").insert(
     want.map((b) => ({
       org_id: orgId,
       builtin_key: b.builtin_key,
@@ -64,7 +68,6 @@ export async function seedBuiltinAnswerSkills(orgId: string, userId: string): Pr
       visibility: "org",
       created_by: userId,
     })),
-    { onConflict: "org_id,builtin_key", ignoreDuplicates: true },
   );
 }
 

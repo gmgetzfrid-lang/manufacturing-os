@@ -64,7 +64,10 @@ export async function loadAnswerSkillsBlock(
   const have = new Set(rows.filter((r) => r.builtin_key).map((r) => r.builtin_key));
   const toSeed = BUILTIN_ANSWER_SKILLS.filter((b) => !have.has(b.builtin_key));
   if (toSeed.length > 0) {
-    const { error } = await admin.from("answer_skills").upsert(
+    // Plain insert: the unique (org_id, builtin_key) index is PARTIAL, which
+    // ON CONFLICT can't infer through the API. A concurrent seeder turns
+    // this into a duplicate-key error; either way the rows exist.
+    const { error } = await admin.from("answer_skills").insert(
       toSeed.map((b) => ({
         org_id: orgId,
         builtin_key: b.builtin_key,
@@ -74,7 +77,6 @@ export async function loadAnswerSkillsBlock(
         enabled: true,
         visibility: "org",
       })),
-      { onConflict: "org_id,builtin_key", ignoreDuplicates: true },
     );
     if (!error) {
       for (const b of toSeed) {
