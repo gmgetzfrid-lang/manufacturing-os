@@ -285,7 +285,8 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   // exist the user picks which one watches it; with exactly one, Link acts
   // immediately — no detours to other pages.
   const [linking, setLinking] = useState<{ type: "library" | "folder"; id: string; name: string } | null>(null);
-  const [linkBusy, setLinkBusy] = useState(false);
+  // Which container is mid-link — busy state stays ON that button.
+  const [linkingKey, setLinkingKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -304,35 +305,46 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
   // "Not synced yet" has a one-click answer: reconcile EVERY knowledge
   // library with doc control right now instead of waiting for the cron.
+  // Failures are COUNTED and reported — "already up to date" while every
+  // library errored would be a green lie.
   const syncAll = async () => {
     if (!model || model.knowledgeLibraries.length === 0) return;
     setSyncing(true); setError(null); setSyncNote(null);
-    try {
-      let added = 0;
-      for (const kl of model.knowledgeLibraries) {
-        try { added += (await syncKnowledgeSources(orgId, kl.id)).added; }
-        catch { /* one library must not block the rest */ }
+    let added = 0;
+    const failures: string[] = [];
+    for (const kl of model.knowledgeLibraries) {
+      try {
+        const r = await syncKnowledgeSources(orgId, kl.id);
+        added += r.added;
+        failures.push(...(r.errors ?? []).map((e) => `${kl.name}: ${e}`));
+      } catch (e) {
+        failures.push(`${kl.name}: ${(e as Error).message}`);
       }
-      await load();
+    }
+    await load();
+    if (failures.length > 0) {
+      setError(`Sync hit ${failures.length} problem${failures.length === 1 ? "" : "s"} — ${failures[0]}${failures.length > 1 ? " (and more)" : ""}`);
+      if (added > 0) setSyncNote(`${added} document${added === 1 ? "" : "s"} still pulled in before the errors.`);
+    } else {
       setSyncNote(added > 0
         ? `Synced — ${added} document${added === 1 ? "" : "s"} pulled in from document control.`
         : "Synced — already up to date with document control.");
-    } catch (e) { setError((e as Error).message); }
-    finally { setSyncing(false); }
+    }
+    setSyncing(false);
   };
 
   // Link an unwatched container to a knowledge library IN PLACE — the
   // sources API links and syncs in one call, so the folder's documents
   // appear as soon as the model reloads.
   const doLink = async (klId: string, target: { type: "library" | "folder"; id: string; name: string }) => {
-    setLinkBusy(true); setError(null); setSyncNote(null);
+    setLinkingKey(target.id); setError(null); setSyncNote(null);
     try {
       const res = await addKnowledgeSources(orgId, klId, [{ type: target.type, id: target.id }]);
       setLinking(null);
       await load();
       setSyncNote(`Linked “${target.name}” — ${res.added} document${res.added === 1 ? "" : "s"} pulled in. Indexing starts automatically.`);
     } catch (e) { setError((e as Error).message); }
-    finally { setLinkBusy(false); }
+    finally { setLinkingKey(null); }
   };
   const requestLink = (target: { type: "library" | "folder"; id: string; name: string }) => {
     if (!model?.canSync) return;
@@ -412,6 +424,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
   // ── One row per document, its AI state printed on it ──────────────────
   const STATE_META: Record<Exclude<DcDocRow["state"], "ready">, { label: string; hint: string }> = {
+    indexing: { label: "Indexing…", hint: "Mirrored and being indexed — the Read button appears when it finishes (usually under a minute). Reopen or Sync to refresh." },
     pending_sync: { label: "Not synced yet", hint: "Watched by the AI — press Sync to mirror it now." },
     unwatched: { label: "Not linked to AI", hint: "No knowledge library watches this folder — press Link to connect it right here." },
     not_pdf: { label: "No PDF revision", hint: "The AI reads PDFs only — attach a PDF current revision." },
@@ -419,6 +432,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
     no_file: { label: "No file yet", hint: "This document has no current file attached." },
     held_back: { label: "Held back from AI", hint: "A controller excluded this document from AI reading." },
   };
+  const FALLBACK_META = { label: "Unavailable", hint: "This document can't be read right now." };
   const docRow = (d: DcDocRow, container?: { type: "library" | "folder"; id: string; name: string }) => {
     if (d.state === "ready" && d.kdocId) {
       const kid = d.kdocId;
@@ -438,7 +452,9 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         </button>
       );
     }
-    const meta = STATE_META[d.state as Exclude<DcDocRow["state"], "ready">];
+    const meta = d.state === "ready"
+      ? FALLBACK_META // ready without a kdocId — must not crash the modal
+      : STATE_META[d.state] ?? FALLBACK_META;
     return (
       <div key={d.dcDocId} title={meta.hint}
         className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-dashed border-[var(--color-border)] opacity-80">
@@ -447,16 +463,20 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           <span className="block text-xs font-bold text-[var(--color-text-muted)] truncate">{d.name}</span>
           <span className="block text-[10px] text-[var(--color-text-faint)] truncate">{meta.hint}</span>
         </span>
-        {d.state === "pending_sync" && model?.canSync ? (
+        {d.state === "indexing" ? (
+          <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700 shrink-0">
+            <Loader2 className="w-3 h-3 animate-spin" /> Indexing…
+          </span>
+        ) : d.state === "pending_sync" && model?.canSync ? (
           <button type="button" onClick={() => void syncAll()} disabled={syncing}
             className="text-[10px] font-black px-2 py-1 rounded-md border border-cyan-300 text-cyan-700 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 disabled:opacity-50 shrink-0">
             {syncing ? "Syncing…" : "Sync now"}
           </button>
         ) : d.state === "unwatched" && model?.canSync && container ? (
-          <button type="button" onClick={() => requestLink(container)} disabled={linkBusy}
+          <button type="button" onClick={() => requestLink(container)} disabled={linkingKey !== null}
             title={`Connect “${container.name}” to an AI knowledge library`}
             className="text-[10px] font-black px-2 py-1 rounded-md border border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-50 shrink-0">
-            {linkBusy ? "Linking…" : "Link to AI"}
+            {linkingKey === container.id ? "Linking…" : "Link to AI"}
           </button>
         ) : (
           <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
@@ -478,10 +498,10 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         {f.name}
         <span className="text-[10px] font-bold text-[var(--color-text-muted)]">· {f.totalDocs}</span>
         {!f.watched && (model?.canSync ? (
-          <button type="button" disabled={linkBusy}
+          <button type="button" disabled={linkingKey !== null}
             onClick={() => requestLink({ type: "folder", id: f.id, name: f.name })}
             className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
-            {linkBusy ? "linking…" : "not linked to AI — link now"}
+            {linkingKey === f.id ? "linking…" : "not linked to AI — link now"}
           </button>
         ) : (
           <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
@@ -557,13 +577,13 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               <div className="font-black mb-1">Link &ldquo;{linking.name}&rdquo; to which AI knowledge library?</div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {(model?.knowledgeLibraries ?? []).map((kl) => (
-                  <button key={kl.id} type="button" disabled={linkBusy}
+                  <button key={kl.id} type="button" disabled={linkingKey !== null}
                     onClick={() => void doLink(kl.id, linking)}
                     className="px-2.5 py-1 rounded-lg border border-amber-400 bg-white dark:bg-transparent text-[11px] font-black text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
-                    {linkBusy ? "Linking…" : kl.name}
+                    {linkingKey !== null ? "Linking…" : kl.name}
                   </button>
                 ))}
-                <button type="button" onClick={() => setLinking(null)} disabled={linkBusy}
+                <button type="button" onClick={() => setLinking(null)} disabled={linkingKey !== null}
                   className="px-2 py-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   Cancel
                 </button>
@@ -604,11 +624,11 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                       {l.totalDocs} doc{l.totalDocs === 1 ? "" : "s"}
                     </span>
                     {!l.watched && (model?.canSync ? (
-                      <button type="button" disabled={linkBusy}
+                      <button type="button" disabled={linkingKey !== null}
                         onClick={() => requestLink({ type: "library", id: l.id, name: l.name })}
                         title="Watch this whole library — every folder, now and in the future"
                         className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
-                        {linkBusy ? "linking…" : "not linked to AI — link whole library"}
+                        {linkingKey === l.id ? "linking…" : "not linked to AI — link whole library"}
                       </button>
                     ) : (
                       <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">

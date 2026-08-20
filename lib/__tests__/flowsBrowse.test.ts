@@ -12,9 +12,9 @@ const base = (): FlowsBrowseInputs => ({
   sources: [],
   dcLibraryNames: new Map([["dl1", "Drawings"]]),
   dcFolders: new Map([
-    ["fA", { name: "PFDs", libraryId: "dl1", parentId: null, pathNames: ["PFDs"] }],
-    ["fA1", { name: "Unit 20", libraryId: "dl1", parentId: "fA", pathNames: ["PFDs", "Unit 20"] }],
-    ["fB", { name: "P&IDs", libraryId: "dl1", parentId: null, pathNames: ["P&IDs"] }],
+    ["fA", { name: "PFDs", libraryId: "dl1", parentId: null  }],
+    ["fA1", { name: "Unit 20", libraryId: "dl1", parentId: "fA" }],
+    ["fB", { name: "P&IDs", libraryId: "dl1", parentId: null }],
   ]),
   dcDocs: [],
   nonPdfDocIds: new Set(),
@@ -41,7 +41,7 @@ describe("assembleFlowsBrowse — the DC tree with AI states", () => {
 
   it("a brand-new folder with an unlinked doc APPEARS, state 'unwatched' — never missing", () => {
     const inputs = base();
-    inputs.dcFolders.set("fNew", { name: "New PFDs", libraryId: "dl1", parentId: null, pathNames: ["New PFDs"] });
+    inputs.dcFolders.set("fNew", { name: "New PFDs", libraryId: "dl1", parentId: null });
     // The knowledge library watches only the old PFDs folder.
     inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "folder", sourceId: "fA" }];
     inputs.dcDocs = [{ id: "n1", name: "New PFD", libraryId: "dl1", collectionId: "fNew", block: null }];
@@ -115,5 +115,25 @@ describe("assembleFlowsBrowse — the DC tree with AI states", () => {
     inputs.dcDocs = [{ id: "d1", name: "Doc", libraryId: "dl1", collectionId: null, block: null }];
     const { tree } = assembleFlowsBrowse(inputs);
     expect(tree.map((l) => l.name)).toEqual(["Drawings"]);
+  });
+});
+
+describe("assembleFlowsBrowse — mirror status honesty", () => {
+  it("a pending/stale mirror is 'indexing', never 'ready' — Read must not scan page 1 of an unpaged file", () => {
+    const inputs = base();
+    inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "library", sourceId: "dl1" }];
+    inputs.knowledgeDocs = [
+      { id: "k1", name: "Fresh mirror", libraryId: "kl1", pageCount: null, status: "pending", sourceDocumentId: "d1" },
+      { id: "k2", name: "Rev-up mirror", libraryId: "kl1", pageCount: 9, status: "stale", sourceDocumentId: "d2" },
+    ];
+    inputs.dcDocs = [
+      { id: "d1", name: "Fresh", libraryId: "dl1", collectionId: "fA", block: null },
+      { id: "d2", name: "Revved", libraryId: "dl1", collectionId: "fA", block: null },
+    ];
+    const { tree } = assembleFlowsBrowse(inputs);
+    const states = tree[0].folders[0].docs.map((d) => d.state);
+    expect(states).toEqual(["indexing", "indexing"]);
+    // The kdoc id still rides along for when it flips ready.
+    expect(tree[0].folders[0].docs[0].kdocId).toBe("k1");
   });
 });

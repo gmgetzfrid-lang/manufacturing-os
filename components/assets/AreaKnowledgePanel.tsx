@@ -66,13 +66,12 @@ interface AreaStatus {
   canManage: boolean;
 }
 
-export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds, onChanged }: {
+export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds }: {
   orgId: string;
   userId: string;
   userName: string;
   unit: { code: string; label: string };
   unitAssetIds: string[];
-  onChanged?: () => void;
 }) {
   const [status, setStatus] = useState<AreaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -345,7 +344,10 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           orgId={orgId} userId={userId} userName={userName} unit={unit}
           status={status}
           onClose={() => setWizardOpen(false)}
-          onDone={(msg) => { setWizardOpen(false); setNote(msg); void loadStatus(); onChanged?.(); }}
+          // No page-wide refresh here: it would UNMOUNT this panel and eat
+          // the success message before anyone reads it — nothing about the
+          // assets changed anyway.
+          onDone={(msg) => { setWizardOpen(false); setNote(msg); void loadStatus(); }}
         />
       )}
     </div>
@@ -384,6 +386,20 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
     () => (bound && libChoice === bound.id ? new Set(status.sources.map((s) => s.sourceId)) : new Set<string>()),
     [bound, libChoice, status.sources],
   );
+
+  // Moving the area to a DIFFERENT library must not silently abandon the
+  // folders it watches today: carry them into the selection so the new
+  // library starts with the same coverage unless the user unchecks them.
+  useEffect(() => {
+    if (!bound || libChoice === bound.id) return;
+    setChecked((prev) => {
+      const next = new Set(prev);
+      for (const s of status.sources) {
+        next.add(s.type === "folder" ? `folder:${s.sourceId}` : `library:${s.sourceId}`);
+      }
+      return next;
+    });
+  }, [libChoice, bound, status.sources]);
 
   useEffect(() => {
     let alive = true;

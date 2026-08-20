@@ -32,7 +32,7 @@ export function Reveal({ children, delay = 0, className = "" }: {
     return () => obs.disconnect();
   }, []);
   return (
-    <div ref={ref} className={className}
+    <div ref={ref} className={className} data-reveal
       style={shown
         ? { animation: `rise 0.6s var(--ease-fluid) ${delay}ms both` }
         : { opacity: 0 }}>
@@ -45,6 +45,12 @@ export function Reveal({ children, delay = 0, className = "" }: {
 export function RotatingWord({ words, className = "" }: { words: string[]; className?: string }) {
   const [i, setI] = useState(0);
   useEffect(() => {
+    // An infinite word-swap is exactly what prefers-reduced-motion asks
+    // us not to do — settle on the last (most general) word instead.
+    if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const t = setTimeout(() => setI(words.length - 1), 0);
+      return () => clearTimeout(t);
+    }
     const t = setInterval(() => setI((x) => (x + 1) % words.length), 2200);
     return () => clearInterval(t);
   }, [words.length]);

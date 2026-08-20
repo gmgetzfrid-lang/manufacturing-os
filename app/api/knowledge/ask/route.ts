@@ -1435,8 +1435,10 @@ export async function POST(req: NextRequest) {
       "merge several provisions into one bullet or one citation: a claim built from §A plus §B " +
       "cites [nA] on the §A part and [nB] on the §B part, so each highlight matches its claim. " +
       "When the user supplied their own operating numbers, END with '### Applied to your case' " +
-      "walking those values through the path to a concrete result — or a **Need:** line naming the " +
-      "one missing input.";
+      "walking those values through the path to a concrete result. If a required user-specific " +
+      "input is MISSING for that final step, do NOT append a Need inside the answer — follow the " +
+      "CALCULATIONS rule instead: reply with ONLY the one-line '**Need:** …' question; the full " +
+      "decision path comes after they answer.";
     const calcProtocol =
       "\n\nCALCULATIONS: when the question requires computing from a cited formula (test pressures, " +
       "spans, thicknesses…): (1) transcribe the formula EXACTLY as printed with its variable " +

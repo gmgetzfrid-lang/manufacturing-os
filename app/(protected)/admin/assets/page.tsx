@@ -423,7 +423,6 @@ function AssetsPageInner() {
             userName={userEmail ?? "Member"}
             unit={{ code: currentUnit.code, label: currentUnit.label || `Unit ${currentUnit.code}` }}
             unitAssetIds={areaAssetIds}
-            onChanged={() => { invalidateAssetCache(); void refresh(); }}
           />
         )}
 
@@ -1781,21 +1780,33 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
       setError("Prefixes need a code to live under — add the equipment-type code (e.g. 02).");
       return;
     }
-    if (tc && existingTypeCodes.includes(tc)) {
+    if (tc && existingTypeCodes.some((c) => c.trim().toLowerCase() === tc.toLowerCase())) {
       setError(`Code ${tc} is already used by another equipment type in the Site Codebook — pick a different code or leave it blank.`);
       return;
     }
     setBusy(true); setError(null);
     try {
-      await createAssetType({ orgId, name: n });
+      // Codebook FIRST — it's the write most likely to be refused (RLS
+      // requires Admin/DocCtrl on the headline role; codes collide under a
+      // unique index). Ordering it first means a refusal leaves NOTHING
+      // half-created, so a retry can never mint duplicate categories.
       if (tc) {
         const { error: cbErr } = await supabase.from("codebook_entries").insert({
           org_id: orgId, kind: "equipment_type", code: tc, label: n,
           meta: { tagPrefixes: px }, sort: existingTypeCodes.length,
           origin: "manual", created_by: userId,
         });
-        if (cbErr) throw new Error(`Category created, but the codebook entry failed: ${cbErr.message}`);
+        if (cbErr && cbErr.code === "23505") {
+          setError(`Code ${tc} is already used in the Site Codebook — pick a different code or leave it blank.`);
+          setBusy(false); return;
+        }
+        if (cbErr && cbErr.code === "42501") {
+          setError("Only Admin or Doc Control can teach the Site Codebook — leave the code blank to create the category alone, or ask a controller.");
+          setBusy(false); return;
+        }
+        if (cbErr) { setError(cbErr.message); setBusy(false); return; }
       }
+      await createAssetType({ orgId, name: n });
       onCreated();
     } catch (e) {
       setError((e as Error).message);

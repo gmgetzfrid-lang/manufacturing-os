@@ -105,9 +105,14 @@ export default function CitedPageViewer({
   // swap it for a sibling sheet where the wanted tag actually lives.
   const [view, setView] = useState({ fileKey, title, documentId });
   // Stepping the source carousel (or a prop change) re-aims the viewer at
-  // the newly active source's document AND page.
+  // the newly active source's document AND page. Crossing into a DIFFERENT
+  // file resets the page count — a stale count from the previous document
+  // would cage or overrun the page arrows until the new PDF loads.
   useEffect(() => {
-    setView({ fileKey, title, documentId });
+    setView((prev) => {
+      if (prev.fileKey !== fileKey) setNumPages(null);
+      return { fileKey, title, documentId };
+    });
     setPageNumber(page);
   }, [fileKey, title, documentId, page]);
 
@@ -211,14 +216,18 @@ export default function CitedPageViewer({
   // lights up each cited section as you reach it.
   const viewKey = view.documentId ?? view.fileKey;
   const pageQuotes = useMemo(() => {
-    const m = new Map<number, { norms: string[]; words: Set<string> }>();
+    // Word sets stay PER QUOTE — a union across four citations builds a
+    // vocabulary big enough to light up unrelated sentences on the page,
+    // and each highlight must match its own claim.
+    const m = new Map<number, Array<{ norm: string; words: Set<string> }>>();
     for (const s of list) {
       if ((s.documentId ?? s.fileKey) !== viewKey || !s.quote) continue;
-      const entry = m.get(s.page) ?? { norms: [], words: new Set<string>() };
+      const entries = m.get(s.page) ?? [];
       const norm = normalize(s.quote);
-      entry.norms.push(norm);
-      for (const w of norm.split(" ")) { if (w.length >= 4) entry.words.add(w); }
-      m.set(s.page, entry);
+      const words = new Set<string>();
+      for (const w of norm.split(" ")) { if (w.length >= 4) words.add(w); }
+      entries.push({ norm, words });
+      m.set(s.page, entries);
     }
     return m;
   }, [list, viewKey]);
@@ -316,13 +325,14 @@ export default function CitedPageViewer({
       }
       const pq = pageQuotes.get(pageNumber);
       if (!pq) return safe;
-      if (norm.length >= 10 && pq.norms.some((q) => q.includes(norm))) {
+      if (norm.length >= 10 && pq.some((q) => q.norm.includes(norm))) {
         return `<mark style="background: rgba(250, 204, 21, 0.55); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
       // Fragmented layer: mark items whose significant words ALL come from
-      // a cited quote (and at least one is ≥5 chars, to keep noise out).
+      // ONE cited quote (and at least one is ≥5 chars, to keep noise out).
       const words = norm.split(" ").filter((w) => w.length >= 4);
-      if (words.length > 0 && words.some((w) => w.length >= 5) && words.every((w) => pq.words.has(w))) {
+      if (words.length > 0 && words.some((w) => w.length >= 5)
+        && pq.some((q) => words.every((w) => q.words.has(w)))) {
         return `<mark style="background: rgba(250, 204, 21, 0.45); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
       return safe;
@@ -468,7 +478,12 @@ export default function CitedPageViewer({
           ) : (
             <Document options={PDF_DOC_OPTIONS}
               file={url}
-              onLoadSuccess={({ numPages: n }) => setNumPages(n)}
+              onLoadSuccess={({ numPages: n }) => {
+                setNumPages(n);
+                // Fast page-arrow clicks against a stale count can leave an
+                // out-of-range page — clamp instead of rendering an error.
+                setPageNumber((p) => Math.min(p, n));
+              }}
               onLoadError={(e) => setError(`Couldn't open the PDF: ${e.message}`)}
               loading={<div className="mt-16"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>}
             >
