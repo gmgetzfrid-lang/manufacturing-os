@@ -106,32 +106,38 @@ export async function GET(req: NextRequest) {
         .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true);
       for (const r of (data ?? []) as Array<{ id: string }>) aiExcluded.add(r.id);
     }
-    const { data } = await supabaseAdmin
-      .from("documents")
-      .select("id, name, title, document_number, library_id, collection_id, status, archived_at, current_version_id")
-      .eq("org_id", orgId).limit(MAX_DOCS);
-    for (const d of (data ?? []) as Array<{
-      id: string; name: string | null; title: string | null; document_number: string | null;
-      library_id: string | null; collection_id: string | null;
-      status: string | null; archived_at: string | null; current_version_id: string | null;
-    }>) {
-      // Effective home library: the doc's own, or its folder's when the doc
-      // row doesn't carry one — a doc must never be uncountable.
-      const libraryId = d.library_id
-        ?? (d.collection_id ? landscape.folders.get(d.collection_id)?.library_id ?? null : null);
-      if (!libraryId) continue;
-      const verdict = aiReadability({
-        id: d.id, status: d.status, archivedAt: d.archived_at,
-        currentVersionId: d.current_version_id, aiExcluded: aiExcluded.has(d.id),
-      }, true);
-      const block = verdict.readable || verdict.reason === "out_of_scope"
-        ? null
-        : verdict.reason;
-      dcDocs.push({
-        id: d.id, name: displayName(d), libraryId,
-        collectionId: d.collection_id, block,
-      });
-      if (d.current_version_id) currentVersionByDoc.set(d.id, d.current_version_id);
+    // Paged with a stable order — a flat cap returns an ARBITRARY slice
+    // past its limit, and this tree's whole promise is that no document
+    // silently vanishes from it.
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data } = await supabaseAdmin
+        .from("documents")
+        .select("id, name, title, document_number, library_id, collection_id, status, archived_at, current_version_id")
+        .eq("org_id", orgId).order("id").range(from, from + 999);
+      for (const d of (data ?? []) as Array<{
+        id: string; name: string | null; title: string | null; document_number: string | null;
+        library_id: string | null; collection_id: string | null;
+        status: string | null; archived_at: string | null; current_version_id: string | null;
+      }>) {
+        // Effective home library: the doc's own, or its folder's when the doc
+        // row doesn't carry one — a doc must never be uncountable.
+        const libraryId = d.library_id
+          ?? (d.collection_id ? landscape.folders.get(d.collection_id)?.library_id ?? null : null);
+        if (!libraryId) continue;
+        const verdict = aiReadability({
+          id: d.id, status: d.status, archivedAt: d.archived_at,
+          currentVersionId: d.current_version_id, aiExcluded: aiExcluded.has(d.id),
+        }, true);
+        const block = verdict.readable || verdict.reason === "out_of_scope"
+          ? null
+          : verdict.reason;
+        dcDocs.push({
+          id: d.id, name: displayName(d), libraryId,
+          collectionId: d.collection_id, block,
+        });
+        if (d.current_version_id) currentVersionByDoc.set(d.id, d.current_version_id);
+      }
+      if ((data ?? []).length < 1000) break;
     }
   }
 
