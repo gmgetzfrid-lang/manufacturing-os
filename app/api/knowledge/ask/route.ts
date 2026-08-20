@@ -1423,6 +1423,20 @@ export async function POST(req: NextRequest) {
       "knows — finish everything you CAN, then end with a short 'To go further I need:' list naming " +
       "each item and exactly why. When the user must choose between discovered options, ask ONE " +
       "question listing them rather than assuming.";
+    // "How do I determine X?" must leave the reader COVERED — the whole
+    // decision path, not a compressed one-liner that skips the estimate
+    // rules and floors the source spells out.
+    const decisionPathProtocol =
+      "\n\nHOW-DO-I / DETERMINE / SIZE / SELECT QUESTIONS: the reader must be covered by the answer " +
+      "ALONE. Walk the COMPLETE decision path the passages define — the general rule, every special " +
+      "case that changes it, the mandated estimating rules when data isn't available yet, any " +
+      "floor/minimum or vacuum/external-pressure provision, and any duty to re-evaluate later — " +
+      "each as its OWN Basis bullet carrying the [n] of the exact provision it came from. NEVER " +
+      "merge several provisions into one bullet or one citation: a claim built from §A plus §B " +
+      "cites [nA] on the §A part and [nB] on the §B part, so each highlight matches its claim. " +
+      "When the user supplied their own operating numbers, END with '### Applied to your case' " +
+      "walking those values through the path to a concrete result — or a **Need:** line naming the " +
+      "one missing input.";
     const calcProtocol =
       "\n\nCALCULATIONS: when the question requires computing from a cited formula (test pressures, " +
       "spans, thicknesses…): (1) transcribe the formula EXACTLY as printed with its variable " +
@@ -1509,7 +1523,8 @@ export async function POST(req: NextRequest) {
       "they didn't ask about but cannot act without gets ONE \"! \" line. An answer that buries the " +
       "point under adjacent material is a WRONG answer here." +
       precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
-      tableNote + wholeDocNote + graphHopNote + needsDirective + calcProtocol + fetchDirective;
+      tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
+      fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
     // ── Answer + Fetch loop: the model can request pages it needs to SEE

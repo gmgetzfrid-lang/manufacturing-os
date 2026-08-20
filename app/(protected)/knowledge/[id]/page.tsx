@@ -52,6 +52,13 @@ interface ViewerTarget {
   /** Drawings: the sheet and the tags to point at on it. */
   documentId?: string;
   tags?: string[];
+  /** The answer's full evidence trail — 2+ entries grow the viewer's
+   *  Previous/Next source carousel. */
+  sources?: Array<{
+    fileKey: string; page: number; quote: string | null; title: string;
+    section?: string | null; documentId?: string; tags?: string[]; n?: number;
+  }>;
+  sourceIndex?: number;
 }
 
 /** A document the answer NAMES, clickable in place. "per EP 5-6-2" with no
@@ -1225,6 +1232,29 @@ export default function KnowledgeLibraryPage() {
   const openCitation = useCallback((c: KnowledgeCitation) => {
     const doc = docs.find((d) => d.id === c.documentId);
     if (!doc) { showToast({ type: "error", title: "That document is no longer in the library." }); return; }
+    // The whole answer's evidence trail rides along: every resolvable doc
+    // citation becomes a carousel stop, opened on the one that was clicked.
+    // An answer built from §4.2.4 [1] and §4.2.5 [2] is two obvious stops,
+    // and both passages highlight while paging the same document.
+    const siblings = answer && answer.citations.includes(c) ? answer.citations : [c];
+    const sources = siblings
+      .filter((x) => !x.url && x.documentId)
+      .map((x) => {
+        const d = docs.find((dd) => dd.id === x.documentId);
+        return d ? {
+          fileKey: d.fileKey,
+          page: x.page ?? 1,
+          quote: x.quote ?? null,
+          title: x.documentName ?? d.name,
+          section: x.section ?? null,
+          documentId: d.id,
+          tags: x.tags,
+          n: x.n,
+        } : null;
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null);
+    const sourceIndex = Math.max(0, sources.findIndex((s) =>
+      s.documentId === c.documentId && s.page === (c.page ?? 1) && s.quote === (c.quote ?? null)));
     setViewer({
       fileKey: doc.fileKey,
       page: c.page ?? 1,
@@ -1233,8 +1263,9 @@ export default function KnowledgeLibraryPage() {
       section: c.section ?? null,
       documentId: doc.id,
       tags: c.tags,
+      ...(sources.length > 1 ? { sources, sourceIndex } : {}),
     });
-  }, [docs, showToast]);
+  }, [docs, answer, showToast]);
 
   // Show-me chips: open a document the answer NAMED. The server sends the
   // fileKey with each mention, so this works even for docs in linked
@@ -1989,6 +2020,8 @@ export default function KnowledgeLibraryPage() {
           orgId={activeOrgId ?? undefined}
           documentId={viewer.documentId}
           tags={viewer.tags}
+          sources={viewer.sources}
+          initialIndex={viewer.sourceIndex}
           onClose={() => setViewer(null)}
         />
       )}
