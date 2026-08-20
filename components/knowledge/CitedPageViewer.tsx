@@ -37,8 +37,24 @@ const escapeHtml = (s: string) =>
 
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
+/** One stop on the answer's evidence trail — everything needed to open a
+ *  document at a cited page with its passage highlighted. */
+export interface CitedSource {
+  fileKey: string;
+  page: number;
+  quote: string | null;
+  title: string;
+  section?: string | null;
+  documentId?: string;
+  tags?: string[];
+  /** The answer's citation number, shown on the carousel jump chip. */
+  n?: number;
+}
+
 export default function CitedPageViewer({
-  fileKey, page, quote, title, section, onClose, orgId, documentId, tags,
+  fileKey: fileKeyProp, page: pageProp, quote: quoteProp, title: titleProp,
+  section: sectionProp, onClose, orgId, documentId: documentIdProp,
+  tags: tagsProp, sources, initialIndex,
 }: {
   fileKey: string;
   page: number;
@@ -52,7 +68,28 @@ export default function CitedPageViewer({
   documentId?: string;
   /** Tags the answer is about — marked on the sheet as soon as it opens. */
   tags?: string[];
+  /** The answer's FULL evidence trail. With 2+ entries the viewer grows a
+   *  source carousel (Previous/Next source + numbered jump chips), and every
+   *  cited passage of whichever document is open highlights on its page —
+   *  an answer stitched from §4.2.4 and §4.2.5 shows BOTH, not just the
+   *  one you clicked. */
+  sources?: CitedSource[];
+  /** Which source to open on (index into sources). */
+  initialIndex?: number;
 }) {
+  const list = useMemo<CitedSource[]>(
+    () => (sources && sources.length > 0
+      ? sources
+      : [{ fileKey: fileKeyProp, page: pageProp, quote: quoteProp, title: titleProp, section: sectionProp, documentId: documentIdProp, tags: tagsProp }]),
+    [sources, fileKeyProp, pageProp, quoteProp, titleProp, sectionProp, documentIdProp, tagsProp],
+  );
+  const [idx, setIdx] = useState(() =>
+    Math.min(Math.max(initialIndex ?? 0, 0), Math.max((sources?.length ?? 1) - 1, 0)));
+  const activeSource = list[Math.min(idx, list.length - 1)];
+  const { fileKey, page, title } = activeSource;
+  const section = activeSource.section ?? null;
+  const documentId = activeSource.documentId;
+  const tags = activeSource.tags;
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pageNumber, setPageNumber] = useState(page);
@@ -67,7 +104,12 @@ export default function CitedPageViewer({
   // The sheet currently on screen. Starts as the cited one; a jump chip can
   // swap it for a sibling sheet where the wanted tag actually lives.
   const [view, setView] = useState({ fileKey, title, documentId });
-  useEffect(() => { setView({ fileKey, title, documentId }); }, [fileKey, title, documentId]);
+  // Stepping the source carousel (or a prop change) re-aims the viewer at
+  // the newly active source's document AND page.
+  useEffect(() => {
+    setView({ fileKey, title, documentId });
+    setPageNumber(page);
+  }, [fileKey, title, documentId, page]);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,7 +206,22 @@ export default function CitedPageViewer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const quoteNorm = useMemo(() => (quote ? normalize(quote) : ""), [quote]);
+  // Every cited passage of the document CURRENTLY open, grouped by page —
+  // not just the citation that was clicked. Paging through the document
+  // lights up each cited section as you reach it.
+  const viewKey = view.documentId ?? view.fileKey;
+  const pageQuotes = useMemo(() => {
+    const m = new Map<number, { norms: string[]; words: Set<string> }>();
+    for (const s of list) {
+      if ((s.documentId ?? s.fileKey) !== viewKey || !s.quote) continue;
+      const entry = m.get(s.page) ?? { norms: [], words: new Set<string>() };
+      const norm = normalize(s.quote);
+      entry.norms.push(norm);
+      for (const w of norm.split(" ")) { if (w.length >= 4) entry.words.add(w); }
+      m.set(s.page, entry);
+    }
+    return m;
+  }, [list, viewKey]);
 
   // ── Pointing at tags on a drawing ────────────────────────────────────
   const [marks, setMarks] = useState<TagPosition[]>([]);
@@ -243,19 +300,13 @@ export default function CitedPageViewer({
     setPendingFind(e.tag);
   };
 
-  // Significant words of the quote — the fallback matcher for FRAGMENTED
-  // text layers, where each item is a word or two and the old ≥10-char
-  // containment test never fired, so "highlighted" pages showed nothing.
-  const quoteWords = useMemo(() => {
-    const set = new Set<string>();
-    if (quote) for (const w of normalize(quote).split(" ")) { if (w.length >= 4) set.add(w); }
-    return set;
-  }, [quote]);
   const searchNorm = useMemo(() => normalize(findApplied), [findApplied]);
 
-  // Highlight any text-layer item that belongs to the quoted passage
-  // (yellow), and any item matching the find box (sky) — the find works on
-  // EVERY document, not just drawings with a tag index.
+  // Highlight any text-layer item that belongs to a cited passage on the
+  // page being viewed (yellow — ALL of this document's citations, not just
+  // the clicked one), and any item matching the find box (sky). The
+  // significant-words fallback handles FRAGMENTED text layers, where each
+  // item is a word or two and containment never fires.
   const textRenderer = useCallback(
     ({ str }: { str: string }) => {
       const safe = escapeHtml(str);
@@ -263,19 +314,20 @@ export default function CitedPageViewer({
       if (searchNorm && norm.includes(searchNorm)) {
         return `<mark style="background: rgba(56, 189, 248, 0.55); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
-      if (!quoteNorm || pageNumber !== page) return safe;
-      if (norm.length >= 10 && quoteNorm.includes(norm)) {
+      const pq = pageQuotes.get(pageNumber);
+      if (!pq) return safe;
+      if (norm.length >= 10 && pq.norms.some((q) => q.includes(norm))) {
         return `<mark style="background: rgba(250, 204, 21, 0.55); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
       // Fragmented layer: mark items whose significant words ALL come from
-      // the quote (and at least one is ≥5 chars, to keep ambient noise out).
+      // a cited quote (and at least one is ≥5 chars, to keep noise out).
       const words = norm.split(" ").filter((w) => w.length >= 4);
-      if (words.length > 0 && words.some((w) => w.length >= 5) && words.every((w) => quoteWords.has(w))) {
+      if (words.length > 0 && words.some((w) => w.length >= 5) && words.every((w) => pq.words.has(w))) {
         return `<mark style="background: rgba(250, 204, 21, 0.45); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
       return safe;
     },
-    [quoteNorm, quoteWords, searchNorm, pageNumber, page],
+    [pageQuotes, searchNorm, pageNumber],
   );
 
   return (
@@ -463,6 +515,46 @@ export default function CitedPageViewer({
             </Document>
           )}
         </div>
+
+        {/* Source carousel — the answer's whole evidence trail, walkable.
+            An answer stitched from three provisions across two documents is
+            three obvious stops here, not a mystery hidden behind one
+            superscript. */}
+        {list.length > 1 && (
+          <div className="px-3 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] shrink-0 flex items-center gap-2 sm:gap-3">
+            <button type="button" onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={idx === 0}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-[var(--color-border-strong)] text-xs font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 shrink-0">
+              <ChevronLeft className="w-4 h-4" /> <span className="hidden sm:inline">Previous source</span>
+            </button>
+            <div className="flex-1 min-w-0 text-center">
+              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+                Source {idx + 1} of {list.length}
+                <span className="normal-case tracking-normal font-bold">
+                  {" · "}{activeSource.title.replace(/\.pdf$/i, "").slice(0, 44)}
+                  {activeSource.section ? ` · ${activeSource.section}` : ""} · p.{activeSource.page}
+                </span>
+              </div>
+              <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
+                {list.map((s, i) => (
+                  <button key={`${s.fileKey}-${s.page}-${i}`} type="button" onClick={() => setIdx(i)}
+                    title={`${s.title.replace(/\.pdf$/i, "")}${s.section ? ` · ${s.section}` : ""} · p.${s.page}`}
+                    className={`min-w-6 h-6 px-1.5 rounded-md text-[10px] font-black tabular-nums border transition-all ${
+                      i === idx
+                        ? "bg-orange-600 text-white border-orange-600 scale-110 shadow"
+                        : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-orange-400 hover:text-orange-700"
+                    }`}>
+                    {s.n ?? i + 1}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button type="button" onClick={() => setIdx((i) => Math.min(list.length - 1, i + 1))}
+              disabled={idx >= list.length - 1}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-orange-600 text-white text-xs font-black hover:bg-orange-500 disabled:opacity-40 shadow shrink-0">
+              <span className="hidden sm:inline">Next source</span> <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
