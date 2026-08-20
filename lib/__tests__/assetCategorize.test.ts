@@ -8,15 +8,18 @@ import type { Asset, AssetType } from "@/lib/assets";
 
 const book: Codebook = {
   ...EMPTY_CODEBOOK,
+  units: [
+    { id: "u1", kind: "unit", code: "20", label: "Crude Unit", meta: {}, sort: 0, origin: "import" },
+  ],
   equipmentTypes: [
     { id: "1", kind: "equipment_type", code: "02", label: "Exchanger", meta: { tagPrefixes: ["E", "EA"] }, sort: 0, origin: "import" },
     { id: "2", kind: "equipment_type", code: "03", label: "Pump", meta: { tagPrefixes: ["P"] }, sort: 1, origin: "import" },
   ],
 };
 
-const asset = (id: string, tag: string, typeId: string | null = null): Asset => ({
+const asset = (id: string, tag: string, typeId: string | null = null, extra: Partial<Asset> = {}): Asset => ({
   id, org_id: "o", tag, tag_normalized: tag.toLowerCase().replace(/[^a-z0-9]/g, ""),
-  type_id: typeId, description: null,
+  type_id: typeId, description: null, unit_code: null, code: null, ...extra,
 } as unknown as Asset);
 
 const types: AssetType[] = [
@@ -54,5 +57,18 @@ describe("planCategorization — codebook → registry bridge", () => {
     const plan = planCategorization([asset("a1", "E-22")], types, EMPTY_CODEBOOK);
     expect(plan.assignments).toHaveLength(0);
     expect(plan.unmatched).toEqual(["E-22"]);
+  });
+
+  it("files unfiled assets into their operating area from the site code", () => {
+    // 2002.22 = unit 20 + type 02 (Exchanger) + item 22 — the numbering
+    // system the org imported files the plant by itself.
+    const plan = planCategorization(
+      [
+        asset("a1", "E-22", null, { code: "2002.22" }),
+        asset("a2", "P-5", null, { code: "2003.05", unit_code: "20" }), // already filed
+      ],
+      types, book,
+    );
+    expect(plan.unitAssignments).toEqual([{ assetId: "a1", tag: "E-22", unitCode: "20" }]);
   });
 });

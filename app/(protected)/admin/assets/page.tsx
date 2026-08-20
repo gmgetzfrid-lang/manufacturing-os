@@ -296,17 +296,19 @@ function AssetsPageInner() {
                 </button>
               ) : (
                 <>
-                  <button
-                    onClick={() => setAddCategoryOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
-                  >
-                    <Plus className="w-4 h-4" /> New category
-                  </button>
+                  {/* CATEGORY leads — it is the next level of the hierarchy.
+                      Assets are added inside their category's section. */}
                   <button
                     onClick={() => openCreate({ unitCode: unitFilter === "__unassigned" ? undefined : unitFilter })}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
+                    className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
                   >
                     <Plus className="w-4 h-4" /> New asset
+                  </button>
+                  <button
+                    onClick={() => setAddCategoryOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
+                  >
+                    <Plus className="w-4 h-4" /> New category
                   </button>
                 </>
               )}

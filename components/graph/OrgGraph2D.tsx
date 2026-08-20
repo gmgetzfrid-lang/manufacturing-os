@@ -14,7 +14,7 @@ import { groupColorFor, type GraphSettings } from "@/lib/graphSettings";
 import { NODE_COLORS, EDGE_RGB, ACCENT } from "@/components/graph/graphTheme";
 
 const BASE_R: Record<GraphNodeType, number> = {
-  document: 3.5, asset: 4, unit: 7, library: 6, project: 6, plant: 8,
+  document: 3.5, asset: 4, unit: 7, library: 6, project: 6, plant: 8, plot: 6,
 };
 
 export interface Camera { x: number; y: number; scale: number }

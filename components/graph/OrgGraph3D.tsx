@@ -22,7 +22,7 @@ import { NODE_COLORS, EDGE_RGB, ACCENT } from "@/components/graph/graphTheme";
 type Three = typeof import("three");
 
 const BASE_R: Record<GraphNodeType, number> = {
-  document: 3.2, asset: 3.8, unit: 7, library: 6, project: 6, plant: 8,
+  document: 3.2, asset: 3.8, unit: 7, library: 6, project: 6, plant: 8, plot: 6,
 };
 
 interface Props {

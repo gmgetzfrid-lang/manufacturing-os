@@ -20,7 +20,7 @@
 import { supabase } from "@/lib/supabase";
 import { loadCodebook } from "@/lib/codebook";
 
-export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant";
+export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot";
 
 export type GraphEdgeType =
   | "tag"          // document ↔ asset
@@ -31,7 +31,8 @@ export type GraphEdgeType =
   | "supersession"
   | "proposed"     // discovered, awaiting review — drawn as a ghost
   | "mention"      // the document's text names the equipment, quote attached
-  | "flow";        // process flow: from FEEDS to (directional in meaning)
+  | "flow"         // process flow: from FEEDS to (directional in meaning)
+  | "plot";        // the asset is MARKED on this plot plan — spatial truth
 
 export interface GraphNode {
   id: string;            // namespaced: "doc:<id>", "asset:<id>", "cbunit:<code>", …
@@ -98,7 +99,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   const [
     codebook,
     unitsRes, plantsRes, libsRes, projectsRes, docsRes, assetsRes,
-    docAssets, projectDocs, related, supersessions, mentions, flows, kdocMirrors,
+    docAssets, projectDocs, related, supersessions, mentions, flows, plotPlansRes, kdocMirrors,
   ] = await Promise.all([
     loadCodebook(orgId).catch(() => null),
     supabase.from("units").select("id, name, code, plant_id").eq("org_id", orgId).eq("archived", false),
@@ -131,6 +132,9 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     // contributes nothing (pageRows tolerates the missing table).
     pageRows<{ from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>(
       "process_flows", "from_kind, from_ref, to_kind, to_ref, status", orgId, EDGE_CAP),
+    // Plot plans: spatial maps whose markers pin assets to a place. Each
+    // plan is a node; each marker is an edge to the asset it pins.
+    supabase.from("plot_plans").select("id, name, markers").eq("org_id", orgId).limit(300),
     // Knowledge documents aren't graph nodes; the CONTROLLED document they
     // mirror is. Without this map every mention found in an indexed PDF would
     // be dropped on the floor.
@@ -209,6 +213,12 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       href: `/projects/${p.id}`, degree: 0,
     });
   }
+  for (const pp of optional<{ id: string; name: string; markers: unknown }>(plotPlansRes)) {
+    nodes.set(`plot:${pp.id}`, {
+      id: `plot:${pp.id}`, type: "plot", label: pp.name,
+      href: `/plot-plans/${pp.id}`, degree: 0,
+    });
+  }
   for (const a of assets) {
     nodes.set(`asset:${a.id}`, {
       id: `asset:${a.id}`, type: "asset", label: a.tag, sub: a.description ?? undefined,
@@ -258,6 +268,15 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   }
   for (const r of supersessions.rows) {
     addEdge(`doc:${r.superseded_doc_id}`, `doc:${r.replacement_doc_id}`, "supersession");
+  }
+
+  // Plot-plan markers: the spatial layer joins the web — an asset pinned on
+  // a plan is an edge you can walk from the map to the place and back.
+  for (const pp of optional<{ id: string; name: string; markers: unknown }>(plotPlansRes)) {
+    const markers = Array.isArray(pp.markers) ? pp.markers : [];
+    for (const mk of markers as Array<{ assetId?: string }>) {
+      if (mk?.assetId) addEdge(`plot:${pp.id}`, `asset:${mk.assetId}`, "plot");
+    }
   }
 
   // Process flows: asset endpoints are registry uuids; unit endpoints are
