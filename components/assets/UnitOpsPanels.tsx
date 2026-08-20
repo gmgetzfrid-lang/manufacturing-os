@@ -42,7 +42,7 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
   const [result, setResult] = useState<CategorizationResult | null>(null);
   const plan = useMemo(() => planCategorization(assets, types, book), [assets, types, book]);
   const uncategorized = plan.assignments.length + plan.unmatched.length;
-  if (uncategorized === 0 && !result) return null;
+  if (uncategorized === 0 && plan.unitAssignments.length === 0 && !result) return null;
 
   const run = async () => {
     setBusy(true);
@@ -59,7 +59,7 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-black text-emerald-700 dark:text-emerald-300">
             <CheckCircle2 className="w-4 h-4" />
-            {result.categorized} categorized{result.createdTypes > 0 ? ` · ${result.createdTypes} new categor${result.createdTypes === 1 ? "y" : "ies"} created from your codebook` : ""}
+            {result.categorized} categorized{result.filedToUnits > 0 ? ` · ${result.filedToUnits} filed to their operating area from site codes` : ""}{result.createdTypes > 0 ? ` · ${result.createdTypes} new categor${result.createdTypes === 1 ? "y" : "ies"} created from your codebook` : ""}
             {result.failed > 0 ? ` · ${result.failed} failed` : ""}
           </div>
           {result.unmatched.length > 0 && (
@@ -73,7 +73,10 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-[14rem]">
             <div className="text-xs font-black text-[var(--color-text)]">
-              {uncategorized} piece{uncategorized === 1 ? "" : "s"} of equipment uncategorized
+              {uncategorized > 0
+                ? `${uncategorized} piece${uncategorized === 1 ? "" : "s"} of equipment uncategorized`
+                : `${plan.unitAssignments.length} piece${plan.unitAssignments.length === 1 ? "" : "s"} not filed to an operating area`}
+              {uncategorized > 0 && plan.unitAssignments.length > 0 ? ` · ${plan.unitAssignments.length} unfiled to areas` : ""}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
               Your Site Codebook already knows the taxonomy — {plan.assignments.length > 0
@@ -81,7 +84,7 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
                 : <>but none of its prefixes match these tags. Add the prefixes in the <Link href="/admin/codebook" className="underline font-bold">Site Codebook</Link>.</>}
             </div>
           </div>
-          {plan.assignments.length > 0 && (
+          {(plan.assignments.length > 0 || plan.unitAssignments.length > 0) && (
             <button onClick={() => void run()} disabled={busy}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-60 shrink-0">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}

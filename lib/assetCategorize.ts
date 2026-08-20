@@ -16,12 +16,15 @@
 // asset too.
 
 import { supabase } from "@/lib/supabase";
-import { typeForTag, type Codebook } from "@/lib/codebook";
+import { typeForTag, codeToTag, type Codebook } from "@/lib/codebook";
 import { createAssetType, updateAsset, type Asset, type AssetType } from "@/lib/assets";
 
 export interface CategorizationPlan {
   /** tag → codebook type label, for assets currently uncategorized. */
   assignments: Array<{ assetId: string; tag: string; typeName: string }>;
+  /** Assets with no operating area whose SITE CODE names one (2030.22 →
+   *  unit 20) — the numbering system filing the plant by itself. */
+  unitAssignments: Array<{ assetId: string; tag: string; unitCode: string }>;
   /** Codebook labels with no matching asset_types row yet. */
   typesToCreate: string[];
   /** Uncategorized tags the codebook has no prefix for. */
@@ -37,11 +40,20 @@ export function planCategorization(
 ): CategorizationPlan {
   const typeByName = new Map(types.map((t) => [t.name.toLowerCase(), t]));
   const assignments: CategorizationPlan["assignments"] = [];
+  const unitAssignments: CategorizationPlan["unitAssignments"] = [];
   const unmatched: string[] = [];
   const typesToCreate = new Set<string>();
   let alreadyCategorized = 0;
 
   for (const a of assets) {
+    // Unit filing: the site code carries the unit ("2030.22" → 20). An
+    // asset without an operating area whose code decodes gets filed.
+    if (!a.unit_code && a.code) {
+      const decoded = codeToTag(a.code, book);
+      if (decoded?.unitCode) {
+        unitAssignments.push({ assetId: a.id, tag: a.tag, unitCode: decoded.unitCode });
+      }
+    }
     if (a.type_id) { alreadyCategorized += 1; continue; }
     const entry = typeForTag(a.tag, book);
     if (!entry || !entry.label.trim()) { unmatched.push(a.tag); continue; }
@@ -51,6 +63,7 @@ export function planCategorization(
   }
   return {
     assignments,
+    unitAssignments,
     typesToCreate: [...typesToCreate].sort(),
     unmatched,
     alreadyCategorized,
@@ -59,6 +72,7 @@ export function planCategorization(
 
 export interface CategorizationResult {
   categorized: number;
+  filedToUnits: number;
   createdTypes: number;
   unmatched: string[];
   failed: number;
@@ -100,5 +114,12 @@ export async function applyCategorization(
       categorized += 1;
     } catch { failed += 1; }
   }
-  return { categorized, createdTypes, unmatched: plan.unmatched, failed };
+  let filedToUnits = 0;
+  for (const u of plan.unitAssignments) {
+    try {
+      await updateAsset(u.assetId, { unit_code: u.unitCode }, userId);
+      filedToUnits += 1;
+    } catch { failed += 1; }
+  }
+  return { categorized, filedToUnits, createdTypes, unmatched: plan.unmatched, failed };
 }

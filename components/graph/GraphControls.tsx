@@ -21,9 +21,9 @@ import { NODE_COLORS } from "@/components/graph/graphTheme";
 
 const TYPE_LABELS: Record<GraphNodeType, string> = {
   document: "Documents", asset: "Equipment", unit: "Units",
-  library: "Libraries", project: "Projects", plant: "Plants",
+  library: "Libraries", project: "Projects", plant: "Plants", plot: "Plot plans",
 };
-const TYPE_ORDER: GraphNodeType[] = ["unit", "asset", "document", "library", "project", "plant"];
+const TYPE_ORDER: GraphNodeType[] = ["unit", "asset", "document", "library", "project", "plant", "plot"];
 
 function Section({ icon: Icon, title, children, defaultOpen = false }: {
   icon: React.ComponentType<{ className?: string }>;
