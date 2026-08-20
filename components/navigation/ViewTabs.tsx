@@ -75,7 +75,7 @@ export default function ViewTabs({
 
 // ─── Tab presets for each consolidated tool ──────────────────────
 
-import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2 } from "lucide-react";
+import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Puzzle } from "lucide-react";
 
 export const DOCUMENT_VIEWS: ViewTab[] = [
   { label: "Table", href: "/documents", icon: Table },
@@ -109,5 +109,6 @@ export const INTELLIGENCE_VIEWS: ViewTab[] = [
   { label: "Knowledge", href: "/knowledge", icon: BookOpen },
   { label: "Graph", href: "/graph", icon: Waypoints },
   { label: "Review", href: "/admin/proposed-links", icon: GitPullRequest },
+  { label: "Skills", href: "/intelligence/skills", icon: Puzzle },
   { label: "Setup", href: "/intelligence/setup", icon: Settings2 },
 ];
