@@ -190,6 +190,22 @@ function AssetsPageInner() {
   // Accordion state per category; everything starts open.
   const [closedTypes, setClosedTypes] = useState<Set<string>>(new Set());
 
+  // The Site Codebook's numbering for each category (matched by label):
+  // "Exchanger" → code 02, prefixes E/EA. Painted on the section header so
+  // the code you taught the codebook is VISIBLY doing something.
+  const cbTypeByLabel = useMemo(() => {
+    const m = new Map<string, { code: string; prefixes: string[] }>();
+    for (const e of book.equipmentTypes) {
+      const label = (e.label ?? "").trim().toLowerCase();
+      if (!label) continue;
+      m.set(label, {
+        code: e.code,
+        prefixes: (e.meta.tagPrefixes ?? []).slice(0, 4),
+      });
+    }
+    return m;
+  }, [book.equipmentTypes]);
+
   // Landing cards: everything a unit card says about itself — equipment
   // count, the top types inside, photo debt, pinned resources.
   const unitSummaries = useMemo(() => {
@@ -444,28 +460,66 @@ function AssetsPageInner() {
             ) : (
               groupedByType?.map((g) => {
                 const open = !closedTypes.has(g.typeId);
+                const isUncat = g.typeId === "__none";
+                const cb = isUncat ? undefined : cbTypeByLabel.get(g.name.trim().toLowerCase());
                 return (
                 <div key={g.typeId}>
-                  <div className="flex items-center gap-2 mb-2">
+                  {/* Category headers are the unit's chapter titles — they
+                      carry the codebook's code + prefixes so the numbering
+                      system you taught is visibly at work. */}
+                  <div className={`flex items-center gap-2.5 mb-2.5 rounded-xl border px-3 py-2 ${isUncat
+                    ? "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30"
+                    : "border-purple-200 dark:border-purple-900 bg-gradient-to-r from-purple-50/80 to-transparent dark:from-purple-950/30"}`}>
                     <button type="button"
                       onClick={() => setClosedTypes((prev) => {
                         const next = new Set(prev);
                         if (next.has(g.typeId)) next.delete(g.typeId); else next.add(g.typeId);
                         return next;
                       })}
-                      className="flex items-center gap-2 text-left">
-                      <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform ${open ? "" : "-rotate-90"}`} />
-                      <span className="text-xs font-black text-[var(--color-text)]">{g.name}</span>
-                      <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{g.list.length}</span>
+                      className="flex items-center gap-2.5 text-left flex-1 min-w-0">
+                      <ChevronDown className={`w-4 h-4 shrink-0 ${isUncat ? "text-amber-500" : "text-purple-400"} transition-transform ${open ? "" : "-rotate-90"}`} />
+                      <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${isUncat
+                        ? "bg-amber-100 dark:bg-amber-900/50"
+                        : "bg-purple-100 dark:bg-purple-900/50"}`}>
+                        {isUncat
+                          ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                          : <Tag className="w-3.5 h-3.5 text-purple-600" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-black text-[var(--color-text)]">{g.name}</span>
+                          <span className={`text-[10px] font-black rounded-full px-2 py-0.5 ${isUncat
+                            ? "bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300"
+                            : "bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300"}`}>
+                            {g.list.length}
+                          </span>
+                          {cb && (
+                            <span className="font-mono text-[10px] font-black text-purple-700 dark:text-purple-300 bg-[var(--color-surface)] border border-purple-200 dark:border-purple-800 rounded px-1.5 py-0.5"
+                              title={`Site Codebook equipment-type code ${cb.code}`}>
+                              code {cb.code}
+                            </span>
+                          )}
+                          {cb && cb.prefixes.length > 0 && (
+                            <span className="font-mono text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-1.5 py-0.5"
+                              title="Tag prefixes that auto-categorize into this section">
+                              {cb.prefixes.join(" · ")}
+                            </span>
+                          )}
+                        </span>
+                        {isUncat && (
+                          <span className="block text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
+                            File these: hit Categorize on a card, or run Auto-categorize above.
+                          </span>
+                        )}
+                      </span>
                     </button>
-                    <span className="flex-1 h-px bg-[var(--color-border)]/60" />
                     {isAdmin && (
                       <button type="button"
                         onClick={() => openCreate({
                           typeId: g.typeId === "__none" ? undefined : g.typeId,
                           unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                         })}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-purple-700 hover:border-purple-400">
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-purple-700 hover:border-purple-400 shrink-0">
                         <Plus className="w-3 h-3" /> Asset
                       </button>
                     )}
@@ -1149,8 +1203,15 @@ function AssetCard({
           </div>
           {/* Always visible — a hover-only edit button doesn't exist on
               touchscreens, and "how do I edit this?" should never be a
-              puzzle. */}
+              puzzle. An uncategorized asset gets a LABELED door out of
+              limbo, not a pencil icon to decode. */}
           <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+            {!type && onEdit && (
+              <button onClick={onEdit}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-[9px] font-black uppercase tracking-wider hover:bg-amber-200 dark:hover:bg-amber-900">
+                <Tag className="w-2.5 h-2.5" /> Categorize
+              </button>
+            )}
             {onAddPhotos && (
               <button onClick={onAddPhotos} title="Add photos" className="p-1 text-[var(--color-text-faint)] hover:text-emerald-600 hover:bg-emerald-50 rounded">
                 <Camera className="w-3.5 h-3.5" />
@@ -1689,20 +1750,29 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
   const save = async () => {
     const n = name.trim();
     if (!n) { setError("Name the category (Pump, Exchanger…)."); return; }
+    // Teaching moment: a code (with or without prefixes) writes a real Site
+    // Codebook entry — it must never be swallowed silently. Validate BEFORE
+    // creating anything so a fixable problem doesn't half-save.
+    const px = prefixes.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
+    const tc = typeCode.trim();
+    if (px.length > 0 && !tc) {
+      setError("Prefixes need a code to live under — add the equipment-type code (e.g. 02).");
+      return;
+    }
+    if (tc && existingTypeCodes.includes(tc)) {
+      setError(`Code ${tc} is already used by another equipment type in the Site Codebook — pick a different code or leave it blank.`);
+      return;
+    }
     setBusy(true); setError(null);
     try {
       await createAssetType({ orgId, name: n });
-      // Teaching moment: prefixes + code make the codebook smarter, which
-      // makes auto-categorize and every FUTURE asset smarter. Optional —
-      // no numbering system is required to organize manually.
-      const px = prefixes.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
-      const tc = typeCode.trim();
-      if (px.length > 0 && tc && !existingTypeCodes.includes(tc)) {
-        await supabase.from("codebook_entries").insert({
+      if (tc) {
+        const { error: cbErr } = await supabase.from("codebook_entries").insert({
           org_id: orgId, kind: "equipment_type", code: tc, label: n,
           meta: { tagPrefixes: px }, sort: existingTypeCodes.length,
           origin: "manual", created_by: userId,
         });
+        if (cbErr) throw new Error(`Category created, but the codebook entry failed: ${cbErr.message}`);
       }
       onCreated();
     } catch (e) {
