@@ -24,6 +24,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal, loadDcLandscape, containerReadable } from "@/lib/knowledgeAccess";
+import { aiReadability } from "@/lib/aiBoundary";
 import {
   suggestFoldersForUnit, computeAreaDrift, type AreaFolder,
 } from "@/lib/areaKnowledge";
@@ -59,15 +60,36 @@ export async function GET(req: NextRequest) {
   const knowledgeLibraries = (klRows ?? []) as Array<{ id: string; name: string }>;
   const boundLibrary = boundId ? knowledgeLibraries.find((l) => l.id === boundId) ?? null : null;
 
-  // ── Per-folder doc counts, for suggestions and drift ──────────────────
-  const docCountByFolder = new Map<string, number>();
+  // ── Per-folder doc counts, for suggestions and drift — paged so a big
+  // site's counts stay true (a hard 5000 cap zeroed folders arbitrarily),
+  // and AI-READABLE only, so "12 docs" in a drift banner never turns into
+  // "linked — 0 documents pulled in" (the sync skips superseded/archived/
+  // fileless/excluded docs, so this count must too). ─────────────────────
+  const aiExcluded = new Set<string>();
   {
     const { data } = await supabaseAdmin
-      .from("documents").select("collection_id").eq("org_id", orgId).limit(5000);
-    for (const d of (data ?? []) as Array<{ collection_id: string | null }>) {
+      .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true);
+    for (const r of (data ?? []) as Array<{ id: string }>) aiExcluded.add(r.id);
+  }
+  const docCountByFolder = new Map<string, number>();
+  for (let from = 0; from < 20_000; from += 1000) {
+    const { data } = await supabaseAdmin
+      .from("documents")
+      .select("id, collection_id, status, archived_at, current_version_id")
+      .eq("org_id", orgId).order("id").range(from, from + 999);
+    for (const d of (data ?? []) as Array<{
+      id: string; collection_id: string | null;
+      status: string | null; archived_at: string | null; current_version_id: string | null;
+    }>) {
       if (!d.collection_id) continue;
+      const verdict = aiReadability({
+        id: d.id, status: d.status, archivedAt: d.archived_at,
+        currentVersionId: d.current_version_id, aiExcluded: aiExcluded.has(d.id),
+      }, true);
+      if (!verdict.readable) continue;
       docCountByFolder.set(d.collection_id, (docCountByFolder.get(d.collection_id) ?? 0) + 1);
     }
+    if ((data ?? []).length < 1000) break;
   }
   // Same ACL bar as the sources browse picker: a folder the caller can't
   // read in doc control must not surface here by name either.
@@ -97,7 +119,7 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Bound: state + drift ──────────────────────────────────────────────
-  const [{ data: srcRows }, { data: kdocRows }] = await Promise.all([
+  const [{ data: srcRows, error: srcErr }, { data: kdocRows, error: kdocErr }] = await Promise.all([
     supabaseAdmin.from("knowledge_sources")
       .select("id, source_type, source_id, source_name")
       .eq("org_id", orgId).eq("library_id", boundLibrary.id),
@@ -105,6 +127,11 @@ export async function GET(req: NextRequest) {
       .select("id, name, status, source_document_id")
       .eq("org_id", orgId).eq("library_id", boundLibrary.id).limit(2000),
   ]);
+  // A failed sources read must NOT masquerade as "no sources" — empty
+  // coverage would flag every mirrored doc as moved-out and paint a false
+  // data-loss warning. Fail loudly instead.
+  if (srcErr) return bad(`Couldn't load the library's sources: ${srcErr.message}`, 500);
+  if (kdocErr) return bad(`Couldn't load the library's documents: ${kdocErr.message}`, 500);
   const sources = ((srcRows ?? []) as Array<{
     id: string; source_type: string; source_id: string; source_name: string;
   }>).map((s) => ({
@@ -189,14 +216,71 @@ export async function GET(req: NextRequest) {
     unit,
     boundLibrary,
     knowledgeLibraries,
-    sources: sources.map((s) => ({ id: s.id, type: s.type, name: s.name })),
+    // sourceId rides along so the wizard can match watched containers by
+    // ID — a snapshot name comparison breaks the moment a folder renames.
+    sources: sources.map((s) => ({ id: s.id, type: s.type, sourceId: s.sourceId, name: s.name })),
     counts,
     drift: {
       deadSources: drift.deadSources,
       movedOut: drift.movedOut.slice(0, 10),
+      // The list is capped for display; the TOTAL must not be — "10 moved"
+      // when 400 moved is a lie about data loss.
+      movedOutTotal: drift.movedOut.length,
       newMatches: drift.newMatches.slice(0, 6),
     },
     suggestions: [],
     canManage: principal.isController,
   });
+}
+
+// ── POST: bind (or unbind) the area's knowledge library ─────────────────────
+//
+// Server-side on purpose: the codebook RLS write policy checks only the
+// headline role column, so a member whose DocCtrl authority lives in the
+// additive roles[] array would get a SILENT zero-row update from the
+// client. Here the bar is the same principal.isController that gates every
+// other knowledge mutation — and a denied write is a loud 403, never a
+// green no-op.
+export async function POST(req: NextRequest) {
+  let body: { orgId?: string; unitCode?: string; knowledgeLibraryId?: string | null };
+  try { body = await req.json(); } catch { return bad("Expected JSON body", 400); }
+  const orgId = String(body.orgId ?? "").trim();
+  const unitCode = String(body.unitCode ?? "").trim();
+  const klId = body.knowledgeLibraryId == null ? null : String(body.knowledgeLibraryId).trim();
+  if (!orgId || !unitCode) return bad("orgId and unitCode are required", 400);
+
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!token) return bad("Not signed in", 401);
+  const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
+  if (userErr || !userData?.user) return bad("Not signed in", 401);
+  const principal = await loadPrincipal(orgId, userData.user.id);
+  if (!principal) return bad("Not a member of this workspace", 403);
+  if (!principal.isController) {
+    return bad("Only Admin or Doc Control can bind an area's knowledge library.", 403);
+  }
+
+  if (klId) {
+    const { data: kl } = await supabaseAdmin
+      .from("knowledge_libraries").select("id")
+      .eq("id", klId).eq("org_id", orgId).maybeSingle();
+    if (!kl) return bad("Knowledge library not found", 404);
+  }
+
+  const { data: unitRow, error: unitErr } = await supabaseAdmin
+    .from("codebook_entries").select("id, meta")
+    .eq("org_id", orgId).eq("kind", "unit").eq("code", unitCode).maybeSingle();
+  if (unitErr) return bad(unitErr.message, 500);
+  if (!unitRow) return bad(`Unit ${unitCode} isn't in the Site Codebook.`, 404);
+
+  const meta = { ...((unitRow.meta as Record<string, unknown>) ?? {}) };
+  if (klId) meta.knowledgeLibraryId = klId;
+  else delete meta.knowledgeLibraryId;
+  const { data: updated, error: upErr } = await supabaseAdmin
+    .from("codebook_entries")
+    .update({ meta, updated_at: new Date().toISOString() })
+    .eq("id", unitRow.id as string)
+    .select("id");
+  if (upErr) return bad(upErr.message, 500);
+  if (!updated || updated.length === 0) return bad("The binding didn't save — try again.", 500);
+  return NextResponse.json({ ok: true });
 }

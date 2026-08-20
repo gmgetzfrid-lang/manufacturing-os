@@ -28,20 +28,24 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
  *  must not match "Crude Unit" just because both say "unit". */
 const GENERIC = new Set(["unit", "area", "plant", "system", "section", "block", "no", "number"]);
 
-/** Does this folder look like it belongs to the unit? Matches on the
- *  DISTINCTIVE parts of the unit's label ("crude" in "Crude Unit"), or on
- *  the unit's code as a standalone number ("Unit 20", "20 - Crude").
- *  Checked against the folder's own name first, then its full path. */
+/** Does this folder look like it belongs to the unit? Matches when ANY
+ *  distinctive label token appears as a WHOLE WORD ("Crude Distillation
+ *  Unit" finds a folder just named "Crude" — real folders are shorter than
+ *  real labels), or when the unit's code appears as a standalone token
+ *  ("Unit 20", "20 - Crude", "U-20"). Everything runs through the same
+ *  normalizer, so codes with case or punctuation ("20A", "U-20") work and
+ *  nothing is fed to a regex — a code like "20(A)" must never crash the
+ *  route. Whole-word matching keeps "Gas" out of "Gaskets". */
 export function folderMatchesUnit(
   unit: { code: string; label: string },
   folder: { name: string; pathNames: string[] },
 ): boolean {
   const distinct = norm(unit.label).split(" ").filter((t) => t.length >= 3 && !GENERIC.has(t));
-  const code = unit.code.trim();
+  const codeNorm = norm(unit.code);
   const hits = (text: string): boolean => {
-    const t = norm(text);
-    if (distinct.length > 0 && distinct.every((d) => t.includes(d))) return true;
-    if (code && new RegExp(`(^| )${code}( |$)`).test(t)) return true;
+    const padded = ` ${norm(text)} `;
+    if (distinct.some((d) => padded.includes(` ${d} `))) return true;
+    if (codeNorm && padded.includes(` ${codeNorm} `)) return true;
     return false;
   };
   return hits(folder.name) || hits(folder.pathNames.join(" "));

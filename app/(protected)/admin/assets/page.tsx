@@ -252,6 +252,14 @@ function AssetsPageInner() {
     () => (unitFilter ? filtered.map((a) => a.id) : []),
     [unitFilter, filtered],
   );
+  // The area's FULL asset list, independent of search/type/photo filters —
+  // the knowledge panel's counts describe the area, not the current view.
+  const areaAssetIds = useMemo(
+    () => (unitFilter && unitFilter !== "__unassigned"
+      ? assets.filter((a) => a.unit_code === unitFilter).map((a) => a.id)
+      : []),
+    [unitFilter, assets],
+  );
 
   const searchActive = search.trim().length > 0 || typeFilter !== "" || filterMode !== "all";
 
@@ -414,7 +422,7 @@ function AssetsPageInner() {
             userId={uid}
             userName={userEmail ?? "Member"}
             unit={{ code: currentUnit.code, label: currentUnit.label || `Unit ${currentUnit.code}` }}
-            unitAssetIds={unitAssetIds}
+            unitAssetIds={areaAssetIds}
             onChanged={() => { invalidateAssetCache(); void refresh(); }}
           />
         )}

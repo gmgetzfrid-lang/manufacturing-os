@@ -379,25 +379,12 @@ export async function saveUnitLinks(orgId: string, unitCode: string, links: Unit
   if (upErr) throw new Error(upErr.message);
 }
 
-/** Bind (or unbind, with null) an operating area's knowledge library —
- *  read-modify-write on the unit's meta, same contract as saveUnitLinks. */
-export async function setUnitKnowledgeLibrary(
-  orgId: string, unitCode: string, knowledgeLibraryId: string | null,
-): Promise<void> {
-  const { data, error } = await supabase
-    .from("codebook_entries").select("id, meta")
-    .eq("org_id", orgId).eq("kind", "unit").eq("code", unitCode).maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error(`Unit ${unitCode} isn't in the Site Codebook.`);
-  const meta = { ...((data.meta as Record<string, unknown>) ?? {}) };
-  if (knowledgeLibraryId) meta.knowledgeLibraryId = knowledgeLibraryId;
-  else delete meta.knowledgeLibraryId;
-  const { error: upErr } = await supabase
-    .from("codebook_entries")
-    .update({ meta, updated_at: new Date().toISOString() })
-    .eq("id", data.id as string);
-  if (upErr) throw new Error(upErr.message);
-}
+// NOTE: binding a unit to its knowledge library happens SERVER-SIDE
+// (POST /api/area/knowledge-status) — the codebook RLS write policy checks
+// only the headline role column, so a client-side update could silently
+// affect zero rows for a member whose DocCtrl authority lives in the
+// additive roles[] array. The route uses the same controller bar as the
+// rest of the knowledge stack.
 
 export async function saveConfig(orgId: string, patch: {
   drawingNumber?: DrawingNumberConfig | null;

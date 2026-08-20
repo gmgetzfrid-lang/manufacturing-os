@@ -34,6 +34,24 @@ describe("folderMatchesUnit", () => {
     expect(folderMatchesUnit(crude, folder("f8", "Unit 120", ["Unit 120"]))).toBe(false);
     expect(folderMatchesUnit(crude, folder("f9", "Area 205", ["Area 205"]))).toBe(false);
   });
+
+  it("a long unit label still finds its short folder — ANY distinctive token, whole-word", () => {
+    const cdu = { code: "20", label: "Crude Distillation Unit" };
+    expect(folderMatchesUnit(cdu, folder("f10", "Crude", ["PFDs", "Crude"]))).toBe(true);
+    expect(folderMatchesUnit(cdu, folder("f11", "Distillation", ["P&IDs", "Distillation"]))).toBe(true);
+    // Whole-word only: "Gas" must not match inside "Gaskets".
+    const gas = { code: "30", label: "Gas Plant" };
+    expect(folderMatchesUnit(gas, folder("f12", "Gaskets", ["Spares", "Gaskets"]))).toBe(false);
+  });
+
+  it("punctuated and alphanumeric codes match through normalization — and never crash", () => {
+    const u20 = { code: "U-20", label: "" };
+    expect(folderMatchesUnit(u20, folder("f13", "U-20 PFDs", ["U-20 PFDs"]))).toBe(true);
+    const weird = { code: "20(A)", label: "" };
+    // Regex metacharacters in a free-text code must not throw.
+    expect(() => folderMatchesUnit(weird, folder("f14", "Unit 20(A)", ["Unit 20(A)"]))).not.toThrow();
+    expect(folderMatchesUnit(weird, folder("f14", "Unit 20(A)", ["Unit 20(A)"]))).toBe(true);
+  });
 });
 
 describe("suggestFoldersForUnit", () => {
