@@ -28,7 +28,7 @@ import type { Asset, AssetType } from "@/lib/assets";
 import type { Codebook } from "@/lib/codebook";
 import { planCategorization, applyCategorization, type CategorizationResult } from "@/lib/assetCategorize";
 import { listProcessFlows, decideFlow, deleteFlow, type ProcessFlow } from "@/lib/processFlows";
-import { syncKnowledgeSources } from "@/lib/knowledge";
+import { syncKnowledgeSources, addKnowledgeSources } from "@/lib/knowledge";
 import type { DcLibraryNode, DcFolderNode, DcDocRow, FlowsBrowseUploadGroup } from "@/lib/flowsBrowse";
 
 // ─── Auto-categorize ───────────────────────────────────────────────────────
@@ -281,6 +281,11 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
+  // An unwatched container being linked: when several knowledge libraries
+  // exist the user picks which one watches it; with exactly one, Link acts
+  // immediately — no detours to other pages.
+  const [linking, setLinking] = useState<{ type: "library" | "folder"; id: string; name: string } | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -314,6 +319,32 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         : "Synced — already up to date with document control.");
     } catch (e) { setError((e as Error).message); }
     finally { setSyncing(false); }
+  };
+
+  // Link an unwatched container to a knowledge library IN PLACE — the
+  // sources API links and syncs in one call, so the folder's documents
+  // appear as soon as the model reloads.
+  const doLink = async (klId: string, target: { type: "library" | "folder"; id: string; name: string }) => {
+    setLinkBusy(true); setError(null); setSyncNote(null);
+    try {
+      const res = await addKnowledgeSources(orgId, klId, [{ type: target.type, id: target.id }]);
+      setLinking(null);
+      await load();
+      setSyncNote(`Linked “${target.name}” — ${res.added} document${res.added === 1 ? "" : "s"} pulled in. Indexing starts automatically.`);
+    } catch (e) { setError((e as Error).message); }
+    finally { setLinkBusy(false); }
+  };
+  const requestLink = (target: { type: "library" | "folder"; id: string; name: string }) => {
+    if (!model?.canSync) return;
+    if (model.knowledgeLibraries.length === 0) {
+      setError("Create an AI knowledge library first (Knowledge tab) — then Link connects folders to it from right here.");
+      return;
+    }
+    if (model.knowledgeLibraries.length === 1) {
+      void doLink(model.knowledgeLibraries[0].id, target);
+    } else {
+      setLinking(target);
+    }
   };
 
   // "1-4", "2,5,9", "3" → up to 6 page numbers. Empty = first pages.
@@ -382,13 +413,13 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   // ── One row per document, its AI state printed on it ──────────────────
   const STATE_META: Record<Exclude<DcDocRow["state"], "ready">, { label: string; hint: string }> = {
     pending_sync: { label: "Not synced yet", hint: "Watched by the AI — press Sync to mirror it now." },
-    unwatched: { label: "Not linked to AI", hint: "No knowledge library watches this folder — link it under Sources on the Knowledge tab." },
+    unwatched: { label: "Not linked to AI", hint: "No knowledge library watches this folder — press Link to connect it right here." },
     not_pdf: { label: "No PDF revision", hint: "The AI reads PDFs only — attach a PDF current revision." },
     not_current: { label: "Superseded / archived", hint: "Only current revisions are read." },
     no_file: { label: "No file yet", hint: "This document has no current file attached." },
     held_back: { label: "Held back from AI", hint: "A controller excluded this document from AI reading." },
   };
-  const docRow = (d: DcDocRow) => {
+  const docRow = (d: DcDocRow, container?: { type: "library" | "folder"; id: string; name: string }) => {
     if (d.state === "ready" && d.kdocId) {
       const kid = d.kdocId;
       return (
@@ -421,11 +452,12 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
             className="text-[10px] font-black px-2 py-1 rounded-md border border-cyan-300 text-cyan-700 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 disabled:opacity-50 shrink-0">
             {syncing ? "Syncing…" : "Sync now"}
           </button>
-        ) : d.state === "unwatched" ? (
-          <Link href="/knowledge"
-            className="text-[10px] font-black px-2 py-1 rounded-md border border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 shrink-0">
-            Link
-          </Link>
+        ) : d.state === "unwatched" && model?.canSync && container ? (
+          <button type="button" onClick={() => requestLink(container)} disabled={linkBusy}
+            title={`Connect “${container.name}” to an AI knowledge library`}
+            className="text-[10px] font-black px-2 py-1 rounded-md border border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-50 shrink-0">
+            {linkBusy ? "Linking…" : "Link to AI"}
+          </button>
         ) : (
           <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
             d.state === "pending_sync"
@@ -445,13 +477,23 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${f.watched ? "text-cyan-600" : "text-amber-500"}`} />
         {f.name}
         <span className="text-[10px] font-bold text-[var(--color-text-muted)]">· {f.totalDocs}</span>
-        {!f.watched && (
+        {!f.watched && (model?.canSync ? (
+          <button type="button" disabled={linkBusy}
+            onClick={() => requestLink({ type: "folder", id: f.id, name: f.name })}
+            className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
+            {linkBusy ? "linking…" : "not linked to AI — link now"}
+          </button>
+        ) : (
           <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
             not linked to AI
           </span>
-        )}
+        ))}
       </div>
-      {f.docs.length > 0 && <div className="space-y-1 mb-1">{f.docs.map(docRow)}</div>}
+      {f.docs.length > 0 && (
+        <div className="space-y-1 mb-1">
+          {f.docs.map((d) => docRow(d, { type: "folder", id: f.id, name: f.name }))}
+        </div>
+      )}
       {f.folders.map((c) => renderFolder(c, depth + 1))}
     </div>
   );
@@ -508,6 +550,26 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               <span className="text-[10px] font-black text-cyan-700 shrink-0">reads p. {pages.join(", ")}</span>
             )}
           </div>
+          {/* Multiple AI libraries → the link needs a destination. One click
+              picks it; the linking + sync happen right here. */}
+          {linking && (
+            <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 px-2.5 py-2 text-[11px] text-amber-900 dark:text-amber-300">
+              <div className="font-black mb-1">Link &ldquo;{linking.name}&rdquo; to which AI knowledge library?</div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(model?.knowledgeLibraries ?? []).map((kl) => (
+                  <button key={kl.id} type="button" disabled={linkBusy}
+                    onClick={() => void doLink(kl.id, linking)}
+                    className="px-2.5 py-1 rounded-lg border border-amber-400 bg-white dark:bg-transparent text-[11px] font-black text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
+                    {linkBusy ? "Linking…" : kl.name}
+                  </button>
+                ))}
+                <button type="button" onClick={() => setLinking(null)} disabled={linkBusy}
+                  className="px-2 py-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {syncNote && (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
               {syncNote}
@@ -541,13 +603,24 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                     <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">
                       {l.totalDocs} doc{l.totalDocs === 1 ? "" : "s"}
                     </span>
-                    {!l.watched && (
+                    {!l.watched && (model?.canSync ? (
+                      <button type="button" disabled={linkBusy}
+                        onClick={() => requestLink({ type: "library", id: l.id, name: l.name })}
+                        title="Watch this whole library — every folder, now and in the future"
+                        className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
+                        {linkBusy ? "linking…" : "not linked to AI — link whole library"}
+                      </button>
+                    ) : (
                       <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
                         not linked to AI
                       </span>
-                    )}
+                    ))}
                   </div>
-                  {l.docs.length > 0 && <div className="space-y-1 mb-1">{l.docs.map(docRow)}</div>}
+                  {l.docs.length > 0 && (
+                    <div className="space-y-1 mb-1">
+                      {l.docs.map((d) => docRow(d, { type: "library", id: l.id, name: l.name }))}
+                    </div>
+                  )}
                   {l.folders.map((f) => renderFolder(f, 0))}
                 </div>
               ))}
