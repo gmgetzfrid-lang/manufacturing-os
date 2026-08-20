@@ -363,42 +363,57 @@ function SectionedBlocks({ blocks, citations, onCite }: {
     return s;
   });
   const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
+  // Items rise in one after another (capped stagger) — the reveal itself
+  // walks the reader down the step, both on load and on accordion open.
+  const enter = (i: number): React.CSSProperties => ({
+    animation: "rise 0.35s var(--ease-fluid) both",
+    animationDelay: `${Math.min(i, 10) * 40}ms`,
+  });
   const renderItems = (items: AnswerBlock[]) => {
     let n = 0;
     return items.map((b, i) => {
       if (b.type === "important") {
-        return <ImportantCallout key={i} text={b.text} citations={citations} onCite={onCite} />;
+        return <div key={i} style={enter(i)}><ImportantCallout text={b.text} citations={citations} onCite={onCite} /></div>;
       }
       if (b.type === "bullet") {
         n += 1;
-        return <FactCard key={i} n={n} alt={n % 2 === 0} text={b.text} citations={citations} onCite={onCite} />;
+        return <div key={i} style={enter(i)}><FactCard n={n} alt={n % 2 === 0} text={b.text} citations={citations} onCite={onCite} /></div>;
       }
       if (isCheck(b.text)) {
         return (
-          <div key={i} className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[13px] text-amber-800 dark:text-amber-300">
+          <div key={i} style={enter(i)} className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[13px] text-amber-800 dark:text-amber-300">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
             <span><InlineAnswer text={b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "")} citations={citations} onCite={onCite} /></span>
           </div>
         );
       }
       return (
-        <p key={i} className="text-sm text-[var(--color-text)] leading-relaxed px-3">
+        <p key={i} style={enter(i)} className="text-sm text-[var(--color-text)] leading-relaxed px-3">
           <InlineAnswer text={b.text} citations={citations} onCite={onCite} />
         </p>
       );
     });
   };
+  // Which labeled section is LAST decides where the stepper rail ends — the
+  // rail runs node → node and stops at the final step instead of dangling.
+  const lastLabeled = sections.reduce((acc, sec, i) => (sec.label !== null ? i : acc), -1);
+  let step = 0;
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-0">
       {sections.map((sec, si) => {
         if (sec.label === null) {
-          return <div key={si} className="space-y-1.5">{renderItems(sec.items)}</div>;
+          return <div key={si} className="space-y-1.5 pb-2">{renderItems(sec.items)}</div>;
         }
+        step += 1;
         const facts = sec.items.filter((b) => b.type === "bullet").length;
         const open = !closed.has(si);
         const a = SECTION_ACCENTS[sec.accent % SECTION_ACCENTS.length];
+        const isLast = si === lastLabeled;
         return (
-          <div key={si}>
+          <div
+            key={si}
+            style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(step - 1, 8) * 70}ms` }}
+          >
             <button
               type="button"
               onClick={() => setClosed((prev) => {
@@ -406,15 +421,28 @@ function SectionedBlocks({ blocks, citations, onCite }: {
                 if (next.has(si)) next.delete(si); else next.add(si);
                 return next;
               })}
-              className="w-full flex items-center gap-2.5 pt-5 pb-1.5 text-left"
+              className="group/step w-full flex items-center gap-3 pt-4 pb-1.5 text-left"
             >
-              <span className={`w-2 h-2 rounded-full shrink-0 ${a.bar}`} />
-              <span className="text-[16px] sm:text-[17px] font-black tracking-tight leading-tight text-[var(--color-text)]">{sec.label}</span>
-              {facts > 0 && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-faint)]">· {facts}</span>}
+              {/* Numbered step node — the stepper's anchor point. */}
+              <span className={`shrink-0 w-6 h-6 rounded-full ${a.bar} text-white text-[11px] font-black flex items-center justify-center shadow-sm ring-2 ring-[var(--color-surface)] transition-transform duration-200 group-hover/step:scale-110`}>
+                {step}
+              </span>
+              <span className="text-[16px] sm:text-[17px] font-black tracking-tight leading-tight text-[var(--color-text)] group-hover/step:text-[var(--color-accent)] transition-colors">{sec.label}</span>
+              {facts > 0 && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-faint)]">· {facts} {facts === 1 ? "fact" : "facts"}</span>}
               <span className="flex-1 h-px bg-[var(--color-border)]/70" />
-              <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+              <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
             </button>
-            {open && <div className="space-y-1.5">{renderItems(sec.items)}</div>}
+            {/* The rail: content hangs off a vertical connector dropping from
+                the step node to the next one — the answer READS as a route. */}
+            <div className={`ml-3 pl-5 sm:pl-6 ${open || !isLast ? "border-l-2 border-[var(--color-border)]/60" : ""} ${open ? "pb-4" : "pb-2"}`}>
+              {open ? (
+                <div className="space-y-1.5">{renderItems(sec.items)}</div>
+              ) : (
+                <div className="text-[11px] text-[var(--color-text-faint)] font-medium pl-3">
+                  {facts > 0 ? `${facts} ${facts === 1 ? "item" : "items"} — tap to expand` : "tap to expand"}
+                </div>
+              )}
+            </div>
           </div>
         );
       })}
@@ -773,7 +801,12 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
 
       {/* Hero answer card */}
       <div className="rounded-2xl border-2 border-orange-400 dark:border-orange-700 bg-[var(--color-surface)] shadow-lg overflow-hidden animate-pop">
-        <div className="h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />
+        {/* Living top rule: a slow sheen drifts along the gradient — quiet
+            proof the page is alive. Disabled for reduced-motion users. */}
+        <div
+          className="h-1.5 bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 motion-safe:animate-[shimmer_6s_linear_infinite]"
+          style={{ backgroundSize: "200% 100%" }}
+        />
         {/* THE ANSWER — a light frosted band with an orange spine. The dark
             plaque read as a harsh speedbump (design review); separation now
             comes from tone + the accent border, not a black block. */}
@@ -781,7 +814,13 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
           ? "px-4 sm:px-5 py-4 border-l-4 border-orange-500 bg-[var(--color-surface-2)]/60 backdrop-blur-sm"
           : "px-4 sm:px-5 pt-4"}>
           <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">Answer</div>
+            <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">
+              <span aria-hidden className="relative flex w-1.5 h-1.5">
+                <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-60" style={{ animationDuration: "2.4s" }} />
+                <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-orange-500" />
+              </span>
+              Answer
+            </div>
             <CopyButton text={answer.answer} label="Copy answer" />
           </div>
           {hero ? (

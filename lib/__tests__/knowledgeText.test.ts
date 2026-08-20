@@ -438,6 +438,38 @@ describe("explodeRunOn — the wall-of-text killer", () => {
     expect(blocks.filter((b) => b.type === "bullet").length).toBe(3);
   });
 
+  it("keeps a long-but-complete first sentence whole as the headline", () => {
+    // A user reported the collapsed headline reading "…when a system is
+    // limited by the flange rating" — carved mid-thought at a comma. A
+    // complete sentence up to 420 chars must survive intact, un-ellipsized.
+    const firstSentence =
+      "No passage gives a psig value for a Class 150 flange, because the governing rule in " +
+      "EP 5-5-3 §6.6.2 is that when a system is limited by the flange rating, the hydrotest " +
+      "pressure is set from the flange's maximum allowable rating at the test temperature " +
+      "rather than from any fixed table value, so the number must be computed per rating class [1].";
+    const text = `${firstSentence} The computed value becomes a hold point requiring inspector signoff before the test proceeds [2].`;
+    const blocks = explodeRunOn(text)!;
+    expect(blocks[0].type).toBe("hero");
+    expect(blocks[0].text).toBe(firstSentence);
+    expect(blocks[0].text).not.toContain("…");
+    expect(blocks.filter((b) => b.type === "bullet").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("marks a genuinely cut headline with ellipses so the cut reads intentional", () => {
+    // First "sentence" longer than 420 chars with no sentence stops — it must
+    // be carved, and the seam must be visible: hero trails "…", first
+    // continuation bullet leads with "… ".
+    const clause = (i: number) =>
+      `requirement group ${i} covers the full weld procedure envelope for this line class in this unit`;
+    const monster = Array.from({ length: 6 }, (_, i) => clause(i)).join(", ");
+    expect(monster.length).toBeGreaterThan(420);
+    const blocks = explodeRunOn(monster)!;
+    expect(blocks[0].type).toBe("hero");
+    expect(blocks[0].text.endsWith("…")).toBe(true);
+    const bullets = blocks.filter((b) => b.type === "bullet");
+    expect(bullets[0].text.startsWith("… ")).toBe(true);
+  });
+
   it("is applied by parseAnswerBlocks to run-on heroes", () => {
     const blocks = parseAnswerBlocks(`**Answer:** ${RUN_ON}`);
     expect(blocks[0].type).toBe("hero");
