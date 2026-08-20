@@ -189,7 +189,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
                     onClick={() => void release(c)}
                     disabled={releasingId === c.sessionId}
                     title="Release — no changes"
-                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 opacity-60 sm:opacity-0 group-hover:opacity-100 hover:bg-emerald-100 transition-all disabled:opacity-50"
+                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 sm:py-1 rounded-md text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-emerald-100 transition-all disabled:opacity-50"
                   >
                     {releasingId === c.sessionId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                     Release
