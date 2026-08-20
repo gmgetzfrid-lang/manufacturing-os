@@ -29,6 +29,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import { openEvidencePack, openProjectEvidencePack } from "@/lib/evidencePack";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
+import { searchAtlas } from "@/lib/featureAtlas";
 import { requestSignature } from "@/components/signatures/SignatureCaptureHost";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
@@ -246,6 +247,15 @@ export default function GlobalCommandPalette() {
         if (a.label.toLowerCase().includes(q) || a.keywords.includes(q)) {
           items.push({ key: `action-${a.href}-${a.label}`, label: a.label, subtitle: "Action", href: a.href, isAction: true });
         }
+      }
+      // PLACES — the app knows its own map. "numbering system" lands on the
+      // Site Codebook even when no record matches; nobody should have to
+      // remember where a feature lives.
+      for (const p of searchAtlas(trimmed, 4)) {
+        items.push({
+          key: `place-${p.href}`, label: p.label, subtitle: p.blurb,
+          href: p.href, isAction: true, badge: "Place",
+        });
       }
       for (const h of hits) {
         items.push({

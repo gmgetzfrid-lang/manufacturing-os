@@ -19,6 +19,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
+import { atlasForPrompt } from "@/lib/featureAtlas";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
@@ -115,7 +116,8 @@ export async function POST(req: NextRequest) {
 
   const playbook =
     (await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge")) +
-    (await loadAnswerSkillsBlock(supabaseAdmin, orgId, user.id));
+    (await loadAnswerSkillsBlock(supabaseAdmin, orgId, user.id)) +
+    atlasForPrompt();
 
   const call: ModelCall = async (system, userTurn) => {
     const out = await callAiModel({
