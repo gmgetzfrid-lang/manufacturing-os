@@ -10,7 +10,7 @@ import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2, Eye, MessageSquare,
-  ThumbsUp, ThumbsDown, X,
+  ThumbsUp, ThumbsDown, X, Waypoints,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -33,6 +33,7 @@ import {
   type KnowledgeLibraryLink,
   rebuildDrawingIndex,
 } from "@/lib/knowledge";
+import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
@@ -715,6 +716,11 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
     () => ({ links: answer.mentionedDocs ?? [], open: onOpenDoc ?? null }),
     [answer.mentionedDocs, onOpenDoc],
   );
+  // Shaping the graph is ADMIN curation of the shared map — the entry point
+  // only exists for Admin/DocCtrl, and the server enforces the same gate.
+  const { activeOrgId: shapeOrgId, activeRole: shapeRole, uid: shapeUid, userEmail: shapeUserEmail } = useRole();
+  const canShape = shapeRole === "Admin" || shapeRole === "DocCtrl";
+  const [shaping, setShaping] = useState(false);
   const [proof, setProof] = useState<ProofState | null>(null);
   const proofCtx = useMemo(() => ({
     show: (c: KnowledgeCitation, context: string, anchor: DOMRect) => {
@@ -784,6 +790,17 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
         proof={proof}
         onClose={() => setProof(null)}
         onOpenPage={(c) => { setProof(null); onCite(c); }}
+      />
+    )}
+    {shaping && shapeOrgId && shapeUid && (
+      <GraphShapeWizard
+        orgId={shapeOrgId}
+        userId={shapeUid}
+        userName={shapeUserEmail ?? undefined}
+        question={question}
+        answer={answer.answer}
+        citedKnowledgeDocIds={answer.citations.filter((c) => !c.url && c.documentId).map((c) => c.documentId!)}
+        onClose={() => setShaping(false)}
       />
     )}
     <div className="mt-4 space-y-3">
@@ -878,6 +895,13 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
                 className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-lg border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-500/10 transition-colors">
                 <ChevronDown className={`w-3 h-3 transition-transform ${elaborated ? "rotate-180" : ""}`} />
                 {elaborated ? "Hide detail" : "Show detail"}
+              </button>
+            )}
+            {canShape && shapeOrgId && shapeUid && (
+              <button onClick={() => setShaping(true)}
+                title="AI proposes how this answer attributes to the org graph — you curate, it writes"
+                className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-500/10 transition-colors">
+                <Waypoints className="w-3 h-3" /> Shape the graph
               </button>
             )}
             <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
