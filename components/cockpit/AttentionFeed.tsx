@@ -96,14 +96,19 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
         {counts.all > 0 && (
           <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-[var(--color-text)] text-xs font-black">{counts.all}</span>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        {/* One fixed-width segmented pill + Mark-all — everything else lives
+            on its own WRAPPING chip row below. The old layout packed the
+            group chips into this same non-wrapping row: at phone width the
+            card's overflow-hidden clipped them (and often Mark-all) clean
+            off screen, untappable. */}
+        <div className="ml-auto flex items-center gap-2 flex-wrap min-w-0">
           {/* Segmented filter */}
           <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
             {FILTERS.map((f) => (
               <button
                 key={f.key}
                 onClick={() => onFilter(f.key)}
-                className={`inline-flex items-center gap-1 px-2 h-6 rounded-md text-[11px] font-bold transition-colors ${
+                className={`inline-flex items-center gap-1 px-2 h-8 sm:h-6 rounded-md text-[11px] font-bold transition-colors ${
                   filter === f.key ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }`}
               >
@@ -111,35 +116,13 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
                 <span className={`text-[10px] ${filter === f.key ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>{f.n}</span>
               </button>
             ))}
-        <span className="mx-1 h-4 w-px bg-[var(--color-border)]" />
-        <button
-          onClick={() => setGroup("all")}
-          className={`px-2 py-1 rounded-full text-[10px] font-bold ${group === "all" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-        >
-          Everything
-        </button>
-        {KIND_GROUPS.map((g) => {
-          const n = items.filter((i) => groupOf(String(i.kind)) === g.key).length;
-          // Keep the ACTIVE group's chip visible even at zero — otherwise the
-          // only affordance showing (and clearing) the filter disappears.
-          if (n === 0 && group !== g.key) return null;
-          return (
-            <button
-              key={g.key}
-              onClick={() => setGroup(group === g.key ? "all" : g.key)}
-              className={`px-2 py-1 rounded-full text-[10px] font-bold ${group === g.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-            >
-              {g.label} · {n}
-            </button>
-          );
-        })}
           </div>
           {counts.unread > 0 && (
             <button
               onClick={onMarkAll}
               disabled={markingAll}
               title="Mark all notifications read"
-              className="inline-flex items-center gap-1 px-2 h-7 rounded-lg text-[11px] font-bold text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2 h-8 sm:h-7 rounded-lg text-[11px] font-bold text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
               {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline">Mark all read</span>
@@ -147,6 +130,34 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           )}
         </div>
       </div>
+
+      {/* Kind-group chips — their own wrapping row, so every chip stays
+          visible and tappable at any width. */}
+      {counts.all > 0 && (
+        <div className="px-4 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setGroup("all")}
+            className={`px-2.5 py-1.5 sm:py-1 rounded-full text-[10px] font-bold ${group === "all" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+          >
+            Everything
+          </button>
+          {KIND_GROUPS.map((g) => {
+            const n = items.filter((i) => groupOf(String(i.kind)) === g.key).length;
+            // Keep the ACTIVE group's chip visible even at zero — otherwise the
+            // only affordance showing (and clearing) the filter disappears.
+            if (n === 0 && group !== g.key) return null;
+            return (
+              <button
+                key={g.key}
+                onClick={() => setGroup(group === g.key ? "all" : g.key)}
+                className={`px-2.5 py-1.5 sm:py-1 rounded-full text-[10px] font-bold ${group === g.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+              >
+                {g.label} · {n}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {counts.all === 0 ? (
         <div className="px-4 py-10 text-center">
@@ -204,9 +215,11 @@ function AttentionRow({ item, onMarkRead }: { item: AttentionItem; onMarkRead: (
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMarkRead(item.notificationId!); }}
             title="Mark read"
-            className="p-1 rounded-md text-[var(--color-text)] hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
+            // p-2 -m-1: ~32px touch target without growing the visual — a
+            // near-miss used to hit the surrounding Link and navigate away.
+            className="p-2 -m-1 rounded-md text-[var(--color-text)] hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
           >
-            <CheckCheck className="w-3.5 h-3.5" />
+            <CheckCheck className="w-4 h-4" />
           </button>
         ) : (
           <ChevronRight className="w-4 h-4 text-[var(--color-text)] shrink-0" />

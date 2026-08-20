@@ -87,15 +87,18 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
       {editing && (
         <>
           <GripVertical className="absolute top-4 left-2 w-4 h-4 text-[var(--color-text-muted)]/60 z-10 pointer-events-none" />
-          <div data-no-drag className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+          {/* Chip background + bigger touch pads: transparent 28px buttons
+              sat over the header text and invited mis-taps of the
+              destructive ✕ on phones. */}
+          <div data-no-drag className="absolute top-2 right-2 flex items-center gap-1.5 z-10 rounded-xl bg-[var(--color-surface)]/85 backdrop-blur border border-[var(--color-border)] px-0.5 py-0.5">
             {meta.hasSettings && (
               <button type="button" onClick={onOpenSettings} title="Widget settings"
-                className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                className="p-2.5 sm:p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                 <Settings2 className="w-4 h-4" />
               </button>
             )}
             <button type="button" onClick={onRemove} title="Remove widget"
-              className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 transition-colors">
+              className="p-2.5 sm:p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -103,7 +106,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
       )}
 
       {/* min-h-0 lets the body flex region shrink so its internal scroll works. */}
-      <div className={`relative flex-1 min-h-0 flex flex-col p-5 ${editing ? "pl-7" : ""}`}>
+      <div className={`relative flex-1 min-h-0 flex flex-col p-5 ${editing ? "pl-7 pr-16" : ""}`}>
         {/* Header — glowing gradient icon badge + label + the "open the tool"
             chip on the right (replaces the old full-width footer band, which
             repeated on every card and ate a row of body space). */}
@@ -120,7 +123,9 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
             <Link
               href={meta.href}
               title={meta.cta}
-              className="shrink-0 inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] border border-transparent hover:border-[var(--color-border)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-all opacity-70 group-hover/widget:opacity-100"
+              // Full opacity + a real tap height where hover doesn't exist —
+              // the card's primary navigation can't be a dimmed 26px chip.
+              className="shrink-0 inline-flex items-center gap-1 pl-2.5 pr-1.5 py-2.5 sm:py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] border border-transparent hover:border-[var(--color-border)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-all opacity-70 group-hover/widget:opacity-100 [@media(hover:none)]:opacity-100"
             >
               Open
               <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover/widget:translate-x-0.5" />

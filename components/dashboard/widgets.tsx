@@ -544,7 +544,9 @@ function InboxBody() {
   const buckets = dayBuckets(data?.notifDates ?? [], 14);
   const wk = weekSplit(data?.notifDates ?? []);
   return (
-    <div className={FILL}>
+    // FILL + SCROLL: on phones the card height is fixed, and without the
+    // scroll chain overflow-hidden clipped the last DeckLink unreachable.
+    <div className={`${FILL} ${SCROLL}`}>
       <div className="grid grid-cols-3 gap-2 shrink-0">
         <Stat value={data?.openRequests ?? 0} label="Requests" />
         <Stat value={data?.lockedDocs ?? 0} label="Checked out" />
@@ -828,18 +830,18 @@ function OutstandingBody() {
                   </Link>
                   {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
                   {mr.message && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{mr.message}&quot;</div>}
-                  <div className="mt-1 flex items-center gap-1.5">
+                  <div className="mt-1 flex items-center gap-2.5 sm:gap-1.5">
                     <button
                       onClick={() => respondToMarkup(mr, "shared")}
                       disabled={resolvingId === mr.id}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
                     >
                       <Send className="w-3 h-3" /> Mark shared
                     </button>
                     <button
                       onClick={() => respondToMarkup(mr, "declined")}
                       disabled={resolvingId === mr.id}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-canvas)] text-[var(--color-text-faint)] text-[11px] font-bold disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-canvas)] text-[var(--color-text-faint)] text-[11px] font-bold disabled:opacity-50"
                     >
                       <XCircle className="w-3 h-3" /> Decline
                     </button>
@@ -1125,7 +1127,9 @@ function AdminAnalyticsBody() {
   const wk = weekSplit(data?.auditDates ?? []);
   const maxLib = Math.max(1, ...(data?.topLibs ?? []).map((l) => l.count));
   return (
-    <div className={FILL}>
+    // FILL + SCROLL: at the 300px mobile floor this body overflows and the
+    // whole 'Busiest libraries' block was clipped with no scroll path.
+    <div className={`${FILL} ${SCROLL}`}>
       {/* Headline stats — each one is a doorway into its tool. */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0">
         {([
