@@ -1491,6 +1491,11 @@ export async function POST(req: NextRequest) {
       "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers.\n\n" +
+      "WHOLE PROVISION: when a cited passage states a rule AND then adds a recommendation, default, " +
+      "exception, or practice (\"it is recommended…\", \"unless…\", \"typically…\", \"should be set " +
+      "at…\"), the answer INCLUDES that part — a recommendation in the source is part of the answer, " +
+      "not commentary. Stopping at \"no explicit value is given\" when the same passage recommends " +
+      "one is a WRONG answer.\n\n" +
       "RELEVANCE — answer THE question, not the topic area: before writing, identify what the asker " +
       "is actually trying to decide or do, and lead with exactly that. Passages are a haystack you " +
       "were handed, not an outline to summarize — leave out anything that doesn't change the asker's " +
