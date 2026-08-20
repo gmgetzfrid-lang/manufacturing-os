@@ -20,13 +20,16 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   Wand2, Loader2, AlertTriangle, ArrowRight, Check, X, Waypoints,
-  ScanSearch, Trash2, FileText, Search, CheckCircle2,
+  ScanSearch, Trash2, FileText, Search, CheckCircle2, BookOpen,
+  FolderOpen, RefreshCw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { Asset, AssetType } from "@/lib/assets";
 import type { Codebook } from "@/lib/codebook";
 import { planCategorization, applyCategorization, type CategorizationResult } from "@/lib/assetCategorize";
 import { listProcessFlows, decideFlow, deleteFlow, type ProcessFlow } from "@/lib/processFlows";
+import { syncKnowledgeSources } from "@/lib/knowledge";
+import type { FlowsBrowseLibrary } from "@/lib/flowsBrowse";
 
 // ─── Auto-categorize ───────────────────────────────────────────────────────
 
@@ -252,47 +255,67 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
     </div>
   );
 }
-
-/** Pick the PFD, run the reader. Browse BY LIBRARY (a unit's PFD book lives
- *  in a specific knowledge library), target the exact sheets of a multi-page
- *  book, and if the drawing isn't indexed yet the door to upload it is one
- *  click away. Portaled to <body> so no ancestor transform can trap or clip
- *  the sheet. */
+/** Pick the PFD, run the reader. The picker shows the TRUE filing map —
+ *  every AI knowledge library, its documents grouped by the document-control
+ *  folder each one was mirrored from, no row caps — and when a folder was
+ *  never linked to the AI library it says so by name instead of leaving a
+ *  mystery hole. Portaled to <body> so no ancestor transform can clip the
+ *  sheet. */
 function ReadFlowsModal({ orgId, onClose, onDone }: {
   orgId: string;
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
-  const [libraries, setLibraries] = useState<Array<{ id: string; name: string }>>([]);
+  const [model, setModel] = useState<{ libraries: FlowsBrowseLibrary[]; canSync: boolean } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [libraryId, setLibraryId] = useState<string>("");
   const [query, setQuery] = useState("");
   const [pagesRaw, setPagesRaw] = useState("");
-  const [docs, setDocs] = useState<Array<{ id: string; name: string; library_id: string; page_count: number | null }> | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    supabase.from("knowledge_libraries").select("id, name").eq("org_id", orgId).order("name")
-      .then(({ data }) => { if (alive) setLibraries((data as Array<{ id: string; name: string }>) ?? []); });
-    return () => { alive = false; };
+  const load = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`/api/flows/browse?orgId=${encodeURIComponent(orgId)}`, {
+        headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Couldn't load the libraries.");
+      setModel(json as { libraries: FlowsBrowseLibrary[]; canSync: boolean });
+      setLoadError(null);
+    } catch (e) { setLoadError((e as Error).message); }
   }, [orgId]);
+  useEffect(() => { void load(); }, [load]);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      let q = supabase.from("knowledge_documents")
-        .select("id, name, library_id, page_count").eq("org_id", orgId)
-        .order("created_at", { ascending: false }).limit(50);
-      if (libraryId) q = q.eq("library_id", libraryId);
-      if (query.trim()) q = q.ilike("name", `%${query.trim()}%`);
-      const { data } = await q;
-      if (alive) setDocs((data as Array<{ id: string; name: string; library_id: string; page_count: number | null }>) ?? []);
-    })();
-    return () => { alive = false; };
-  }, [orgId, libraryId, query]);
+  // "My folder isn't here" has a one-click answer: reconcile with doc
+  // control right now instead of waiting for the nightly cron.
+  const syncNow = async (libId: string) => {
+    setSyncingId(libId); setError(null); setSyncNote(null);
+    try {
+      const r = await syncKnowledgeSources(orgId, libId);
+      await load();
+      setSyncNote(r.added > 0
+        ? `Synced — ${r.added} document${r.added === 1 ? "" : "s"} pulled in from document control.`
+        : "Synced — already up to date with document control.");
+    } catch (e) { setError((e as Error).message); }
+    finally { setSyncingId(null); }
+  };
 
-  const libName = useMemo(() => new Map(libraries.map((l) => [l.id, l.name])), [libraries]);
+  // Search filters inside the hierarchy; empty groups fold away, but a
+  // library with a coverage warning stays visible when not searching.
+  const q = query.trim().toLowerCase();
+  const view = (model?.libraries ?? [])
+    .filter((l) => !libraryId || l.id === libraryId)
+    .map((l) => ({
+      ...l,
+      groups: l.groups
+        .map((g) => ({ ...g, docs: q ? g.docs.filter((d) => d.name.toLowerCase().includes(q)) : g.docs }))
+        .filter((g) => g.docs.length > 0),
+    }))
+    .filter((l) => (q ? l.groups.length > 0 : true));
 
   // "1-4", "2,5,9", "3" → up to 6 page numbers. Empty = first pages.
   const parsePages = (raw: string): number[] => {
@@ -333,6 +356,23 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
     finally { setRunningId(null); }
   };
 
+  const docRow = (d: FlowsBrowseLibrary["groups"][number]["docs"][number]) => (
+    <button key={d.id} onClick={() => void run(d.id)} disabled={runningId !== null}
+      className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] hover:border-cyan-400 text-left disabled:opacity-50">
+      <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+      <span className="flex-1 min-w-0">
+        <span className="block text-xs font-bold text-[var(--color-text)] truncate">{d.name}</span>
+        <span className="block text-[10px] text-[var(--color-text-faint)]">
+          {d.pageCount ? `${d.pageCount} page${d.pageCount === 1 ? "" : "s"}` : "page count pending"}
+          {d.status && d.status !== "ready" ? ` · ${d.status}` : ""}
+        </span>
+      </span>
+      {runningId === d.id
+        ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
+        : <span className="text-[10px] font-black text-cyan-700 shrink-0">Read{pages.length > 0 ? ` p.${pages[0]}${pages.length > 1 ? "…" : ""}` : ""}</span>}
+    </button>
+  );
+
   const sheet = (
     <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
@@ -342,8 +382,9 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Read flows from a document</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Pick a PFD or block diagram from any knowledge library. The AI reads the printed pages
-              and proposes flows — only between equipment and units that exist here.
+              Every AI knowledge library, grouped by the document-control folder each PDF
+              came from. The AI reads the printed pages and proposes flows — only between
+              equipment and units that exist here.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
@@ -356,7 +397,9 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
             <select value={libraryId} onChange={(e) => setLibraryId(e.target.value)}
               className="flex-1 min-w-[10rem] px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm">
               <option value="">All knowledge libraries</option>
-              {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              {(model?.libraries ?? []).map((l) => (
+                <option key={l.id} value={l.id}>{l.name} ({l.docCount})</option>
+              ))}
             </select>
             <div className="relative flex-1 min-w-[10rem]">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
@@ -373,6 +416,11 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               <span className="text-[10px] font-black text-cyan-700 shrink-0">reads p. {pages.join(", ")}</span>
             )}
           </div>
+          {syncNote && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+              {syncNote}
+            </div>
+          )}
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
@@ -380,27 +428,68 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-0">
-          {docs === null ? (
+        <div className="flex-1 overflow-y-auto p-3 space-y-4 min-h-0">
+          {model === null && loadError === null ? (
             <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
-          ) : docs.length === 0 ? (
-            <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6 space-y-1">
-              <div>No indexed documents match{libraryId ? " in this library" : ""}.</div>
+          ) : loadError ? (
+            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {loadError}
             </div>
-          ) : docs.map((d) => (
-            <button key={d.id} onClick={() => void run(d.id)} disabled={runningId !== null}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] hover:border-cyan-400 text-left disabled:opacity-50">
-              <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-              <span className="flex-1 min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)] truncate">{d.name}</span>
-                <span className="block text-[10px] text-[var(--color-text-faint)] truncate">
-                  {libName.get(d.library_id) ?? "Library"}{d.page_count ? ` · ${d.page_count} page${d.page_count === 1 ? "" : "s"}` : ""}
+          ) : view.length === 0 ? (
+            <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6">
+              {q ? "No documents match that search." : "No knowledge libraries yet."}
+            </div>
+          ) : view.map((l) => (
+            <div key={l.id}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <BookOpen className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                <span className="text-xs font-black text-[var(--color-text)]">{l.name}</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">
+                  {l.docCount} doc{l.docCount === 1 ? "" : "s"}
                 </span>
-              </span>
-              {runningId === d.id
-                ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
-                : <span className="text-[10px] font-black text-cyan-700 shrink-0">Read{pages.length > 0 ? ` p.${pages[0]}${pages.length > 1 ? "…" : ""}` : ""}</span>}
-            </button>
+                <span className="flex-1" />
+                {model?.canSync && (
+                  <button type="button" onClick={() => void syncNow(l.id)} disabled={syncingId !== null}
+                    title="Reconcile with document control now"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-cyan-700 hover:border-cyan-400 disabled:opacity-50">
+                    <RefreshCw className={`w-3 h-3 ${syncingId === l.id ? "animate-spin" : ""}`} /> Sync
+                  </button>
+                )}
+              </div>
+
+              {/* The honest answer to "where's my folder?" — it was never
+                  linked to this AI library, and here is its name. */}
+              {!q && l.missing.length > 0 && (
+                <div className="mb-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-300 space-y-0.5">
+                  <div className="font-black">Not linked to this AI library yet:</div>
+                  {l.missing.map((m) => (
+                    <div key={m.label} className="flex items-center gap-1.5">
+                      <FolderOpen className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{m.label}</span>
+                      <span className="font-bold shrink-0">· {m.docCount} doc{m.docCount === 1 ? "" : "s"}</span>
+                    </div>
+                  ))}
+                  <div>
+                    <Link href={`/knowledge/${l.id}`} className="font-black underline hover:text-amber-900">
+                      Link the folder in this library&apos;s sources
+                    </Link>{" "}
+                    and its documents appear here.
+                  </div>
+                </div>
+              )}
+
+              {l.groups.length === 0 ? (
+                <div className="text-[11px] text-[var(--color-text-muted)] px-1 py-1.5">No indexed documents in this library yet.</div>
+              ) : l.groups.map((g) => (
+                <div key={g.key} className="mb-2">
+                  <div className="flex items-center gap-1.5 px-1 py-1 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <FolderOpen className="w-3 h-3 text-[var(--color-text-faint)]" /> {g.label}
+                    <span className="font-bold normal-case tracking-normal">· {g.docs.length}</span>
+                  </div>
+                  <div className="space-y-1">{g.docs.map(docRow)}</div>
+                </div>
+              ))}
+            </div>
           ))}
         </div>
 
