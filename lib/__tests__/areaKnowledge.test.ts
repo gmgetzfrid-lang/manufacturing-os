@@ -89,6 +89,9 @@ describe("computeAreaDrift", () => {
       { kdocId: "k1", name: "Crude PFD", collectionId: "fB", inDc: true },   // moved to unwatched folder
       { kdocId: "k2", name: "Still home", collectionId: "fA", inDc: true },  // fine
       { kdocId: "k3", name: "Deleted in DC", collectionId: null, inDc: false }, // gone entirely — sync's job
+      // Folder DELETED (dangling id): the dead-source banner owns that
+      // story — "link its new folder" would point at nothing.
+      { kdocId: "k4", name: "Orphaned by folder deletion", collectionId: "fGone", inDc: true },
     ];
     const drift = computeAreaDrift(inputs);
     expect(drift.movedOut).toEqual([{ kdocId: "k1", name: "Crude PFD" }]);

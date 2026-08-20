@@ -36,9 +36,14 @@ export const metadata = {
     "Document control, drafting workflow, AI that has read your library, and a living map of your site — for any facility that runs on drawings. Designed to support OSHA PSM 1910.119 and ISO 9001 documentation, with a one-click export of every byte you put in. No lock-in, ever.",
 };
 
+export const revalidate = 86400;
+
 export default function MarketingPage() {
   return (
     <div className="min-h-dvh bg-white text-slate-900">
+      {/* No JS (crawlers, blocked chunks): reveal everything — a blank
+          front door is worse than an unanimated one. */}
+      <noscript><style>{"[data-reveal]{opacity:1 !important}"}</style></noscript>
       <Nav />
       <Hero />
       <PromiseStrip />
@@ -156,11 +161,12 @@ function PromiseStrip() {
     { icon: <ShieldCheck className="w-5 h-5 text-emerald-700" />, title: "No lock-in, ever", body: "Three self-serve exit paths. Your whole dataset in standard formats, one click.", href: "#trust" },
     { icon: <KeyRound className="w-5 h-5 text-orange-700" />, title: "Your AI, your key", body: "The AI runs on your own provider key with per-user caps. Your documents never train anyone's model.", href: "#capabilities" },
     { icon: <ClipboardCheck className="w-5 h-5 text-blue-700" />, title: "Honest compliance", body: "We support the documentation; we don't sell certification. The line is drawn explicitly.", href: "#honesty" },
-    { icon: <FileCheck2 className="w-5 h-5 text-violet-700" />, title: "Everything audited", body: "Every login, download, approval, and export in a tamper-evident log you can hand to an auditor.", href: "#security" },
+    { icon: <FileCheck2 className="w-5 h-5 text-violet-700" />, title: "Everything audited", body: "Every login, download, approval, and export in an append-only log you can hand to an auditor.", href: "#security" },
   ];
   return (
     <section className="bg-slate-50 border-b border-slate-200">
       <div className="max-w-6xl mx-auto px-6 py-10">
+        <h2 className="sr-only">Our commitments</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {promises.map((p, i) => (
             <Reveal key={p.title} delay={i * 80}>
@@ -271,7 +277,7 @@ function PillarsSection() {
             ]}
             chips={[
               "Revision history & compare", "Supersession marking", "Status-stamped PDFs",
-              "Checkout locks (24h auto-release)", "Live editing-now chips", "Metadata-first bulk upload",
+              "Checkout locks (ad-hoc holds auto-release in 24h)", "Live editing-now chips", "Metadata-first bulk upload",
               "AI title-block ingest", "Auto document numbering", "Short links (/d/DOC-001)",
               "Custom columns & terminology", "Saved views & favorites", "Curated playbooks",
               "Library subscriptions", "Stale-copy recall", "Where-used impact panel", "Full-text search",
@@ -286,7 +292,7 @@ function PillarsSection() {
             tagline="Ask in plain language; the answer comes back cited to the exact page with the highlighted proof one click away. It can only reference documents you gave it — nothing invented."
             bullets={[
               "Reads scanned and CAD-exported drawings with vision — extracts equipment tags, audits cross-references, even traces lines",
-              "Runs on your own AI key (Claude, OpenAI, or Gemini) with per-user spend caps and full usage metering",
+              "Runs on your own AI key (Claude or OpenAI — providers that never train on your data) with per-user spend caps and full usage metering",
               "You draw the boundary: exclude any document from AI reading with one switch; sources sync from document control with your ACLs intact",
             ]}
             chips={[
@@ -335,7 +341,7 @@ function PillarsSection() {
               "Site Codebook (your numbering, taught once)", "Operating areas hub", "Equipment registry & photos",
               "Auto-categorize from tags & site codes", "Process flow map (drawn or AI-read)",
               "Plot plans with placed markers", "2D/3D interactive graph", "Process / equipment / document lenses",
-              "Path finding between any two nodes", "Per-tag backlinks", "3D point-cloud viewer",
+              "Path finding between any two nodes", "Per-tag backlinks",
               "Guided facility setup navigator",
             ]}
             delay={160}
@@ -451,7 +457,7 @@ function TrustSection() {
                 <h3 className="text-lg font-black text-slate-900 mb-1">Everything you&apos;d need to rebuild from scratch.</h3>
                 <p className="text-sm text-slate-600 leading-relaxed mb-3">
                   The export is a portable ZIP: manifest, README, the database schema DDL, one JSON file per
-                  table, and every binary file path-preserved. Unzip it, point a fresh Postgres at the schema,
+                  table, and every binary file path-preserved. Unzip it, point a fresh Postgres at the schema, apply the included migrations in order,
                   bulk-load the JSON, and you&apos;re back online — with any document-control vendor, or none.
                 </p>
                 <div className="flex flex-wrap gap-2 text-[11px] text-slate-500 font-mono">
@@ -512,7 +518,7 @@ function ComplianceHonestySection() {
               <ul className="space-y-2.5 text-sm text-slate-700">
                 <Honesty title="Document control infrastructure" body="Revision history, current-vs-superseded clarity, status stamping — the documentation backbone called for by ISO 9001 §7.5 and OSHA PSM §(d)." />
                 <Honesty title="Management of Change (MOC) tickets" body="Dedicated MOC ticket type with engineer-routed sign-off, addressing the documentation OSHA PSM §(l) requires when modifying covered processes." />
-                <Honesty title="Immutable audit trail" body="Every login, download, approval, status change written to a tamper-evident log. Exportable as evidence for internal or external audits." />
+                <Honesty title="Immutable audit trail" body="Every login, download, approval, status change written to an append-only log that nothing in the app can edit or delete. Exportable as evidence for internal or external audits." />
                 <Honesty title="Engineer-routed approval enforcement" body="Non-engineer requesters cannot self-approve engineering work; the system enforces routing to a qualified engineer." />
                 <Honesty title="Customer-owned data" body="Full data export anytime, in standard formats. Supports vendor risk management policies and disaster recovery requirements." />
               </ul>
@@ -566,11 +572,11 @@ function SecuritySection() {
     { icon: <Database className="w-5 h-5 text-blue-300" />, title: "Encryption at rest", body: "Postgres encrypted at rest by Supabase. File storage encrypted at rest by Cloudflare R2." },
     { icon: <Server className="w-5 h-5 text-blue-300" />, title: "Row-level isolation", body: "Postgres RLS scopes every query to its org. No cross-tenant leakage possible at the database layer." },
     { icon: <KeyRound className="w-5 h-5 text-blue-300" />, title: "AES-256-GCM for secrets", body: "Customer S3 credentials and personal AI provider keys encrypted at rest — never stored in the clear." },
-    { icon: <Users className="w-5 h-5 text-blue-300" />, title: "Roles + per-node access control", body: "Admin, Manager, Supervisor, Engineer, Drafter, Doc Control, Requester — plus ACLs on libraries, folders, and documents, evaluated as one chain." },
-    { icon: <PenLine className="w-5 h-5 text-blue-300" />, title: "Signature ceremony", body: "Approvals that matter require re-entering your password at the moment of signing — a session left open can't sign for you." },
+    { icon: <Users className="w-5 h-5 text-blue-300" />, title: "Roles + per-node access control", body: "Eighteen roles — from Admin and Doc Control to Contractor, Auditor, and four Engineer tiers — plus ACLs on libraries, folders, and documents, evaluated as one chain." },
+    { icon: <PenLine className="w-5 h-5 text-blue-300" />, title: "Signature ceremony", body: "Approvals that matter require fresh authentication at the moment of signing — password re-entry, or a recent sign-in for SSO accounts — recorded with the signature." },
     { icon: <GitBranch className="w-5 h-5 text-blue-300" />, title: "Configurable authority policies", body: "What each role may do — approve, issue, hold, export — is policy your admins set, enforced server-side, with a view-as simulator to preview it." },
     { icon: <Factory className="w-5 h-5 text-blue-300" />, title: "Governed AI boundary", body: "AI reads only what document-control ACLs allow for the person asking. Excluded documents are never indexed, retrieved, or cited." },
-    { icon: <ClipboardCheck className="w-5 h-5 text-blue-300" />, title: "Audited service-role usage", body: "The only code that bypasses RLS is the export endpoint — and exports log themselves to your audit trail." },
+    { icon: <ClipboardCheck className="w-5 h-5 text-blue-300" />, title: "Server-side privileged access", body: "Browser clients never hold keys that bypass RLS. Privileged server routes re-check membership and role on every call, and data exports log themselves to your audit trail." },
   ];
   return (
     <section id="security" className="bg-slate-950 text-white">

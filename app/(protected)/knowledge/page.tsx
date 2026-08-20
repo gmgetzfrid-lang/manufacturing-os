@@ -94,7 +94,7 @@ export default function KnowledgePage() {
           <div className="text-xs text-amber-800 dark:text-amber-300">
             <b>No AI provider connected yet.</b> Libraries can be built and indexed, but questions need an API key —
             open <button className="underline font-bold" onClick={() => setShowSettings(true)}>AI settings</button> and
-            add one (Anthropic, OpenAI or Gemini). The key owner pays the provider directly; this app adds no cost.
+            add one (Anthropic or OpenAI — providers that never train on your data). The key owner pays the provider directly; this app adds no cost.
           </div>
         </div>
       )}

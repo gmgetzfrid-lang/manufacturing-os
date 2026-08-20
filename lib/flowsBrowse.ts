@@ -26,7 +26,7 @@
 // Pure and testable: the API route feeds it plain data, no I/O here.
 
 export type DcDocState =
-  | "ready" | "pending_sync" | "unwatched" | "not_pdf"
+  | "ready" | "indexing" | "pending_sync" | "unwatched" | "not_pdf"
   | "not_current" | "no_file" | "held_back";
 
 export interface DcDocRow {
@@ -90,7 +90,7 @@ export interface FlowsBrowseInputs {
   /** DC folder (collection) id → shape. */
   dcFolders: Map<string, {
     name: string; libraryId: string;
-    parentId: string | null; pathNames: string[];
+    parentId: string | null;
   }>;
   /** EVERY controlled document in the org, with its AI-boundary block (null
    *  when the boundary allows it). */
@@ -177,8 +177,11 @@ export function assembleFlowsBrowse(inputs: FlowsBrowseInputs): FlowsBrowseResul
   const libsWithDocs = new Set<string>();
   for (const d of dcDocs) {
     const mirror = mirrorByDc.get(d.id);
+    // A mirror still being indexed (pending/stale/error) is NOT ready — a
+    // "Read" on it would scan page 1 of an unpaged file and blame the
+    // drawing for having no flows.
     const state: DcDocState = mirror
-      ? "ready"
+      ? (mirror.status === "ready" ? "ready" : "indexing")
       : d.block
         ? d.block
         : !isCovered(d, union)

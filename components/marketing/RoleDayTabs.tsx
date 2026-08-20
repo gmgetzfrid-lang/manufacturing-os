@@ -107,9 +107,9 @@ export function RoleDayTabs() {
   const role = ROLES.find((r) => r.key === active) ?? ROLES[0];
   return (
     <div>
-      <div className="flex flex-wrap gap-2 mb-6">
+      <div role="tablist" aria-label="Pick your job" className="flex flex-wrap gap-2 mb-6">
         {ROLES.map((r) => (
-          <button key={r.key} type="button" onClick={() => setActive(r.key)}
+          <button key={r.key} type="button" role="tab" aria-selected={r.key === active} onClick={() => setActive(r.key)}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-black border transition-all ${
               r.key === active
                 ? "bg-slate-900 text-white border-slate-900 shadow-lg scale-[1.02]"
@@ -123,7 +123,7 @@ export function RoleDayTabs() {
         style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
         {role.intro}
       </p>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div role="tabpanel" aria-live="polite" className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {role.moments.map((m, i) => (
           <div key={`${role.key}-${i}`}
             className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm"

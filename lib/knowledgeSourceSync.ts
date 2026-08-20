@@ -108,7 +108,29 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       out.errors.push(`enumerate ${source.source_id}: ${error.message}`);
       continue;
     }
-    for (const d of (docs ?? []) as DcDocRow[]) {
+    const enumerated: DcDocRow[] = [...((docs ?? []) as DcDocRow[])];
+    if (source.source_type === "library") {
+      // documents.library_id is nullable: a doc filed into one of this
+      // library's FOLDERS with a null library_id belongs to the library
+      // all the same, and skipping it here would leave it "pending sync"
+      // forever in every picker that uses the same coverage rule.
+      const folderIds = [...landscape.folders.entries()]
+        .filter(([, f]) => f.library_id === source.source_id)
+        .map(([id]) => id);
+      for (let i = 0; i < folderIds.length; i += 100) {
+        const { data: extra, error: exErr } = await supabaseAdmin
+          .from("documents")
+          .select("id, name, title, document_number, status, archived_at, current_version_id")
+          .eq("org_id", orgId).is("library_id", null)
+          .in("collection_id", folderIds.slice(i, i + 100));
+        if (exErr) {
+          out.errors.push(`enumerate ${source.source_id} folders: ${exErr.message}`);
+          continue;
+        }
+        enumerated.push(...((extra ?? []) as DcDocRow[]));
+      }
+    }
+    for (const d of enumerated) {
       if (wanted.has(d.id)) continue;
       // ONE gate, shared with every other door (lib/aiBoundary.ts). Held
       // back, superseded, archived, or fileless — each is a different reason

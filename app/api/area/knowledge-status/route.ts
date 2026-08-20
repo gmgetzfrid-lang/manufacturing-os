@@ -73,10 +73,13 @@ export async function GET(req: NextRequest) {
   }
   const docCountByFolder = new Map<string, number>();
   for (let from = 0; from < 20_000; from += 1000) {
-    const { data } = await supabaseAdmin
+    const { data, error: docErr } = await supabaseAdmin
       .from("documents")
       .select("id, collection_id, status, archived_at, current_version_id")
       .eq("org_id", orgId).order("id").range(from, from + 999);
+    // A failed page must FAIL, not read as "zero documents" — empty counts
+    // silently kill drift detection and flip checklist steps to todo.
+    if (docErr) return bad(`Couldn't count documents: ${docErr.message}`, 500);
     for (const d of (data ?? []) as Array<{
       id: string; collection_id: string | null;
       status: string | null; archived_at: string | null; current_version_id: string | null;
@@ -90,6 +93,23 @@ export async function GET(req: NextRequest) {
       docCountByFolder.set(d.collection_id, (docCountByFolder.get(d.collection_id) ?? 0) + 1);
     }
     if ((data ?? []).length < 1000) break;
+  }
+  // Roll counts up each folder's ancestry: linking "PFDs / Crude Unit"
+  // pulls in everything under it, so its advertised count must say so —
+  // a parent showing "0 docs" over full children is the inverse of honest.
+  {
+    const rolled = new Map<string, number>();
+    for (const [folderId, count] of docCountByFolder) {
+      let cur: string | null = folderId;
+      const seen = new Set<string>();
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        rolled.set(cur, (rolled.get(cur) ?? 0) + count);
+        cur = landscape.folders.get(cur)?.parent_id ?? null;
+      }
+    }
+    docCountByFolder.clear();
+    for (const [k, v] of rolled) docCountByFolder.set(k, v);
   }
   // Same ACL bar as the sources browse picker: a folder the caller can't
   // read in doc control must not surface here by name either.
@@ -112,26 +132,34 @@ export async function GET(req: NextRequest) {
       knowledgeLibraries,
       sources: [],
       counts: { ready: 0, pending: 0 },
-      drift: { deadSources: [], movedOut: [], newMatches: [] },
+      drift: { deadSources: [], movedOut: [], movedOutTotal: 0, newMatches: [] },
       suggestions: suggestFoldersForUnit(unit, allFolders),
       canManage: principal.isController,
     });
   }
 
   // ── Bound: state + drift ──────────────────────────────────────────────
-  const [{ data: srcRows, error: srcErr }, { data: kdocRows, error: kdocErr }] = await Promise.all([
-    supabaseAdmin.from("knowledge_sources")
-      .select("id, source_type, source_id, source_name")
-      .eq("org_id", orgId).eq("library_id", boundLibrary.id),
-    supabaseAdmin.from("knowledge_documents")
-      .select("id, name, status, source_document_id")
-      .eq("org_id", orgId).eq("library_id", boundLibrary.id).limit(2000),
-  ]);
+  const { data: srcRows, error: srcErr } = await supabaseAdmin
+    .from("knowledge_sources")
+    .select("id, source_type, source_id, source_name")
+    .eq("org_id", orgId).eq("library_id", boundLibrary.id);
   // A failed sources read must NOT masquerade as "no sources" — empty
   // coverage would flag every mirrored doc as moved-out and paint a false
   // data-loss warning. Fail loudly instead.
   if (srcErr) return bad(`Couldn't load the library's sources: ${srcErr.message}`, 500);
-  if (kdocErr) return bad(`Couldn't load the library's documents: ${kdocErr.message}`, 500);
+  // Mirrors, PAGED — headline counts and moved-out detection computed on an
+  // arbitrary 2000-row slice would lie on big libraries.
+  const kdocRows: Array<{ id: string; name: string; status: string | null; source_document_id: string | null }> = [];
+  for (let from = 0; from < 10_000; from += 1000) {
+    const { data, error: kdocErr } = await supabaseAdmin
+      .from("knowledge_documents")
+      .select("id, name, status, source_document_id")
+      .eq("org_id", orgId).eq("library_id", boundLibrary.id)
+      .order("id").range(from, from + 999);
+    if (kdocErr) return bad(`Couldn't load the library's documents: ${kdocErr.message}`, 500);
+    kdocRows.push(...((data ?? []) as typeof kdocRows));
+    if ((data ?? []).length < 1000) break;
+  }
   const sources = ((srcRows ?? []) as Array<{
     id: string; source_type: string; source_id: string; source_name: string;
   }>).map((s) => ({
@@ -140,9 +168,7 @@ export async function GET(req: NextRequest) {
     sourceId: s.source_id,
     name: s.source_name,
   }));
-  const kdocs = (kdocRows ?? []) as Array<{
-    id: string; name: string; status: string | null; source_document_id: string | null;
-  }>;
+  const kdocs = kdocRows;
   const counts = {
     ready: kdocs.filter((d) => d.status === "ready").length,
     pending: kdocs.filter((d) => d.status !== "ready").length,
@@ -177,9 +203,12 @@ export async function GET(req: NextRequest) {
   const dcIds = [...new Set(kdocs.map((d) => d.source_document_id).filter((x): x is string => !!x))];
   const dcById = new Map<string, { collectionId: string | null; libraryId: string | null }>();
   for (let i = 0; i < dcIds.length; i += 100) {
-    const { data } = await supabaseAdmin
+    const { data, error: dcErr } = await supabaseAdmin
       .from("documents").select("id, collection_id, library_id")
       .in("id", dcIds.slice(i, i + 100));
+    // A failed chunk would make its docs read as "deleted in doc control"
+    // and silently vanish from moved-out detection — fail instead.
+    if (dcErr) return bad(`Couldn't locate mirrored documents: ${dcErr.message}`, 500);
     for (const d of (data ?? []) as Array<{ id: string; collection_id: string | null; library_id: string | null }>) {
       dcById.set(d.id, { collectionId: d.collection_id, libraryId: d.library_id });
     }

@@ -52,9 +52,9 @@ export function TourTabs() {
 
   return (
     <div>
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div role="tablist" aria-label="Product tour" className="flex flex-wrap gap-2 mb-3">
         {TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => pick(t.key)}
+          <button key={t.key} type="button" role="tab" aria-selected={t.key === active} onClick={() => pick(t.key)}
             className={`relative px-4 py-2 rounded-xl text-sm font-black border transition-all overflow-hidden ${
               t.key === active
                 ? "bg-orange-600 text-white border-orange-600 shadow-lg"
@@ -73,8 +73,10 @@ export function TourTabs() {
         {CAPTIONS[active]}
       </p>
       <style>{`@keyframes mkt-progress { from { width: 0 } to { width: 100% } }
-@keyframes mkt-dash { to { stroke-dashoffset: -24 } }`}</style>
-      <div key={`panel-${active}`} style={{ animation: "rise 0.5s var(--ease-fluid) both" }}>
+@keyframes mkt-dash { to { stroke-dashoffset: -24 } }
+.mkt-dash-anim { animation: mkt-dash 1.2s linear infinite }
+@media (prefers-reduced-motion: reduce) { .mkt-dash-anim { animation: none } }`}</style>
+      <div key={`panel-${active}`} role="tabpanel" aria-live="polite" style={{ animation: "rise 0.5s var(--ease-fluid) both" }}>
         {active === "library" && <DocumentLibraryMockup />}
         {active === "ask" && <AskAiMockup />}
         {active === "ticket" && <DraftingTicketMockup />}
@@ -94,8 +96,11 @@ export function TourTabs() {
 // ─── Shared frame + bits ────────────────────────────────────────────────────
 
 function MockupFrame({ url, children }: { url?: string; children: React.ReactNode }) {
+  // Decorative screenshot stand-ins: inert + aria-hidden keeps their dead
+  // buttons out of the tab order and the a11y tree — the tab captions
+  // already carry the meaning.
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
+    <div inert aria-hidden className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
       <div className="bg-slate-100 border-b border-slate-200 px-3 py-2 flex items-center gap-2">
         <div className="flex gap-1.5 shrink-0">
           <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
@@ -262,7 +267,7 @@ function AskAiMockup() {
             </div>
           </div>
           <div className="px-4 py-2 bg-slate-50 border-t border-slate-200 text-[10px] text-slate-500 font-medium">
-            Runs on <b>your own AI key</b> (Claude, OpenAI, or Gemini) with per-user spend caps — your documents are never used to train anyone&apos;s model.
+            Runs on <b>your own AI key</b> (Claude or OpenAI) with per-user spend caps — your documents are never used to train anyone&apos;s model.
           </div>
         </div>
       </div>
@@ -277,14 +282,14 @@ function GraphMockup() {
   return (
     <MockupFrame url="app.manufacturing-os.com/graph">
       <div className="bg-slate-950 relative">
-        <div className="absolute top-3 left-3 z-10 flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5 px-3 pt-3">
           {["Everything", "Process flow", "Equipment", "Documents"].map((l, i) => (
             <span key={l} className={`px-2.5 py-1 rounded-lg text-[10px] font-black ${i === 1 ? "bg-cyan-500 text-slate-950" : "bg-white/10 text-white/70"}`}>{l}</span>
           ))}
         </div>
-        <svg viewBox="0 0 640 300" className="w-full h-[300px]">
+        <svg viewBox="0 0 640 300" className="w-full h-auto" style={{ aspectRatio: "640 / 300" }}>
           {/* flow edges (animated dashes) */}
-          <g stroke="#06b6d4" strokeWidth="2" fill="none" strokeDasharray="6 6" style={{ animation: "mkt-dash 1.2s linear infinite" }}>
+          <g className="mkt-dash-anim" stroke="#06b6d4" strokeWidth="2" fill="none" strokeDasharray="6 6">
             <path d="M150 150 L290 110" />
             <path d="M290 110 L430 150" />
             <path d="M430 150 L540 100" />

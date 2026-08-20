@@ -103,8 +103,13 @@ export function computeAreaDrift(inputs: AreaDriftInputs): AreaDrift {
     .filter((s) => !existingFolderIds.has(s.sourceId))
     .map((s) => ({ id: s.id, sourceName: s.sourceName }));
 
+  // "Moved out" means moved to a folder that EXISTS outside coverage (or to
+  // the library root). Docs whose folder was DELETED are the dead-source
+  // story — reporting them here too would tell the user to "link their new
+  // folder" when no new folder exists.
   const movedOut = coversEverything ? [] : mirroredDocs
-    .filter((d) => d.inDc && (!d.collectionId || !coveredFolderIds.has(d.collectionId)))
+    .filter((d) => d.inDc
+      && (!d.collectionId || (existingFolderIds.has(d.collectionId) && !coveredFolderIds.has(d.collectionId))))
     .map((d) => ({ kdocId: d.kdocId, name: d.name }));
 
   const newMatches = coversEverything ? [] : allFolders

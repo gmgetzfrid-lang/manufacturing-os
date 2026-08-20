@@ -1235,8 +1235,14 @@ export default function KnowledgeLibraryPage() {
     // The whole answer's evidence trail rides along: every resolvable doc
     // citation becomes a carousel stop, opened on the one that was clicked.
     // An answer built from §4.2.4 [1] and §4.2.5 [2] is two obvious stops,
-    // and both passages highlight while paging the same document.
-    const siblings = answer && answer.citations.includes(c) ? answer.citations : [c];
+    // and both passages highlight while paging the same document. Earlier
+    // TURNS keep their carousels too — the clicked citation is looked up in
+    // every rendered answer's array, not just the latest one.
+    const pools: Array<KnowledgeCitation[] | undefined> = [
+      answer?.citations,
+      ...thread.map((t) => t.answer.citations),
+    ];
+    const siblings = pools.find((p) => p?.includes(c)) ?? [c];
     const sources = siblings
       .filter((x) => !x.url && x.documentId)
       .map((x) => {
@@ -1253,7 +1259,11 @@ export default function KnowledgeLibraryPage() {
         } : null;
       })
       .filter((s): s is NonNullable<typeof s> => s !== null);
-    const sourceIndex = Math.max(0, sources.findIndex((s) =>
+    // Match the clicked citation by its NUMBER first — two chunks can yield
+    // identical doc+page+quote under different [n]s, and the chip the user
+    // clicked must be the chip that lights up.
+    const byN = sources.findIndex((s) => s.n === c.n);
+    const sourceIndex = Math.max(0, byN >= 0 ? byN : sources.findIndex((s) =>
       s.documentId === c.documentId && s.page === (c.page ?? 1) && s.quote === (c.quote ?? null)));
     setViewer({
       fileKey: doc.fileKey,
@@ -1265,7 +1275,7 @@ export default function KnowledgeLibraryPage() {
       tags: c.tags,
       ...(sources.length > 1 ? { sources, sourceIndex } : {}),
     });
-  }, [docs, answer, showToast]);
+  }, [docs, answer, thread, showToast]);
 
   // Show-me chips: open a document the answer NAMED. The server sends the
   // fileKey with each mention, so this works even for docs in linked
