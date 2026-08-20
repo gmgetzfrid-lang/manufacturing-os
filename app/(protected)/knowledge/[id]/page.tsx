@@ -355,7 +355,13 @@ function SectionedBlocks({ blocks, citations, onCite }: {
       }
     }
     if (cur.label !== null || cur.items.length > 0) out.push(cur);
-    return out;
+    // An empty labeled section gets NO step. Two ways one appears: a
+    // super-heading like **Basis:** whose content all lives in the ###
+    // sections right after it (those ARE the steps), and a section whose
+    // only lines were `!` imperatives — hoisted above the stepper so they
+    // are never hidden. Either way a numbered node with nothing under it
+    // reads broken.
+    return out.filter((sec) => sec.items.length > 0);
   }, [blocks]);
   const [closed, setClosed] = useState<Set<number>>(() => {
     const s = new Set<number>();
