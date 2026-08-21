@@ -303,3 +303,114 @@ describe("exampleProject", () => {
     expect(scoreBids(econ).filter((s) => s.best)).toHaveLength(1);
   });
 });
+
+// ── Adversarial-review regression pins ────────────────────────────────────
+// Each test here pins the FIX for a defect the review fleet confirmed —
+// remove one and you re-open a verified bug.
+
+describe("review regressions", () => {
+  it("a zero-dollar 'bid' never scores Infinity or wins best value", () => {
+    const zero: ParsedQuote = {
+      id: "z", vendorName: "Freebie Inc", total: 0, exclusions: [],
+      lineItems: [{ description: "Demo and repipe the exchanger circuits", hours: 500 }],
+    };
+    const real: ParsedQuote = {
+      id: "r", vendorName: "Real Co", total: 100_000, exclusions: [],
+      lineItems: [{ description: "Demo and repipe the exchanger circuits", hours: 1000, total: 100_000 }],
+    };
+    const scores = scoreBids(computeBidEconomics([zero, real]));
+    for (const s of scores) {
+      expect(Number.isFinite(s.score)).toBe(true);
+      expect(Number.isFinite(s.parts.manpower)).toBe(true);
+    }
+    expect(scores.find((s) => s.quoteId === "z")!.best).toBe(false);
+    // And the validator refuses a zero total outright.
+    expect(() => validateParsedQuote({ vendorName: "x", total: 0, lineItems: [] }, "id")).toThrow();
+  });
+
+  it("going over budget scores WORSE than sitting at budget (no discontinuity reward)", () => {
+    const at = computeProjectHealth(snapshot({ cpi: null, spent: 100_000 })).parts.find((p) => p.label === "Cost")!;
+    const over = computeProjectHealth(snapshot({ cpi: null, spent: 110_000 })).parts.find((p) => p.label === "Cost")!;
+    expect(over.score!).toBeLessThan(at.score!);
+  });
+
+  it("short-abbreviation scope (NDE / RT) is judgeable — a bid that neither prices nor excludes it is flagged", () => {
+    const withNde: ParsedQuote = {
+      id: "a", vendorName: "A", total: 150_000, exclusions: [],
+      lineItems: [
+        { description: "Demo and repipe exchanger circuits", total: 120_000 },
+        { description: "NDE (RT 10%)", total: 30_000 },
+      ],
+    };
+    const silent: ParsedQuote = {
+      id: "b", vendorName: "B", total: 120_000, exclusions: [],
+      lineItems: [{ description: "Demo and repipe exchanger circuits", total: 120_000 }],
+    };
+    const econ = computeBidEconomics([withNde, silent]);
+    expect(econ.find((e) => e.quoteId === "b")!.missingScope).toContain("NDE (RT 10%)");
+    // …while "under" in an unrelated line never counts as mentioning NDE.
+    const under: ParsedQuote = {
+      id: "c", vendorName: "C", total: 120_000, exclusions: [],
+      lineItems: [{ description: "Grout under baseplates and repipe exchanger circuits", total: 120_000 }],
+    };
+    const econ2 = computeBidEconomics([withNde, under]);
+    expect(econ2.find((e) => e.quoteId === "c")!.missingScope).toContain("NDE (RT 10%)");
+  });
+
+  it("evidence rules match whole words only — no false green from 'grounded' or 'Rapid'", () => {
+    const state: ProjectEvidenceState = {
+      turnoverAcceptedNames: [], miChecklistComplete: false,
+      documentTitles: ["NDE Report Pkg 4", "Rapid Response Plan Rev 2"],
+      equipmentTags: [],
+    };
+    const items: ChecklistItemState[] = [
+      { id: "1", text: "All piping supports grounded and bonded per spec", applicability: "applies", status: "open", manualNote: null, evidence: [] },
+      { id: "2", text: "P&ID redlines complete", applicability: "applies", status: "open", manualNote: null, evidence: [] },
+      { id: "3", text: "NDE complete per ITP", applicability: "applies", status: "open", manualNote: null, evidence: [] },
+    ];
+    const results = applyAutoEvidence(items, state);
+    // "grounded and bonded" matches no rule — untouched, never satisfied.
+    expect(results.find((r) => r.id === "1")).toBeUndefined();
+    // "Rapid Response Plan" must NOT satisfy the P&ID item.
+    const pid = results.find((r) => r.id === "2");
+    expect(pid?.status ?? "needs_evidence").toBe("needs_evidence");
+    // The real NDE doc still greens the real NDE item, citation attached.
+    const nde = results.find((r) => r.id === "3")!;
+    expect(nde.status).toBe("satisfied");
+    expect(nde.addedEvidence[0].label).toContain("NDE Report Pkg 4");
+  });
+
+  it("entries dated after schedule end still reach the S-curve's terminal totals", () => {
+    const series = buildCostSeries({
+      budget: 100_000,
+      scheduleStart: "2026-01-01", scheduleEnd: "2026-03-01",
+      commitments: [{ date: "2026-01-10", amount: 80_000 }],
+      actuals: [{ date: "2026-02-01", amount: 40_000 }, { date: "2026-03-15", amount: 40_000 }],
+    });
+    const last = series[series.length - 1];
+    expect(last.actual).toBe(80_000);        // the late invoice is not dropped
+    expect(last.planned).toBe(100_000);      // planned holds at budget past schedule end
+  });
+
+  it("quality health never grants vacuous checklist credit on a turnover-only project", () => {
+    const noTurnoverProgress = computeProjectHealth(snapshot({
+      checklistCount: 0, checklistOpenItems: 0, checklistNeedsEvidence: 0,
+      turnoverRequired: 4, turnoverAccepted: 0,
+    })).parts.find((p) => p.label === "Quality")!;
+    expect(noTurnoverProgress.score!).toBeLessThanOrEqual(5);
+  });
+
+  it("responsiveness scoring is continuous around the 2-day mark", () => {
+    const ev = (days: number): CompanyEvidence => ({
+      recordables: 0, nearMisses: 0, warnings: 0, stopWorks: 0, commendations: 0,
+      qualityManualScore: null, turnoverAccepted: 0, turnoverRejected: 0,
+      punchClosed: 0, punchTotal: 0,
+      awardsTotal: 0, finalCostTotal: 0, changeOrderCount: 0, changeOrderScopeGapCount: 0,
+      milestonesOnTheirScopes: 0, milestonesHitOnTime: 0,
+      submissionCount: 3, avgSubmitToReviewDays: null, avgAssignToSubmitDays: days,
+    });
+    const at2 = computeCompanyScorecard(ev(2)).dimensions.find((d) => d.key === "responsiveness")!.score!;
+    const just = computeCompanyScorecard(ev(2.1)).dimensions.find((d) => d.key === "responsiveness")!.score!;
+    expect(at2 - just).toBeLessThan(2);
+  });
+});

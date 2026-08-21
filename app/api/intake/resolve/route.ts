@@ -80,8 +80,10 @@ export async function GET(req: NextRequest) {
         id: String(q.id),
         fileName: (q.file_name as string | null) ?? "Quote",
         // The company sees whether their price was picked — not the numbers.
+        // A voided (withdrawn) quote reads as not selected, never as a bid
+        // that is still live.
         status: q.status === "awarded" ? "awarded"
-          : q.status === "declined" ? "not_selected"
+          : q.status === "declined" || q.status === "void" ? "not_selected"
           : "under_review",
         submittedAt: (q.created_at as string | null) ?? null,
       })),

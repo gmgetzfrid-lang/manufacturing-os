@@ -150,13 +150,16 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         console.warn("[wizard] extended fields not saved:", extErr.message);
       }
 
-      // Budget lines.
-      const accounts = budgetRows.filter((r) => r.name.trim() && Number(r.budget) >= 0 && r.budget !== "");
+      // Budget lines. A named row with a blank amount still saves (budget 0)
+      // — typed input is never silently discarded.
+      const accounts = budgetRows.filter((r) => r.name.trim() && Number(r.budget || 0) >= 0);
       if (accounts.length > 0) {
-        await supabase.from("cost_accounts").insert(accounts.map((r) => ({
+        const { error: accErr } = await supabase.from("cost_accounts").insert(accounts.map((r) => ({
           org_id: orgId, project_id: projectId,
-          name: r.name.trim(), budget: Number(r.budget), cost_type: r.type, currency: "USD",
-        }))).then(() => undefined, () => undefined);
+          name: r.name.trim(), budget: Number(r.budget || 0), cost_type: r.type, currency: "USD",
+          created_by: actorUserId,
+        })));
+        if (accErr) console.warn("[wizard] budget lines not saved:", accErr.message);
       }
 
       // First milestones.
@@ -178,12 +181,16 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           org_id: orgId, project_id: projectId,
           name: r.name.trim(), kind: r.kind, trade: r.trade.trim() || null,
           company_id: byName.get(r.name.trim().toLowerCase()) ?? null,
+          created_by: actorUserId,
         }));
         const { error: pErr } = await supabase.from("project_parties").insert(rows);
         if (pErr && (pErr.code === "PGRST204" || pErr.code === "42703")) {
-          await supabase.from("project_parties")
-            .insert(rows.map(({ company_id: _c, ...rest }) => rest))
-            .then(() => undefined, () => undefined);
+          // Pre-migration: company_id doesn't exist yet — save without the link.
+          const { error: retryErr } = await supabase.from("project_parties")
+            .insert(rows.map(({ company_id: _c, ...rest }) => rest));
+          if (retryErr) console.warn("[wizard] contractors not saved:", retryErr.message);
+        } else if (pErr) {
+          console.warn("[wizard] contractors not saved:", pErr.message);
         }
       }
 

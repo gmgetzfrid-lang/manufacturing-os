@@ -154,7 +154,11 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                 {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
                 <StatusChip status={doc.status} />
                 {canManage && doc.status === "draft" && (
-                  <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
+                  <>
+                    <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
+                    <button onClick={() => void typeTotal(doc)}
+                      className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>
+                  </>
                 )}
                 {canManage && doc.status === "parsed" && (
                   <PostControls accounts={accounts} busy={busy === doc.id}
@@ -200,6 +204,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, canMan
   const scores = useMemo(() => new Map(scoreBids(econ).map((s) => [s.quoteId, s])), [econ]);
   const awarded = groupDocs.find((d) => d.status === "awarded");
   const unread = groupDocs.filter((d) => d.status === "draft");
+  // Bids with a human-typed total but no readable extraction (unreadable
+  // scans) — comparable on price only, but fully awardable.
+  const manualBids = useMemo(
+    () => groupDocs.filter((d) =>
+      d.status !== "void" && d.status !== "draft" && !parsedQuoteFrom(d) && (d.totalAmount ?? 0) > 0),
+    [groupDocs]);
 
   const award = async (doc: CostDocument, accountId: string) => {
     const total = doc.totalAmount ?? parsedQuoteFrom(doc)?.total ?? 0;
@@ -332,6 +342,27 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, canMan
                 </tbody>
               </table>
             </div>
+          )}
+          {manualBids.length > 0 && (
+            <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+              {manualBids.map((d) => (
+                <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" ? "opacity-55" : ""}`}>
+                  <span className="font-bold text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
+                  <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file — it competes on price only, with no manpower or coverage score.">
+                    typed total — price only
+                  </span>
+                  <StatusChip status={d.status} />
+                  {canManage && !awarded && d.status === "parsed" && (
+                    <PostControls accounts={accounts} busy={busy === d.id}
+                      onPost={(accountId) => award(d, accountId)} label="Award" />
+                  )}
+                  {canManage && d.status === "parsed" && (
+                    <VoidButton doc={d} actor={actor} busy={busy === d.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
           {econ.length > 1 && (
             <div className="text-[10px] text-[var(--color-text-muted)]">

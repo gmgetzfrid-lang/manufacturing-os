@@ -21,9 +21,11 @@ export async function resolveDocumentFile(orgId: string, documentId: string): Pr
   if (!doc) return null;
   const versionId = (doc.current_version_id as string | null) ?? (doc.pending_version_id as string | null);
   if (!versionId) return null;
+  // org_id re-checked on the version too: the pointer columns are
+  // member-writable, so a forged cross-org version id must never resolve.
   const { data: ver } = await supabaseAdmin
     .from("document_versions").select("file_url, file_type")
-    .eq("id", versionId).maybeSingle();
+    .eq("id", versionId).eq("org_id", orgId).maybeSingle();
   if (!ver?.file_url) return null;
   return {
     documentId: String(doc.id),

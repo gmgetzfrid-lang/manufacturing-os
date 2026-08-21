@@ -43,25 +43,27 @@ function cumulativeAt(sorted: DatedAmount[], atMs: number): number {
   return sum;
 }
 
-/** The S-curve series. Span = schedule dates when present, else the entry
- *  date range; a single-day span still renders (two points). */
+/** The S-curve series. The GRID spans schedule dates extended to cover
+ *  every entry (a late invoice or closeout CO must never vanish from the
+ *  chart's terminal totals); the PLANNED line still climbs across the
+ *  schedule span only, holding flat at budget beyond schedule end. A
+ *  single-day span still renders (two points). */
 export function buildCostSeries(input: CostSeriesInput): CostSeriesPoint[] {
   const points = Math.max(2, input.points ?? 40);
   const entries = [...input.commitments, ...input.actuals]
     .map((e) => toMs(e.date))
     .filter(Number.isFinite);
-  const startMs = input.scheduleStart && Number.isFinite(toMs(input.scheduleStart))
-    ? toMs(input.scheduleStart)
-    : entries.length ? Math.min(...entries) : NaN;
-  const endMs = input.scheduleEnd && Number.isFinite(toMs(input.scheduleEnd))
-    ? toMs(input.scheduleEnd)
-    : entries.length ? Math.max(...entries) : NaN;
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
+  const planStart = input.scheduleStart ? toMs(input.scheduleStart) : NaN;
+  const planEnd = input.scheduleEnd ? toMs(input.scheduleEnd) : NaN;
+  const candidatesStart = [planStart, ...(entries.length ? [Math.min(...entries)] : [])].filter(Number.isFinite);
+  const candidatesEnd = [planEnd, ...(entries.length ? [Math.max(...entries)] : [])].filter(Number.isFinite);
+  if (candidatesStart.length === 0 || candidatesEnd.length === 0) return [];
+  const startMs = Math.min(...candidatesStart);
+  const endMs = Math.max(...candidatesEnd);
   const span = Math.max(endMs - startMs, DAY);
 
-  const hasPlan = input.budget > 0
-    && !!input.scheduleStart && Number.isFinite(toMs(input.scheduleStart))
-    && !!input.scheduleEnd && Number.isFinite(toMs(input.scheduleEnd));
+  const hasPlan = input.budget > 0 && Number.isFinite(planStart) && Number.isFinite(planEnd);
+  const planSpan = hasPlan ? Math.max(planEnd - planStart, DAY) : DAY;
   const commitments = [...input.commitments].sort((a, b) => toMs(a.date) - toMs(b.date));
   const actuals = [...input.actuals].sort((a, b) => toMs(a.date) - toMs(b.date));
 
@@ -70,7 +72,7 @@ export function buildCostSeries(input: CostSeriesInput): CostSeriesPoint[] {
     const t = startMs + (span * i) / (points - 1);
     out.push({
       date: iso(t),
-      planned: hasPlan ? (input.budget * Math.min(Math.max((t - startMs) / span, 0), 1)) : null,
+      planned: hasPlan ? (input.budget * Math.min(Math.max((t - planStart) / planSpan, 0), 1)) : null,
       committed: cumulativeAt(commitments, t),
       actual: cumulativeAt(actuals, t),
     });

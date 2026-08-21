@@ -72,10 +72,20 @@ export interface BidScore {
 const norm = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Whole-word presence — substring matching would let "under" count as a
+ *  mention of "nde" and quietly hide missing NDE scope. */
+const hasWord = (hay: string, word: string) => new RegExp(`\\b${escapeRe(word)}\\b`).test(hay);
+
 /** Loose scope matching: one bid "priced" a scope item if any of its line
  *  descriptions or exclusions shares the item's normalized head words. */
 function mentions(quote: ParsedQuote, item: string): boolean {
-  const key = norm(item).split(" ").filter((w) => w.length > 3).slice(0, 3);
+  const words = norm(item).split(" ");
+  // Head words prefer substantial tokens, but craft abbreviations (NDE,
+  // PWHT, RT, UT, PMI…) are short — fall back to 2+-letter words so scope
+  // like "NDE (RT 10%)" is judgeable instead of permanently invisible.
+  let key = words.filter((w) => w.length > 3).slice(0, 3);
+  if (key.length === 0) key = words.filter((w) => w.length >= 2 && !/^\d+$/.test(w)).slice(0, 3);
   if (key.length === 0) return true; // too generic to judge — never flag
   const hay = [
     ...quote.lineItems.map((l) => norm(l.description)),
@@ -85,7 +95,7 @@ function mentions(quote: ParsedQuote, item: string): boolean {
   // in the exclusions must match the scope line "Insulation reinstatement
   // complete"; demanding every word would re-flag honestly-excluded scope.
   const need = Math.ceil((key.length * 2) / 3);
-  return hay.some((h) => key.filter((w) => h.includes(w)).length >= need);
+  return hay.some((h) => key.filter((w) => hasWord(h, w)).length >= need);
 }
 
 /** Economics per bid, computed against the whole field (for missing-scope). */
@@ -150,7 +160,9 @@ export function scoreBids(
 
   const scored = econ.map((e) => {
     const price = e.total > 0 && minTotal > 0 ? (minTotal / e.total) * 100 : 0;
-    const manpower = e.dollarsPerHour != null && minDph != null
+    // The > 0 guard matters: a zero-dollar "bid" would otherwise divide to
+    // Infinity and crown itself best value.
+    const manpower = e.dollarsPerHour != null && e.dollarsPerHour > 0 && minDph != null
       ? (minDph / e.dollarsPerHour) * 100
       : 0; // undisclosed hours = floor, by design
     const gaps = e.missingScope.length + e.exclusionCount;
@@ -181,7 +193,7 @@ export function validateParsedQuote(raw: unknown, id: string): ParsedQuote {
   const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
   const total = num(r.total);
-  if (total == null || total < 0) throw new Error("Couldn't read a total price from the quote.");
+  if (total == null || total <= 0) throw new Error("Couldn't read a total price from the quote.");
   const items = Array.isArray(r.lineItems) ? r.lineItems : [];
   return {
     id,

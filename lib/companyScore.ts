@@ -140,7 +140,9 @@ export function computeCompanyScorecard(e: CompanyEvidence): CompanyScorecard {
       dims.push({ key: "responsiveness", label: "Responsiveness", score: null, detail: "No portal history yet" });
     } else {
       const d = e.avgAssignToSubmitDays;
-      const score = clamp(d <= 2 ? 100 : d <= 5 ? 90 - (d - 2) * 8 : d <= 14 ? 66 - (d - 5) * 5 : 20 - (d - 14));
+      // Piecewise but CONTINUOUS — a 1-hour difference in average turnaround
+      // must never cost a 10-point cliff: 2d→100, 5d→70, 14d→25, then fading.
+      const score = clamp(d <= 2 ? 100 : d <= 5 ? 100 - (d - 2) * 10 : d <= 14 ? 70 - (d - 5) * 5 : 25 - (d - 14) * 2);
       dims.push({
         key: "responsiveness", label: "Responsiveness", score: r1(score),
         detail: `${r1(d)}d avg to submit${e.avgSubmitToReviewDays != null ? ` · our review took ${r1(e.avgSubmitToReviewDays)}d` : ""}`,

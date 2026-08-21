@@ -75,9 +75,12 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
     });
   } else if (s.budget > 0) {
     const burned = s.spent / s.budget;
+    // Continuous across the 100% line: the under-budget curve bottoms out at
+    // 60 as burn approaches 100%, and the over-budget curve continues DOWN
+    // from there — going over must never score higher than staying under.
     parts.push({
-      label: "Cost", score: burned <= 1 ? 100 - clamp((burned - 0.85) * 400, 0, 40) : clamp(100 - (burned - 1) * 200),
-      detail: `${Math.round(burned * 100)}% of budget spent`,
+      label: "Cost", score: burned <= 1 ? 100 - clamp((burned - 0.85) * 400, 0, 40) : clamp(60 - (burned - 1) * 200),
+      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " — over budget" : ""}`,
     });
   } else {
     parts.push({ label: "Cost", score: null, detail: "No budget set yet" });
@@ -110,13 +113,22 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
     parts.push({ label: "Change control", score: s.budget > 0 ? 100 : null, detail: s.budget > 0 ? "No change orders" : "Needs a budget first" });
   }
 
-  // Quality & closeout readiness.
+  // Quality & closeout readiness. Only signals that EXIST contribute — a
+  // project with turnover requirements but no checklist doesn't collect a
+  // vacuous "checklists clear" credit (and vice versa).
   if (s.checklistCount > 0 || s.turnoverRequired > 0) {
-    const clDone = s.checklistOpenItems + s.checklistNeedsEvidence === 0;
-    const toRatio = s.turnoverRequired > 0 ? s.turnoverAccepted / s.turnoverRequired : 1;
+    const qparts: number[] = [];
+    if (s.checklistCount > 0) {
+      const unresolved = s.checklistOpenItems + s.checklistNeedsEvidence;
+      qparts.push(unresolved === 0 ? 100 : Math.max(0, 100 - unresolved * 7));
+    }
+    if (s.turnoverRequired > 0) {
+      qparts.push((s.turnoverAccepted / s.turnoverRequired) * 100);
+    }
+    const base = qparts.reduce((a, b) => a + b, 0) / qparts.length;
     parts.push({
       label: "Quality",
-      score: clamp((clDone ? 60 : Math.max(0, 60 - (s.checklistNeedsEvidence + s.checklistOpenItems) * 4)) + toRatio * 40 - s.punchOpen * 2),
+      score: clamp(base - s.punchOpen * 2),
       detail: [
         s.checklistNeedsEvidence > 0 ? `${s.checklistNeedsEvidence} checklist item${s.checklistNeedsEvidence === 1 ? "" : "s"} need evidence` : null,
         s.turnoverRequired > 0 ? `turnover ${s.turnoverAccepted}/${s.turnoverRequired} accepted` : null,

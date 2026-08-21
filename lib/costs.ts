@@ -146,7 +146,7 @@ export async function saveParty(input: {
   }
   if (!row.name) return { ok: false, error: "Party name is required." };
   const { data, error } = await supabase.from("project_parties")
-    .insert({ org_id: input.orgId, project_id: input.projectId, ...row })
+    .insert({ org_id: input.orgId, project_id: input.projectId, created_by: input.actor.uid, ...row })
     .select("id").single();
   if (error || !data) return { ok: false, error: error?.message ?? "Couldn't create the party." };
   await audit("COST_PARTY_CREATED", input.orgId, String(data.id), input.actor, { name: row.name });
@@ -191,7 +191,7 @@ export async function saveAccount(input: {
   }
   if (!row.name) return { ok: false, error: "Account name is required." };
   const { data, error } = await supabase.from("cost_accounts")
-    .insert({ org_id: input.orgId, project_id: input.projectId, budget: 0, ...row })
+    .insert({ org_id: input.orgId, project_id: input.projectId, budget: 0, created_by: input.actor.uid, ...row })
     .select("id").single();
   if (error || !data) return { ok: false, error: error?.message ?? "Couldn't create the account." };
   await audit("COST_ACCOUNT_CREATED", input.orgId, String(data.id), input.actor, { name: row.name, code: row.code ?? null });
@@ -213,12 +213,15 @@ export async function addEntry(input: {
   entryType: CostEntryType; amount: number; entryDate: string;
   partyId?: string | null; description?: string | null; reference?: string | null;
   actor: Actor;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; entryId?: string }> {
   if (!Number.isFinite(input.amount) || input.amount === 0) {
     return { ok: false, error: "Amount must be a non-zero number." };
   }
-  if (input.entryType !== "adjustment" && input.amount < 0) {
-    return { ok: false, error: "Only adjustments can be negative — use an adjustment to credit an account." };
+  // Actuals record money that really left — never negative. Commitments may
+  // be signed (a change-order CREDIT reduces the promised side, the same
+  // side the original award lives on) and adjustments are signed by nature.
+  if (input.entryType === "actual" && input.amount < 0) {
+    return { ok: false, error: "Actuals can't be negative — post a credit as an adjustment (or a commitment credit for descoped awards)." };
   }
   const { data, error } = await supabase.from("cost_entries").insert({
     org_id: input.orgId, project_id: input.projectId,
@@ -237,7 +240,7 @@ export async function addEntry(input: {
   await audit("COST_ENTRY_POSTED", input.orgId, String(data.id), input.actor, {
     accountId: input.costAccountId, type: input.entryType, amount: input.amount, reference: input.reference ?? null,
   });
-  return { ok: true };
+  return { ok: true, entryId: String(data.id) };
 }
 
 /** Financial records are never deleted — voiding keeps the row with a

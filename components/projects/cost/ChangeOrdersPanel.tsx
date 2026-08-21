@@ -45,16 +45,22 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
 
   const decide = async (co: ChangeOrder, decision: "approved" | "rejected" | "void", accountId?: string) => {
     let target = co;
-    if (decision === "approved" && !co.costAccountId) {
-      if (!accountId) { setErr("Pick which budget line this change order posts to before approving."); return; }
-      const { error } = await supabase.from("change_orders").update({ cost_account_id: accountId }).eq("id", co.id);
-      if (error) { setErr(error.message); return; }
-      target = { ...co, costAccountId: accountId };
+    if (decision === "approved" && !co.costAccountId && !accountId) {
+      setErr("Pick which budget line this change order posts to before approving."); return;
     }
     if (decision === "approved") {
+      // Confirm FIRST — nothing (not even the account assignment) persists
+      // on a cancelled approval.
+      const postsTo = accountName.get(co.costAccountId ?? accountId ?? "") ?? "the budget line";
       if (!(await appConfirm({
-        message: `Approve ${co.coNumber} for ${fmtMoney(co.amount)}? This posts the money to "${accountName.get(target.costAccountId ?? "") ?? "the budget line"}" immediately.`,
+        message: `Approve ${co.coNumber} for ${fmtMoney(co.amount)}? This posts the money to "${postsTo}" immediately.`,
       }))) return;
+      if (!co.costAccountId && accountId) {
+        const { error } = await supabase.from("change_orders").update({ cost_account_id: accountId })
+          .eq("id", co.id).eq("status", "proposed");
+        if (error) { setErr(error.message); return; }
+        target = { ...co, costAccountId: accountId };
+      }
     }
     let note: string | null = null;
     if (decision === "rejected") {

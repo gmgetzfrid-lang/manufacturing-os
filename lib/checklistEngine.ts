@@ -86,7 +86,10 @@ const EVIDENCE_RULES: Array<{
     probe: (s) => firstDocMatch(s, ["weld map", "weld log"]),
   },
   {
-    match: /nde|radiograph|ultrasonic|rt \d|ut \d/i,
+    // \b guards matter: bare "nde" would fire on "under", "grounded",
+    // "recommended" — a false green on a PSSR is the one failure this
+    // module promises never to produce.
+    match: /\bnde\b|radiograph|ultrasonic|\brt \d|\but \d/i,
     probe: (s) => firstDocMatch(s, ["nde", "radiograph", "ut report", "rt report"]),
   },
   {
@@ -103,14 +106,21 @@ const EVIDENCE_RULES: Array<{
   },
   {
     match: /p&id|piping and instrument/i,
-    probe: (s) => firstDocMatch(s, ["p&id", "pid "]),
+    probe: (s) => firstDocMatch(s, ["p&id", "pid"]),
   },
 ];
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Whole-word title matching — substring matching would cite "Rapid
+ *  Response Plan" as a P&ID ("pid") or "Extended Warranty" as NDE
+ *  evidence. A false citation on a satisfied safety item is worse than no
+ *  match at all. */
 function firstDocMatch(s: ProjectEvidenceState, keys: string[]): string | null {
+  const patterns = keys.map((k) => new RegExp(`\\b${escapeRe(norm(k))}\\b`));
   for (const t of s.documentTitles) {
     const n = norm(t);
-    if (keys.some((k) => n.includes(norm(k)))) return `Document on file: "${t}"`;
+    if (patterns.some((p) => p.test(n))) return `Document on file: "${t}"`;
   }
   return null;
 }

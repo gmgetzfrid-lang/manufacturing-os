@@ -44,10 +44,12 @@ async function authHeader(): Promise<Record<string, string>> {
   return data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : {};
 }
 
-export default function QualityTab({ orgId, projectId, canManage, uid, userEmail, jobKind }: {
+export default function QualityTab({ orgId, projectId, canManage, uid, userEmail, jobKind, onDataChanged }: {
   orgId: string; projectId: string; canManage: boolean;
   uid: string; userEmail?: string | null;
   jobKind: string | null;
+  /** Fires after each data reload so the page's coach/health re-gathers. */
+  onDataChanged?: () => void;
 }) {
   const actor: Actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
   const [err, setErr] = useState<string | null>(null);
@@ -67,6 +69,8 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
+    onDataChanged?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -674,7 +678,9 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, se
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
           {[...open, ...closed].map((it) => {
-            const overdue = it.status === "open" && it.dueDate && Date.parse(it.dueDate) < now;
+            // Overdue starts AFTER the due day ends, in the viewer's timezone
+            // — an item due today is due, not late.
+            const overdue = it.status === "open" && it.dueDate && new Date(`${it.dueDate}T23:59:59`).getTime() < now;
             return (
               <li key={it.id} className={`px-4 py-2 flex items-center gap-2 text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
                 <span className={`w-2 h-2 rounded-full shrink-0 ${it.status === "done" ? "bg-emerald-500" : it.status === "void" ? "bg-[var(--color-border-strong)]" : overdue ? "bg-rose-500" : "bg-amber-500"}`} />

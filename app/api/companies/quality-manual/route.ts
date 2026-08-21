@@ -85,8 +85,13 @@ export async function POST(req: NextRequest) {
   }
 
   const block = extractJsonBlock(text);
-  const parsed = block ? (JSON.parse(block) as { findings?: unknown }) : null;
-  const findings = validateRubricFindings(parsed?.findings);
+  let findings: ReturnType<typeof validateRubricFindings>;
+  try {
+    const parsed = block ? (JSON.parse(block) as { findings?: unknown }) : null;
+    findings = validateRubricFindings(parsed?.findings);
+  } catch {
+    return bad("The evaluation wasn't valid JSON — try again.", 502);
+  }
   if (findings.length === 0) return bad("The evaluation returned nothing usable — try again.", 502);
   const score = rubricCoverageScore(findings);
 

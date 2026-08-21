@@ -35,8 +35,10 @@ const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
   { v: "adjustment", label: "Adjustment", hint: "Signed correction (can be negative to credit back)" },
 ];
 
-export default function CostsTab({ orgId, projectId, canManage, uid, userEmail }: {
+export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
+  /** Fires after each data reload so the page's coach/health re-gathers. */
+  onDataChanged?: () => void;
 }) {
   const [accounts, setAccounts] = useState<CostAccount[]>([]);
   const [entries, setEntries] = useState<CostEntry[]>([]);
@@ -78,6 +80,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail }
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
+    onDataChanged?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 

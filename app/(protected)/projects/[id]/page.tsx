@@ -100,6 +100,14 @@ export default function ProjectDetailPage() {
       window.history.replaceState(null, "", u.toString());
     } catch { /* URL sync is best-effort */ }
   }, []);
+  // Same-page ?tab= navigations (the coach's deep links live on THIS page)
+  // must switch the tab too — the state initializer only runs on mount.
+  useEffect(() => {
+    const t = search?.get("tab");
+    if (t === "intake" || t === "costs" || t === "quality" || t === "activity" || t === "schedule" || t === "members" || t === "documents") {
+      setTabState(t);
+    }
+  }, [search]);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
 
@@ -483,6 +491,7 @@ export default function ProjectDetailPage() {
             canManage={!!isAdmin || !!isOwner}
             uid={uid}
             userEmail={userEmail}
+            onDataChanged={() => setCoachKey((k) => k + 1)}
           />
         )}
         {tab === "quality" && project.id && project.orgId && uid && (
@@ -493,6 +502,7 @@ export default function ProjectDetailPage() {
             uid={uid}
             userEmail={userEmail}
             jobKind={jobKind}
+            onDataChanged={() => setCoachKey((k) => k + 1)}
           />
         )}
         {tab === "intake" && !canManage && (
@@ -652,10 +662,10 @@ export default function ProjectDetailPage() {
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
-              {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
+              {actionError && <div className="mt-2 text-xs text-red-600">{actionError}</div>}
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm

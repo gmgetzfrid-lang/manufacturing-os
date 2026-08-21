@@ -81,8 +81,15 @@ export async function POST(req: NextRequest) {
   } | null;
   if (!doc) return bad("Cost document not found.", 404);
   if (!doc.file_url) return bad("This row has no stored file to read.", 404);
-  if (doc.status === "awarded" || doc.status === "posted") {
-    return bad("This document already moved money — its extraction is locked.", 409);
+  // Only live documents are readable: awarded/posted are locked (money
+  // moved), and a declined or voided document stays dead — re-reading must
+  // never resurrect a decision someone already made.
+  if (doc.status !== "draft" && doc.status !== "parsed") {
+    return bad(
+      doc.status === "awarded" || doc.status === "posted"
+        ? "This document already moved money — its extraction is locked."
+        : `This document is ${doc.status} — upload it again if it should be back in play.`,
+      409);
   }
   const looksPdf = (doc.mime_type ?? "").includes("pdf") || /\.pdf$/i.test(doc.file_name ?? "");
   if (!looksPdf) return bad("Only PDF quotes and invoices can be read for now — ask the vendor for a PDF.", 415);

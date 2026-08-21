@@ -119,9 +119,15 @@ export async function proposeChangeOrder(input: {
 }
 
 /**
- * Decide a proposed CO. Approval POSTS the money: a commitment entry (or an
- * adjustment when the CO has no account) so every rollup, S-curve, and
- * forecast sees it immediately. Rejection/void just closes the paper.
+ * Decide a proposed CO. Approval POSTS the money: a SIGNED commitment entry
+ * (a credit CO reduces the committed side — the same side the original
+ * award lives on) so every rollup, S-curve, and forecast sees it
+ * immediately. Rejection/void just closes the paper.
+ *
+ * Concurrency-safe: the decision is CLAIMED with a compare-and-swap BEFORE
+ * money moves — two approvers on stale tabs can't both post; the loser is
+ * told the CO was already decided. If posting then fails, the claim is
+ * reverted so a clean retry is possible.
  */
 export async function decideChangeOrder(input: {
   co: ChangeOrder;
@@ -130,10 +136,28 @@ export async function decideChangeOrder(input: {
   actorId: string;
   actorName?: string | null;
 }): Promise<void> {
-  const { co } = input;
+  // Re-read — the caller's snapshot may be stale (amount, account, status).
+  const { data: row, error: readErr } = await supabase
+    .from("change_orders").select("*").eq("id", input.co.id).maybeSingle();
+  if (readErr || !row) throw new Error(readErr?.message ?? "Change order not found.");
+  const co = rowToCo(row as Record<string, unknown>);
   if (co.status !== "proposed") throw new Error(`This change order is already ${co.status}.`);
   if (input.decision === "approved" && !co.costAccountId) {
     throw new Error("Pick which budget line this change order posts to before approving.");
+  }
+
+  // Claim the decision. Zero rows matched = someone else decided first —
+  // PostgREST reports that as success, so the count is the real signal.
+  const { data: claimed, error } = await supabase.from("change_orders").update({
+    status: input.decision,
+    decided_at: new Date().toISOString(),
+    decided_by: input.actorId,
+    decided_by_name: input.actorName ?? null,
+    decision_note: input.note?.trim() || null,
+  }).eq("id", co.id).eq("status", "proposed").select("id");
+  if (error) throw new Error(error.message);
+  if (!claimed || claimed.length === 0) {
+    throw new Error("Someone else just decided this change order — refresh to see the outcome.");
   }
 
   if (input.decision === "approved" && co.costAccountId) {
@@ -142,24 +166,27 @@ export async function decideChangeOrder(input: {
       projectId: co.projectId,
       costAccountId: co.costAccountId,
       partyId: co.partyId ?? undefined,
-      entryType: co.amount >= 0 ? "commitment" : "adjustment",
+      entryType: "commitment",
       amount: co.amount,
       entryDate: new Date().toISOString().slice(0, 10),
       description: `${co.coNumber} — ${co.title}`,
       reference: co.coNumber,
       actor: { uid: input.actorId, email: input.actorName ?? null },
     });
-    if (!posted.ok) throw new Error(posted.error ?? "Couldn't post the change order to the budget line.");
+    if (!posted.ok) {
+      // Money didn't move — put the CO back so the retry is clean.
+      await supabase.from("change_orders").update({
+        status: "proposed", decided_at: null, decided_by: null, decided_by_name: null, decision_note: null,
+      }).eq("id", co.id).then(() => undefined, () => undefined);
+      throw new Error(posted.error ?? "Couldn't post the change order to the budget line.");
+    }
+    // Durable CO → cost-entry link, so an approval made in error can be
+    // unwound by voiding exactly the entry it created.
+    if (posted.entryId) {
+      await supabase.from("change_orders").update({ posted_entry_id: posted.entryId })
+        .eq("id", co.id).then(() => undefined, () => undefined);
+    }
   }
-
-  const { error } = await supabase.from("change_orders").update({
-    status: input.decision,
-    decided_at: new Date().toISOString(),
-    decided_by: input.actorId,
-    decided_by_name: input.actorName ?? null,
-    decision_note: input.note?.trim() || null,
-  }).eq("id", co.id).eq("status", "proposed");
-  if (error) throw new Error(error.message);
 
   await logAuditAction({
     action: input.decision === "approved" ? "CHANGE_ORDER_APPROVED" : input.decision === "rejected" ? "CHANGE_ORDER_REJECTED" : "CHANGE_ORDER_VOIDED",

@@ -161,9 +161,52 @@ export function quoteGroups(docs: CostDocument[]): Array<{ group: string; docs: 
 }
 
 /**
+ * Claim a cost document's next lifecycle state with a compare-and-swap:
+ * the UPDATE only matches while the row is still in an expected state, so
+ * two users acting on stale tabs can't both move the same money. Returns
+ * the row AS RE-READ from the DB (fresh totals — a colleague's manual
+ * correction wins over any stale snapshot).
+ */
+async function claimDocTransition(
+  docId: string,
+  fromStatuses: CostDocStatus[],
+  to: CostDocStatus,
+  actorUid: string,
+): Promise<{ ok: true; fresh: CostDocument } | { ok: false; error: string }> {
+  const { data: row, error: readErr } = await supabase
+    .from("cost_documents").select("*").eq("id", docId).maybeSingle();
+  if (readErr || !row) return { ok: false, error: readErr?.message ?? "Document not found — it may have been removed." };
+  const fresh = mapDoc(row as Record<string, unknown>);
+  if (!fromStatuses.includes(fresh.status)) {
+    return { ok: false, error: `This document is already ${COST_DOC_STATUS_LABEL[fresh.status].toLowerCase()} — refresh to see the latest.` };
+  }
+  const { data: claimed, error } = await supabase.from("cost_documents")
+    .update({ status: to, posted_at: new Date().toISOString(), posted_by: actorUid })
+    .eq("id", docId).in("status", fromStatuses)
+    .select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!claimed || claimed.length === 0) {
+    return { ok: false, error: "Someone else just decided this document — refresh to see the latest." };
+  }
+  return { ok: true, fresh };
+}
+
+/** Best-effort revert when money failed to post after a claim — the row
+ *  goes back to its prior state so a retry is clean. */
+async function revertDocTransition(docId: string, backTo: CostDocStatus): Promise<void> {
+  await supabase.from("cost_documents")
+    .update({ status: backTo, posted_at: null, posted_by: null })
+    .eq("id", docId)
+    .then(() => undefined, () => undefined);
+}
+
+/**
  * Award a quote: post its total as a COMMITMENT on the chosen budget line,
  * mark it awarded, and mark the competing bids in the same RFQ group
  * declined (their paper stays — the tabulation remains reviewable).
+ * Concurrency-safe: the award is CLAIMED via compare-and-swap before any
+ * money moves, and the total is re-read from the DB so a colleague's
+ * correction (setManualTotal) is what actually posts.
  */
 export async function awardQuote(input: {
   doc: CostDocument;
@@ -173,55 +216,55 @@ export async function awardQuote(input: {
 }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
   if (doc.kind !== "quote") return { ok: false, error: "Only quotes can be awarded." };
-  if (doc.status === "awarded") return { ok: false, error: "This quote is already awarded." };
-  if (doc.status === "void" || doc.status === "declined") {
-    return { ok: false, error: `This quote is ${COST_DOC_STATUS_LABEL[doc.status].toLowerCase()} — re-upload it to award.` };
-  }
+
+  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "awarded", input.actor.uid);
+  if (!claim.ok) return { ok: false, error: claim.error };
+  const fresh = claim.fresh;
+
   // total_amount is the human-visible number (AI-written at parse, or typed
-  // via setManualTotal) — it outranks the stored extraction, so a manual
-  // correction is what actually gets awarded.
-  const total = doc.totalAmount ?? parsedQuoteFrom(doc)?.total;
+  // via setManualTotal) — it outranks the stored extraction.
+  const total = fresh.totalAmount ?? parsedQuoteFrom(fresh)?.total;
   if (total == null || !(total > 0)) {
+    await revertDocTransition(doc.id, fresh.status);
     return { ok: false, error: "No readable total on this quote yet — run the AI read (or type the total) first." };
   }
 
   const posted = await addEntry({
-    orgId: doc.orgId, projectId: doc.projectId,
+    orgId: fresh.orgId, projectId: fresh.projectId,
     costAccountId: input.costAccountId,
-    partyId: doc.partyId ?? undefined,
+    partyId: fresh.partyId ?? undefined,
     entryType: "commitment",
     amount: total,
     entryDate: new Date().toISOString().slice(0, 10),
-    description: `Award — ${doc.vendorName ?? "vendor"}${doc.rfqGroup ? ` (${doc.rfqGroup})` : ""}`,
-    reference: doc.docNumber ?? doc.fileName ?? undefined,
+    description: `Award — ${fresh.vendorName ?? "vendor"}${fresh.rfqGroup ? ` (${fresh.rfqGroup})` : ""}`,
+    reference: fresh.docNumber ?? fresh.fileName ?? undefined,
     actor: input.actor,
   });
-  if (!posted.ok) return { ok: false, error: posted.error ?? "Couldn't post the commitment." };
+  if (!posted.ok) {
+    await revertDocTransition(doc.id, fresh.status);
+    return { ok: false, error: posted.error ?? "Couldn't post the commitment." };
+  }
 
-  const nowIso = new Date().toISOString();
-  const { error } = await supabase.from("cost_documents")
-    .update({ status: "awarded", posted_at: nowIso, posted_by: input.actor.uid })
-    .eq("id", doc.id);
-  if (error) return { ok: false, error: `The commitment posted but the quote couldn't be marked awarded: ${error.message}` };
-
-  // Same-group rivals: still-open ones become "not selected".
+  // Same-group rivals: still-open ones become "not selected". The DB-side
+  // status guard means a rival someone awarded meanwhile is never clobbered.
   const rivals = input.siblings.filter((d) =>
-    d.id !== doc.id && d.kind === "quote" && !!doc.rfqGroup && d.rfqGroup === doc.rfqGroup &&
-    (d.status === "draft" || d.status === "parsed"));
+    d.id !== doc.id && d.kind === "quote" && !!fresh.rfqGroup && d.rfqGroup === fresh.rfqGroup);
   if (rivals.length > 0) {
     await supabase.from("cost_documents").update({ status: "declined" })
       .in("id", rivals.map((d) => d.id))
+      .in("status", ["draft", "parsed"])
       .then(() => undefined, () => undefined);
   }
 
-  await audit("COST_DOC_AWARDED", doc.orgId, doc.id, input.actor, {
-    vendor: doc.vendorName, total, rfqGroup: doc.rfqGroup, declined: rivals.map((d) => d.vendorName ?? d.id),
+  await audit("COST_DOC_AWARDED", fresh.orgId, doc.id, input.actor, {
+    vendor: fresh.vendorName, total, rfqGroup: fresh.rfqGroup, rivalsConsidered: rivals.map((d) => d.vendorName ?? d.id),
     costAccountId: input.costAccountId,
   });
   return { ok: true };
 }
 
-/** Confirm a parsed invoice: post its total as an ACTUAL and mark it. */
+/** Confirm a parsed invoice: post its total as an ACTUAL and mark it.
+ *  Same claim-before-money discipline as awardQuote. */
 export async function postInvoice(input: {
   doc: CostDocument;
   costAccountId: string;
@@ -229,33 +272,35 @@ export async function postInvoice(input: {
 }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
   if (doc.kind === "quote") return { ok: false, error: "Quotes are awarded, not posted — use Award." };
-  if (doc.status === "posted") return { ok: false, error: "This invoice is already posted." };
-  if (doc.status === "void") return { ok: false, error: "This document is void." };
-  const total = doc.totalAmount ?? (doc.parsed as { total?: number } | null)?.total ?? null;
+
+  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "posted", input.actor.uid);
+  if (!claim.ok) return { ok: false, error: claim.error };
+  const fresh = claim.fresh;
+
+  const total = fresh.totalAmount ?? (fresh.parsed as { total?: number } | null)?.total ?? null;
   if (total == null || !(total > 0)) {
+    await revertDocTransition(doc.id, fresh.status);
     return { ok: false, error: "No readable total on this invoice yet — run the AI read (or type the total) first." };
   }
 
   const posted = await addEntry({
-    orgId: doc.orgId, projectId: doc.projectId,
+    orgId: fresh.orgId, projectId: fresh.projectId,
     costAccountId: input.costAccountId,
-    partyId: doc.partyId ?? undefined,
+    partyId: fresh.partyId ?? undefined,
     entryType: "actual",
     amount: total,
-    entryDate: doc.docDate ?? new Date().toISOString().slice(0, 10),
-    description: `Invoice — ${doc.vendorName ?? "vendor"}`,
-    reference: doc.docNumber ?? doc.fileName ?? undefined,
+    entryDate: fresh.docDate ?? new Date().toISOString().slice(0, 10),
+    description: `Invoice — ${fresh.vendorName ?? "vendor"}`,
+    reference: fresh.docNumber ?? fresh.fileName ?? undefined,
     actor: input.actor,
   });
-  if (!posted.ok) return { ok: false, error: posted.error ?? "Couldn't post the actual." };
+  if (!posted.ok) {
+    await revertDocTransition(doc.id, fresh.status);
+    return { ok: false, error: posted.error ?? "Couldn't post the actual." };
+  }
 
-  const { error } = await supabase.from("cost_documents")
-    .update({ status: "posted", posted_at: new Date().toISOString(), posted_by: input.actor.uid })
-    .eq("id", doc.id);
-  if (error) return { ok: false, error: `The actual posted but the invoice couldn't be marked: ${error.message}` };
-
-  await audit("COST_DOC_POSTED", doc.orgId, doc.id, input.actor, {
-    vendor: doc.vendorName, total, costAccountId: input.costAccountId,
+  await audit("COST_DOC_POSTED", fresh.orgId, doc.id, input.actor, {
+    vendor: fresh.vendorName, total, costAccountId: input.costAccountId,
   });
   return { ok: true };
 }

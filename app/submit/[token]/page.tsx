@@ -35,6 +35,17 @@ interface Resolved {
   quotes?: SubmittedQuote[];
 }
 
+// Module-level so its identity is stable across renders — defined inside the
+// component it would remount the whole form (and drop input focus) on every
+// keystroke.
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-dvh bg-[var(--color-surface-2)] flex items-start justify-center p-4 sm:p-8">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-lg p-6">{children}</div>
+    </div>
+  );
+}
+
 export default function IntakePortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
   const [state, setState] = useState<"loading" | "ok" | "revoked" | "expired" | "notfound" | "error">("loading");
@@ -108,12 +119,6 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       setMsg({ tone: "err", text: (e as Error).message });
     } finally { setRedlineBusy(null); }
   };
-
-  const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div className="min-h-dvh bg-[var(--color-surface-2)] flex items-start justify-center p-4 sm:p-8">
-      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-lg p-6">{children}</div>
-    </div>
-  );
 
   if (state === "loading") return <Shell><div className="text-center text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" />Opening your submission portal…</div></Shell>;
   if (state !== "ok" || !data) {

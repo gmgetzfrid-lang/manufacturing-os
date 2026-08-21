@@ -50,10 +50,17 @@ COMMENT ON COLUMN projects.job_kind IS 'Wizard sizing: small | standard | capita
 COMMENT ON COLUMN projects.setup_state IS 'Wizard step outcomes; the project coach re-surfaces skipped steps.';
 
 -- ── Ownership helper (used by every owner-write policy below) ────────────
+-- Ownership alone isn't enough: the owner must also still be an ACTIVE org
+-- member, so offboarding someone (status != 'active') revokes their write
+-- access to cost/controls tables immediately, whatever projects still name
+-- them owner. search_path pinned per the house SECURITY DEFINER pattern.
 CREATE OR REPLACE FUNCTION user_owns_project(p_project UUID)
-RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER AS $$
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT EXISTS (
-    SELECT 1 FROM projects p WHERE p.id = p_project AND p.owner_user_id = auth.uid()
+    SELECT 1 FROM projects p
+    JOIN org_members m
+      ON m.org_id = p.org_id AND m.uid = auth.uid() AND m.status = 'active'
+    WHERE p.id = p_project AND p.owner_user_id = auth.uid()
   );
 $$;
 
@@ -279,6 +286,16 @@ DO $$ BEGIN
     USING (is_org_controller(org_id) OR user_owns_project(project_id))
     WITH CHECK (is_org_controller(org_id) OR user_owns_project(project_id));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- ── Cost-table schema reconciliation ─────────────────────────────────────
+-- The 20260819 backfill reconstruction of cost_entries missed the
+-- created_by_name column addEntry has always written — add it idempotently
+-- so environments rebuilt from migrations match the live schema. And the
+-- reconstructed NOT NULLs on created_by are relaxed to match cost_documents:
+-- attribution lives in audit_logs; a missing uid must never eat a budget row.
+ALTER TABLE cost_entries ADD COLUMN IF NOT EXISTS created_by_name TEXT;
+ALTER TABLE cost_accounts   ALTER COLUMN created_by DROP NOT NULL;
+ALTER TABLE project_parties ALTER COLUMN created_by DROP NOT NULL;
 
 -- ── THE UNGATING: cost writes open to the project owner ──────────────────
 -- 20260906 hardened cost tables to controller-only writes. The audit's
