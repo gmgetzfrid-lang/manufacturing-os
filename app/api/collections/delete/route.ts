@@ -63,9 +63,24 @@ export async function POST(req: NextRequest) {
     .from("documents").update({ collection_id: heirParent }).eq("collection_id", collectionId)
     .select(RETENTION_DOC_COLUMNS);
   if (docErr) return bad(`Couldn't move documents out: ${docErr.message}`, 500);
+  // 30-DAY DELETE HOLD (20261011): the emptied folder shell is soft-deleted —
+  // hidden from every listing, restorable by controllers from "Recently
+  // deleted", purged for real by the maintenance cron after 30 days. On a DB
+  // that hasn't run the migration yet, fall back to the old hard delete so
+  // the button never breaks.
   const { error: delErr } = await supabaseAdmin
-    .from("collections").delete().eq("id", collectionId);
-  if (delErr) return bad(`Couldn't delete the folder: ${delErr.message}`, 500);
+    .from("collections")
+    .update({ deleted_at: new Date().toISOString(), deleted_by: user.id })
+    .eq("id", collectionId);
+  if (delErr) {
+    if (/deleted_at|42703|PGRST204/i.test(`${delErr.code} ${delErr.message}`)) {
+      const { error: hardErr } = await supabaseAdmin
+        .from("collections").delete().eq("id", collectionId);
+      if (hardErr) return bad(`Couldn't delete the folder: ${hardErr.message}`, 500);
+    } else {
+      return bad(`Couldn't delete the folder: ${delErr.message}`, 500);
+    }
+  }
 
   // The stepped-up subfolders (and their subtrees) now carry stale
   // denormalized paths that still include the deleted folder — rebuild them

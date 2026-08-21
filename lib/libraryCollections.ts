@@ -149,16 +149,21 @@ export async function createLibrary(input: { orgId: string; name: string; type?:
 /** Flat list of a library's folders for a picker (one-time fetch). */
 export interface PickerFolder { id: string; name: string; parentId: string | null; pathNames: string[] }
 export async function listLibraryFoldersOnce(libraryId: string): Promise<PickerFolder[]> {
+  // select("*") + client-side deleted filter, deliberately: naming deleted_at
+  // in the column list would 42703 on a DB that hasn't run 20261011 yet,
+  // while "*" degrades gracefully (no column → nothing filtered).
   const { data, error } = await supabase
     .from(TABLE)
-    .select("id, name, parent_id, path_names")
+    .select("*")
     .eq("library_id", libraryId)
     .order("name", { ascending: true });
   if (error) throw new Error(error.message);
-  return ((data as Array<{ id: string; name: string; parent_id: string | null; path_names: unknown }>) ?? []).map((r) => ({
-    id: r.id, name: r.name, parentId: r.parent_id,
-    pathNames: Array.isArray(r.path_names) ? (r.path_names as string[]) : [],
-  }));
+  return ((data as Array<{ id: string; name: string; parent_id: string | null; path_names: unknown; deleted_at?: string | null }>) ?? [])
+    .filter((r) => !r.deleted_at)
+    .map((r) => ({
+      id: r.id, name: r.name, parentId: r.parent_id,
+      pathNames: Array.isArray(r.path_names) ? (r.path_names as string[]) : [],
+    }));
 }
 
 /** Update a folder's presentational customization (color/icon/cover/desc
@@ -334,6 +339,43 @@ export async function deleteFolder(collectionId: string, orgId: string): Promise
   if (!res.ok) throw new Error(out?.error ?? "Couldn't delete the folder.");
 }
 
+export interface DeletedFolder {
+  id: string;
+  name: string;
+  pathNames: string[];
+  deletedAt: string;
+  purgeAt: string;
+}
+
+/** Folders in this library's 30-day trash (controllers only, via the server). */
+export async function listDeletedFolders(orgId: string, libraryId: string): Promise<DeletedFolder[]> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in.");
+  const res = await fetch(`/api/collections/trash?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const out = (await res.json().catch(() => null)) as { error?: string; folders?: DeletedFolder[] } | null;
+  if (!res.ok) throw new Error(out?.error ?? "Couldn't load deleted folders.");
+  return out?.folders ?? [];
+}
+
+/** Bring a trashed folder back (empty, at its old spot — or the root if the
+ *  old parent is gone). Its former contents stayed where the delete moved
+ *  them and can be moved back by hand. */
+export async function restoreDeletedFolder(orgId: string, collectionId: string): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in.");
+  const res = await fetch("/api/collections/trash", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ orgId, collectionId }),
+  });
+  const out = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(out?.error ?? "Couldn't restore the folder.");
+}
+
 export function listenLibraryFolders(
   libraryId: string,
   cb: (folders: LibraryCollection[]) => void,
@@ -358,7 +400,11 @@ export function listenLibraryFolders(
       ({ data, error } = await build(false));
     }
     if (error) { opts?.onError?.(error.message); return; }
-    if (alive) cb((data || []).map((r) => fromDb(r as Record<string, unknown>)));
+    // Trash filter (20261011): soft-deleted folders vanish from every
+    // listing. Client-side so a pre-migration DB (no column) changes nothing.
+    if (alive) cb((data || [])
+      .filter((r) => !(r as Record<string, unknown>).deleted_at)
+      .map((r) => fromDb(r as Record<string, unknown>)));
   };
 
   fetch();

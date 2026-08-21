@@ -67,6 +67,7 @@ async function handler(req: NextRequest) {
     complianceNotices: number;
     complianceOrgs: number;
     complianceEmails: number;
+    folderTrashPurged?: number;
     knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
     knowledgeIngest?: { docs: number; pages: number; completed: number };
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
@@ -211,6 +212,27 @@ async function handler(req: NextRequest) {
       if ((body?.sent ?? body?.processed ?? 0) === 0) break;
     }
   } catch { /* the daily drain will catch up */ }
+
+  // 7b. FOLDER TRASH PURGE — soft-deleted folder shells past their 30-day
+  //     hold are removed for good. They're empty (contents stepped up at
+  //     delete time), so this is a plain row delete. No-op on a DB that
+  //     hasn't run 20261011 (no deleted_at column).
+  try {
+    const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const { data: purged, error: purgeErr } = await sb
+      .from("collections").delete()
+      .not("deleted_at", "is", null).lt("deleted_at", cutoff)
+      .select("id");
+    if (purgeErr) {
+      if (!/deleted_at|42703/i.test(`${purgeErr.code ?? ""} ${purgeErr.message}`)) {
+        result.errors.push(`folder-trash: ${purgeErr.message}`);
+      }
+    } else {
+      result.folderTrashPurged = (purged ?? []).length;
+    }
+  } catch (e) {
+    result.errors.push(`folder-trash: ${(e as Error).message}`);
+  }
 
   // 8. KNOWLEDGE SOURCES — the live-subscription heartbeat. Reconcile every
   //    knowledge library against its document-control sources (newly filed
