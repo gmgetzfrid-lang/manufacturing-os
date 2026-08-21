@@ -52,7 +52,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           <input
             value={filter.query}
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
-            placeholder="Search tasks, WO#, area, person…"
+            placeholder="Search tasks, work-order number, area, person…"
             className="w-full pl-8 pr-8 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]"
           />
           {filter.query && (

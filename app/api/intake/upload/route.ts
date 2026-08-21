@@ -45,6 +45,89 @@ export async function POST(req: NextRequest) {
   if (!(file instanceof File) || file.size === 0) return bad("A file is required.");
   if (file.size > MAX_BYTES) return bad("File exceeds the 100 MB limit.");
 
+  // Link purpose, fetched tolerantly — the column arrives with 20261013 and
+  // a pre-migration deployment must keep serving document links unchanged.
+  let purpose = "documents";
+  let rfqGroup: string | null = null;
+  {
+    const { data: p, error: pErr } = await supabaseAdmin
+      .from("project_intake_links").select("purpose, rfq_group").eq("id", link.id as string).maybeSingle();
+    if (!pErr && p) {
+      purpose = String((p as { purpose?: string | null }).purpose ?? "documents");
+      rfqGroup = ((p as { rfq_group?: string | null }).rfq_group ?? null);
+    }
+  }
+
+  // ── Quote branch: this link submits PRICES, not drawings. The file lands
+  // as a cost_document (kind 'quote') for the project's bid tabulation —
+  // it never touches document control. ──
+  if (purpose === "quote") {
+    const orgIdQ = String(link.org_id);
+    const projectIdQ = String(link.project_id);
+    const companyQ = String(link.company_name);
+    const noteQ = String(form.get("changeNote") ?? "").trim().slice(0, 2000) || null;
+
+    const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "quote";
+    const key = `orgs/${orgIdQ}/project-costs/${projectIdQ}/quote-${crypto.randomUUID()}-${safeName}`;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await r2.send(new PutObjectCommand({
+        Bucket: R2_BUCKET, Key: key, Body: bytes,
+        ContentType: file.type || "application/octet-stream",
+      }));
+    } catch (e) {
+      console.error("[intake/upload] R2 put failed (quote)", e);
+      return bad("File storage failed — try again.", 502);
+    }
+
+    const { data: qdoc, error: qErr } = await supabaseAdmin.from("cost_documents").insert({
+      org_id: orgIdQ, project_id: projectIdQ,
+      kind: "quote",
+      file_url: key, file_name: file.name, mime_type: file.type || null,
+      vendor_name: companyQ,
+      rfq_group: rfqGroup,
+      intake_link_id: link.id,
+      status: "draft",
+      created_by: null,
+    }).select("id").single();
+    if (qErr || !qdoc) return bad(`Couldn't record the quote: ${qErr?.message ?? "unknown"}`, 500);
+    const quoteId = String(qdoc.id);
+
+    const { data: projQ } = await supabaseAdmin
+      .from("projects").select("owner_user_id, name").eq("id", projectIdQ).maybeSingle();
+    const { data: controllersQ } = await supabaseAdmin
+      .from("org_members").select("uid").eq("org_id", orgIdQ).eq("status", "active").in("role", ["Admin", "DocCtrl"]);
+    const targetsQ = [...new Set([
+      ...(((controllersQ ?? []) as Array<{ uid: string }>).map((c) => c.uid)),
+      ...(projQ?.owner_user_id ? [String(projQ.owner_user_id)] : []),
+    ])];
+    await supabaseAdmin.from("notifications").insert(targetsQ.map((uid) => ({
+      org_id: orgIdQ, user_id: uid,
+      kind: "review_requested",
+      title: `Quote received: ${companyQ}${rfqGroup ? ` — ${rfqGroup}` : ""}`,
+      body: `${companyQ} submitted a quote through their intake link.${noteQ ? ` Note: ${noteQ}` : ""} Run the AI read from the project's Costs tab to tabulate it.`,
+      link: `/projects/${projectIdQ}?tab=costs`,
+      resource_type: "cost", resource_id: quoteId,
+      actor_name: companyQ,
+      metadata: { intake: true, quote: true, rfqGroup },
+    }))).then(() => undefined, () => undefined);
+
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "INTAKE_QUOTE_SUBMISSION",
+      resource_type: "cost", resource_id: quoteId,
+      org_id: orgIdQ, user_id: null, user_email: link.contact_email ?? null,
+      details: { company: companyQ, projectId: projectIdQ, rfqGroup, fileName: safeName, size: file.size, note: noteQ },
+    }).then(() => undefined, () => undefined);
+    await supabaseAdmin.rpc("bump_intake_use", { p_link: link.id }).then(() => undefined, () => undefined);
+
+    return NextResponse.json({
+      ok: true,
+      quoteId,
+      status: "quote_received",
+      message: `Your quote is in — ${String(projQ?.name ?? "the project")}'s team has been notified. You'll be contacted about the award decision.`,
+    });
+  }
+
   const docId = String(form.get("docId") ?? "").trim() || null;
   const ticketId = String(form.get("ticketId") ?? "").trim() || null;
   const title = String(form.get("title") ?? "").trim() || null;

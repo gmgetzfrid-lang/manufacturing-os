@@ -1,14 +1,15 @@
 "use client";
 
-// CostsTab — cost control on the project page. Budget vs committed vs
-// spent per account, rolled to a project stat strip; accounts optionally
-// pin to a schedule milestone so earned value (and CPI — the partner the
-// SPI dashboard never had) is measured, not guessed. Entries are the money
-// trail: commitments (POs/contracts), actuals (invoices/timesheets), and
-// signed adjustments. Nothing deletes — entries void with a strikethrough.
+// CostsTab — the COST COMMAND CENTER on the project page.
 //
-// Writes are Admin/DocCtrl only (RLS-enforced); everyone on the project
-// reads the same picture.
+// One screen, the whole money story, readable by a rookie: budget vs
+// committed vs spent tiles (jargon translated in place), the S-curve and a
+// forecast sentence, inbound quotes read by AI and tabulated side by side,
+// change orders with reason codes, and the account/entry machinery
+// underneath. Before the project has any numbers, the charts render with
+// watermarked EXAMPLE data — you see what you're building toward, not a
+// blank pane. Writes: org controllers and the PROJECT OWNER (RLS,
+// 20261013); everyone on the project reads the same picture.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -21,6 +22,10 @@ import {
   listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty,
   computeCostRollup, milestonePctIndex, fmtMoney,
 } from "@/lib/costs";
+import { listCostDocs, parsedQuoteFrom, type CostDocument } from "@/lib/costDocs";
+import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
+import QuotesPanel from "@/components/projects/cost/QuotesPanel";
+import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
@@ -36,7 +41,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail }
   const [accounts, setAccounts] = useState<CostAccount[]>([]);
   const [entries, setEntries] = useState<CostEntry[]>([]);
   const [parties, setParties] = useState<CostParty[]>([]);
+  const [docs, setDocs] = useState<CostDocument[]>([]);
   const [milestones, setMilestones] = useState<Array<{ id: string; name: string; pct: number }>>([]);
+  const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [openAccount, setOpenAccount] = useState<string | null>(null);
@@ -49,24 +56,39 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail }
   const refresh = useCallback(async () => {
     setErr(null);
     try {
-      const [a, e, p, { data: ms }] = await Promise.all([
+      const [a, e, p, d, { data: ms }] = await Promise.all([
         listAccounts(orgId, projectId),
         listEntries(orgId, projectId),
         listParties(orgId, projectId),
-        supabase.from("milestones").select("id, name, percent_complete, status")
+        listCostDocs(orgId, projectId).catch(() => [] as CostDocument[]), // pre-migration tolerance
+        supabase.from("milestones").select("id, name, percent_complete, status, planned_at")
           .eq("project_id", projectId).order("planned_at"),
       ]);
       setAccounts(a);
       setEntries(e);
       setParties(p);
-      const rows = ((ms ?? []) as Array<{ id: string; name: string; percent_complete: number | null; status: string }>);
+      setDocs(d);
+      const rows = ((ms ?? []) as Array<{ id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null }>);
       const idx = milestonePctIndex(rows.map((m) => ({ id: m.id, percentComplete: m.percent_complete, status: m.status })));
       setMilestones(rows.map((m) => ({ id: m.id, name: m.name, pct: idx.get(m.id) ?? 0 })));
+      const dates = rows.map((m) => m.planned_at).filter((v): v is string => !!v).sort();
+      setSchedSpan(dates.length >= 2
+        ? { start: dates[0].slice(0, 10), end: dates[dates.length - 1].slice(0, 10) }
+        : { start: null, end: null });
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Crew curve input: the awarded quote's stated labor hours.
+  const awardedLaborHours = useMemo(() => {
+    const awarded = docs.find((d) => d.kind === "quote" && d.status === "awarded");
+    if (!awarded) return null;
+    const q = parsedQuoteFrom(awarded);
+    const hours = q?.lineItems.reduce((s, l) => s + (l.hours ?? 0), 0) ?? 0;
+    return hours > 0 ? hours : null;
+  }, [docs]);
 
   const pctIndex = useMemo(() => new Map(milestones.map((m) => [m.id, m.pct])), [milestones]);
   const rollup = useMemo(() => computeCostRollup(accounts, entries, pctIndex), [accounts, entries, pctIndex]);
@@ -108,7 +130,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail }
           icon={rollup.remaining < 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
           label="Remaining" value={fmtMoney(rollup.remaining, cur)}
           tone={rollup.remaining < 0 ? "rose" : "emerald"}
-          sub={rollup.cpi != null ? `CPI ${rollup.cpi.toFixed(2)} ${rollup.cpi >= 1 ? "— under-running" : "— over-running"}` : undefined}
+          sub={rollup.cpi != null
+            ? `CPI ${rollup.cpi.toFixed(2)} — ${rollup.cpi >= 1
+              ? `getting $${rollup.cpi.toFixed(2)} of work per $1 spent`
+              : `only $${rollup.cpi.toFixed(2)} of work per $1 spent`}`
+            : undefined}
         />
       </div>
 
@@ -132,6 +158,20 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail }
           Accounts use mixed currencies ({rollup.currencies.join(", ")}) — the totals above sum raw numbers. Keep one currency per project for honest rollups.
         </div>
       )}
+
+      {/* ── The picture: S-curve, forecast sentence, crew curve (or the
+             watermarked EXAMPLE preview until real numbers exist) ── */}
+      <CostCharts rollup={rollup} entries={entries}
+        scheduleStart={schedSpan.start} scheduleEnd={schedSpan.end}
+        awardedLaborHours={awardedLaborHours} />
+
+      {/* ── Inbound quotes → AI read → bid tabulation → award ── */}
+      <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+        accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
+
+      {/* ── Change orders — never a silent budget edit ── */}
+      <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+        accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} />
 
       {/* ── Accounts ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -228,6 +268,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail }
           <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={() => void refresh()} />
         )}
       </div>
+
+      {/* ── Plain-language glossary — visible, not a hover Easter egg ── */}
+      <CostGlossary />
     </div>
   );
 }

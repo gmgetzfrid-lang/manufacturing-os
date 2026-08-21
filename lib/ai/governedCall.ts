@@ -9,7 +9,7 @@
 // Server-only: touches ai_connections via the service role.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { callAiModel, type AiProviderId, type AiCallResult } from "@/lib/ai/providerCall";
+import { callAiModel, type AiProviderId, type AiCallResult, type AiCallImage } from "@/lib/ai/providerCall";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
@@ -31,6 +31,9 @@ export async function governedAiCall(input: {
   instructionScope?: "knowledge" | "codebook" | "equipment";
   system: string;
   user: string;
+  /** Page images attached to the user turn — quote PDFs, checklists,
+   *  quality manuals read as printed. Same gates apply either way. */
+  images?: AiCallImage[];
   maxTokens?: number;
   timeoutMs?: number;
 }): Promise<AiCallResult> {
@@ -77,6 +80,7 @@ export async function governedAiCall(input: {
       apiKey: openAiKey(String(conn.api_key)),
       system: input.system + instructions,
       user: input.user,
+      images: input.images,
       maxTokens: input.maxTokens ?? 2000,
       timeoutMs: input.timeoutMs ?? 45_000,
     });

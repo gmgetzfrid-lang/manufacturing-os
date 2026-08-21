@@ -93,6 +93,17 @@ export const ORG_SCOPED_TABLES = [
   "cost_documents",
   "cost_entries",
   "project_parties",
+  "change_orders",
+
+  // Known companies registry (contractor/vendor scorecards + safety log)
+  "companies",
+  "company_events",
+
+  // Quality program (checklists, turnover packages, punch lists)
+  "project_checklists",
+  "checklist_items",
+  "turnover_items",
+  "punch_items",
 
   // Projects + schedule
   "projects",
