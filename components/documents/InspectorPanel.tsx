@@ -38,6 +38,7 @@ import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
+import { collectTagGroups } from "@/lib/documentTags";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 
@@ -152,6 +153,52 @@ export default function InspectorPanel({
     return () => { alive = false; };
   }, [selectedDoc?.id]);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
+
+  // Cheap per-selection counts: they let the ALERTS zone render only when
+  // something is actually wrong, and give drawer headers honest summaries
+  // ("3 issued · 8/12 confirmed") without opening them.
+  const [activeHoldCount, setActiveHoldCount] = useState(0);
+  const [staleHolderCount, setStaleHolderCount] = useState(0);
+  const [distSummary, setDistSummary] = useState<{ issued: number; ackDone: number; ackTotal: number } | null>(null);
+  const [holdsRefresh, setHoldsRefresh] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!selectedDoc?.id || !selectedDoc.orgId) {
+        if (alive) { setActiveHoldCount(0); setStaleHolderCount(0); setDistSummary(null); }
+        return;
+      }
+      try {
+        const { listActiveHoldsForDocument } = await import("@/lib/holds");
+        const holds = await listActiveHoldsForDocument(selectedDoc.id);
+        if (alive) setActiveHoldCount(holds.length);
+      } catch { if (alive) setActiveHoldCount(0); }
+      try {
+        const { getDocumentRecall } = await import("@/lib/staleCopies");
+        const holders = await getDocumentRecall(selectedDoc.id, selectedDoc.currentVersionId ?? null);
+        if (alive) setStaleHolderCount(holders.filter((h) => !h.hasCurrent).length);
+      } catch { if (alive) setStaleHolderCount(0); }
+      try {
+        const { listTransmittalsForDocument } = await import("@/lib/transmittals");
+        const list = await listTransmittalsForDocument(selectedDoc.orgId, selectedDoc.id);
+        const issued = list.filter((t) => t.status === "issued" || t.status === "acknowledged").length;
+        let ackDone = 0;
+        let ackTotal = 0;
+        if (selectedDoc.currentVersionId) {
+          const { data } = await supabase.from("distribution_acks")
+            .select("acknowledged_at")
+            .eq("document_id", selectedDoc.id)
+            .eq("version_id", selectedDoc.currentVersionId)
+            .limit(500);
+          const rows = (data ?? []) as Array<{ acknowledged_at: string | null }>;
+          ackTotal = rows.length;
+          ackDone = rows.filter((r) => r.acknowledged_at).length;
+        }
+        if (alive) setDistSummary({ issued, ackDone, ackTotal });
+      } catch { if (alive) setDistSummary(null); }
+    })();
+    return () => { alive = false; };
+  }, [selectedDoc?.id, selectedDoc?.orgId, selectedDoc?.currentVersionId, holdsRefresh]);
 
   // Pull the stored CAD source for the current revision. Records an EDIT
   // intent pinned to that revision (the drafter's base is now on record) and
@@ -354,8 +401,10 @@ export default function InspectorPanel({
         </div>
       )}
 
-      {/* HOLDS (Phase 5) ─────────────────────────────────────────────── */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
+      {/* ALERTS — exception states only. A healthy document renders NOTHING
+          here: active holds surface loudly; placing a first hold lives under
+          Manage & lifecycle. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount > 0 && (
         <HoldStrip
           documentId={selectedDoc.id}
           orgId={selectedDoc.orgId}
@@ -364,7 +413,18 @@ export default function InspectorPanel({
           userEmail={userEmail || undefined}
           userRole={activeRole || undefined}
           canEdit={canManageAssets || isOwner}
+          refreshKey={holdsRefresh}
+          onChange={() => setHoldsRefresh((k) => k + 1)}
         />
+      )}
+      {staleHolderCount > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex items-start gap-2">
+          <Send className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600" />
+          <span>
+            <b>{staleHolderCount} {staleHolderCount === 1 ? "person is" : "people are"} holding a superseded copy</b> downloaded
+            in the last 60 days. Open <b>Distribution &amp; sharing</b> below to see who and send a recall nudge.
+          </span>
+        </div>
       )}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
@@ -397,7 +457,7 @@ export default function InspectorPanel({
       )}
 
       {/* PRIMARY ACTIONS ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <button
           onClick={onFullScreen}
           disabled={!selectedVersion?.fileUrl}
@@ -432,26 +492,11 @@ export default function InspectorPanel({
           {checkedOutByMe ? <LogOut className="w-3.5 h-3.5" /> : <LogIn className="w-3.5 h-3.5" />}
           {checkedOutByMe ? "Check in" : "Checkout"}
         </button>
-      </div>
-
-      {/* VERSIONS & RECORDS — the everyday trio, kept one click away.
-          "Compare" opens the true-overlay revision diff with version pickers. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <button onClick={onMetadata} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
           <Pencil className="w-3.5 h-3.5" /> Metadata
         </button>
-        <button onClick={onHistory} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-          <History className="w-3.5 h-3.5" /> History
-        </button>
-        <button
-          onClick={() => setCompareOpen(true)}
-          disabled={!selectedDoc.id}
-          title="Overlay any two revisions — grey unchanged, red removed, green added"
-          className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-violet-200 bg-violet-50 text-xs font-bold text-violet-800 hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <GitCompare className="w-3.5 h-3.5" /> Compare
-        </button>
       </div>
+
 
       {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
           or a role/user granted "publish" on this library, or the accountable
@@ -503,7 +548,18 @@ export default function InspectorPanel({
           document" story: share links, transmittals (and their trail),
           read confirmations, and stale-copy recall. */}
       {selectedDoc.id && selectedDoc.orgId && uid && (
-        <CollapsibleSection id="distribution" title="Distribution & sharing" icon={Send}>
+        <CollapsibleSection
+          id="distribution"
+          title="Distribution & sharing"
+          icon={Send}
+          summary={distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)
+            ? <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
+                {distSummary.issued > 0 ? `${distSummary.issued} issued` : ""}
+                {distSummary.issued > 0 && distSummary.ackTotal > 0 ? " · " : ""}
+                {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
+              </span>
+            : undefined}
+        >
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setShareOpen(true)}
@@ -557,7 +613,24 @@ export default function InspectorPanel({
       {/* RELATIONSHIPS & IMPACT — what this document touches: where-used
           impact, AI readability, curated/automatic relations, equipment. */}
       {selectedDoc.id && selectedDoc.orgId && (
-        <CollapsibleSection id="relationships" title="Relationships & impact" icon={Layers}>
+        <CollapsibleSection
+          id="relationships"
+          title="Relationships & impact"
+          icon={Layers}
+          summary={(() => {
+            // Cheap synchronous count for the collapsed header — equipment tags
+            // come straight from metadata; impact/related counts load on open.
+            const tagCount = collectTagGroups(
+              selectedDoc.metadata as Record<string, unknown> | null,
+              customColumns,
+            ).reduce((n, g) => n + g.tags.length, 0);
+            return tagCount > 0
+              ? <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
+                  {tagCount} equipment tag{tagCount === 1 ? "" : "s"}
+                </span>
+              : undefined;
+          })()}
+        >
       {/* IMPACT — what changing this document touches. */}
       {selectedDoc.id && selectedDoc.orgId && (
         <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
@@ -717,6 +790,25 @@ export default function InspectorPanel({
 
       {/* HISTORY & ACTIVITY — the revision record plus the audit tail. */}
       <CollapsibleSection id="history" title="History & activity" icon={History} defaultOpen>
+        {/* The deep views live HERE, nested — not as a duplicate top-level
+            button showing the same list through a second door. */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => setCompareOpen(true)}
+            disabled={!selectedDoc.id}
+            title="Overlay any two revisions — grey unchanged, red removed, green added"
+            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-violet-200 bg-violet-50 text-xs font-bold text-violet-800 hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <GitCompare className="w-3.5 h-3.5" /> Compare revisions
+          </button>
+          <button
+            onClick={onHistory}
+            title="Open the full history drawer"
+            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
+          >
+            <History className="w-3.5 h-3.5" /> Full history
+          </button>
+        </div>
       {/* VERSION HISTORY ────────────────────────────────────────────── */}
       <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
         <VersionHistoryPanel
@@ -767,9 +859,10 @@ export default function InspectorPanel({
             <button
               onClick={() => setModifyOpen(true)}
               disabled={selectedDoc.status === "Archived"}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Structural changes beyond a rev-up: split into sheets, merge documents, renumber, correct a label"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Pencil className="w-3.5 h-3.5" /> Modify Document…
+              <Wrench className="w-3.5 h-3.5" /> Other lifecycle changes… <span className="font-normal text-[var(--color-text-muted)]">split · merge · renumber</span>
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -818,6 +911,21 @@ export default function InspectorPanel({
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
+          )}
+          {/* Holds live in the ALERTS zone once active; placing the first
+              one starts here. */}
+          {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount === 0 && (canManageAssets || isOwner) && (
+            <HoldStrip
+              documentId={selectedDoc.id}
+              orgId={selectedDoc.orgId}
+              userId={uid}
+              userName={userEmail || undefined}
+              userEmail={userEmail || undefined}
+              userRole={activeRole || undefined}
+              canEdit
+              refreshKey={holdsRefresh}
+              onChange={() => setHoldsRefresh((k) => k + 1)}
+            />
           )}
           {/* Danger zone — hard delete is controller-only; owners request. */}
           {/* DESTRUCTIVE ────────────────────────────────────────────────── */}
