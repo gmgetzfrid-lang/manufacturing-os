@@ -691,6 +691,183 @@ export default function LibraryExplorerPage() {
     }
   };
 
+  // ── Cut / copy / paste / undo ──────────────────────────────────────
+  const pushUndo = (entry: UndoEntry) => {
+    undoStackRef.current.push(entry);
+    if (undoStackRef.current.length > 20) undoStackRef.current.shift();
+  };
+
+  /** Ctrl+X — mark the selection for a move. Rows dim until pasted. */
+  const cutSelection = () => {
+    if (!isController || selectedDocIds.size === 0) return;
+    const sources = new Map<string, string | null>();
+    for (const d of documents) {
+      if (selectedDocIds.has(d.id!)) sources.set(d.id!, d.collectionId ?? null);
+    }
+    cutSourceRef.current = sources;
+    setCutDocIds(new Set(selectedDocIds));
+  };
+
+  /** Ctrl+V — move the cut documents into the folder being viewed. */
+  const pasteCut = async () => {
+    if (!isController || cutDocIds.size === 0) return;
+    const ids = [...cutDocIds];
+    const target = currentFolderId ?? null;
+    // Skip no-op pastes back into the source folder.
+    const moving = ids.filter((id) => (cutSourceRef.current.get(id) ?? null) !== target);
+    setCutDocIds(new Set());
+    if (moving.length === 0) return;
+    try {
+      await moveDocumentsServer({ orgId: activeOrgId!, docIds: moving, targetFolderId: target });
+      // Undo restores each doc to the folder it was CUT from.
+      const bySource = new Map<string | null, string[]>();
+      for (const id of moving) {
+        const src = cutSourceRef.current.get(id) ?? null;
+        const arr = bySource.get(src);
+        if (arr) arr.push(id); else bySource.set(src, [id]);
+      }
+      pushUndo({
+        kind: "docs",
+        label: `Moved ${moving.length} document${moving.length === 1 ? "" : "s"}`,
+        groups: [...bySource.entries()].map(([targetFolderId, docIds]) => ({ docIds, targetFolderId })),
+      });
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
+      setDocsRefreshTick((t) => t + 1);
+      setError(`Moved ${moving.length} document${moving.length === 1 ? "" : "s"} here. Ctrl+Z undoes it.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't paste the documents.");
+    }
+  };
+
+  /** Ctrl+C — copy the selected documents' permanent /d/ links. */
+  const copySelectionLinks = () => {
+    const rows = sortedDocs.filter((d) => selectedDocIds.has(d.id!));
+    if (rows.length === 0) return;
+    const text = rows
+      .map((d) => d.documentNumber
+        ? `${window.location.origin}/d/${encodeURIComponent(d.documentNumber)}`
+        : (d.title || d.name || d.id))
+      .join("\n");
+    void navigator.clipboard?.writeText(text);
+    setError(`Copied ${rows.length} document link${rows.length === 1 ? "" : "s"} to the clipboard.`);
+  };
+
+  /** Ctrl+Z — reverse the most recent move. */
+  const undoLastMove = async () => {
+    if (undoBusy) return;
+    const entry = undoStackRef.current.pop();
+    if (!entry) return;
+    setUndoBusy(true);
+    try {
+      if (entry.kind === "docs") {
+        for (const g of entry.groups) {
+          await moveDocumentsServer({ orgId: activeOrgId!, docIds: g.docIds, targetFolderId: g.targetFolderId });
+        }
+      } else {
+        await moveFolderServer({ orgId: activeOrgId!, collectionId: entry.collectionId, newParentId: entry.targetParentId });
+      }
+      nudgeKnowledgeSources(activeOrgId!, libraryId);
+      setDocsRefreshTick((t) => t + 1);
+      setError(`Undid: ${entry.label}.`);
+    } catch (e) {
+      // The reversal failed — put the entry back so Ctrl+Z can retry.
+      undoStackRef.current.push(entry);
+      setError(e instanceof Error ? e.message : "Couldn't undo that move.");
+    } finally {
+      setUndoBusy(false);
+    }
+  };
+
+  // ── Inline title rename (details layout) ───────────────────────────
+  const startTitleEdit = (docRecord: DocumentRecord) => {
+    setEditingTitleId(docRecord.id!);
+    setEditingTitleValue(docRecord.title || docRecord.name || "");
+  };
+  const saveInlineTitle = async (docId: string, value: string) => {
+    const title = value.trim();
+    setSavingTitle(true);
+    try {
+      if (title) {
+        const { error: upErr } = await supabase.from("documents")
+          .update({ title, updated_at: new Date().toISOString(), updated_by: uid ?? null })
+          .eq("id", docId);
+        if (upErr) throw new Error(upErr.message);
+        setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, title } : d)));
+      }
+      setEditingTitleId(null);
+      setEditingTitleValue("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't rename the document.");
+    } finally {
+      setSavingTitle(false);
+    }
+  };
+
+  // ── Marquee (rubber-band) selection ────────────────────────────────
+  // Starts on empty space inside a [data-doc-marquee] container; selects
+  // every [data-doc-item] whose box intersects the rectangle. Ctrl adds to
+  // the selection present when the drag began.
+  const marqueeRef = useRef<{ x1: number; y1: number; base: Set<string>; moved: boolean } | null>(null);
+  const handleMarqueeMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-doc-item], button, a, input, textarea, select")) return;
+    const base = e.ctrlKey || e.metaKey ? new Set(selectedDocIds) : new Set<string>();
+    marqueeRef.current = { x1: e.clientX, y1: e.clientY, base, moved: false };
+    const container = e.currentTarget as HTMLElement;
+    const onMove = (ev: MouseEvent) => {
+      const st = marqueeRef.current;
+      if (!st) return;
+      if (!st.moved && Math.abs(ev.clientX - st.x1) < 4 && Math.abs(ev.clientY - st.y1) < 4) return;
+      st.moved = true;
+      ev.preventDefault();
+      const rect = {
+        left: Math.min(st.x1, ev.clientX), right: Math.max(st.x1, ev.clientX),
+        top: Math.min(st.y1, ev.clientY), bottom: Math.max(st.y1, ev.clientY),
+      };
+      setMarquee({ x1: rect.left, y1: rect.top, x2: rect.right, y2: rect.bottom });
+      const hits = new Set(st.base);
+      let lastHit: string | null = null;
+      container.querySelectorAll("[data-doc-item]").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.left < rect.right && r.right > rect.left && r.top < rect.bottom && r.bottom > rect.top) {
+          const id = el.getAttribute("data-doc-item");
+          if (id) { hits.add(id); lastHit = id; }
+        }
+      });
+      applySelection({ ids: hits, anchorId: lastHit, focusId: lastHit });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      marqueeRef.current = null;
+      setMarquee(null);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // ── Folder tile multi-select (ctrl/shift; plain click still OPENS) ──
+  const folderOrderIds = (): string[] => filteredFolders.map((f) => f.id!).filter(Boolean);
+  const handleFolderTileSelect = (id: string, mods: { ctrl: boolean; shift: boolean }) => {
+    const next = clickItem(
+      { ids: selectedFolderIds, anchorId: folderAnchorRef.current, focusId: folderAnchorRef.current },
+      folderOrderIds(), id, mods,
+    );
+    setSelectedFolderIds(new Set(next.ids));
+    folderAnchorRef.current = next.anchorId;
+  };
+  // Multi-folder drag-move: dragging a SELECTED tile moves the whole set.
+  const dropMoveFolders = async (dragIds: string[], targetId: string | null) => {
+    const ids = dragIds.filter((id) => id !== targetId);
+    for (const id of ids) {
+      // Sequential — each move revalidates cycles against the live tree,
+      // and dropMoveFolder records its own undo entry.
+      await dropMoveFolder(id, targetId);
+    }
+    setSelectedFolderIds(new Set());
+  };
+
   /** How many tiles per row the current grid actually renders — measured,
    *  because auto-fill makes the count viewport-dependent. */
   const measureGridColumns = (): number => {
@@ -718,6 +895,25 @@ export default function LibraryExplorerPage() {
     if (mods.ctrl && e.key.toLowerCase() === "a") {
       e.preventDefault();
       applySelection(selectAll(order));
+      return;
+    }
+    // Explorer clipboard verbs. Cut/paste are moves (controllers, like every
+    // reorganizing act); copy hands out permanent /d/ links — duplicating a
+    // CONTROLLED document would mint a second source of truth, so it doesn't.
+    if (mods.ctrl && e.key.toLowerCase() === "x" && !e.repeat) {
+      if (isController && selectedDocIds.size > 0) { e.preventDefault(); cutSelection(); }
+      return;
+    }
+    if (mods.ctrl && e.key.toLowerCase() === "c" && !e.repeat) {
+      if (selectedDocIds.size > 0) { e.preventDefault(); copySelectionLinks(); }
+      return;
+    }
+    if (mods.ctrl && e.key.toLowerCase() === "v" && !e.repeat) {
+      if (isController && cutDocIds.size > 0) { e.preventDefault(); void pasteCut(); }
+      return;
+    }
+    if (mods.ctrl && e.key.toLowerCase() === "z" && !e.repeat) {
+      if (isController && undoStackRef.current.length > 0) { e.preventDefault(); void undoLastMove(); }
       return;
     }
     // In the tile layouts, up/down move by a full ROW (measured column
@@ -773,7 +969,8 @@ export default function LibraryExplorerPage() {
       return;
     }
     if (e.key === "Escape") {
-      clearSelection();
+      if (cutDocIds.size > 0) setCutDocIds(new Set()); // cancel a pending cut first
+      else clearSelection();
       return;
     }
     // Type-ahead: printable characters spell a document number/title.
@@ -901,6 +1098,26 @@ export default function LibraryExplorerPage() {
   const [viewDefaults, setViewDefaults] = useState<{ hasUserRow: boolean; hasOrgRow: boolean }>({ hasUserRow: false, hasOrgRow: false });
   // Right-click context menu target (position + document).
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; doc: DocumentRecord } | null>(null);
+  // Cut (Ctrl+X) marks documents for a move; Ctrl+V drops them into the
+  // folder you're viewing. Marked rows dim, exactly like Explorer.
+  const [cutDocIds, setCutDocIds] = useState<Set<string>>(new Set());
+  // Where each cut doc CAME from — captured at cut time so paste can be undone.
+  const cutSourceRef = useRef<Map<string, string | null>>(new Map());
+  // Undo stack for moves (docs + folders). Ctrl+Z pops and reverses.
+  type UndoEntry =
+    | { kind: "docs"; label: string; groups: Array<{ docIds: string[]; targetFolderId: string | null }> }
+    | { kind: "folder"; label: string; collectionId: string; targetParentId: string | null };
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const [undoBusy, setUndoBusy] = useState(false);
+  // Marquee (rubber-band) selection rectangle, in viewport coordinates.
+  const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  // Inline title rename (details layout) — the second F2 field.
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [editingTitleValue, setEditingTitleValue] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
+  // Multi-select over FOLDER tiles (ctrl/shift+click; plain click still opens).
+  const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set());
+  const folderAnchorRef = useRef<string | null>(null);
   const [sortKey, setSortKey] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   // The current folder's saved default sort (null = none, use app default).
@@ -1884,8 +2101,15 @@ export default function LibraryExplorerPage() {
   // locally so the row disappears under the cursor instead of a beat later.
   const dropMoveFolder = async (dragId: string, targetId: string | null) => {
     try {
+      const prevParent = folderMap.get(dragId)?.parentId ?? null;
       const { warning } = await moveFolderServer({ orgId: activeOrgId!, collectionId: dragId, newParentId: targetId });
       if (warning) setError(warning);
+      pushUndo({
+        kind: "folder",
+        label: `Moved folder "${folderMap.get(dragId)?.name ?? "folder"}"`,
+        collectionId: dragId,
+        targetParentId: prevParent,
+      });
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
@@ -1978,10 +2202,27 @@ export default function LibraryExplorerPage() {
   const dropMoveDocs = async (docIds: string[], folderId: string | null) => {
     if (docIds.length === 0) return;
     try {
+      // Capture each doc's CURRENT folder before the move so Ctrl+Z can
+      // put every one back where it came from.
+      const bySource = new Map<string | null, string[]>();
+      for (const d of documents) {
+        if (!docIds.includes(d.id!)) continue;
+        const src = d.collectionId ?? null;
+        if (src === (folderId ?? null)) continue;
+        const arr = bySource.get(src);
+        if (arr) arr.push(d.id!); else bySource.set(src, [d.id!]);
+      }
       // Server route: authority (additive roles), same-library validation,
       // retention re-clock against the destination, audit entry.
       const res = await moveDocumentsServer({ orgId: activeOrgId!, docIds, targetFolderId: folderId });
       if (res.warning) setError(res.warning);
+      if (bySource.size > 0) {
+        pushUndo({
+          kind: "docs",
+          label: `Moved ${docIds.length} document${docIds.length === 1 ? "" : "s"}`,
+          groups: [...bySource.entries()].map(([targetFolderId, ids]) => ({ docIds: ids, targetFolderId })),
+        });
+      }
       const moved = new Set(docIds);
       if (folderId !== currentFolderId) {
         setDocuments((prev) => prev.filter((d) => !moved.has(d.id!)));
@@ -2709,6 +2950,10 @@ export default function LibraryExplorerPage() {
             setEditingDocNumError(null);
           },
         });
+        entries.push({
+          key: "renameTitle", label: "Rename title", icon: <Pencil className="w-3.5 h-3.5" />,
+          onSelect: () => startTitleEdit(doc),
+        });
       }
       if (doc.documentNumber) {
         entries.push({
@@ -2736,7 +2981,24 @@ export default function LibraryExplorerPage() {
         }
       },
     });
+    entries.push({
+      key: "copyLinks", label: many ? `Copy ${n} links` : "Copy link(s)",
+      icon: <LinkIcon className="w-3.5 h-3.5" />,
+      onSelect: copySelectionLinks,
+    });
     if (isController) {
+      entries.push({
+        key: "cut", label: many ? `Cut ${n} (move with paste)` : "Cut (move with paste)",
+        icon: <ArrowRight className="w-3.5 h-3.5" />,
+        onSelect: cutSelection,
+      });
+      if (cutDocIds.size > 0) {
+        entries.push({
+          key: "paste", label: `Paste ${cutDocIds.size} here`,
+          icon: <FolderPlus className="w-3.5 h-3.5" />,
+          onSelect: () => void pasteCut(),
+        });
+      }
       entries.push({
         key: "move", label: many ? `Move ${n} documents…` : "Move to folder…",
         icon: <ArrowRight className="w-3.5 h-3.5" />,
@@ -3183,6 +3445,11 @@ export default function LibraryExplorerPage() {
           isController={isController}
           onNavigate={setCurrentFolderId}
           onCreateFolder={openCreateFolder}
+          onDropItems={isController ? (targetId, payload) => {
+            if (payload.folderIds?.length) void dropMoveFolders(payload.folderIds, targetId);
+            else if (payload.folderId) void dropMoveFolder(payload.folderId, targetId);
+            else if (payload.docIds?.length) void dropMoveDocs(payload.docIds, targetId);
+          } : undefined}
         />
 
         {/* MAIN AREA — full width, no inspector grid */}
@@ -3331,10 +3598,13 @@ export default function LibraryExplorerPage() {
                     onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onMoveInto={isController ? (dragId, targetId) => void dropMoveFolder(dragId, targetId) : undefined}
+                    onMoveManyInto={isController ? (ids, targetId) => void dropMoveFolders(ids, targetId) : undefined}
                     onDocsDrop={isController ? (docIds, folderId) => void dropMoveDocs(docIds, folderId) : undefined}
                     onReorder={isController ? (dragId, targetId, pos) => void dropReorderFolder(dragId, targetId, pos) : undefined}
                     onDelete={isController ? (id) => void handleDeleteFolder(id) : undefined}
                     isController={isController}
+                    selectedIds={selectedFolderIds}
+                    onTileSelect={handleFolderTileSelect}
                   />
                 </div>
               )}
@@ -3576,13 +3846,16 @@ export default function LibraryExplorerPage() {
                       layouts. Same docs, same selection, same gestures. */}
                   {docLayout !== "details" ? (
                     <div
+                      data-doc-marquee
                       className="flex-1 overflow-y-auto hidden md:block"
                       onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
+                      onMouseDown={handleMarqueeMouseDown}
                     >
                       <DocGridView
                         docs={sortedDocs}
                         layout={docLayout === "list" ? "list" : docLayout === "grid" ? "grid" : "thumbs"}
                         selectedIds={selectedDocIds}
+                        dimmedIds={cutDocIds}
                         focusedId={selFocusId}
                         draggable={isController}
                         onItemClick={(id, e) => {
@@ -3597,8 +3870,10 @@ export default function LibraryExplorerPage() {
                     </div>
                   ) : (
                   <div
+                    data-doc-marquee
                     className="flex-1 overflow-x-auto hidden md:block"
                     onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
+                    onMouseDown={handleMarqueeMouseDown}
                   >
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
                       <thead className="bg-slate-50/70 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] uppercase font-black tracking-wider">
@@ -3702,7 +3977,7 @@ export default function LibraryExplorerPage() {
                                     : isFocused
                                     ? "bg-[var(--color-surface-2)]"
                                     : "hover:bg-slate-50/60"
-                                } ${isKeyFocused ? "outline outline-1 -outline-offset-1 outline-blue-400" : ""}`}
+                                } ${isKeyFocused ? "outline outline-1 -outline-offset-1 outline-blue-400" : ""} ${cutDocIds.has(docRecord.id!) ? "opacity-50" : ""}`}
                               >
                                 {/* Left edge accent on selected row */}
                                 {(isRowSelected || isFocused) && (
@@ -3757,6 +4032,29 @@ export default function LibraryExplorerPage() {
                                   // Stacked Title cell — shows Doc Number underneath unless separate column exists
                                   if (colKey === "title") {
                                     const hasSeparateDocNum = activeColumns.includes("documentNumber");
+                                    if (editingTitleId === docRecord.id) {
+                                      return (
+                                        <td key={colKey} className={`px-3 ${rowPad}`}>
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              autoFocus
+                                              value={editingTitleValue}
+                                              onChange={(e) => setEditingTitleValue(e.target.value)}
+                                              onClick={(e) => e.stopPropagation()}
+                                              onKeyDown={(e) => {
+                                                e.stopPropagation();
+                                                if (e.key === "Enter") void saveInlineTitle(docRecord.id!, editingTitleValue);
+                                                else if (e.key === "Escape") { setEditingTitleId(null); setEditingTitleValue(""); }
+                                              }}
+                                              onBlur={() => { if (!savingTitle) void saveInlineTitle(docRecord.id!, editingTitleValue); }}
+                                              disabled={savingTitle}
+                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-blue-400 bg-blue-50 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
+                                            />
+                                            {savingTitle && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
+                                          </div>
+                                        </td>
+                                      );
+                                    }
                                     return (
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
                                         <div className="min-w-0">
@@ -3950,6 +4248,14 @@ export default function LibraryExplorerPage() {
           />
         )}
       </InspectorDrawer>
+
+      {/* MARQUEE (rubber-band) selection rectangle */}
+      {marquee && (
+        <div
+          className="fixed z-[85] border border-blue-400 bg-blue-400/10 pointer-events-none rounded-sm"
+          style={{ left: marquee.x1, top: marquee.y1, width: marquee.x2 - marquee.x1, height: marquee.y2 - marquee.y1 }}
+        />
+      )}
 
       {/* RIGHT-CLICK CONTEXT MENU on document rows/cards */}
       {ctxMenu && (

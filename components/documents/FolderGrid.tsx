@@ -40,6 +40,13 @@ interface FolderGridProps {
   onReorder?: (dragId: string, targetId: string, position: "before" | "after") => void;
   onDelete?: (id: string) => void;
   isController: boolean;
+  /** Multi-select over tiles (ctrl/shift+click). Plain click still OPENS —
+   *  folders navigate on click everywhere in this app. */
+  selectedIds?: ReadonlySet<string>;
+  onTileSelect?: (id: string, mods: { ctrl: boolean; shift: boolean }) => void;
+  /** Move SEVERAL folders at once (a drag that started on a selected tile
+   *  carries the whole selection). Falls back to per-id onMoveInto. */
+  onMoveManyInto?: (ids: string[], targetId: string) => void;
 }
 
 export default function FolderGrid({
@@ -58,8 +65,18 @@ export default function FolderGrid({
   onAckPolicy,
   onReviewControl,
   onRetention,
-  isController
+  isController,
+  selectedIds,
+  onTileSelect,
+  onMoveManyInto,
 }: FolderGridProps) {
+  // Spring-loaded folders: hovering a tile mid-drag for ~900ms opens it, so
+  // deep drops don't need a separate navigation step first.
+  const springRef = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const clearSpring = () => {
+    if (springRef.current) { clearTimeout(springRef.current.timer); springRef.current = null; }
+  };
+  useEffect(() => clearSpring, []);
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -171,16 +188,50 @@ export default function FolderGrid({
         return (
         <div
           key={folder.id}
-          onClick={() => onOpen(folder.id!)}
+          onClick={(e) => {
+            // Ctrl/shift+click SELECTS (Explorer); plain click still opens.
+            if (onTileSelect && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+              if (e.shiftKey) window.getSelection()?.removeAllRanges();
+              onTileSelect(folder.id!, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
+              return;
+            }
+            onOpen(folder.id!);
+          }}
           onContextMenu={(e) => handleContextMenu(e, folder.id!)}
           draggable={isController && !!onMoveInto}
           onDragStart={(e) => {
             e.dataTransfer.setData("application/x-folder-id", folder.id!);
+            // Dragging a SELECTED tile carries the whole selection.
+            const ids = selectedIds?.has(folder.id!) && selectedIds.size > 1
+              ? [...selectedIds] : [folder.id!];
+            if (ids.length > 1) {
+              e.dataTransfer.setData("application/x-folder-ids", JSON.stringify(ids));
+              const ghost = document.createElement("div");
+              ghost.textContent = `${ids.length} folders`;
+              ghost.style.cssText =
+                "position:absolute;top:-1000px;padding:6px 12px;background:#1e293b;color:#fff;"
+                + "border-radius:10px;font-size:12px;font-weight:700;";
+              document.body.appendChild(ghost);
+              e.dataTransfer.setDragImage(ghost, 12, 12);
+              setTimeout(() => ghost.remove(), 0);
+            }
             e.dataTransfer.effectAllowed = "move";
             setDraggingId(folder.id!);
           }}
-          onDragEnd={() => setDraggingId(null)}
+          onDragEnd={() => { setDraggingId(null); clearSpring(); }}
           onDragOver={(e) => {
+            // Spring-load: linger over a tile mid-drag (any payload, files
+            // from the OS included) and it opens, so you can drop deeper
+            // without a separate navigation trip first.
+            if ((acceptsDrag(e) || e.dataTransfer.types.includes("Files")) && draggingId !== folder.id) {
+              if (springRef.current?.id !== folder.id) {
+                clearSpring();
+                springRef.current = {
+                  id: folder.id!,
+                  timer: setTimeout(() => { springRef.current = null; onOpen(folder.id!); }, 900),
+                };
+              }
+            }
             if (!acceptsDrag(e)) return;
             const isFolderDrag = e.dataTransfer.types.includes("application/x-folder-id");
             // Edge quarters reorder among siblings; the middle moves INSIDE.
@@ -200,16 +251,34 @@ export default function FolderGrid({
             e.stopPropagation();          // the upload overlay must not fire
             setDropTarget({ id: folder.id!, zone });
           }}
-          onDragLeave={() => setDropTarget((cur) => (cur?.id === folder.id ? null : cur))}
+          onDragLeave={() => {
+            setDropTarget((cur) => (cur?.id === folder.id ? null : cur));
+            if (springRef.current?.id === folder.id) clearSpring();
+          }}
           onDrop={(e) => {
+            clearSpring();
             if (!acceptsDrag(e)) return;
             e.preventDefault();
             e.stopPropagation();
             const zone = (dropTarget && dropTarget.id === folder.id) ? dropTarget.zone : "into";
             setDropTarget(null);
             const dragFolder = e.dataTransfer.getData("application/x-folder-id");
+            const dragFolders = e.dataTransfer.getData("application/x-folder-ids");
             const dragDocs = e.dataTransfer.getData("application/x-doc-ids");
-            if (dragFolder && zone !== "into" && onReorder && dragFolder !== folder.id) {
+            // A multi-folder drag: every selected folder moves in (edge
+            // reorder is a single-folder gesture — with many it means move).
+            let folderIds: string[] = [];
+            if (dragFolders) {
+              try { folderIds = (JSON.parse(dragFolders) as string[]).filter(Boolean); }
+              catch { folderIds = []; }
+            }
+            if (folderIds.length > 1) {
+              const movable = folderIds.filter((id) => !isDescendant(id, folder.id!));
+              if (movable.length > 0) {
+                if (onMoveManyInto) onMoveManyInto(movable, folder.id!);
+                else if (onMoveInto) for (const id of movable) onMoveInto(id, folder.id!);
+              }
+            } else if (dragFolder && zone !== "into" && onReorder && dragFolder !== folder.id) {
               onReorder(dragFolder, folder.id!, zone);
             } else if (dragFolder && onMoveInto && !isDescendant(dragFolder, folder.id!)) {
               onMoveInto(dragFolder, folder.id!);
@@ -228,6 +297,8 @@ export default function FolderGrid({
               ? 'border-l-4 border-l-blue-500 border-[var(--color-border)]'
               : (dropTarget && dropTarget.id === folder.id && dropTarget.zone === "after")
               ? 'border-r-4 border-r-blue-500 border-[var(--color-border)]'
+              : selectedIds?.has(folder.id!)
+              ? 'bg-blue-50/80 dark:bg-blue-950/30 border-blue-300 ring-1 ring-blue-200'
               : contextMenu?.id === folder.id
               ? 'bg-[var(--color-accent-soft)]/60 border-[var(--color-accent)]/50 shadow-md ring-1 ring-[var(--color-accent)]/30'
               : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-accent)]/50'}
