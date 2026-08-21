@@ -62,17 +62,43 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
 
   const { data: sourceRows, error: srcErr } = await supabaseAdmin
     .from("knowledge_sources")
-    .select("id, org_id, library_id, source_type, source_id")
+    .select("id, org_id, library_id, source_type, source_id, source_name")
     .eq("library_id", libraryId);
   if (srcErr) {
     out.errors.push(`sources: ${srcErr.message}`);
     return out;
   }
-  const sources = (sourceRows ?? []) as SourceRow[];
+  const sources = (sourceRows ?? []) as Array<SourceRow & { source_name: string | null }>;
   if (sources.length === 0) return out;
   const orgId = sources[0].org_id;
 
   const landscape = await loadDcLandscape(orgId);
+
+  // ── Self-heal display names ─────────────────────────────────────────────
+  // source_name is a denormalized snapshot from link time; matching is by id
+  // so a renamed/moved DC folder keeps working — but its label would lie
+  // forever. Every sync pass recomputes the same "Library / Folder / Sub"
+  // path the link API writes and updates any that drifted. Best-effort: a
+  // failed label write must never block the document reconcile below.
+  for (const source of sources) {
+    let fresh: string | null = null;
+    if (source.source_type === "library") {
+      fresh = landscape.libraries.get(source.source_id)?.name ?? null;
+    } else {
+      const f = landscape.folders.get(source.source_id);
+      if (f) {
+        const lib = landscape.libraries.get(f.library_id)?.name ?? "Library";
+        fresh = [lib, ...(f.path_names.length ? f.path_names : [f.name])].join(" / ");
+      }
+    }
+    // A vanished container keeps its last-known name — that's exactly what
+    // the dead-source drift warning shows the user.
+    if (fresh && fresh !== source.source_name) {
+      await supabaseAdmin.from("knowledge_sources")
+        .update({ source_name: fresh }).eq("id", source.id)
+        .then(() => undefined, () => undefined);
+    }
+  }
 
   // ── The per-document AI carve-out ────────────────────────────────────────
   // Linking a library says "the AI may read this container". A single file

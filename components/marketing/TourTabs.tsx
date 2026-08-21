@@ -52,7 +52,28 @@ export function TourTabs() {
 
   return (
     <div>
-      <div role="tablist" aria-label="Product tour" className="flex flex-wrap gap-2 mb-3">
+      <div role="tablist" aria-label="Product tour" className="flex flex-wrap items-center gap-2 mb-3">
+        {/* Explicit pause/play — auto-advance must be stoppable without
+            having to park the cursor over the panel (WCAG 2.2.2). */}
+        <button
+          type="button"
+          onClick={() => setAuto((a) => !a)}
+          aria-pressed={!auto}
+          aria-label={auto ? "Pause the tour" : "Resume the tour"}
+          title={auto ? "Pause the tour" : "Resume the tour"}
+          className="w-9 h-9 shrink-0 rounded-xl border border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:text-orange-600 transition-all flex items-center justify-center"
+        >
+          {auto ? (
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor" aria-hidden="true">
+              <rect x="3" y="2.5" width="3.5" height="11" rx="1" />
+              <rect x="9.5" y="2.5" width="3.5" height="11" rx="1" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor" aria-hidden="true">
+              <path d="M4.5 2.8a1 1 0 0 1 1.53-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2a1 1 0 0 1-1.53-.85V2.8Z" />
+            </svg>
+          )}
+        </button>
         {TABS.map((t) => (
           <button key={t.key} type="button" role="tab" aria-selected={t.key === active} onClick={() => pick(t.key)}
             className={`relative px-4 py-2 rounded-xl text-sm font-black border transition-all overflow-hidden ${
