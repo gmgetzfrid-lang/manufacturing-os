@@ -79,7 +79,8 @@ import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
   listenLibraryFolders,
-  moveFolderAndDescendants,
+  moveFolderServer,
+  moveDocumentsServer,
   renameFolderAndDescendants,
   reorderFolders,
   deleteFolder,
@@ -107,6 +108,14 @@ import {
 } from "@/lib/explorerSelection";
 import DocContextMenu, { type ContextMenuEntry } from "@/components/documents/DocContextMenu";
 import DocGridView from "@/components/documents/DocGridView";
+import {
+  buildFolderPlan,
+  collectDroppedFiles,
+  filesFromDirectoryInput,
+  FolderUploadLimitError,
+  type FolderPlan,
+  type PathedFile,
+} from "@/lib/folderUpload";
 import { makeLibraryStoragePath, uploadToPath } from "@/lib/storage";
 import type {
   AccessControl,
@@ -428,7 +437,100 @@ export default function LibraryExplorerPage() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
+    // Entries must be captured SYNCHRONOUSLY — the DataTransferItemList is
+    // dead once the handler returns. Dropped FOLDERS are traversed and their
+    // subtree recreated; plain files take the classic path.
+    if (e.dataTransfer.items?.length) {
+      const { hasDirectories, promise } = collectDroppedFiles(e.dataTransfer.items);
+      if (hasDirectories) {
+        void promise
+          .then((pathed) => handleUploadPathedFiles(pathed))
+          .catch((err) => {
+            setError(err instanceof FolderUploadLimitError
+              ? err.message
+              : "Couldn't read the dropped folder. Try the Upload folder button instead.");
+          });
+        return;
+      }
+    }
     handleUploadFiles(e.dataTransfer.files);
+  };
+
+  /** Stage a batch that carries subfolder structure (folder drop or the
+   *  Upload-folder picker). The tree is only CREATED at upload-confirm time —
+   *  cancelling the staging modal creates nothing. */
+  const handleUploadPathedFiles = (pathed: PathedFile[]) => {
+    if (!pathed.length || !activeOrgId || !uid || !library) return;
+    const map = new Map<File, string[]>();
+    const hasTree = pathed.some((p) => p.relPath.length > 0);
+    if (hasTree && !isController) {
+      // Folder creation is a Doc Control act. Members still get their files —
+      // flattened into the current folder — and an honest statement of why.
+      setError("Creating folders needs Admin or Doc Control rights, so the files were staged flat into this folder.");
+    } else if (hasTree) {
+      for (const p of pathed) if (p.relPath.length) map.set(p.file, p.relPath);
+    }
+    uploadPathsRef.current = map;
+    setPendingUploadFiles(pathed.map((p) => p.file));
+    setShowStagingModal(true);
+    if (hasTree && isController) setError(null);
+    if (folderInputRef.current) folderInputRef.current.value = "";
+  };
+
+  const handleFolderPick = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    try {
+      handleUploadPathedFiles(filesFromDirectoryInput(list));
+    } catch (err) {
+      setError(err instanceof FolderUploadLimitError ? err.message : "Couldn't read that folder.");
+      if (folderInputRef.current) folderInputRef.current.value = "";
+    }
+  };
+
+  /** Create every missing folder in the plan (parents first), reusing
+   *  existing folders by case-insensitive name under the same parent —
+   *  dropping the same tree twice never duplicates it. Returns key → id. */
+  const ensureFolderPlan = async (plan: FolderPlan): Promise<Map<string, string>> => {
+    const idByKey = new Map<string, string>();
+    if (!activeOrgId || !uid || !library) return idByKey;
+    const existingByParent = new Map<string | null, Map<string, string>>();
+    for (const f of folders) {
+      const k = f.parentId ?? null;
+      if (!existingByParent.has(k)) existingByParent.set(k, new Map());
+      existingByParent.get(k)!.set(f.name.trim().toLowerCase(), f.id!);
+    }
+    const register = (parentId: string | null, name: string, id: string) => {
+      if (!existingByParent.has(parentId)) existingByParent.set(parentId, new Map());
+      existingByParent.get(parentId)!.set(name.trim().toLowerCase(), id);
+    };
+    for (const node of plan.folders) {
+      const parentCollectionId = node.parentKey
+        ? idByKey.get(node.parentKey) ?? null
+        : (currentFolderId ?? null);
+      const reuse = existingByParent.get(parentCollectionId)?.get(node.name.trim().toLowerCase());
+      if (reuse) { idByKey.set(node.key, reuse); continue; }
+      const newAcl = library.defaultNewAcl
+        ?? (library.folderSecurity === "Granular"
+          ? { inherit: true, visibility: library.defaultNewVisibility ?? "normal", rules: [] }
+          : undefined);
+      const newId = await createFolder({
+        orgId: activeOrgId,
+        libraryId,
+        parentId: parentCollectionId,
+        name: node.name,
+        visibility: library.defaultNewVisibility ?? "normal",
+        acl: newAcl,
+        createdBy: uid,
+      });
+      if (newAcl) {
+        const chain = [...buildFolderChain(currentFolder), ...Array(node.depth).fill(newAcl)];
+        const aclIndex = buildAclIndexFromChain(chain);
+        await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
+      }
+      register(parentCollectionId, node.name, newId);
+      idByKey.set(node.key, newId);
+    }
+    return idByKey;
   };
 
   // ── Explorer selection ─────────────────────────────────────────────
@@ -738,6 +840,12 @@ export default function LibraryExplorerPage() {
   const [versionHistoryRefreshKey, setVersionHistoryRefreshKey] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // <input webkitdirectory> — the "Upload folder" picker.
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  // File → subfolder path for the current staged batch. Files keep object
+  // identity through the staging modal, so this map is how a dropped tree's
+  // structure survives to the actual upload without touching the modal.
+  const uploadPathsRef = useRef<Map<File, string[]>>(new Map());
 
   // ... (useEffect hooks)
 
@@ -1616,11 +1724,11 @@ export default function LibraryExplorerPage() {
   // locally so the row disappears under the cursor instead of a beat later.
   const dropMoveFolder = async (dragId: string, targetId: string | null) => {
     try {
-      await moveFolderAndDescendants({ collectionId: dragId, newParentId: targetId });
+      await moveFolderServer({ orgId: activeOrgId!, collectionId: dragId, newParentId: targetId });
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
-      setError("Couldn't move that folder.");
+      setError(e instanceof Error ? e.message : "Couldn't move that folder.");
     }
   };
   /** Place dragId before/after targetId among the target's siblings. A drag
@@ -1632,7 +1740,7 @@ export default function LibraryExplorerPage() {
     if (!target || !dragged) return;
     try {
       if ((dragged.parentId ?? null) !== (target.parentId ?? null)) {
-        await moveFolderAndDescendants({ collectionId: dragId, newParentId: target.parentId ?? null });
+        await moveFolderServer({ orgId: activeOrgId!, collectionId: dragId, newParentId: target.parentId ?? null });
       }
       // Sibling order as currently DISPLAYED, minus the dragged folder,
       // with it re-inserted at the drop slot.
@@ -1686,9 +1794,9 @@ export default function LibraryExplorerPage() {
   const dropMoveDocs = async (docIds: string[], folderId: string | null) => {
     if (docIds.length === 0) return;
     try {
-      const { error } = await supabase.from("documents")
-        .update({ collection_id: folderId, updated_by: uid }).in("id", docIds);
-      if (error) throw error;
+      // Server route: authority (additive roles), same-library validation,
+      // retention re-clock against the destination, audit entry.
+      await moveDocumentsServer({ orgId: activeOrgId!, docIds, targetFolderId: folderId });
       const moved = new Set(docIds);
       if (folderId !== currentFolderId) {
         setDocuments((prev) => prev.filter((d) => !moved.has(d.id!)));
@@ -1701,36 +1809,33 @@ export default function LibraryExplorerPage() {
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
-      setError(docIds.length === 1 ? "Couldn't move that document." : "Couldn't move those documents.");
+      setError(e instanceof Error ? e.message
+        : docIds.length === 1 ? "Couldn't move that document." : "Couldn't move those documents.");
     }
   };
 
   const confirmMoveFolder = async (targetId: string | null) => {
     if (!renameFolderId) return;
     try {
-      await moveFolderAndDescendants({ collectionId: renameFolderId, newParentId: targetId ?? null });
+      await moveFolderServer({ orgId: activeOrgId!, collectionId: renameFolderId, newParentId: targetId ?? null });
       nudgeKnowledgeSources(activeOrgId!, libraryId);
       setShowMoveModal(false);
       setRenameFolderId(null);
     } catch (e) {
       console.error(e);
-      setError("Failed to move folder.");
+      setError(e instanceof Error ? e.message : "Failed to move folder.");
     }
   };
 
   const confirmMoveDoc = async (targetId: string | null) => {
     if (!selectedDoc?.id) return;
     try {
-      await supabase.from("documents").update({
-        collection_id: targetId ?? null,
-        updated_at: new Date().toISOString(),
-        updated_by: uid ?? null,
-      }).eq("id", selectedDoc.id);
+      await moveDocumentsServer({ orgId: activeOrgId!, docIds: [selectedDoc.id], targetFolderId: targetId ?? null });
       setShowMoveDocModal(false);
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
-      setError("Failed to move document.");
+      setError(e instanceof Error ? e.message : "Failed to move document.");
     }
   };
 
@@ -1739,6 +1844,7 @@ export default function LibraryExplorerPage() {
   // bytes leave the browser yet. The staging modal opens for review.
   const handleUploadFiles = (files: FileList | null) => {
     if (!files || files.length === 0 || !activeOrgId || !uid || !library) return;
+    uploadPathsRef.current = new Map(); // flat upload — no tree to recreate
     setPendingUploadFiles(Array.from(files));
     setShowStagingModal(true);
     setError(null);
@@ -1790,6 +1896,27 @@ export default function LibraryExplorerPage() {
     try {
       const folderPath = currentFolder?.pathNames ?? [];
 
+      // ── Folder-tree batches: recreate the dropped subfolder structure ──
+      // Only now, at confirm — cancelling the staging modal creates nothing.
+      // Existing same-named folders are reused, so re-dropping a tree tops
+      // it up instead of duplicating it.
+      const pathByFile = uploadPathsRef.current;
+      let folderIdByKey = new Map<string, string>();
+      let foldersCreatedNote = "";
+      if (pathByFile.size > 0) {
+        const pathed = items
+          .filter((it) => pathByFile.has(it.file))
+          .map((it) => ({ file: it.file, relPath: pathByFile.get(it.file)! }));
+        const plan = buildFolderPlan(pathed);
+        folderIdByKey = await ensureFolderPlan(plan);
+        foldersCreatedNote = `Folder structure preserved (${plan.folders.length} folder${plan.folders.length === 1 ? "" : "s"} in the tree).`;
+      }
+      const targetFolderFor = (file: File): string | null => {
+        const rel = pathByFile.get(file);
+        if (!rel || rel.length === 0) return currentFolderId ?? null;
+        return folderIdByKey.get(rel.map((s) => s.toLowerCase()).join("/")) ?? currentFolderId ?? null;
+      };
+
       // ── Pre-flight: resolve final doc numbers ────────────────────
       // Auto-numbering (when this library owns a counter): items whose number
       // was left BLANK get the next issued number — atomic, gap-free, no two
@@ -1834,10 +1961,11 @@ export default function LibraryExplorerPage() {
       const uploadOne = async (entry: { item: StagedItem; docNumber: string }) => {
         const { item, docNumber } = entry;
         const file = item.file;
+        const subPath = pathByFile.get(file) ?? [];
         const storagePath = makeLibraryStoragePath({
           orgId: activeOrgId,
           libraryId,
-          folderPath,
+          folderPath: [...folderPath, ...subPath],
           filename: file.name,
         });
         const uploadResult = await uploadToPath(file, storagePath, {
@@ -1856,7 +1984,7 @@ export default function LibraryExplorerPage() {
         const { data: newDoc, error: docErr } = await supabase.from("documents").insert({
           org_id: activeOrgId,
           library_id: libraryId,
-          collection_id: currentFolderId ?? null,
+          collection_id: targetFolderFor(file),
           name: file.name,
           title,
           document_number: docNumber,
@@ -1936,6 +2064,7 @@ export default function LibraryExplorerPage() {
       }
 
       const notes: string[] = [];
+      if (foldersCreatedNote) notes.push(foldersCreatedNote);
       if (autoRenamed.length > 0) {
         const sample = autoRenamed.slice(0, 3).map((r) => `${r.original} → ${r.final}`).join(", ");
         const more = autoRenamed.length > 3 ? `, +${autoRenamed.length - 3} more` : "";
@@ -1958,6 +2087,7 @@ export default function LibraryExplorerPage() {
         // one picks it up NOW, not at the next cron pass.
         nudgeKnowledgeSources(activeOrgId!, libraryId);
         setPendingUploadFiles([]);
+        uploadPathsRef.current = new Map();
         if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
       }
     } catch (e) {
@@ -2645,6 +2775,19 @@ export default function LibraryExplorerPage() {
           <span className="hidden md:inline">Upload</span>
         </button>
 
+        {/* Upload a whole FOLDER — its subfolder tree is recreated here.
+            (Dropping a folder from the OS onto the file area does the same.) */}
+        {isController && (
+          <button
+            onClick={() => folderInputRef.current?.click()}
+            className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
+            title="Upload a folder — subfolders and their files keep their structure"
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Upload folder</span>
+          </button>
+        )}
+
         {/* New folder is a FIRST-CLASS action, right beside Upload — creating
             structure is as basic as adding files; it must never hide in an
             overflow menu. Creates inside whatever folder you're viewing. */}
@@ -2797,6 +2940,15 @@ export default function LibraryExplorerPage() {
       </div>
 
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleUploadFiles(e.target.files)} />
+      {/* webkitdirectory isn't in React's input types — spread it through. */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => handleFolderPick(e.target.files)}
+        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+      />
 
       {/* BODY: folder rail + full-width main */}
       <div className="flex flex-1 overflow-hidden relative isolate">
@@ -2931,9 +3083,9 @@ export default function LibraryExplorerPage() {
                   <div className="w-20 h-20 rounded-2xl bg-blue-100 border-2 border-blue-400 border-dashed flex items-center justify-center mb-4">
                     <UploadCloud className="w-9 h-9 text-blue-500" />
                   </div>
-                  <p className="text-lg font-bold text-blue-700">Drop files to upload</p>
+                  <p className="text-lg font-bold text-blue-700">Drop files or folders to upload</p>
                   <p className="text-sm text-blue-500 mt-1">
-                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"}
+                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"} — a dropped folder keeps its subfolder structure
                   </p>
                 </div>
               )}
@@ -3840,7 +3992,7 @@ export default function LibraryExplorerPage() {
         files={pendingUploadFiles}
         customColumns={(library?.customColumns ?? []) as unknown as CustomColumnDef[]}
         defaultStatus="Issued"
-        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); }}
+        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); uploadPathsRef.current = new Map(); }}
         onSubmit={handleStagedUpload}
         onAddColumn={isController ? () => { setWizardInitType("text"); setWizardInitStep(2); setShowCreateColumn(true); } : undefined}
         uniquenessKeys={library?.uniquenessKeys}

@@ -334,6 +334,49 @@ export async function reorderFolders(orderedIds: string[]): Promise<void> {
       .then(() => undefined, () => undefined)));
 }
 
+/** Server-side folder move (subtree re-parent + denorm path rebuild).
+ *  Same authority model as deleteFolder: the route runs on the service role
+ *  behind the additive-role controller check, so a raw client update can't
+ *  bypass it and stale path denorms self-heal on every move. */
+export async function moveFolderServer(params: {
+  orgId: string;
+  collectionId: string;
+  newParentId: string | null;
+}): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in.");
+  const res = await fetch("/api/collections/move", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(params),
+  });
+  const out = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(out?.error ?? "Couldn't move the folder.");
+}
+
+/** Server-side bulk document move: authority check (additive roles),
+ *  same-library validation, retention re-clock against the destination,
+ *  audit entry. Returns how many retention clocks changed. */
+export async function moveDocumentsServer(params: {
+  orgId: string;
+  docIds: string[];
+  targetFolderId: string | null;
+}): Promise<{ moved: number; retentionRecomputed: number }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in.");
+  const res = await fetch("/api/documents/move", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(params),
+  });
+  const out = (await res.json().catch(() => null)) as
+    { error?: string; moved?: number; retentionRecomputed?: number } | null;
+  if (!res.ok) throw new Error(out?.error ?? "Couldn't move the documents.");
+  return { moved: out?.moved ?? params.docIds.length, retentionRecomputed: out?.retentionRecomputed ?? 0 };
+}
+
 export async function deleteFolder(collectionId: string, orgId: string): Promise<void> {
   // NOT a client-side supabase call, deliberately. collections carries a
   // RESTRICTIVE delete policy with no permissive one, so an anon-key DELETE
