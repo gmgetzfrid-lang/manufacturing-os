@@ -114,27 +114,37 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           )).length);
       } else if (alive) setFlowCount(0);
       if (unitAssetIds.length > 0) {
-        // Chunked — a 600-asset area must not have its doc-link count read
-        // from the first 200 assets only.
+        // Chunked over EVERY asset (no 1,000-asset display cap), and each
+        // chunk's links are paged — a checklist that says "12 documents
+        // linked" must mean 12, not "12 among the slice we looked at".
         const docIds = new Set<string>();
-        for (let i = 0; i < Math.min(unitAssetIds.length, 1000); i += 200) {
-          const { data: links } = await supabase.from("document_assets")
-            .select("document_id").in("asset_id", unitAssetIds.slice(i, i + 200)).limit(1000);
-          for (const l of links ?? []) docIds.add(l.document_id as string);
+        for (let i = 0; i < unitAssetIds.length; i += 200) {
+          const chunk = unitAssetIds.slice(i, i + 200);
+          for (let from = 0; ; from += 1000) {
+            const { data: links } = await supabase.from("document_assets")
+              .select("document_id").in("asset_id", chunk)
+              .order("document_id").range(from, from + 999);
+            for (const l of links ?? []) docIds.add(l.document_id as string);
+            if (!links || links.length < 1000 || from >= 20000) break;
+          }
         }
         if (alive) setDocLinkCount(docIds.size);
       } else if (alive) setDocLinkCount(0);
-      const { data: plots } = await supabase.from("plot_plans")
-        .select("markers").eq("org_id", orgId).limit(50);
-      if (alive) {
-        let marks = 0;
+      // Every plot plan, paged — the old .limit(50) undercounted markers on
+      // sites with more than 50 plans.
+      let marks = 0;
+      for (let from = 0; ; from += 100) {
+        const { data: plots } = await supabase.from("plot_plans")
+          .select("markers").eq("org_id", orgId)
+          .order("id").range(from, from + 99);
         for (const p of plots ?? []) {
           for (const mk of ((p.markers as Array<{ assetId?: string }> | null) ?? [])) {
             if (mk.assetId && assetSet.has(mk.assetId)) marks++;
           }
         }
-        setPlotMarkCount(marks);
+        if (!plots || plots.length < 100 || from >= 2000) break;
       }
+      if (alive) setPlotMarkCount(marks);
     })().catch(() => { if (alive) { setFlowCount(0); setDocLinkCount(0); setPlotMarkCount(0); } });
     return () => { alive = false; };
   }, [orgId, unit.code, unitAssetIds]);

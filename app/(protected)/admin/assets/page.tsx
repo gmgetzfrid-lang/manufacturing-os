@@ -49,7 +49,11 @@ import { normalizeTag } from "@/lib/assets";
 import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
-const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
+// DocCtrl belongs here: document controllers own the asset↔document wiring
+// (categories, codebook areas, file links), so gating them out of asset
+// creation left them able to manage everything about an asset EXCEPT
+// making it exist.
+const ADMIN_ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor"];
 
 export default function AssetsPage() {
   // useSearchParams needs a Suspense boundary at build time.
@@ -344,7 +348,7 @@ function AssetsPageInner() {
         {!isAdmin && (
           <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
             <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only Admin / Manager / Supervisor roles can create or edit assets. Your role: <b>{activeRole}</b>. You can still browse + view photos.</span>
+            <span>Only Admin / Doc Control / Manager / Supervisor roles can create or edit assets. Your role: <b>{activeRole}</b>. You can still browse + view photos.</span>
           </div>
         )}
 
