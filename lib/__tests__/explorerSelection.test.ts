@@ -126,6 +126,13 @@ describe("moveFocus", () => {
     expect([...s.ids]).toEqual(["d"]);
   });
 
+  it("ctrl+shift+arrow ADDS the range to the selection", () => {
+    let s = clickItem(emptySelection(), ORDER, "a");
+    s = clickItem(s, ORDER, "f", { ctrl: true });               // {a, f}, anchor f
+    s = moveFocus(s, ORDER, "up", { ctrl: true, shift: true }); // + range f→e
+    expect(new Set(s.ids)).toEqual(new Set(["a", "e", "f"]));
+  });
+
   it("empty list is a no-op", () => {
     const s = moveFocus(emptySelection(), [], "down");
     expect(s.ids.size).toBe(0);
@@ -160,6 +167,15 @@ describe("typeAheadTarget", () => {
   it("multi-char buffer matches from the focused item (spelling one name)", () => {
     expect(typeAheadTarget(ITEMS, "pu", null)).toBe("1");
     expect(typeAheadTarget(ITEMS, "pi", "1")).toBe("4");
+  });
+
+  it("no focus scans from the FIRST item even when the last also matches", () => {
+    const items = [
+      { id: "1", label: "Pump A" },
+      { id: "2", label: "Pump B" },
+    ];
+    expect(typeAheadTarget(items, "pu", null)).toBe("1");
+    expect(typeAheadTarget(items, "p", null)).toBe("1");
   });
 
   it("single-char buffer cycles PAST the current focus", () => {

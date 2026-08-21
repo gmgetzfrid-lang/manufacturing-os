@@ -23,10 +23,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import {
-  resolveEffectiveRetentionPolicy,
-  computeRetentionUntil,
-  retentionBasisISO,
-} from "@/lib/retentionPolicy";
+  loadDestinationPolicies,
+  reclockRetentionForDocs,
+  RETENTION_DOC_COLUMNS,
+  type RetentionDocRow,
+} from "@/lib/serverRetention";
 import type { RetentionPolicy } from "@/types/schema";
 
 export const runtime = "nodejs";
@@ -37,17 +38,7 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-interface MovedDocRow {
-  id: string;
-  org_id: string;
-  library_id: string;
-  retention_policy: RetentionPolicy | null;
-  created_at: string | null;
-  updated_at: string | null;
-  effective_date: string | null;
-  disposition_state: string | null;
-  retention_until: string | null;
-}
+type MovedDocRow = RetentionDocRow & { org_id: string; library_id: string };
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -75,7 +66,7 @@ export async function POST(req: NextRequest) {
 
   const { data: docRows, error: docsErr } = await supabaseAdmin
     .from("documents")
-    .select("id, org_id, library_id, retention_policy, created_at, updated_at, effective_date, disposition_state, retention_until")
+    .select(`org_id, library_id, ${RETENTION_DOC_COLUMNS}`)
     .in("id", docIds);
   if (docsErr) return bad(`Couldn't load the documents: ${docsErr.message}`, 500);
   const docs = (docRows ?? []) as MovedDocRow[];
@@ -100,44 +91,40 @@ export async function POST(req: NextRequest) {
     folderPolicy = (folder.retention_policy as RetentionPolicy | null) ?? null;
   }
 
-  const now = new Date().toISOString();
+  // Deliberately NOT bumping updated_at: a relocation isn't a content
+  // change, and several retention bases ("issued"/"superseded") clock from
+  // updated_at — bumping it here would silently extend those clocks by the
+  // age of the record on every move.
   const { error: moveErr } = await supabaseAdmin
     .from("documents")
-    .update({ collection_id: targetFolderId, updated_at: now, updated_by: user.id })
+    .update({ collection_id: targetFolderId, updated_by: user.id })
     .in("id", docIds);
   if (moveErr) return bad(`Couldn't move the documents: ${moveErr.message}`, 500);
 
   // Re-clock retention against the destination. One folder + one library
   // policy covers the whole batch (same destination for every doc).
-  const { data: libRow } = await supabaseAdmin
-    .from("libraries").select("retention_policy").eq("id", libraryId).maybeSingle();
-  const libPolicy = (libRow?.retention_policy as RetentionPolicy | null) ?? null;
-
-  let retentionUpdated = 0;
-  const updates = docs
-    .filter((d) => d.disposition_state !== "disposed")
-    .map((d) => {
-      const policy = resolveEffectiveRetentionPolicy(d.retention_policy, folderPolicy, libPolicy);
-      const until = policy ? computeRetentionUntil(retentionBasisISO(policy, d), policy) : null;
-      const state = !policy ? null : until && until <= now.slice(0, 10) ? "eligible" : "active";
-      if (until === d.retention_until && (state ?? null) === (d.disposition_state ?? null)) return null;
-      return { id: d.id, retention_until: until, disposition_state: state };
-    })
-    .filter((u): u is { id: string; retention_until: string | null; disposition_state: string | null } => u !== null);
-  for (let i = 0; i < updates.length; i += 25) {
-    const results = await Promise.all(updates.slice(i, i + 25).map((u) =>
-      supabaseAdmin.from("documents")
-        .update({ retention_until: u.retention_until, disposition_state: u.disposition_state })
-        .eq("id", u.id)));
-    retentionUpdated += results.filter((r) => !r.error).length;
-  }
+  const { libPolicy } = await loadDestinationPolicies(supabaseAdmin, libraryId, null);
+  const reclock = await reclockRetentionForDocs(supabaseAdmin, docs, folderPolicy, libPolicy);
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "DOCS_MOVED",
     resource_type: "collection", resource_id: targetFolderId ?? libraryId,
     org_id: orgId, user_id: user.id, user_email: user.email ?? null,
-    details: { count: docIds.length, targetFolderId, libraryId, retentionRecomputed: retentionUpdated },
+    details: {
+      count: docIds.length, targetFolderId, libraryId,
+      retentionRecomputed: reclock.updated,
+      retentionFailed: reclock.failed,
+      ...(reclock.firstError ? { retentionError: reclock.firstError } : {}),
+    },
   }).then(() => undefined, () => undefined);
 
-  return NextResponse.json({ ok: true, moved: docIds.length, retentionRecomputed: retentionUpdated });
+  return NextResponse.json({
+    ok: true,
+    moved: docIds.length,
+    retentionRecomputed: reclock.updated,
+    retentionFailed: reclock.failed,
+    ...(reclock.failed > 0
+      ? { warning: `Moved, but ${reclock.failed} retention clock${reclock.failed === 1 ? "" : "s"} couldn't be recomputed (${reclock.firstError ?? "unknown error"}). They'll correct on the next retention pass.` }
+      : {}),
+  });
 }

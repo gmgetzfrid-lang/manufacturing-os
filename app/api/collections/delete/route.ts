@@ -15,6 +15,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { loadCollectionTree, rebuildSubtreePaths } from "@/lib/serverCollections";
+import {
+  loadDestinationPolicies,
+  reclockRetentionForDocs,
+  RETENTION_DOC_COLUMNS,
+  type RetentionDocRow,
+} from "@/lib/serverRetention";
 
 export const runtime = "nodejs";
 
@@ -53,8 +59,9 @@ export async function POST(req: NextRequest) {
     .from("collections").update({ parent_id: heirParent }).eq("parent_id", collectionId)
     .select("id, name");
   if (childErr) return bad(`Couldn't move subfolders out: ${childErr.message}`, 500);
-  const { error: docErr } = await supabaseAdmin
-    .from("documents").update({ collection_id: heirParent }).eq("collection_id", collectionId);
+  const { data: steppedDocs, error: docErr } = await supabaseAdmin
+    .from("documents").update({ collection_id: heirParent }).eq("collection_id", collectionId)
+    .select(RETENTION_DOC_COLUMNS);
   if (docErr) return bad(`Couldn't move documents out: ${docErr.message}`, 500);
   const { error: delErr } = await supabaseAdmin
     .from("collections").delete().eq("id", collectionId);
@@ -74,11 +81,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // The stepped-up documents changed parents, and retention inherits
+  // doc → folder → library with a MATERIALIZED deadline — re-clock them
+  // against the heir folder (or library root), exactly like a move does.
+  let retentionNote: Record<string, unknown> = {};
+  const stepped = (steppedDocs ?? []) as RetentionDocRow[];
+  if (stepped.length) {
+    const { folderPolicy, libPolicy } = await loadDestinationPolicies(
+      supabaseAdmin, node.library_id as string, heirParent);
+    const reclock = await reclockRetentionForDocs(supabaseAdmin, stepped, folderPolicy, libPolicy);
+    retentionNote = {
+      retentionRecomputed: reclock.updated,
+      retentionFailed: reclock.failed,
+      ...(reclock.firstError ? { retentionError: reclock.firstError } : {}),
+    };
+  }
+
   await supabaseAdmin.from("audit_logs").insert({
     action: "FOLDER_DELETED",
     resource_type: "collection", resource_id: collectionId,
     org_id: orgId, user_id: user.id, user_email: user.email ?? null,
-    details: { name: node.name, contentsMovedTo: heirParent },
+    details: { name: node.name, contentsMovedTo: heirParent, ...retentionNote },
   }).then(() => undefined, () => undefined);
 
   return NextResponse.json({ ok: true, contentsMovedTo: heirParent });

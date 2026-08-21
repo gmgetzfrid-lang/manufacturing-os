@@ -117,7 +117,14 @@ export function collectDroppedFiles(items: DataTransferItemList): {
   const hasDirectories = entries.some((e) => e.isDirectory);
   const promise = (async () => {
     const out: PathedFile[] = [];
-    for (const f of looseFiles) if (!isJunkFile(f.name)) out.push({ file: f, relPath: [] });
+    for (const f of looseFiles) {
+      if (isJunkFile(f.name)) continue;
+      if (out.length >= MAX_FOLDER_UPLOAD_FILES) {
+        throw new FolderUploadLimitError(
+          `That drop contains more than ${MAX_FOLDER_UPLOAD_FILES} files. Upload it in smaller batches.`);
+      }
+      out.push({ file: f, relPath: [] });
+    }
     for (const entry of entries) await walkEntry(entry, [], out);
     return out;
   })();

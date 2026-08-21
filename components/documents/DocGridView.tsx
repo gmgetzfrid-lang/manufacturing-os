@@ -114,6 +114,7 @@ export default function DocGridView({
 
   return (
     <div
+      data-doc-grid
       className="p-3 grid gap-3"
       style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${layout === "thumbs" ? 210 : 136}px, 1fr))` }}
       onClick={(e) => { if (e.target === e.currentTarget) onBackgroundClick?.(); }}

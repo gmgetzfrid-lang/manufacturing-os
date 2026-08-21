@@ -242,88 +242,11 @@ export async function renameFolderAndDescendants(collectionId: string, newNameRa
   }
 }
 
-export async function moveFolderAndDescendants(params: {
-  collectionId: string;
-  newParentId: string | null;
-}) {
-  const { collectionId, newParentId } = params;
-
-  const node = await getCollectionById(collectionId);
-  if (!node) throw new Error("Folder not found.");
-
-  const nextParentId = normalizeParentId(newParentId);
-
-  let parentPathNames: string[] = [];
-  let parentPathIds: string[] = [];
-
-  if (nextParentId) {
-    if (nextParentId === collectionId) throw new Error("A folder can't be moved into itself.");
-    const parent = await getCollectionById(nextParentId);
-    if (!parent) throw new Error("Destination folder not found.");
-    if (parent.libraryId !== node.libraryId) throw new Error("Destination folder belongs to a different library.");
-    parentPathNames = normalizePathNames(parent);
-    parentPathIds = normalizePathIds(parent);
-    // THE guard that keeps folders findable. Moving a folder into its own
-    // subtree detaches the whole branch from the root: nothing lists it,
-    // nothing can navigate to it, and to the person who owns it the folder
-    // has simply ceased to exist — which is exactly how it was reported.
-    // path_ids can be stale, so the parent CHAIN is walked as well.
-    if (parentPathIds.includes(collectionId)) {
-      throw new Error("That folder is inside this one — moving it there would orphan both.");
-    }
-    let cursor = parent;
-    for (let hops = 0; cursor?.parentId && hops < 100; hops++) {
-      if (cursor.parentId === collectionId) {
-        throw new Error("That folder is inside this one — moving it there would orphan both.");
-      }
-      cursor = (await getCollectionById(cursor.parentId))!;
-      if (!cursor) break;
-    }
-  }
-
-  const oldPathNames = normalizePathNames(node);
-  const oldPathIds = normalizePathIds(node);
-
-  const newPathNames = [...parentPathNames, node.name];
-  const newPathIds = nextParentId ? [...parentPathIds, nextParentId] : [];
-
-  await supabase
-    .from(TABLE)
-    .update({ parent_id: nextParentId, path: newPathNames, path_names: newPathNames, path_ids: newPathIds })
-    .eq("id", collectionId);
-
-  const { data: descendants } = await supabase
-    .from(TABLE)
-    .select("id, path_names, path_ids")
-    .filter("path_ids", "cs", `{${collectionId}}`);
-
-  if (!descendants?.length) return;
-
-  for (const item of descendants as Array<{ id: string; path_names: string[]; path_ids: string[] }>) {
-    const childPath = item.path_names ?? [];
-    const childPathIds = item.path_ids ?? [];
-
-    const isPrefix =
-      oldPathNames.length <= childPath.length &&
-      oldPathNames.every((seg, i) => childPath[i] === seg);
-    if (!isPrefix) continue;
-
-    const updatedNames = [...newPathNames, ...childPath.slice(oldPathNames.length)];
-
-    const oldIdsPrefix = [...oldPathIds, collectionId];
-    const isIdPrefix =
-      oldIdsPrefix.length <= childPathIds.length &&
-      oldIdsPrefix.every((seg, i) => childPathIds[i] === seg);
-    if (!isIdPrefix) continue;
-
-    const updatedIds = [...newPathIds, collectionId, ...childPathIds.slice(oldIdsPrefix.length)];
-
-    await supabase
-      .from(TABLE)
-      .update({ path: updatedNames, path_names: updatedNames, path_ids: updatedIds })
-      .eq("id", item.id);
-  }
-}
+// Folder moves are SERVER-SIDE ONLY (moveFolderServer above → POST
+// /api/collections/move): the route enforces the additive-role controller
+// bar and rebuilds the subtree's denormalized paths from the live tree.
+// The old client-side implementation (moveFolderAndDescendants) is gone —
+// re-adding a raw-PostgREST move would bypass both.
 
 /** Persist a manual order for SIBLING folders (same parent). Index in the
  *  array becomes sort_order. Best-effort per row — one failed write must
@@ -342,7 +265,7 @@ export async function moveFolderServer(params: {
   orgId: string;
   collectionId: string;
   newParentId: string | null;
-}): Promise<void> {
+}): Promise<{ warning?: string }> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in.");
@@ -351,30 +274,45 @@ export async function moveFolderServer(params: {
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(params),
   });
-  const out = (await res.json().catch(() => null)) as { error?: string } | null;
+  const out = (await res.json().catch(() => null)) as { error?: string; warning?: string } | null;
   if (!res.ok) throw new Error(out?.error ?? "Couldn't move the folder.");
+  return { warning: out?.warning };
 }
 
 /** Server-side bulk document move: authority check (additive roles),
  *  same-library validation, retention re-clock against the destination,
- *  audit entry. Returns how many retention clocks changed. */
+ *  audit entry. Batches of any size are chunked under the route's per-call
+ *  cap, so "select all → move" works on 500+ selections. */
 export async function moveDocumentsServer(params: {
   orgId: string;
   docIds: string[];
   targetFolderId: string | null;
-}): Promise<{ moved: number; retentionRecomputed: number }> {
+}): Promise<{ moved: number; retentionRecomputed: number; warning?: string }> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in.");
-  const res = await fetch("/api/documents/move", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(params),
-  });
-  const out = (await res.json().catch(() => null)) as
-    { error?: string; moved?: number; retentionRecomputed?: number } | null;
-  if (!res.ok) throw new Error(out?.error ?? "Couldn't move the documents.");
-  return { moved: out?.moved ?? params.docIds.length, retentionRecomputed: out?.retentionRecomputed ?? 0 };
+  const CHUNK = 400; // under the route's 500 cap
+  let moved = 0;
+  let retentionRecomputed = 0;
+  let warning: string | undefined;
+  for (let i = 0; i < params.docIds.length; i += CHUNK) {
+    const res = await fetch("/api/documents/move", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...params, docIds: params.docIds.slice(i, i + CHUNK) }),
+    });
+    const out = (await res.json().catch(() => null)) as
+      { error?: string; moved?: number; retentionRecomputed?: number; warning?: string } | null;
+    if (!res.ok) {
+      // Honest partial statement: chunks before this one already moved.
+      const prefix = moved > 0 ? `Moved ${moved} document${moved === 1 ? "" : "s"}, then failed: ` : "";
+      throw new Error(prefix + (out?.error ?? "Couldn't move the documents."));
+    }
+    moved += out?.moved ?? 0;
+    retentionRecomputed += out?.retentionRecomputed ?? 0;
+    if (out?.warning) warning = out.warning;
+  }
+  return { moved, retentionRecomputed, warning };
 }
 
 export async function deleteFolder(collectionId: string, orgId: string): Promise<void> {

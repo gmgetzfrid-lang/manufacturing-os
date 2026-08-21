@@ -79,16 +79,28 @@ export async function POST(req: NextRequest) {
   const nodeInTree = tree.byId.get(collectionId);
   if (nodeInTree) nodeInTree.parent_id = newParentId;
 
+  // The re-parent above is already committed — from here on the move
+  // HAPPENED. A path-rebuild failure must not masquerade as a failed move
+  // (the folder would "error" yet visibly relocate), and the audit entry
+  // must be written either way: the paths are display denorms; parent_id
+  // is the truth and the next server-side move/rename self-heals them.
   let subtreeSize = 0;
+  let pathError: string | null = null;
   try { subtreeSize = await rebuildSubtreePaths(supabaseAdmin, tree, [collectionId]); }
-  catch (e) { return bad((e as Error).message, 500); }
+  catch (e) { pathError = (e as Error).message; }
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "FOLDER_MOVED",
     resource_type: "collection", resource_id: collectionId,
     org_id: orgId, user_id: user.id, user_email: user.email ?? null,
-    details: { name: nodeRow.name, newParentId, subtreeSize },
+    details: { name: nodeRow.name, newParentId, subtreeSize, ...(pathError ? { pathRebuildError: pathError } : {}) },
   }).then(() => undefined, () => undefined);
 
-  return NextResponse.json({ ok: true, subtreeSize });
+  return NextResponse.json({
+    ok: true,
+    subtreeSize,
+    ...(pathError
+      ? { warning: `The folder moved, but breadcrumb paths for its subtree couldn't all be rewritten (${pathError}). They'll self-correct on the next move or rename.` }
+      : {}),
+  });
 }

@@ -25,6 +25,11 @@ export async function loadCollectionTree(
     .eq("library_id", libraryId).limit(10000);
   if (error) throw new Error(`Couldn't load the folder tree: ${error.message}`);
   const rows = (data ?? []) as CollectionTreeRow[];
+  // A truncated tree would silently rewrite SHORTENED paths for nodes whose
+  // ancestors fell past the cap — corrupting data instead of erroring.
+  if (rows.length >= 10000) {
+    throw new Error("This library has 10,000+ folders — tree operations need a larger read window. Contact support.");
+  }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const childrenOf = new Map<string | null, CollectionTreeRow[]>();
   for (const r of rows) {
