@@ -112,6 +112,7 @@ import {
   buildFolderPlan,
   collectDroppedFiles,
   filesFromDirectoryInput,
+  isJunkFile,
   FolderUploadLimitError,
   type FolderPlan,
   type PathedFile,
@@ -367,9 +368,9 @@ export default function LibraryExplorerPage() {
       await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
       setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
 
-      // Auto-add to view (active columns)
+      // Auto-add to view (active columns) — schema act, lands org-wide.
       const newActive = [...activeColumns, field.key];
-      await updateColumns(newActive);
+      await updateColumns(newActive, { scope: "org" });
 
     } catch (e) {
       console.error("Failed to add column", e);
@@ -409,7 +410,7 @@ export default function LibraryExplorerPage() {
       await supabase.from("libraries").update({ uniqueness_keys: nextKeys, updated_by: uid }).eq("id", library.id!);
       setLibrary((prev) => prev ? { ...prev, customColumns: nextCols, uniquenessKeys: nextKeys } : prev);
       if (!hasSheet && !activeColumns.includes("sheet")) {
-        await updateColumns([...activeColumns, "sheet"]);
+        await updateColumns([...activeColumns, "sheet"], { scope: "org" });
       }
     } catch (e) {
       console.error("Failed to add Sheet column + uniqueness", e);
@@ -452,6 +453,9 @@ export default function LibraryExplorerPage() {
           });
         return;
       }
+      // Plain-file drop: the classic path handles it; the traversal promise
+      // is redundant here but still running — silence its rejection.
+      promise.catch(() => undefined);
     }
     handleUploadFiles(e.dataTransfer.files);
   };
@@ -460,7 +464,15 @@ export default function LibraryExplorerPage() {
    *  Upload-folder picker). The tree is only CREATED at upload-confirm time —
    *  cancelling the staging modal creates nothing. */
   const handleUploadPathedFiles = (pathed: PathedFile[]) => {
-    if (!pathed.length || !activeOrgId || !uid || !library) return;
+    // Reset the picker FIRST — an early return must not wedge the input so
+    // that re-picking the same folder fires no change event.
+    if (folderInputRef.current) folderInputRef.current.value = "";
+    if (!pathed.length) {
+      setError("That folder contained no uploadable files.");
+      return;
+    }
+    if (!activeOrgId || !uid || !library) return;
+    uploadFolderPlanRef.current = null;
     const map = new Map<File, string[]>();
     const hasTree = pathed.some((p) => p.relPath.length > 0);
     if (hasTree && !isController) {
@@ -474,7 +486,6 @@ export default function LibraryExplorerPage() {
     setPendingUploadFiles(pathed.map((p) => p.file));
     setShowStagingModal(true);
     if (hasTree && isController) setError(null);
-    if (folderInputRef.current) folderInputRef.current.value = "";
   };
 
   const handleFolderPick = (list: FileList | null) => {
@@ -489,10 +500,22 @@ export default function LibraryExplorerPage() {
 
   /** Create every missing folder in the plan (parents first), reusing
    *  existing folders by case-insensitive name under the same parent —
-   *  dropping the same tree twice never duplicates it. Returns key → id. */
-  const ensureFolderPlan = async (plan: FolderPlan): Promise<Map<string, string>> => {
+   *  dropping the same tree twice never duplicates it.
+   *
+   *  Every node's REAL ACL chain is tracked as the tree is built: a reused
+   *  folder contributes its own actual ACL (and its real ancestors'), never
+   *  a fabricated one — so a subtree dropped into or through a RESTRICTED
+   *  existing folder inherits that restriction in acl_index, exactly as if
+   *  each folder had been created by hand. The chains are returned so the
+   *  document inserts can index against their true parent chain too. */
+  interface EnsuredFolderPlan {
+    idByKey: Map<string, string>;
+    chainByFolderId: Map<string, AccessControl[]>;
+  }
+  const ensureFolderPlan = async (plan: FolderPlan): Promise<EnsuredFolderPlan> => {
     const idByKey = new Map<string, string>();
-    if (!activeOrgId || !uid || !library) return idByKey;
+    const chainByFolderId = new Map<string, AccessControl[]>();
+    if (!activeOrgId || !uid || !library) return { idByKey, chainByFolderId };
     const existingByParent = new Map<string | null, Map<string, string>>();
     for (const f of folders) {
       const k = f.parentId ?? null;
@@ -503,12 +526,26 @@ export default function LibraryExplorerPage() {
       if (!existingByParent.has(parentId)) existingByParent.set(parentId, new Map());
       existingByParent.get(parentId)!.set(name.trim().toLowerCase(), id);
     };
+    const baseChain = buildFolderChain(currentFolder);
+    const chainOf = (folderId: string | null): AccessControl[] => {
+      if (folderId === (currentFolderId ?? null)) return baseChain;
+      if (folderId && chainByFolderId.has(folderId)) return chainByFolderId.get(folderId)!;
+      if (folderId) {
+        const f = folderMap.get(folderId);
+        if (f) return buildFolderChain(f);
+      }
+      return baseChain;
+    };
     for (const node of plan.folders) {
       const parentCollectionId = node.parentKey
-        ? idByKey.get(node.parentKey) ?? null
+        ? idByKey.get(node.parentKey) ?? (currentFolderId ?? null)
         : (currentFolderId ?? null);
       const reuse = existingByParent.get(parentCollectionId)?.get(node.name.trim().toLowerCase());
-      if (reuse) { idByKey.set(node.key, reuse); continue; }
+      if (reuse) {
+        idByKey.set(node.key, reuse);
+        chainByFolderId.set(reuse, chainOf(reuse));
+        continue;
+      }
       const newAcl = library.defaultNewAcl
         ?? (library.folderSecurity === "Granular"
           ? { inherit: true, visibility: library.defaultNewVisibility ?? "normal", rules: [] }
@@ -522,16 +559,26 @@ export default function LibraryExplorerPage() {
         acl: newAcl,
         createdBy: uid,
       });
+      const parentChain = chainOf(parentCollectionId);
+      const myChain = newAcl ? [...parentChain, newAcl] : parentChain;
       if (newAcl) {
-        const chain = [...buildFolderChain(currentFolder), ...Array(node.depth).fill(newAcl)];
-        const aclIndex = buildAclIndexFromChain(chain);
-        await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
+        const aclIndex = buildAclIndexFromChain(myChain);
+        // A failed index write would leave the folder's RLS index missing its
+        // inherited restrictions — that must fail the upload, not pass silently.
+        const { error: idxErr } = await supabase.from("collections")
+          .update({ acl_index: aclIndex ?? null }).eq("id", newId);
+        if (idxErr) throw new Error(`Couldn't apply permissions to the new folder "${node.name}": ${idxErr.message}`);
       }
+      chainByFolderId.set(newId, myChain);
       register(parentCollectionId, node.name, newId);
       idByKey.set(node.key, newId);
     }
-    return idByKey;
+    return { idByKey, chainByFolderId };
   };
+  // Survives a partial-failure retry so a second Upload click reuses the
+  // folders already created instead of racing the folders listener and
+  // creating the tree twice. Cleared when a new batch is staged.
+  const uploadFolderPlanRef = useRef<EnsuredFolderPlan | null>(null);
 
   // ── Explorer selection ─────────────────────────────────────────────
   // All gestures funnel through the pure engine so click, checkbox, keyboard
@@ -609,11 +656,27 @@ export default function LibraryExplorerPage() {
     }
   };
 
+  /** How many tiles per row the current grid actually renders — measured,
+   *  because auto-fill makes the count viewport-dependent. */
+  const measureGridColumns = (): number => {
+    const el = document.querySelector("[data-doc-grid]");
+    if (!el) return 1;
+    const cols = window.getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean).length;
+    return Math.max(1, cols);
+  };
+
+  // Serializes keyboard-triggered bulk actions so key-repeat can't queue a
+  // stack of confirm dialogs (appConfirm queues, it doesn't dedupe).
+  const bulkKeyBusyRef = useRef(false);
+
   /** The full Explorer keyboard model, attached to the explorer card. Skips
-   *  anything typed into an input/textarea (the filter box, inline editors). */
+   *  anything typed into an input/inline editor and any focused button (they
+   *  keep their native Enter/Space), and goes quiet while the context menu
+   *  is open — the menu owns the keyboard then. */
   const handleExplorerKeyDown = (e: React.KeyboardEvent) => {
+    if (ctxMenu) return;
     const target = e.target as HTMLElement;
-    if (target.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (target.closest("input, textarea, select, button, a, [contenteditable='true'], [role='menu'], [role='dialog']")) return;
     const order = orderedDocIds();
     const mods = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
 
@@ -622,15 +685,25 @@ export default function LibraryExplorerPage() {
       applySelection(selectAll(order));
       return;
     }
-    const MOVE_KEYS: Record<string, MoveKey> = {
-      ArrowDown: "down", ArrowUp: "up",
-      ArrowRight: "down", ArrowLeft: "up",
-      Home: "home", End: "end",
-      PageDown: "pageDown", PageUp: "pageUp",
+    // In the tile layouts, up/down move by a full ROW (measured column
+    // count) and left/right by one — real 2D navigation. In the row
+    // layouts, left/right alias up/down.
+    const gridMode = docLayout === "grid" || docLayout === "thumbs";
+    const cols = gridMode ? measureGridColumns() : 1;
+    const MOVE_KEYS: Record<string, { key: MoveKey; page: number }> = {
+      ArrowDown: gridMode ? { key: "pageDown", page: cols } : { key: "down", page: 1 },
+      ArrowUp: gridMode ? { key: "pageUp", page: cols } : { key: "up", page: 1 },
+      ArrowRight: { key: "down", page: 1 },
+      ArrowLeft: { key: "up", page: 1 },
+      Home: { key: "home", page: 1 },
+      End: { key: "end", page: 1 },
+      PageDown: { key: "pageDown", page: gridMode ? cols * 4 : 12 },
+      PageUp: { key: "pageUp", page: gridMode ? cols * 4 : 12 },
     };
     if (MOVE_KEYS[e.key]) {
       e.preventDefault();
-      const next = moveFocus(currentSelection(), order, MOVE_KEYS[e.key], mods, 12);
+      const mv = MOVE_KEYS[e.key];
+      const next = moveFocus(currentSelection(), order, mv.key, mods, mv.page);
       applySelection(next);
       scrollDocIntoView(next.focusId);
       return;
@@ -640,12 +713,12 @@ export default function LibraryExplorerPage() {
       applySelection(toggleFocused(currentSelection()));
       return;
     }
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && !e.repeat) {
       const doc = sortedDocs.find((d) => d.id === selFocusId);
       if (doc) { e.preventDefault(); handleRowDoubleClick(doc); }
       return;
     }
-    if (e.key === "F2") {
+    if (e.key === "F2" && !e.repeat) {
       const doc = sortedDocs.find((d) => d.id === selFocusId);
       if (doc && docLayout === "details") {
         e.preventDefault();
@@ -657,8 +730,11 @@ export default function LibraryExplorerPage() {
     }
     if (e.key === "Delete" && selectedDocIds.size > 0 && isController) {
       e.preventDefault();
+      if (e.repeat || bulkKeyBusyRef.current) return;
+      bulkKeyBusyRef.current = true;
       // Explorer's Delete = recycle (archive); Shift+Delete = permanent.
-      if (mods.shift) void handleBulkDelete(); else void handleBulkArchive();
+      const run = mods.shift ? handleBulkDelete() : handleBulkArchive();
+      void run.finally(() => { bulkKeyBusyRef.current = false; });
       return;
     }
     if (e.key === "Escape") {
@@ -666,7 +742,10 @@ export default function LibraryExplorerPage() {
       return;
     }
     // Type-ahead: printable characters spell a document number/title.
+    // stopPropagation so global single-key bindings (the "/" palette
+    // shortcut) don't fire while the user is addressing the file list.
     if (e.key.length === 1 && !mods.ctrl && !e.altKey) {
+      e.stopPropagation();
       const ta = typeAheadRef.current;
       if (ta.timer) clearTimeout(ta.timer);
       ta.buffer += e.key;
@@ -1652,20 +1731,28 @@ export default function LibraryExplorerPage() {
     return [...builtins, ...dynamic, ...orphans];
   }, [columnDefs, activeColumns, library?.columnLabelOverrides]);
 
-  const updateColumns = async (next: string[]) => {
+  // Column tweaks save to YOUR view only — for everyone, admins included.
+  // Publishing the current state as the org-wide default is an explicit act
+  // via the View menu. The ONE exception: library SCHEMA changes (an admin
+  // creating or deleting a custom column) pass scope:"org" so the change
+  // reaches everyone who rides the org default, not just the admin.
+  const updateColumns = async (next: string[], opts?: { scope?: "user" | "org" }) => {
     setActiveColumns(next);
     if (!activeOrgId || !uid) return;
-    // Column tweaks save to YOUR view only — for everyone, admins included.
-    // Publishing the current state as the org-wide default is an explicit,
-    // deliberate act via the View menu's "Set as org-wide default".
+    const scope = opts?.scope === "org" && isController ? "org" : "user";
     await saveTableView({
-      scope: "user",
+      scope,
       orgId: activeOrgId,
-      ownerUserId: uid,
+      ownerUserId: scope === "user" ? uid : undefined,
       libraryId,
       collectionId: currentFolderId ?? undefined,
       columns: next,
     });
+    // A user row now exists here — surface the "Clear my default" escape
+    // hatch immediately, not on the next folder visit.
+    setViewDefaults((prev) => scope === "user"
+      ? { ...prev, hasUserRow: true }
+      : { ...prev, hasOrgRow: true });
   };
 
   const openCreateFolder = () => {
@@ -1724,7 +1811,8 @@ export default function LibraryExplorerPage() {
   // locally so the row disappears under the cursor instead of a beat later.
   const dropMoveFolder = async (dragId: string, targetId: string | null) => {
     try {
-      await moveFolderServer({ orgId: activeOrgId!, collectionId: dragId, newParentId: targetId });
+      const { warning } = await moveFolderServer({ orgId: activeOrgId!, collectionId: dragId, newParentId: targetId });
+      if (warning) setError(warning);
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
@@ -1796,7 +1884,8 @@ export default function LibraryExplorerPage() {
     try {
       // Server route: authority (additive roles), same-library validation,
       // retention re-clock against the destination, audit entry.
-      await moveDocumentsServer({ orgId: activeOrgId!, docIds, targetFolderId: folderId });
+      const res = await moveDocumentsServer({ orgId: activeOrgId!, docIds, targetFolderId: folderId });
+      if (res.warning) setError(res.warning);
       const moved = new Set(docIds);
       if (folderId !== currentFolderId) {
         setDocuments((prev) => prev.filter((d) => !moved.has(d.id!)));
@@ -1843,12 +1932,17 @@ export default function LibraryExplorerPage() {
   // Step 1: file selection / drag-drop → just stage the files. NO
   // bytes leave the browser yet. The staging modal opens for review.
   const handleUploadFiles = (files: FileList | null) => {
+    if (fileInputRef.current) fileInputRef.current.value = "";
     if (!files || files.length === 0 || !activeOrgId || !uid || !library) return;
     uploadPathsRef.current = new Map(); // flat upload — no tree to recreate
-    setPendingUploadFiles(Array.from(files));
+    uploadFolderPlanRef.current = null;
+    // OS metadata junk (.DS_Store & friends) is filtered on the folder path;
+    // filter the flat path too so it never becomes a controlled document.
+    const clean = Array.from(files).filter((f) => !isJunkFile(f.name));
+    if (clean.length === 0) return;
+    setPendingUploadFiles(clean);
     setShowStagingModal(true);
     setError(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   // Step 2: user confirmed metadata for each file → actually upload
@@ -1901,20 +1995,33 @@ export default function LibraryExplorerPage() {
       // Existing same-named folders are reused, so re-dropping a tree tops
       // it up instead of duplicating it.
       const pathByFile = uploadPathsRef.current;
-      let folderIdByKey = new Map<string, string>();
+      let ensured: EnsuredFolderPlan = { idByKey: new Map(), chainByFolderId: new Map() };
       let foldersCreatedNote = "";
       if (pathByFile.size > 0) {
         const pathed = items
           .filter((it) => pathByFile.has(it.file))
           .map((it) => ({ file: it.file, relPath: pathByFile.get(it.file)! }));
         const plan = buildFolderPlan(pathed);
-        folderIdByKey = await ensureFolderPlan(plan);
+        // A retry after partial failure reuses the already-built tree.
+        if (!uploadFolderPlanRef.current) {
+          uploadFolderPlanRef.current = await ensureFolderPlan(plan);
+        }
+        ensured = uploadFolderPlanRef.current;
         foldersCreatedNote = `Folder structure preserved (${plan.folders.length} folder${plan.folders.length === 1 ? "" : "s"} in the tree).`;
       }
       const targetFolderFor = (file: File): string | null => {
         const rel = pathByFile.get(file);
         if (!rel || rel.length === 0) return currentFolderId ?? null;
-        return folderIdByKey.get(rel.map((s) => s.toLowerCase()).join("/")) ?? currentFolderId ?? null;
+        return ensured.idByKey.get(rel.map((s) => s.toLowerCase()).join("/")) ?? currentFolderId ?? null;
+      };
+      // The doc's RLS index must reflect its REAL parent chain — the target
+      // subfolder's, not the folder the user happened to be viewing.
+      const chainForTarget = (targetId: string | null): AccessControl[] => {
+        if (targetId === (currentFolderId ?? null)) return buildFolderChain(currentFolder);
+        const fromPlan = targetId ? ensured.chainByFolderId.get(targetId) : undefined;
+        if (fromPlan) return fromPlan;
+        const f = targetId ? folderMap.get(targetId) : null;
+        return f ? buildFolderChain(f) : buildFolderChain(currentFolder);
       };
 
       // ── Pre-flight: resolve final doc numbers ────────────────────
@@ -1981,10 +2088,11 @@ export default function LibraryExplorerPage() {
           { documentNumber: docNumber, title, rev, status, customFields: item.customFields },
           library.uniquenessKeys,
         );
+        const targetCollectionId = targetFolderFor(file);
         const { data: newDoc, error: docErr } = await supabase.from("documents").insert({
           org_id: activeOrgId,
           library_id: libraryId,
-          collection_id: targetFolderFor(file),
+          collection_id: targetCollectionId,
           name: file.name,
           title,
           document_number: docNumber,
@@ -2003,7 +2111,7 @@ export default function LibraryExplorerPage() {
           visibility: library.defaultNewVisibility ?? "normal",
           acl: library.defaultNewAcl ?? null,
           acl_index: library.defaultNewAcl
-            ? buildAclIndexFromChain([...buildFolderChain(currentFolder), library.defaultNewAcl])
+            ? buildAclIndexFromChain([...chainForTarget(targetCollectionId), library.defaultNewAcl])
             : null,
           created_at: now,
           created_by: uid,
@@ -2088,6 +2196,7 @@ export default function LibraryExplorerPage() {
         nudgeKnowledgeSources(activeOrgId!, libraryId);
         setPendingUploadFiles([]);
         uploadPathsRef.current = new Map();
+        uploadFolderPlanRef.current = null;
         if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
       }
     } catch (e) {
@@ -2172,9 +2281,10 @@ export default function LibraryExplorerPage() {
     const updatedCols = (library.customColumns ?? []).filter((c) => c.key !== key);
     await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
     setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
-    // Remove from active view columns too
+    // Remove from active view columns too — schema act, lands org-wide so
+    // the deleted column doesn't linger as an orphan in the org default.
     const nextActive = activeColumns.filter((k) => k !== key);
-    await updateColumns(nextActive);
+    await updateColumns(nextActive, { scope: "org" });
   };
 
   // Rename a column's display label. Works for both system columns
@@ -3266,7 +3376,10 @@ export default function LibraryExplorerPage() {
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                               >
                                 <X className="w-3.5 h-3.5" />
-                                <span className="flex-1">Clear my default (use org&apos;s)</span>
+                                <span className="flex-1">
+                                  Clear my default (use org&apos;s)
+                                  <span className="block text-[10px] font-normal">Removes your saved layout, sort AND column setup here</span>
+                                </span>
                               </button>
                             )}
                           </div>
@@ -3459,6 +3572,10 @@ export default function LibraryExplorerPage() {
                           sortedDocs.map((docRecord) => {
                             const isRowSelected = selectedDocIds.has(docRecord.id!);
                             const isFocused = selectedDoc?.id === docRecord.id;
+                            // Keyboard focus (ctrl+arrows travel without
+                            // selecting) — must be VISIBLE or ctrl+space
+                            // toggles a row the user can't identify.
+                            const isKeyFocused = selFocusId === docRecord.id;
                             return (
                               <tr
                                 key={docRecord.id}
@@ -3474,7 +3591,7 @@ export default function LibraryExplorerPage() {
                                     : isFocused
                                     ? "bg-[var(--color-surface-2)]"
                                     : "hover:bg-slate-50/60"
-                                }`}
+                                } ${isKeyFocused ? "outline outline-1 -outline-offset-1 outline-blue-400" : ""}`}
                               >
                                 {/* Left edge accent on selected row */}
                                 {(isRowSelected || isFocused) && (
@@ -3992,7 +4109,7 @@ export default function LibraryExplorerPage() {
         files={pendingUploadFiles}
         customColumns={(library?.customColumns ?? []) as unknown as CustomColumnDef[]}
         defaultStatus="Issued"
-        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); uploadPathsRef.current = new Map(); }}
+        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); uploadPathsRef.current = new Map(); uploadFolderPlanRef.current = null; }}
         onSubmit={handleStagedUpload}
         onAddColumn={isController ? () => { setWizardInitType("text"); setWizardInitStep(2); setShowCreateColumn(true); } : undefined}
         uniquenessKeys={library?.uniquenessKeys}

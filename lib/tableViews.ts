@@ -139,26 +139,27 @@ export async function saveTableView(params: {
   if (params.view !== undefined) payload.view_config = params.view;
 
   let { error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" });
-  // Pre-migration safety: if sort_config/view_config don't exist yet, retry
-  // without the missing column so saves never break before the migration runs.
-  if (error && isMissingColumn(error, "view_config")) {
-    delete payload.view_config;
-    ({ error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" }));
-  }
-  if (error && isMissingColumn(error, "sort_config")) {
+  // Pre-migration safety: sort_config/view_config come from later migrations.
+  // PostgREST names only the FIRST unknown column, so a single targeted
+  // retry can fail on the second one — strip BOTH optional columns at once
+  // and retry. Columns still land; the sort/layout part waits on the
+  // migration (there's no column to store it in anyway).
+  if (error && isMissingConfigColumn(error) && ("sort_config" in payload || "view_config" in payload)) {
     delete payload.sort_config;
+    delete payload.view_config;
     ({ error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" }));
   }
   if (error) throw new Error(error.message);
   return id;
 }
 
-/** True when an error is "column table_views.<col> does not exist"
- *  (Postgres 42703 / PostgREST schema-cache miss) — migration not yet applied. */
-function isMissingColumn(error: { code?: string; message?: string } | null, col: string): boolean {
+/** True when an error is "column table_views.sort_config/view_config does not
+ *  exist" (Postgres 42703 / PostgREST PGRST204 schema-cache miss) — the
+ *  migration adding them hasn't been applied yet. */
+function isMissingConfigColumn(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false;
-  if (new RegExp(col, "i").test(error.message ?? "")) return true;
-  return (error.code === "42703" || error.code === "PGRST204") && !(error.message ?? "").includes("_config");
+  if (/sort_config|view_config/i.test(error.message ?? "")) return true;
+  return error.code === "42703" || error.code === "PGRST204";
 }
 
 /** Resolve the effective per-folder default sort: a user's own pinned sort
@@ -231,7 +232,8 @@ export async function deleteTableView(params: {
   collectionId?: string;
 }) {
   const id = tableViewId(params);
-  await supabase.from(TABLE).delete().eq("id", id);
+  const { error } = await supabase.from(TABLE).delete().eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 export function listenTableView(

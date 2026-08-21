@@ -46,13 +46,26 @@ export default function DocContextMenu({
   }, [x, y, entries.length]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    // Escape must not leak to the page (it would also clear the selection
+    // the menu is acting on) — capture phase, stopPropagation.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+    };
+    // Close on any press OUTSIDE the menu — capture phase, no overlay div.
+    // This lets a right-click on ANOTHER row close this menu and still reach
+    // the row, which reopens the menu there in one gesture (Explorer's
+    // behavior; an overlay needed two clicks).
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
     const onScroll = () => onClose();
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onDown, true);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onScroll);
     return () => {
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onDown, true);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onScroll);
     };
@@ -60,12 +73,6 @@ export default function DocContextMenu({
 
   return (
     <>
-      {/* Click-away layer — also swallows the browser menu on a second right-click. */}
-      <div
-        className="fixed inset-0 z-[90]"
-        onClick={onClose}
-        onContextMenu={(e) => { e.preventDefault(); onClose(); }}
-      />
       <div
         ref={ref}
         role="menu"

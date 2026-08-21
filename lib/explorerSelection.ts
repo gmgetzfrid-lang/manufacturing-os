@@ -119,7 +119,10 @@ export function moveFocus(
   }
   if (mods.shift) {
     const anchor = state.anchorId && order.includes(state.anchorId) ? state.anchorId : (state.focusId ?? id);
-    return { ids: new Set(rangeBetween(order, anchor, id)), anchorId: anchor, focusId: id };
+    const range = rangeBetween(order, anchor, id);
+    // ctrl+shift+arrow ADDS the range — same contract as ctrl+shift+click.
+    const ids = mods.ctrl ? new Set([...state.ids, ...range]) : new Set(range);
+    return { ids, anchorId: anchor, focusId: id };
   }
   return { ids: new Set([id]), anchorId: id, focusId: id };
 }
@@ -170,15 +173,16 @@ export function typeAheadTarget(
   fromId: string | null,
 ): string | null {
   const needle = buffer.trim().toLowerCase();
-  if (!needle) return null;
+  if (!needle || items.length === 0) return null;
   const start = fromId ? items.findIndex((i) => i.id === fromId) : -1;
   const n = items.length;
   // Repeatedly typing one letter cycles through items starting with it, so
   // a single-char buffer searches AFTER the current focus; longer buffers
   // (still spelling one name) search FROM the focus, wrapping either way.
-  const offset = needle.length === 1 ? 1 : 0;
+  // With no focus at all, the scan begins at the FIRST item.
+  const begin = start === -1 ? 0 : start + (needle.length === 1 ? 1 : 0);
   for (let step = 0; step < n; step++) {
-    const item = items[(start + offset + step + n) % n];
+    const item = items[(begin + step) % n];
     if (item.label.toLowerCase().startsWith(needle)) return item.id;
   }
   return null;
