@@ -259,6 +259,10 @@ function summarizeAudit(r: AuditRow): string {
     case "DOWNLOAD":     return `Downloaded${d.fileName ? ` ${d.fileName}` : ""}`;
     case "CHECK_OUT":    return "Checked out";
     case "CHECK_IN":     return "Checked in";
+    // Legacy names the checkout modal wrote before the CHECK_OUT/CHECK_IN
+    // unification — old rows must keep reading correctly.
+    case "DOCUMENT_CHECKOUT": return "Checked out";
+    case "DOCUMENT_CHECKIN":  return "Checked in";
     case "ABANDON":      return "Checkout abandoned";
     case "JOIN":         return "Joined collaborative session";
     case "FORCE_RELEASE":return "Checkout force-released";

@@ -148,6 +148,9 @@ const CheckoutInfoPopover = ({
         userName,
         sessionStatus: "checked_in",
         releasedReason: "Released from the checkout popover (no changes)",
+        // The button says "no changes" — record it, so the register never
+        // shows a blank row for a deliberate release.
+        outcome: { outcome: "all_clear", note: null, ref: null },
       });
       const { endMyIntents } = await import("@/lib/intents");
       void endMyIntents({ documentId: docRecord.id, userId: currentUserId, sources: ["checkout"] });

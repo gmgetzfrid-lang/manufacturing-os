@@ -438,10 +438,10 @@ export async function finishMySession(input: {
   userId: string;
   userName: string;
   episodeId?: string | null;
-  /** What the session row should say. Default "checked_in".
-   *  ("abandoned" is reserved for the expiry sweep — a deliberate human
-   *  check-in is never recorded as abandonment; the outcome carries the
-   *  truth instead.) */
+  /** What the session row should say. Default "checked_in". Nothing writes
+   *  "abandoned" anymore — a deliberate check-in records its OUTCOME instead,
+   *  and the expiry sweep records outcome 'auto_released'. The value stays in
+   *  the union only for legacy rows that already carry it. */
   sessionStatus?: "checked_in" | "abandoned";
   releasedReason?: string | null;
   /** The check-in register entry (migration 20261012): what came of this

@@ -30,6 +30,7 @@ import ReviewPill from "@/components/documents/ReviewPill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
 import CollapsibleSection from "@/components/ui/CollapsibleSection";
+import DocClassControl from "@/components/documents/DocClassControl";
 import AddToPackageButton from "@/components/documents/AddToPackageButton";
 import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
@@ -159,15 +160,18 @@ export default function InspectorPanel({
   // ("3 issued · 8/12 confirmed") without opening them.
   const [activeHoldCount, setActiveHoldCount] = useState(0);
   const [staleHolderCount, setStaleHolderCount] = useState(0);
-  const [distSummary, setDistSummary] = useState<{ issued: number; ackDone: number; ackTotal: number } | null>(null);
+  const [distSummary, setDistSummary] = useState<{ issued: number; issuedCapped: boolean; ackDone: number; ackTotal: number } | null>(null);
   const [holdsRefresh, setHoldsRefresh] = useState(0);
   useEffect(() => {
     let alive = true;
+    // Reset SYNCHRONOUSLY before any await — switching documents must never
+    // show the previous document's alerts/pills against the new one while
+    // the fresh counts are still in flight.
+    setActiveHoldCount(0);
+    setStaleHolderCount(0);
+    setDistSummary(null);
     (async () => {
-      if (!selectedDoc?.id || !selectedDoc.orgId) {
-        if (alive) { setActiveHoldCount(0); setStaleHolderCount(0); setDistSummary(null); }
-        return;
-      }
+      if (!selectedDoc?.id || !selectedDoc.orgId) return;
       try {
         const { listActiveHoldsForDocument } = await import("@/lib/holds");
         const holds = await listActiveHoldsForDocument(selectedDoc.id);
@@ -181,20 +185,26 @@ export default function InspectorPanel({
       try {
         const { listTransmittalsForDocument } = await import("@/lib/transmittals");
         const list = await listTransmittalsForDocument(selectedDoc.orgId, selectedDoc.id);
+        // listTransmittalsForDocument caps at 50 rows — an honest pill says so.
         const issued = list.filter((t) => t.status === "issued" || t.status === "acknowledged").length;
+        const issuedCapped = list.length >= 50;
         let ackDone = 0;
         let ackTotal = 0;
         if (selectedDoc.currentVersionId) {
-          const { data } = await supabase.from("distribution_acks")
-            .select("acknowledged_at")
-            .eq("document_id", selectedDoc.id)
-            .eq("version_id", selectedDoc.currentVersionId)
-            .limit(500);
-          const rows = (data ?? []) as Array<{ acknowledged_at: string | null }>;
-          ackTotal = rows.length;
-          ackDone = rows.filter((r) => r.acknowledged_at).length;
+          // COUNT queries, not truncated row fetches — the collapsed pill must
+          // agree with the DistributionAcks panel it summarizes.
+          const base = () => supabase.from("distribution_acks")
+            .select("id", { count: "exact", head: true })
+            .eq("document_id", selectedDoc.id!)
+            .eq("version_id", selectedDoc.currentVersionId!);
+          const [{ count: total }, { count: done }] = await Promise.all([
+            base(),
+            base().not("acknowledged_at", "is", null),
+          ]);
+          ackTotal = total ?? 0;
+          ackDone = done ?? 0;
         }
-        if (alive) setDistSummary({ issued, ackDone, ackTotal });
+        if (alive) setDistSummary({ issued, issuedCapped, ackDone, ackTotal });
       } catch { if (alive) setDistSummary(null); }
     })();
     return () => { alive = false; };
@@ -421,8 +431,9 @@ export default function InspectorPanel({
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex items-start gap-2">
           <Send className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600" />
           <span>
-            <b>{staleHolderCount} {staleHolderCount === 1 ? "person is" : "people are"} holding a superseded copy</b> downloaded
-            in the last 60 days. Open <b>Distribution &amp; sharing</b> below to see who and send a recall nudge.
+            <b>{staleHolderCount} {staleHolderCount === 1 ? "person" : "people"} may be working from a superseded copy</b> —
+            they pulled an older revision in the last 60 days and haven&apos;t pulled the current one.
+            Open <b>Distribution &amp; sharing</b> below to see who and send a recall nudge.
           </span>
         </div>
       )}
@@ -554,7 +565,7 @@ export default function InspectorPanel({
           icon={Send}
           summary={distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)
             ? <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
-                {distSummary.issued > 0 ? `${distSummary.issued} issued` : ""}
+                {distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
                 {distSummary.issued > 0 && distSummary.ackTotal > 0 ? " · " : ""}
                 {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
               </span>
@@ -851,6 +862,28 @@ export default function InspectorPanel({
         </CollapsibleSection>
       )}
 
+      {/* HOLDS — placing the FIRST hold. Every hold-authorized role
+          (Manager/Supervisor/Engineer/Drafter/controllers/owner) must be able
+          to stop work from a document — a safety control, not an admin
+          convenience — so this cannot live inside the controller-gated
+          Manage drawer. Collapsed: zero chrome on a healthy document. Once a
+          hold is active this disappears and the ALERTS zone takes over. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount === 0 && (canManageAssets || isOwner) && (
+        <CollapsibleSection id="placehold" title="Holds" icon={Shield}>
+          <HoldStrip
+            documentId={selectedDoc.id}
+            orgId={selectedDoc.orgId}
+            userId={uid}
+            userName={userEmail || undefined}
+            userEmail={userEmail || undefined}
+            userRole={activeRole || undefined}
+            canEdit
+            refreshKey={holdsRefresh}
+            onChange={() => setHoldsRefresh((k) => k + 1)}
+          />
+        </CollapsibleSection>
+      )}
+
       {/* MANAGE & LIFECYCLE — admin/owner actions behind one header. */}
       {canManage && (
         <CollapsibleSection id="manage" title="Manage & lifecycle" icon={Wrench}>
@@ -873,6 +906,17 @@ export default function InspectorPanel({
               <Lock className="w-3.5 h-3.5" /> Permissions
             </button>
           </div>
+
+          {/* Document-class override (controller-only): the per-document
+              declaration that drives the MOC gate + check-in routing. */}
+          {isController && selectedDoc.id && (
+            <DocClassControl
+              documentId={selectedDoc.id}
+              collectionId={selectedDoc.collectionId ?? null}
+              libraryId={selectedDoc.libraryId ?? null}
+              fileName={selectedDoc.name ?? null}
+            />
+          )}
           {/* Lifecycle actions */}
           <div className="grid grid-cols-2 gap-2">
             {onSupersede && (
@@ -911,21 +955,6 @@ export default function InspectorPanel({
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
-          )}
-          {/* Holds live in the ALERTS zone once active; placing the first
-              one starts here. */}
-          {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount === 0 && (canManageAssets || isOwner) && (
-            <HoldStrip
-              documentId={selectedDoc.id}
-              orgId={selectedDoc.orgId}
-              userId={uid}
-              userName={userEmail || undefined}
-              userEmail={userEmail || undefined}
-              userRole={activeRole || undefined}
-              canEdit
-              refreshKey={holdsRefresh}
-              onChange={() => setHoldsRefresh((k) => k + 1)}
-            />
           )}
           {/* Danger zone — hard delete is controller-only; owners request. */}
           {/* DESTRUCTIVE ────────────────────────────────────────────────── */}

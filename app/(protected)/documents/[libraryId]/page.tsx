@@ -4541,6 +4541,10 @@ export default function LibraryExplorerPage() {
           document={checkoutDoc}
           currentUser={{ uid: uid || '', email: userEmail, role: activeRole }}
           canPublish={canPublish}
+          folderPath={(() => {
+            const f = checkoutDoc.collectionId ? folderMap.get(checkoutDoc.collectionId) : null;
+            return f ? [...(f.pathNames ?? []), f.name].filter(Boolean) as string[] : [];
+          })()}
         />
       )}
 

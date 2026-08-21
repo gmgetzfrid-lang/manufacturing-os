@@ -1053,16 +1053,30 @@ export async function autoReleaseExpiredAdHoc(
     (data as Array<{ document_id: string; org_id: string }>).map((r) => [r.document_id, r.org_id]),
   );
 
-  await db
-    .from("checkout_sessions")
-    .update({
+  // The register outcome for a sweep is 'auto_released' — the one outcome no
+  // human ever chooses. Pre-migration (no outcome columns) the write retries
+  // without them, same tolerance as finishMySession.
+  {
+    const basePayload = {
       status: "checked_in",
       ended_at: nowIso,
       released_at: nowIso,
       released_reason: "Auto-released after 24h ad-hoc cap",
-    })
-    .in("id", ids)
-    .eq("status", "active");
+    };
+    const { error: sweepErr } = await db
+      .from("checkout_sessions")
+      .update({ ...basePayload, outcome: "auto_released" })
+      .in("id", ids)
+      .eq("status", "active");
+    if (sweepErr) {
+      const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
+      if (isMissingOutcomeSchema(sweepErr)) {
+        await db.from("checkout_sessions").update(basePayload).in("id", ids).eq("status", "active");
+      } else {
+        console.warn("[autoReleaseExpiredAdHoc] sweep update failed", sweepErr);
+      }
+    }
+  }
 
   // Settle each affected document from its remaining active sessions —
   // blanket-clearing freed docs that non-expired sessions still held, and

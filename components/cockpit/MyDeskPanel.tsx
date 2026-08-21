@@ -130,6 +130,8 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
         userName: userEmail?.split("@")[0] || "User",
         sessionStatus: "checked_in",
         releasedReason: "Released from My Desk",
+        // The button says "no changes" — record it on the register.
+        outcome: { outcome: "all_clear", note: null, ref: null },
       });
       const { endMyIntents } = await import("@/lib/intents");
       void endMyIntents({ documentId: c.documentId, userId: uid, sources: ["checkout"] });

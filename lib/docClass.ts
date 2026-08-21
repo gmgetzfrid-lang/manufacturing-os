@@ -59,8 +59,12 @@ export function resolveEffectiveDocClass(
 
 /**
  * Resolve the class that applies to THIS document from the live DB chain.
- * Null = unclassified (or pre-migration env) — callers must degrade to
- * today's behavior, never assume a class.
+ * Null = unclassified (or pre-migration env) — callers degrade to today's
+ * behavior. A TRANSIENT failure (network, RLS hiccup) THROWS instead of
+ * returning null: "we couldn't check" must never silently read as "no class
+ * declared" — that's how a PSM gate quietly turns itself off. Callers that
+ * enforce (RevUpModal) fail CLOSED on the throw; advisory callers may catch
+ * and degrade.
  */
 export async function effectiveDocClassForDocument(doc: {
   id?: string | null;
@@ -90,8 +94,8 @@ export async function effectiveDocClassForDocument(doc: {
     return resolveEffectiveDocClass(docLevel, folderLevel, libLevel);
   } catch (e) {
     if (isMissingDocClassSchema(e)) { docClassSchemaMissing = true; return null; }
-    console.warn("[docClass] resolve failed", e);
-    return null;
+    // Real failure — the caller must decide, not inherit a silent "no class".
+    throw new Error(`Couldn't resolve the document class: ${(e as { message?: string })?.message ?? "unknown error"}`);
   }
 }
 
@@ -133,4 +137,9 @@ export async function setDocClass(input: {
     }
     throw new Error(error.message);
   }
+  // A successful write PROVES the columns exist — un-latch the missing-schema
+  // flag so resolvers work immediately when the migration was applied
+  // mid-session (otherwise a declared 'drawing' class would save while the
+  // MOC gate stayed silently off until the next full reload).
+  docClassSchemaMissing = false;
 }

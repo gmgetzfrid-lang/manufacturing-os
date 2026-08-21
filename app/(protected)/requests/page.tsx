@@ -397,7 +397,7 @@ export default function RequestPortal() {
           ticket.title.toLowerCase().includes(q) ||
           (ticket.requesterName || '').toLowerCase().includes(q) ||
           (ticket.assignedDrafterName || '').toLowerCase().includes(q) ||
-          ticket.unit.toLowerCase().includes(q);
+          (ticket.unit || '').toLowerCase().includes(q);
         if (!matches) return false;
       }
 

@@ -70,7 +70,7 @@ async function summarizeDerivativeWork(docIds: string[], sinceIso: string): Prom
   if (rows.length === 0) return [];
   const counts: Record<string, number> = {};
   for (const r of rows) counts[r.action] = (counts[r.action] ?? 0) + 1;
-  const interesting = ["CHECK_OUT", "REV_UP", "DOWNLOAD", "HOLD_OPENED"];
+  const interesting = ["CHECK_OUT", "DOCUMENT_CHECKOUT", "REV_UP", "DOWNLOAD", "HOLD_OPENED"];
   for (const a of interesting) {
     if (counts[a]) warnings.push(`${counts[a]} ${a.replace("_", " ").toLowerCase()} event${counts[a] === 1 ? "" : "s"} happened on the new docs since the split.`);
   }

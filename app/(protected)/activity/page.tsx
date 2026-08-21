@@ -192,7 +192,7 @@ export default function ActivityFeedPage() {
       if (new Date(r.timestamp).toDateString() === todayStr) today++;
       if (r.userEmail) actors.add(r.userEmail);
       if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(r.action)) cat.revisions++;
-      else if (["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE"].includes(r.action)) cat.locks++;
+      else if (["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "DOCUMENT_CHECKOUT", "DOCUMENT_CHECKIN"].includes(r.action)) cat.locks++;
       else if (["HOLD_OPENED", "HOLD_RELEASED"].includes(r.action)) cat.holds++;
       else if (r.action.startsWith("MILESTONE_")) cat.milestones++;
       else if (r.action === "EQUIPMENT_STATE_CHANGED") cat.equipment++;

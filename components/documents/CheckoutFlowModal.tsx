@@ -71,9 +71,13 @@ interface CheckoutFlowModalProps {
   /** Per-library publish authority (canPublishOnLibrary) — the SAME grant the
    *  inspector uses, so publish shows up in both places or neither. */
   canPublish?: boolean;
+  /** The document's folder-name chain — threads through to RevUpModal so a
+   *  revision published from check-in lands under the same storage prefix as
+   *  every other publish of the document. */
+  folderPath?: string[];
 }
 
-export default function CheckoutFlowModal({ isOpen, onClose, document, currentUser, canPublish = false }: CheckoutFlowModalProps) {
+export default function CheckoutFlowModal({ isOpen, onClose, document, currentUser, canPublish = false, folderPath }: CheckoutFlowModalProps) {
   const [activeSessions, setActiveSessions] = useState<CheckoutSession[]>([]);
   const [, setLoading] = useState(true);
   const [note, setNote] = useState("");
@@ -160,10 +164,15 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .eq("status", "active")
         .order("started_at", { ascending: false });
       if (alive) {
+        // purpose + episodeId MUST survive this mapping — CheckInPanel derives
+        // its entire outcome card set from mySession.purpose. Dropping it here
+        // silently degrades every check-in to the generic card set.
         setActiveSessions((data || []).map(r => ({
           id: r.id, orgId: r.org_id, documentId: r.document_id, libraryId: r.library_id,
           userId: r.user_id, userName: r.user_name, mode: r.mode, note: r.note,
           status: r.status, startedAt: r.started_at, lastSeenAt: r.last_seen_at,
+          purpose: r.purpose, episodeId: r.episode_id,
+          expectedReleaseAt: r.expected_release_at, autoExpiresAt: r.auto_expires_at,
         } as CheckoutSession)));
         setLoading(false);
       }
@@ -240,6 +249,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
   const handleCheckout = async () => {
     if (!currentUser.uid || !document.orgId) return;
+    // One act, one session: never start a full checkout while a quick hold is
+    // in flight or while we already hold an active session — otherwise the
+    // register shows two simultaneous checkouts for one person, one act.
+    if (processing || quickBusy || mySession) return;
     // The forced flow: no checkout without a stated purpose + reason. This is
     // the document-control record every other member sees.
     if (!purposeCategory) {
@@ -403,6 +416,21 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           }
         } catch (e) { console.warn("[checkout] join notify failed", e); }
         setEpisode(checkoutEpisode);
+        // The register records JOINS too — a join is a checkout act, and a
+        // later CHECK_IN with no matching CHECK_OUT is a hole in the story.
+        await logCheckoutEvent({
+          orgId: document.orgId, fileId: document.id!,
+          userId: currentUser.uid, userEmail: currentUser.email || "unknown",
+          userRole: currentUser.role || "unknown",
+          type: "CHECK_OUT",
+          details: {
+            joined: true, documentNumber: document.documentNumber ?? null,
+            mode, purpose: purposeCategory, reason: note.trim(),
+            sessionId: insertedSession?.id ?? null,
+            episodeId: checkoutEpisode?.id ?? null,
+            checkoutNumber: checkoutEpisode?.seq ?? null,
+          },
+        });
         setProcessing(false);
         showToast({
           type: "warning",
@@ -497,11 +525,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   // One-click lightweight tier, offered INSIDE the modal too: the person who
   // opened the full form and balked still gets the honest cheap option.
   const handleQuickHold = async () => {
-    if (!document.id || !document.orgId || !currentUser.uid || quickBusy) return;
+    if (!document.id || !document.orgId || !currentUser.uid || quickBusy || processing) return;
     setQuickBusy(true);
     try {
       const userName = currentUser.email?.split("@")[0] || "User";
-      await quickHold({
+      const result = await quickHold({
         orgId: document.orgId,
         documentId: document.id,
         libraryId: document.libraryId ?? null,
@@ -514,8 +542,18 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         userId: currentUser.uid, userEmail: currentUser.email || "unknown",
         userRole: currentUser.role || "unknown",
         type: "CHECK_OUT",
-        details: { quickHold: true, autoExpires: "end of day" },
+        details: { quickHold: true, autoExpires: "end of day", joined: result === "joined" },
       });
+      // Honesty over convenience: a quick hold on a locked document JOINS the
+      // holder's checkout — say so, same as the full-checkout path does.
+      if (result === "joined") {
+        showToast({
+          type: "warning",
+          title: "Joined an active checkout",
+          message: "Someone else holds the lock — your quick hold put you on their checkout ticket. Coordinate before editing.",
+          duration: 8000,
+        });
+      }
       setQuickBusy(false);
       onClose();
     } catch (e) {
@@ -541,7 +579,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   // then just the two-question form — no collaborator panel, no history, no
   // thread pane. The multi-person dashboard appears only when there IS a
   // checkout in motion. Overload is why people bounce off systems.
-  const isIdle = activeSessions.length === 0 && !mySession && !isOrphaned && !episode;
+  // document.checkedOutBy matters too: a foreign lock with lost session rows
+  // (someone ELSE's orphan) must show the full layout, not a slim form whose
+  // button confusingly reads "Join Session" on an apparently idle document.
+  const isIdle = activeSessions.length === 0 && !mySession && !isOrphaned && !episode && !document.checkedOutBy;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
@@ -570,7 +611,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
               <h3 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Active Collaborators</h3>
               {activeSessions.length === 0 ? (
                 <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-sm">
-                  {isOrphaned ? "This checkout got out of sync — fix it below." : "No one is currently working on this file."}
+                  {isOrphaned
+                    ? "This checkout got out of sync — fix it below."
+                    : document.checkedOutBy
+                      ? `Held by ${document.checkedOutByName || "another user"}, but their session went missing. An Admin/DocCtrl can force-release it from the row's checkout popover.`
+                      : "No one is currently working on this file."}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -610,6 +655,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   mySession={mySession}
                   activeSessions={activeSessions}
                   canPublish={canPublish}
+                  folderPath={folderPath}
                   onDone={onClose}
                 />
               ) : (
@@ -861,7 +907,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                           )}
                           <button
                             onClick={handleCheckout}
-                            disabled={processing || !ready}
+                            disabled={processing || quickBusy || !ready}
                             className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-[var(--color-surface)] border-2 border-blue-600 text-blue-700 hover:bg-blue-50' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-900/20'} disabled:opacity-60 disabled:cursor-not-allowed`}
                           >
                             {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
