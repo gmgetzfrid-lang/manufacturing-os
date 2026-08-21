@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -319,20 +319,6 @@ export default function InspectorPanel({
               resourceType="document"
               resourceId={selectedDoc.id}
             />
-            <button
-              onClick={() => setShareOpen(true)}
-              title="Generate a public share link for someone outside the org"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-            >
-              <LinkIcon className="w-3 h-3" /> Share
-            </button>
-            <NextLink
-              href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
-              title="Issue this document on a transmittal — a tracked cover sheet to a recipient"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-            >
-              <Send className="w-3 h-3" /> Transmit
-            </NextLink>
             <PresenceIndicator
               resourceType="document"
               resourceId={selectedDoc.id}
@@ -341,11 +327,6 @@ export default function InspectorPanel({
               role={activeRole || undefined}
             />
           </div>
-        )}
-
-        {/* Who did we ISSUE this to? The document-side transmittal trail. */}
-        {selectedDoc.id && selectedDoc.orgId && (
-          <TransmittalTrail orgId={selectedDoc.orgId} documentId={selectedDoc.id} currentRev={selectedDoc.rev ?? null} />
         )}
       </div>
 
@@ -373,69 +354,6 @@ export default function InspectorPanel({
         </div>
       )}
 
-      {/* IMPACT — what changing this document touches. */}
-      {selectedDoc.id && selectedDoc.orgId && (
-        <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
-      )}
-
-      {/* AI BOUNDARY — whether AI features can read this document, stated
-          plainly, with the per-document carve-out for controllers. */}
-      {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && (
-        <div className="px-4 pt-2">
-          <AiBoundaryChip
-            documentId={selectedDoc.id}
-            libraryId={selectedDoc.libraryId}
-            orgId={selectedDoc.orgId}
-            canManage={isController}
-          />
-        </div>
-      )}
-
-      {/* RELATED — the document's relationship web: curated pins (documents +
-          external links), automatic matches, the graph, and the short link. */}
-      {selectedDoc.id && selectedDoc.orgId && (
-        <div className="px-4 py-3 border-t border-[var(--color-border)]">
-          <RelatedPanel
-            documentId={selectedDoc.id}
-            orgId={selectedDoc.orgId}
-            documentNumber={selectedDoc.documentNumber}
-            userId={uid ?? undefined}
-            userName={userEmail ?? undefined}
-            canManage={["Admin", "DocCtrl", "Manager", "Supervisor"].includes(activeRole ?? "")}
-          />
-        </div>
-      )}
-
-      {/* DISTRIBUTION CONFIRMATIONS — "8 of 12 confirmed they have Rev 5",
-          plus the recipient's own unmissable confirm bar. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <DistributionAcks
-          documentId={selectedDoc.id}
-          orgId={selectedDoc.orgId}
-          libraryId={selectedDoc.libraryId ?? null}
-          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
-          currentRev={selectedDoc.rev ?? null}
-          currentVersionId={selectedDoc.currentVersionId ?? null}
-          currentUserId={uid}
-          currentUserName={userEmail?.split("@")[0] ?? null}
-          isController={isController}
-        />
-      )}
-
-      {/* DISTRIBUTION — who pulled copies, and are they still current. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <DistributionRecall
-          documentId={selectedDoc.id}
-          orgId={selectedDoc.orgId}
-          libraryId={selectedDoc.libraryId ?? null}
-          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
-          currentRev={selectedDoc.rev ?? null}
-          currentVersionId={selectedDoc.currentVersionId ?? null}
-          currentUserId={uid}
-          currentUserName={userEmail?.split("@")[0] ?? null}
-        />
-      )}
-
       {/* HOLDS (Phase 5) ─────────────────────────────────────────────── */}
       {selectedDoc.id && selectedDoc.orgId && uid && (
         <HoldStrip
@@ -447,19 +365,6 @@ export default function InspectorPanel({
           userRole={activeRole || undefined}
           canEdit={canManageAssets || isOwner}
         />
-      )}
-
-      {/* QUICK NOTES — drop ad-hoc context anywhere (collapsed by default) */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <CollapsibleSection id="quicknote" title="Quick note" icon={StickyNote}>
-          <QuickNoteComposer
-            orgId={selectedDoc.orgId}
-            userId={uid}
-            userEmail={userEmail || undefined}
-            userName={userEmail?.split("@")[0]}
-            scope={{ documentId: selectedDoc.id }}
-          />
-        </CollapsibleSection>
       )}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
@@ -548,6 +453,144 @@ export default function InspectorPanel({
         </button>
       </div>
 
+      {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
+          or a role/user granted "publish" on this library, or the accountable
+          owner), and on the checkout lock: publishing over someone else's
+          active checkout is blocked. */}
+      {canPublishEff && onRevUp && (
+        <button
+          onClick={onRevUp}
+          disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
+          title={isCheckedOut && !checkedOutByMe
+            ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked — coordinate or ask them to check in.`
+            : "Publish a new revision"}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {isCheckedOut && !checkedOutByMe
+            ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</>
+            : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision</>}
+        </button>
+      )}
+
+      {/* SOURCE CUSTODY: pull the authoritative CAD file from the vault
+          instead of a desktop folder. Records an edit intent pinned to the
+          current revision — so the publish contract knows your base, and
+          overlap advisories can see you're working. */}
+      {selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid && (
+        <button
+          onClick={() => void handleGetSource()}
+          disabled={sourceBusy}
+          title="Download the native CAD source (DWG/zip) stored with the current revision. Marks you as working on this document from this revision."
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-sky-200 bg-sky-50 text-xs font-black text-sky-800 hover:bg-sky-100 transition-all disabled:opacity-50"
+        >
+          <FileText className="w-3.5 h-3.5" />
+          {sourceBusy ? "Fetching source…" : `Get CAD source (${selectedVersion.sourceFileName || "DWG"})`}
+        </button>
+      )}
+
+      {/* WORK PACKAGE — pin this drawing into a job bundle from where the
+          drawing lives, not only from /packages. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <AddToPackageButton
+          doc={selectedDoc}
+          orgId={selectedDoc.orgId}
+          userId={uid}
+          userName={userEmail?.split("@")[0] ?? null}
+        />
+      )}
+
+      {/* DISTRIBUTION & SHARING — one drawer for the whole "who has this
+          document" story: share links, transmittals (and their trail),
+          read confirmations, and stale-copy recall. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <CollapsibleSection id="distribution" title="Distribution & sharing" icon={Send}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShareOpen(true)}
+              title="Generate a public share link for someone outside the org"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+            >
+              <LinkIcon className="w-3 h-3" /> Share
+            </button>
+            <NextLink
+              href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
+              title="Issue this document on a transmittal — a tracked cover sheet to a recipient"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+            >
+              <Send className="w-3 h-3" /> Transmit
+            </NextLink>
+          </div>
+          <TransmittalTrail orgId={selectedDoc.orgId} documentId={selectedDoc.id} currentRev={selectedDoc.rev ?? null} />
+      {/* DISTRIBUTION CONFIRMATIONS — "8 of 12 confirmed they have Rev 5",
+          plus the recipient's own unmissable confirm bar. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionAcks
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+          isController={isController}
+        />
+      )}
+
+      {/* DISTRIBUTION — who pulled copies, and are they still current. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionRecall
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+        />
+      )}
+
+        </CollapsibleSection>
+      )}
+
+      {/* RELATIONSHIPS & IMPACT — what this document touches: where-used
+          impact, AI readability, curated/automatic relations, equipment. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <CollapsibleSection id="relationships" title="Relationships & impact" icon={Layers}>
+      {/* IMPACT — what changing this document touches. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
+      )}
+
+      {/* AI BOUNDARY — whether AI features can read this document, stated
+          plainly, with the per-document carve-out for controllers. */}
+      {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && (
+        <div className="px-4 pt-2">
+          <AiBoundaryChip
+            documentId={selectedDoc.id}
+            libraryId={selectedDoc.libraryId}
+            orgId={selectedDoc.orgId}
+            canManage={isController}
+          />
+        </div>
+      )}
+
+      {/* RELATED — the document's relationship web: curated pins (documents +
+          external links), automatic matches, the graph, and the short link. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <div className="px-4 py-3 border-t border-[var(--color-border)]">
+          <RelatedPanel
+            documentId={selectedDoc.id}
+            orgId={selectedDoc.orgId}
+            documentNumber={selectedDoc.documentNumber}
+            userId={uid ?? undefined}
+            userName={userEmail ?? undefined}
+            canManage={["Admin", "DocCtrl", "Manager", "Supervisor"].includes(activeRole ?? "")}
+          />
+        </div>
+      )}
+
       {/* EQUIPMENT TAGS ─────────────────────────────────────────────
           Quick-glance asset chips. Click any to open the photo popover
           without going through Metadata. Auto-hides if the doc has
@@ -563,6 +606,9 @@ export default function InspectorPanel({
         />
       )}
 
+        </CollapsibleSection>
+      )}
+
       {/* COMPLIANCE & CONTROL — review cycle, read-&-understood, pre-publish
           review, retention/legal hold, and origin, grouped behind ONE header.
           The header's pills keep the at-a-glance status visible while the
@@ -575,7 +621,6 @@ export default function InspectorPanel({
           summary={
             <>
               <ReviewPill nextReviewDate={selectedDoc.nextReviewDate} compact />
-              <EffectivePill effectiveDate={selectedDoc.effectiveDate} compact />
               <RetentionPill retentionUntil={selectedDoc.retentionUntil} dispositionState={selectedDoc.dispositionState} legalHold={selectedDoc.legalHold} compact />
               {selectedDoc.origin === "external" && (
                 <OriginBadge origin="external" source={selectedDoc.externalSource} reference={selectedDoc.externalReference} />
@@ -613,50 +658,105 @@ export default function InspectorPanel({
         </CollapsibleSection>
       )}
 
-      {/* SOURCE CUSTODY: pull the authoritative CAD file from the vault
-          instead of a desktop folder. Records an edit intent pinned to the
-          current revision — so the publish contract knows your base, and
-          overlap advisories can see you're working. */}
-      {selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid && (
-        <button
-          onClick={() => void handleGetSource()}
-          disabled={sourceBusy}
-          title="Download the native CAD source (DWG/zip) stored with the current revision. Marks you as working on this document from this revision."
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-sky-200 bg-sky-50 text-xs font-black text-sky-800 hover:bg-sky-100 transition-all disabled:opacity-50"
+      {/* CHECKOUT — status, force release, and the sealed episode record,
+          in ONE place instead of three. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <CollapsibleSection
+          id="checkout"
+          title="Checkout"
+          icon={Lock}
+          summary={isCheckedOut
+            ? <span className="inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border-amber-200">
+                {checkedOutByMe ? "Checked out by you" : `Checked out · ${selectedDoc.checkedOutByName || "someone"}`}
+              </span>
+            : undefined}
         >
-          <FileText className="w-3.5 h-3.5" />
-          {sourceBusy ? "Fetching source…" : `Get CAD source (${selectedVersion.sourceFileName || "DWG"})`}
-        </button>
-      )}
-
-      {/* WORK PACKAGE — pin this drawing into a job bundle from where the
-          drawing lives, not only from /packages. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <AddToPackageButton
-          doc={selectedDoc}
-          orgId={selectedDoc.orgId}
-          userId={uid}
-          userName={userEmail?.split("@")[0] ?? null}
+        <CheckoutStatusCell
+          docRecord={selectedDoc}
+          currentUserId={uid ?? undefined}
+          currentUserEmail={userEmail ?? undefined}
+          userRole={activeRole}
+          onCheckout={onCheckout}
         />
+        {isController && isCheckedOut && onForceUnlock && (
+          <button
+            onClick={() => onForceUnlock(selectedDoc)}
+            className="w-full mt-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-bold flex items-center justify-center transition-colors"
+          >
+            <Shield className="w-3.5 h-3.5 mr-1.5" />
+            Force Release Lock
+          </button>
+        )}
+          <CheckoutHistoryPanel orgId={selectedDoc.orgId} documentId={selectedDoc.id} />
+        </CollapsibleSection>
       )}
 
-      {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
-          or a role/user granted "publish" on this library, or the accountable
-          owner), and on the checkout lock: publishing over someone else's
-          active checkout is blocked. */}
-      {canPublishEff && onRevUp && (
-        <button
-          onClick={onRevUp}
-          disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
-          title={isCheckedOut && !checkedOutByMe
-            ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked — coordinate or ask them to check in.`
-            : "Publish a new revision"}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {isCheckedOut && !checkedOutByMe
-            ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</>
-            : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision</>}
-        </button>
+      {/* FILE DETAILS ───────────────────────────────────────────────── */}
+      <CollapsibleSection id="filedetails" title="File details" icon={FileText}>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+          <div className="text-[var(--color-text-muted)]">Type</div>
+          <div className="text-[var(--color-text)] font-mono truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
+
+          <div className="text-[var(--color-text-muted)]">Size</div>
+          <div className="text-[var(--color-text)] font-mono">{formatBytes(sizeBytes)}</div>
+
+          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Created</div>
+          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.createdAt)}</div>
+
+          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Modified</div>
+          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.updatedAt)}</div>
+
+          {selectedVersion?.createdByName && (
+            <>
+              <div className="text-[var(--color-text-muted)] flex items-center gap-1"><User className="w-3 h-3" /> By</div>
+              <div className="text-[var(--color-text)] truncate">{selectedVersion.createdByName}</div>
+            </>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      {/* HISTORY & ACTIVITY — the revision record plus the audit tail. */}
+      <CollapsibleSection id="history" title="History & activity" icon={History} defaultOpen>
+      {/* VERSION HISTORY ────────────────────────────────────────────── */}
+      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
+        <VersionHistoryPanel
+          doc={selectedDoc}
+          currentUserId={uid ?? undefined}
+          currentUserEmail={userEmail ?? undefined}
+          userRole={activeRole}
+          refreshKey={versionHistoryRefreshKey}
+          onOpenVersion={(v) => onOpenVersion?.(v)}
+          canRevert={canPublishEff}
+          onRevertVersion={onRevertVersion}
+        />
+      </div>
+
+        {recentAudits.length === 0 ? (
+          <div className="text-xs text-[var(--color-text-faint)] italic">No recent activity.</div>
+        ) : (
+          <div className="space-y-3">
+            {recentAudits.map((log, i) => (
+              <div key={i} className="flex flex-col gap-0.5 border-l-2 border-[var(--color-border)] pl-3">
+                <span className="text-[10px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
+                <span className="text-[10px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
+                <span className="text-[9px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CollapsibleSection>
+
+      {/* QUICK NOTES — drop ad-hoc context anywhere (collapsed by default) */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <CollapsibleSection id="quicknote" title="Quick note" icon={StickyNote}>
+          <QuickNoteComposer
+            orgId={selectedDoc.orgId}
+            userId={uid}
+            userEmail={userEmail || undefined}
+            userName={userEmail?.split("@")[0]}
+            scope={{ documentId: selectedDoc.id }}
+          />
+        </CollapsibleSection>
       )}
 
       {/* MANAGE & LIFECYCLE — admin/owner actions behind one header. */}
@@ -719,123 +819,38 @@ export default function InspectorPanel({
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
           )}
-        </CollapsibleSection>
-      )}
-
-      {/* CHECKOUT STATUS ────────────────────────────────────────────── */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
-        <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3">Checkout Status</div>
-        <CheckoutStatusCell
-          docRecord={selectedDoc}
-          currentUserId={uid ?? undefined}
-          currentUserEmail={userEmail ?? undefined}
-          userRole={activeRole}
-          onCheckout={onCheckout}
-        />
-        {isController && isCheckedOut && onForceUnlock && (
-          <button
-            onClick={() => onForceUnlock(selectedDoc)}
-            className="w-full mt-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-bold flex items-center justify-center transition-colors"
-          >
-            <Shield className="w-3.5 h-3.5 mr-1.5" />
-            Force Release Lock
-          </button>
-        )}
-      </div>
-
-      {/* CHECKOUT CONVERSATION — the sealed episode record (system notes like
-          "X published Rev 5 over your checkout" live here). Was only visible
-          inside the checkout modal; now readable wherever the document is. */}
-      {selectedDoc.id && selectedDoc.orgId && (
-        <CollapsibleSection id="checkouthistory" title="Checkout history & conversation" icon={History}>
-          <CheckoutHistoryPanel orgId={selectedDoc.orgId} documentId={selectedDoc.id} />
-        </CollapsibleSection>
-      )}
-
-      {/* FILE DETAILS ───────────────────────────────────────────────── */}
-      <CollapsibleSection id="filedetails" title="File details" icon={FileText}>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
-          <div className="text-[var(--color-text-muted)]">Type</div>
-          <div className="text-[var(--color-text)] font-mono truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
-
-          <div className="text-[var(--color-text-muted)]">Size</div>
-          <div className="text-[var(--color-text)] font-mono">{formatBytes(sizeBytes)}</div>
-
-          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Created</div>
-          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.createdAt)}</div>
-
-          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Modified</div>
-          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.updatedAt)}</div>
-
-          {selectedVersion?.createdByName && (
-            <>
-              <div className="text-[var(--color-text-muted)] flex items-center gap-1"><User className="w-3 h-3" /> By</div>
-              <div className="text-[var(--color-text)] truncate">{selectedVersion.createdByName}</div>
-            </>
+          {/* Danger zone — hard delete is controller-only; owners request. */}
+          {/* DESTRUCTIVE ────────────────────────────────────────────────── */}
+          {isController && (
+            <button
+              onClick={onDelete}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete Document
+            </button>
           )}
-        </div>
-      </CollapsibleSection>
-
-      {/* VERSION HISTORY ────────────────────────────────────────────── */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
-        <VersionHistoryPanel
-          doc={selectedDoc}
-          currentUserId={uid ?? undefined}
-          currentUserEmail={userEmail ?? undefined}
-          userRole={activeRole}
-          refreshKey={versionHistoryRefreshKey}
-          onOpenVersion={(v) => onOpenVersion?.(v)}
-          canRevert={canPublishEff}
-          onRevertVersion={onRevertVersion}
-        />
-      </div>
-
-      {/* RECENT ACTIVITY ────────────────────────────────────────────── */}
-      <CollapsibleSection id="activity" title="Recent activity" icon={Activity}>
-        {recentAudits.length === 0 ? (
-          <div className="text-xs text-[var(--color-text-faint)] italic">No recent activity.</div>
-        ) : (
-          <div className="space-y-3">
-            {recentAudits.map((log, i) => (
-              <div key={i} className="flex flex-col gap-0.5 border-l-2 border-[var(--color-border)] pl-3">
-                <span className="text-[10px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
-                <span className="text-[10px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
-                <span className="text-[9px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </CollapsibleSection>
-
-      {/* DESTRUCTIVE ────────────────────────────────────────────────── */}
-      {isController && (
-        <button
-          onClick={onDelete}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
-        >
-          <Trash2 className="w-3.5 h-3.5" /> Delete Document
-        </button>
-      )}
-      {/* Owners can't hard-delete (that would break the audit trail) — they
-          request it, and Admin/DocCtrl approve by deleting. */}
-      {!isController && isOwner && selectedDoc.id && selectedDoc.orgId && (
-        <button
-          onClick={async () => {
-            const reason = await appPrompt({ title: "Request deletion", message: "Admin / Doc Control will review. Why should this document be deleted?", placeholder: "Reason" });
-            if (!reason?.trim() || !uid) return;
-            try {
-              await requestDeletion({
-                orgId: selectedDoc.orgId!, documentId: selectedDoc.id!,
-                docLabel: selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document",
-                libraryId: selectedDoc.libraryId, requesterId: uid, requesterName: userEmail, reason: reason.trim(),
-              });
-              await appAlert({ message: "Deletion request sent to Admin / Doc Control." });
-            } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-          }}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50/60 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
-        >
-          <Trash2 className="w-3.5 h-3.5" /> Request deletion
-        </button>
+          {/* Owners can't hard-delete (that would break the audit trail) — they
+              request it, and Admin/DocCtrl approve by deleting. */}
+          {!isController && isOwner && selectedDoc.id && selectedDoc.orgId && (
+            <button
+              onClick={async () => {
+                const reason = await appPrompt({ title: "Request deletion", message: "Admin / Doc Control will review. Why should this document be deleted?", placeholder: "Reason" });
+                if (!reason?.trim() || !uid) return;
+                try {
+                  await requestDeletion({
+                    orgId: selectedDoc.orgId!, documentId: selectedDoc.id!,
+                    docLabel: selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document",
+                    libraryId: selectedDoc.libraryId, requesterId: uid, requesterName: userEmail, reason: reason.trim(),
+                  });
+                  await appAlert({ message: "Deletion request sent to Admin / Doc Control." });
+                } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+              }}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50/60 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Request deletion
+            </button>
+          )}
+        </CollapsibleSection>
       )}
 
       {modifyOpen && selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
