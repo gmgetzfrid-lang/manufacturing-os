@@ -84,6 +84,9 @@ import {
   renameFolderAndDescendants,
   reorderFolders,
   deleteFolder,
+  listDeletedFolders,
+  restoreDeletedFolder,
+  type DeletedFolder,
   updateCollectionAppearance,
   updateCollectionHomeConfig,
 } from "@/lib/libraryCollections";
@@ -161,6 +164,7 @@ import {
   UploadCloud,
   X,
   Archive,
+  ArchiveRestore,
   Briefcase,
   CheckSquare,
   Hash,
@@ -178,6 +182,36 @@ const BUILTIN_COLUMNS = [
   { key: "status", label: "Status" },
   { key: "updatedAt", label: "Updated" },
 ];
+
+// Explorer-style file columns — available in the column manager but not in
+// the default set, so existing views don't widen unasked. Values come from
+// data every document already carries (upload metadata + timestamps).
+const OPTIONAL_BUILTIN_COLUMNS = [
+  { key: "size", label: "Size" },
+  { key: "fileType", label: "Type" },
+  { key: "createdAt", label: "Created" },
+];
+
+function formatBytesShort(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function docSizeBytes(d: DocumentRecord): number {
+  const raw = (d.metadata ?? {})["size_bytes"];
+  const n = typeof raw === "string" ? Number(raw) : typeof raw === "number" ? raw : NaN;
+  return Number.isFinite(n) ? n : 0;
+}
+
+function docFileExt(d: DocumentRecord): string {
+  const meta = (d.metadata ?? {}) as Record<string, unknown>;
+  const ext = (typeof meta.extension === "string" && meta.extension)
+    || (d.name?.includes(".") ? d.name.split(".").pop() ?? "" : "");
+  return ext ? ext.toLowerCase() : "";
+}
 
 function safeString(v: unknown) {
   return typeof v === "string" ? v : "";
@@ -287,9 +321,10 @@ export default function LibraryExplorerPage() {
   const [editingDocNumValue, setEditingDocNumValue] = useState("");
   const [editingDocNumError, setEditingDocNumError] = useState<string | null>(null);
   const [savingDocNum, setSavingDocNum] = useState(false);
-  // Initial fetch is capped to keep first paint snappy. When the cap is
-  // hit we surface a banner with a button to load more.
-  const [docFetchLimit, setDocFetchLimit] = useState<number>(500);
+  // Docs stream in progressively (500/page): first page paints, the rest
+  // auto-loads. docStreamProgress = rows loaded so far while streaming
+  // (null when done); docFetchHitCap = the 10k hard stop was reached.
+  const [docStreamProgress, setDocStreamProgress] = useState<number | null>(null);
   const [docFetchHitCap, setDocFetchHitCap] = useState(false);
   const [loadingUpload, setLoadingUpload] = useState(false);
   // Per-batch progress: a bulk upload that shows nothing for two minutes is
@@ -843,6 +878,9 @@ export default function LibraryExplorerPage() {
   const [showSetManager, setShowSetManager] = useState(false);
   const [showEquipmentSweep, setShowEquipmentSweep] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  // Folder trash (30-day delete hold): null = closed, array = open with rows.
+  const [trashFolders, setTrashFolders] = useState<DeletedFolder[] | null>(null);
+  const [trashBusy, setTrashBusy] = useState<string | null>(null);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
   const [customizeFolderId, setCustomizeFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -1294,34 +1332,53 @@ export default function LibraryExplorerPage() {
     if (cached) { setDocuments(cached); setLoadingDocs(false); }
     else { setLoadingDocs(true); }
 
+    // Progressive full load: the first page paints fast, then the REST of the
+    // folder streams in automatically (500/page, hard stop 10,000) so sorting
+    // and filtering always operate on the whole folder — a sorted view over a
+    // silent slice was a lie. The banner shows live progress while it streams.
     const fetchDocs = async () => {
       try {
-        let q = supabase.from("documents").select(DOC_LIST_COLUMNS)
-          .eq("org_id", activeOrgId).eq("library_id", libraryId);
-        if (currentFolderId) q = q.eq("collection_id", currentFolderId);
-        else q = q.is("collection_id", null);
-        if (!isControllerRole(activeRole)) q = q.eq("visibility", "normal");
-        // Hide archived docs from default view. Admins can flip the toggle
-        // (showArchivedDocs) to surface them for restore.
-        if (!showArchivedDocs) q = q.neq("status", "Archived");
-        q = q.order("updated_at", { ascending: false }).limit(docFetchLimit);
-        const { data, error: qErr } = await q;
-        if (!alive) return;
-        if (qErr) { setError(qErr.message); setDocuments([]); }
-        else {
+        const PAGE = 500;
+        const HARD_CAP = 10000;
+        let all: DocumentRecord[] = [];
+        for (let from = 0; from < HARD_CAP; from += PAGE) {
+          let q = supabase.from("documents").select(DOC_LIST_COLUMNS)
+            .eq("org_id", activeOrgId).eq("library_id", libraryId);
+          if (currentFolderId) q = q.eq("collection_id", currentFolderId);
+          else q = q.is("collection_id", null);
+          if (!isControllerRole(activeRole)) q = q.eq("visibility", "normal");
+          // Hide archived docs from default view. Admins can flip the toggle
+          // (showArchivedDocs) to surface them for restore.
+          if (!showArchivedDocs) q = q.neq("status", "Archived");
+          // Stable two-key order so pages never overlap or skip rows.
+          q = q.order("updated_at", { ascending: false }).order("id").range(from, from + PAGE - 1);
+          const { data, error: qErr } = await q;
+          if (!alive) return;
+          if (qErr) {
+            if (from === 0) { setError(qErr.message); setDocuments([]); }
+            else setError(`Loaded the first ${all.length.toLocaleString()} documents; the rest failed: ${qErr.message}`);
+            break;
+          }
           const rows = (data || []).map((r) => fromDocRow(r as unknown as Record<string, unknown>));
-          folderDocsCache.current.set(cacheKey, rows);
-          setDocuments(rows);
-          setDocFetchHitCap(rows.length >= docFetchLimit);
+          all = all.concat(rows);
+          folderDocsCache.current.set(cacheKey, all);
+          setDocuments(all);
+          const morePagesLikely = rows.length === PAGE;
+          setDocStreamProgress(morePagesLikely && from + PAGE < HARD_CAP ? all.length : null);
+          setDocFetchHitCap(morePagesLikely && from + PAGE >= HARD_CAP);
+          if (from === 0) setLoadingDocs(false); // first page is on screen
+          if (!morePagesLikely) break;
         }
       } catch (e: unknown) { if (alive) setError((e as Error).message); }
-      finally { if (alive) setLoadingDocs(false); }
+      finally {
+        if (alive) { setLoadingDocs(false); setDocStreamProgress(null); }
+      }
     };
 
     fetchDocs();
 
     return () => { alive = false; };
-  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docFetchLimit, docsRefreshTick]);
+  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docsRefreshTick]);
 
   // Read-&-understood completion for the visible docs — one grouped query per
   // page, recomputed from the roster (never a cached count), so the Ack pill/
@@ -1500,8 +1557,15 @@ export default function LibraryExplorerPage() {
 
   const sortedDocs = useMemo(() => {
     return [...filteredDocs].sort((a, b) => {
+      // Size sorts numerically — "9 KB" must not beat "10 MB".
+      if (sortKey === "size") {
+        const cmp = docSizeBytes(a) - docSizeBytes(b);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
       let aVal: unknown, bVal: unknown;
       if (sortKey === "title") { aVal = a.title || a.name; bVal = b.title || b.name; }
+      else if (sortKey === "createdAt") { aVal = a.createdAt; bVal = b.createdAt; }
+      else if (sortKey === "fileType") { aVal = docFileExt(a); bVal = docFileExt(b); }
       else if (sortKey === "documentNumber") { aVal = a.documentNumber; bVal = b.documentNumber; }
       else if (sortKey === "rev") { aVal = a.rev; bVal = b.rev; }
       else if (sortKey === "status") { aVal = a.status; bVal = b.status; }
@@ -1723,12 +1787,21 @@ export default function LibraryExplorerPage() {
       label: overrides[c.key] || c.label,
       locked: true,
     }));
+    // Explorer file columns — addable/removable, never in the default set.
+    const optional = OPTIONAL_BUILTIN_COLUMNS.map((c) => ({
+      key: c.key,
+      label: overrides[c.key] || c.label,
+    }));
     const dynamic = columnDefs.map((c) => ({ key: c.key, label: c.label }));
-    const known = new Set([...builtins.map((c) => c.key), ...dynamic.map((c) => c.key)]);
+    const known = new Set([
+      ...builtins.map((c) => c.key),
+      ...optional.map((c) => c.key),
+      ...dynamic.map((c) => c.key),
+    ]);
     const orphans = activeColumns
       .filter((k) => !known.has(k))
       .map((k) => ({ key: k, label: overrides[k] || k }));
-    return [...builtins, ...dynamic, ...orphans];
+    return [...builtins, ...optional, ...dynamic, ...orphans];
   }, [columnDefs, activeColumns, library?.columnLabelOverrides]);
 
   // Column tweaks save to YOUR view only — for everyone, admins included.
@@ -1853,10 +1926,11 @@ export default function LibraryExplorerPage() {
     const ok = await appConfirm({
       title: `Delete "${f.name}"?`,
       message:
-        "Only the folder is deleted — nothing inside is lost. Its documents"
+        "Nothing inside is lost. Its documents"
         + (childCount > 0 ? ` and ${childCount} subfolder${childCount === 1 ? "" : "s"}` : "")
-        + " move up one level. If an AI knowledge library watches this specific folder, its"
-        + " contents leave that library's scope.",
+        + " move up one level, and the folder itself is held in Recently deleted (⋯ menu)"
+        + " for 30 days — restore it from there if this was a mistake. If an AI knowledge"
+        + " library watches this specific folder, its contents leave that library's scope.",
       confirmLabel: "Delete folder",
       tone: "danger",
     });
@@ -1876,6 +1950,28 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error(e);
       setError("Couldn't delete that folder.");
+    }
+  };
+
+  // ── Folder trash (30-day delete hold) ──────────────────────────────
+  const openTrash = async () => {
+    try {
+      setTrashFolders(await listDeletedFolders(activeOrgId!, libraryId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load deleted folders.");
+    }
+  };
+  const restoreFromTrash = async (id: string) => {
+    setTrashBusy(id);
+    try {
+      await restoreDeletedFolder(activeOrgId!, id);
+      // The realtime folders listener picks the restored folder up; drop the
+      // row from the modal so the list reflects reality immediately.
+      setTrashFolders((prev) => (prev ?? []).filter((x) => x.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't restore the folder.");
+    } finally {
+      setTrashBusy(null);
     }
   };
 
@@ -2421,6 +2517,14 @@ export default function LibraryExplorerPage() {
     if (key === "rev") return docRecord.rev || "-";
     if (key === "status") return docRecord.status || "-";
     if (key === "updatedAt") return formatTimestamp(docRecord.updatedAt);
+    if (key === "createdAt") return formatTimestamp(docRecord.createdAt);
+    if (key === "size") return formatBytesShort(docSizeBytes(docRecord));
+    if (key === "fileType") {
+      const ext = docFileExt(docRecord);
+      if (ext) return `.${ext}`;
+      const mime = (docRecord.metadata ?? {})["mime_type"];
+      return typeof mime === "string" && mime ? mime : "—";
+    }
 
     const def = columnMap.get(key);
     const value = (docRecord.metadata ?? {})[key];
@@ -2760,8 +2864,7 @@ export default function LibraryExplorerPage() {
           library={library}
           actorUserId={uid}
           onApplied={() => {
-            // Force a refresh by re-running the docs effect dep
-            setDocFetchLimit((n) => n);
+            setDocsRefreshTick((t) => t + 1);
           }}
         />
       )}
@@ -2776,7 +2879,7 @@ export default function LibraryExplorerPage() {
           actorUserId={uid}
           onImported={() => {
             setShowCsvImport(false);
-            setDocFetchLimit((n) => n); // trigger refetch
+            setDocsRefreshTick((t) => t + 1);
           }}
         />
       )}
@@ -2993,6 +3096,15 @@ export default function LibraryExplorerPage() {
                     title="Set a retention period for records in this library"
                   >
                     <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Retention
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); void openTrash(); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Deleted folders are held for 30 days and can be restored here"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Recently deleted…
                   </button>
                 )}
                 {isController && (
@@ -3240,17 +3352,15 @@ export default function LibraryExplorerPage() {
                     />
                   </div>
                 )}
-                {docFetchHitCap && !loadingDocs && (
-                  <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900 flex items-center justify-between gap-3">
-                    <span>
-                      Showing the first <b>{docFetchLimit.toLocaleString()}</b> documents (newest first). More exist below this cap.
-                    </span>
-                    <button
-                      onClick={() => setDocFetchLimit((n) => n + 500)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-200 hover:bg-amber-300 text-amber-900 font-bold text-[11px]"
-                    >
-                      Load 500 more
-                    </button>
+                {docStreamProgress !== null && (
+                  <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-[11px] text-blue-900 flex items-center gap-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Loading the rest of this folder… <b>{docStreamProgress.toLocaleString()}</b> so far. Sorting covers everything once done.
+                  </div>
+                )}
+                {docFetchHitCap && !loadingDocs && docStreamProgress === null && (
+                  <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900">
+                    Showing the first <b>10,000</b> documents (newest first) — this folder holds more. Use the filter box or subfolders to narrow it.
                   </div>
                 )}
                 <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 bg-[var(--color-surface)]">
@@ -3503,7 +3613,8 @@ export default function LibraryExplorerPage() {
                             />
                           </th>
                           {activeColumns.map((colKey) => {
-                            const builtinLabel = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label;
+                            const builtinLabel = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label
+                              ?? OPTIONAL_BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label;
                             const overrideLabel = library?.columnLabelOverrides?.[colKey];
                             const label = overrideLabel || builtinLabel || columnMap.get(colKey)?.label || colKey;
                             const width = getColWidth(colKey);
@@ -4307,6 +4418,49 @@ export default function LibraryExplorerPage() {
               >
                 Create
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RECENTLY DELETED FOLDERS — the 30-day delete hold. */}
+      {trashFolders !== null && (
+        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4" onClick={() => setTrashFolders(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold text-[var(--color-text)]">Recently deleted folders</div>
+                <div className="text-xs text-[var(--color-text-muted)]">
+                  Held for 30 days, then removed for good. Restoring brings the folder back empty at its old spot — its former contents moved up a level when it was deleted.
+                </div>
+              </div>
+              <button onClick={() => setTrashFolders(null)} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-80 overflow-y-auto p-3 space-y-1.5">
+              {trashFolders.length === 0 ? (
+                <div className="text-center text-xs text-[var(--color-text-faint)] py-8">Nothing in the trash.</div>
+              ) : trashFolders.map((f) => (
+                <div key={f.id} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+                  <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-[var(--color-text)] truncate">{f.name}</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] truncate">
+                      {f.pathNames.length > 1 ? `${f.pathNames.slice(0, -1).join(" / ")} · ` : ""}
+                      deleted {new Date(f.deletedAt).toLocaleDateString()} · purges {new Date(f.purgeAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void restoreFromTrash(f.id)}
+                    disabled={trashBusy === f.id}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 disabled:opacity-50 transition-all"
+                  >
+                    {trashBusy === f.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArchiveRestore className="w-3 h-3" />}
+                    Restore
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </div>

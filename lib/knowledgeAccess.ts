@@ -83,9 +83,11 @@ export async function loadDcLandscape(orgId: string): Promise<{
   libraries: Map<string, ContainerNode & { name: string }>;
   folders: Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>;
 }> {
+  // collections is select("*") so the trash filter works before AND after
+  // migration 20261011 (naming deleted_at explicitly would 42703 pre-migration).
   const [libsRes, foldersRes] = await Promise.all([
     supabaseAdmin.from("libraries").select("id, name, acl, visibility").eq("org_id", orgId),
-    supabaseAdmin.from("collections").select("id, name, library_id, parent_id, acl, visibility, path_names").eq("org_id", orgId),
+    supabaseAdmin.from("collections").select("*").eq("org_id", orgId),
   ]);
   const libraries = new Map<string, ContainerNode & { name: string }>();
   for (const l of libsRes.data ?? []) {
@@ -97,6 +99,7 @@ export async function loadDcLandscape(orgId: string): Promise<{
   }
   const folders = new Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>();
   for (const c of foldersRes.data ?? []) {
+    if ((c as Record<string, unknown>).deleted_at) continue; // in the 30-day trash
     folders.set(c.id as string, {
       name: (c.name as string) ?? "Folder",
       library_id: c.library_id as string,

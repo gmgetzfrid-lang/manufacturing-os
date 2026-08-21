@@ -86,7 +86,17 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
       const id = await createFolder({ orgId, libraryId: upLibraryId, parentId: folderId || null, name: name.trim(), createdBy: userId });
       setFolders(await listLibraryFoldersOnce(upLibraryId));
       setFolderId(id);
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) {
+      // The DB enforces that folder creation is an Admin/DocCtrl act
+      // (migration 20261011) — translate its refusal into the product rule.
+      const msg = (e as Error).message;
+      await appAlert({
+        message: /row-level security|policy/i.test(msg)
+          ? "Creating folders needs Admin or Document Control. Pick an existing folder, or ask Doc Control to add one."
+          : msg,
+        tone: "danger",
+      });
+    }
   };
   const createAndLink = async () => {
     if (!userId) return;

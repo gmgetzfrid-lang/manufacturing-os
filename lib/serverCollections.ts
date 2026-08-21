@@ -20,11 +20,13 @@ export async function loadCollectionTree(
   admin: SupabaseClient,
   libraryId: string,
 ): Promise<CollectionTree> {
+  // select("*") + client-side trash filter — pre-migration safe (see 20261011).
   const { data, error } = await admin
-    .from("collections").select("id, parent_id, name")
+    .from("collections").select("*")
     .eq("library_id", libraryId).limit(10000);
   if (error) throw new Error(`Couldn't load the folder tree: ${error.message}`);
-  const rows = (data ?? []) as CollectionTreeRow[];
+  const rows = ((data ?? []) as Array<CollectionTreeRow & { deleted_at?: string | null }>)
+    .filter((r) => !r.deleted_at);
   // A truncated tree would silently rewrite SHORTENED paths for nodes whose
   // ancestors fell past the cap — corrupting data instead of erroring.
   if (rows.length >= 10000) {
