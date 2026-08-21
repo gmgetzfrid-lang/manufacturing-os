@@ -13,23 +13,18 @@ import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
 import { effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
+import { resolveEffectiveRetentionPolicy, computeRetentionUntil } from "@/lib/retentionPolicy";
 import type { RetentionPolicy } from "@/types/schema";
+
+// The pure resolution/date logic lives in lib/retentionPolicy.ts so server
+// routes (which must not import the browser client) share it; re-exported
+// here to keep every existing import site working.
+export { resolveEffectiveRetentionPolicy, computeRetentionUntil } from "@/lib/retentionPolicy";
 
 type Level = "library" | "collection" | "document";
 interface PolicyCols { retention_policy?: RetentionPolicy | null }
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean)));
 const todayISO = () => new Date().toISOString().slice(0, 10);
-
-// ── Policy resolution ────────────────────────────────────────────────────────
-
-export function resolveEffectiveRetentionPolicy(
-  docP?: RetentionPolicy | null, folderP?: RetentionPolicy | null, libP?: RetentionPolicy | null,
-): RetentionPolicy | null {
-  for (const p of [docP, folderP, libP]) {
-    if (p) return p.enabled ? p : null;
-  }
-  return null;
-}
 
 export async function effectiveRetentionPolicyForDocument(doc: {
   retentionPolicy?: RetentionPolicy | null; collectionId?: string | null; libraryId: string;
@@ -41,14 +36,6 @@ export async function effectiveRetentionPolicyForDocument(doc: {
   }
   const { data: lib } = await supabase.from("libraries").select("retention_policy").eq("id", doc.libraryId).maybeSingle();
   return resolveEffectiveRetentionPolicy(doc.retentionPolicy ?? null, folder, (lib as PolicyCols)?.retention_policy ?? null);
-}
-
-export function computeRetentionUntil(basisISO: string | null, policy: RetentionPolicy | null): string | null {
-  if (!policy || !policy.enabled || !policy.years || !basisISO) return null;
-  const d = new Date(basisISO);
-  if (Number.isNaN(d.getTime())) return null;
-  d.setFullYear(d.getFullYear() + policy.years);
-  return d.toISOString().slice(0, 10);
 }
 
 export type RetentionStatus = "none" | "active" | "eligible" | "disposed" | "hold";
