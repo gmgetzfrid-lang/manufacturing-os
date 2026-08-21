@@ -313,8 +313,17 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "export_destinations", "export_runs", "ai_usage_events",
   "ai_key_agreements", "ai_usage_limits",
   "access_requests",
+  // Companies before project_parties (parties carry company_id) and before
+  // the events that hang off them.
+  "companies", "company_events",
   "project_parties",
   "cost_accounts", "cost_documents", "cost_entries",
+  // Change orders reference cost_accounts + project_parties, both above.
+  "change_orders",
+  // Quality program: checklists before their items; turnover/punch only
+  // need projects + parties + documents, all long since restored.
+  "project_checklists", "checklist_items",
+  "turnover_items", "punch_items",
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources",
   "knowledge_documents", "knowledge_chunks", "knowledge_page_entities",
   "knowledge_questions",

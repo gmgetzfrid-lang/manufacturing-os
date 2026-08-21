@@ -46,6 +46,50 @@ export async function GET(req: NextRequest) {
   const { data: org } = await supabaseAdmin
     .from("orgs").select("name").eq("id", link.org_id as string).maybeSingle();
 
+  // Link purpose, fetched tolerantly — the column arrives with 20261013 and
+  // a pre-migration deployment must keep serving document links unchanged.
+  let purpose = "documents";
+  let rfqGroup: string | null = null;
+  {
+    const { data: p, error: pErr } = await supabaseAdmin
+      .from("project_intake_links").select("purpose, rfq_group").eq("id", link.id as string).maybeSingle();
+    if (!pErr && p) {
+      purpose = String((p as { purpose?: string | null }).purpose ?? "documents");
+      rfqGroup = ((p as { rfq_group?: string | null }).rfq_group ?? null);
+    }
+  }
+
+  // ── Quote links: the register is the company's own quote submissions,
+  // not a document list. ──
+  if (purpose === "quote") {
+    const { data: quotes } = await supabaseAdmin
+      .from("cost_documents")
+      .select("id, file_name, status, total_amount, created_at")
+      .eq("intake_link_id", link.id as string)
+      .order("created_at", { ascending: false }).limit(50);
+    return NextResponse.json({
+      purpose: "quote",
+      rfqGroup,
+      projectName: (project?.name as string | null) ?? "Project",
+      orgName: (org?.name as string | null) ?? null,
+      companyName: link.company_name,
+      allowAutoSupersede: false,
+      items: [],
+      redlineRequests: [],
+      quotes: (((quotes ?? []) as Array<Record<string, unknown>>)).map((q) => ({
+        id: String(q.id),
+        fileName: (q.file_name as string | null) ?? "Quote",
+        // The company sees whether their price was picked — not the numbers.
+        // A voided (withdrawn) quote reads as not selected, never as a bid
+        // that is still live.
+        status: q.status === "awarded" ? "awarded"
+          : q.status === "declined" || q.status === "void" ? "not_selected"
+          : "under_review",
+        submittedAt: (q.created_at as string | null) ?? null,
+      })),
+    });
+  }
+
   // The register: every document this link has ever submitted a version of.
   const { data: vers } = await supabaseAdmin
     .from("document_versions")
@@ -113,6 +157,7 @@ export async function GET(req: NextRequest) {
   } catch { /* slice empty */ }
 
   return NextResponse.json({
+    purpose: "documents",
     projectName: (project?.name as string | null) ?? "Project",
     orgName: (org?.name as string | null) ?? null,
     companyName: link.company_name,

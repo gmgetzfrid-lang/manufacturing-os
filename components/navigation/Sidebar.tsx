@@ -43,6 +43,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
   Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
+  HardHat,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -228,6 +229,7 @@ export default function Sidebar({
       { label: 'Documents',   hint: 'Libraries · board · locks · packages · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
       { label: 'Operating areas', hint: 'Equipment registry by unit · plot-plan map',  href: '/admin/assets', icon: Factory,   tone: 'purple' },
       { label: 'Projects',    hint: 'Project workspaces & milestones',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
+      { label: 'Companies',   hint: 'Known contractors & vendors — scored on evidence',        href: '/companies',    icon: HardHat,   tone: 'amber' },
       {
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),

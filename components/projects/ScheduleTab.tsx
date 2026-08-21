@@ -224,8 +224,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       )}
 
       <FirstRunHint storageKey="schedule.intro.v2" tone="info">
-        Drop an exported schedule from MS Project (.xml / .csv) or Primavera P6 (.xml / .xer) and we&apos;ll parse it.
-        Drag milestones in the calendar to reschedule; click a pill to advance its status. Metrics roll up live.
+        Drop an exported schedule file and we&apos;ll parse it — from MS Project (.xml / .csv) or Primavera P6,
+        the scheduling tool big projects use (.xml / .xer export). No file? Type a few milestones by hand — that&apos;s
+        enough to unlock the board. Drag milestones in the calendar to reschedule; click a pill to advance its status.
       </FirstRunHint>
 
       {/* Progress dashboard — always on top, summarizes everything */}
@@ -254,10 +255,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         <div className="inline-flex items-center gap-2">
           <button
             onClick={() => setShowGhost((v) => !v)}
-            title={showGhost ? "Hide imported (ghost) milestones" : "Show imported (ghost) milestones"}
+            title={showGhost
+              ? "Hide the read-only rows imported from your scheduling tool (they still count in the metrics)"
+              : "Show the read-only rows imported from your scheduling tool"}
             className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] transition-colors"
           >
-            {showGhost ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Ghost rows
+            {showGhost ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Imported rows
           </button>
           {canEdit && (
             <>
@@ -391,7 +394,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{visible.length}</span>
             </div>
             <HelpTooltip>
-              <b>Ghost milestones</b> are read-only rows imported from your scheduling tool. They still count toward the earned-value rollup. Toggle the Ghost button up top to hide them from this list while keeping them in metrics.
+              <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. Toggle &ldquo;Imported rows&rdquo; up top to hide them from this list while keeping them in metrics.
             </HelpTooltip>
           </div>
 
@@ -720,7 +723,9 @@ function AddMilestoneForm({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (required)" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" autoFocus />
         <input type="date" value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)} className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" title="Planned date" />
-        <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="Weight" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
+        <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="Weight (default 1)"
+          title="How much this milestone counts in the % complete — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
+          className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
         <input value={linkedRev} onChange={(e) => setLinkedRev(e.target.value)} placeholder='Linked ref (e.g. "Rev 3 release")' className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
       </div>
       <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" rows={2} className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 resize-y" />

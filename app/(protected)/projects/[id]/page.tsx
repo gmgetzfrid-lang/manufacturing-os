@@ -23,6 +23,11 @@ import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import EditProjectModal from "@/components/projects/EditProjectModal";
 import CostsTab from "@/components/projects/CostsTab";
+import QualityTab from "@/components/projects/QualityTab";
+import ProjectCoach from "@/components/projects/ProjectCoach";
+import { openProjectReport, draftLessonsLearned, saveLessonsLearned } from "@/lib/projectReport";
+import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
+import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
@@ -46,7 +51,7 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
-type Tab = "documents" | "intake" | "costs" | "activity" | "schedule" | "members";
+type Tab = "documents" | "intake" | "costs" | "quality" | "activity" | "schedule" | "members";
 
 type CheckoutWithDoc = CheckoutSession & {
   docNumber?: string;
@@ -84,7 +89,7 @@ export default function ProjectDetailPage() {
   const search = useSearchParams();
   const initialTab = ((): Tab => {
     const t = search?.get("tab");
-    return t === "intake" || t === "costs" || t === "activity" || t === "schedule" || t === "members" ? t : "documents";
+    return t === "intake" || t === "costs" || t === "quality" || t === "activity" || t === "schedule" || t === "members" ? t : "documents";
   })();
   const [tab, setTabState] = useState<Tab>(initialTab);
   const setTab = useCallback((t: Tab) => {
@@ -95,6 +100,14 @@ export default function ProjectDetailPage() {
       window.history.replaceState(null, "", u.toString());
     } catch { /* URL sync is best-effort */ }
   }, []);
+  // Same-page ?tab= navigations (the coach's deep links live on THIS page)
+  // must switch the tab too — the state initializer only runs on mount.
+  useEffect(() => {
+    const t = search?.get("tab");
+    if (t === "intake" || t === "costs" || t === "quality" || t === "activity" || t === "schedule" || t === "members" || t === "documents") {
+      setTabState(t);
+    }
+  }, [search]);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
 
@@ -104,6 +117,16 @@ export default function ProjectDetailPage() {
   const [pendingStatus, setPendingStatus] = useState<ProjectStatus | null>(null);
   const [statusReason, setStatusReason] = useState("");
   const [transitionBusy, setTransitionBusy] = useState(false);
+  // Closeout gates: loaded when the Complete confirm opens, so the modal
+  // shows exactly what's still outstanding before the project closes.
+  const [gates, setGates] = useState<ProjectStateSnapshot | null>(null);
+  // Wizard fields the typed Project doesn't carry — fetched tolerantly.
+  const [jobKind, setJobKind] = useState<string | null>(null);
+  // Lessons-learned editor
+  const [lessonsDraft, setLessonsDraft] = useState<string | null>(null);
+  const [lessonsBusy, setLessonsBusy] = useState(false);
+  // Coach re-gathers when page data changes.
+  const [coachKey, setCoachKey] = useState(0);
 
   const isOwner = project && uid && project.ownerUserId === uid;
   const isMember = members.some((m) => m.userId === uid);
@@ -152,12 +175,29 @@ export default function ProjectDetailPage() {
       } else {
         setCheckouts([]);
       }
+
+      // Wizard fields (tolerant — pre-migration DBs simply report null).
+      const { data: ext, error: extErr } = await supabase
+        .from("projects").select("job_kind").eq("id", projectId).maybeSingle();
+      setJobKind(!extErr && ext ? ((ext as { job_kind?: string | null }).job_kind ?? null) : null);
+      setCoachKey((k) => k + 1);
     } catch (e) {
       setError((e as Error).message || "Failed to load project");
     } finally {
       setLoading(false);
     }
   }, [projectId]);
+
+  // Closeout gates load when the Complete confirmation opens.
+  useEffect(() => {
+    if (pendingStatus !== "completed" || !project?.orgId || !projectId) { setGates(null); return; }
+    let cancelled = false;
+    void gatherProjectSnapshot(project.orgId, projectId)
+      .then((s) => { if (!cancelled) setGates(s); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingStatus, projectId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -305,6 +345,32 @@ export default function ProjectDetailPage() {
                 catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
             />
+            <ActionButton
+              icon={<FileText className="w-3.5 h-3.5" />}
+              label="Report"
+              onClick={async () => {
+                if (!project.id || !project.orgId) return;
+                try { await openProjectReport(project.orgId, project.id); }
+                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+              }}
+            />
+            {canManage && (project.status === "completed" || project.status === "active" || project.status === "paused") && (
+              <ActionButton
+                icon={<Target className="w-3.5 h-3.5" />}
+                label="Lessons learned"
+                onClick={async () => {
+                  if (!project.id || !project.orgId) return;
+                  setLessonsBusy(true);
+                  try {
+                    const existing = await supabase.from("projects").select("lessons_learned").eq("id", project.id).maybeSingle();
+                    const stored = (existing.data as { lessons_learned?: string | null } | null)?.lessons_learned ?? null;
+                    setLessonsDraft(stored || await draftLessonsLearned(project.orgId, project.id));
+                  } catch (e) {
+                    await appAlert({ message: (e as Error).message, tone: "danger" });
+                  } finally { setLessonsBusy(false); }
+                }}
+              />
+            )}
             {project.id && project.orgId && uid && (
               <>
                 <WatchButton
@@ -356,6 +422,9 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "costs"} onClick={() => setTab("costs")}>
               <CircleDollarSign className="w-3.5 h-3.5" /> Costs
             </TabButton>
+            <TabButton active={tab === "quality"} onClick={() => setTab("quality")}>
+              <ShieldCheck className="w-3.5 h-3.5" /> Quality
+            </TabButton>
             <TabButton active={tab === "intake"} onClick={() => setTab("intake")}>
               <UploadCloud className="w-3.5 h-3.5" /> Intake
             </TabButton>
@@ -384,6 +453,11 @@ export default function ProjectDetailPage() {
           execution canvas; everything else keeps the comfortable
           reading width. */}
       <div className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
+        {/* Health + "what do I feed you" — the wizard for the rest of the
+            project's life, visible from every tab. */}
+        {project.id && project.orgId && tab !== "schedule" && (
+          <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
+        )}
         {tab === "documents" && (
           <div className="space-y-4">
             {project.id && project.orgId && uid && (
@@ -414,9 +488,21 @@ export default function ProjectDetailPage() {
           <CostsTab
             orgId={project.orgId}
             projectId={project.id}
-            canManage={!!isAdmin}
+            canManage={!!isAdmin || !!isOwner}
             uid={uid}
             userEmail={userEmail}
+            onDataChanged={() => setCoachKey((k) => k + 1)}
+          />
+        )}
+        {tab === "quality" && project.id && project.orgId && uid && (
+          <QualityTab
+            orgId={project.orgId}
+            projectId={project.id}
+            canManage={!!canManage}
+            uid={uid}
+            userEmail={userEmail}
+            jobKind={jobKind}
+            onDataChanged={() => setCoachKey((k) => k + 1)}
           />
         )}
         {tab === "intake" && !canManage && (
@@ -470,6 +556,43 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
+      {/* Lessons-learned editor — auto-drafted from the project's exhaust
+          (change orders by reason, slips, rejections), edited by a human. */}
+      {lessonsDraft !== null && (
+        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+          <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-[var(--color-border)]">
+              <div className="text-sm font-black text-[var(--color-text)]">Lessons learned</div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-1">
+                Drafted from this project&apos;s own records — change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report.
+              </div>
+            </div>
+            <div className="px-6 py-4">
+              <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12}
+                className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs font-mono resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            </div>
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+              <button onClick={() => setLessonsDraft(null)} disabled={lessonsBusy}
+                className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+              <button
+                onClick={async () => {
+                  if (!project?.id || !project.orgId || !uid) return;
+                  setLessonsBusy(true);
+                  const res = await saveLessonsLearned({ orgId: project.orgId, projectId: project.id, text: lessonsDraft, actorId: uid, actorEmail: userEmail });
+                  setLessonsBusy(false);
+                  if (!res.ok) { setActionError(res.error ?? "Couldn't save lessons learned."); return; }
+                  setLessonsDraft(null);
+                }}
+                disabled={lessonsBusy}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+                {lessonsBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Save to project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showEdit && uid && (
         <EditProjectModal
           project={project}
@@ -499,6 +622,35 @@ export default function ProjectDetailPage() {
                   : "No checkouts will be affected."}
               </div>
             </div>
+            {/* Closeout gates — what a finished job should have closed out.
+                Warnings, not walls: the owner can complete anyway, on the record. */}
+            {pendingStatus === "completed" && gates && (() => {
+              const gateLines: Array<{ ok: boolean; text: string }> = [
+                { ok: gates.punchOpen === 0, text: gates.punchOpen === 0 ? "Punch list clear" : `${gates.punchOpen} punch item${gates.punchOpen === 1 ? "" : "s"} still open` },
+                { ok: gates.turnoverRequired === 0 || gates.turnoverAccepted >= gates.turnoverRequired, text: gates.turnoverRequired === 0 ? "No turnover requirements set" : gates.turnoverAccepted >= gates.turnoverRequired ? "Turnover package fully accepted" : `Turnover ${gates.turnoverAccepted}/${gates.turnoverRequired} accepted` },
+                { ok: gates.checklistOpenItems + gates.checklistNeedsEvidence === 0, text: gates.checklistOpenItems + gates.checklistNeedsEvidence === 0 ? "Checklists clear" : `${gates.checklistOpenItems + gates.checklistNeedsEvidence} checklist item${gates.checklistOpenItems + gates.checklistNeedsEvidence === 1 ? "" : "s"} unresolved` },
+                { ok: gates.openChangeOrders === 0, text: gates.openChangeOrders === 0 ? "No change orders awaiting decision" : `${gates.openChangeOrders} change order${gates.openChangeOrders === 1 ? "" : "s"} awaiting decision` },
+              ];
+              const failed = gateLines.filter((g) => !g.ok).length;
+              return (
+                <div className="px-6 pt-4">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Closeout gates</div>
+                  <ul className="space-y-1">
+                    {gateLines.map((g, i) => (
+                      <li key={i} className={`flex items-center gap-2 text-xs font-bold ${g.ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
+                        {g.ok ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                        {g.text}
+                      </li>
+                    ))}
+                  </ul>
+                  {failed > 0 && (
+                    <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                      You can complete anyway — the open items stay on the record and in the report.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="px-6 py-5">
               <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
                 Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
@@ -510,10 +662,10 @@ export default function ProjectDetailPage() {
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
-              {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
+              {actionError && <div className="mt-2 text-xs text-red-600">{actionError}</div>}
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm

@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Briefcase, Plus, Search, Lock, Globe, Loader2, AlertTriangle,
+  Briefcase, Plus, Search, Lock, Globe, AlertTriangle,
   Calendar, User as UserIcon, Layers, ChevronRight, Download,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -17,10 +17,11 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
-import { listProjects, createProject } from "@/lib/projects";
+import { listProjects } from "@/lib/projects";
+import ProjectWizard from "@/components/projects/ProjectWizard";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
-import type { Project, ProjectStatus, ProjectVisibility, Timestamp } from "@/types/schema";
+import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
 
 const STATUS_TABS: { value: ProjectStatus | "all"; label: string; color: string }[] = [
   { value: "active",    label: "Active",    color: "emerald" },
@@ -182,13 +183,12 @@ export default function ProjectsPage() {
         )}
 
       {showCreate && activeOrgId && uid && (
-        <CreateProjectModal
-          isOpen={showCreate}
-          onClose={() => setShowCreate(false)}
+        <ProjectWizard
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail ?? undefined}
           actorRole={activeRole}
+          onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); void refresh(); }}
         />
       )}
@@ -272,113 +272,6 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       <button onClick={onCreate} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold">
         <Plus className="w-4 h-4" /> Create your first project
       </button>
-    </div>
-  );
-}
-
-function CreateProjectModal({
-  isOpen, onClose, orgId, actorUserId, actorEmail, actorRole, onCreated,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  orgId: string;
-  actorUserId: string;
-  actorEmail?: string;
-  actorRole: string;
-  onCreated: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [moc, setMoc] = useState("");
-  const [targetDate, setTargetDate] = useState("");
-  const [visibility, setVisibility] = useState<ProjectVisibility>("public");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!isOpen) return null;
-
-  const submit = async () => {
-    if (!name.trim()) return setError("Project name is required");
-    if (!description.trim()) return setError("Description is required — explain what the team will be doing");
-    setBusy(true); setError(null);
-    try {
-      await createProject({
-        orgId, name, description, mocReference: moc, visibility,
-        targetCompletionDate: targetDate ? new Date(targetDate).toISOString() : undefined,
-        actorUserId, actorEmail, actorRole,
-      });
-      setName(""); setDescription(""); setMoc(""); setTargetDate("");
-      onCreated();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-accent)]" /></div>
-          <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">New Project</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Group your checkouts so the team knows what you&apos;re working on.</div>
-          </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
-            ✕
-          </button>
-        </div>
-
-        <div className="px-6 py-5 space-y-4">
-          <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-          </div>
-          <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Description *</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about? What will the team do with the attached documents?" rows={3} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-          </div>
-          <div className="flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-blue-800">
-            <Briefcase className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>
-              <b>After creating</b>, go to a library, select the documents this project needs, and click <b>Checkout to Project</b> on the bulk action bar. Or open a single doc and check it out via the project picker.
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
-              <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Target completion</label>
-              <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
-            </div>
-          </div>
-          <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Visibility</label>
-            <div className="mt-1 flex bg-[var(--color-surface-2)] p-1 rounded-lg">
-              <button onClick={() => setVisibility("public")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "public" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-                Public (everyone in org)
-              </button>
-              <button onClick={() => setVisibility("private")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "private" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-                Private (members only)
-              </button>
-            </div>
-          </div>
-          {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-            </div>
-          )}
-        </div>
-
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-            {busy ? "Creating…" : "Create Project"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
