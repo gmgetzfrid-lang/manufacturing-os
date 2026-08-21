@@ -90,8 +90,23 @@ import {
   defaultColumnsFromSchema,
   listenEffectiveColumns,
   saveTableView,
-  resolveEffectiveSort,
+  deleteTableView,
+  resolveEffectiveViewState,
 } from "@/lib/tableViews";
+import {
+  clickItem,
+  contextClickItem,
+  emptySelection,
+  moveFocus,
+  pruneSelection,
+  selectAll,
+  toggleFocused,
+  typeAheadTarget,
+  type ExplorerSelection,
+  type MoveKey,
+} from "@/lib/explorerSelection";
+import DocContextMenu, { type ContextMenuEntry } from "@/components/documents/DocContextMenu";
+import DocGridView from "@/components/documents/DocGridView";
 import { makeLibraryStoragePath, uploadToPath } from "@/lib/storage";
 import type {
   AccessControl,
@@ -105,6 +120,7 @@ import type {
   MetadataValue,
   NodeVisibility,
   MetadataFieldType,
+  ExplorerLayout,
 } from "@/types/schema";
 import {
   ArrowLeft,
@@ -139,6 +155,10 @@ import {
   CheckSquare,
   Hash,
   Save, ArrowRight,
+  Table as TableIcon,
+  List as ListIcon,
+  Image as ImageIcon,
+  Link as LinkIcon,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -411,20 +431,155 @@ export default function LibraryExplorerPage() {
     handleUploadFiles(e.dataTransfer.files);
   };
 
+  // ── Explorer selection ─────────────────────────────────────────────
+  // All gestures funnel through the pure engine so click, checkbox, keyboard
+  // and right-click keep ONE consistent selection with anchor semantics.
+  const currentSelection = (): ExplorerSelection => ({
+    ids: selectedDocIds,
+    anchorId: selAnchorRef.current,
+    focusId: selFocusId,
+  });
+  const applySelection = (next: ExplorerSelection) => {
+    setSelectedDocIds(new Set(next.ids));
+    selAnchorRef.current = next.anchorId;
+    setSelFocusId(next.focusId);
+  };
+  const clearSelection = () => applySelection(emptySelection());
+  const orderedDocIds = (): string[] => sortedDocs.map((d) => d.id!).filter(Boolean);
+
+  const scrollDocIntoView = (id: string | null) => {
+    if (!id) return;
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-doc-item="${id}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  /** Row/card click — Windows semantics: plain selects one (and focuses the
+   *  inspector), ctrl toggles, shift ranges from the anchor. */
+  const handleRowClick = (docRecord: DocumentRecord, e: React.MouseEvent) => {
+    const mods = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
+    // Shift-click would otherwise smear a text selection across the rows.
+    if (mods.shift) window.getSelection()?.removeAllRanges();
+    applySelection(clickItem(currentSelection(), orderedDocIds(), docRecord.id!, mods));
+    if (!mods.ctrl && !mods.shift) setSelectedDoc(docRecord);
+  };
+
+  const handleRowDoubleClick = (docRecord: DocumentRecord) => {
+    setSelectedDoc(docRecord);
+    setShowFullScreen(true);
+  };
+
+  const handleRowContextMenu = (docRecord: DocumentRecord, e: React.MouseEvent) => {
+    e.preventDefault();
+    applySelection(contextClickItem(currentSelection(), orderedDocIds(), docRecord.id!));
+    setCtxMenu({ x: e.clientX, y: e.clientY, doc: docRecord });
+  };
+
   const toggleSelectDoc = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSelectedDocIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    applySelection(clickItem(currentSelection(), orderedDocIds(), id, { ctrl: true }));
   };
 
   const toggleSelectAll = () => {
     if (selectedDocIds.size === sortedDocs.length && sortedDocs.length > 0)
-      setSelectedDocIds(new Set());
+      clearSelection();
     else
-      setSelectedDocIds(new Set(sortedDocs.map((d) => d.id!).filter(Boolean)));
+      applySelection(selectAll(orderedDocIds()));
+  };
+
+  /** Shared drag source for table rows AND grid cards: dragging a selected
+   *  item drags the whole selection; anything else drags just itself. */
+  const handleDocDragStart = (docRecord: DocumentRecord, e: React.DragEvent) => {
+    const ids = selectedDocIds.has(docRecord.id!) && selectedDocIds.size > 1
+      ? [...selectedDocIds]
+      : [docRecord.id!];
+    e.dataTransfer.setData("application/x-doc-ids", JSON.stringify(ids));
+    e.dataTransfer.effectAllowed = "move";
+    if (ids.length > 1) {
+      const ghost = document.createElement("div");
+      ghost.textContent = `${ids.length} documents`;
+      ghost.style.cssText =
+        "position:absolute;top:-1000px;padding:6px 12px;background:#1e293b;color:#fff;"
+        + "border-radius:10px;font-size:12px;font-weight:700;";
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 12, 12);
+      setTimeout(() => ghost.remove(), 0);
+    }
+  };
+
+  /** The full Explorer keyboard model, attached to the explorer card. Skips
+   *  anything typed into an input/textarea (the filter box, inline editors). */
+  const handleExplorerKeyDown = (e: React.KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("input, textarea, select, [contenteditable='true']")) return;
+    const order = orderedDocIds();
+    const mods = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
+
+    if (mods.ctrl && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      applySelection(selectAll(order));
+      return;
+    }
+    const MOVE_KEYS: Record<string, MoveKey> = {
+      ArrowDown: "down", ArrowUp: "up",
+      ArrowRight: "down", ArrowLeft: "up",
+      Home: "home", End: "end",
+      PageDown: "pageDown", PageUp: "pageUp",
+    };
+    if (MOVE_KEYS[e.key]) {
+      e.preventDefault();
+      const next = moveFocus(currentSelection(), order, MOVE_KEYS[e.key], mods, 12);
+      applySelection(next);
+      scrollDocIntoView(next.focusId);
+      return;
+    }
+    if (e.key === " " && mods.ctrl) {
+      e.preventDefault();
+      applySelection(toggleFocused(currentSelection()));
+      return;
+    }
+    if (e.key === "Enter") {
+      const doc = sortedDocs.find((d) => d.id === selFocusId);
+      if (doc) { e.preventDefault(); handleRowDoubleClick(doc); }
+      return;
+    }
+    if (e.key === "F2") {
+      const doc = sortedDocs.find((d) => d.id === selFocusId);
+      if (doc && docLayout === "details") {
+        e.preventDefault();
+        setEditingDocNumId(doc.id!);
+        setEditingDocNumValue(doc.documentNumber || "");
+        setEditingDocNumError(null);
+      }
+      return;
+    }
+    if (e.key === "Delete" && selectedDocIds.size > 0 && isController) {
+      e.preventDefault();
+      // Explorer's Delete = recycle (archive); Shift+Delete = permanent.
+      if (mods.shift) void handleBulkDelete(); else void handleBulkArchive();
+      return;
+    }
+    if (e.key === "Escape") {
+      clearSelection();
+      return;
+    }
+    // Type-ahead: printable characters spell a document number/title.
+    if (e.key.length === 1 && !mods.ctrl && !e.altKey) {
+      const ta = typeAheadRef.current;
+      if (ta.timer) clearTimeout(ta.timer);
+      ta.buffer += e.key;
+      ta.timer = setTimeout(() => { ta.buffer = ""; ta.timer = null; }, 700);
+      const items = sortedDocs.map((d) => ({
+        id: d.id!,
+        label: d.documentNumber || d.title || d.name || "",
+      }));
+      const hit = typeAheadTarget(items, ta.buffer, selFocusId);
+      if (hit) {
+        e.preventDefault();
+        applySelection(clickItem(currentSelection(), order, hit, {}));
+        scrollDocIntoView(hit);
+      }
+    }
   };
 
   const handleBulkDelete = async () => {
@@ -514,6 +669,19 @@ export default function LibraryExplorerPage() {
   // UX enhancements
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+  // Explorer selection companions: the shift-range anchor and the keyboard
+  // focus. Together with selectedDocIds they form the ExplorerSelection the
+  // pure engine (lib/explorerSelection) operates on.
+  const selAnchorRef = useRef<string | null>(null);
+  const [selFocusId, setSelFocusId] = useState<string | null>(null);
+  // Type-ahead buffer ("P-10" jumps to P-101), reset after 700ms of silence.
+  const typeAheadRef = useRef<{ buffer: string; timer: ReturnType<typeof setTimeout> | null }>({ buffer: "", timer: null });
+  // Document layout: details table | compact list | tiles | large previews.
+  const [docLayout, setDocLayout] = useState<ExplorerLayout>("details");
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [viewDefaults, setViewDefaults] = useState<{ hasUserRow: boolean; hasOrgRow: boolean }>({ hasUserRow: false, hasOrgRow: false });
+  // Right-click context menu target (position + document).
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; doc: DocumentRecord } | null>(null);
   const [sortKey, setSortKey] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   // The current folder's saved default sort (null = none, use app default).
@@ -1159,6 +1327,20 @@ export default function LibraryExplorerPage() {
     });
   }, [filteredDocs, sortKey, sortDir]);
 
+  // Selection hygiene: when the visible list changes (folder change, filter,
+  // move), silently drop selected ids that are no longer on screen so bulk
+  // actions can never touch rows the user can't see.
+  useEffect(() => {
+    const order = sortedDocs.map((d) => d.id!).filter(Boolean);
+    const state = { ids: selectedDocIds, anchorId: selAnchorRef.current, focusId: selFocusId };
+    const pruned = pruneSelection(state, order);
+    if (pruned !== state) {
+      setSelectedDocIds(new Set(pruned.ids));
+      selAnchorRef.current = pruned.anchorId;
+      setSelFocusId(pruned.focusId);
+    }
+  }, [sortedDocs, selectedDocIds, selFocusId]);
+
   useEffect(() => {
     if (!library || !activeOrgId) return;
 
@@ -1188,27 +1370,32 @@ export default function LibraryExplorerPage() {
     };
   }, [library, currentFolderId, activeOrgId, uid, libraryId, currentFolder?.columnOverrides]);
 
-  // Load this folder's saved default sort and apply it when we enter the
-  // folder. Applying is gated to once per folder visit so a manual re-sort
-  // within the folder isn't overwritten; the indicator stays in sync though.
+  // Load this folder's saved default view (sort + layout + density) and apply
+  // it when we enter the folder. Resolution is user default → org default →
+  // app default, each field independently. Applying is gated to once per
+  // folder visit so an in-session manual re-sort or layout flip isn't
+  // clobbered; the indicators stay in sync though.
   useEffect(() => {
     if (!activeOrgId) return;
     const folderKey = `${libraryId}::${currentFolderId ?? "root"}`;
     let alive = true;
-    void resolveEffectiveSort({
+    void resolveEffectiveViewState({
       orgId: activeOrgId,
       ownerUserId: uid ?? undefined,
       libraryId,
       collectionId: currentFolderId ?? undefined,
-    }).then((s) => {
+    }).then((res) => {
       if (!alive) return;
-      setFolderDefaultSort(s ?? null);
+      setFolderDefaultSort(res.sort ?? null);
+      setViewDefaults({ hasUserRow: res.hasUserRow, hasOrgRow: res.hasOrgRow });
       if (sortAppliedFolderRef.current !== folderKey) {
         sortAppliedFolderRef.current = folderKey;
-        if (s?.key) { setSortKey(s.key); setSortDir(s.dir === "asc" ? "asc" : "desc"); }
+        if (res.sort?.key) { setSortKey(res.sort.key); setSortDir(res.sort.dir === "asc" ? "asc" : "desc"); }
         else { setSortKey("updatedAt"); setSortDir("desc"); }
+        setDocLayout(res.view?.layout ?? "details");
+        if (res.view?.density) setDensity(res.view.density);
       }
-    }).catch(() => { /* sort default is best-effort */ });
+    }).catch(() => { /* view default is best-effort */ });
     return () => { alive = false; };
   }, [activeOrgId, uid, libraryId, currentFolderId]);
 
@@ -1359,15 +1546,14 @@ export default function LibraryExplorerPage() {
 
   const updateColumns = async (next: string[]) => {
     setActiveColumns(next);
-    if (!activeOrgId) return;
-    
-    // Admins define the Global Default View.
-    const scope = isController ? "org" : "user";
-    
+    if (!activeOrgId || !uid) return;
+    // Column tweaks save to YOUR view only — for everyone, admins included.
+    // Publishing the current state as the org-wide default is an explicit,
+    // deliberate act via the View menu's "Set as org-wide default".
     await saveTableView({
-      scope,
+      scope: "user",
       orgId: activeOrgId,
-      ownerUserId: scope === "user" ? (uid ?? undefined) : undefined,
+      ownerUserId: uid,
       libraryId,
       collectionId: currentFolderId ?? undefined,
       columns: next,
@@ -2097,32 +2283,135 @@ export default function LibraryExplorerPage() {
   // Is the current sort already this folder's saved default?
   const isFolderDefaultSort =
     !!folderDefaultSort && folderDefaultSort.key === sortKey && folderDefaultSort.dir === sortDir;
-  // Pin the current sort as this folder's default (controllers → everyone;
-  // others → just them). Stored on the folder's table-view row.
-  const saveFolderDefaultSort = async () => {
-    if (!activeOrgId || savingSortDefault || activeColumns.length === 0) return;
+
+  // Save the WHOLE current presentation (columns, sort, layout, density) as
+  // this library/folder's default. Everyone — Viewer to Admin — can save a
+  // personal default; only controllers can publish the org-wide default that
+  // everyone else inherits until they save their own.
+  const saveViewDefault = async (scope: "user" | "org") => {
+    if (!activeOrgId || !uid || savingSortDefault) return;
     setSavingSortDefault(true);
     try {
-      const scope = isController ? "org" : "user";
       await saveTableView({
         scope,
         orgId: activeOrgId,
-        ownerUserId: scope === "user" ? (uid ?? undefined) : undefined,
+        ownerUserId: scope === "user" ? uid : undefined,
         libraryId,
         collectionId: currentFolderId ?? undefined,
         columns: activeColumns,
         sort: { key: sortKey, dir: sortDir },
+        view: { layout: docLayout, density },
       });
       setFolderDefaultSort({ key: sortKey, dir: sortDir });
+      setViewDefaults((prev) => scope === "user" ? { ...prev, hasUserRow: true } : { ...prev, hasOrgRow: true });
     } catch (e) {
-      await appAlert(`Couldn't save the default sort: ${(e as Error).message}`);
+      await appAlert(`Couldn't save the default view: ${(e as Error).message}`);
     } finally {
       setSavingSortDefault(false);
     }
   };
 
+  // Drop the personal default so this container falls back to the org's.
+  const clearMyViewDefault = async () => {
+    if (!activeOrgId || !uid) return;
+    try {
+      await deleteTableView({
+        scope: "user",
+        orgId: activeOrgId,
+        ownerUserId: uid,
+        libraryId,
+        collectionId: currentFolderId ?? undefined,
+      });
+      setViewDefaults((prev) => ({ ...prev, hasUserRow: false }));
+      // Re-resolve on next folder entry; apply the org state now for feedback.
+      const res = await resolveEffectiveViewState({
+        orgId: activeOrgId, ownerUserId: uid, libraryId, collectionId: currentFolderId ?? undefined,
+      });
+      setFolderDefaultSort(res.sort ?? null);
+      if (res.sort?.key) { setSortKey(res.sort.key); setSortDir(res.sort.dir === "asc" ? "asc" : "desc"); }
+      setDocLayout(res.view?.layout ?? "details");
+      if (res.view?.density) setDensity(res.view.density);
+    } catch (e) {
+      await appAlert(`Couldn't clear your default view: ${(e as Error).message}`);
+    }
+  };
+
   const rowPad = density === "compact" ? "py-2" : "py-3";
   const headerPad = density === "compact" ? "py-2" : "py-3";
+
+  // Right-click menu for a document row/card. Acts on the whole selection
+  // when the clicked item is part of it (the gesture handler guarantees it
+  // is), so "Archive 5" and "Move 5" read exactly like Explorer.
+  const buildDocContextEntries = (doc: DocumentRecord): ContextMenuEntry[] => {
+    const n = selectedDocIds.has(doc.id!) ? Math.max(selectedDocIds.size, 1) : 1;
+    const many = n > 1;
+    const isStaged = stagedDocs.some((d) => d.id === doc.id);
+    const entries: ContextMenuEntry[] = [];
+    if (!many) {
+      entries.push({
+        key: "open", label: "Open", icon: <Eye className="w-3.5 h-3.5" />,
+        onSelect: () => handleRowDoubleClick(doc),
+      });
+      entries.push({
+        key: "meta", label: "Edit metadata", icon: <Pencil className="w-3.5 h-3.5" />,
+        onSelect: () => { setSelectedDoc(doc); setShowMetadataEditor(true); },
+      });
+      if (docLayout === "details") {
+        entries.push({
+          key: "rename", label: "Rename number", icon: <Hash className="w-3.5 h-3.5" />,
+          onSelect: () => {
+            setEditingDocNumId(doc.id!);
+            setEditingDocNumValue(doc.documentNumber || "");
+            setEditingDocNumError(null);
+          },
+        });
+      }
+      if (doc.documentNumber) {
+        entries.push({
+          key: "link", label: "Copy link", icon: <LinkIcon className="w-3.5 h-3.5" />,
+          onSelect: () => {
+            void navigator.clipboard?.writeText(`${window.location.origin}/d/${encodeURIComponent(doc.documentNumber!)}`);
+          },
+        });
+      }
+    }
+    entries.push({
+      key: "stage", separator: !many,
+      label: many ? `Add ${n} to Reference Stack` : isStaged ? "Remove from Reference Stack" : "Add to Reference Stack",
+      icon: <Layers className="w-3.5 h-3.5" />,
+      onSelect: () => {
+        if (many) {
+          setStagedDocs((prev) => {
+            const existing = new Set(prev.map((d) => d.id));
+            return [...prev, ...sortedDocs.filter((d) => selectedDocIds.has(d.id!) && !existing.has(d.id))];
+          });
+        } else {
+          setStagedDocs((prev) => prev.some((d) => d.id === doc.id)
+            ? prev.filter((d) => d.id !== doc.id)
+            : [...prev, doc]);
+        }
+      },
+    });
+    if (isController) {
+      entries.push({
+        key: "move", label: many ? `Move ${n} documents…` : "Move to folder…",
+        icon: <ArrowRight className="w-3.5 h-3.5" />,
+        onSelect: () => setShowBulkMoveModal(true),
+      });
+      entries.push({
+        key: "archive", separator: true,
+        label: many ? `Archive ${n}` : "Archive",
+        icon: <Archive className="w-3.5 h-3.5" />,
+        onSelect: () => void handleBulkArchive(),
+      });
+      entries.push({
+        key: "delete", label: many ? `Delete ${n} permanently…` : "Delete permanently…",
+        icon: <Trash2 className="w-3.5 h-3.5" />, danger: true,
+        onSelect: () => void handleBulkDelete(),
+      });
+    }
+    return entries;
+  };
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -2627,12 +2916,14 @@ export default function LibraryExplorerPage() {
 
             {/* BROWSER CARD */}
             <div
-              className={`bg-[var(--color-surface)] border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 ${
+              className={`bg-[var(--color-surface)] border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 focus:outline-none ${
                 isDragOver ? "border-blue-400 ring-4 ring-blue-100" : "border-[var(--color-border)]"
               }`}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
+              tabIndex={0}
+              onKeyDown={handleExplorerKeyDown}
             >
               {/* Drag overlay */}
               {isDragOver && (
@@ -2738,30 +3029,98 @@ export default function LibraryExplorerPage() {
                           : "Preparing upload…"}
                       </div>
                     )}
-                    {/* Pin the current row order as THIS folder's default. Sort a
-                        column first (e.g. click "Sheet No" so 1 is at the top),
-                        then click here — the folder opens that way every time. */}
-                    {isController && (
+                    {/* Layout switcher — Details / List / Grid / Thumbnails.
+                        Same selection, same gestures, different geometry. */}
+                    <div className="hidden md:inline-flex items-center rounded-lg border border-[var(--color-border)] overflow-hidden" role="group" aria-label="Layout">
+                      {([
+                        { key: "details" as ExplorerLayout, icon: <TableIcon className="w-3.5 h-3.5" />, label: "Details" },
+                        { key: "list" as ExplorerLayout, icon: <ListIcon className="w-3.5 h-3.5" />, label: "List" },
+                        { key: "grid" as ExplorerLayout, icon: <LayoutGrid className="w-3.5 h-3.5" />, label: "Grid" },
+                        { key: "thumbs" as ExplorerLayout, icon: <ImageIcon className="w-3.5 h-3.5" />, label: "Thumbnails" },
+                      ]).map((opt) => (
+                        <button
+                          key={opt.key}
+                          onClick={() => setDocLayout(opt.key)}
+                          title={opt.label}
+                          aria-pressed={docLayout === opt.key}
+                          className={`px-2 py-1.5 transition-colors ${
+                            docLayout === opt.key
+                              ? "bg-slate-900 text-white"
+                              : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
+                          }`}
+                        >
+                          {opt.icon}
+                        </button>
+                      ))}
+                    </div>
+                    {/* View defaults — save the current presentation (layout +
+                        sort + columns + density) for THIS library/folder.
+                        Everyone can save a personal default; controllers can
+                        also publish the org-wide default everyone inherits. */}
+                    <div className="relative">
                       <button
-                        onClick={() => void saveFolderDefaultSort()}
-                        disabled={savingSortDefault || isFolderDefaultSort}
-                        title={isFolderDefaultSort
-                          ? `This folder opens sorted by ${sortLabelFor(sortKey)} (${sortDir === "asc" ? "ascending — 1 at the top" : "descending — highest at the top"}). Click a column header to change it.`
-                          : `Make the current sort (${sortLabelFor(sortKey)}, ${sortDir === "asc" ? "ascending" : "descending"}) the default order every time this folder is opened — for everyone.`}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all disabled:cursor-default ${
-                          isFolderDefaultSort
-                            ? "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-                            : "border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:border-[var(--color-accent)]"
+                        onClick={() => setViewMenuOpen((v) => !v)}
+                        title="View defaults for this folder"
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                          viewMenuOpen
+                            ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                            : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                         }`}
                       >
-                        {savingSortDefault
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : isFolderDefaultSort
-                            ? <Check className="w-3.5 h-3.5" />
-                            : <Pin className="w-3.5 h-3.5" />}
-                        <span className="hidden sm:inline">{isFolderDefaultSort ? "Default sort" : "Set default sort"}</span>
+                        {savingSortDefault ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                        <span className="hidden lg:inline">View</span>
+                        <ChevronDown className="w-3 h-3" />
                       </button>
-                    )}
+                      {viewMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)} />
+                          <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl py-2">
+                            <div className="px-3 pb-2 border-b border-[var(--color-border)]">
+                              <div className="text-[11px] font-black text-[var(--color-text)]">
+                                {currentFolder ? `Folder: ${currentFolder.name}` : `Library: ${library?.name ?? ""}`}
+                              </div>
+                              <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
+                                Current: {docLayout === "details" ? "Details" : docLayout === "list" ? "List" : docLayout === "grid" ? "Grid" : "Thumbnails"} · sorted by {sortLabelFor(sortKey)} ({sortDir === "asc" ? "ascending" : "descending"})
+                                {isFolderDefaultSort ? " · saved default sort" : ""}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => { setViewMenuOpen(false); void saveViewDefault("user"); }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                            >
+                              <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                              <span className="flex-1">
+                                Set as <b>my</b> default here
+                                <span className="block text-[10px] font-normal text-[var(--color-text-muted)]">Only you — wins over the org default</span>
+                              </span>
+                              {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                            </button>
+                            {isController && (
+                              <button
+                                onClick={() => { setViewMenuOpen(false); void saveViewDefault("org"); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                              >
+                                <Shield className="w-3.5 h-3.5 text-[var(--color-accent)]" />
+                                <span className="flex-1">
+                                  Set as <b>org-wide</b> default here
+                                  <span className="block text-[10px] font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
+                                </span>
+                                {viewDefaults.hasOrgRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                              </button>
+                            )}
+                            {viewDefaults.hasUserRow && (
+                              <button
+                                onClick={() => { setViewMenuOpen(false); void clearMyViewDefault(); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span className="flex-1">Clear my default (use org&apos;s)</span>
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
                     {isController && (
                       <button
                         onClick={() => setShowEquipmentSweep(true)}
@@ -2838,8 +3197,34 @@ export default function LibraryExplorerPage() {
                       </button>
                     ))}
                   </div>
-                  {/* DESKTOP TABLE — overflow-x-auto for column overflow */}
-                  <div className="flex-1 overflow-x-auto hidden md:block">
+                  {/* DESKTOP — Details table, or the List/Grid/Thumbnails
+                      layouts. Same docs, same selection, same gestures. */}
+                  {docLayout !== "details" ? (
+                    <div
+                      className="flex-1 overflow-y-auto hidden md:block"
+                      onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
+                    >
+                      <DocGridView
+                        docs={sortedDocs}
+                        layout={docLayout === "list" ? "list" : docLayout === "grid" ? "grid" : "thumbs"}
+                        selectedIds={selectedDocIds}
+                        focusedId={selFocusId}
+                        draggable={isController}
+                        onItemClick={(id, e) => {
+                          const d = sortedDocs.find((x) => x.id === id);
+                          if (d) handleRowClick(d, e);
+                        }}
+                        onItemDoubleClick={handleRowDoubleClick}
+                        onItemContextMenu={handleRowContextMenu}
+                        onItemDragStart={handleDocDragStart}
+                        onBackgroundClick={clearSelection}
+                      />
+                    </div>
+                  ) : (
+                  <div
+                    className="flex-1 overflow-x-auto hidden md:block"
+                    onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
+                  >
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
                       <thead className="bg-slate-50/70 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] uppercase font-black tracking-wider">
                         <tr>
@@ -2925,28 +3310,12 @@ export default function LibraryExplorerPage() {
                             return (
                               <tr
                                 key={docRecord.id}
+                                data-doc-item={docRecord.id}
                                 draggable={isController}
-                                onDragStart={(e) => {
-                                  // Dragging a CHECKED row drags the whole
-                                  // selection — anything else silently moves
-                                  // one file of ten and reads as data loss.
-                                  const ids = isRowSelected && selectedDocIds.size > 1
-                                    ? [...selectedDocIds]
-                                    : [docRecord.id!];
-                                  e.dataTransfer.setData("application/x-doc-ids", JSON.stringify(ids));
-                                  e.dataTransfer.effectAllowed = "move";
-                                  if (ids.length > 1) {
-                                    const ghost = document.createElement("div");
-                                    ghost.textContent = `${ids.length} documents`;
-                                    ghost.style.cssText =
-                                      "position:absolute;top:-1000px;padding:6px 12px;background:#1e293b;color:#fff;"
-                                      + "border-radius:10px;font-size:12px;font-weight:700;";
-                                    document.body.appendChild(ghost);
-                                    e.dataTransfer.setDragImage(ghost, 12, 12);
-                                    setTimeout(() => ghost.remove(), 0);
-                                  }
-                                }}
-                                onClick={() => setSelectedDoc(docRecord)}
+                                onDragStart={(e) => handleDocDragStart(docRecord, e)}
+                                onClick={(e) => handleRowClick(docRecord, e)}
+                                onDoubleClick={() => handleRowDoubleClick(docRecord)}
+                                onContextMenu={(e) => handleRowContextMenu(docRecord, e)}
                                 className={`group cursor-pointer transition-colors relative ${
                                   isRowSelected
                                     ? "bg-blue-50/70"
@@ -3141,6 +3510,7 @@ export default function LibraryExplorerPage() {
                       </tbody>
                     </table>
                   </div>
+                  )}
                   </>
                 )}
               </div>
@@ -3200,6 +3570,16 @@ export default function LibraryExplorerPage() {
           />
         )}
       </InspectorDrawer>
+
+      {/* RIGHT-CLICK CONTEXT MENU on document rows/cards */}
+      {ctxMenu && (
+        <DocContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          entries={buildDocContextEntries(ctxMenu.doc)}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
 
       {/* Persistent discoverability hint — teaches that bulk actions exist,
           shown only when nothing's selected and there are rows to act on. The

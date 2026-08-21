@@ -829,8 +829,21 @@ export interface TableViewConfig {
   /** Per-folder default sort (column key + direction). null/undefined = use
    *  the app default. Persisted alongside the per-folder column layout. */
   sort?: { key: string; dir: "asc" | "desc" } | null;
+  /** Explorer presentation state (layout + density). null/undefined = inherit
+   *  (org default for user rows; app default for org rows). */
+  view?: ExplorerViewConfig | null;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
+}
+
+/** How a library/folder renders its documents. "details" is the full column
+ *  table; "list" is a compact name-first table; "grid" is medium tiles with
+ *  first-page previews; "thumbs" is large preview tiles. */
+export type ExplorerLayout = "details" | "list" | "grid" | "thumbs";
+
+export interface ExplorerViewConfig {
+  layout?: ExplorerLayout;
+  density?: "compact" | "comfy";
 }
 
 export type IngestionStatus = "queued" | "processing" | "completed" | "failed";
