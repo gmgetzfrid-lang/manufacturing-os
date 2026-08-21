@@ -22,6 +22,12 @@ function FolderGlyph({ folder, active }: { folder: LibraryCollection; active: bo
   return <Folder className={`w-3.5 h-3.5 shrink-0 ${active ? "text-[var(--color-accent)]" : "text-amber-500"}`} />;
 }
 
+export interface RailDropPayload {
+  folderId?: string;
+  folderIds?: string[];
+  docIds?: string[];
+}
+
 interface FolderRailProps {
   libraryName: string;
   folders: LibraryCollection[];
@@ -29,6 +35,50 @@ interface FolderRailProps {
   isController: boolean;
   onNavigate: (id: string | null) => void;
   onCreateFolder: () => void;
+  /** Accept dragged documents/folders on rail icons and tree rows — the
+   *  rail is a natural move target ("drag onto Piping"), same contract as
+   *  the breadcrumb drops. Omitted = rail is navigation-only. */
+  onDropItems?: (targetId: string | null, payload: RailDropPayload) => void;
+}
+
+/** Shared drag-drop handlers for any rail/tree element that represents a
+ *  folder (or the library root when targetId is null). */
+function railDropHandlers(
+  targetId: string | null,
+  onDropItems?: (targetId: string | null, payload: RailDropPayload) => void,
+) {
+  if (!onDropItems) return {};
+  return {
+    onDragOver: (e: React.DragEvent) => {
+      if (
+        e.dataTransfer.types.includes("application/x-doc-ids")
+        || e.dataTransfer.types.includes("application/x-folder-id")
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const manyRaw = e.dataTransfer.getData("application/x-folder-ids");
+      if (manyRaw) {
+        try {
+          const ids = (JSON.parse(manyRaw) as string[]).filter(Boolean);
+          if (ids.length > 0) { onDropItems(targetId, { folderIds: ids }); return; }
+        } catch { /* fall through to the single-id key */ }
+      }
+      const folderId = e.dataTransfer.getData("application/x-folder-id");
+      if (folderId) { onDropItems(targetId, { folderId }); return; }
+      const docsRaw = e.dataTransfer.getData("application/x-doc-ids");
+      if (docsRaw) {
+        try {
+          const ids = (JSON.parse(docsRaw) as string[]).filter(Boolean);
+          if (ids.length > 0) onDropItems(targetId, { docIds: ids });
+        } catch { /* malformed payload -- ignore the drop */ }
+      }
+    },
+  };
 }
 
 function TreeNode({
@@ -37,12 +87,14 @@ function TreeNode({
   depth,
   currentFolderId,
   onNavigate,
+  onDropItems,
 }: {
   folder: LibraryCollection;
   allFolders: LibraryCollection[];
   depth: number;
   currentFolderId: string | null;
   onNavigate: (id: string) => void;
+  onDropItems?: (targetId: string | null, payload: RailDropPayload) => void;
 }) {
   const [expanded, setExpanded] = useState(depth < 1);
   const children = allFolders.filter((f) => f.parentId === folder.id);
@@ -51,6 +103,7 @@ function TreeNode({
   return (
     <div>
       <div
+        {...railDropHandlers(folder.id ?? null, onDropItems)}
         className={`flex items-center gap-0.5 rounded-lg transition-all ${
           isActive
             ? "bg-[var(--color-accent)]/12 text-[var(--color-accent)]"
@@ -82,6 +135,7 @@ function TreeNode({
               depth={depth + 1}
               currentFolderId={currentFolderId}
               onNavigate={onNavigate}
+              onDropItems={onDropItems}
             />
           ))}
         </div>
@@ -97,6 +151,7 @@ export default function FolderRail({
   isController,
   onNavigate,
   onCreateFolder,
+  onDropItems,
 }: FolderRailProps) {
   const [hovered, setHovered] = useState(false);
   const rootFolders = folders.filter((f) => !f.parentId);
@@ -125,6 +180,7 @@ export default function FolderRail({
 
         <button
           onClick={() => onNavigate(null)}
+          {...railDropHandlers(null, onDropItems)}
           className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
             !currentFolderId
               ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
@@ -141,6 +197,7 @@ export default function FolderRail({
             <button
               key={folder.id}
               onClick={() => onNavigate(folder.id!)}
+              {...railDropHandlers(folder.id ?? null, onDropItems)}
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all relative ${
                 isActive
                   ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
@@ -201,6 +258,7 @@ export default function FolderRail({
             <div className="flex-1 overflow-y-auto py-2 px-1.5 custom-scrollbar">
               <button
                 onClick={() => onNavigate(null)}
+                {...railDropHandlers(null, onDropItems)}
                 className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-all mb-1 ${
                   !currentFolderId
                     ? "bg-[var(--color-accent)]/12 text-[var(--color-accent)] font-bold"
@@ -219,6 +277,7 @@ export default function FolderRail({
                   depth={0}
                   currentFolderId={currentFolderId}
                   onNavigate={onNavigate}
+                  onDropItems={onDropItems}
                 />
               ))}
 

@@ -22,6 +22,8 @@ interface DocGridViewProps {
   docs: DocumentRecord[];
   layout: DocViewLayout;
   selectedIds: ReadonlySet<string>;
+  /** Items marked by Ctrl+X — rendered dimmed until pasted. */
+  dimmedIds?: ReadonlySet<string>;
   focusedId?: string | null;
   draggable?: boolean;
   onItemClick: (id: string, e: React.MouseEvent) => void;
@@ -45,6 +47,7 @@ export default function DocGridView({
   docs,
   layout,
   selectedIds,
+  dimmedIds,
   focusedId,
   draggable,
   onItemClick,
@@ -87,7 +90,7 @@ export default function DocGridView({
               key={doc.id}
               data-doc-item={doc.id}
               {...commonHandlers(doc)}
-              className={`${itemShell(doc, selected, focused)} rounded-lg px-2 py-1 flex items-center gap-2.5`}
+              className={`${itemShell(doc, selected, focused)} rounded-lg px-2 py-1 flex items-center gap-2.5 ${dimmedIds?.has(doc.id!) ? "opacity-50" : ""}`}
             >
               <DocThumb documentId={doc.id} width={thumbWidth} rounded="rounded" />
               <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate max-w-[16ch] shrink-0">
@@ -127,7 +130,7 @@ export default function DocGridView({
             key={doc.id}
             data-doc-item={doc.id}
             {...commonHandlers(doc)}
-            className={`${itemShell(doc, selected, focused)} rounded-xl p-2.5 flex flex-col items-center gap-2 relative`}
+            className={`${itemShell(doc, selected, focused)} rounded-xl p-2.5 flex flex-col items-center gap-2 relative ${dimmedIds?.has(doc.id!) ? "opacity-50" : ""}`}
             title={doc.title || doc.name || undefined}
           >
             {doc.checkedOutBy && (
