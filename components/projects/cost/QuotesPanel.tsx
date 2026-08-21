@@ -202,7 +202,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, canMan
   const unread = groupDocs.filter((d) => d.status === "draft");
 
   const award = async (doc: CostDocument, accountId: string) => {
-    const total = parsedQuoteFrom(doc)?.total ?? doc.totalAmount ?? 0;
+    const total = doc.totalAmount ?? parsedQuoteFrom(doc)?.total ?? 0;
     const account = accounts.find((a) => a.id === accountId);
     if (!(await appConfirm({
       message: `Award "${group}" to ${doc.vendorName ?? "this vendor"} for ${fmtMoney(total)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,

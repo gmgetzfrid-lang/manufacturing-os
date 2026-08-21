@@ -177,7 +177,10 @@ export async function awardQuote(input: {
   if (doc.status === "void" || doc.status === "declined") {
     return { ok: false, error: `This quote is ${COST_DOC_STATUS_LABEL[doc.status].toLowerCase()} — re-upload it to award.` };
   }
-  const total = parsedQuoteFrom(doc)?.total ?? doc.totalAmount;
+  // total_amount is the human-visible number (AI-written at parse, or typed
+  // via setManualTotal) — it outranks the stored extraction, so a manual
+  // correction is what actually gets awarded.
+  const total = doc.totalAmount ?? parsedQuoteFrom(doc)?.total;
   if (total == null || !(total > 0)) {
     return { ok: false, error: "No readable total on this quote yet — run the AI read (or type the total) first." };
   }

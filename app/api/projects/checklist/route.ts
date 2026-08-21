@@ -174,7 +174,9 @@ export async function POST(req: NextRequest) {
   }
 
   const block = extractJsonBlock(text);
-  const parsed = block ? (JSON.parse(block) as { assessments?: unknown[] }) : null;
+  let parsed: { assessments?: unknown[] } | null = null;
+  try { parsed = block ? (JSON.parse(block) as { assessments?: unknown[] }) : null; }
+  catch { return bad("The assessment wasn't valid JSON — try again.", 502); }
   const byRef = new Map(items.map((it) => [it.id.slice(0, 8), it]));
   const proposals: Array<{ itemId: string; applicability: "applies" | "na" | "unknown"; rationale: string }> = [];
   for (const raw of parsed?.assessments ?? []) {
