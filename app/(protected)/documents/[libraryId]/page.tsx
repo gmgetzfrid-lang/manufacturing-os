@@ -4539,7 +4539,12 @@ export default function LibraryExplorerPage() {
           isOpen={showCheckoutFlow}
           onClose={() => setShowCheckoutFlow(false)}
           document={checkoutDoc}
-          currentUser={{ uid: uid || '', email: userEmail, role: activeRole }} 
+          currentUser={{ uid: uid || '', email: userEmail, role: activeRole }}
+          canPublish={canPublish}
+          folderPath={(() => {
+            const f = checkoutDoc.collectionId ? folderMap.get(checkoutDoc.collectionId) : null;
+            return f ? [...(f.pathNames ?? []), f.name].filter(Boolean) as string[] : [];
+          })()}
         />
       )}
 

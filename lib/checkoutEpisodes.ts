@@ -141,6 +141,17 @@ export function isMissingEpisodeSchema(err: unknown): boolean {
   );
 }
 
+/** True when the error means the 20261012 outcome columns aren't applied yet
+ *  (checkout_sessions.outcome / outcome_note / outcome_ref). Callers drop the
+ *  outcome payload and record a plain check-in instead of failing it. */
+export function isMissingOutcomeSchema(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  if (!e) return false;
+  if (e.code === "42703" || e.code === "PGRST204") return true;
+  const msg = (e.message ?? "").toLowerCase();
+  return msg.includes("outcome") && (msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find"));
+}
+
 // Once we know the schema is missing we stop retrying for the session —
 // avoids a failed query per call on pre-migration environments.
 let episodeSchemaMissing = false;
@@ -427,25 +438,46 @@ export async function finishMySession(input: {
   userId: string;
   userName: string;
   episodeId?: string | null;
-  /** What the session row should say. Default "checked_in". */
+  /** What the session row should say. Default "checked_in". Nothing writes
+   *  "abandoned" anymore — a deliberate check-in records its OUTCOME instead,
+   *  and the expiry sweep records outcome 'auto_released'. The value stays in
+   *  the union only for legacy rows that already carry it. */
   sessionStatus?: "checked_in" | "abandoned";
   releasedReason?: string | null;
+  /** The check-in register entry (migration 20261012): what came of this
+   *  checkout. Dropped silently on pre-migration environments. */
+  outcome?: { outcome: string; note?: string | null; ref?: Record<string, unknown> | null } | null;
 }): Promise<FinishSessionResult> {
   const now = new Date().toISOString();
 
   // 1. End MY active session row(s) for this document.
-  const { error: endErr } = await supabase
-    .from("checkout_sessions")
-    .update({
-      status: input.sessionStatus ?? "checked_in",
-      ended_at: now,
-      released_at: now,
-      released_by: input.userId,
-      released_reason: input.releasedReason ?? null,
-    })
-    .eq("document_id", input.documentId)
-    .eq("user_id", input.userId)
-    .eq("status", "active");
+  const basePayload: Record<string, unknown> = {
+    status: input.sessionStatus ?? "checked_in",
+    ended_at: now,
+    released_at: now,
+    released_by: input.userId,
+    released_reason: input.releasedReason ?? null,
+  };
+  const withOutcome = input.outcome
+    ? {
+        ...basePayload,
+        outcome: input.outcome.outcome,
+        outcome_note: input.outcome.note ?? null,
+        outcome_ref: input.outcome.ref ?? null,
+      }
+    : basePayload;
+  const endMine = (payload: Record<string, unknown>) =>
+    supabase
+      .from("checkout_sessions")
+      .update(payload)
+      .eq("document_id", input.documentId)
+      .eq("user_id", input.userId)
+      .eq("status", "active");
+  let { error: endErr } = await endMine(withOutcome);
+  if (endErr && input.outcome && isMissingOutcomeSchema(endErr)) {
+    // Pre-migration env: record the check-in without the outcome columns.
+    ({ error: endErr } = await endMine(basePayload));
+  }
   if (endErr) throw new Error(endErr.message);
 
   // 2. Who's still in? (My rows are already non-active, but recompute

@@ -148,6 +148,9 @@ const CheckoutInfoPopover = ({
         userName,
         sessionStatus: "checked_in",
         releasedReason: "Released from the checkout popover (no changes)",
+        // The button says "no changes" — record it, so the register never
+        // shows a blank row for a deliberate release.
+        outcome: { outcome: "all_clear", note: null, ref: null },
       });
       const { endMyIntents } = await import("@/lib/intents");
       void endMyIntents({ documentId: docRecord.id, userId: currentUserId, sources: ["checkout"] });
@@ -422,7 +425,9 @@ export default function CheckoutStatusCell({
             className="group/qh flex items-center gap-1 px-2 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-blue-300 hover:bg-blue-50 text-[var(--color-text-faint)] hover:text-blue-600 transition-all disabled:opacity-50 text-[10px] font-bold"
           >
             {quickBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-            <span className="hidden lg:inline">Quick hold</span>
+            {/* Always labeled — an icon-only mystery button defeats the whole
+                point of a friction-free tier. */}
+            <span>Quick hold</span>
           </button>
         )}
       </div>

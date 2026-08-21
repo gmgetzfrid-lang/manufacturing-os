@@ -34,6 +34,7 @@ import {
   StaleBaseError, DuplicateLabelError, type StaleBaseInfo,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
+import { effectiveDocClassForDocument, type DocClass } from "@/lib/docClass";
 import { getMyEditBase } from "@/lib/intents";
 import { postActivity } from "@/lib/activityThread";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
@@ -52,6 +53,20 @@ interface RevUpModalProps {
   actorEmail?: string;
   actorRole?: string;
   onSuccess: (newVersion: DocumentVersion) => void;
+  /** Fired when the publish entered the REVIEW GATE instead of landing
+   *  directly (submitForReview path). Optional — most callers only care
+   *  about direct publishes; the check-in flow needs both outcomes. */
+  onReviewSubmitted?: (draft: { versionId: string; revisionLabel: string }) => void;
+  /** Like onSuccess but carries whether the publish landed as an
+   *  UNRECONCILED BRANCH — callers recording outcomes need the distinction
+   *  (a branch is NOT the current revision). Fired before onSuccess. */
+  onDirectPublished?: (v: DocumentVersion, branched: boolean) => void;
+  /** Force the initial change type, overriding the per-library remembered
+   *  value — the check-in "Minor correction" card presets "Correction" so
+   *  its no-MOC / no-review promise is actually enforced. */
+  presetChangeType?: DocumentVersion["changeType"];
+  /** Prefill the change-log narrative (e.g. the typed correction note). */
+  presetChangeLog?: string;
 }
 
 const ISSUE_TYPES: { value: NonNullable<DocumentVersion["issueType"]>; label: string }[] = [
@@ -72,7 +87,8 @@ const inputClass =
 
 export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
-  orgId, actorUserId, actorEmail, actorRole, onSuccess,
+  orgId, actorUserId, actorEmail, actorRole, onSuccess, onReviewSubmitted,
+  onDirectPublished, presetChangeType, presetChangeLog,
 }: RevUpModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -128,6 +144,10 @@ export default function RevUpModal({
       if (remembered?.issueType) setIssueType(remembered.issueType);
       if (remembered?.changeType) setChangeType(remembered.changeType);
     } catch { /* private mode */ }
+    // An explicit caller preset beats the remembered value — the launcher
+    // knows what this publish IS (e.g. check-in's Correction card).
+    if (presetChangeType) setChangeType(presetChangeType);
+    if (presetChangeLog) setChangeLog(presetChangeLog);
     setError(null);
     setConflict(null);
     setShowBranchInput(false);
@@ -158,10 +178,15 @@ export default function RevUpModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey]);
+  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey, presetChangeType, presetChangeLog]);
 
   // Resolve this library/folder/document's pre-publish review policy when the
-  // modal opens, so we know whether to publish directly or open an in-review draft.
+  // modal opens, so we know whether to publish directly or open an in-review
+  // draft — and its declared document class, which drives the MOC gate.
+  const [docClass, setDocClass] = useState<DocClass | null>(null);
+  // "We couldn't check the class" is NOT "no class declared" — on a transient
+  // resolution failure the MOC gate fails CLOSED (drawing rules assumed).
+  const [docClassUnknown, setDocClassUnknown] = useState(false);
   useEffect(() => {
     if (!isOpen) return;
     let alive = true;
@@ -170,6 +195,12 @@ export default function RevUpModal({
         const c = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
         if (alive) setReviewControl(c);
       } catch { if (alive) setReviewControl(null); }
+      try {
+        const cls = await effectiveDocClassForDocument({ id: doc.id, collectionId: doc.collectionId ?? null, libraryId });
+        if (alive) { setDocClass(cls); setDocClassUnknown(false); }
+      } catch {
+        if (alive) { setDocClass(null); setDocClassUnknown(true); }
+      }
     })();
     return () => { alive = false; };
   }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, libraryId]);
@@ -178,6 +209,14 @@ export default function RevUpModal({
   // an escape hatch that always publishes directly (no sign-off cycle).
   const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType });
   const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);
+
+  // THE PSM GATE (OSHA 1910.119(l)): a non-minor revision of a declared
+  // DRAWING requires its Management of Change reference before it may
+  // publish. Minor/Correction is replacement-in-kind and stays exempt —
+  // the same boundary the review gate already draws. An UNKNOWN class
+  // (resolution failed) is treated as drawing: PSM gates fail closed.
+  const isMinorLike = changeType === "Minor" || changeType === "Correction";
+  const mocRequired = (docClass === "drawing" || docClassUnknown) && !isMinorLike;
 
   // The document is held by SOMEONE ELSE — publishing will leave their checkout
   // open, note it on their thread, and notify them. Requires an override message.
@@ -219,6 +258,11 @@ export default function RevUpModal({
         `${doc.checkedOutByName || "Another user"} has this checked out — add a note explaining why you're publishing now.`,
       );
     }
+    if (mocRequired && mocReference.trim().length < 3) {
+      return setError(
+        "This is a drawing-class document — PSM requires the MOC reference for a non-minor revision. Enter the MOC number, or set the change type to Minor/Correction if this is replacement-in-kind.",
+      );
+    }
 
     setSubmitting(true);
     try {
@@ -244,6 +288,7 @@ export default function RevUpModal({
           title: `Submitted for review — draft ${submitted.revisionLabel}`,
           message: "Reviewers have been notified. The current revision stays the controlled copy; the moment the last required reviewer signs, the draft publishes automatically.",
         });
+        onReviewSubmitted?.(submitted);
       } else {
         const { newVersion, branched } = await revUpDocument({
           ...common,
@@ -252,6 +297,7 @@ export default function RevUpModal({
           branchReason: asBranch ? branchReason.trim() : undefined,
           sourceFile,
         });
+        onDirectPublished?.(newVersion, !!branched);
         onSuccess(newVersion);
         if (branched) {
           // The branch is real but NOT current — make sure that lands.
@@ -638,6 +684,34 @@ export default function RevUpModal({
             />
           </Field>
 
+          {/* THE PSM GATE — when the declared class makes MOC mandatory, the
+              field leaves the fold and stands where it can't be missed. */}
+          {mocRequired && (
+            <Field
+              label={docClassUnknown ? "MOC Reference (required — class unverified)" : "MOC Reference (required — drawing class)"}
+              hint={docClassUnknown
+                ? "The document's class couldn't be verified right now, so drawing rules apply: a non-minor revision needs its Management of Change."
+                : "PSM: a non-minor drawing revision needs its Management of Change. Minor/Correction change types are replacement-in-kind and exempt."}
+              isoTopic="moc_reference"
+            >
+              <input
+                value={mocReference}
+                onChange={(e) => setMocReference(e.target.value)}
+                className={`${inputClass} ${mocReference.trim().length >= 3 ? "" : "border-amber-400 bg-amber-50/40"}`}
+                placeholder="MOC-2026-0142"
+              />
+            </Field>
+          )}
+          {/* The exemption must be VISIBLE, not silent: a remembered "Minor"
+              change type on a drawing waives the MOC — say so, so a real
+              process change doesn't slip out under last week's setting. */}
+          {docClass === "drawing" && isMinorLike && (
+            <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+              <b>{changeType}</b> on a drawing is replacement-in-kind — no MOC required. If this revision
+              changes the process, switch the change type to <b>Major</b> (the MOC becomes mandatory).
+            </div>
+          )}
+
           {/* THE FOLD — everyday publishes are: PDF, base, label, narrative.
               The audit metered ~14 decisions on this form; the signoff chain,
               MOC, source-CAD naming, effective date, and CAD attach are
@@ -658,11 +732,14 @@ export default function RevUpModal({
             <Field label="Approved By"><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className={inputClass} /></Field>
           </div>
 
-          {/* Cross-references */}
+          {/* Cross-references. When the class makes MOC mandatory it already
+              stands above the fold — no duplicate field here. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="MOC Reference" hint="Optional ticket # from change platform" isoTopic="moc_reference">
-              <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className={inputClass} placeholder="MOC-2026-0142" />
-            </Field>
+            {!mocRequired && (
+              <Field label="MOC Reference" hint="Optional ticket # from change platform" isoTopic="moc_reference">
+                <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className={inputClass} placeholder="MOC-2026-0142" />
+              </Field>
+            )}
             <Field label="Source CAD File" hint="e.g. P-101_Rev3.dwg">
               <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className={inputClass} placeholder="P-101_Rev3.dwg" />
             </Field>

@@ -1,44 +1,40 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { createProject, writeActivity, listProjects } from "@/lib/projects";
 import type { Project } from "@/types/schema";
 import ActivityThread from "@/components/documents/ActivityThread";
 import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
 import MarkupRequestModal from "@/components/documents/MarkupRequestModal";
-import RevUpModal from "@/components/documents/RevUpModal";
+import CheckInPanel from "@/components/documents/CheckInPanel";
 import { notifyMany } from "@/lib/inAppNotifications";
-import { generateTicketNumber } from "@/lib/ticketNumber";
-import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import {
   type CheckoutEpisode,
   getActiveEpisode,
   ensureActiveEpisode,
   adoptInFlightCheckout,
   episodeSchemaIsMissing,
-  finishMySession,
   reconcileDocumentCheckoutState,
   activeCollaboratorNames,
   postEpisodeSystemMessage,
+  quickHold,
 } from "@/lib/checkoutEpisodes";
-import { postHandoff } from "@/lib/activityThread";
-import { recordIntent, endMyIntents } from "@/lib/intents";
+import { recordIntent } from "@/lib/intents";
 import {
   X,
   Clock,
   User,
   AlertTriangle,
-  CheckCircle2,
-  ArrowRight,
+  Check,
   Loader2,
   RefreshCw,
-  Briefcase
+  Briefcase,
+  Zap
 } from "lucide-react";
 import type { CheckoutSession, DocumentRecord, CheckoutMode } from "@/types/schema";
-import { useRouter } from "next/navigation";
 import { useToast } from "@/components/providers/ToastProvider";
-import { logAuditAction } from "@/lib/audit";
+import { logCheckoutEvent } from "@/lib/audit";
 
 // ISO-style document control: every checkout must say WHY. The category is the
 // machine-readable purpose (filterable, reportable); the reason is the
@@ -72,10 +68,16 @@ interface CheckoutFlowModalProps {
   onClose: () => void;
   document: DocumentRecord;
   currentUser: { uid: string; email: string | null; role: string | null };
+  /** Per-library publish authority (canPublishOnLibrary) — the SAME grant the
+   *  inspector uses, so publish shows up in both places or neither. */
+  canPublish?: boolean;
+  /** The document's folder-name chain — threads through to RevUpModal so a
+   *  revision published from check-in lands under the same storage prefix as
+   *  every other publish of the document. */
+  folderPath?: string[];
 }
 
-export default function CheckoutFlowModal({ isOpen, onClose, document, currentUser }: CheckoutFlowModalProps) {
-  const router = useRouter();
+export default function CheckoutFlowModal({ isOpen, onClose, document, currentUser, canPublish = false, folderPath }: CheckoutFlowModalProps) {
   const [activeSessions, setActiveSessions] = useState<CheckoutSession[]>([]);
   const [, setLoading] = useState(true);
   const [note, setNote] = useState("");
@@ -103,17 +105,19 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   // checkout can never silently park a doc forever.
   const [adhocDuration, setAdhocDuration] = useState<"24h" | "3d" | "1w" | "1mo">("24h");
   
-  // Check-in State
-  const [checkInReason, setCheckInReason] = useState<'abandon' | 'revise' | null>(null);
-  const [revisionNote, setRevisionNote] = useState("");
-  // Handoff note — short message left in the activity thread so the
-  // next collaborator knows where this user left off. Always optional;
-  // never blocks check-in.
-  const [handoffNote, setHandoffNote] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [quickBusy, setQuickBusy] = useState(false);
   const [showMarkupRequest, setShowMarkupRequest] = useState(false);
-  const [showRevUp, setShowRevUp] = useState(false);
   const { showToast } = useToast();
+
+  // Focus follows the sequence: pick a purpose (step ①), and the cursor jumps
+  // to the reason box (step ②). No autoFocus on a later step.
+  const noteInputRef = useRef<HTMLInputElement>(null);
+  const prevPurposeRef = useRef("");
+  useEffect(() => {
+    if (purposeCategory && !prevPurposeRef.current) noteInputRef.current?.focus();
+    prevPurposeRef.current = purposeCategory;
+  }, [purposeCategory]);
 
   const mySession = activeSessions.find(s => s.userId === currentUser.uid);
 
@@ -160,10 +164,15 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .eq("status", "active")
         .order("started_at", { ascending: false });
       if (alive) {
+        // purpose + episodeId MUST survive this mapping — CheckInPanel derives
+        // its entire outcome card set from mySession.purpose. Dropping it here
+        // silently degrades every check-in to the generic card set.
         setActiveSessions((data || []).map(r => ({
           id: r.id, orgId: r.org_id, documentId: r.document_id, libraryId: r.library_id,
           userId: r.user_id, userName: r.user_name, mode: r.mode, note: r.note,
           status: r.status, startedAt: r.started_at, lastSeenAt: r.last_seen_at,
+          purpose: r.purpose, episodeId: r.episode_id,
+          expectedReleaseAt: r.expected_release_at, autoExpiresAt: r.auto_expires_at,
         } as CheckoutSession)));
         setLoading(false);
       }
@@ -240,6 +249,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
   const handleCheckout = async () => {
     if (!currentUser.uid || !document.orgId) return;
+    // One act, one session: never start a full checkout while a quick hold is
+    // in flight or while we already hold an active session — otherwise the
+    // register shows two simultaneous checkouts for one person, one act.
+    if (processing || quickBusy || mySession) return;
     // The forced flow: no checkout without a stated purpose + reason. This is
     // the document-control record every other member sees.
     if (!purposeCategory) {
@@ -403,6 +416,21 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           }
         } catch (e) { console.warn("[checkout] join notify failed", e); }
         setEpisode(checkoutEpisode);
+        // The register records JOINS too — a join is a checkout act, and a
+        // later CHECK_IN with no matching CHECK_OUT is a hole in the story.
+        await logCheckoutEvent({
+          orgId: document.orgId, fileId: document.id!,
+          userId: currentUser.uid, userEmail: currentUser.email || "unknown",
+          userRole: currentUser.role || "unknown",
+          type: "CHECK_OUT",
+          details: {
+            joined: true, documentNumber: document.documentNumber ?? null,
+            mode, purpose: purposeCategory, reason: note.trim(),
+            sessionId: insertedSession?.id ?? null,
+            episodeId: checkoutEpisode?.id ?? null,
+            checkoutNumber: checkoutEpisode?.seq ?? null,
+          },
+        });
         setProcessing(false);
         showToast({
           type: "warning",
@@ -468,10 +496,13 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       }
 
       // Document-control audit record: who, what, why, expected return.
-      await logAuditAction({
-        action: "DOCUMENT_CHECKOUT", resourceId: document.id!, resourceType: "document",
-        orgId: document.orgId, userId: currentUser.uid, userEmail: currentUser.email || undefined,
-        userRole: currentUser.role || undefined,
+      // One event family for the whole system — the popover, quick hold, and
+      // this modal all write CHECK_OUT/CHECK_IN, so the register is one query.
+      await logCheckoutEvent({
+        orgId: document.orgId, fileId: document.id!,
+        userId: currentUser.uid, userEmail: currentUser.email || "unknown",
+        userRole: currentUser.role || "unknown",
+        type: "CHECK_OUT",
         details: {
           documentNumber: document.documentNumber ?? null,
           mode, purpose: purposeCategory, reason: note.trim(),
@@ -491,125 +522,44 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     }
   };
 
-  const handleCheckIn = async () => {
-    if (!mySession || !checkInReason || !currentUser.uid) return;
-    setProcessing(true);
-
+  // One-click lightweight tier, offered INSIDE the modal too: the person who
+  // opened the full form and balked still gets the honest cheap option.
+  const handleQuickHold = async () => {
+    if (!document.id || !document.orgId || !currentUser.uid || quickBusy || processing) return;
+    setQuickBusy(true);
     try {
-      const userName = currentUser.email?.split('@')[0] || "User";
-
-      // Close the loop in the audit trail: checkout + check-in are paired
-      // records for the document-control register.
-      await logAuditAction({
-        action: "DOCUMENT_CHECKIN", resourceId: document.id!, resourceType: "document",
-        orgId: document.orgId, userId: currentUser.uid, userEmail: currentUser.email || undefined,
-        userRole: currentUser.role || undefined,
-        details: {
-          documentNumber: document.documentNumber ?? null,
-          outcome: checkInReason, sessionId: mySession.id ?? null,
-          episodeId: episode?.id ?? null,
-          checkoutNumber: episode?.seq ?? null,
-          handoffNote: handoffNote.trim() || null,
-        },
-      });
-
-      // Post a handoff note FIRST so it lands before the system event —
-      // makes the thread read more naturally ("here's where I left it" →
-      // "I checked in").
-      if (handoffNote.trim()) {
-        await postHandoff({
-          orgId: document.orgId!, documentId: document.id!,
-          lockId: document.currentLockId ?? null, episodeId: episode?.id ?? null,
-          userId: currentUser.uid, userName,
-          text: handoffNote.trim(),
-        });
-      }
-
-      // Settle the episode: last one out closes the ticket; if we hold the
-      // lock and others remain it TRANSFERS (the checkout continues until
-      // everyone is done); a non-holder just drops off the list. System
-      // events for each land in the thread.
-      const finish = await finishMySession({
-        orgId: document.orgId!,
-        documentId: document.id!,
+      const userName = currentUser.email?.split("@")[0] || "User";
+      const result = await quickHold({
+        orgId: document.orgId,
+        documentId: document.id,
+        libraryId: document.libraryId ?? null,
+        currentVersionId: document.currentVersionId ?? null,
         userId: currentUser.uid,
         userName,
-        episodeId: episode?.id ?? null,
-        sessionStatus: checkInReason === 'abandon' ? 'abandoned' : 'checked_in',
-        releasedReason: checkInReason === 'revise' ? 'Checked in with revision request' : null,
       });
-      if (finish.episodeClosed) setEpisode(null);
-
-      // The checkout-scoped edit intent ends with the session. (Download/
-      // viewer intents keep their own decay — they reflect copies that may
-      // still be on the user's machine.)
-      void endMyIntents({
-        documentId: document.id!,
-        userId: currentUser.uid,
-        sources: ["checkout"],
+      await logCheckoutEvent({
+        orgId: document.orgId, fileId: document.id,
+        userId: currentUser.uid, userEmail: currentUser.email || "unknown",
+        userRole: currentUser.role || "unknown",
+        type: "CHECK_OUT",
+        details: { quickHold: true, autoExpires: "end of day", joined: result === "joined" },
       });
-
-      if (checkInReason === 'revise') {
-        if (!document.orgId) throw new Error("This document has no workspace set.");
-        const ticketNumber = await generateTicketNumber(document.orgId);
-        const { data: ticketRow, error: ticketErr } = await supabase.from("tickets").insert({
-          org_id: document.orgId,
-          ticket_id: ticketNumber,
-          title: `Revision Request: ${document.title}`,
-          description: `Generated from Check-in. User Note: ${revisionNote}`,
-          request_type: 'Revision',
-          status: 'PENDING_ASSIGNMENT',
-          priority: 2,
-          requester_id: currentUser.uid,
-          requester_name: currentUser.email?.split('@')[0] || "User",
-          requester_email: currentUser.email,
-          requester_role: currentUser.role,
-          history: [{ action: 'Created via Check-in', user: currentUser.email, date: new Date().toISOString(), details: `Source Document: ${document.documentNumber}` }],
-        }).select('id').single();
-        if (ticketErr || !ticketRow) throw new Error(ticketErr?.message || "Couldn't create the revision request ticket.");
-
-        // Tell the assignment queue (DraftingSupervisor → Admin fallback) the
-        // same way a normal new request does — this fork previously created
-        // the ticket silently and nobody was notified.
-        void (async () => {
-          try {
-            const recipients = await resolveTicketRecipients(document.orgId!, 'PENDING_ASSIGNMENT', currentUser.uid);
-            if (recipients.length === 0) return;
-            await notifyMany({
-              orgId: document.orgId!,
-              userIds: recipients.map((m) => m.uid),
-              actorUserId: currentUser.uid,
-              actorName: currentUser.email?.split('@')[0],
-              kind: 'request_pending_approval',
-              title: `New drafting request: Revision Request: ${document.title}`,
-              body: 'Created from a document check-in. Ready for a drafter to be assigned.',
-              link: `/requests/${ticketRow.id}`,
-              resourceType: 'ticket',
-              resourceId: ticketRow.id as string,
-            });
-          } catch (e) {
-            console.warn('[checkout] revision-request notify failed (non-blocking)', e);
-          }
-        })();
-
-        // Attach the ticket pointer to the (possibly just-sealed) episode
-        // record — the explicit id keeps it out of the NEXT checkout's thread.
-        await postEpisodeSystemMessage({
-          orgId: document.orgId!, documentId: document.id!,
-          episodeId: episode?.id ?? null,
-          text: `Revision requested at check-in — ticket ${ticketNumber} created.`,
+      // Honesty over convenience: a quick hold on a locked document JOINS the
+      // holder's checkout — say so, same as the full-checkout path does.
+      if (result === "joined") {
+        showToast({
+          type: "warning",
+          title: "Joined an active checkout",
+          message: "Someone else holds the lock — your quick hold put you on their checkout ticket. Coordinate before editing.",
+          duration: 8000,
         });
-
-        router.push(`/requests/${ticketRow?.id}`);
-      } else {
-        onClose();
       }
-
-      setProcessing(false);
-    } catch (e: unknown) {
+      setQuickBusy(false);
+      onClose();
+    } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Check-in failed", message: (e as Error).message });
-      setProcessing(false);
+      showToast({ type: "error", title: "Quick hold failed", message: (e as Error).message });
+      setQuickBusy(false);
     }
   };
 
@@ -625,12 +575,21 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   
   const isOrphaned = isLockHolderWithoutSession || isZombieCollaborator || isStaleCollaborator;
 
+  // IDLE = nobody has this document out and nothing is broken. The modal is
+  // then just the two-question form — no collaborator panel, no history, no
+  // thread pane. The multi-person dashboard appears only when there IS a
+  // checkout in motion. Overload is why people bounce off systems.
+  // document.checkedOutBy matters too: a foreign lock with lost session rows
+  // (someone ELSE's orphan) must show the full layout, not a slim form whose
+  // button confusingly reads "Join Session" on an apparently idle document.
+  const isIdle = activeSessions.length === 0 && !mySession && !isOrphaned && !episode && !document.checkedOutBy;
+
   return (
     <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-      <div className="bg-[var(--color-surface)] w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95">
-        
+      <div className={`bg-[var(--color-surface)] w-full rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 ${isIdle ? "max-w-xl max-h-[88vh]" : "max-w-4xl h-[80vh]"}`}>
+
         {/* LEFT: SESSION & ACTIONS */}
-        <div className="flex-1 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-2)]">
+        <div className={`flex-1 flex flex-col bg-[var(--color-surface-2)] ${isIdle ? "" : "border-r border-[var(--color-border)]"}`}>
           <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface)]">
             <div>
               <h2 className="text-lg font-bold text-[var(--color-text)]">Document Checkout</h2>
@@ -645,12 +604,18 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             
-            {/* Active Sessions List */}
+            {/* Active Sessions List — only when there IS a session story to
+                tell. An idle document opens straight to the form. */}
+            {!isIdle && (
             <div>
               <h3 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Active Collaborators</h3>
               {activeSessions.length === 0 ? (
                 <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-sm">
-                  {isOrphaned ? "This checkout got out of sync — fix it below." : "No one is currently working on this file."}
+                  {isOrphaned
+                    ? "This checkout got out of sync — fix it below."
+                    : document.checkedOutBy
+                      ? `Held by ${document.checkedOutByName || "another user"}, but their session went missing. An Admin/DocCtrl can force-release it from the row's checkout popover.`
+                      : "No one is currently working on this file."}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -674,92 +639,25 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                 </div>
               )}
             </div>
+            )}
 
             {/* ACTION AREA */}
             <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-5 shadow-sm">
               {mySession ? (
-                // CHECK IN FLOW (Existing Session)
-                <div className="space-y-4">
-                  <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center"><CheckCircle2 className="w-4 h-4 mr-2 text-green-600" /> You are checked out</h3>
-
-                  {/* In-flight revision publish: while still checked out, user
-                      can push a new revision (typically from CAD) without
-                      first checking in. Opens RevUpModal scoped to this doc. */}
-                  {(currentUser.role === 'Admin' || currentUser.role === 'DocCtrl') && (
-                    <button
-                      onClick={() => setShowRevUp(true)}
-                      className="w-full p-3 rounded-xl border-2 border-emerald-200 hover:border-emerald-400 bg-emerald-50 text-left flex items-center gap-3 transition-all"
-                    >
-                      <div className="p-2 bg-emerald-500 rounded-lg text-white shrink-0">
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </div>
-                      <div>
-                        <div className="font-bold text-sm text-emerald-900">Publish a new revision</div>
-                        <div className="text-[10px] text-emerald-800 leading-tight">Upload an updated PDF (e.g. from CAD) onto this document while still checked out. Captures signoffs + MOC reference.</div>
-                      </div>
-                    </button>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <button 
-                      onClick={() => setCheckInReason('abandon')}
-                      className={`p-3 rounded-xl border-2 text-left transition-all ${checkInReason === 'abandon' ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-500' : 'border-[var(--color-border)] hover:border-amber-300'}`}
-                    >
-                      <div className="font-bold text-sm text-[var(--color-text)] mb-1">Release — no changes</div>
-                      <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">Done looking. Nothing else happens.</p>
-                    </button>
-                    <button
-                      onClick={() => setCheckInReason('revise')}
-                      className={`p-3 rounded-xl border-2 text-left transition-all ${checkInReason === 'revise' ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-[var(--color-border)] hover:border-blue-300'}`}
-                    >
-                      <div className="font-bold text-sm text-[var(--color-text)] mb-1">Request a revision</div>
-                      <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">Opens a drafting ticket with your note.</p>
-                    </button>
-                  </div>
-
-                  {checkInReason === 'revise' && (
-                    <div>
-                      <textarea
-                        value={revisionNote}
-                        onChange={(e) => setRevisionNote(e.target.value)}
-                        placeholder="What needs to change on this drawing?"
-                        className="w-full p-3 rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                        rows={3}
-                      />
-                      <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                        Only this note travels with the ticket. If you drew markups in the viewer,
-                        use <b>Download w/ Markup</b> there and attach that file to the ticket after it opens.
-                      </div>
-                    </div>
-                  )}
-
-                  {checkInReason && (
-                    <div>
-                      <label className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
-                        Handoff note (optional)
-                      </label>
-                      <textarea
-                        value={handoffNote}
-                        onChange={(e) => setHandoffNote(e.target.value)}
-                        placeholder="Where are you leaving this for the next person? e.g. &ldquo;Sheet 3 still needs vendor data, sheet 4 ready for review.&rdquo;"
-                        rows={2}
-                        className="mt-1 w-full p-2.5 rounded-lg border border-blue-200 bg-blue-50/40 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
-                      <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                        Posted to the document&apos;s activity thread so anyone still checked out (or the next person to take this on) sees it.
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleCheckIn}
-                    disabled={!checkInReason || processing}
-                    className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
-                  >
-                    {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ArrowRight className="w-4 h-4 mr-2" />}
-                    {checkInReason === 'revise' ? 'Open Ticket & Release' : 'Release Checkout'}
-                  </button>
-                </div>
+                // CHECK IN FLOW — "How did it go?" One question, cards derived
+                // from the checkout purpose + document class + authority.
+                // Everything (attestation, MOC gate, redline uploads, ticket
+                // routing, publish, owner routing, handoff) lives in the panel.
+                <CheckInPanel
+                  document={document}
+                  currentUser={currentUser}
+                  episode={episode}
+                  mySession={mySession}
+                  activeSessions={activeSessions}
+                  canPublish={canPublish}
+                  folderPath={folderPath}
+                  onDone={onClose}
+                />
               ) : (
                 // CHECK OUT FLOW (Start New Session or Recover)
                 <div className="space-y-4">
@@ -770,6 +668,22 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     </div>
                   ) : (
                     <h3 className="text-sm font-bold text-[var(--color-text)]">Check out this document</h3>
+                  )}
+
+                  {/* The friction-free tier, offered here too — whoever opens
+                      the full form and balks still gets the honest cheap path. */}
+                  {!isOrphaned && (
+                    <button
+                      type="button"
+                      onClick={handleQuickHold}
+                      disabled={quickBusy || processing}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50/60 hover:bg-blue-50 text-left transition-colors disabled:opacity-50"
+                    >
+                      {quickBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" /> : <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
+                      <span className="text-[11px] text-blue-900">
+                        <b>Just need it for today?</b> Quick hold — one click, no questions, auto-releases tonight.
+                      </span>
+                    </button>
                   )}
 
                   {/* THE WHOLE DEFAULT FORM: what + why. Everything else is
@@ -797,11 +711,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   <div>
                     <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">In a few words, why? <span className="text-rose-500">*</span></label>
                     <input
+                      ref={noteInputRef}
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       placeholder="e.g. Updating pump specs per MOC-2026-014..."
                       className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                      autoFocus
                     />
                     <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
                       Shown to everyone who looks at this document while you have it out.
@@ -952,34 +866,66 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     </div>
                   )}
 
-                  <div className="flex gap-2">
-                    {isOrphaned && (
-                      <button
-                        onClick={handleForceUnlock}
-                        className="px-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-xl font-bold text-sm hover:bg-[var(--color-surface-2)]"
-                        title="Release the lock without starting a session"
-                      >
-                        Release Lock
-                      </button>
-                    )}
-                    
-                    <button 
-                      onClick={handleCheckout}
-                      disabled={processing || !purposeCategory || note.trim().length < 5}
-                      title={!purposeCategory ? "Pick a purpose first" : note.trim().length < 5 ? "Add a brief reason (5+ characters)" : undefined}
-                      className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-[var(--color-surface)] border-2 border-blue-600 text-blue-700 hover:bg-blue-50' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-900/20'} disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
-                      {isOrphaned ? "Restore Session" : document.checkedOutBy ? "Join Session" : "Check Out Now"}
-                    </button>
-                  </div>
+                  {/* EVERYTHING STATED UP FRONT — the checklist shows both
+                      requirements with live state, and the button narrates
+                      exactly what it's waiting on. No surprise on click, ever. */}
+                  {(() => {
+                    const purposeDone = !!purposeCategory;
+                    const noteLen = note.trim().length;
+                    const noteDone = noteLen >= 5;
+                    const ready = purposeDone && noteDone;
+                    const StepMark = ({ done, n }: { done: boolean; n: string }) =>
+                      done
+                        ? <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        : <span className="w-3.5 h-3.5 shrink-0 rounded-full border border-[var(--color-border-strong)] text-[9px] font-black text-[var(--color-text-muted)] inline-flex items-center justify-center">{n}</span>;
+                    const buttonLabel = processing ? "Working…"
+                      : !purposeDone ? "Pick a purpose to continue"
+                      : !noteDone ? (noteLen === 0 ? "Add a few words on why" : `Add ${5 - noteLen} more character${5 - noteLen === 1 ? "" : "s"}`)
+                      : isOrphaned ? "Restore Session"
+                      : document.checkedOutBy ? "Join Session" : "Check Out Now";
+                    return (
+                      <div className="space-y-2">
+                        {!ready && (
+                          <div className="flex items-center gap-4 text-[11px] text-[var(--color-text-muted)]">
+                            <span className={`flex items-center gap-1.5 ${purposeDone ? "text-emerald-700" : ""}`}>
+                              <StepMark done={purposeDone} n="1" /> What you&apos;re doing
+                            </span>
+                            <span className={`flex items-center gap-1.5 ${noteDone ? "text-emerald-700" : ""}`}>
+                              <StepMark done={noteDone} n="2" /> Why (5+ characters)
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          {isOrphaned && (
+                            <button
+                              onClick={handleForceUnlock}
+                              className="px-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-xl font-bold text-sm hover:bg-[var(--color-surface-2)]"
+                              title="Release the lock without starting a session"
+                            >
+                              Release Lock
+                            </button>
+                          )}
+                          <button
+                            onClick={handleCheckout}
+                            disabled={processing || quickBusy || !ready}
+                            className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-[var(--color-surface)] border-2 border-blue-600 text-blue-700 hover:bg-blue-50' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-900/20'} disabled:opacity-60 disabled:cursor-not-allowed`}
+                          >
+                            {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
+                            {buttonLabel}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
 
             {/* Sealed records of previous checkouts: participants, who/why,
-                conversation, and revisions published in each window. */}
-            {document.id && document.orgId && (
+                conversation, and revisions published in each window. Hidden on
+                the idle two-question form — the inspector's Checkout drawer
+                carries the same register. */}
+            {!isIdle && document.id && document.orgId && (
               <CheckoutHistoryPanel
                 orgId={document.orgId}
                 documentId={document.id}
@@ -990,8 +936,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           </div>
         </div>
 
-        {/* RIGHT: ACTIVITY THREAD (scoped to the live checkout episode) */}
-        {document.id && document.orgId && (
+        {/* RIGHT: ACTIVITY THREAD (scoped to the live checkout episode) —
+            only when a checkout is actually in motion. */}
+        {!isIdle && document.id && document.orgId && (
           <ActivityThread
             orgId={document.orgId}
             documentId={document.id}
@@ -1021,31 +968,6 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         />
       )}
 
-      {/* New-revision publish — inline so the user doesn't have to
-          close the checkout to push an update. */}
-      {showRevUp && document.orgId && document.libraryId && document.id && (
-        <RevUpModal
-          isOpen={showRevUp}
-          onClose={() => setShowRevUp(false)}
-          doc={document}
-          libraryId={document.libraryId}
-          orgId={document.orgId}
-          actorUserId={currentUser.uid}
-          actorEmail={currentUser.email ?? undefined}
-          actorRole={currentUser.role ?? undefined}
-          onSuccess={() => {
-            setShowRevUp(false);
-            // Post a system event into the episode's thread so the rest of
-            // the crew sees the new rev landed.
-            void postEpisodeSystemMessage({
-              orgId: document.orgId!,
-              documentId: document.id!,
-              episodeId: episode?.id ?? null,
-              text: `New revision published by ${currentUser.email?.split('@')[0] || 'someone'}.`,
-            });
-          }}
-        />
-      )}
     </div>
   );
 }

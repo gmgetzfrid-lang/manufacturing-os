@@ -40,7 +40,25 @@ interface EpisodeSessionRow {
   status: string | null;
   startedAt: string | null;
   endedAt: string | null;
+  /** The check-in register entry (20261012) — what came of the checkout. */
+  outcome: string | null;
+  outcomeNote: string | null;
 }
+
+/** Honest register labels. field_verified is the walkdown attestation — the
+ *  positive PSI-accuracy record; discrepancy is its counterpart. */
+const OUTCOME_LABEL: Record<string, { label: string; cls: string }> = {
+  all_clear: { label: "No change needed", cls: "text-[var(--color-text-muted)]" },
+  field_verified: { label: "Field verified ✓", cls: "text-emerald-700" },
+  discrepancy: { label: "Field discrepancy reported", cls: "text-amber-700" },
+  correction_requested: { label: "Minor correction requested", cls: "text-blue-700" },
+  revision_requested: { label: "Revision requested", cls: "text-blue-700" },
+  published: { label: "Published a revision", cls: "text-orange-700" },
+  submitted_for_review: { label: "Submitted for review", cls: "text-violet-700" },
+  sent_to_owner: { label: "Sent to owner", cls: "text-blue-700" },
+  handoff: { label: "Handed off", cls: "text-[var(--color-text-muted)]" },
+  auto_released: { label: "Auto-released", cls: "text-amber-600" },
+};
 
 interface EpisodeVersionRow {
   id: string;
@@ -111,9 +129,11 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
     try {
       const isLegacy = key === "__legacy__";
 
+      // select("*") — pre-migration safe: the outcome columns (20261012) may
+      // not exist yet, and naming them in the projection would 42703.
       let sessionQuery = supabase
         .from("checkout_sessions")
-        .select("id, user_name, purpose, note, mode, status, started_at, ended_at")
+        .select("*")
         .eq("document_id", documentId)
         .order("started_at", { ascending: true });
       sessionQuery = isLegacy ? sessionQuery.is("episode_id", null) : sessionQuery.eq("episode_id", key);
@@ -127,6 +147,8 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
         status: (r.status as string | null) ?? null,
         startedAt: (r.started_at as string | null) ?? null,
         endedAt: (r.ended_at as string | null) ?? null,
+        outcome: (r.outcome as string | null) ?? null,
+        outcomeNote: (r.outcome_note as string | null) ?? null,
       }));
 
       const messages = await listActivity(orgId, documentId, { episodeId: isLegacy ? null : key });
@@ -264,7 +286,22 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                   {s.purpose && <span className="text-violet-700"> · {s.purpose}</span>}
                   {s.note && <span className="text-[var(--color-text-muted)] italic"> — &ldquo;{s.note}&rdquo;</span>}
                   <span className="text-[var(--color-text-faint)]"> · {fmtRange(s.startedAt, s.endedAt)}</span>
-                  {s.status === "abandoned" && <span className="text-amber-600 font-bold"> · abandoned</span>}
+                  {(() => {
+                    // The outcome is the register's verdict. Legacy rows
+                    // predate outcomes; their old 'abandoned' status keeps its
+                    // (historical) tag, but no new human check-in writes it.
+                    const oc = s.outcome ? OUTCOME_LABEL[s.outcome] : null;
+                    if (oc) {
+                      return (
+                        <span className={`font-bold ${oc.cls}`}> · {oc.label}
+                          {s.outcomeNote && <span className="font-normal text-[var(--color-text-muted)] italic"> — &ldquo;{s.outcomeNote}&rdquo;</span>}
+                        </span>
+                      );
+                    }
+                    return s.status === "abandoned"
+                      ? <span className="text-amber-600 font-bold"> · abandoned</span>
+                      : null;
+                  })()}
                 </div>
               </div>
             ))}

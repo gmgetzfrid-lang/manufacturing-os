@@ -120,4 +120,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "knowledge_chunks", column: "embedding", migration: "20260930_semantic_layer.sql", feature: "pgvector semantic index" },
   { table: "documents", column: "ai_excluded", migration: "20260807_link_proposals.sql", feature: "Per-document AI exclusion (Pillar A)" },
   { table: "checkout_sessions", column: "auto_expires_at", migration: "20260527_projects_and_collaboration.sql", feature: "24h ad-hoc checkout cap" },
+  { table: "checkout_sessions", column: "outcome", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Check-in outcome register (field verification, MOC trail)" },
+  { table: "documents", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Document classes — PSM MOC gate + drafting routing for drawings" },
+  { table: "libraries", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Library-level document class declaration" },
 ];
