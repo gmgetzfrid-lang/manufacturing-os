@@ -4539,7 +4539,8 @@ export default function LibraryExplorerPage() {
           isOpen={showCheckoutFlow}
           onClose={() => setShowCheckoutFlow(false)}
           document={checkoutDoc}
-          currentUser={{ uid: uid || '', email: userEmail, role: activeRole }} 
+          currentUser={{ uid: uid || '', email: userEmail, role: activeRole }}
+          canPublish={canPublish}
         />
       )}
 

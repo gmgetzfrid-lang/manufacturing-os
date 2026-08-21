@@ -10,6 +10,8 @@ import { ShieldCheck, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setReviewControlPolicy } from "@/lib/reviewControl";
+import { setDocClass as saveDocClass, type DocClass } from "@/lib/docClass";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type ReviewControl, type ReviewControlMode, type Role } from "@/types/schema";
 
@@ -102,6 +104,13 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [timeoutDays, setTimeoutDays] = useState(7);
 
+  // Document class declaration (20261012) — 'drawing' makes MOC mandatory on
+  // non-minor publishes and routes check-in changes through drafting;
+  // 'procedure' hands release to the effective owner / publishers. "inherit"
+  // clears this level so the parent's declaration applies.
+  const [docClass, setDocClassState] = useState<DocClass | "inherit">("inherit");
+  const [loadedDocClass, setLoadedDocClass] = useState<DocClass | "inherit">("inherit");
+
   const table = level === "library" ? "libraries" : "collections";
   const scopeLabel = level === "library" ? "library" : "folder";
 
@@ -114,12 +123,18 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   useEffect(() => {
     let alive = true;
     (async () => {
+      // select("*") — doc_class may predate the 20261012 migration; naming it
+      // in the projection would fail the whole modal load.
       const [{ data }, orgTeams] = await Promise.all([
-        supabase.from(table).select("review_control").eq("id", id).maybeSingle(),
+        supabase.from(table).select("*").eq("id", id).maybeSingle(),
         listTeams(orgId).catch(() => [] as Team[]),
       ]);
       if (!alive) return;
       setAllTeams(orgTeams);
+      const declared = ((data as Record<string, unknown> | null)?.doc_class as string | null) ?? null;
+      const dc: DocClass | "inherit" = declared === "drawing" || declared === "procedure" ? declared : "inherit";
+      setDocClassState(dc);
+      setLoadedDocClass(dc);
       const c = (data?.review_control as ReviewControl) ?? null;
       setExisting(c);
       if (c) {
@@ -151,6 +166,15 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         timeoutDays,
       };
       await setReviewControlPolicy({ level, id, orgId, control, actorId: uid, actorName: userName });
+      // Doc-class declaration rides the same Save — written only when it
+      // actually changed, and a pre-migration failure never eats the policy.
+      if (docClass !== loadedDocClass) {
+        try {
+          await saveDocClass({ level, id, docClass: docClass === "inherit" ? null : docClass });
+        } catch (e) {
+          void appAlert({ title: "Review policy saved — document class was not", message: (e as Error).message });
+        }
+      }
       onSaved?.(); onClose();
     } finally { setBusy(false); }
   };
@@ -179,6 +203,33 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
           <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>
         ) : (
           <div className="p-5 space-y-3 overflow-y-auto">
+            {/* DOCUMENT CLASS — the declaration that drives change-control
+                routing everywhere: drawings demand MOC on non-minor publishes
+                and send check-in changes through drafting; procedures release
+                through the owner/publishers. Inherit defers to the parent. */}
+            <div>
+              <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Document class of this {scopeLabel}</div>
+              <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
+                {([
+                  { v: "inherit", label: level === "library" ? "Unclassified" : "Inherit" },
+                  { v: "drawing", label: "Drawings / CAD" },
+                  { v: "procedure", label: "Procedures / text" },
+                ] as const).map((o) => (
+                  <button key={o.v} type="button" onClick={() => setDocClassState(o.v)}
+                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${docClass === o.v ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                {docClass === "drawing"
+                  ? "PSM applies: a non-minor revision requires its MOC number, and check-in routes redlines to drafting."
+                  : docClass === "procedure"
+                    ? "The effective owner (or granted publishers) releases revisions directly — through the review gate below if one is set."
+                    : "No class-specific rules. Declare a class so the right change process applies automatically."}
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               {MODES.map((m) => (
                 <label key={m.value} className={`block rounded-lg border p-2.5 cursor-pointer ${mode === m.value ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)]"}`}>
