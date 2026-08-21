@@ -2,7 +2,7 @@
 // Supabase implementation — replaces Firestore version
 
 import { supabase } from "@/lib/supabase";
-import type { TableViewConfig, ViewColumn } from "@/types/schema";
+import type { ExplorerViewConfig, TableViewConfig, ViewColumn } from "@/types/schema";
 
 const TABLE = "table_views";
 
@@ -85,6 +85,7 @@ function fromDb(row: Record<string, unknown>): TableViewConfig {
     columns: (row.columns as string[]) ?? [],
     columnConfig: (row.column_config as TableViewConfig["columnConfig"]) ?? {},
     sort: (row.sort_config as TableViewConfig["sort"]) ?? null,
+    view: (row.view_config as ExplorerViewConfig | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string | undefined,
   };
@@ -117,6 +118,9 @@ export async function saveTableView(params: {
   /** Per-folder default sort. Only written when provided, so a column-only
    *  save never clears an existing saved sort. Pass null to clear it. */
   sort?: TableViewConfig["sort"];
+  /** Explorer layout/density. Only written when provided (same contract as
+   *  sort). Pass null to clear it. */
+  view?: ExplorerViewConfig | null;
 }): Promise<string> {
   const id = tableViewId(params);
 
@@ -132,11 +136,16 @@ export async function saveTableView(params: {
     updated_at: new Date().toISOString(),
   };
   if (params.sort !== undefined) payload.sort_config = params.sort;
+  if (params.view !== undefined) payload.view_config = params.view;
 
   let { error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" });
-  // Pre-migration safety: if sort_config doesn't exist yet, retry without it so
-  // column saves never break before the migration is applied.
-  if (error && isMissingSortColumn(error)) {
+  // Pre-migration safety: if sort_config/view_config don't exist yet, retry
+  // without the missing column so saves never break before the migration runs.
+  if (error && isMissingColumn(error, "view_config")) {
+    delete payload.view_config;
+    ({ error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" }));
+  }
+  if (error && isMissingColumn(error, "sort_config")) {
     delete payload.sort_config;
     ({ error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" }));
   }
@@ -144,11 +153,12 @@ export async function saveTableView(params: {
   return id;
 }
 
-/** True when an error is "column table_views.sort_config does not exist"
+/** True when an error is "column table_views.<col> does not exist"
  *  (Postgres 42703 / PostgREST schema-cache miss) — migration not yet applied. */
-function isMissingSortColumn(error: { code?: string; message?: string } | null): boolean {
+function isMissingColumn(error: { code?: string; message?: string } | null, col: string): boolean {
   if (!error) return false;
-  return error.code === "42703" || error.code === "PGRST204" || /sort_config/i.test(error.message ?? "");
+  if (new RegExp(col, "i").test(error.message ?? "")) return true;
+  return (error.code === "42703" || error.code === "PGRST204") && !(error.message ?? "").includes("_config");
 }
 
 /** Resolve the effective per-folder default sort: a user's own pinned sort
@@ -166,6 +176,33 @@ export async function resolveEffectiveSort(params: {
   const orgView = await getTableView({ scope: "org", ...params });
   if (orgView?.sort) return orgView.sort;
   return null;
+}
+
+/** Resolve sort + layout in one pass (two row reads, not four). Each field
+ *  resolves independently: a user who saved only a layout still inherits the
+ *  org's sort, and vice versa. Also reports which scope rows exist so the
+ *  View menu can show "you have a personal default here". */
+export async function resolveEffectiveViewState(params: {
+  orgId?: string;
+  ownerUserId?: string;
+  libraryId?: string;
+  collectionId?: string;
+}): Promise<{
+  sort: TableViewConfig["sort"];
+  view: ExplorerViewConfig | null;
+  hasUserRow: boolean;
+  hasOrgRow: boolean;
+}> {
+  const [userView, orgView] = await Promise.all([
+    params.ownerUserId ? getTableView({ scope: "user", ...params }) : Promise.resolve(null),
+    getTableView({ scope: "org", ...params }),
+  ]);
+  return {
+    sort: userView?.sort ?? orgView?.sort ?? null,
+    view: userView?.view ?? orgView?.view ?? null,
+    hasUserRow: !!userView,
+    hasOrgRow: !!orgView,
+  };
 }
 
 export async function resolveEffectiveColumns(params: {
