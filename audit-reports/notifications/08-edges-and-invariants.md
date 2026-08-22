@@ -4,14 +4,37 @@
 
 What the seven lenses did not look at — notification content as an egress surface, lifecycle edges, accessibility — plus what is sound and must not break.
 
-> ### ⚠ These findings were NOT adversarially verified
+> ### Verification record — this file has now been checked
 >
-> Every other report in this area went through a refutation pass where a second
-> agent tried to kill each finding against the code. This one did not — it is the
-> completeness critic's output, produced after the verification stage.
+> This report was the completeness critic's output and originally shipped with a
+> banner saying its findings had **not** been through the adversarial refutation
+> pass the other reports had. That pass has now been run by hand against the
+> source. The banner is replaced by this record.
 >
-> **Treat every entry as `SUSPECTED` regardless of its stated verification, and
-> reproduce before acting.**
+> **Method.** Every `CRITICAL` and every `HIGH` was re-read against the cited
+> code, including at least one negative search per absence claim. `MEDIUM`
+> findings were not individually re-verified and are marked below — treat those
+> as `SUSPECTED` and reproduce first, exactly as `DEC-29` requires.
+>
+> | ID | Result |
+> |---|---|
+> | `NEDGE-1` | **CONFIRMED.** The 26/48 split was recomputed by diffing the `NotificationKind` union against `sectionForKind`'s `case` labels programmatically. Exact. |
+> | `NEDGE-2` | **CONFIRMED verbatim.** Every quoted line matches. `grep -rn "'immediate'" supabase/` returns **nothing** — the token appears in no SQL file — and `digest_frequency` has exactly one definition with no later `ALTER`. |
+> | `NEDGE-3` | **HALF CONFIRMED — see the correction on the finding.** The role path already filters on active membership *and* already reads the additive `roles` array. The follower path does not filter at all. |
+> | `NEDGE-4` | **CONFIRMED verbatim.** `const link = \`/requests/${ticketId}\`` at `comment/route.ts:263` and `workflow-action/route.ts:313`, interpolated straight into `<a href>`, and `send-queued` passes `body_html` to Resend unmodified. |
+> | `NEDGE-5` | **CONFIRMED.** `grep -c "aria-live\|aria-label\|role="` returns **0** for both `NotificationBell.tsx` and `ToastProvider.tsx`. |
+> | `NEDGE-6` | Not individually re-verified. Treat as `SUSPECTED`. |
+> | `NEDGE-7` | **CONFIRMED.** `notifications_own_select` is `USING (user_id = auth.uid())` with **no org predicate** (`20260723_notifications_unify.sql:37`). A removed member's auth account still matches their old rows. |
+> | `NEDGE-8` | Not individually re-verified. Treat as `SUSPECTED`. |
+> | `NEDGE-9` | Not individually re-verified. Treat as `SUSPECTED`. |
+> | `NEDGE-10`–`NEDGE-13` | `MEDIUM`, not individually re-verified — **except** the `push_enabled` / `inapp_enabled` claim inside `NEDGE-13`, which is **CONFIRMED**: a repo-wide search finds no reader outside `exportTables.ts`. |
+>
+> One finding from the same pass is worth naming here because it corroborates
+> `OS-1`: the insert policy's own migration comment reads *"Any active org member
+> may insert a notification for any recipient in the org (so a client action can
+> fan out to others). **Validated at the app layer.**"*
+> (`20260723_notifications_unify.sql:42-45`). The hole is deliberate and
+> documented; what is missing is the validation it defers to.
 
 
 ### Already there — reusable substrate
@@ -109,6 +132,23 @@ page.tsx:151 `{(["immediate", "hourly", "daily", "never"] as const).map((opt) =>
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notify/recipients.ts:23-45`, `lib/notify/dispatch.ts:135-147`, `lib/notify/recipients.ts:48-62`, `app/api/admin/restore/begin/route.ts:68`, `app/api/admin/restore/apply/route.ts:64`, `supabase/schema.sql:42`
+
+> **Half confirmed, half refuted — the surviving half is the follower path.**
+>
+> **Refuted:** the role path is already correct. `resolveRoleRecipients`
+> (`lib/notify/recipients.ts:47-62`) filters `.eq("status", "active")` **and**
+> already prefers the additive array:
+> `const held = m.roles && m.roles.length > 0 ? m.roles : m.role ? [m.role] : []`.
+> A deactivated member is not reachable through role routing, and this function
+> is **not** an instance of the headline-role defect.
+>
+> **Confirmed:** `resolveFollowers` (`lib/notify/recipients.ts:22-45`) reads
+> `subscriptions` rows and the ticket's `watchers` array and applies **no
+> membership filter of any kind**. A deactivated member who watched a ticket or
+> subscribed to a library keeps receiving notifications indefinitely.
+>
+> Rework this finding against the follower path only. An agent who reads the
+> original title and "fixes" `resolveRoleRecipients` will be editing correct code.
 
 **Mechanism.** org_members.status is constrained to ('active','invited','suspended','inactive') and non-active rows are genuinely created — both restore routes insert members with `status: "inactive"`. Three recipient-resolution paths treat status inconsistently. resolveRoleRecipients filters `.eq("status", "active")`. resolveFollowers does not touch org_members at all — it reads subscriptions by resource_type + resource_id only (and reads tickets.watchers), so a suspended member's watch rows keep resolving. emailsFor filters on org_id and uid but NOT on status, so a suspended member still has an org_members row with an email and receives mail. The result is a matrix nobody would predict: suspend a user and they stop being reached by role broadcasts but keep being reached by everything they ever watched, on both channels. Remove them entirely and the asymmetry inverts — emailsFor finds no row so email stops, but notifyMany still inserts a bell row for them because the notifications INSERT policy validates the ACTOR's membership, not the recipient's.
 

@@ -20,8 +20,8 @@
     "findings": 139,
     "gaps": 14,
     "by_severity": {
-      "CRITICAL": 16,
-      "HIGH": 51,
+      "CRITICAL": 15,
+      "HIGH": 52,
       "MEDIUM": 72
     },
     "by_status": {
@@ -143,30 +143,8 @@
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
     },
     {
-      "id": "EDGE-1",
-      "title": "Every per-user email opt-out is silently ignored for the new-drafting-request notification: queueEmail reads the RECIPIENT's preferences under the SENDER's JWT, and RLS returns nothing",
-      "severity": "CRITICAL",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/notifications.ts:53",
-        "lib/notifications.ts:59",
-        "lib/notifications.ts:61",
-        "lib/notifications.ts:147",
-        "lib/notify/dispatch.ts:105",
-        "app/(protected)/requests/new/page.tsx:342",
-        "supabase/migrations/20260605_rls_policies_new_tables.sql:112"
-      ],
-      "summary": "A DraftingSupervisor turns off 'Assignments' (or Email notifications entirely) on /settings/notifications because she works her queue through the portal. She still receives an email for every new drafting request filed by anyone in the org, forever, because the requester's browser cannot read her preference row. She filters the sender to spam — and the one email class that DOES honor her preferenc",
-      "area": "drafting-flow",
-      "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
-    },
-    {
       "id": "EDGE-2",
-      "title": "Public field QR verification shows a green 'LATEST ISSUE' for the deliverable of a CANCELED drafting request — the API fetches ticketStatus and the page throws it away",
+      "title": "Public field QR verification computes its verdict from `deliverable_rev` alone and never reads the ticket's status, so a reopened or withdrawn deliverable still scans green as \"LATEST ISSUE\"",
       "severity": "CRITICAL",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -177,7 +155,8 @@
         "app/api/verify-ticket/route.ts:71-88",
         "app/api/verify-ticket/route.ts:100",
         "app/verify-ticket/[ticketId]/page.tsx:26",
-        "app/verify-ticket/[ticketId]/page.tsx:35-38"
+        "app/verify-ticket/[ticketId]/page.tsx:35-38",
+        "app/api/verify-ticket/route.ts:72-89"
       ],
       "summary": "A drafting request for a tie-in isometric reaches PENDINGIFC, Rev 1 is issued, and a stamped print with the QR goes to a contractor. Two weeks later the MOC is withdrawn and the request is CANCELED. The contractor's foreman, holding the print at the unit, scans the QR to do the right thing. He gets a full-screen green 'LATEST ISSUE — This copy is the latest issued revision of this deliverable.' No",
       "area": "drafting-flow",
@@ -546,6 +525,29 @@
       "summary": "An operations tech needs a change to a P&ID in a restricted library. They can describe it and cannot link it. The ticket arrives with a document number typed into the description. Triage has to find the drawing by hand, and every downstream mechanism that keys on metadata.sourcedocument.id — the Impact panel, the intent bridge, overlap advisories — is blind to it (LIFE-4).",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
+    },
+    {
+      "id": "EDGE-1",
+      "title": "Every per-user email opt-out is silently ignored for the new-drafting-request notification: queueEmail reads the RECIPIENT's preferences under the SENDER's JWT, and RLS returns nothing",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/notifications.ts:53",
+        "lib/notifications.ts:59",
+        "lib/notifications.ts:61",
+        "lib/notifications.ts:147",
+        "lib/notify/dispatch.ts:105",
+        "app/(protected)/requests/new/page.tsx:342",
+        "supabase/migrations/20260605_rls_policies_new_tables.sql:112",
+        "lib/notifications.ts:59-61"
+      ],
+      "summary": "A DraftingSupervisor turns off 'Assignments' (or Email notifications entirely) on /settings/notifications because she works her queue through the portal. She still receives an email for every new drafting request filed by anyone in the org, forever, because the requester's browser cannot read her preference row. She filters the sender to spam — and the one email class that DOES honor her preferenc",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
     },
     {
       "id": "EDGE-3",

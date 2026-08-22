@@ -35,13 +35,20 @@ stacking, and what a real OS notification would attach to.
 | 05 | [Realtime & lifecycle](./05-realtime-and-lifecycle.md) | 12 | Channels, teardown, multi-tab drift, events fired while nobody is looking |
 | 06 | [Stacking & progress](./06-stacking-and-progress.md) | 13 | The bottom-right corner: how many things live there and whether failures are seen |
 | 07 | [OS notifications & nudges](./07-os-notifications-and-nudges.md) | 12 | Web Push, login nudges, person-to-person pokes |
-| 08 | [Edges & invariants](./08-edges-and-invariants.md) | 13 | ⚠ **unverified** — egress, lifecycle edges, accessibility, and what is sound |
+| 08 | [Edges & invariants](./08-edges-and-invariants.md) | 13 | Egress, lifecycle edges, accessibility, and what is sound. **Verified by hand** — record at the top of the file |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Read before claiming a file |
 
 **`01`–`07` were adversarially verified** — a second agent read the cited code
 and tried to refute each finding. Refuted findings were dropped. Several
 severities were **lowered** by that pass and the lowered value is what is
-recorded. **`08` was not verified** and says so at the top of the file.
+recorded.
+
+**`08` has since been verified by hand.** Every `CRITICAL` and `HIGH` was re-read
+against the source; the per-finding record is at the top of that file. `NEDGE-2`
+— the one the sequencing leads with — was confirmed verbatim, including the
+negative search that matters: the token `'immediate'` appears in **no** SQL file
+in the repository. One finding was corrected (`NEDGE-3`, half refuted). Its
+`MEDIUM`s remain unverified and are marked as such.
 
 Each report opens with a **reusable substrate table** — what already exists and
 works. That is deliberately as prominent as the defects, because most of what

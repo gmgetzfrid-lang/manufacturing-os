@@ -1,18 +1,37 @@
 # 13 · Edges, modalities & load-bearing invariants
 
-**14 findings** — 2 CRITICAL · 7 HIGH · 5 MEDIUM.
+**14 findings** — 1 CRITICAL · 8 HIGH · 5 MEDIUM.
 
 What the seven lenses did not look at — plus the parts of this flow that are sound and must not be broken.
 
-> ### ⚠ These findings were NOT adversarially verified
+> ### Verification record — this file has now been checked
 >
-> Every other report in this area went through a refutation pass where a second
-> agent tried to kill each finding against the code. This one did not — it is the
-> completeness critic's output, produced after the verification stage.
+> This report was the completeness critic's output and originally shipped with a
+> banner saying its findings had **not** been through the adversarial refutation
+> pass the other reports had. That pass has now been run by hand against the
+> source. The banner is replaced by this record.
 >
-> **Treat every entry here as `SUSPECTED` regardless of its stated verification,
-> and reproduce before acting.** They are recorded because a defect nobody looked
-> at is worth more than a tidy report, not because they carry the same weight.
+> **Method.** Every `CRITICAL` and every `HIGH` was re-read against the cited
+> code, including at least one negative search per absence claim. `MEDIUM`
+> findings were not individually re-verified and are marked below — treat those
+> as `SUSPECTED` and reproduce first, exactly as `DEC-29` requires.
+>
+> | ID | Result |
+> |---|---|
+> | `EDGE-1` | **CONFIRMED, severity lowered to `HIGH`.** The mechanism is exact and sharper than the title suggests — see the correction on the finding. |
+> | `EDGE-2` | **CONFIRMED, retitled.** The verdict computation (`verify-ticket/route.ts:72-89`) reads only `deliverable_rev`; `t.status` is returned in the payload as `ticketStatus` and never enters a branch. See the correction — the general form is stronger than the `CANCELED` instance. |
+> | `EDGE-3` | **CONFIRMED, and more precise than stated.** The management/engineer/DocCtrl branch and the requester branch both apply `.neq('status', 'CLOSED')`. The drafter's `assigned` query (`:159`) is the **only one that does not**. |
+> | `EDGE-4` | Not individually re-verified as a whole, but one half is **REFUTED**: `resolveRoleRecipients` does filter `.eq("status", "active")`. See `EDGE-6`. |
+> | `EDGE-5` | Not individually re-verified. Treat as `SUSPECTED`. |
+> | `EDGE-6` | **CORRECTED — the claim is true of the picker, not of the notifier.** `lib/notify/recipients.ts:47-62` already reads the additive array: `const held = m.roles && m.roles.length > 0 ? m.roles : m.role ? [m.role] : []`. Any restatement of this finding must not implicate `resolveRoleRecipients`. |
+> | `EDGE-7` | **CONFIRMED.** `sla_breached_at` has exactly one reference in application code — a read mapping at `requests/[id]/page.tsx:896`. No writer anywhere. |
+> | `EDGE-8` | **CONFIRMED verbatim.** `void (async () => { … })()` at `:338`, then `setTimeout(() => router.push('/requests'), 500)` at `:360-363`. |
+> | `EDGE-9` | **CONFIRMED verbatim.** Same evidence as `NEDGE-4` in the notifications area — one defect, two areas. `lib/publicOrigin.ts` exists for exactly this problem and is not used on this path. |
+> | `EDGE-10`–`EDGE-14` | `MEDIUM`, not individually re-verified — **except `EDGE-12`, which is CONFIRMED and is the sharper finding of the two.** `email_notifications` has an INSERT policy and **no SELECT policy** for `authenticated` (`20260605_rls_policies_new_tables.sql:120-124`), so the dedupe read at `lib/notifications.ts:65-74` returns zero rows on every client-side path and can never suppress anything. `EDGE-14` is also **CONFIRMED**: no reader of `inapp_enabled` / `push_enabled` outside `exportTables.ts`. |
+>
+> `EDGE-11` is not a defect — it is the list of load-bearing invariants a fix must
+> not disturb. It was not re-verified and should be read as a starting point for
+> your own diff-check, not as a guarantee.
 
 
 ---
@@ -22,10 +41,29 @@ What the seven lenses did not look at — plus the parts of this flow that are s
 
 ## EDGE-1 · Every per-user email opt-out is silently ignored for the new-drafting-request notification: queueEmail reads the RECIPIENT's preferences under the SENDER's JWT, and RLS returns nothing
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:53`, `lib/notifications.ts:59`, `lib/notifications.ts:61`, `lib/notifications.ts:147`, `lib/notify/dispatch.ts:105`, `app/(protected)/requests/new/page.tsx:342`, `supabase/migrations/20260605_rls_policies_new_tables.sql:112`
+
+> **Verified, corrected, and lowered to `HIGH`.** The mechanism is real and is
+> sharper than the title states. `queueEmail` **does** check preferences —
+> `lib/notifications.ts:59-61` reads `email_enabled`, `digest_frequency ===
+> "never"` and `shouldSendForEvent`. The defect is *where it runs*:
+> `notification_preferences` carries `notif_prefs_own`, `FOR ALL TO authenticated
+> USING (user_id = auth.uid())` (`20260605_rls_policies_new_tables.sql:112-115`).
+> So when `queueEmail` executes **in the requester's browser**, the lookup for
+> *another* person's row returns nothing, `prefs` is `null`, and
+> `shouldSendForEvent(null, …)` returns `true` (`lib/notifications.ts:147`).
+>
+> **Every opt-out is bypassed on every client-initiated email**, not just the
+> new-request one. Same root as `DELIV-2` and `EDGE-12`: preference and dedupe
+> reads that only work under the service role are being made from the client.
+>
+> Lowered from `CRITICAL` to `HIGH` on calibration, not on doubt: in this area
+> `CRITICAL` is reserved for an unapproved package reaching the field. An ignored
+> email preference drives people out of the app, which is serious — it is not
+> that.
 
 **Mechanism.** queueEmail() runs in the browser against the anon client bound to the ACTOR's session. It looks up notification_preferences for input.toUserId — another person. The only policy on that table is notif_prefs_own ... USING (user_id = auth.uid()). So for every recipient who is not the actor the SELECT returns zero rows with no error, prefs is null, prefs?.email_enabled === false is false, prefs?.digest_frequency === "never" is false, and shouldSendForEvent(null, …) short-circuits on `if (!prefs) return true`. The email is queued unconditionally. The drain never re-checks: app/api/notifications/send-queued/route.ts reads only email_notifications and posts straight to Resend, so there is no second gate. The new-drafting-request notification — the entry point of the whole flow — is emitted through exactly this path (requests/new/page.tsx:342 emit({category:'assignment', kind:'request_pending_approval'}) → dispatch.ts:116 queueEmail). The comment at dispatch.ts:105 asserts the opposite. The two server-side ticket routes prove the correct pattern exists (workflow-action/route.ts:351 and comment/route.ts:276 both read prefs with supabaseAdmin), so only the client-side emit() producers are blind.
 
@@ -74,12 +112,30 @@ lib/notify/dispatch.ts:105-106
 
 <a id="edge-2"></a>
 
-## EDGE-2 · Public field QR verification shows a green 'LATEST ISSUE' for the deliverable of a CANCELED drafting request — the API fetches ticketStatus and the page throws it away
+## EDGE-2 · Public field QR verification computes its verdict from `deliverable_rev` alone and never reads the ticket's status, so a reopened or withdrawn deliverable still scans green as "LATEST ISSUE"
 
 - **Severity:** CRITICAL
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-ticket/route.ts:71-88`, `app/api/verify-ticket/route.ts:100`, `app/verify-ticket/[ticketId]/page.tsx:26`, `app/verify-ticket/[ticketId]/page.tsx:35-38`
+
+> **Verified, and retitled to the general case.** The original title led with a
+> `CANCELED` ticket, which is the **weakest** instance: `SM-8` establishes that
+> `CANCELED` is currently unreachable by any code path, so that specific scenario
+> is hypothetical today.
+>
+> The general form is confirmed and reachable. `app/api/verify-ticket/route.ts:72-89`
+> branches only on `printedRev`, `currentRev`, `latestIssued` and `inReview`.
+> `t.status` is read into the response as `ticketStatus` (`:99`) and **never
+> enters the verdict**. A ticket reopened for rework whose `deliverable_rev` is
+> still the issued number resolves to `verdict: "current"`, and
+> `app/verify-ticket/[ticketId]/page.tsx:35-38` renders that as a green
+> **"LATEST ISSUE"** with *"This copy is the latest issued revision"*.
+>
+> `CRITICAL` retained: a field print scanning green while its deliverable is
+> under rework is precisely the failure the QR exists to prevent. Read alongside
+> `SM-5` — reopen re-issues the **same** revision number — which is what makes
+> this reachable rather than theoretical.
 
 **Mechanism.** The unauthenticated verify endpoint selects status from tickets and returns it as ticketStatus (route.ts:100). The verdict ladder (route.ts:71-88) branches only on printedRev vs deliverable_rev — there is no branch on ticket status anywhere, so a CANCELED ticket whose Rev 1 was previously issued still computes verdict = "current". The public page declares ticketStatus in its result type (page.tsx:26) and never reads it: the complete set of field reads in that file is result.checkedAt, currentRev, inReview, lastActivityAt, printedRev, ticketNumber, title, unit, verdict. ticketStatus appears exactly once, in the interface. The 'current' verdict renders as a full-bleed emerald panel with a check icon and the sentence 'This copy is the latest issued revision of this deliverable.'
 

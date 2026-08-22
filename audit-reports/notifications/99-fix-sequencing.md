@@ -21,10 +21,15 @@ push — all of it is attention-grabbing behaviour, and all of it needs a workin
 annoys has no recourse, which produces exactly the reaction the owner asked to
 avoid.
 
-⚠ It is in [`08-edges-and-invariants.md`](./08-edges-and-invariants.md), which is
-**unverified**. Reproduce it — read the migration's CHECK constraint and the page's
-write — before fixing. If it does not reproduce, say so and move on; the ordering
-argument still applies to whatever the real state of preferences turns out to be.
+**Verified.** This was originally flagged as needing reproduction because it sits
+in the critic's report. It has since been checked by hand against the source and
+confirmed verbatim — every quoted line matches, `digest_frequency` has exactly one
+CHECK definition with no later `ALTER`, and `grep -rn "'immediate'" supabase/`
+returns **nothing**: the token the UI writes appears in no SQL file in the
+repository. The record is at the top of
+[`08-edges-and-invariants.md`](./08-edges-and-invariants.md).
+
+Still reproduce before fixing, per `DEC-29` — but expect it to reproduce.
 
 ---
 
@@ -185,8 +190,9 @@ diffing the union against the switch's case labels, not by eye.
 Everything about *what a user sees* is read from JSX and CSS classes and was
 **not observed**. Per `DEC-29`, reproduce before fixing. Two specifically:
 
-- **`NEDGE-2`** is in the unverified report and is the first thing this file asks
-  you to do. Read the CHECK constraint and the write before touching it.
+- **`NEDGE-2`** has been verified by hand and is the first thing this file asks
+  you to do. Reproduce it anyway — `DEC-29` does not exempt confirmed findings —
+  but the constraint and the write have both been read.
 - **Every animation and layout claim in `06`** — the corner-stack overlap, the
   z-index conflicts, the mobile coverage — is inferred from positioning classes.
   These are cheap to confirm in a browser and should be.

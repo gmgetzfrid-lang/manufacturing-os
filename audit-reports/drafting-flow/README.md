@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**139 findings** — 16 CRITICAL, 51 HIGH, 72 MEDIUM — plus **14 gap specs**, all
+**139 findings** — 15 CRITICAL, 52 HIGH, 72 MEDIUM — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -49,15 +49,20 @@ completeness critic, every finding put through an adversarial refutation pass.
 | 10 | [Audit & evidence](./10-audit-evidence.md) | 14 | What this system could prove to a PSM auditor, and what it could not |
 | 11 | [Document handoff](./11-document-handoff.md) | 13 | Where the request flow meets the controlled document, and the as-built path |
 | 12 | [Projects boundary](./12-projects-boundary.md) | 13 | The bidirectional-portal question, answered from the schema up |
-| 13 | [Edges & invariants](./13-edges-and-invariants.md) | 14 | ⚠ **unverified** — the completeness critic, plus what is sound and must not break |
+| 13 | [Edges & invariants](./13-edges-and-invariants.md) | 14 | The completeness critic, plus what is sound and must not break. **Verified by hand** — record at the top of the file |
 | 90 | [**Gap register**](./90-gap-register.md) | 14 specs | What has to be built. `GAP-101`+ so they never collide with the other area |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Read before claiming any file |
 
 **`06`–`12` were adversarially verified** — a second agent read the cited code and
 tried to refute each finding. Three were refuted and are not recorded. Several
 severities were lowered by that pass and the lowered value is the one shown.
-**`13` was not verified** and says so at the top of the file: treat every entry
-there as `SUSPECTED` and reproduce before acting.
+
+**`13` has since been verified by hand.** Every `CRITICAL` and `HIGH` was re-read
+against the source; the per-finding record is at the top of that file. Two
+findings were corrected (`EDGE-2` retitled to its general case, `EDGE-6`
+scoped away from code that is already correct), one was lowered (`EDGE-1`
+`CRITICAL` → `HIGH`), and its `MEDIUM`s remain unverified and are marked as
+such.
 
 ### Root-cause clusters — read before claiming a file
 

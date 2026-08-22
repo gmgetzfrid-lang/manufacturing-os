@@ -211,7 +211,9 @@
         "lib/notify/recipients.ts:48-62",
         "app/api/admin/restore/begin/route.ts:68",
         "app/api/admin/restore/apply/route.ts:64",
-        "supabase/schema.sql:42"
+        "supabase/schema.sql:42",
+        "lib/notify/recipients.ts:47-62",
+        "lib/notify/recipients.ts:22-45"
       ],
       "summary": "An engineer is suspended pending an investigation (status → 'suspended'). They remain a watcher on 40 drawings and 6 tickets. Over the following weeks every rev-up, every hold, every branch on those documents resolves them through resolveFollowers, inserts a bell row, finds their still-present email in orgmembers, and mails them the document number and the hold reason at their personal-forwarded a",
       "area": "notifications",
