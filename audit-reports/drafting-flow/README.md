@@ -125,10 +125,127 @@ data completeness or visibility, which are free.
 
 ### "I'm not boxing myself into a new role or extra friction"
 
-Correct instinct, and the mechanisms to honour it already exist. Per-person
-capability grants with expiry are built (`lib/capabilityPolicy.ts:98-110`); teams
-are built and correctly additive. **The answer to "should I add a QA/QC role?" is
-no** — grant the capability to whoever already does the work.
+Correct instinct, and it goes further than a role: **`DEC-35` forbids any
+facility's vocabulary appearing in application code at all.** No `QAQC`, no
+`B31.3`, no `NDE`, and no role name as a routing target.
+
+Routing becomes data (`GAP-112`), and nothing needs inventing to hold it:
+`org_configurations` already stores your request types, units and priorities with
+an admin editor; `resolveEffectiveDocClass` (`lib/docClass.ts:49-58`) is six
+lines of document → folder → library resolution to copy exactly; and
+`lib/reviewControl.ts` already has the roster mechanics.
+
+Each slot carries a **mode** — `blocking`, `consent_window`, or `notify_only` —
+which is the friction ladder made configurable. One facility puts its quality
+function on `notify_only` and keeps stop-work authority for free; another makes
+it blocking for the engineered lane only. Neither choice is in the code.
+
+This also fixes a defect found independently in the roles area: `isEngineerRole`
+matches the **substring** `"Engineer"`, and role identity is unversioned
+customer-editable JSON — one rename from matching nothing.
+
+### "Only engineered packages unless the requester declares like-in-kind"
+
+**This is the policy the review model now serves, and an earlier version of this
+audit had it backwards.** `GAP-101` used to say the class is set at triage and
+that requiring the requester to classify was out of scope. `DEC-33` reverses it,
+and the revision is marked inline in the gap register.
+
+Engineering is the **default**. One thing removes it: the requester declaring
+like-in-kind at intake, in their own name, with a typed statement (`GAP-110`).
+The assigner may add engineering back at any time and may **never** remove it.
+
+Two things make this cheap rather than expensive:
+
+- **The unanswered state is the safe one.** Blank means engineered. Someone who
+  does not understand the question is not blocked and not misrouted — and the
+  form cannot be gamed by clicking through, because clicking through *is* the
+  conservative outcome. This is why it does not reintroduce `UI-5`.
+- **The checking party was already there.** A drafting manager sits at
+  `PENDING_ASSIGNMENT` on every ticket from every door. Reading a one-line
+  declaration while assigning adds **zero waits**.
+
+### "The drafting manager can flag engineering, and then it's required"
+
+**That mechanism is already 80% built**, and its author wrote your model into the
+code:
+
+```
+// Engineering review is an OPTIONAL branch the assigner triggers via "Flag for
+// Engineering Review", never an automatic gate.        — lib/workflow.ts:46-50
+```
+
+`request_eng_review` exists at `NEW` and `PENDING_ASSIGNMENT`, requires a comment
+and an engineer pick, and persists `assigned_engineer_id`,
+`engineer_review_requested_at` and `engineer_review_reason`
+(`lib/ticketTransitions.ts:179-189`).
+
+**What it does not do is bind the approval end.** `approve_team` returns the
+ticket to assignment carrying nothing, and `PENDING_REVIEW` consults only
+`requiresEngineerApproval(ticket.requesterRole)` — so a flagged ticket can still
+be self-approved to IFC by a Manager requester. The flag buys a conversation and
+no gate. The missing piece is one persisted boolean (`GAP-111`, effort `S`).
+
+### "I'm the drafting manager and the QA/QC — but that's not true elsewhere"
+
+`DEC-37`: **one person may satisfy any number of slots.** Independence is a
+property of a *slot*, not of a person, and the record shows every slot satisfied
+and by whom rather than pretending one did not apply.
+
+The genuine control survives and is narrower than it sounds: the person who
+*produced* a deliverable may not be the person who *accepts* it. That is about
+one artifact and two acts, not about job titles. It amends `DEC-12`, which a
+naive reading would have used to forbid hat-stacking outright.
+
+### "The system has to log it was available to them"
+
+`DEC-38`: **no delivery record, no silent advance.** This is the condition that
+makes silence-is-consent defensible rather than reckless, and `GAP-109` must not
+ship without `GAP-113`.
+
+The substrate exists and is currently unsafe for the purpose. `notifications`
+already stores one row per (recipient, event) with `read_at` — exactly the "it
+was available to them, and whether they looked" record. But `notify()` is
+documented *"fire-and-forget by design"* and swallows its error
+(`lib/inAppNotifications.ts:74-97`). Correct for a bell icon; disqualifying for a
+clock. Compounding it, `LEAK-1` means the workflow route never resolves
+recipients at all.
+
+`GAP-113` keeps three states apart, because collapsing them discards the most
+useful signal you have about whether the window length is right:
+
+| State | Evidence | Reading |
+|---|---|---|
+| Never delivered | no row | **Blocks.** Not consent. |
+| Delivered, unopened | row, `read_at` null | Advances — recorded as *not opened* |
+| Opened, no action | row, `read_at` set | Advances — recorded as *seen, no objection* |
+
+And the record lives on the **ticket**, not the bell — evidence cannot sit in a
+feed that gets marked read and pruned. A window resolving to zero recipients
+never advances: nobody was asked, so nobody declined to object. The
+acknowledged-distribution feature already hit that failure mode and named it
+`ack_unsatisfiable`.
+
+### "A bidirectional portal to projects"
+
+**The project side is built. The ticket is the only work object it cannot see.**
+
+`CheckoutSession`, `Milestone` and `MarkupRequest` all carry `projectId`
+(`types/schema.ts:929`, `:456`, `:1002`), and `ProjectActivity` already has
+`doc_added` / `doc_removed` / `markup_requested` in its typed event vocabulary.
+`Ticket` carries no `projectId` and no container reference of any kind. Someone
+already needed the link and worked around its absence: `lib/transitionIn.ts:304`
+writes `metadata.intake_collision.projectId` into untyped JSON.
+
+The trap is in the word *push*. `DEC-40`: **reference, never copy.** A controlled
+drawing copied into project storage does not supersede, does not carry a hold,
+does not appear in distribution recall, and does not visibly go stale — which is
+the failure the whole system exists to prevent, produced by the most natural
+reading of the requirement.
+
+The seam to get right is permissions: a project member who cannot read the
+library must **see that a deliverable exists and be unable to open it**. Hiding
+it reads as "drafting did nothing"; opening it is an egress hole. `GAP-114`.
 
 ### "Codes vary by org — B31.3 in my case"
 

@@ -84,10 +84,14 @@ result.
 
 ### Where a judgment call is needed
 
-**[`DECISIONS.md`](./DECISIONS.md) has already made it.** Thirty-two calls
-covering the role model, ownership, the workflow, the admin surfaces, the
-document lifecycle, and this protocol. A report that used to say *"a human must
-decide"* now cites a `DEC-` id. Follow it.
+**[`DECISIONS.md`](./DECISIONS.md) has already made it.** Forty calls covering
+the role model, ownership, the workflow, the admin surfaces, the document
+lifecycle, the review model, and this protocol. A report that used to say *"a
+human must decide"* now cites a `DEC-` id. Follow it.
+
+⚠ **`DEC-33`…`DEC-40` carry stated facility policy and override earlier
+guidance where they conflict** — including guidance inside the drafting-flow gap
+register, which is marked inline where it was revised.
 
 If you hit a call that genuinely is not covered: **do not stop.** Make it
 yourself using the same standard — pick the option that fails safe for a
