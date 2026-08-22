@@ -25,13 +25,19 @@ audit-reports/
 │   ├── NN-<domain>.md
 │   ├── 90-gap-register.md       ← build specs for missing capabilities
 │   └── 99-fix-sequencing.md     ← the execution order. Read it first.
-└── drafting-flow/
-    ├── README.md                ← includes the root-cause clusters. Read before claiming.
+├── drafting-flow/
+│   ├── README.md                ← includes the root-cause clusters. Read before claiming.
     ├── findings.json
     ├── 01–05 … design read      ← tiering, friction, wiring, leaks, discoverability
     ├── 06–12 … deep read        ← adversarially verified against the code
     ├── 13 … ⚠ UNVERIFIED        ← completeness critic; reproduce before acting
-    ├── 90-gap-register.md
+│   ├── 90-gap-register.md
+│   └── 99-fix-sequencing.md
+└── notifications/
+    ├── README.md                ← the direct answers live here
+    ├── findings.json
+    ├── 01–07 … verified
+    ├── 08 … ⚠ UNVERIFIED
     └── 99-fix-sequencing.md
 ```
 
@@ -288,6 +294,7 @@ was deliberately cut are stated in each spec.
 |---|---|---|---|---|
 | **Projects tab** | The Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 133 | — | [`projects-tab/`](./projects-tab/README.md) |
 | **Roles & permissions** | The whole authority model: roles, additive roles, capability policy, content ACL, ownership & publish, the drafting workflow, document lifecycle, delegation & teams, non-document surfaces, content egress, and the database functions underneath | 124 | 15 | [`roles-and-permissions/`](./roles-and-permissions/README.md) |
+| **Notifications & alerts** | Every way the app tells a person something: the bell, sidebar badges, toasts, the corner dock, progress indicators, email, and the service worker — producers, delivery, taxonomy, the badge trail, realtime, stacking, and the OS-notification substrate | 105 | — | [`notifications/`](./notifications/README.md) |
 | **Drafting request flow** | The request flow end to end — intake, triage, assignment, drafting, review, approval, issue, closure — plus review tiering, document-control wiring, friction and latency, leaks, discoverability, and a second deep pass over the state machine, RLS, routing, authority surfaces, audit evidence, the document handoff and the Projects boundary | 139 | 14 | [`drafting-flow/`](./drafting-flow/README.md) |
 
 **Areas overlap deliberately.** `roles-and-permissions` covered *authority* in
