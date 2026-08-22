@@ -1171,9 +1171,26 @@ that is a router slot property (`waivable_by`), added then — not a code branch
 <a id="dec-34"></a>
 ## DEC-34 · What form does the like-in-kind declaration take?
 
-**Decision. A typed statement, not a checkbox, and not a dropdown value. Stored
-as first-class columns with the declarer's identity and timestamp — never in
-`metadata`.**
+**Decision. A typed statement, not a checkbox and not a dropdown value —
+recorded as an **e-signature**, with the ticket carrying a pointer to it plus
+denormalized columns for querying. Never in `metadata`.**
+
+> **Strengthened after the deep audit.** The original decision said "first-class
+> columns" and that is still necessary — but it is **not sufficient**, and the
+> reason is `SM-2`/`PERS-1`/`AUTHZ-2`: `tickets` carries one `FOR ALL` policy
+> with no `WITH CHECK`, so any active org member can rewrite any ticket column
+> directly through the REST endpoint. A declaration stored only as a ticket
+> column is a claim anyone in the org can forge or erase.
+>
+> `lib/eSignatures.ts` already exists, is the strongest evidentiary artifact in
+> the system, and is the right home: the signature is the record, the column is
+> a convenience. Choosing like-in-kind at intake runs the signature ceremony
+> against `{resourceType: 'ticket', resourceId}` with the like-in-kind sentence
+> as the statement, and the returned id is stored on the ticket.
+>
+> ⚠ `EVID-3` says e-signatures are themselves written directly by the browser
+> with client-supplied identity. **Fix `EVID-3` before leaning on signatures for
+> this**, or the stronger record inherits the weaker one's problem.
 
 The requester types what is being replaced with what. Minimum length enforced.
 No canned text, no preset options.
@@ -1252,9 +1269,29 @@ facility with no configuration must keep working exactly as it does today.
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
 
-**Decision. In `org_configurations`, under a new key, resolved through the
-document container chain exactly as `doc_class` and `review_control` already
-are: document → folder → library, most specific DEFINED level wins.**
+**Decision. As a `routing_control JSONB` column on `libraries`, `collections`
+and `documents` — exactly where `review_control` and `doc_class` already live —
+resolved through the container chain: document → folder → library, most specific
+DEFINED level wins.**
+
+> **Revised.** An earlier version of this decision said `org_configurations`
+> under a new key. That is wrong in a way worth naming, because the reasoning
+> looked sound: `org_configurations` already holds the drafting form's request
+> types with an admin editor, so one more key seemed free.
+>
+> It is not free. Routing must resolve **per container** — that is the whole
+> point of "route this drawing type to the doc control of that library". A
+> per-org blob would need its own library→rule index, maintained by hand, in
+> parallel with the chain walk `review_control` and `doc_class` already do
+> natively. Two mechanisms for one question is how they drift.
+>
+> Put it where its neighbours are. The migration mirrors `20261012` (doc_class)
+> line for line, is additive and idempotent, and inherits the existing
+> per-table RLS on `libraries` / `collections` — no new policies.
+>
+> Note also: the column on `org_configurations` is **`data`**, not `value`
+> (`supabase/schema.sql:52-59`). An agent writing to `value` gets a runtime
+> error, not a type error.
 
 **Rationale.** Stated requirement: *"this assign should exist in the doc ctrl so
 we could use it here."* That is right, and the substrate is already built:
@@ -1372,6 +1409,23 @@ bell-icon notifications: awaited, error-checked, retried, and the window's start
 timestamp is written **in the same transaction as** the delivery rows. If the
 rows cannot be written, no timestamp is written and the ticket stays put with a
 visible reason.
+
+> ⚠ **`notifications.read_at` is NOT usable as evidence today, and this is not a
+> theoretical objection.** `app/api/tickets/workflow-action/route.ts:324-332`
+> mass-stamps `read_at` on **other users'** unread rows for the ticket on every
+> transition (`EVID-13`). So "they opened it" is already destroyed by any
+> subsequent workflow action — the very thing a consent window is racing.
+>
+> **`EVID-13` is a hard prerequisite of `GAP-113`**, not a related finding. Until
+> it is fixed, the three-state record in that spec collapses to two, and the
+> useful middle state ("delivered, never opened") cannot be distinguished from
+> "opened and ignored".
+
+> ⚠ **No new cron entry.** `app/api/cron/maintenance/route.ts:286-291` documents
+> that a third scheduled entry fails every deployment on this hosting plan and
+> once froze production for a day. Any clock this decision needs — window expiry,
+> warnings, escalation — **extends the existing maintenance cron**. It does not
+> add one to `vercel.json`.
 
 **Do not** reuse `notify()` unchanged for this and assume the record is there.
 **Do not** start the clock at the moment of the transition; start it at the

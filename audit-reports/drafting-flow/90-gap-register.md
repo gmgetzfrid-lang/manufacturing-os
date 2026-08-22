@@ -1146,6 +1146,41 @@ existed as a concept. **Neither should be built as a bespoke mechanism.** Build
 the router; express both as configuration in it. Their `Do not` lists still
 apply — especially "no new status, no new role."
 
+### Where it lives — corrected
+
+> An earlier version of this spec put the routing table in `org_configurations`
+> under a new key. **`DEC-36` has been revised: it belongs as a
+> `routing_control JSONB` column on `libraries`, `collections` and `documents`**,
+> exactly where `review_control` and `doc_class` already sit.
+>
+> The reason is that routing must resolve **per container** — which is the whole
+> requirement, "route this drawing type to the doc control of that library". A
+> per-org blob needs its own library→rule index maintained by hand, in parallel
+> with a chain walk that already exists. Two mechanisms for one question is how
+> they drift apart.
+>
+> The migration mirrors `20261012` (doc_class) line for line: additive,
+> idempotent, and inheriting the existing per-table RLS on `libraries` and
+> `collections` — no new policies.
+>
+> Two further traps found while checking this:
+> - `org_configurations`'s JSON column is **`data`**, not `value`
+>   (`supabase/schema.sql:52-59`). Writing `value` is a runtime error, not a type
+>   error.
+> - **Do not model routing stops as `CapabilityId`s.** `lib/capabilityPolicy.ts`
+>   is a fixed 17-member union with `defaultRoles` baked per entry. A facility's
+>   stop is data; a capability is code.
+> - **Do not add a facility's role to the `Role` union.** `types/schema.ts` is a
+>   closed union of 19 literals and `ROLE_CAPABILITIES` is
+>   `Record<Role, Capability[]>` — adding one is a code change, which is exactly
+>   what `DEC-35` forbids.
+> - **Do not key the router on `ticket.status`.** That is what
+>   `lib/ticketRouting.ts:97-107` does today, and it is why routing cannot vary
+>   by library or work class.
+> - **Do not let the router resolve to nobody.** `lib/ticketRouting.ts:83-92`
+>   currently guarantees a non-empty pool via `fallbackToAdmins`. Keep that
+>   property — an empty stop is a silently dropped request.
+
 ### The substrate is already there
 
 Nothing here needs a new table.
@@ -1270,8 +1305,26 @@ than no router**, because it looks like a control.
 <a id="gap-113"></a>
 ## GAP-113 · The availability record — proving it was asked
 
-**Verdict: BUILD** · Effort: **M** · Depends on: `LEAK-1` · Decisions: `DEC-38`, `DEC-39`
+**Verdict: BUILD** · Effort: **M** · Depends on: `LEAK-1`, **`EVID-13`** · Decisions: `DEC-38`, `DEC-39`
 **`GAP-109` MUST NOT SHIP WITHOUT THIS.**
+
+> ### ⚠ `read_at` is already destroyed — `EVID-13` is a prerequisite, not a relative
+>
+> The three-state record below rests on `notifications.read_at` meaning "this
+> person opened it". It does not mean that today.
+> `app/api/tickets/workflow-action/route.ts:324-332` **mass-stamps `read_at` on
+> other users' unread rows** for the ticket on every transition. So the moment
+> anything else happens on the ticket, everyone reads as having seen it.
+>
+> Fix `EVID-13` first or the middle state — *delivered, never opened*, the most
+> useful signal about whether the window length is right — is unrecoverable.
+
+> ### ⚠ Do not add a cron entry
+>
+> `app/api/cron/maintenance/route.ts:286-291` records that a third scheduled
+> entry **fails every deployment on this hosting plan** and once froze production
+> for a day. Window expiry, warnings and escalation extend the existing
+> maintenance cron. Nothing goes into `vercel.json`.
 
 ### The requirement it implements
 
@@ -1399,7 +1452,23 @@ you have about whether the window length is right.
 <a id="gap-114"></a>
 ## GAP-114 · Projects ↔ requests, by reference
 
-**Verdict: BUILD** · Effort: **M** · Depends on: `GAP-105` · Decisions: `DEC-40`
+**Verdict: BUILD** · Effort: **M** · Depends on: `GAP-105`, **`PROJ-1`/`HAND-3`** · Decisions: `DEC-40`
+
+> ### ⚠ There is nothing to link yet
+>
+> `project_documents.document_id` is `UUID NOT NULL REFERENCES documents(id)`.
+> A ticket's `type: 'Final'` attachment is **not** a document — it is a JSONB
+> entry on the ticket with an R2 key.
+>
+> `PROJ-1` and `HAND-3` are the same fact from two directions: **a request's
+> approved deliverable never becomes a controlled document.** Until that is
+> built, "push the deliverable to the project's documents" has no row to
+> reference, and the only way to satisfy it would be the byte copy `DEC-40`
+> forbids.
+>
+> So the order is: deliverable → controlled document (`DEC-22`, `GAP-6` in the
+> roles area), *then* the project reference. Linking the **request** to a project
+> is independent and can ship first — that is one nullable FK.
 
 ### The requirement it implements
 

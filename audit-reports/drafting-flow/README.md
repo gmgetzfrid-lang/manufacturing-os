@@ -28,8 +28,12 @@ use it without being taught.
 
 ## Findings
 
-**40 findings** — 7 CRITICAL, 20 HIGH, 13 MEDIUM — plus **9 gap specs**, all
+**139 findings** — 16 CRITICAL, 51 HIGH, 72 MEDIUM — plus **14 gap specs**, all
 buildable.
+
+Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
+leaks, discoverability. **`06`–`13`** are the deep read: seven code lenses plus a
+completeness critic, every finding put through an adversarial refutation pass.
 
 | # | Report | Findings | Focus |
 |---|---|---|---|
@@ -38,8 +42,36 @@ buildable.
 | 03 | [Document control wiring](./03-doc-control-wiring.md) | 7 | Routing drawings to the library's document controller for review and release |
 | 04 | [Flow leaks](./04-flow-leaks.md) | 9 | Where work, state and attention escape without saying so |
 | 05 | [Discoverability](./05-ui-discoverability.md) | 7 | Can a first-time user work this without studying it? |
-| 90 | [**Gap register**](./90-gap-register.md) | 9 specs | What has to be built. `GAP-101`+ so they never collide with the other area |
-| 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. The keystone build, and what must not ship before it |
+| 06 | [State machine](./06-state-machine.md) | 13 | Reachable transitions, concurrency, partial failure, and the actions that skip the gates |
+| 07 | [Persistence & RLS](./07-persistence-and-rls.md) | 8 | What the database actually permits, and which writes fail silently |
+| 08 | [Routing & attention](./08-routing-and-attention.md) | 11 | Who is told what, and what goes quiet |
+| 09 | [Authority surfaces](./09-authority-surfaces.md) | 13 | Every door into a ticket, including the public verify endpoint |
+| 10 | [Audit & evidence](./10-audit-evidence.md) | 14 | What this system could prove to a PSM auditor, and what it could not |
+| 11 | [Document handoff](./11-document-handoff.md) | 13 | Where the request flow meets the controlled document, and the as-built path |
+| 12 | [Projects boundary](./12-projects-boundary.md) | 13 | The bidirectional-portal question, answered from the schema up |
+| 13 | [Edges & invariants](./13-edges-and-invariants.md) | 14 | ⚠ **unverified** — the completeness critic, plus what is sound and must not break |
+| 90 | [**Gap register**](./90-gap-register.md) | 14 specs | What has to be built. `GAP-101`+ so they never collide with the other area |
+| 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Read before claiming any file |
+
+**`06`–`12` were adversarially verified** — a second agent read the cited code and
+tried to refute each finding. Three were refuted and are not recorded. Several
+severities were lowered by that pass and the lowered value is the one shown.
+**`13` was not verified** and says so at the top of the file: treat every entry
+there as `SUSPECTED` and reproduce before acting.
+
+### Root-cause clusters — read before claiming a file
+
+Four of the nine CRITICALs are the same defect seen from different angles. An
+agent claiming one file needs to know it shares a fix with three others.
+
+| Cluster | Findings | One fix |
+|---|---|---|
+| **The blanket `tickets` RLS policy** | `SM-2`, `PERS-1`, `AUTHZ-2`, `EVID-1` | One migration. `supabase/schema.sql:1079-1081` is `FOR ALL USING (…)` with no `WITH CHECK`. Four lenses found it independently. |
+| **The minor-correction bypass** | `SM-1`, `AUTHZ-1`, and `TIER-7` | One gate. `GAP-111` requires it inside the delivery gate. |
+| **Audit writes that cannot fail loudly** | `PERS-7`, `EVID-6` | `supabase-js` resolves with `{error}` rather than throwing. |
+| **`rowToTicket` never maps `metadata`** | `SM-11`, `PERS-5` | One line — and the reason `GAP-110`'s declaration cannot live in `metadata`. |
+| **Headline `role` instead of `roles[]`** | `ROUTE-8`, `ROUTE-10`, `EDGE-6`, and `LEAK-2` | `DEC-1` collapses all four. |
+| **The SLA layer has no reader** | `ROUTE-9`, `EDGE-7` | `GAP-106`. |
 
 ---
 

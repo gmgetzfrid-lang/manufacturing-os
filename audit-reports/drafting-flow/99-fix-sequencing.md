@@ -3,7 +3,7 @@
 **Binding, not advisory.** This area has one ordering constraint that outweighs
 everything else, and getting it wrong produces a workflow people abandon.
 
-No findings of their own — this is the plan the 40 findings and 9 gap specs are
+No findings of their own — this is the plan the 139 findings and 14 gap specs are
 worked against. Judgment calls shared with the roles model are settled in
 [`../DECISIONS.md`](../DECISIONS.md).
 
@@ -31,26 +31,66 @@ So any authenticated member of the org can `UPDATE` any ticket row directly:
 policy, the compare-and-set and the audit log are all client-side conventions
 against a row anyone can write.**
 
+Four separate lenses found this independently — `SM-2`, `PERS-1`, `AUTHZ-2`,
+`EVID-1`. One migration closes all four.
+
 This does not make the rest of the area pointless — most people use the UI, and
 the UI is where friction and mistakes live. But it does fix the order:
 
-1. **`ENF-2`** — constrain `tickets` writes at the database. A permissive
-   `SELECT` policy plus a `RESTRICTIVE` policy limiting `UPDATE` to the service
-   role (the workflow route already uses `supabaseAdmin`), or column-level
-   grants. **Ship this before `GAP-110`/`GAP-111`**, or the declaration and the
-   engineering flag are advisory too.
-2. **`ENF-6`** — `my_org_ids()` is `SECURITY DEFINER` with no `SET search_path`,
+1. **`PERS-1` / `SM-2` / `AUTHZ-2` / `EVID-1`** — constrain `tickets` writes at
+   the database. Permissive `SELECT` stays; `UPDATE` is restricted to the service
+   role (the workflow route already uses `supabaseAdmin`) or column-guarded by a
+   trigger. **Ship this before `GAP-110`/`GAP-111`**, or the like-in-kind
+   declaration and the engineering flag are advisory too — anyone in the org
+   could clear either from a browser console.
+2. **`SM-1` / `AUTHZ-1` / `TIER-7`** — "Approve with Minor Correction" goes
+   straight to `PENDING_IFC` (`lib/ticketTransitions.ts:230-235`) and is offered
+   to **every** requester at `PENDING_REVIEW`, including the exact branch where
+   the code has just decided they are not qualified to approve
+   (`lib/workflow.ts:222-228`). A one-click bypass of engineering sign-off, in
+   the UI, today. **This is the single finding most directly opposed to the
+   stated policy that unapproved packages must not reach the field.**
+3. **`PERS-8`** — `my_org_ids()` is `SECURITY DEFINER` with no `SET search_path`,
    and it is the sole gate on every ticket RLS decision. One line.
-3. **`ENF-1`** — "Approve with Minor Correction" goes straight to `PENDING_IFC`
-   (`lib/ticketTransitions.ts:230-235`) and is offered to **every** requester at
-   `PENDING_REVIEW` including the branch the engineer gate blocks
-   (`lib/workflow.ts:222-228`). It is a one-click bypass of engineering sign-off,
-   in the UI, today. This is the single finding most directly opposed to the
-   stated policy that unapproved packages must not reach the field.
+4. **`PERS-7` / `EVID-6`** — `logAuditAction` cannot detect a failed audit write:
+   `supabase-js` resolves with `{error}` rather than throwing. Every audit row in
+   the system is silently best-effort. Fix before relying on the audit log to
+   prove anything, which `GAP-113` does.
+5. **`EVID-13`** — workflow transitions mass-stamp `read_at` on **other users'**
+   unread notifications (`app/api/tickets/workflow-action/route.ts:324-332`).
+   This destroys the only "did they see it" signal in the system.
+   **Hard prerequisite of `GAP-113`**, which is itself a hard prerequisite of
+   `GAP-109`.
 
 ⚠ **Do not read this as "fix the database and the rest can wait."** The
 friction work in Phase 0 is what stops people leaving the app, and someone who
 has left the app is not constrained by RLS either.
+
+⚠ **No new cron entry, ever.** `app/api/cron/maintenance/route.ts:286-291`
+records that a third scheduled entry fails every deployment on this hosting plan
+and once froze production for a day. Every clock this area needs — consent
+windows, SLA escalation, warnings — extends the existing maintenance cron.
+
+---
+
+## Where the deep-read findings go
+
+`06`–`13` were produced after the sequencing below was written. They do not
+reorder it; they populate it.
+
+| Phase | Add |
+|---|---|
+| **−1** | the five items above |
+| **1 — stop the leaks** | `SM-13` (`requiresFile` unenforced server-side), `SM-9` (four writers bypass the CAS), `SM-4` (archive commit destroys a live reopened ticket), `SM-5` (reopen re-issues the same rev, so two documents verify as current), `AUTHZ-4`, `AUTHZ-5`, `AUTHZ-12` |
+| **2 — wiring** | `PERS-5`/`SM-11` (map `metadata`) **before** anything reads a declaration; `PERS-6` (`unit` unset on two of three creation paths) |
+| **3 — the keystone** | unchanged: `GAP-103`, and `HAND-1`/`HAND-4`/`HAND-6` are the review-gate defects it will inherit |
+| **4 — the review model** | `GAP-110` → `GAP-111` → `GAP-109` (after `GAP-113`, after `EVID-13`) |
+| **5 — the rest** | `ROUTE-*`, `PROJ-*`, remaining `EVID-*` in severity order |
+
+`11-document-handoff.md` has no phase of its own because it is not this area's
+to own: `DEC-22` and `GAP-6` in `roles-and-permissions` already commit to the
+hand-back design. Read `HAND-3` before starting that work — it is the clearest
+statement of why the two systems share no write path today.
 
 ---
 
