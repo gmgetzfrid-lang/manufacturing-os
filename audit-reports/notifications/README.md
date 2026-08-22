@@ -20,7 +20,7 @@ stacking, and what a real OS notification would attach to.
    including the badge roll-up, the login nudge, Web Push and the
    person-to-person poke. Read **the signal ladder** at the top of it before
    adding any signal anywhere.
-3. **This area overlaps `drafting-flow` deliberately.** That area owns the
+4. **This area overlaps `drafting-flow` deliberately.** That area owns the
    ticket-shaped notification defects (`LEAK-1`, `ROUTE-*`, `EVID-13`); this one
    owns the notification *system*. Where a defect belongs to both it is recorded
    in full once and cross-referenced — never duplicated.
