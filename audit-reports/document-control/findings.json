@@ -18,9 +18,9 @@
     "findings": 147,
     "gaps": 0,
     "by_severity": {
-      "CRITICAL": 19,
+      "CRITICAL": 20,
       "HIGH": 59,
-      "MEDIUM": 69
+      "MEDIUM": 68
     },
     "by_status": {
       "OPEN": 147
@@ -414,6 +414,26 @@
       "summary": "The publisher of a B31.3 line-list revision is also the document's effective owner. Two primaries are outstanding and the turnaround is tomorrow. They call recordReviewSignoff (or issue the PATCH directly) with the Piping Lead's signoffId. RLS permits it — they are the effective owner. An esignatures row is written with signeruserid = the publisher (RLS forces that), intent 'Reviewed'. The roster ",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
+    },
+    {
+      "id": "XEDGE-1",
+      "title": "/api/templates/generate reads ANY object in the R2 bucket by caller-supplied key and returns its parsed cell contents — no org prefix check, no ACL check, no assertSafeStorageKey",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/templates/generate/route.ts:126-156",
+        "lib/r2Bytes.ts:8-11",
+        "app/api/templates/route.ts:93-100",
+        "app/api/storage/download-url/route.ts:29-45",
+        "lib/knowledgeAccess.ts:31-46"
+      ],
+      "summary": "A Viewer in org A is denied read on a private cost model or a controlled drawing's native source (documentversions.sourcefilekey holds .xlsx natives, lib/revisions.ts:506,524). They POST {orgId: <their own org>, templateId: <any template of theirs>, sourceFileKey: \"orgs/<orgB>/documents/…/schedule.xlsx\"}. The route authorizes them against THEIR org, fetches org B's object, parses it and returns it",
+      "area": "document-control",
+      "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "DCK-4",
@@ -1506,29 +1526,8 @@
       "report": "audit-reports/document-control/06-transmittals.md"
     },
     {
-      "id": "XEDGE-1",
-      "title": "MS Project's project-summary task (OutlineLevel 0) is coerced to level 1 and lands as a top-level LEAF spanning the whole job, double-counting in every rollup",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/scheduleParsers.ts:247",
-        "lib/scheduleParsers.ts:252-261",
-        "lib/scheduleParsers.ts:838-839",
-        "lib/executionReport.ts:121-124",
-        "lib/milestones.ts:657-659",
-        "lib/criticalPath.ts:43-49"
-      ],
-      "summary": "A planner exports Unit 200 Turnaround from MS Project. The file's first task is the project summary (UID 0, name = the project, Start = job start, Finish = job finish, PercentComplete = whole-job %). It imports as a top-level task with no children, so it is counted as a leaf everywhere: totalLeaves is one too many, its weight is added to the denominator of SPI and percent-complete, and because its",
-      "area": "document-control",
-      "report": "audit-reports/document-control/11-edges-and-invariants.md"
-    },
-    {
       "id": "XEDGE-2",
-      "title": "No parser ever populates durationHours, so every \"effort-weighted\" number on an imported schedule is really a task count — and MS Project's Work value is captured as an unparsed string",
+      "title": "Every multi-document render download throws before it can be sent — a literal em dash in the Content-Disposition header makes NextResponse reject the batch after the production record is already written",
       "severity": "HIGH",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -1536,22 +1535,18 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/scheduleParsers.ts:52",
-        "lib/scheduleParsers.ts:295-296",
-        "lib/scheduleParsers.ts:304-320",
-        "lib/scheduleParsers.ts:402-412",
-        "lib/scheduleParsers.ts:546-556",
-        "lib/milestones.ts:981",
-        "lib/scheduleProgress.ts:44-50",
-        "lib/executionReport.ts:106"
+        "app/api/templates/generate/route.ts:383-388",
+        "app/api/templates/generate/route.ts:343-354",
+        "app/api/templates/generate/route.ts:371-377",
+        "lib/outputTemplateText.ts:120-138"
       ],
-      "summary": "A turnaround is imported from P6 with 400 activities. hoursOf returns 0 for all of them (executionReport.ts:106), so plannedHours = 0 and the Report's \"Work hours\" card prints 0 / 0 h with pctHours silently falling back to pctComplete (executionReport.ts:169). Every rollup — buildProgressIndex, overallPercent, computeScheduleMetrics' SPI and earned value, the per-group pctComplete — weights a 200-",
+      "summary": "A controller generates 12 RFQ letters and clicks download (not \"file into document control\"). The server renders all 12, records a production run of 12 documents and an audit entry saying 12 were generated, then throws while building the response; the browser sees a 500 and the user has zero files. The compliance record now claims a document production run that never reached anyone, and repeating ",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-3",
-      "title": "The approved baseline is writable and erasable by any active org member, can half-apply, is never shown on the timeline, and every batch move rewrites past it without a word",
+      "title": "The chunked restore is a universal, unaudited write primitive: audit_logs, e_signatures and document_acknowledgments are importable with fully client-authored content, and /apply-table writes no audit row at all",
       "severity": "HIGH",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -1559,37 +1554,19 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/milestones.ts:1462-1502",
-        "lib/milestones.ts:1504-1514",
-        "supabase/migrations/20260706_milestones_baseline.sql:1-12",
-        "components/projects/TaskDetailPanel.tsx:480-483",
-        "components/projects/ScheduleTab.tsx:201-215"
+        "app/api/admin/restore/apply-table/route.ts:24,38-43,74-89",
+        "lib/exportTables.ts:53,67,130",
+        "lib/dataRestore.ts:86-93,249-251",
+        "app/api/admin/restore/apply/route.ts:214-224",
+        "app/api/admin/restore/begin/route.ts:78-85"
       ],
-      "summary": "A turnaround plan is baselined at kickoff. Two weeks in, a supervisor drags a phase and confirms the move; the drag path (computeTreeMove → withCascade → applymilestonemoves) writes new planned dates for dozens of rows with no baseline comparison anywhere — the single-task edit form is the only surface that warns (\"+7 days vs the approved plan\", TaskDetailPanel.tsx:482), and grep baselineFinishAt ",
+      "summary": "An Admin (or anyone who has taken an Admin session) posts fabricated esignatures and documentacknowledgments rows dated last quarter, and auditlogs rows attributing an approval to a controller who never made it — then posts a matching documents/documentversions slice so the record set is internally consistent. Nothing in the workspace records that a restore happened: the audit trail an OSHA/PSM au",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-4",
-      "title": "apply_milestone_moves skips its entire authorization block whenever auth.uid() is NULL, and SECURITY DEFINER means RLS does not backstop it",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "SUSPECTED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "supabase/migrations/20260907_milestone_batch_move.sql:20-47",
-        "supabase/migrations/20260907_milestone_batch_move.sql:49-59",
-        "lib/milestones.ts:303-307"
-      ],
-      "summary": "An unauthenticated request carrying the public anon key calls rpc('applymilestonemoves', {porg, pproject, pmoves}). vuid is NULL, the membership lookup and the role check are both skipped, and the loop rewrites plannedstartat/plannedat on every id supplied, with updatedby = NULL. The caller needs the org, project and milestone UUIDs, which bounds the practical exposure — but a member who has legit",
-      "area": "document-control",
-      "report": "audit-reports/document-control/11-edges-and-invariants.md"
-    },
-    {
-      "id": "XEDGE-5",
-      "title": "cascadeDependents and sequenceSiblings rewrite the planned dates of COMPLETED work, contradicting the module's own \"actuals never move\" contract",
+      "title": "The export retention purge lists and deletes the customer's ENTIRE bucket when no prefix is set — it deletes by age, not by whether the object is one of ours",
       "severity": "HIGH",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -1597,14 +1574,52 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/scheduleReflow.ts:38-43",
-        "lib/scheduleReflow.ts:49-52",
-        "lib/scheduleReflow.ts:345-363",
-        "lib/scheduleReflow.ts:433-447",
-        "lib/scheduleReflow.ts:159-168",
-        "lib/__tests__/scheduleReflowLocks.test.ts:56-92"
+        "lib/exportRunner.ts:257-265",
+        "lib/exportRunner.ts:374-405",
+        "app/api/data-export/destinations/route.ts:122,134"
       ],
-      "summary": "A phase \"Weld spool 12\" has three sub-steps; \"Fit-up\" was completed on 2 Jan and stamped with its actual. \"Weld spool 12\" depends on an upstream task that slips nine days. The cascade pushes the phase forward and drags the completed fit-up's planned window from 2–3 Jan to 11–12 Jan. The batch persists through applymilestonemoves in one transaction. The task now reads: planned 11 Jan, actualat 2 Ja",
+      "summary": "An admin points a backup destination at an existing corporate bucket (s3://acme-eng-archive) without filling in the optional Prefix field, and sets Retention to 30 days because that is what their policy says. The first scheduled run at 05:00 UTC uploads the ZIP, then enumerates the whole bucket and permanently deletes every object last modified more than 30 days ago — the customer's own archived P",
+      "area": "document-control",
+      "report": "audit-reports/document-control/11-edges-and-invariants.md"
+    },
+    {
+      "id": "XEDGE-5",
+      "title": "The printed transmittal cover sheet's QR and the emailed portal link are built from window.location.origin — the exact failure lib/publicOrigin.ts exists to prevent, on the one artifact that leaves the site",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/transmittals.ts:389-393",
+        "lib/transmittals.ts:278",
+        "lib/transmittals.ts:309-321",
+        "lib/publicOrigin.ts:1-22",
+        "lib/docPack.ts:104-105",
+        "app/api/share/file/route.ts:114-116"
+      ],
+      "summary": "A document controller working from a preview deployment (or any non-canonical host) issues a transmittal to a contractor and prints the cover sheet. The QR encodes https://mfgos-git-branch-x.vercel.app/transmittal/<token>. The contractor scans it at the gate and lands on a Vercel login wall; the electronic acknowledgment is never made, so the org's proof that the drawing package was received — the",
+      "area": "document-control",
+      "report": "audit-reports/document-control/11-edges-and-invariants.md"
+    },
+    {
+      "id": "XEDGE-6",
+      "title": "The service worker caches authenticated document bytes and signed-URL JSON in a device-wide cache that survives sign-out, ignoring Cache-Control: no-store",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "public/sw.js:114-120",
+        "public/sw.js:156-177",
+        "public/sw.js:203-220",
+        "app/api/share/file/route.ts:145-151",
+        "app/api/storage/download-url/route.ts:144-153"
+      ],
+      "summary": "A shared field tablet in Field Mode. A supervisor opens a share link for Rev C of a line drawing; the stamped PDF lands in RUNTIMECACHE. The share is later revoked and the drawing superseded by Rev D. Out in the unit with no signal, anyone holding the tablet re-opens that URL: the network-first fetch fails and sw.js:167-172 (navigation) or :214-215 (sub-resource) returns the cached Rev C from disk",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
@@ -2824,27 +2839,8 @@
       "report": "audit-reports/document-control/06-transmittals.md"
     },
     {
-      "id": "XEDGE-6",
-      "title": "A multi-project P6 export merges every project's activities into the one target project — no proj_id filter exists on either P6 path",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/scheduleParsers.ts:349-365",
-        "lib/scheduleParsers.ts:383-413",
-        "lib/scheduleParsers.ts:479-502",
-        "lib/scheduleParsers.ts:527-557"
-      ],
-      "summary": "A scheduler exports from P6 at the EPS node — the usual way to get \"the outage\" when it spans two units — or simply exports a file that still contains a second project. Every activity from both projects imports into the one selected project. The board now shows another unit's work as top-level phases; overall percent complete, SPI, the critical path, the overdue count and the health score are all ",
-      "area": "document-control",
-      "report": "audit-reports/document-control/11-edges-and-invariants.md"
-    },
-    {
       "id": "XEDGE-7",
-      "title": "A phase whose tasks are all MISSED rolls up as \"planned, 0%\" — missed is the one exception state that never bubbles",
+      "title": "Scheduled full-database exports keep firing for canceled workspaces and for destinations whose creator has been removed — the cron checks neither subscription nor membership",
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -2852,18 +2848,18 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/scheduleProgress.ts:55-64",
-        "lib/scheduleProgress.ts:110-118",
-        "lib/scheduleProgress.ts:139-146",
-        "lib/__tests__/scheduleProgress.test.ts:46-50"
+        "app/api/data-export/run-scheduled/route.ts:60-66,106-115",
+        "lib/serverAuth.ts:69-98",
+        "app/api/stripe/webhook/route.ts:80-95",
+        "components/subscription/SubscriptionGate.tsx:41-48"
       ],
-      "summary": "A night-shift phase contains four hydrotest tasks; the shift is lost and all four are marked missed. The phase row on the timeline, the calendar tile and the planning list renders with the blue \"Planned\" dot at 0% — visually identical to work that has not started yet. Collapse the phase (the default for a 500-row turnaround) and the missed work is invisible: SchedulePulse surfaces overdue and bloc",
+      "summary": "Edge traced end to end: an org cancels. customer.subscription.deleted sets status canceled. Every night at 05:00 UTC the cron still builds a complete export of that workspace — all tables plus embedded binaries under a 1.5GB cap — and pushes it to whatever bucket or webhook is on file. If the person who configured that destination is the departed engineer whose account was deactivated months earli",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-8",
-      "title": "MS Project CSV predecessors are matched against whichever id column won the synonym race, so a file with both Unique ID and ID wires dependencies to the wrong tasks",
+      "title": "The Growth-plan gate on cloud backup destinations is enforced on create only — PATCH can add the bucket afterwards",
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -2871,19 +2867,16 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/scheduleParsers.ts:579-590",
-        "lib/scheduleParsers.ts:634-648",
-        "lib/scheduleParsers.ts:686-701",
-        "lib/scheduleParsers.ts:710",
-        "lib/milestones.ts:1090-1099"
+        "app/api/data-export/destinations/route.ts:81-95",
+        "app/api/data-export/destinations/[id]/route.ts:49-56"
       ],
-      "summary": "A planner exports a schedule from MS Project with both Unique ID and ID columns (the default when both are on the Gantt). Rows key on Unique ID; predecessor tokens are IDs. In a file that has been edited over time the two numberings diverge, so msp:14 as a predecessor resolves to whatever task holds Unique ID 14 — a real, unrelated task. The board draws a confident FS arrow between them, cascadeDe",
+      "summary": "A Starter-plan org creates a webhook or bucket-less destination (passes, no gate), then PATCHes it with {bucket, endpoint, region, accesskeyid, secretaccesskey, schedulekind:\"daily\"}. It now has a fully functional scheduled S3/R2 backup — the paid Growth feature — and the nightly cron (run-scheduled) never re-checks the plan either.",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-9",
-      "title": "Shift (day/night) is derived by parsing an offset-less imported datetime as browser-local, then frozen — so it is wrong by the importer's UTC offset and never follows the task",
+      "title": "The export SSRF guard validates the URL it is given and then hands the request to fetch, which follows redirects — and resolves DNS separately from the connection",
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -2891,19 +2884,18 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/milestones.ts:902-910",
-        "lib/milestones.ts:975",
-        "lib/scheduleParsers.ts:911-914",
-        "lib/scheduleFilter.ts:104",
-        "lib/scheduleFilter.ts:26-27"
+        "lib/exportRunner.ts:58-76",
+        "lib/exportRunner.ts:308-313",
+        "lib/exportRunner.ts:429-438",
+        "lib/exportRunner.ts:247,412"
       ],
-      "summary": "A planner in UTC+5:30 imports a schedule whose night-shift tasks start at 19:00 plant time. new Date(\"2026-06-01T19:00:00\") is 13:30Z for that browser, so getUTCHours is 13 and the tasks are labelled \"day\". The night supervisor filters the board by Shift = night (scheduleFilter.ts:104) and the shift's work is missing. Because the label is stored, not derived, re-importing from a different machine ",
+      "summary": "An Admin (or anyone with Admin/Manager/DocCtrl, per destinations ADMINROLES) creates a webhook destination at a host they control that 307-redirects to an internal address. testDestinationConnection reports ok and the HTTP status of the internal service is echoed back in { ok:false, error: Webhook returned HTTP ${r.status} } (:436) — a port/liveness oracle for the deployment's private network. On ",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-10",
-      "title": "The \"critical path\" walk includes tasks that have float, merges parallel chains, truncates at any gap over 14 days, and its remaining-hours figure ignores progress",
+      "title": "The full-org export dumps export_destinations' encrypted credential columns verbatim, and the restore path can re-import them into a different workspace where the same global key decrypts them",
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -2911,19 +2903,19 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/criticalPath.ts:56",
-        "lib/criticalPath.ts:63-79",
-        "lib/criticalPath.ts:81-85",
-        "components/projects/ExecutionReportView.tsx:86-87",
-        "components/projects/ExecutionView.tsx:1503-1504"
+        "lib/exportTables.ts:157,171-176",
+        "lib/dataExport.ts:31-32",
+        "app/api/data-export/destinations/route.ts:55-66",
+        "lib/exportRunner.ts:333-343",
+        "lib/serverCrypto.ts:22-31"
       ],
-      "summary": "A supervisor turns on Critical path to decide where to put the extra crew. On a schedule with two parallel finishing chains, the highlight covers both, including a task with three days of float — so the crew is moved onto work that cannot pull the finish in. On a schedule whose true driver is an 8-week vendor delivery, that item is not highlighted at all, because its finish is more than 14 days be",
+      "summary": "Org A's nightly backup ZIP is delivered to a shared/managed webhook or bucket, or an ex-admin keeps their last export. Whoever holds it now has org A's S3 credentials as ciphertext. On the same deployment, an Admin of org B posts those rows to /api/admin/restore/apply-table with table \"exportdestinations\"; orgid is rewritten to B, but the ciphertext is unchanged and buildS3ClientFromDestination de",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-11",
-      "title": "The drag path — the primary way dates move — writes no per-task reschedule breadcrumb, and its one batch audit row is fire-and-forget",
+      "title": "The render action accepts an unbounded document array and an arbitrary tag→value map, neither limited to the template's declared placeholders",
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -2931,38 +2923,34 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/milestones.ts:247-270",
-        "lib/milestones.ts:293-327",
-        "lib/milestones.ts:321-326",
-        "supabase/migrations/20260907_milestone_batch_move.sql:49-59"
+        "app/api/templates/generate/route.ts:66,317-339",
+        "lib/docxRender.ts:60-99",
+        "lib/outputTemplateText.ts:32,41-54"
       ],
-      "summary": "Someone asks why a hydrotest moved four days. The task's activity panel (listMilestoneNotes, :557-563) shows status changes only — no reschedule entries, because every move came through a drag. The project audit log holds one MILESTONESRESCHEDULED row per drag with a count and up to 50 ids and no before/after dates, and if that insert was rejected by RLS or a transient error, nothing anywhere reco",
+      "summary": "Generation is deliberately open to every member (the Generate button is outside the isController guard, app/(protected)/output-templates/page.tsx:111 vs :141-144). A member posts 5,000 documents in one render call: the function renders 5,000 .docx in a loop and builds the zip in RAM until the 300s/​memory ceiling kills it — after the audit row and production record are written. The raw-XML variant",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-12",
-      "title": "Three schedule numbers are presented as record when they are estimates, including in the printable end-of-job report and in a refusal message that promises a \"true 1:1 copy\"",
+      "title": "The server-side workbook parser is xlsx@0.18.5 — the last npm release, carrying unpatched prototype-pollution and ReDoS advisories — and it is reachable with an attacker-chosen bucket object",
       "severity": "MEDIUM",
       "status": "OPEN",
-      "verification": "CONFIRMED",
+      "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/scheduleParsers.ts:144-152",
-        "components/projects/ExecutionReportView.tsx:70-78",
-        "components/projects/ExecutionView.tsx:723-731",
-        "components/projects/ExecutionView.tsx:1503-1504",
-        "lib/executionReport.ts:179-190"
+        "lib/xlsxData.ts:9,33",
+        "app/api/templates/generate/route.ts:131"
       ],
-      "summary": "An end-of-job report is printed and filed as the schedule record for a PSM-regulated outage. It states a forecast finish derived from average tasks-per-day, a percent-complete that is really a task count (finding 3), and — on the timeline the crew worked from — an unqualified \"critical path\". Separately, a planner who is refused an .mpp upload is told the XML route loses nothing, exports the XML, ",
+      "summary": "Any active org member uploads a crafted workbook to their own output-data prefix (permitted by /api/storage/upload-url) and calls the draft action. The parse runs in the Next.js server runtime with the service-role Supabase client and R2 credentials in scope; a successful Object.prototype pollution in that process affects every subsequent request handled by the same warm instance, and the ReDoS pa",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-13",
-      "title": "cascadeDependents hardcodes a full calendar day between finish and start, so every FS link inflates the chain and pins successors to the predecessor's clock time",
+      "title": "The storage orphan sweep paginates the reference scan with no ORDER BY, then permanently deletes every object it did not see referenced",
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -2970,17 +2958,18 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/scheduleReflow.ts:350-356",
-        "lib/scheduleReflow.ts:438",
-        "lib/__tests__/dependencies.test.ts:28-49"
+        "lib/storageOrphans.ts:90-104",
+        "lib/storageOrphans.ts:118-150",
+        "lib/storageOrphans.ts:154-180",
+        "app/api/admin/orphans/route.ts:27,47"
       ],
-      "summary": "A 20-link weld/NDE/hydrotest chain is imported with 08:00–17:00 activity times and correct FS relationships. The first drag triggers withCascade (ExecutionView.tsx:449-461), which pushes every downstream task so that each starts exactly 24 hours after its predecessor's 17:00 finish. Twenty tasks now start at 17:00, their day/night shift labels (assigned once at import, never recomputed) are stale,",
+      "summary": "A plant with 40k documentversions rows runs the orphan sweep from /admin (route:47 deleteOrphans). While page 12 of the documentversions scan is running, a check-in updates rows in that table; two rows shift across the page boundary and one is never returned. Its fileurl — the current published PDF of a controlled drawing older than 7 days — is not in the reference set, so it is deleted from R2. T",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     },
     {
       "id": "XEDGE-14",
-      "title": "effectiveWeight mixes work hours and unit weights in the same denominator, so tagging a few tasks with hours silently re-weights the whole project",
+      "title": "subscribed_plan is read only from Stripe subscription metadata, so a plan change made in the billing portal never reaches the app — and an update event without metadata nulls the plan outright",
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
@@ -2988,14 +2977,12 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/scheduleProgress.ts:41-50",
-        "lib/scheduleProgress.ts:141",
-        "lib/scheduleProgress.ts:159-165",
-        "lib/executionReport.ts:158-159",
-        "lib/milestones.ts:663-669",
-        "components/projects/TaskDetailPanel.tsx:520"
+        "app/api/stripe/webhook/route.ts:50-66",
+        "app/api/stripe/checkout/route.ts:119-122",
+        "app/api/stripe/portal/route.ts:140-145",
+        "lib/stripe.ts:30-36"
       ],
-      "summary": "A planner tags the eight biggest jobs on a 400-task turnaround with their real hours (say 40h each) and leaves the rest untouched. Those eight now carry weight 40 against 392 rows carrying weight 1: 320 of 712 total weight, 45% of the project, sits on 2% of the tasks. Overall completion, every phase's pctComplete, SPI and earned value swing by tens of points the moment those eight tasks change sta",
+      "summary": "An admin upgrades Starter→Growth in the portal. Stripe bills Growth; the webhook fires with the original metadata and writes subscribedplan: \"starter\". The org is refused cloud backup destinations with \"require the Growth plan. Upgrade in Billing\" (destinations/route.ts:91) while paying for Growth. The reverse is equally live: a downgrade leaves subscribedplan: \"growth\" and the entitlement stays o",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
     }

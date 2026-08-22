@@ -1,18 +1,12 @@
 # 03 · The audit log & admin rails
 
-**14 findings** — 1 CRITICAL · 7 HIGH · 6 MEDIUM.
+**14 findings** — 1 CRITICAL · 4 HIGH · 9 MEDIUM.
 
 What the trail can prove, and whether every admin surface is gated server-side.
 
-> ### ⚠ NOT adversarially verified
->
-> The completeness critic ran after the verification stage. **Treat every entry as
-> `SUSPECTED` regardless of its stated verification, and reproduce before acting**
-> (`DEC-29`).
->
-> **This report spans all four areas audited in this run** — document control,
-> projects & cost, admin & org, and the public surfaces. It lives here because
-> document control is the largest of them; the other three READMEs link to it.
+> Each finding survived an adversarial verification pass: a second agent read the
+> cited code and tried to refute it. Refuted findings were dropped. A severity set
+> by that pass overrides the original.
 
 
 ### Already there — substrate and sound invariants
@@ -53,6 +47,8 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
 
 **Chain reaction.** Everything that reads authority through this policy: lib/holds.ts (holds.open / holds.release), the workflow-action route's server-side re-derivation, /admin/analytics and /admin/archive-view page gating (they call policyAllows on the loaded policy), the ViewAsSimulator capability column, and the DB-side holds/force-release enforcement introduced in 20260901. Fixing the column name in TypeScript alone would silently activate a policy that has never been enforced — any org that clicked Save and got an error, then edited the grid again, may have a partially-stored intent. Coordinate with roles-and-permissions WF-11 (capability_policy write gating) and DB-1.
 
+> **Verifier correction.** One mechanism detail is wrong, without changing the conclusion: the `try { … } catch { return {}; }` at lib/capabilityPolicy.ts:190 is NOT what swallows the read failure. supabase-js resolves with {error}, and the code destructures only `{ data }` (line 172), so `data` is null, `raw` becomes {}, and loadCapabilityPolicy returns {caps:{}, grants:[]} — which it then CACHES for 60s. Defaults apply either way. Also note saveCapabilityPolicy DOES check {error} and throws (line 235), so the save surfaces an error to the admin and the CAPABILITY_POLICY_CHANGED audit row at :239 is never reached at all.
+
 **Done when.**
 
 - [ ] One column name is used everywhere for org_configurations; a test or probe asserts that `loadCapabilityPolicy` round-trips a saved policy against the real column name.
@@ -82,6 +78,8 @@ lib/accessRecert.ts:106-111 — `await supabase.from("libraries").update({ last_
 ```
 
 **Chain reaction.** The FOR-ALL-with-WITH-CHECK-but-no-actor-binding shape on access_recertification_events is the same pattern the earlier audits found on tickets, notifications, email_notifications and project_documents. Tightening it will start rejecting the client-side insert above, which currently fails silently — so the unchecked-write fix must land with or before the policy fix, or the control goes from "silently unrecorded" to "silently unrecorded and also refused". The owner-notification dead end also touches the notifications area's recipient-resolution work.
+
+> **Verifier correction.** Leg (2) is theoretical and should be dropped from the claim. `userId: input.actorId ?? ""` (:112) only produces the empty string when actorId is null, and the sole caller passes `uid` from a page where the user is a signed-in controller; nobody ran this and no code path supplies null. Also note `.catch(() => {})` there is harmless-but-inert for a different reason than stated: logAuditAction has its own try/catch (lib/audit.ts:17-30) and never rejects, so the error is dropped inside the helper, not by the .catch.
 
 **Done when.**
 
@@ -123,65 +121,7 @@ app/(protected)/admin/libraries/page.tsx:151 — `const { error } = await supaba
 
 <a id="alog-4"></a>
 
-## ALOG-4 · Every destructive admin operation's audit insert is written so a failure cannot be detected — seven service-role routes plus the two permission-change writers all discard the result
-
-- **Severity:** HIGH
-- **Status:** OPEN
-- **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/purge/route.ts:173-184`, `app/api/admin/restore/apply/route.ts:129-139`, `app/api/admin/shed/commit/route.ts:113-120`, `app/api/admin/ticket-shed/commit/route.ts:197-204`, `app/api/admin/ticket-shed/restore/route.ts:210-217`, `app/api/admin/archive-cancel/route.ts:64-71`, `app/api/admin/orphans/route.ts:48-53`, `lib/capabilityPolicy.ts:237-246`, `components/permissions/PermissionDrawer.tsx:291-302`
-
-**Mechanism.** supabase-js resolves with `{ error }` rather than rejecting (established by drafting-flow PERS-7 / EVID-6, which traced `shouldThrowOnError = false` and confirmed `throwOnError()` appears zero times in lib/, app/, components/ or hooks/). EVID-6 scoped itself to `logAuditAction`. The admin rails do not go through `logAuditAction` at all — they insert into audit_logs directly — and every one of them uses a construct that is dead against a resolved error. Seven service-role routes use `try { await sb.from("audit_logs").insert({…}); } catch { /* best-effort */ }`; two more use `.then(() => undefined, () => undefined)`. The two `.then` cases are the permission writers: `saveCapabilityPolicy`, whose own comment reads "Full before/after audit — a permission change is the one edit an IT department must always be able to reconstruct", and `PermissionDrawer.save`, whose comment reads "Full before/after audit — a permission change must always be reconstructable." Both then discard the outcome. PermissionDrawer additionally writes `user_id: auth.user?.id ?? null` (line 296): a null `user_id` fails the `audit_logs_insert` WITH CHECK (`user_id = auth.uid()`), and that rejection is swallowed by the same `.then`.
-
-**Failure scenario.** A DocCtrl edits the ACL on the P&ID library to grant a contractor `write`, and the audit insert is rejected (session refreshed mid-action so `auth.getUser()` returns no user, or any RLS/constraint fault). The ACL update at PermissionDrawer.tsx:284 already committed and was checked; the audit row at :291 did not and was not. The drawer closes normally. Six months later, reconstructing "who granted this contractor write access to the P&ID library" returns nothing — and there is no error, no console line, and no retry anywhere in the system. The same shape covers DATA_PURGE, DATA_RESTORE, DATA_ARCHIVE_RECLAIM, TICKET_ARCHIVE_RECLAIM, TICKET_ARCHIVE_RESTORE, ARCHIVE_PRODUCE_CANCELED and STORAGE_ORPHANS_PURGED: for those seven, the audit row is the ONLY surviving record of what was destroyed, because the rows themselves are gone.
-
-**Evidence.**
-
-```
-app/api/admin/purge/route.ts:173-184 — `// Purging is itself an audited action — chain of custody for what was removed.` / `try {` / `await sb.from("audit_logs").insert({ action: "DATA_PURGE", … });` / `} catch { /* never block the purge result on the audit insert */ }`. lib/capabilityPolicy.ts:237-246 — `// Full before/after audit — a permission change is the one edit an IT` / `// department must always be able to reconstruct.` / `await supabase.from("audit_logs").insert({ action: "CAPABILITY_POLICY_CHANGED", … }).then(() => undefined, () => undefined);`. components/permissions/PermissionDrawer.tsx:296 — `user_id: auth.user?.id ?? null,` and :302 — `}).then(() => undefined, () => undefined);`. app/api/admin/orphans/route.ts:53 — `}).then(() => undefined, () => undefined);`.
-```
-
-**Chain reaction.** Shares a root cause with drafting-flow PERS-7 / EVID-6 (whose Done-when is "logAuditAction destructures and inspects `{ error }` … or writes to a durable dead-letter/outbox"). Fixing `logAuditAction` alone leaves all nine of these sites untouched, because none of them call it. If a dead-letter/outbox table is the chosen remedy, note the deployment constraint: no third vercel.json cron entry is permitted (app/api/cron/maintenance/route.ts:286-291), so a drainer must ride the existing maintenance sweep.
-
-**Done when.**
-
-- [ ] Each of the nine sites destructures `{ error }` and escalates — into the response body, a dead-letter row, or a raised error — rather than discarding it.
-- [ ] PermissionDrawer refuses to claim a permission change was audited when it could not resolve an actor id.
-- [ ] A test proves that a rejected audit insert on a purge or an ACL change is observable somewhere.
-
----
-
-<a id="alog-5"></a>
-
-## ALOG-5 · The capability-policy save is a whole-grid read-modify-write off a mount-time snapshot behind a 60-second cache — two admins silently clobber each other, and the `before` half of the CAPABILITY_POLICY_CHANGED record can be a state that was never current
-
-- **Severity:** HIGH
-- **Status:** OPEN
-- **Verification:** CONFIRMED
-- **Locations:** `components/permissions/CapabilityPolicyEditor.tsx:35-43`, `components/permissions/CapabilityPolicyEditor.tsx:59-91`, `lib/capabilityPolicy.ts:161-196`, `lib/capabilityPolicy.ts:215-246`, `lib/capabilityPolicy.ts:252-283`
-
-**Mechanism.** `loadCapabilityPolicy` caches per org for `CACHE_TTL_MS = 60_000`. The editor loads once on mount into both `policy` and `baseline`, and `save()` writes `{ caps: policy, grants: stored.grants ?? [] }` — the full grid as it was at mount, plus whatever grants the (possibly cached) read returned. Nothing is compared against current state and nothing is versioned, so a second admin's edit made after this editor mounted is overwritten wholesale. The impact preview computes `was = baseline?.[d.id] ?? d.defaultRoles` against the same mount-time snapshot, so it describes a diff from a state that may no longer exist. Worse, `saveCapabilityPolicy` builds its audit payload as `const before = await loadCapabilityPolicy(input.orgId)` (line 219) — the very same cached read — and writes `details: { before, after: input.policy }`. Within the TTL, `before` is the cached value, not the row being overwritten. The same read-modify-write shape governs delegations: `addUserGrant`/`revokeUserGrant` (lines 252-283) each read `current = await loadCapabilityPolicy(...)`, rebuild the grants array, and hand the whole policy to `saveCapabilityPolicy`.
-
-**Failure scenario.** Two controllers respond to the same incident. Admin A opens /admin/permissions and narrows "Force close" to Admin only. Admin B, whose console has been open since before that change, grants a temporary `ticket.assign` delegation to a supervisor through the View-as panel — `addUserGrant` reads the cached policy, rebuilds grants, and saves the whole object, restoring Manager and Supervisor on "Force close". The audit row for B's action records `before` as the pre-A state, so the trail shows no one ever removed those roles and no one ever put them back. A's change is gone and the log agrees it never happened.
-
-**Evidence.**
-
-```
-lib/capabilityPolicy.ts:161-163 — `const CACHE_TTL_MS = 60_000;` / `const cache = new Map<string, { at: number; policy: CapabilityPolicy }>();` and :169 — `if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.policy;`. lib/capabilityPolicy.ts:219 — `const before = await loadCapabilityPolicy(input.orgId);`. components/permissions/CapabilityPolicyEditor.tsx:37-40 — `const stored = await loadCapabilityPolicy(activeOrgId);` / `const merged = { ...defaultCapabilityPolicy(), ...(stored.caps ?? {}) };` / `setPolicy(merged);` / `setBaseline(merged);`. components/permissions/CapabilityPolicyEditor.tsx:66 — `const was = baseline?.[d.id] ?? d.defaultRoles;`. components/permissions/CapabilityPolicyEditor.tsx:84 — `await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps: policy, grants: stored.grants ?? [] }, … })`.
-```
-
-**Chain reaction.** The org_configurations column defect above means this save currently throws before it can land, so the lost-update is latent — but it becomes live the instant the column name is fixed, and the two fixes will almost certainly ship together. The row is a single JSONB blob with no updated_at precondition and no optimistic-concurrency token, so the fix is a structural one (conditional update on a version/updated_at, or a server route that merges) rather than a cache-TTL tweak.
-
-**Done when.**
-
-- [ ] A save that would overwrite a policy changed since the editor loaded is refused or merged, not applied blindly.
-- [ ] The `before` recorded in CAPABILITY_POLICY_CHANGED is read from the database at write time, bypassing the cache, or is derived from the row the update actually replaced.
-- [ ] addUserGrant and revokeUserGrant modify only the grants array without republishing a stale caps grid.
-
----
-
-<a id="alog-6"></a>
-
-## ALOG-6 · The entire user and role administration surface writes no audit row at all: granting a role, removing a role, adding a member and removing a member are all unrecorded
+## ALOG-4 · The entire user and role administration surface writes no audit row at all: granting a role, removing a role, adding a member and removing a member are all unrecorded
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -208,38 +148,9 @@ app/(protected)/admin/users/page.tsx:134-137 — `const { error } = await supaba
 
 ---
 
-<a id="alog-7"></a>
+<a id="alog-5"></a>
 
-## ALOG-7 · The permissions console's headline panel is a hand-maintained 52-row string matrix that has drifted from the code — at least five rows assert authority boundaries the app does not have
-
-- **Severity:** HIGH
-- **Status:** OPEN
-- **Verification:** CONFIRMED
-- **Locations:** `components/permissions/PermissionsExplorer.tsx:14-80`, `app/(protected)/admin/permissions/page.tsx:148`, `app/(protected)/admin/holds/page.tsx:32`, `app/(protected)/admin/scope/page.tsx:36`, `app/(protected)/admin/assets/page.tsx:56`, `app/api/admin/create-user/route.ts:62`, `app/(protected)/documents/[libraryId]/page.tsx:3372-3379`
-
-**Mechanism.** `PermissionsExplorer` is rendered first on /admin/permissions, above the real editor, described as "the IT-department view of the ENTIRE app" and "Derived from a code audit of every enforcement point". It is a literal array of 52 `Row` objects whose `m` field is a 12-character string, one char per role, hand-written in source. It imports nothing from `lib/capabilityPolicy`, `lib/permissions`, or `lib/acl`; it never reads the org's stored policy, so it cannot reflect any change made in the CapabilityPolicyEditor rendered directly below it, nor any per-person delegation, nor any ACL rule. Being a snapshot, it has drifted. Column order is `[Admin, DocCtrl, Manager, Supervisor, DraftingSup, Engineer 1-4, Drafter, Requester, Staff*, Contractor, Auditor, Viewer]`, so position 1 is DocCtrl. Checkable mismatches: (1) `{ cap: "Audit log", m: "yyyy------y-" }` asserts a boundary that does not exist — `audit_logs_org_access` grants SELECT to every member (schema.sql:1084-1085) and /activity renders the rows to everyone; (2) `{ cap: "Release stale checkouts (/admin/holds)", m: "y-yy--------" }` marks DocCtrl "—", but the page's gate is `new Set(["Admin","Manager","Supervisor","DocCtrl"])`; (3) `{ cap: "Operational scope", m: "y-yy--------" }` marks DocCtrl "—", but /admin/scope's gate is the same four-role set; (4) `{ cap: "Equipment / asset admin pages", m: "y-yy--------" }` marks DocCtrl "—", but /admin/assets uses `["Admin","DocCtrl","Manager","Supervisor"]` and the file's own comment says "DocCtrl belongs here"; (5) `{ cap: "User management (invite, roles)", m: "y-y---------" }` marks DocCtrl "—", but /api/admin/create-user admits `["Admin","DocCtrl"]`; (6) `{ cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner" }` promises any-role owners can recertify, but the only entry point is inside `{isController && ( … Access recertification … )}`.
-
-**Failure scenario.** An IT auditor is asked to produce the workspace's access-control matrix. They open /admin/permissions, screenshot the top panel, and hand it over. It says the audit log is restricted to five roles — a Drafter or a Safety staffer can read every row of it — and it says Doc Control cannot manage users, release stale checkouts, edit operational scope or edit the equipment registry, all four of which Doc Control can do. The document is signed as an accurate control description and is wrong in both directions: it under-states an exposure and over-states three restrictions.
-
-**Evidence.**
-
-```
-components/permissions/PermissionsExplorer.tsx:14 — `const ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSup", "Engineer 1-4", "Drafter", "Requester", "Staff*", "Contractor", "Auditor", "Viewer"];`. :17 — `// m: 12 chars in ROLES order — y (yes), c (conditional), - (no).` :65 — `{ area: "Metrics", cap: "Audit log", m: "yyyy------y-" },`. :74 — `{ area: "Admin", cap: "Release stale checkouts (/admin/holds)", m: "y-yy--------" },` vs app/(protected)/admin/holds/page.tsx:32 — `const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);`. :68 — `{ area: "Admin", cap: "User management (invite, roles)", m: "y-y---------", cond: "Only an Admin can grant the Admin role" },` vs app/api/admin/create-user/route.ts:62 — `if (!callerMember || !["Admin", "DocCtrl"].includes(callerMember.role as string))`. :45 — `{ area: "Reviews", cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner" },` vs app/(protected)/documents/[libraryId]/page.tsx:3372 — `{isController && (` wrapping the "Access recertification" menu item, with `const isController = isControllerRole(activeRole);` at :2861 and lib/permissions.ts:18-20 — `return role === "Admin" || role === "DocCtrl";`.
-```
-
-**Chain reaction.** roles-and-permissions SURF-9 already censuses the per-page gates and DEC-17 scopes what may be fixed there; this finding is about the artifact that *reports* those gates, which SURF-9 does not cover. Deriving the matrix from CAPABILITY_DEFS + the stored policy would fix the drift for the Requests/Metrics/Holds rows but not for the Documents/Publishing/Reviews rows, which encode ACL and ownership semantics no single evaluator exposes — so the honest fix may be to derive what can be derived and label the rest as a documented, dated snapshot.
-
-**Done when.**
-
-- [ ] Rows that correspond to a registered capability are rendered from CAPABILITY_DEFS and the org's stored policy, not from a literal string.
-- [ ] The five mismatches above are each either corrected or shown to be intentional.
-- [ ] Any remaining hand-maintained rows are visibly marked as a documentation snapshot rather than presented as derived truth.
-
----
-
-<a id="alog-8"></a>
-
-## ALOG-8 · `/activity` renders the entire org audit log to every role with no gate of any kind, sitting in the same tab strip as /admin/audit's "Admin-class roles only" banner
+## ALOG-5 · `/activity` renders the entire org audit log to every role with no gate of any kind, sitting in the same tab strip as /admin/audit's "Admin-class roles only" banner
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -258,6 +169,8 @@ app/(protected)/activity/page.tsx:102-105 — `const { data, error: qErr } = awa
 
 **Chain reaction.** This is the in-app half of roles-and-permissions SURF-9 ("/admin/audit … ❌ none — audit_logs_org_access allows every member"), whose Done-when #1 is a RESTRICTIVE SELECT policy matching the roles the page claims. That policy would also blank /activity for most of the org — /activity is a real, shipped, people-facing feature, so the fix must decide deliberately what /activity is allowed to show (e.g. a curated action subset) rather than discovering it as breakage.
 
+> **Verifier correction.** Sharpen the framing: this is not an RLS bypass — the database deliberately grants audit SELECT to every org member, so /activity is consistent with the data layer and /admin/audit's banner is the outlier. The defect is that the app asserts an admin-only boundary it does not have anywhere.
+
 **Done when.**
 
 - [ ] /activity applies an explicit, stated authority rule rather than none, and that rule is enforced somewhere other than the client.
@@ -266,9 +179,9 @@ app/(protected)/activity/page.tsx:102-105 — `const { data, error: qErr } = awa
 
 ---
 
-<a id="alog-9"></a>
+<a id="alog-6"></a>
 
-## ALOG-9 · "Export CSV" exports only the rows currently on screen — by default the last 7 days capped at 200 — with no truncation notice, and drops the `metadata` column entirely from the evidence file
+## ALOG-6 · "Export CSV" exports only the rows currently on screen — by default the last 7 days capped at 200 — with no truncation notice, and drops the `metadata` column entirely from the evidence file
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -295,9 +208,9 @@ app/(protected)/admin/audit/page.tsx:107-108 — `const [range, setRange] = useS
 
 ---
 
-<a id="alog-10"></a>
+<a id="alog-7"></a>
 
-## ALOG-10 · Audit rows record self-declared identity: `user_email` and `user_role` come from the caller, `timestamp` is client-settable, and the one field `AuditEntry` declares for it is never written
+## ALOG-7 · Audit rows record self-declared identity: `user_email` and `user_role` come from the caller, `timestamp` is client-settable, and the one field `AuditEntry` declares for it is never written
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -324,9 +237,40 @@ supabase/schema.sql:781-793 — `user_id UUID,` / `user_email TEXT,` / `user_rol
 
 ---
 
-<a id="alog-11"></a>
+<a id="alog-8"></a>
 
-## ALOG-11 · The action-permissions grid can only grant to 12 hardcoded role tokens; five of the system's nineteen real roles — Accounting, Safety, HR, Maintenance, Operations — have no column, so authority already held by those roles is invisible in the console that governs it
+## ALOG-8 · Every destructive admin operation's audit insert is written so a failure cannot be detected — seven service-role routes plus the two permission-change writers all discard the result
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `app/api/admin/purge/route.ts:173-184`, `app/api/admin/restore/apply/route.ts:129-139`, `app/api/admin/shed/commit/route.ts:113-120`, `app/api/admin/ticket-shed/commit/route.ts:197-204`, `app/api/admin/ticket-shed/restore/route.ts:210-217`, `app/api/admin/archive-cancel/route.ts:64-71`, `app/api/admin/orphans/route.ts:48-53`, `lib/capabilityPolicy.ts:237-246`, `components/permissions/PermissionDrawer.tsx:291-302`
+
+**Mechanism.** supabase-js resolves with `{ error }` rather than rejecting (established by drafting-flow PERS-7 / EVID-6, which traced `shouldThrowOnError = false` and confirmed `throwOnError()` appears zero times in lib/, app/, components/ or hooks/). EVID-6 scoped itself to `logAuditAction`. The admin rails do not go through `logAuditAction` at all — they insert into audit_logs directly — and every one of them uses a construct that is dead against a resolved error. Seven service-role routes use `try { await sb.from("audit_logs").insert({…}); } catch { /* best-effort */ }`; two more use `.then(() => undefined, () => undefined)`. The two `.then` cases are the permission writers: `saveCapabilityPolicy`, whose own comment reads "Full before/after audit — a permission change is the one edit an IT department must always be able to reconstruct", and `PermissionDrawer.save`, whose comment reads "Full before/after audit — a permission change must always be reconstructable." Both then discard the outcome. PermissionDrawer additionally writes `user_id: auth.user?.id ?? null` (line 296): a null `user_id` fails the `audit_logs_insert` WITH CHECK (`user_id = auth.uid()`), and that rejection is swallowed by the same `.then`.
+
+**Failure scenario.** A DocCtrl edits the ACL on the P&ID library to grant a contractor `write`, and the audit insert is rejected (session refreshed mid-action so `auth.getUser()` returns no user, or any RLS/constraint fault). The ACL update at PermissionDrawer.tsx:284 already committed and was checked; the audit row at :291 did not and was not. The drawer closes normally. Six months later, reconstructing "who granted this contractor write access to the P&ID library" returns nothing — and there is no error, no console line, and no retry anywhere in the system. The same shape covers DATA_PURGE, DATA_RESTORE, DATA_ARCHIVE_RECLAIM, TICKET_ARCHIVE_RECLAIM, TICKET_ARCHIVE_RESTORE, ARCHIVE_PRODUCE_CANCELED and STORAGE_ORPHANS_PURGED: for those seven, the audit row is the ONLY surviving record of what was destroyed, because the rows themselves are gone.
+
+**Evidence.**
+
+```
+app/api/admin/purge/route.ts:173-184 — `// Purging is itself an audited action — chain of custody for what was removed.` / `try {` / `await sb.from("audit_logs").insert({ action: "DATA_PURGE", … });` / `} catch { /* never block the purge result on the audit insert */ }`. lib/capabilityPolicy.ts:237-246 — `// Full before/after audit — a permission change is the one edit an IT` / `// department must always be able to reconstruct.` / `await supabase.from("audit_logs").insert({ action: "CAPABILITY_POLICY_CHANGED", … }).then(() => undefined, () => undefined);`. components/permissions/PermissionDrawer.tsx:296 — `user_id: auth.user?.id ?? null,` and :302 — `}).then(() => undefined, () => undefined);`. app/api/admin/orphans/route.ts:53 — `}).then(() => undefined, () => undefined);`.
+```
+
+**Chain reaction.** Shares a root cause with drafting-flow PERS-7 / EVID-6 (whose Done-when is "logAuditAction destructures and inspects `{ error }` … or writes to a durable dead-letter/outbox"). Fixing `logAuditAction` alone leaves all nine of these sites untouched, because none of them call it. If a dead-letter/outbox table is the chosen remedy, note the deployment constraint: no third vercel.json cron entry is permitted (app/api/cron/maintenance/route.ts:286-291), so a drainer must ride the existing maintenance sweep.
+
+> **Verifier correction.** Overstated at HIGH. Six of the seven routes use the SERVICE-ROLE client (`sb`/`actor.admin`), which bypasses RLS entirely, so the realistic failure modes are narrow (network, NOT NULL on action/resource_id/resource_type). And the PermissionDrawer sub-claim is speculative: `user_id: auth.user?.id ?? null` (line 296) only yields null if `supabase.auth.getUser()` returns no user, which cannot happen on the same tick that the user's own authenticated UPDATE at line 284 just succeeded — nobody ran this, and no code path produces the null. The durable defect is the shape (unobservable audit failure on destructive operations), not a demonstrated lost row.
+
+**Done when.**
+
+- [ ] Each of the nine sites destructures `{ error }` and escalates — into the response body, a dead-letter row, or a raised error — rather than discarding it.
+- [ ] PermissionDrawer refuses to claim a permission change was audited when it could not resolve an actor id.
+- [ ] A test proves that a rejected audit insert on a purge or an ACL change is observable somewhere.
+
+---
+
+<a id="alog-9"></a>
+
+## ALOG-9 · The action-permissions grid can only grant to 12 hardcoded role tokens; five of the system's nineteen real roles — Accounting, Safety, HR, Maintenance, Operations — have no column, so authority already held by those roles is invisible in the console that governs it
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -345,6 +289,8 @@ components/permissions/CapabilityPolicyEditor.tsx:24 — `const TOKENS = ["*", "
 
 **Chain reaction.** PermissionsExplorer collapses the same five roles into a single "Staff*" column (PermissionsExplorer.tsx:14-15), so both halves of the console erase the distinction the user-admin page carefully restored. Deriving TOKENS from ALL_ROLES adds five columns to an already wide grid and needs a decision about whether Engineer-N collapses to the "Engineer" alias token, which `roleTokenMatches` (lib/capabilityPolicy.ts:141-145) supports.
 
+> **Verifier correction.** The headline overstates one half. 'Authority already held by those roles is invisible in the console' is not demonstrable: none of the 17 CAPABILITY_DEFS defaults name Accounting/Safety/HR/Maintenance/Operations (they use MGMT, 'Engineer', 'Drafter', 'Requester', 'Admin','DocCtrl' or '*'), and an out-of-grid token can only enter the stored policy by a direct database edit — no code path writes one. The confirmed defect is the forward direction: an admin cannot grant any capability to five of the org's assignable roles except by using '*' (Everyone).
+
 **Done when.**
 
 - [ ] The grid's columns are derived from the role model rather than a literal, or the omission is deliberate and stated in the UI.
@@ -353,9 +299,9 @@ components/permissions/CapabilityPolicyEditor.tsx:24 — `const TOKENS = ["*", "
 
 ---
 
-<a id="alog-12"></a>
+<a id="alog-10"></a>
 
-## ALOG-12 · The audit INSERT policy explicitly admits `org_id IS NULL`, but the SELECT policy and both viewers can never return such a row — a write-only sink for audit evidence, reachable through optional-orgId signatures
+## ALOG-10 · The audit INSERT policy explicitly admits `org_id IS NULL`, but the SELECT policy and both viewers can never return such a row — a write-only sink for audit evidence, reachable through optional-orgId signatures
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -374,6 +320,8 @@ supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:88 — `AND (org
 
 **Chain reaction.** The same signature at lib/documentOrigin.ts:41 also carries `userId: input.actorId ?? ""`, the empty-string-into-UUID failure drafting-flow EVID-6 confirmed — so the identical call is at risk of both failure modes at once. Any fix that makes orgId required should be paired with making actorId required, since both defaults produce silently-lost evidence.
 
+> **Verifier correction.** The producer side is weaker than the finding suggests, and I would keep this at SUSPECTED-and-latent rather than acting on it. I brace-matched every `logAuditAction({…})` call across app/, lib/, components/ and hooks/: 0 of them omit orgId. The cited 'reachable instance' is not one — lib/documentOrigin.ts:41 passes `orgId: input.orgId ?? undefined`, but its only caller (components/documents/OriginSection.tsx:48) reads orgId from a prop typed `orgId: string` (:17), so undefined never arrives. This is a hardening note about a policy that permits rows nothing writes, not a live evidence gap.
+
 **Done when.**
 
 - [ ] Either org_id is NOT NULL on audit_logs and the INSERT policy stops admitting NULL, or a query exists that can surface NULL-org rows to someone.
@@ -382,9 +330,9 @@ supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:88 — `AND (org
 
 ---
 
-<a id="alog-13"></a>
+<a id="alog-11"></a>
 
-## ALOG-13 · The audit viewer can filter 36 action types out of the 110 the app writes; every admin-authority action — permission changes, ACL changes, recertifications, purges, restores, e-signatures, folder deletes — is unreachable through any filter, and the compliance KPI miscounts in both directions
+## ALOG-11 · The audit viewer can filter 36 action types out of the 110 the app writes; every admin-authority action — permission changes, ACL changes, recertifications, purges, restores, e-signatures, folder deletes — is unreachable through any filter, and the compliance KPI miscounts in both directions
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -411,9 +359,40 @@ app/(protected)/admin/audit/page.tsx:271-274 — `<Select value={actionFilter} o
 
 ---
 
-<a id="alog-14"></a>
+<a id="alog-12"></a>
 
-## ALOG-14 · The permissions console asserts the legacy read/write/admin matrix "is GONE" and that nothing depended on it, while /admin/libraries still writes all three columns and the documents home page still filters library cards on two of them
+## ALOG-12 · The capability-policy save is a whole-grid read-modify-write off a mount-time snapshot behind a 60-second cache — two admins silently clobber each other, and the `before` half of the CAPABILITY_POLICY_CHANGED record can be a state that was never current
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `components/permissions/CapabilityPolicyEditor.tsx:35-43`, `components/permissions/CapabilityPolicyEditor.tsx:59-91`, `lib/capabilityPolicy.ts:161-196`, `lib/capabilityPolicy.ts:215-246`, `lib/capabilityPolicy.ts:252-283`
+
+**Mechanism.** `loadCapabilityPolicy` caches per org for `CACHE_TTL_MS = 60_000`. The editor loads once on mount into both `policy` and `baseline`, and `save()` writes `{ caps: policy, grants: stored.grants ?? [] }` — the full grid as it was at mount, plus whatever grants the (possibly cached) read returned. Nothing is compared against current state and nothing is versioned, so a second admin's edit made after this editor mounted is overwritten wholesale. The impact preview computes `was = baseline?.[d.id] ?? d.defaultRoles` against the same mount-time snapshot, so it describes a diff from a state that may no longer exist. Worse, `saveCapabilityPolicy` builds its audit payload as `const before = await loadCapabilityPolicy(input.orgId)` (line 219) — the very same cached read — and writes `details: { before, after: input.policy }`. Within the TTL, `before` is the cached value, not the row being overwritten. The same read-modify-write shape governs delegations: `addUserGrant`/`revokeUserGrant` (lines 252-283) each read `current = await loadCapabilityPolicy(...)`, rebuild the grants array, and hand the whole policy to `saveCapabilityPolicy`.
+
+**Failure scenario.** Two controllers respond to the same incident. Admin A opens /admin/permissions and narrows "Force close" to Admin only. Admin B, whose console has been open since before that change, grants a temporary `ticket.assign` delegation to a supervisor through the View-as panel — `addUserGrant` reads the cached policy, rebuilds grants, and saves the whole object, restoring Manager and Supervisor on "Force close". The audit row for B's action records `before` as the pre-A state, so the trail shows no one ever removed those roles and no one ever put them back. A's change is gone and the log agrees it never happened.
+
+**Evidence.**
+
+```
+lib/capabilityPolicy.ts:161-163 — `const CACHE_TTL_MS = 60_000;` / `const cache = new Map<string, { at: number; policy: CapabilityPolicy }>();` and :169 — `if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.policy;`. lib/capabilityPolicy.ts:219 — `const before = await loadCapabilityPolicy(input.orgId);`. components/permissions/CapabilityPolicyEditor.tsx:37-40 — `const stored = await loadCapabilityPolicy(activeOrgId);` / `const merged = { ...defaultCapabilityPolicy(), ...(stored.caps ?? {}) };` / `setPolicy(merged);` / `setBaseline(merged);`. components/permissions/CapabilityPolicyEditor.tsx:66 — `const was = baseline?.[d.id] ?? d.defaultRoles;`. components/permissions/CapabilityPolicyEditor.tsx:84 — `await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps: policy, grants: stored.grants ?? [] }, … })`.
+```
+
+**Chain reaction.** The org_configurations column defect above means this save currently throws before it can land, so the lost-update is latent — but it becomes live the instant the column name is fixed, and the two fixes will almost certainly ship together. The row is a single JSONB blob with no updated_at precondition and no optimistic-concurrency token, so the fix is a structural one (conditional update on a version/updated_at, or a server route that merges) rather than a cache-TTL tweak.
+
+> **Verifier correction.** Two overstatements. (1) The stale-`before` window is narrower than implied: loadCapabilityPolicy only returns the cached value if the save happens within 60s of the mount-time load; past that the read is fresh. (2) The lost-update is the durable half and does not depend on the cache at all — `policy` is held in React state from mount, so a concurrent admin's edit is clobbered whenever the second save lands, cache or no cache. HIGH is too strong for a two-simultaneous-admins race on a console with an Admin/DocCtrl-only gate (admin/permissions/page.tsx:34).
+
+**Done when.**
+
+- [ ] A save that would overwrite a policy changed since the editor loaded is refused or merged, not applied blindly.
+- [ ] The `before` recorded in CAPABILITY_POLICY_CHANGED is read from the database at write time, bypassing the cache, or is derived from the row the update actually replaced.
+- [ ] addUserGrant and revokeUserGrant modify only the grants array without republishing a stale caps grid.
+
+---
+
+<a id="alog-13"></a>
+
+## ALOG-13 · The permissions console asserts the legacy read/write/admin matrix "is GONE" and that nothing depended on it, while /admin/libraries still writes all three columns and the documents home page still filters library cards on two of them
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -432,10 +411,43 @@ app/(protected)/admin/permissions/page.tsx:13-16 — `// The old read/write/admi
 
 **Chain reaction.** roles-and-permissions DACL-10 owns the read_access/visible_to enforcement gap and its Done-when is "Either read_access/visible_to are retired in favour of libraries.acl (one model), or the detail page enforces the same predicate the home page uses AND a RESTRICTIVE RLS policy enforces it on libraries." This finding is the documentation half: whichever way DACL-10 resolves, the console comment must stop asserting a removal that never happened, and the wizard must stop offering two controls that do nothing.
 
+> **Verifier correction.** The closing sentence is wrong and would mislead anyone acting on this. 'An admin configuring who can upload and who can administer in the Library wizard changes nothing anywhere' is false: the same wizard values ALSO build the library's real, enforced ACL — LibraryWizard.tsx:249 derives writeRoles from the upload-role picker, then :258-259 emit `{effect:"allow", subject:{type:"role"}, actions:["upload","createFolder","editMetadata","write",…]}` and admin/managePermissions rules into `acl`, which page.tsx:107 persists and which the ACL evaluator and the database deny-guards (20260901:126-176) act on. What is dead is the mirrored COLUMN, not the control.
+
 **Done when.**
 
 - [ ] The comment on /admin/permissions matches what the code does, or the legacy columns really are removed everywhere including LibraryWizard and handleSaveLibrary.
 - [ ] write_access and admin_access are either enforced or dropped from the wizard UI and the write payload.
 - [ ] The decision is recorded so the next agent does not re-derive it from the stale comment.
+
+---
+
+<a id="alog-14"></a>
+
+## ALOG-14 · The permissions console's headline panel is a hand-maintained 52-row string matrix that has drifted from the code — at least five rows assert authority boundaries the app does not have
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `components/permissions/PermissionsExplorer.tsx:14-80`, `app/(protected)/admin/permissions/page.tsx:148`, `app/(protected)/admin/holds/page.tsx:32`, `app/(protected)/admin/scope/page.tsx:36`, `app/(protected)/admin/assets/page.tsx:56`, `app/api/admin/create-user/route.ts:62`, `app/(protected)/documents/[libraryId]/page.tsx:3372-3379`
+
+**Mechanism.** `PermissionsExplorer` is rendered first on /admin/permissions, above the real editor, described as "the IT-department view of the ENTIRE app" and "Derived from a code audit of every enforcement point". It is a literal array of 52 `Row` objects whose `m` field is a 12-character string, one char per role, hand-written in source. It imports nothing from `lib/capabilityPolicy`, `lib/permissions`, or `lib/acl`; it never reads the org's stored policy, so it cannot reflect any change made in the CapabilityPolicyEditor rendered directly below it, nor any per-person delegation, nor any ACL rule. Being a snapshot, it has drifted. Column order is `[Admin, DocCtrl, Manager, Supervisor, DraftingSup, Engineer 1-4, Drafter, Requester, Staff*, Contractor, Auditor, Viewer]`, so position 1 is DocCtrl. Checkable mismatches: (1) `{ cap: "Audit log", m: "yyyy------y-" }` asserts a boundary that does not exist — `audit_logs_org_access` grants SELECT to every member (schema.sql:1084-1085) and /activity renders the rows to everyone; (2) `{ cap: "Release stale checkouts (/admin/holds)", m: "y-yy--------" }` marks DocCtrl "—", but the page's gate is `new Set(["Admin","Manager","Supervisor","DocCtrl"])`; (3) `{ cap: "Operational scope", m: "y-yy--------" }` marks DocCtrl "—", but /admin/scope's gate is the same four-role set; (4) `{ cap: "Equipment / asset admin pages", m: "y-yy--------" }` marks DocCtrl "—", but /admin/assets uses `["Admin","DocCtrl","Manager","Supervisor"]` and the file's own comment says "DocCtrl belongs here"; (5) `{ cap: "User management (invite, roles)", m: "y-y---------" }` marks DocCtrl "—", but /api/admin/create-user admits `["Admin","DocCtrl"]`; (6) `{ cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner" }` promises any-role owners can recertify, but the only entry point is inside `{isController && ( … Access recertification … )}`.
+
+**Failure scenario.** An IT auditor is asked to produce the workspace's access-control matrix. They open /admin/permissions, screenshot the top panel, and hand it over. It says the audit log is restricted to five roles — a Drafter or a Safety staffer can read every row of it — and it says Doc Control cannot manage users, release stale checkouts, edit operational scope or edit the equipment registry, all four of which Doc Control can do. The document is signed as an accurate control description and is wrong in both directions: it under-states an exposure and over-states three restrictions.
+
+**Evidence.**
+
+```
+components/permissions/PermissionsExplorer.tsx:14 — `const ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSup", "Engineer 1-4", "Drafter", "Requester", "Staff*", "Contractor", "Auditor", "Viewer"];`. :17 — `// m: 12 chars in ROLES order — y (yes), c (conditional), - (no).` :65 — `{ area: "Metrics", cap: "Audit log", m: "yyyy------y-" },`. :74 — `{ area: "Admin", cap: "Release stale checkouts (/admin/holds)", m: "y-yy--------" },` vs app/(protected)/admin/holds/page.tsx:32 — `const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);`. :68 — `{ area: "Admin", cap: "User management (invite, roles)", m: "y-y---------", cond: "Only an Admin can grant the Admin role" },` vs app/api/admin/create-user/route.ts:62 — `if (!callerMember || !["Admin", "DocCtrl"].includes(callerMember.role as string))`. :45 — `{ area: "Reviews", cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner" },` vs app/(protected)/documents/[libraryId]/page.tsx:3372 — `{isController && (` wrapping the "Access recertification" menu item, with `const isController = isControllerRole(activeRole);` at :2861 and lib/permissions.ts:18-20 — `return role === "Admin" || role === "DocCtrl";`.
+```
+
+**Chain reaction.** roles-and-permissions SURF-9 already censuses the per-page gates and DEC-17 scopes what may be fixed there; this finding is about the artifact that *reports* those gates, which SURF-9 does not cover. Deriving the matrix from CAPABILITY_DEFS + the stored policy would fix the drift for the Requests/Metrics/Holds rows but not for the Documents/Publishing/Reviews rows, which encode ACL and ownership semantics no single evaluator exposes — so the honest fix may be to derive what can be derived and label the rest as a documented, dated snapshot.
+
+> **Verifier correction.** Two of the six cited mismatches do not hold as stated. (1) 'Audit log' m="yyyy------y-" is an EXACT match for admin/audit/page.tsx:27's `["Admin","Manager","Supervisor","DocCtrl","Auditor"]` — it is not drift against its own subject; it only looks wrong once you accept finding #2 (that /activity leaks the same table), so it is derivative, not independent evidence. (2) 'User management (invite, roles)' m="y-y---------" matches the /admin/users PAGE gate, which is `if (!['Admin','Manager'].includes(activeRole))` at admin/users/page.tsx:231 — DocCtrl genuinely cannot open that page. The real inconsistency is app-internal: the API at create-user/route.ts:62 admits `["Admin","DocCtrl"]`, so Manager can open the page but gets 403 from the route, and DocCtrl is admitted by the route but cannot reach the page. Severity MEDIUM: this is a misleading reference table in an admin console, not an enforcement defect.
+
+**Done when.**
+
+- [ ] Rows that correspond to a registered capability are rendered from CAPABILITY_DEFS and the org's stored policy, not from a literal string.
+- [ ] The five mismatches above are each either corrected or shown to be intentional.
+- [ ] Any remaining hand-maintained rows are visibly marked as a documentation snapshot rather than presented as derived truth.
 
 ---

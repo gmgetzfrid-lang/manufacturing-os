@@ -1,26 +1,34 @@
 # 11 · Edges, modalities & load-bearing invariants
 
-**14 findings** — 5 HIGH · 9 MEDIUM.
+**14 findings** — 1 CRITICAL · 5 HIGH · 8 MEDIUM.
 
 What twenty-three lenses did not look at — plus what is sound and must not break.
 
-> Each finding survived an adversarial verification pass: a second agent read the
-> cited code and tried to refute it. Refuted findings were dropped. A severity set
-> by that pass overrides the original.
+> ### ⚠ NOT adversarially verified
+>
+> The completeness critic ran after the verification stage. **Treat every entry as
+> `SUSPECTED` regardless of its stated verification, and reproduce before acting**
+> (`DEC-29`).
+>
+> **This report spans all four areas audited in this run** — document control,
+> projects & cost, admin & org, and the public surfaces. It lives here because
+> document control is the largest of them; the other three READMEs link to it.
 
 
 ### Already there — substrate and sound invariants
 
 | Thing | Where | Why it matters |
 |---|---|---|
-| computeTreeMove's locked-leaf handling and whole-tree re-enveloping — the one reflow engine that gets actuals right | `lib/scheduleReflow.ts:126-208 (`if (isLocked(byId.get(sid))) continue;` at :161; deepest-first re-envelope at :174-192)` | This is the correct implementation of the rule the module documents, and it is well tested (scheduleReflowLocks.test.ts:41-53). Findings 1 and 7 should be fixed by making cascadeDependents and sequenceSiblings match this function, not by changing it. |
-| apply_milestone_moves as an atomic batch with SET search_path and a PGRST202 fallback | `supabase/migrations/20260907_milestone_batch_move.sql:14-20; lib/milestones.ts:303-320` | It fixes a real half-moved-schedule failure, pins search_path (the SECURITY DEFINER hazard the earlier audits found elsewhere), and degrades to per-row writes on a pre-migration database. Only its NULL-uid escape (finding 2) needs changing — the transaction shape is right. |
-| rebaseSchedule's optimistic lock and its refusal to shift actual dates | `lib/milestones.ts:1209-1229 (`if (raw.updated_at) q = q.eq("updated_at", raw.updated_at);`, skipped-row reporting at :1227-1229)` | The only writer in the scheduling layer that detects a concurrent edit and tells the user which rows it left alone. The prior audit reached the same conclusion ("the strongest code in this surface"). It is the template every other batch writer should copy. |
-| Project- and document-scoped uniqueness for imported external_refs | `supabase/migrations/20260704_milestones_project_scoped_unique.sql` | Fixes a real field failure (the same .mpp imported into a second project silently updating the first project's rows) with three correctly-partitioned indexes covering the project, document and unanchored cases. The import code at lib/milestones.ts:992-1000 mirrors the same scoping. |
-| first_completed_at preservation across a reopen/re-complete cycle | `lib/milestones.ts:368-377 and :481-486 (`update.actual_at = existingFirstCompleted ?? now;`)` | Stops a re-completion from rewriting earned-value history with today's date. This is exactly the actuals-are-immutable discipline that finding 1 breaks elsewhere; keep it. |
-| rollUpSummaryDates' cycle guard and fill-only-what's-missing rule | `lib/scheduleParsers.ts:758-805 (`if (inProgress.has(ref)) return null;` at :773; `if (!r.plannedStartAt) ... if (!r.plannedAt)` at :802-803)` | P6 WBS nodes carry no dates of their own; this derives them from descendants without ever shrinking a summary span the source did supply, and terminates on a malformed parent cycle. |
-| resolveVisibleDepIndex — dependency links survive a collapsed phase | `lib/scheduleDeps.ts:21-35, consumed at components/projects/ExecutionView.tsx:1427-1431` | Snapping an endpoint to its nearest visible ancestor (with a `seen` cycle guard) is what stops arrows from vanishing when a supervisor collapses a phase on a 500-row board. Small, pure, and correct. |
-| assignGroupColors' single-root anchoring | `lib/scheduleColors.ts:84-115` | Handles the common shape where everything hangs off one "Overall project" row by anchoring hue on its first-level children instead of painting the whole board one colour, with cycle guards on both ancestor walks. Note it correctly treats the single root as an ancestor — which is what finding 4 breaks at import time by never creating that root. |
+| The caller-supplied storage-key discipline: assertSafeStorageKey (traversal, control bytes, empty segments, length) run BEFORE an org-prefix membership gate that authorizes the key rather than just the session. Present on all four storage routes. | `lib/storageKey.ts:40-52; app/api/storage/download-url/route.ts:29-45; app/api/storage/upload-url/route.ts:26-45; app/api/storage/multipart/route.ts:37-48; app/api/storage/resolve/route.ts:29` | This is the pattern the templates/generate hole should be fixed WITH, not around — the ordering (sanitize, then parse the first orgs/<uuid>/ segment, then require active membership) is deliberate and documented at storageKey.ts:1-15. Do not relax it to make a fix easier; the download route additionally layers canDiscover and acl_index deny-download on top (download-url:55-111) and that layering is the model for byte-level enforcement. |
+| The document publish-guard trigger: a BEFORE UPDATE trigger on documents that refuses to advance current_version_id or set status='Superseded' when the document is checked out by another user or carries an unreleased hold, with deliberate, documented exemptions for service-role writes and controllers. | `supabase/migrations/20260713_document_publish_guard.sql:28-88` | This is the DB backstop behind lib/documentGuards.ts — it is what stops a raw PostgREST write from publishing over a hold. It only guards 'advance' transitions, which is why lock clears and metadata edits still work; any future RLS or trigger work must preserve that narrowness or it will break legitimate flows. Caveat for whoever touches it: the function is SECURITY DEFINER with no `SET search_path` (line 29), the same shape flagged elsewhere in this codebase — add the search_path pin without widening what the trigger blocks. |
+| The restore org boundary: apply-table remaps ids and then unconditionally overwrites org_id with the authorized workspace, refuses tables outside the export contract, refuses reconciled tables, and caps rows per call. | `app/api/admin/restore/apply-table/route.ts:38-58` | It is the one hard invariant on the most dangerous route in the app — restored rows can never land in someone else's workspace. The fix for the audit_logs/e_signatures importability finding must be additive (shrink IMPORTABLE, add auditing) and must not disturb this forced assignment. |
+| Credential handling for export destinations: AES-256-GCM with a fresh 12-byte random IV and an auth tag per secret, set-only-if-provided on PATCH, and credential columns stripped and masked on every read path. | `lib/serverCrypto.ts:33-54; app/api/data-export/destinations/route.ts:55-66,100-106,152; app/api/data-export/destinations/[id]/route.ts:57-70,102` | The crypto itself is correct and the API never returns a secret after creation — the defect is only that the export bypasses the read path. Fix the export/restore leak by redacting at the export boundary; do not weaken the encrypt-on-write or mask-on-read behaviour, and keep the getKey() throw (serverCrypto.ts:24-29) that makes a missing EXPORT_ENCRYPTION_KEY a 500 instead of a plaintext save. |
+| Backup write verification: after every S3 push the object is HEADed and the stored ContentLength must equal the bytes sent, or the run is marked failed with an explicit 'do NOT trust this backup' message. | `lib/exportRunner.ts:358-371` | "A backup that isn't checked after writing isn't a backup" — this converts a silent truncation into a failed run. The retention-purge fix lives in the same function's neighbourhood; keep this check on the success path untouched. |
+| The orphan sweep's fail-closed layers: any reference-query error aborts the whole scan, objects younger than 7 days are never candidates, protected prefixes are skipped, and deleteOrphans re-runs the full scan server-side rather than trusting the client's list. output_templates was retro-registered as a reference source with a comment explaining the near-miss. | `lib/storageOrphans.ts:9-19,26,77-87,96-97,154-158` | Every one of these is load-bearing for an irreversible operation, and the retro-registration comment ("Tables added later MUST be registered here") is the right maintenance contract. The ordering fix must be added inside this structure — do not replace the fail-closed abort with a warning. |
+| The scheduled-export claim: a compare-and-set update on next_run_at guarded by the exact value selected, so an overlapping cron or a second scheduler cannot double-export, and a failed run advances the clock instead of re-firing. | `app/api/data-export/run-scheduled/route.ts:71-94,158-171` | This is a correct at-most-once claim implemented without a lock table, plus a real CRON_SECRET fail-closed gate at :49-55. The subscription/membership predicate this finding asks for must be added to the SELECT at :60-66, before the claim — not inside the try block, which would burn the schedule slot. |
+| The service worker's honesty rules: never synthesize a status code for an aborted request, never intercept cross-origin requests, never touch RSC payloads (which would pin stale build chunks), and never resolve respondWith to undefined — with a regression test that reads the worker source and asserts each branch. | `public/sw.js:19-31,122-154,105-112; lib/__tests__/sw.test.ts:37,114` | These three rules were each written after a real failure (the phantom 504 on a cancelled prefetch, stale chunks after deploy) and the test pins them. The cache-scoping fix must be confined to cachePut and to a sign-out message handler; do not start intercepting RSC or cross-origin traffic to implement it. |
+| Share downloads are stamped server-side, bucket→server→client, so the bytes can never leave unstamped by falling back to a raw presigned URL — and when stamping fails the file still goes out through this route with a download_audits row recording source 'share_link_unstamped'. | `app/api/share/file/route.ts:83-141` | The header comment (:5-12) documents the exact regression this replaced: a CORS failure that silently opened the RAW file. The distribution record distinguishing stamped from unstamped is what makes the failure auditable rather than invisible. Any caching or performance work on this route must not reintroduce a client-side stamping path. |
+| The template-analyze prefix allowlist: only keys under this org's own output-templates / output-examples / output-data folders may be read, controller-gated, with the reason written down. | `app/api/templates/route.ts:86-100` | It is the correct implementation of the check its sibling /generate route is missing, in the same feature, twelve lines of code long — the fix for the CRITICAL finding is to lift this verbatim, adding assertSafeStorageKey to match the storage routes. |
 
 
 ---
@@ -28,433 +36,389 @@ What twenty-three lenses did not look at — plus what is sound and must not bre
 
 <a id="xedge-1"></a>
 
-## XEDGE-1 · MS Project's project-summary task (OutlineLevel 0) is coerced to level 1 and lands as a top-level LEAF spanning the whole job, double-counting in every rollup
+## XEDGE-1 · /api/templates/generate reads ANY object in the R2 bucket by caller-supplied key and returns its parsed cell contents — no org prefix check, no ACL check, no assertSafeStorageKey
 
-- **Severity:** HIGH
+- **Severity:** CRITICAL
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleParsers.ts:247`, `lib/scheduleParsers.ts:252-261`, `lib/scheduleParsers.ts:838-839`, `lib/executionReport.ts:121-124`, `lib/milestones.ts:657-659`, `lib/criticalPath.ts:43-49`
-- **Also surfaced independently as** [`SCHED-1`](../projects-and-cost/02-scheduling.md#sched-1) — two lenses found this separately. Fix once.
+- **Locations:** `app/api/templates/generate/route.ts:126-156`, `lib/r2Bytes.ts:8-11`, `app/api/templates/route.ts:93-100`, `app/api/storage/download-url/route.ts:29-45`, `lib/knowledgeAccess.ts:31-46`
 
-**Mechanism.** `const outlineLevel = Number(outlineLevelRaw) || 1;` (:247). `Number("0")` is 0, which is falsy, so the project-summary row that MSPDI exports with `<UID>0</UID><OutlineLevel>0</OutlineLevel><Summary>1</Summary>` is relabelled level 1. It then registers as `recentByLevel[1]` (:256) and every genuine level-1 phase, also computing to 1, takes `recentByLevel.get(outlineLevel - 1)` = `get(0)` = undefined and gets `parentExternalRef = null` (:252-255). The summary row therefore has no children in the database, and every consumer derives leaf-ness structurally: `isLeaf = (m) => !m.id || (childrenByParent.get(m.id) ?? []).length === 0` (executionReport.ts:121), `const parentIds = new Set(); ... isLeaf = (m) => !(m.id && parentIds.has(m.id))` (milestones.ts:657-659), `const isLeaf = (m) => !milestones.some((c) => c.parentId === m.id)` (criticalPath.ts:43). The `is_summary` column is set true but nothing reads it for leaf-ness. The same map also mis-parents after a dropped row: a task at level 3 whose level-2 parent was skipped by `if (!name || !plannedRaw) { dropped++; continue; }` (:245) attaches to whatever level-2 row was last seen — a task in a previous phase — because dropped rows never update recentByLevel and deeper keys are only cleared when a shallower row appears (:259-261). The library already knows about this class of bug: reconstructHierarchyFromOutline's comment names "the MPXJ converter bug that orphans every top-level phase because their parent is the project-summary row (MS Project ID 0)" (:837-838), and that helper loops `for (let l = lvl - 1; l >= 0; l--)` (:849) — handling level 0 correctly — but the MS Project XML path never calls it.
+**Mechanism.** The draft branch takes `sourceFileKey` straight off the JSON body and hands it to R2: line 126 `const sourceFileKey = String(body.sourceFileKey ?? "").trim();` then line 131 `sheetData = parseWorkbook(await fetchBytes(sourceFileKey), body.sheet);`. `fetchBytes` (lib/r2Bytes.ts:8-11) is a bare `GetObjectCommand({ Bucket: R2_BUCKET, Key: fileKey })` with no validation of any kind. The only authorization performed is `loadPrincipal(orgId, user.id)` (route:92-93), which returns a principal for ANY active member of ANY role (knowledgeAccess.ts:37-45 — `isController` is computed but never required on this path). The parsed content is then returned to the caller: `headers`, `rowCount` and `columnMap` in the needsMapping response (:148-156), and the actual cell values in `documents[].values` via `baseValues` (:165-172, response :304-313). The repo's own sibling route knows this is required and says so: app/api/templates/route.ts:84-85 — "Both matter — without the prefix check this endpoint would happily return the text of ANY object in the bucket, straight past document ACLs" — and enforces `allowedPrefixes = [orgs/${orgId}/output-templates/, .../output-examples/, .../output-data/]` at :93-100. /generate enforces none of it.
 
-**Failure scenario.** A planner exports Unit 200 Turnaround from MS Project. The file's first task is the project summary (UID 0, name = the project, Start = job start, Finish = job finish, PercentComplete = whole-job %). It imports as a top-level task with no children, so it is counted as a leaf everywhere: totalLeaves is one too many, its weight is added to the denominator of SPI and percent-complete, and because its finish equals the project finish and it is not complete, it is unconditionally seeded into the critical-path chain (criticalPath.ts:56). On the timeline it renders as a task bar spanning the entire outage, draggable — dragging it moves nothing else, because it has no descendants, but it does persist a new project-wide "task" date. Separately, if any row is dropped for a missing date, its children silently re-attach under the previous phase and appear in the wrong WBS branch.
+**Failure scenario.** A Viewer in org A is denied read on a private cost model or a controlled drawing's native source (document_versions.source_file_key holds .xlsx natives, lib/revisions.ts:506,524). They POST {orgId: <their own org>, templateId: <any template of theirs>, sourceFileKey: "orgs/<orgB>/documents/…/schedule.xlsx"}. The route authorizes them against THEIR org, fetches org B's object, parses it and returns its headers and row values. Cross-tenant: keys are enumerable from the already-reported /d/[number] oracle (roles-and-permissions EGRESS-2, intelligence DACL-3) and from document_assets; same-tenant: it is a clean bypass of canDiscover and of the acl_index deny-download rules that app/api/storage/download-url/route.ts:71-111 applies to the exact same bytes.
 
 **Evidence.**
 
 ```
-lib/scheduleParsers.ts:247 verbatim: `const outlineLevel = Number(outlineLevelRaw) || 1;` — the `|| 1` fallback fires for "0" as well as for "". Contrast :849 in the helper this path does not use: `for (let l = lvl - 1; l >= 0; l--)`. The XML test fixture (lib/__tests__/scheduleParsersXml.test.ts:26-47) contains only OutlineLevel 1 tasks and no UID 0 row, so nothing in the suite exercises a real MSPDI export's first task.
+app/api/templates/generate/route.ts:131 `sheetData = parseWorkbook(await fetchBytes(sourceFileKey), body.sheet);`. Two differently-shaped searches confirm nothing guards it: `grep -n "orgs/\|startsWith\|allowedPrefix\|assertSafe" app/api/templates/generate/route.ts` returns only line 51 (the Bearer prefix) and line 244 (a JSON brace test); `grep -rn assertSafeStorageKey` over app/ and lib/ returns exactly four call sites — storage/multipart:37, storage/upload-url:26, storage/download-url:29, storage/resolve:29 — and no templates route. lib/storageKey.ts:1-15 states the house rule this route breaks: "One gate every storage route runs a caller-supplied R2 key through before it reaches the bucket."
 ```
 
-> **Verifier correction.** The secondary mis-parenting claim is overstated. When a level-2 row is dropped by :245, a level-3 child does NOT usually attach to "a task in a previous phase": any intervening level-1 phase row clears every key > 1 at :259-261, so the stale key is normally gone and the orphan gets parentExternalRef = null (top-level) instead. The realistic mis-parent is narrower — a level-3 task adopting the previous level-2 SIBLING inside the same phase. The primary claim (project-summary row becomes a top-level leaf and double-counts) is unaffected.
+**Chain reaction.** The same unvalidated key is the input to XLSX.read (lib/xlsxData.ts:33) on xlsx@0.18.5 — see the dependency finding — so this is also a way to aim a known-vulnerable parser at arbitrary bucket bytes.
 
 **Done when.**
 
-- [ ] Number(outlineLevelRaw) is parsed with an explicit NaN test so 0 survives as 0
-- [ ] A level-0 row is either imported as the root parent of the level-1 phases or skipped with a warning, never as a sibling leaf
-- [ ] Dropped rows clear their level from recentByLevel so a deeper row cannot inherit a stale parent
-- [ ] A fixture containing <UID>0</UID><OutlineLevel>0</OutlineLevel> asserts the phases are its children (or that it was skipped)
+- [ ] `sourceFileKey` is validated with `assertSafeStorageKey` and required to start with one of the same `orgs/${orgId}/output-…/` prefixes app/api/templates/route.ts:93-100 already enforces
+- [ ] a test posts a sourceFileKey under a different org's prefix and asserts 403 with no bucket read
+- [ ] the ACL check applied to bytes on app/api/storage/download-url/route.ts:55-111 is applied (or the key is restricted to output-data uploads, which carry no document ACL)
 
 ---
 
 <a id="xedge-2"></a>
 
-## XEDGE-2 · No parser ever populates durationHours, so every "effort-weighted" number on an imported schedule is really a task count — and MS Project's Work value is captured as an unparsed string
+## XEDGE-2 · Every multi-document render download throws before it can be sent — a literal em dash in the Content-Disposition header makes NextResponse reject the batch after the production record is already written
 
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleParsers.ts:52`, `lib/scheduleParsers.ts:295-296`, `lib/scheduleParsers.ts:304-320`, `lib/scheduleParsers.ts:402-412`, `lib/scheduleParsers.ts:546-556`, `lib/milestones.ts:981`, `lib/scheduleProgress.ts:44-50`, `lib/executionReport.ts:106`
-- **Also surfaced independently as** [`SCHED-2`](../projects-and-cost/02-scheduling.md#sched-2) — two lenses found this separately. Fix once.
+- **Locations:** `app/api/templates/generate/route.ts:383-388`, `app/api/templates/generate/route.ts:343-354`, `app/api/templates/generate/route.ts:371-377`, `lib/outputTemplateText.ts:120-138`
 
-**Mechanism.** `durationHours?: number | null` is declared on ParsedMilestone (scheduleParsers.ts:52), threaded through the import modal (ScheduleImportModal.tsx:184) and written to the column (`baseFields.duration_hours = r.durationHours ?? null`, lib/milestones.ts:981) — but no parser assigns it. `grep -n "durationHours" lib/scheduleParsers.ts` returns exactly one line: the interface declaration. Every row-construction site sets `weight: 1` and nothing else (:308, :359, :406, :495, :550). The MS Project parser reads the field that carries the answer and throws away its meaning: `const workRaw = childText(t, "Work"); if (workRaw) attributes.work = workRaw;` (:295-296) — PT40H0M0S is stored as a display string in the attributes JSON, never parsed to hours. Consequently effectiveWeight's first branch is dead for imports (`const d = m.durationHours; if (d != null && ... d > 0) return d;` — scheduleProgress.ts:45-47) and every leaf falls through to weight 1.
+**Mechanism.** The batch path builds `const zipName = `${tpl.name.replace(/[\\/:*?"<>|]+/g, "-")} — ${rendered.length} documents.zip`;` (:383) — the separator is U+2014 EM DASH, a literal in the source — and passes it as a header value: `"content-disposition": `attachment; filename="${zipName.replace(/"/g, "")}"`` (:386). NextResponse extends the web Response, whose Headers are ByteStrings: any code point > 255 throws a TypeError at construction. The same hazard exists on the single-file path (:375) because `renderFilename` only strips `[\\/:*?"<>|]` (outputTemplateText.ts:120,134) — any non-Latin-1 character coming out of a spreadsheet cell (CJK, Cyrillic, “ ” — ) survives into the header. The throw happens AFTER `output_generations` is inserted (:343-348) and after the `OUTPUT_DOCS_GENERATED` audit row is written (:349-354).
 
-**Failure scenario.** A turnaround is imported from P6 with 400 activities. `hoursOf` returns 0 for all of them (executionReport.ts:106), so plannedHours = 0 and the Report's "Work hours" card prints `0 / 0 h` with pctHours silently falling back to pctComplete (executionReport.ts:169). Every rollup — buildProgressIndex, overallPercent, computeScheduleMetrics' SPI and earned value, the per-group pctComplete — weights a 200-hour vessel entry identically to a 15-minute signature. The UI labels these "Earned weight" (ScheduleProgress.tsx:71), "effort-weighted" (executionReport.ts:31) and "duration-weighted" (scheduleProgress.ts:6), and the doc comment claims work hours are "the truest measure of effort" (:42-43). criticalPath's "Nh remaining on the chain" badge never renders for an imported schedule because remainingHours is always 0 (criticalPath.ts:83-84, ExecutionReportView.tsx:87).
+**Failure scenario.** A controller generates 12 RFQ letters and clicks download (not "file into document control"). The server renders all 12, records a production run of 12 documents and an audit entry saying 12 were generated, then throws while building the response; the browser sees a 500 and the user has zero files. The compliance record now claims a document production run that never reached anyone, and repeating it mints another phantom run each time. Batch download is unusable for every org, on every template, always — the em dash is unconditional.
 
 **Evidence.**
 
 ```
-`grep -n "durationHours" lib/scheduleParsers.ts` → `52:  durationHours?: number | null;` and nothing else. `grep -n "weight:" lib/scheduleParsers.ts` → 308, 359, 406, 495, 550 all `weight: 1`, plus the CSV path at 707. The only writer of duration_hours in the whole app is the manual per-task form (components/projects/TaskDetailPanel.tsx:520 "Work hours", saved at :495 through MilestonePatch.durationHours, lib/milestones.ts:205/229).
+Executed under this repo's Node (v22.22.2): `new Response("x", { headers: { "content-disposition": 'attachment; filename="a — b.zip"' } })` → `Cannot convert argument to a ByteString because the character at index 24 has a value of 8212 which is greater than 255.` The same string via `res.setHeader` on node:http → `Invalid character in header content ["Content-Disposition"]`. Source line app/api/templates/generate/route.ts:383 contains the U+2014 literal; `body.returnJson` (:360-369) short-circuits before this, which is why the filing flow works and only the download is dead.
 ```
-
-> **Verifier correction.** None substantive. Worth adding for the consumer: executionReport.ts:106 `hoursOf` returns 0 when durationHours is absent, so the Report's "Work hours" card renders 0/0 h on an imported schedule rather than silently substituting counts — the count-substitution happens in effectiveWeight, not in the hours card.
 
 **Done when.**
 
-- [ ] MS Project XML <Work> (PT#H#M#S) and <Duration> are parsed to hours and written to durationHours
-- [ ] P6 XML (PlannedDuration / RemainingDuration) and XER (target_drtn_hr_cnt / target_work_qty) populate durationHours
-- [ ] The Report's "Work hours" card is hidden or explicitly labelled "not supplied by this import" when plannedHours is 0, rather than printing 0 / 0 h
-- [ ] A parser test asserts a non-null durationHours on a fixture that carries work
+- [ ] filenames are emitted with RFC 5987 encoding (`filename*=UTF-8''…`) plus an ASCII-folded `filename=` fallback
+- [ ] renderFilename / uniqueFilenames strip or transliterate every code point > 0x7F before it reaches a header
+- [ ] the production record and audit row are written only after the response has been successfully constructed
+- [ ] a test renders two documents whose names contain an em dash and a CJK character and asserts a 200 with a parseable Content-Disposition
 
 ---
 
 <a id="xedge-3"></a>
 
-## XEDGE-3 · The approved baseline is writable and erasable by any active org member, can half-apply, is never shown on the timeline, and every batch move rewrites past it without a word
+## XEDGE-3 · The chunked restore is a universal, unaudited write primitive: audit_logs, e_signatures and document_acknowledgments are importable with fully client-authored content, and /apply-table writes no audit row at all
 
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/milestones.ts:1462-1502`, `lib/milestones.ts:1504-1514`, `supabase/migrations/20260614_phase7_milestones.sql (milestones_member_all policy)`, `supabase/migrations/20260706_milestones_baseline.sql:1-12`, `components/projects/TaskDetailPanel.tsx:480-483`, `components/projects/ScheduleTab.tsx:201-215`
-- **Also surfaced independently as** [`SCHED-3`](../projects-and-cost/02-scheduling.md#sched-3) — two lenses found this separately. Fix once.
+- **Locations:** `app/api/admin/restore/apply-table/route.ts:24,38-43,74-89`, `lib/exportTables.ts:53,67,130`, `lib/dataRestore.ts:86-93,249-251`, `app/api/admin/restore/apply/route.ts:214-224`, `app/api/admin/restore/begin/route.ts:78-85`
 
-**Mechanism.** Four gaps compound around the one artifact that represents the approved plan. (a) Authority: the RLS policy is `FOR ALL TO authenticated USING (active org member) WITH CHECK (active org member)` — both halves are present, but membership is the whole test, so any active member can write baseline_start_at / baseline_finish_at / baseline_set_at directly. The role gate lives only in the UI (`ADMIN_ROLES` at ScheduleTab.tsx:51) and only apply_milestone_moves has a data-layer role check. (b) Atomicity: setBaseline issues one UPDATE per row through `await Promise.all(rows.map(async (r) => {...}))` (:1480-1488) with no transaction; on partial failure it returns `ok: errors.length === 0` but leaves some rows baselined. `hasBaseline` is `milestones.some((m) => m.baselineFinishAt)` (ScheduleTab.tsx:201), so a half-applied baseline reads as "baselined", and executionReport computes drift over `leaves.filter((m) => m.baselineFinishAt)` (executionReport.ts:253) — a subset — while presenting it as the project envelope. (c) Audit: setBaseline logs SCHEDULE_BASELINED (:1490-1499); clearBaseline nulls all four columns for the whole project (:1509-1511) and logs nothing. It also has no caller — `grep -rn clearBaseline` over the repo returns only its definition, its doc comment and a prior audit's mutator census. (d) Re-baselining overwrites the previous snapshot in place; there is no baseline history table, so the prior approved plan is unrecoverable.
+**Mechanism.** `IMPORTABLE = new Set([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES])` (apply-table:24). ORG_SCOPED_TABLES includes `"e_signatures"` (exportTables.ts:53), `"document_acknowledgments"` (:67) and `"audit_logs"` (:130). The SKIP set that would refuse them contains only orgs, org_members, users, notification_preferences, subscriptions, push_subscriptions (dataRestore.ts:86-93). So a POST of `{table:"audit_logs", rows:[…], idRemap:{orgId,uid}}` upserts caller-authored rows straight through the service-role client (:77-86) with no per-table schema validation, no provenance flag marking the row as restored, and no cap beyond 1000 rows per call. The route's own security note — "the caller is an org Admin who fully controls the row content anyway" (:8-12) — is false for exactly these tables: e_signatures and document_acknowledgments are the app's evidence that a named human signed or acknowledged, and audit_logs is the tamper-evidence for everything else. Worse, the chunked path is silent: `grep -n audit_logs app/api/admin/restore/*/route.ts` returns ONE hit, apply/route.ts:130 (the single-shot path). /begin and /apply-table write nothing, and the single-shot path is documented as unusable at real size ("a real org's envelope JSON is tens of MB, far over the ~4.5MB request cap that broke the single-shot apply", begin:5-7).
 
-**Failure scenario.** A turnaround plan is baselined at kickoff. Two weeks in, a supervisor drags a phase and confirms the move; the drag path (computeTreeMove → withCascade → apply_milestone_moves) writes new planned dates for dozens of rows with no baseline comparison anywhere — the single-task edit form is the only surface that warns ("+7 days vs the approved plan", TaskDetailPanel.tsx:482), and `grep baselineFinishAt components/**/*.tsx` shows ExecutionView never reads the baseline at all, though the migration header promises "every view can show 'planned vs now'" (20260706:6-8). Later, "Re-baseline" is clicked (the same button, relabelled, behind one appConfirm at ScheduleTab.tsx:204-207) and the original approved plan is gone with a single audit row recording only a count.
+**Failure scenario.** An Admin (or anyone who has taken an Admin session) posts fabricated `e_signatures` and `document_acknowledgments` rows dated last quarter, and `audit_logs` rows attributing an approval to a controller who never made it — then posts a matching `documents`/`document_versions` slice so the record set is internally consistent. Nothing in the workspace records that a restore happened: the audit trail an OSHA/PSM auditor would read to detect the tampering is itself one of the tables that was written, and the write left no trace. Every downstream compliance surface (review sign-offs, acknowledgment coverage, the audit page) reports the fabricated state as fact.
 
 **Evidence.**
 
 ```
-lib/milestones.ts:1509-1511 verbatim — `const { error } = await supabase.from("milestones").update({ baseline_start_at: null, baseline_finish_at: null, baseline_set_at: null, baseline_set_by: null, }).eq("org_id", ...).eq("project_id", ...)` — followed directly by `if (error) return { ok: false, error: error.message }; return { ok: true };` with no logAuditAction, unlike setBaseline forty lines above. `grep -rn "baselineFinishAt|baselineStartAt" components/` returns four hits, all in TaskDetailPanel and ScheduleTab; ExecutionView, MovePreviewSheet and ScheduleCalendarTileView return none.
+app/api/admin/restore/apply-table/route.ts:38-43 `if (!table || !IMPORTABLE.has(table)) { … } if (isSkippedTable(table)) { … }` — the complete gate. lib/exportTables.ts:130 `"audit_logs",` sits inside ORG_SCOPED_TABLES (the array opens at :15 and closes at :161; USER_SCOPED is a separate const at :167). lib/dataRestore.ts:86-93 is the whole SKIP_TABLES map. Two searches for restore auditing (`grep -n audit_logs app/api/admin/restore/*/route.ts` and `grep -rn DATA_RESTORE app lib`) both return only apply/route.ts.
 ```
 
-**Chain reaction.** Combined with finding 1 (cascade rewriting completed rows), a baselined project can drift in ways that the drift report attributes to the wrong tasks, and the snapshot that would have proved the original plan can be erased without trace.
-
-> **Verifier correction.** Two clauses need trimming. (i) "never shown on the timeline" is true only of ExecutionView — baseline drift IS surfaced elsewhere: ScheduleTab.tsx:520-521 computes driftDays and renders a "+Nd vs plan" chip in the Planning list, and executionReport.ts:252-262 feeds a Baseline drift section of the Report. So the baseline is not invisible, it is absent from the Execution timeline/calendar specifically. (ii) clearBaseline's missing audit entry has no live consequence today: two searches (`grep -rn clearBaseline` over ts/tsx/md, and the setBaseline import census in ScheduleTab.tsx:27) show it is never called from any component or route — it is dead code, which is a defect of a different shape than the one described.
+**Chain reaction.** `export_destinations` is importable on the same path (exportTables.ts:157), and its encrypted credential columns decrypt with the single global EXPORT_ENCRYPTION_KEY — so a restore can install another workspace's S3 credentials into this one (see the export-secrets finding).
 
 **Done when.**
 
-- [ ] Setting or clearing a baseline requires the same role check apply_milestone_moves enforces, at the data layer
-- [ ] clearBaseline writes an audit entry naming the project and row count, or is deleted along with its doc comment
-- [ ] setBaseline applies as one statement (or RPC) so it cannot half-apply, and a partial baseline is reported to the user
-- [ ] A batch move that pushes any row past its baseline finish says so in the move-confirmation sheet, the way the single-task form already does
+- [ ] audit_logs, e_signatures, document_acknowledgments, document_review_signoffs and download_audits are added to SKIP_TABLES (or restored into a quarantined `restored_*` shadow set), matching the reasoning already applied to `subscriptions`
+- [ ] /begin and /apply-table each write a DATA_RESTORE audit row naming the table and row count, and that row is written by a path the restore cannot itself overwrite
+- [ ] restored rows carry a `restored_from_backup_at` provenance column surfaced everywhere signatures and acknowledgments are displayed
+- [ ] a test asserts POST /apply-table with table "audit_logs" returns 400
 
 ---
 
 <a id="xedge-4"></a>
 
-## XEDGE-4 · apply_milestone_moves skips its entire authorization block whenever auth.uid() is NULL, and SECURITY DEFINER means RLS does not backstop it
+## XEDGE-4 · The export retention purge lists and deletes the customer's ENTIRE bucket when no prefix is set — it deletes by age, not by whether the object is one of ours
 
 - **Severity:** HIGH
 - **Status:** OPEN
-- **Verification:** SUSPECTED
-- **Locations:** `supabase/migrations/20260907_milestone_batch_move.sql:20-47`, `supabase/migrations/20260907_milestone_batch_move.sql:49-59`, `lib/milestones.ts:303-307`, `supabase/migrations/20260614_phase7_milestones.sql (milestones_member_all)`
-- **Also surfaced independently as** [`SCHED-4`](../projects-and-cost/02-scheduling.md#sched-4) — two lenses found this separately. Fix once.
+- **Verification:** CONFIRMED
+- **Locations:** `lib/exportRunner.ts:257-265`, `lib/exportRunner.ts:374-405`, `app/api/data-export/destinations/route.ts:122,134`
 
-**Mechanism.** The function is declared `LANGUAGE plpgsql SECURITY DEFINER SET search_path = public` (:20) — so it executes as the owner and RLS on `milestones` does not apply to its UPDATEs. Its own guard is the only authorization, and it opens with an unconditional escape: `IF v_uid IS NULL THEN /* service role: trusted server code */ NULL; ELSE ... END IF;` (:29-32). `auth.uid()` returns NULL for the anon role as well as for the service role — the anon key ships to the browser as NEXT_PUBLIC_*, and PostgREST exposes RPCs to anon by default. Nothing in this migration REVOKEs EXECUTE (the file is 63 lines and contains no GRANT/REVOKE), while sibling migrations that use the same shape at least test the role explicitly (20261011_collections_guard_and_trash.sql:47 — `IF auth.role() = 'service_role' OR auth.uid() IS NULL`). The role check that is skipped is the only place schedule-editing authority is enforced at the data layer: `v_roles && ARRAY['Admin','DocCtrl','Manager','Supervisor'] OR v_owner = v_uid::text` (:41-46).
+**Mechanism.** After a successful push, `if (dest.retention_days && dest.retention_days > 0) { … s3PurgeOlderThan({ dest, prefix: dest.prefix || "", keepDays: dest.retention_days }) }` (:258-264). In s3PurgeOlderThan the empty prefix becomes no filter at all: `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+$/g, "") + "/" : undefined` (:386) — ListObjectsV2 with `Prefix: undefined` enumerates the whole bucket, paging until exhausted (:383-395). The only test applied to each object is age: `if (obj.Key && obj.LastModified && obj.LastModified < cutoff) toDelete.push({ Key: obj.Key })` (:389-391). There is no check that the key matches the export filename pattern built at :239-244, no check that it is a .zip, and no cap on how many objects may be deleted — they are deleted 1000 at a time (:398-404). Both `prefix` and `retention_days` are free-form fields the create route stores verbatim (destinations/route.ts:122,134) with no validation that a retention policy requires a prefix.
 
-**Failure scenario.** An unauthenticated request carrying the public anon key calls `rpc('apply_milestone_moves', {p_org, p_project, p_moves})`. v_uid is NULL, the membership lookup and the role check are both skipped, and the loop rewrites planned_start_at/planned_at on every id supplied, with `updated_by = NULL`. The caller needs the org, project and milestone UUIDs, which bounds the practical exposure — but a member who has legitimately seen those ids (any active org member, including a Viewer whose UI is read-only) can replay them with no session at all and move a baselined turnaround schedule. The role gate that exists in the UI (`ADMIN_ROLES` in components/projects/ScheduleTab.tsx:51) is a display gate only.
+**Failure scenario.** An admin points a backup destination at an existing corporate bucket (`s3://acme-eng-archive`) without filling in the optional Prefix field, and sets Retention to 30 days because that is what their policy says. The first scheduled run at 05:00 UTC uploads the ZIP, then enumerates the whole bucket and permanently deletes every object last modified more than 30 days ago — the customer's own archived P&IDs, vendor packages and anything else living there. The run is recorded as `succeeded` (run-scheduled/route.ts:119-131) because the purge is wrapped in `.catch((e) => step("s3:retention:err", …))` (:264) and never fails the run.
 
 **Evidence.**
 
 ```
-Migration text, verbatim: `IF v_uid IS NULL THEN\n    -- service role: trusted server code\n    NULL;\n  ELSE` (20260907_milestone_batch_move.sql:29-32), inside a function declared `SECURITY DEFINER` at :20. `grep -rn "REVOKE|GRANT EXECUTE" supabase/migrations/` lists ten migrations; 20260907_milestone_batch_move.sql is not among them. SCH-7 in audit-reports/projects-tab/06-schedule-engine.md examines this same function for concurrency (no optimistic lock, v_count counts attempted not affected rows) and does not raise the authorization escape; the roles-and-permissions report establishes the hardcoded ["Admin","DocCtrl",...] vocabulary pattern that :42 also repeats.
+lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+$/g, "") + "/" : undefined,` and :389-391 `for (const obj of out.Contents ?? []) { if (obj.Key && obj.LastModified && obj.LastModified < cutoff) { toDelete.push({ Key: obj.Key }); } }`. Contrast the same file's care on the write side — the read-back verify at :362-371 refuses to call a truncated upload a backup. Two searches for a guard (`grep -n "prefix" lib/exportRunner.ts` and `grep -rn "retention_days" app lib`) return only the storage, the schedule UI field, and these two call sites; nothing validates the pair.
 ```
-
-> **Verifier correction.** Downgraded to SUSPECTED on verification only. The final link — that the anon role actually holds EXECUTE on this function — is a database grant that cannot be read from the repo; it rests on Supabase's default privileges, inferred (strongly) from the fact that eight sibling functions bother to revoke from anon explicitly. Also note the `auth.uid() IS NULL` escape is a repo-wide idiom (20260901_db_hard_enforcement.sql:112/156/168, 20260831_capability_policy_and_rails.sql:49/84, 20261011_collections_guard_and_trash.sql:47), so this is a systemic pattern rather than a one-off oversight — but this function is the only one of that set that both skips the check AND is directly RPC-callable with attacker-controlled org/project/date arguments.
 
 **Done when.**
 
-- [ ] The NULL-uid branch tests auth.role() = 'service_role' explicitly rather than treating any absent uid as trusted
-- [ ] EXECUTE on apply_milestone_moves is revoked from anon (and from public) and granted only to authenticated
-- [ ] A test or manual probe with the anon key and no session receives 42501, not a successful move
+- [ ] a retention policy is refused unless a non-empty prefix is set, and the purge hard-fails on an empty prefix instead of defaulting to the bucket root
+- [ ] deletion candidates are additionally matched against the `manufacturing-os-export-…zip` name pattern this app writes
+- [ ] the purge reports the delete count into `export_runs.diagnostics` and a purge that would delete more objects than the app has ever written to that destination aborts
+- [ ] a test asserts s3PurgeOlderThan with prefix "" performs no ListObjectsV2 call
 
 ---
 
 <a id="xedge-5"></a>
 
-## XEDGE-5 · cascadeDependents and sequenceSiblings rewrite the planned dates of COMPLETED work, contradicting the module's own "actuals never move" contract
+## XEDGE-5 · The printed transmittal cover sheet's QR and the emailed portal link are built from window.location.origin — the exact failure lib/publicOrigin.ts exists to prevent, on the one artifact that leaves the site
 
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleReflow.ts:38-43`, `lib/scheduleReflow.ts:49-52`, `lib/scheduleReflow.ts:345-363`, `lib/scheduleReflow.ts:433-447`, `lib/scheduleReflow.ts:159-168`, `lib/__tests__/scheduleReflowLocks.test.ts:56-92`
-- **Also surfaced independently as** [`SCHED-5`](../projects-and-cost/02-scheduling.md#sched-5) — two lenses found this separately. Fix once.
+- **Locations:** `lib/transmittals.ts:389-393`, `lib/transmittals.ts:278`, `lib/transmittals.ts:309-321`, `lib/publicOrigin.ts:1-22`, `lib/docPack.ts:104-105`, `app/api/share/file/route.ts:114-116`
 
-**Mechanism.** The module header states the rule as absolute: "Locked tasks are never moved by reflow / cascade / sequencing — exactly like MS Project and Primavera, where actuals don't reschedule themselves" (lib/scheduleReflow.ts:39-43). computeTreeMove honours it per node — `for (const sid of subtree) { if (!isLeaf(sid)) continue; if (isLocked(byId.get(sid))) continue; ...}` (:160-161). The other two engines check the lock only on the node they are steering, then move its whole subtree unconditionally. cascadeDependents tests the successor — `if (isLocked(s)) continue;` (:349) — and then shifts every descendant with no lock test at all: `const delta = req - curStart; for (const t of subtreeOf(sid)) { start.set(t, start.get(t)! + delta); finish.set(t, finish.get(t)! + delta); }` (:357-361). sequenceSiblings tests the direct child — `if (isLocked(kid)) { cursor = Math.max(...); continue; }` (:436) — then shifts `subtreeOf(kid.id)` wholesale (:441-444). Any completed task that is a grandchild rather than a child of the steered node is moved.
+**Mechanism.** `export function transmittalPortalUrl(token: string): string { const origin = typeof window !== "undefined" ? window.location.origin : ""; return `${origin}/transmittal/${token}`; }` (transmittals.ts:390-393). Both external consumers use it: `sendTransmittalEmail` embeds it in the email body sent to the recipient (:278 → renderTransmittalEmail → queueExternalEmail :280-289), and `openTransmittalSheet` encodes it into the QR printed on the cover sheet — `portalUrl = transmittalPortalUrl(t.portalToken); … qrDataUrl = await toDataURL(portalUrl, …)` (:309-317). lib/publicOrigin.ts:6-15 states the contract these two violate: "those URLs get scanned by phones in the field, often with no session… `window.location.origin` is wrong whenever the person generating the print is on a preview/branch deploy — Vercel gates those behind its own login, so the scan dead-ends on a Vercel auth screen instead of the verify page." The stamped-PDF paths do it correctly (docPack.ts:104-105, share/file/route.ts:114-116, MultiDocViewer.tsx:724-725, FullScreenViewer.tsx:1015-1016), so this is a deviation from an established, working discipline, not an unbuilt feature.
 
-**Failure scenario.** A phase "Weld spool 12" has three sub-steps; "Fit-up" was completed on 2 Jan and stamped with its actual. "Weld spool 12" depends on an upstream task that slips nine days. The cascade pushes the phase forward and drags the completed fit-up's planned window from 2–3 Jan to 11–12 Jan. The batch persists through apply_milestone_moves in one transaction. The task now reads: planned 11 Jan, actual_at 2 Jan — a completed inspection whose plan sits nine days after it was performed. Baseline drift, SPI, the pace card and the printable end-of-job report all recompute from the rewritten plan, and nothing in the UI marks the row as having been moved after completion. Sequencing a phase produces the same rewrite for any completed grandchild.
+**Failure scenario.** A document controller working from a preview deployment (or any non-canonical host) issues a transmittal to a contractor and prints the cover sheet. The QR encodes `https://mfgos-git-branch-x.vercel.app/transmittal/<token>`. The contractor scans it at the gate and lands on a Vercel login wall; the electronic acknowledgment is never made, so the org's proof that the drawing package was received — the entire point of the portal token — does not exist, while the transmittal record shows it was issued and emailed. The emailed link fails identically. Server-side rendering makes it worse: with `typeof window === "undefined"` the function returns `"/transmittal/<token>"`, a bare path in an outbound email.
 
 **Evidence.**
 
 ```
-Executed against the real module (scratch copy, node --experimental-strip-types). Input: a→b (FS), b1 a COMPLETED child of b, b1 planned 2026-01-02→01-03.
-cascadeDependents(nodes, ["a"]) returned:
-  [{"id":"b","plannedStartAt":"2026-01-11...","plannedAt":"2026-01-12..."},
-   {"id":"b1","plannedStartAt":"2026-01-11T00:00:00.000Z","plannedAt":"2026-01-12T00:00:00.000Z"}]
-b1 is `status: "completed"` and moved nine days. sequenceSiblings with a completed grandchild b1 likewise emitted `{"id":"b1","plannedStartAt":"2026-03-03T00:00:00.000Z"}`. The lock test file covers only direct nodes: "a completed predecessor stays, and shields its successor" (scheduleReflowLocks.test.ts:70) and "sequences the open steps around the locked one" (:86) — both fixtures are flat, so the hole is invisible to the suite.
+lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.location.origin : "";`. The same repo, same class of artifact, done right: lib/docPack.ts:104-105 `verifyUrl: versionId && publicOrigin() ? `${publicOrigin()}/verify/${String(d.id)}?v=${versionId}` : undefined`. Two searches scope the deviation: `grep -rn "publicOrigin()"` returns 9 call sites (requests page, share/file, docPack, physicalBridge, downloads, the two viewers, FileReferenceModal, RelatedPanel); `grep -rn "location.origin"` returns the outbound-URL builders that skipped it — transmittals.ts:390, ShareLinkModal.tsx:81 (external share links), IntakePanel.tsx:273 and QuotesPanel.tsx:559,587 (contractor /submit links), and documents/[libraryId]/page.tsx:748,2962 (the copyable /d/ short links that RelatedPanel.tsx:112 builds with publicOrigin).
 ```
-
-**Chain reaction.** The rewritten dates feed executionReport's baseline drift (lib/executionReport.ts:258-266), which counts the completed row as "slipped" and inflates finishDriftDays; that number is printed in the end-of-job report as the record of schedule performance.
-
-> **Verifier correction.** None. Quoted code appears verbatim at the cited lines and the runtime behaviour reproduces.
 
 **Done when.**
 
-- [ ] cascadeDependents skips locked nodes inside a shifted subtree, not just the successor itself
-- [ ] sequenceSiblings skips locked descendants, not just the direct child
-- [ ] A test fixture places a completed task one level below the node being cascaded and below the node being sequenced, and asserts it does not appear in the change set
-- [ ] A row whose actual_at is set can never receive a planned-date change from a batch engine
+- [ ] transmittalPortalUrl, ShareLinkModal's baseUrl, the /submit link builders and the /d/ copy actions all use publicOrigin()
+- [ ] publicOrigin() throws (or the caller refuses to print/email) when NEXT_PUBLIC_SITE_URL is unset on the server, instead of returning ""
+- [ ] a test asserts transmittalPortalUrl returns an absolute NEXT_PUBLIC_SITE_URL-rooted URL with window undefined
 
 ---
 
 <a id="xedge-6"></a>
 
-## XEDGE-6 · A multi-project P6 export merges every project's activities into the one target project — no proj_id filter exists on either P6 path
+## XEDGE-6 · The service worker caches authenticated document bytes and signed-URL JSON in a device-wide cache that survives sign-out, ignoring Cache-Control: no-store
 
-- **Severity:** MEDIUM
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleParsers.ts:349-365`, `lib/scheduleParsers.ts:383-413`, `lib/scheduleParsers.ts:479-502`, `lib/scheduleParsers.ts:527-557`
-- **Also surfaced independently as** [`SCHED-6`](../projects-and-cost/02-scheduling.md#sched-6) — two lenses found this separately. Fix once.
+- **Locations:** `public/sw.js:114-120`, `public/sw.js:156-177`, `public/sw.js:203-220`, `app/api/share/file/route.ts:145-151`, `app/api/storage/download-url/route.ts:144-153`
 
-**Mechanism.** Both P6 parsers harvest globally. The XML path takes `Array.from(doc.getElementsByTagNameNS("*", "WBS"))` (:349) and `Array.from(doc.getElementsByTagNameNS("*", "Activity"))` (:383) across the whole document, which for an EPS-level or multi-project export contains several `<Project>` elements. The XER path reads the TASK and PROJWBS tables whole (:465-502, :535) and resolves columns by name — `const tId = col(task, ["task_id"]); ... const tWbs = col(task, ["wbs_id"])` (:527-532) — never touching `proj_id`, which every XER TASK row carries (the repo's own test fixture includes it: lib/__tests__/scheduleParsers.test.ts:120-122 has `proj_id` in the %F header and `100` in each %R row). `grep -n "proj_id" lib/scheduleParsers.ts` returns nothing but `proj_node_flag`. Each project's PROJWBS root is flagged `proj_node_flag='Y'` and is given a null parent (:489-497), so the merged result is several disconnected roots in one board with no indication they came from different projects.
+**Mechanism.** The fetch handler intercepts every same-origin GET that is not an RSC payload (sw.js:122-154). Both remaining branches write to Cache Storage: navigations `cachePut(RUNTIME_CACHE, request, res)` (:162) and everything else `cachePut(RUNTIME_CACHE, request, res)` (:211). `cachePut` (:116-120) gates only on `response.ok` — it never inspects Cache-Control, so `/api/share/file`'s explicit `"Cache-Control": "no-store"` (share/file/route.ts:149) is ignored and the stamped controlled PDF is written to disk. `/api/storage/download-url` responses are cached the same way, and that route mints a presigned R2 URL whose lifetime the caller chooses with no upper bound: `const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");` (download-url:144). Cache entries are keyed by URL and matched without regard to request headers (no Vary is set), and the only cache eviction in the codebase is the VERSION sweep in `activate` (sw.js:52-65) — `grep -rn "caches\." app components lib` returns exactly one hit, in lib/__tests__/sw.test.ts:114, and none of the five `supabase.auth.signOut()` call sites (app/(protected)/profile/page.tsx:78, app/(protected)/layout.tsx:99, app/page.tsx:225, components/navigation/Sidebar.tsx:293, components/subscription/SubscriptionGate.tsx:109) clears it.
 
-**Failure scenario.** A scheduler exports from P6 at the EPS node — the usual way to get "the outage" when it spans two units — or simply exports a file that still contains a second project. Every activity from both projects imports into the one selected project. The board now shows another unit's work as top-level phases; overall percent complete, SPI, the critical path, the overdue count and the health score are all computed over a schedule that is partly someone else's. Nothing in the import preview says how many projects the file contained.
+**Failure scenario.** A shared field tablet in Field Mode. A supervisor opens a share link for Rev C of a line drawing; the stamped PDF lands in RUNTIME_CACHE. The share is later revoked and the drawing superseded by Rev D. Out in the unit with no signal, anyone holding the tablet re-opens that URL: the network-first fetch fails and sw.js:167-172 (navigation) or :214-215 (sub-resource) returns the cached Rev C from disk — a revoked, superseded drawing served to a worker with only a footer that says "at time of download". The same mechanism keeps a cached `/api/storage/download-url` JSON payload, so a signed URL issued to user A is replayable by user B for its full lifetime once signal returns — a lifetime user A could have set to a week.
 
 **Evidence.**
 
 ```
-`grep -rn "proj_id" lib/scheduleParsers.ts` → no matches (only `proj_node_flag` at :485/:489). The document-wide selectors are verbatim at :349 and :383; the XER column resolution at :527-533 lists task_id, task_name, task_code, wbs_id, dates and percent — no project column.
+public/sw.js:117 `if (!response || !response.ok || response.type === "opaque") return;` — the whole cacheability decision. app/api/share/file/route.ts:145-151 sets `"Cache-Control": "no-store"` on the PDF the SW stores anyway. The header comment at sw.js:15-17 claims "Deliberately NOT cached: cross-origin requests (Supabase, R2 signed URLs, Stripe, fonts)" — true of the R2 fetch itself, false of the same-origin JSON that CONTAINS the signed URL and of the same-origin route that streams the PDF bytes.
 ```
 
-> **Verifier correction.** None. Consequence severity depends on the user exporting an EPS-level or multi-project XER/XML, which is a user-controlled precondition, not a defect precondition — MEDIUM is the right level.
+**Chain reaction.** Compounds the already-reported share-link weaknesses (intelligence DACL: any member can mint a token for any document): a cached copy outlives the revocation that is the only kill switch those links have.
 
 **Done when.**
 
-- [ ] The parsers detect more than one project in the file (multiple PROJECT rows / <Project> elements) and either ask which to import or report the count
-- [ ] Rows are filtered to the chosen project's proj_id / Project ObjectId
-- [ ] A fixture with two projects asserts only one project's activities are returned
+- [ ] `cachePut` refuses any response whose Cache-Control contains no-store/private, and refuses `/api/` paths that are not explicitly allow-listed as cacheable
+- [ ] sign-out (all five call sites) posts a message to the worker that deletes RUNTIME_CACHE, and the worker clears it on `clients.claim` when the session identity changes
+- [ ] `/api/storage/download-url` caps `expiresIn` server-side (e.g. 900s) instead of trusting the query parameter
+- [ ] a sw.test.ts case asserts a `no-store` response is never written to the cache
 
 ---
 
 <a id="xedge-7"></a>
 
-## XEDGE-7 · A phase whose tasks are all MISSED rolls up as "planned, 0%" — missed is the one exception state that never bubbles
+## XEDGE-7 · Scheduled full-database exports keep firing for canceled workspaces and for destinations whose creator has been removed — the cron checks neither subscription nor membership
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleProgress.ts:55-64`, `lib/scheduleProgress.ts:110-118`, `lib/scheduleProgress.ts:139-146`, `lib/__tests__/scheduleProgress.test.ts:46-50`
-- **Also surfaced independently as** [`SCHED-7`](../projects-and-cost/02-scheduling.md#sched-7) — two lenses found this separately. Fix once.
+- **Locations:** `app/api/data-export/run-scheduled/route.ts:60-66,106-115`, `lib/serverAuth.ts:69-98`, `app/api/stripe/webhook/route.ts:80-95`, `components/subscription/SubscriptionGate.tsx:41-48`
 
-**Mechanism.** deriveSummaryStatus tallies four things and returns in a fixed order: `if (t.total === 0) return "planned"; if (t.done === t.total) return "completed"; if (t.blocked > 0) return "blocked"; if (t.onHold > 0) return "on_hold"; if (t.started > 0) return "in_progress"; return "planned";` (:58-63). There is no `missed` counter — the Agg interface carries `done, blocked, onHold, started` only (:78-80) and the leaf branch only increments blocked/onHold (:116-117). A missed leaf contributes done 0, blocked 0, onHold 0, and started 0 (since `started: p > 0 ? 1 : 0` and leafPercent for a missed task with no logged progress is 0). The function's own comment claims the opposite intent: "anything blocked/on-hold bubbles up so it can't hide" (:53-54) — missed hides.
+**Mechanism.** The daily sweep selects purely on destination state: `.eq("enabled", true).not("next_run_at","is",null).lte("next_run_at", nowIso).limit(50)` (:60-66), then builds and delivers the full org export with the service role (:107-115). No org, subscription or membership predicate exists in the file. Cancellation only writes `subscription_status: "canceled"` on the org (webhook:84-87); nothing disables destinations, and the two enforcement points are inert — `assertOrgHasAccess` has zero callers (already reported as roles-and-permissions SURF-15) and SubscriptionGate hardcodes `const ENFORCE = false;` (SubscriptionGate.tsx:41-48). Removing a member likewise touches nothing: destinations carry only `created_by`/`updated_by` (destinations/route.ts:135-136) and no route re-validates them.
 
-**Failure scenario.** A night-shift phase contains four hydrotest tasks; the shift is lost and all four are marked `missed`. The phase row on the timeline, the calendar tile and the planning list renders with the blue "Planned" dot at 0% — visually identical to work that has not started yet. Collapse the phase (the default for a 500-row turnaround) and the missed work is invisible: SchedulePulse surfaces overdue and blocked (components/projects/SchedulePulse.tsx:31-34) but the summary row itself claims nothing is wrong. The count is not lost everywhere — executionReport tallies `missed` separately (lib/executionReport.ts:150) — but the hierarchy the board is read through says "planned".
+**Failure scenario.** Edge traced end to end: an org cancels. `customer.subscription.deleted` sets status canceled. Every night at 05:00 UTC the cron still builds a complete export of that workspace — all tables plus embedded binaries under a 1.5GB cap — and pushes it to whatever bucket or webhook is on file. If the person who configured that destination is the departed engineer whose account was deactivated months earlier, their private bucket keeps receiving the plant's entire document-control database, including drawings, holds, signatures and audit logs, indefinitely and with no one in the org able to see the credentials (destinations/route.ts:56-65 masks them on read).
 
 **Evidence.**
 
 ```
-Executed against the real module: `deriveSummaryStatus({ total: 3, done: 0, blocked: 0, onHold: 0, started: 0 })` → `'planned'`. `buildProgressIndex([{id:'P'},{id:'k1',parentId:'P',status:'missed'},{id:'k2',parentId:'P',status:'missed'}]).get('P')` → `{ percent: 0, status: 'planned', isLeaf: false, leafDone: 0, leafTotal: 2 }`. The test suite pins the blocked/on-hold case ("blocked and on-hold bubble up; started = in progress", scheduleProgress.test.ts:50) and never constructs a missed leaf.
+app/api/data-export/run-scheduled/route.ts:60-66 is the complete selection predicate. `grep -rn "assertOrgHasAccess" app lib components` returns exactly one line — the definition at lib/serverAuth.ts:78 — and the comment at :75-77 ("data-export / data-portability routes intentionally do NOT call this — a lapsed workspace must always be able to get its data out") explains the interactive export but says nothing about an unattended recurring push.
 ```
-
-> **Verifier correction.** Severity lowered to MEDIUM. The missed state is not fully hidden: each missed LEAF still renders its own status (ScheduleTab.tsx:513 uses m.status for non-parents, and :522 gives missed rows a red tone), and computeScheduleMetrics counts them in byStatus.missed (milestones.ts:650/664). What is wrong is only the derived phase chip and the collapsed-phase reading — a real defect, but the underlying misses remain visible one level down. Also note the suite does pin the all-zero tally → 'planned' case at scheduleProgress.test.ts:55, it just never constructs a missed leaf, which is the finding's actual point.
 
 **Done when.**
 
-- [ ] Agg carries a missed counter and deriveSummaryStatus returns a state that surfaces it (ranked with blocked/on_hold)
-- [ ] STATUS_META already has a rose 'Missed' treatment (ScheduleProgress.tsx:34) — the summary row uses it
-- [ ] A test asserts an all-missed phase does not render as planned
+- [ ] the sweep skips destinations whose org fails org_has_active_subscription (the SQL helper already exists at supabase/migrations/20260713_document_publish_guard.sql:96-106), recording a skipped run rather than silently continuing
+- [ ] deactivating a member disables (or flags for re-confirmation) the destinations they created
+- [ ] the billing page and the destinations page show, per destination, when it last ran and who owns it
 
 ---
 
 <a id="xedge-8"></a>
 
-## XEDGE-8 · MS Project CSV predecessors are matched against whichever id column won the synonym race, so a file with both Unique ID and ID wires dependencies to the wrong tasks
+## XEDGE-8 · The Growth-plan gate on cloud backup destinations is enforced on create only — PATCH can add the bucket afterwards
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleParsers.ts:579-590`, `lib/scheduleParsers.ts:634-648`, `lib/scheduleParsers.ts:686-701`, `lib/scheduleParsers.ts:710`, `lib/milestones.ts:1090-1099`
-- **Also surfaced independently as** [`SCHED-8`](../projects-and-cost/02-scheduling.md#sched-8) — two lenses found this separately. Fix once.
+- **Locations:** `app/api/data-export/destinations/route.ts:81-95`, `app/api/data-export/destinations/[id]/route.ts:49-56`
 
-**Mechanism.** The id column is resolved by first-match synonym order: `id: ["unique id", "uid", "id", "task id"]` (:585), and `findCol` returns the first candidate present (:634-637) — so in an export containing both columns, externalRef becomes `msp:<Unique ID>` (:710). The Predecessors column, however, contains MS Project's **ID** (the outline position), not Unique ID. The parser takes the leading digits of each token and emits refs in the same namespace regardless: `.map((tok) => tok.trim().match(/^\d+/)?.[0]) ... dependsOnExternalRefs = predIds.map((p) => \`${refTag}:${p}\`)` (:696-699). The comment directly above claims this case is handled: "Only resolvable when the file has an id column (so refs line up); otherwise they're left for the user to wire up manually rather than mis-linked" (:689-691) — the guard it describes (`iPred >= 0 && iId >= 0`, :692) tests only that *an* id column exists, not that it is the same numbering the Predecessors column uses. The importer's pass 3 then resolves whatever matches and silently drops the rest: `.map((ref) => refToId.get(ref)).filter((x): x is string => !!x && x !== id)` (milestones.ts:1095-1097).
+**Mechanism.** POST gates on the plan, but only when the create body already carries a bucket: `if (body.bucket) { … const allowed = plan === "growth" || plan === "enterprise" || status === "trialing"; if (!allowed) return 402 }` (route.ts:83-94). PATCH has no plan lookup at all — it copies a fixed field list, `bucket` among them, straight into the update: `const fields: (keyof DestinationPatchBody)[] = ["name", "destination_type", "enabled", "endpoint", "region", "bucket", …]; for (const f of fields) if (f in body) updates[f] = body[f];` ([id]/route.ts:49-55). Credentials are equally patchable (:59-67).
 
-**Failure scenario.** A planner exports a schedule from MS Project with both Unique ID and ID columns (the default when both are on the Gantt). Rows key on Unique ID; predecessor tokens are IDs. In a file that has been edited over time the two numberings diverge, so `msp:14` as a predecessor resolves to whatever task holds Unique ID 14 — a real, unrelated task. The board draws a confident FS arrow between them, cascadeDependents reschedules against it, and the wrongly-linked pair looks exactly like a correct one. Where no match exists the link is dropped with no warning, so the import result reports neither the mis-links nor the losses.
+**Failure scenario.** A Starter-plan org creates a webhook or bucket-less destination (passes, no gate), then PATCHes it with `{bucket, endpoint, region, access_key_id, secret_access_key, schedule_kind:"daily"}`. It now has a fully functional scheduled S3/R2 backup — the paid Growth feature — and the nightly cron (run-scheduled) never re-checks the plan either.
 
 **Evidence.**
 
 ```
-lib/scheduleParsers.ts:585 verbatim: `id:       ["unique id", "uid", "id", "task id"],` against :589 `pred:     ["predecessors", "predecessor", "preds"],`. The suite's fixture has only an `ID` column, so the two numberings coincide (lib/__tests__/scheduleParsers.test.ts:137-147). Adjacent to but distinct from SCH-3 in audit-reports/projects-tab/06-schedule-engine.md, which flags Unique ID vs ID as a row-matching/overwrite hazard; this is the dependency-edge consequence.
+app/api/data-export/destinations/route.ts:83 `if (body.bucket) {` … :88 `const allowed = plan === "growth" || plan === "enterprise" || status === "trialing";`. `grep -n "subscribed_plan\|subscription_status" app/api/data-export/destinations/[id]/route.ts app/api/data-export/run-scheduled/route.ts` returns nothing — two of the three write/execute paths for the same feature have no plan check.
 ```
-
-> **Verifier correction.** Add the trigger condition explicitly: MS Project's default CSV export map ships ID (not Unique ID), so the two numberings coincide and nothing goes wrong on a stock export — the mis-wire needs a customized export map that includes Unique ID, or one that includes Unique ID instead of ID. That makes the code path certain but the field occurrence conditional. The suite's single-ID fixture (scheduleParsers.test.ts:137-147) is as described.
 
 **Done when.**
 
-- [ ] When both Unique ID and ID are present, predecessors are resolved through the ID column (or the row key is switched to ID for dependency purposes only) — the two must agree
-- [ ] Unresolvable predecessor tokens are counted and reported in the import warnings rather than dropped
-- [ ] A CSV fixture with divergent Unique ID and ID columns asserts the links land on the right rows
+- [ ] the plan gate is a shared helper called by POST, PATCH and the scheduled runner
+- [ ] the runner skips (and records) destinations whose org no longer holds the entitlement
+- [ ] a test PATCHes a bucket onto a Starter org's destination and asserts 402
 
 ---
 
 <a id="xedge-9"></a>
 
-## XEDGE-9 · Shift (day/night) is derived by parsing an offset-less imported datetime as browser-local, then frozen — so it is wrong by the importer's UTC offset and never follows the task
+## XEDGE-9 · The export SSRF guard validates the URL it is given and then hands the request to fetch, which follows redirects — and resolves DNS separately from the connection
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/milestones.ts:902-910`, `lib/milestones.ts:975`, `lib/scheduleParsers.ts:911-914`, `lib/scheduleFilter.ts:104`, `lib/scheduleFilter.ts:26-27`
-- **Also surfaced independently as** [`SCHED-9`](../projects-and-cost/02-scheduling.md#sched-9) — two lenses found this separately. Fix once.
+- **Locations:** `lib/exportRunner.ts:58-76`, `lib/exportRunner.ts:308-313`, `lib/exportRunner.ts:429-438`, `lib/exportRunner.ts:247,412`
 
-**Mechanism.** coerceIso normalizes a date-only value to UTC (`return \`${trimmed}T00:00:00Z\`;`, scheduleParsers.ts:914) but returns a datetime verbatim, offset and all: `if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed;` (:913). MS Project XML writes local wall-clock times with no offset (`<Start>2026-06-01T08:00:00</Start>` — the repo's own fixture, scheduleParsersXml.test.ts:29), so the string that reaches the importer has no zone. shiftFromStart then parses it with `const d = new Date(plannedStartIso); ... const h = d.getUTCHours(); return (h >= 6 && h < 18) ? "day" : "night";` (milestones.ts:905-909). Per ES semantics a date-time string without an offset is parsed as **local**, so getUTCHours returns the hour shifted by the importing browser's offset. The value is written once at insert (`baseFields.shift = shiftFromStart(plannedStartIso);` :975) and no reflow, cascade, resize or rebase ever recomputes it — none of the date-moving paths touch the shift column.
+**Mechanism.** `assertSafeExternalUrl` parses the URL, blocks non-http(s), blocks literal private IPs and localhost/.internal, then does `const { address } = await lookup(host)` and rejects a private first address (:58-76). The subsequent calls are plain fetches with default redirect handling: the delivery POST at :308-312 `await fetch(dest.webhook_url, { method: "POST", headers, body: zipBytes … })` and the connection test at :433 `await fetch(dest.webhook_url, { method: "HEAD" })`. Nothing sets `redirect: "manual"`, so a destination on a perfectly public host that answers 307/308 with `Location: http://169.254.169.254/latest/meta-data/…` (or an RFC1918 address) is followed with the body intact and the guard never re-runs. Separately, `lookup()` returns one address and the connection re-resolves later, so a host with a short TTL alternating public/private records (DNS rebinding) passes the check and connects to the private address; multi-record hosts are only checked on the first address returned.
 
-**Failure scenario.** A planner in UTC+5:30 imports a schedule whose night-shift tasks start at 19:00 plant time. `new Date("2026-06-01T19:00:00")` is 13:30Z for that browser, so getUTCHours is 13 and the tasks are labelled "day". The night supervisor filters the board by Shift = night (scheduleFilter.ts:104) and the shift's work is missing. Because the label is stored, not derived, re-importing from a different machine produces different labels for the same file, and moving a task from a day slot to a night slot leaves the old label in place forever.
+**Failure scenario.** An Admin (or anyone with Admin/Manager/DocCtrl, per destinations ADMIN_ROLES) creates a webhook destination at a host they control that 307-redirects to an internal address. `testDestinationConnection` reports ok and the HTTP status of the internal service is echoed back in `{ ok:false, error: `Webhook returned HTTP ${r.status}` }` (:436) — a port/liveness oracle for the deployment's private network. On the scheduled run the whole org ZIP (every table plus embedded binaries) is POSTed to whatever the redirect names.
 
 **Evidence.**
 
 ```
-lib/milestones.ts:905-909 verbatim: `const d = new Date(plannedStartIso); if (isNaN(d.getTime())) return null; const h = d.getUTCHours(); return (h >= 6 && h < 18) ? "day" : "night";`. lib/scheduleParsers.ts:913 verbatim: `if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed;` — the only branch that does not attach a zone. The wall-clock-as-UTC storage convention is stated in components/projects/ScheduleProgress.tsx:180-181. Distinct from SCH-1 (which covers coerceIso's M/D vs D/M branch) and SCH-5/SCH-10 (overdue and rebase timezone handling).
+lib/exportRunner.ts:308-312 — the fetch with no `redirect` option, immediately after `await assertSafeExternalUrl(dest.webhook_url);` at :280. The module's own stated threat model at :31-36 is precisely what the redirect defeats: "a destination pointed at an internal address (e.g. 169.254.169.254 cloud metadata, localhost, RFC1918) would let an admin probe or reach internal infrastructure."
 ```
-
-> **Verifier correction.** "Wrong by the importer's UTC offset" overstates the visible effect. The stored VALUE is a day/night label, not an hour, so the classification only flips when the offset carries the start hour across the 06:00 or 18:00 boundary — an 08:00 start viewed from UTC-5 becomes 13:00 UTC and still reads "day". The realistic breakages are afternoon starts in western zones (13:00 local at UTC-5 → 18:00 UTC → "night") and evening starts in eastern ones. Also, shift is user-correctable after the fact: it is a MilestonePatch field (milestones.ts:203/224) with a select control at TaskDetailPanel.tsx:538 saved at :498 — so the value can be fixed by hand, it just is never recomputed automatically when the task moves.
 
 **Done when.**
 
-- [ ] coerceIso attaches Z to offset-less datetimes so the parsed value matches the wall-clock-as-UTC storage convention
-- [ ] shiftFromStart is computed from the same UTC reading the rest of the app uses, or shift becomes derived rather than stored
-- [ ] Moving a task's planned start across the 06:00/18:00 boundary updates or invalidates its shift
-- [ ] A test pins the shift assigned to an 08:00 and a 19:00 import under a non-UTC TZ
+- [ ] both fetches use `redirect: "manual"` and re-run assertSafeExternalUrl against any Location before following it (bounded hop count)
+- [ ] the resolved address is pinned for the connection (custom agent/lookup) so the checked address is the connected address
+- [ ] every address returned by DNS is checked, not just the first
+- [ ] the test route returns a boolean, not the upstream status code
 
 ---
 
 <a id="xedge-10"></a>
 
-## XEDGE-10 · The "critical path" walk includes tasks that have float, merges parallel chains, truncates at any gap over 14 days, and its remaining-hours figure ignores progress
+## XEDGE-10 · The full-org export dumps export_destinations' encrypted credential columns verbatim, and the restore path can re-import them into a different workspace where the same global key decrypts them
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/criticalPath.ts:56`, `lib/criticalPath.ts:63-79`, `lib/criticalPath.ts:81-85`, `components/projects/ExecutionReportView.tsx:86-87`, `components/projects/ExecutionView.tsx:1503-1504`
-- **Also surfaced independently as** [`SCHED-10`](../projects-and-cost/02-scheduling.md#sched-10) — two lenses found this separately. Fix once.
+- **Locations:** `lib/exportTables.ts:157,171-176`, `lib/dataExport.ts:31-32`, `app/api/data-export/destinations/route.ts:55-66`, `lib/exportRunner.ts:333-343`, `lib/serverCrypto.ts:22-31`
 
-**Mechanism.** Beyond ignoring the dependency graph (already reported as SCH-15), the walk itself is wrong on its own terms. The backward step takes a single global seam across the whole frontier — `const earliestStart = Math.min(...frontier.map(startMs));` (:64) — so two independent chains that happen to finish together are collapsed into one seam, and predecessors of chain A are pulled in as drivers of chain B. Candidate predecessors are anything finishing within the window `finishMs(m) <= earliestStart + slack && finishMs(m) >= earliestStart - 14 * 86400000` (:70), so a task with up to 14 days of float is labelled critical, while a genuine driver separated by more than 14 days — a long-lead material delivery, the most common true driver on a turnaround — fails the window and the walk stops (`if (preds.length === 0) break;` :74). Separately, remainingHours sums each chain task's full planned hours regardless of how much is already done: `if (m && typeof m.durationHours === "number") remainingHours += m.durationHours;` (:83-84), then renders as "{h}h remaining on the chain" (ExecutionReportView.tsx:87).
+**Mechanism.** `"export_destinations"` is an ORG_SCOPED_TABLE (exportTables.ts:157) and the exporter dumps whole rows with no column filtering — `grep -n "encrypted\|redact\|secret\|api_key" lib/dataExport.ts` returns nothing — so `access_key_id_encrypted`, `secret_access_key_encrypted` and `webhook_secret_encrypted` land in tables/export_destinations.json inside every backup ZIP and every /api/data-export/structured download. That contradicts the contract stated three lines below in the same file: ai_connections is excluded because it "holds live AI provider API keys — secrets never leave the database" (exportTables.ts:172-174), and the API surface for these same columns is careful — the destinations GET strips and masks them (destinations/route.ts:56-65). Decryption depends on a single deployment-wide `EXPORT_ENCRYPTION_KEY` (serverCrypto.ts:22-31), and `export_destinations` is importable through /api/admin/restore/apply-table, which forces only org_id (apply-table:54-58).
 
-**Failure scenario.** A supervisor turns on Critical path to decide where to put the extra crew. On a schedule with two parallel finishing chains, the highlight covers both, including a task with three days of float — so the crew is moved onto work that cannot pull the finish in. On a schedule whose true driver is an 8-week vendor delivery, that item is not highlighted at all, because its finish is more than 14 days before the seam. If hours are present, the badge overstates the work left: a 100-hour task logged at 90% still contributes 100h.
+**Failure scenario.** Org A's nightly backup ZIP is delivered to a shared/managed webhook or bucket, or an ex-admin keeps their last export. Whoever holds it now has org A's S3 credentials as ciphertext. On the same deployment, an Admin of org B posts those rows to /api/admin/restore/apply-table with table "export_destinations"; org_id is rewritten to B, but the ciphertext is unchanged and `buildS3ClientFromDestination` decrypts it with the shared server key (exportRunner.ts:334-340). Pressing Test on that destination confirms org A's credentials work, and org B can now write to — and, with retention_days set, delete from — org A's bucket, all from inside the product.
 
 **Evidence.**
 
 ```
-Executed against the real module. (a) Long-lead: leaves `order` (Jan 1–5) and `install` (Mar 1–10) → chain = `['install']`; the driver is dropped. (b) Parallel chains A1(Mar 1–5)→A2(Mar 6–10) and B1(Mar 8–9)→B2(Mar 9–10) → chain = `['A2','B1','B2','A1']`; A1, which has three days of float before A2, is on the path. (c) A single in_progress task, percentComplete 90, durationHours 100 → `remainingHours` = `100`. Cite audit-reports/projects-tab/06-schedule-engine.md SCH-15 for the underlying "ignores dependency edges" defect; these are the errors that remain even inside the heuristic's own model.
+lib/exportTables.ts:157 `"export_destinations",` inside ORG_SCOPED_TABLES vs :172-174 `ai_connections: "holds live AI provider API keys — secrets never leave the database; reconnect providers after a restore"`. lib/exportRunner.ts:334-335 `const accessKeyId = dest.access_key_id_encrypted ? decryptSecret(dest.access_key_id_encrypted) : "";`. Two searches confirm no redaction layer: `grep -n encrypted lib/dataExport.ts` (no hits) and `grep -rn "REDACT\|redactColumns" lib app` (no hits).
 ```
-
-> **Verifier correction.** Two calibrations. (i) The "up to 14 days of float" claim is weaker than stated: :76-77 narrows the 14-day candidate set to `preds.filter((m) => finishMs(m) >= latestPredFinish - slack)`, so only the latest-finishing candidates are added — float still gets in (scenario (b) demonstrates A1), but not arbitrarily up to 14 days. (ii) Substantial overlap with SCH-15, which already names "a 1-day slack / 14-day window" walk and prescribes either real CPM or a rename — a remediation that subsumes the seam and window complaints. The genuinely additive parts are the parallel-chain merge and the remainingHours-ignores-progress bug, neither of which SCH-15 mentions.
 
 **Done when.**
 
-- [ ] Either a real forward/backward CPM pass over dependsOn replaces the date walk, or the control is renamed to what it computes
-- [ ] If the heuristic is kept, the backward step follows each frontier task's own seam rather than one global minimum, and the 14-day cutoff is removed or justified
-- [ ] remainingHours multiplies each chain task's hours by (100 - leafPercent)/100, or the label stops saying "remaining"
+- [ ] the exporter blanks the three *_encrypted columns (or export_destinations joins ai_connections in EXPORT_EXCLUDED_TABLES with the same written reason)
+- [ ] export_destinations is added to SKIP_TABLES so a restore never installs credentials
+- [ ] secrets are encrypted with a per-org derived key, not one deployment-wide key
 
 ---
 
 <a id="xedge-11"></a>
 
-## XEDGE-11 · The drag path — the primary way dates move — writes no per-task reschedule breadcrumb, and its one batch audit row is fire-and-forget
+## XEDGE-11 · The render action accepts an unbounded document array and an arbitrary tag→value map, neither limited to the template's declared placeholders
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/milestones.ts:247-270`, `lib/milestones.ts:293-327`, `lib/milestones.ts:321-326`, `supabase/migrations/20260907_milestone_batch_move.sql:49-59`
-- **Also surfaced independently as** [`SCHED-11`](../projects-and-cost/02-scheduling.md#sched-11) — two lenses found this separately. Fix once.
+- **Locations:** `app/api/templates/generate/route.ts:66,317-339`, `lib/docxRender.ts:60-99`, `lib/outputTemplateText.ts:32,41-54`
 
-**Mechanism.** updateMilestone snapshots the prior finish and drops a note on the task's own activity trail — "Breadcrumb: record a reschedule on the task's own activity trail when the finish date actually moved (so 'what changed' shows moves, not just status flips)" (:258-260, note written at :264-268). applyMilestoneMoves does not: it calls the RPC, which updates rows directly in SQL (migration :50-57), and then writes a single audit row whose result is discarded on both branches — `.then(() => undefined, () => undefined)` (:326). So the path that moves dozens of rows per drag produces zero milestone_notes entries, and its only trace is an audit insert that reads as success whether or not it landed (the supabase-js `{error}`-not-throw pattern the audit-logger and ticket-write findings already established). The details payload also truncates: `ids: input.moves.map((m) => m.id).slice(0, 50)` (:325) — a cascade wider than 50 rows loses the rest. Note the fallback branch (:310-317) does go through updateMilestone and does write notes, so the trail exists only on databases where the RPC is missing.
+**Mechanism.** `MAX_ROWS_PER_CALL = 25` (:66) is applied only in the draft branch (`slice = sheetData.rows.slice(offset, offset + MAX_ROWS_PER_CALL)`, :162). The render branch takes `const docs = Array.isArray(body.documents) ? body.documents : [];` (:317) with no length check and loops `rendered.push({ name: names[i], bytes: renderTemplate(templateBytes, docs[i].values) })` (:333-335), holding every rendered file in memory before zipping (:380-382). `docs[i].values` is passed to docxtemplater untouched — nothing intersects it with `tpl.placeholders`, so any key/value pair the caller invents is injected. Separately, the placeholder detector cannot see raw-XML tags: `const TAG_RE = /\{([#^/]?)\s*([A-Za-z0-9_.\-]+)\s*\}/g;` (outputTemplateText.ts:32) admits `#`, `^`, `/` markers only, so a `{@field}` in an uploaded template is invisible in the reviewed placeholder spec while docxtemplater's raw-XML handling would still consume a caller-supplied value for it.
 
-**Failure scenario.** Someone asks why a hydrotest moved four days. The task's activity panel (listMilestoneNotes, :557-563) shows status changes only — no reschedule entries, because every move came through a drag. The project audit log holds one MILESTONES_RESCHEDULED row per drag with a count and up to 50 ids and no before/after dates, and if that insert was rejected by RLS or a transient error, nothing anywhere recorded the move. The prior notifications audit established that a slipped milestone date reaches no one at event time; this removes the after-the-fact trail as well.
+**Failure scenario.** Generation is deliberately open to every member (the Generate button is outside the isController guard, app/(protected)/output-templates/page.tsx:111 vs :141-144). A member posts 5,000 documents in one render call: the function renders 5,000 .docx in a loop and builds the zip in RAM until the 300s/​memory ceiling kills it — after the audit row and production record are written. The raw-XML variant is the sharper one: if any org template contains a `{@…}` tag (invisible to the analyze step's review UI), a caller supplies OOXML for it and the injected markup becomes part of a document that is then filed into document control as a draft revision on the company's own letterhead.
 
 **Evidence.**
 
 ```
-lib/milestones.ts:326 verbatim: `}).then(() => undefined, () => undefined);`. lib/milestones.ts:261-268 shows the note path that exists only in updateMilestone: `if (priorFinish && input.patch.plannedAt && priorFinish !== input.patch.plannedAt) { ... addMilestoneNote({... kind: "reschedule" ...})`. The RPC's UPDATE (20260907:50-57) writes planned_start_at/planned_at/updated_at/updated_by and nothing else.
+app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.documents) ? body.documents : []; if (docs.length === 0) return bad("Nothing to render.");` — the only check. lib/docxRender.ts:76-80 constructs Docxtemplater with `{ paragraphLoop: true, linebreaks: true, nullGetter: () => "" }` — no `errorLogging`, no tag allow-list, no module restriction. The raw-XML half is SUSPECTED (docxtemplater's runtime behaviour is not observable here — node_modules is not installed); the missing cap and the unfiltered value map are CONFIRMED from source.
 ```
-
-> **Verifier correction.** None. The audit row itself does still exist for a successful insert, so this is a trail-quality defect (no per-task breadcrumb, unverified insert, ids truncated at 50) rather than a total absence of record — which the finding states accurately.
 
 **Done when.**
 
-- [ ] A batch move records the before/after dates for each moved row (in the audit details or as milestone_notes), not just a count
-- [ ] The audit insert's error is surfaced or retried rather than swallowed
-- [ ] The 50-id truncation either goes away or is flagged in the row ("showing 50 of N")
+- [ ] render caps `documents.length` at the same MAX_ROWS_PER_CALL the draft path uses, and streams or slices the zip build
+- [ ] values are filtered to the template's declared placeholder tags before reaching renderTemplate
+- [ ] findPlaceholders recognises `@` raw-XML tags and the analyze UI flags them as unsafe, or renderTemplate is configured to refuse them
 
 ---
 
 <a id="xedge-12"></a>
 
-## XEDGE-12 · Three schedule numbers are presented as record when they are estimates, including in the printable end-of-job report and in a refusal message that promises a "true 1:1 copy"
+## XEDGE-12 · The server-side workbook parser is xlsx@0.18.5 — the last npm release, carrying unpatched prototype-pollution and ReDoS advisories — and it is reachable with an attacker-chosen bucket object
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleParsers.ts:144-152`, `components/projects/ExecutionReportView.tsx:70-78`, `components/projects/ExecutionView.tsx:723-731`, `components/projects/ExecutionView.tsx:1503-1504`, `lib/executionReport.ts:179-190`
-- **Also surfaced independently as** [`SCHED-12`](../projects-and-cost/02-scheduling.md#sched-12) — two lenses found this separately. Fix once.
+- **Verification:** SUSPECTED
+- **Locations:** `package.json:29`, `package-lock.json (node_modules/xlsx 0.18.5)`, `lib/xlsxData.ts:9,33`, `app/api/templates/generate/route.ts:131`
 
-**Mechanism.** (a) The MPP/MPX refusal message tells the user: "The XML import is a true 1:1 copy (every date, dependency, resource, and the full hierarchy)." (scheduleParsers.ts:151). It is not: relationship type and lag are discarded (SCH-8), durationHours is never populated (finding 3), the project-summary row is flattened (finding 4), calendars and working time are not modelled at all, and constraints/deadlines survive only as an attribute string (:290-293). (b) The Report's "Forecast finish" card prints a bare date in the largest type on the card (ExecutionReportView.tsx:72-77). Its basis is `const ratePerDay = tally.done / elapsedDays;` — completed *task count* over calendar days since the earliest planned start — with remaining also a task count (executionReport.ts:182-186). It ignores task size, dependencies and the critical path, and elapsedDays is measured from the plan, not from actual start; the module labels it "a naive forecast" internally (:14) and the card carries no qualifier. This is the surface described in its own header as "Print-friendly so it doubles as an end-of-job report". (c) The Report's critical-path panel does carry the caveat "heuristic — based on schedule shape, not dependency links" (ExecutionReportView.tsx:88); the Timeline surface, where the highlight is actually used to make crew decisions, carries none — the button reads "Critical path" with the tooltip "Highlight the unfinished tasks driving the finish date" (ExecutionView.tsx:727-729) and the legend asserts "On the critical path — drives the finish date" (:1503-1504).
+**Mechanism.** `"xlsx": "^0.18.5"` resolves to the npm-registry build 0.18.5 (confirmed in package-lock: `node_modules/xlsx 0.18.5 https://registry.npmjs.org/xlsx/-/xlsx-0.18.5.tgz`). SheetJS stopped publishing to npm after 0.18.5; the prototype-pollution fix (0.19.3) and the ReDoS fix (0.20.2) exist only on the vendor CDN, so `npm audit`-visible advisories against this package can never be satisfied by a registry bump. The single call site is server-side and reached before any file-ownership check: lib/xlsxData.ts:33 `const wb = XLSX.read(bytes, { type: "buffer", cellDates: true });`, called from app/api/templates/generate/route.ts:131 with bytes fetched from a caller-supplied key. `grep -rn "XLSX.read\|from \"xlsx\"" app lib components` returns exactly these two lines, so the blast surface is one function — which is also what makes it cheap to isolate.
 
-**Failure scenario.** An end-of-job report is printed and filed as the schedule record for a PSM-regulated outage. It states a forecast finish derived from average tasks-per-day, a percent-complete that is really a task count (finding 3), and — on the timeline the crew worked from — an unqualified "critical path". Separately, a planner who is refused an .mpp upload is told the XML route loses nothing, exports the XML, and does not check that his start-to-start links and cure-time lags survived.
+**Failure scenario.** Any active org member uploads a crafted workbook to their own output-data prefix (permitted by /api/storage/upload-url) and calls the draft action. The parse runs in the Next.js server runtime with the service-role Supabase client and R2 credentials in scope; a successful Object.prototype pollution in that process affects every subsequent request handled by the same warm instance, and the ReDoS path stalls a 300s-maxDuration function. Not observable from the repo — no runtime here — hence SUSPECTED, but the version and the reachable sink are both confirmed.
 
 **Evidence.**
 
 ```
-scheduleParsers.ts:151 verbatim: `... The XML import is a true 1:1 copy (every date, dependency, resource, and the full hierarchy).` executionReport.ts:182 verbatim: `const ratePerDay = tally.done / elapsedDays;             // leaves/day so far`. The asymmetry in caveats is visible in the two consumers of the same function: ExecutionReportView.tsx:88 carries the heuristic note, ExecutionView.tsx:723-731 and :1503-1504 do not.
+`node -e` over package-lock.json printed `node_modules/xlsx 0.18.5 https://registry.npmjs.org/xlsx/-/xlsx-0.18.5.tgz`. lib/xlsxData.ts:33 is the only XLSX.read in the tree (two search shapes: `XLSX.read` and `from "xlsx"`).
 ```
-
-> **Verifier correction.** None. Note (a) is an aggregation of defects reported separately (SCH-8, findings 3 and 4) — its distinct contribution is the overpromise in the user-facing refusal string itself, which is a real and separately fixable claim.
 
 **Done when.**
 
-- [ ] The refusal message states what the XML path does and does not carry, or the claim is removed
-- [ ] The Forecast finish card names its basis ("at the current rate of N tasks/day") or is suppressed when fewer than a threshold of tasks are complete
-- [ ] The Timeline critical-path control carries the same caveat the Report already carries
+- [ ] the dependency is moved to the vendored SheetJS build ≥0.20.2 (or replaced with a maintained parser such as exceljs) and the lockfile reflects it
+- [ ] parseWorkbook runs on hardened input: a size cap, a sheet cap, and `Object.freeze(Object.prototype)`-style hardening or an isolated worker
+- [ ] a fixture test asserts a workbook whose sheet names include `__proto__` does not mutate Object.prototype
 
 ---
 
 <a id="xedge-13"></a>
 
-## XEDGE-13 · cascadeDependents hardcodes a full calendar day between finish and start, so every FS link inflates the chain and pins successors to the predecessor's clock time
+## XEDGE-13 · The storage orphan sweep paginates the reference scan with no ORDER BY, then permanently deletes every object it did not see referenced
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleReflow.ts:350-356`, `lib/scheduleReflow.ts:438`, `lib/__tests__/dependencies.test.ts:28-49`
-- **Also surfaced independently as** [`SCHED-13`](../projects-and-cost/02-scheduling.md#sched-13) — two lenses found this separately. Fix once.
+- **Locations:** `lib/storageOrphans.ts:90-104`, `lib/storageOrphans.ts:118-150`, `lib/storageOrphans.ts:154-180`, `app/api/admin/orphans/route.ts:27,47`
 
-**Mechanism.** The finish-to-start constraint is expressed as `for (const pred of s.dependsOn ?? []) { if (finish.has(pred)) req = Math.max(req, finish.get(pred)! + DAY_MS); }` (:351-353) with `DAY_MS = 86_400_000` (:88). This is not finish-to-start; it is finish-to-start-plus-one-calendar-day, applied to the predecessor's finish *instant*. sequenceSiblings does the same (`const desiredStart = cursor === null ? curStart : cursor + DAY_MS;` :438). Two consequences follow. First, an imported schedule where dates already satisfy FS exactly (successor starts the same day the predecessor finishes — normal in a shift-based turnaround) is treated as violating the constraint and pushed. Second, with real clock times — MS Project's usual 08:00/17:00, which the parser preserves — a predecessor finishing 17:00 forces the successor's start to 17:00 the next day, and its finish to 17:00 + its span. Every downstream task in the chain inherits a 17:00 start.
+**Mechanism.** `collectReferencedKeys` walks each source table in 1000-row windows: `const { data, error } = await sb.from(table).select(select).range(from, from + 999);` (:95) — no `.order(...)` anywhere in the loop (:91-102). PostgREST/Postgres give no ordering guarantee across separate LIMIT/OFFSET queries; concurrent updates (HOT tuple moves), a plan switch to a bitmap or parallel scan, or autovacuum between pages can make one row appear twice and another never appear. A row missed in the reference set means its `file_url` is absent from the `referenced` Set, and scanOrphans then classifies the object as an orphan (:132 `if (!key || referenced.has(key)) continue;`) and deleteOrphans deletes it for real (:154-180, `DeleteObjectsCommand`). The module is explicitly built to fail closed — "deleting a live file is unrecoverable" (:9-19) — and it does so for query errors, young objects and protected prefixes, but unstable pagination is a silent way to produce an incomplete reference set that looks complete, which is exactly the failure the comment at :32-33 says must never happen: "an incomplete reference set must never masquerade as a complete one."
 
-**Failure scenario.** A 20-link weld/NDE/hydrotest chain is imported with 08:00–17:00 activity times and correct FS relationships. The first drag triggers withCascade (ExecutionView.tsx:449-461), which pushes every downstream task so that each starts exactly 24 hours after its predecessor's 17:00 finish. Twenty tasks now start at 17:00, their day/night shift labels (assigned once at import, never recomputed) are stale, and the chain has absorbed up to 20 extra days of gap that P6 never had. The move-confirmation sheet reports the dragged task's delta, not the cascade's.
+**Failure scenario.** A plant with 40k document_versions rows runs the orphan sweep from /admin (route:47 `deleteOrphans`). While page 12 of the document_versions scan is running, a check-in updates rows in that table; two rows shift across the page boundary and one is never returned. Its `file_url` — the current published PDF of a controlled drawing older than 7 days — is not in the reference set, so it is deleted from R2. The DB row still points at it; the next person who opens that drawing gets the archive prompt or a 404, and the binary is gone with no undo.
 
 **Evidence.**
 
 ```
-lib/scheduleReflow.ts:352 verbatim: `if (finish.has(pred)) req = Math.max(req, finish.get(pred)! + DAY_MS);`. Every fixture in dependencies.test.ts uses midnight-only dates (`const d = (s: string) => ${s}T00:00:00.000Z`, :5), where +DAY_MS coincides with "the next day", so the suite cannot see the clock-time behaviour. Distinct from SCH-8 in audit-reports/projects-tab/06-schedule-engine.md, which covers relationship type and lag being discarded at parse time — this is the engine's own semantics for a plain zero-lag FS link.
+lib/storageOrphans.ts:95 `const { data, error } = await sb.from(table).select(select).range(from, from + 999);` — the comment above it at :92 claims ".range in 1000-row windows so big tables don't truncate", which addresses the row cap but not ordering. Contrast the same file's other safety layers, which are real: `throw new Error(… aborting (fail-closed))` (:97), `MIN_AGE_DAYS = 7` (:25), `PROTECTED_PREFIXES` (:26), and the re-scan before delete (:157).
 ```
-
-> **Verifier correction.** One scoping nuance: cascadeDependents only runs on a move (it is seeded from changedIds at :338), not at import, so a same-day-FS imported schedule is not inflated on ingest — it inflates the first time anyone drags anything upstream of it. That makes the defect latent rather than immediate, which supports MEDIUM.
 
 **Done when.**
 
-- [ ] The constraint is expressed as successor.start >= predecessor.finish (plus any stored lag), not predecessor.finish + 1 day
-- [ ] Cascaded successors keep their original time-of-day rather than inheriting the predecessor's finish time
-- [ ] A dependency test fixture uses 08:00/17:00 times and asserts the successor's clock time is unchanged
+- [ ] every paginated reference query carries a stable `.order("id", { ascending: true })` (or keyset pagination on id)
+- [ ] collectReferencedKeys cross-checks its per-table row count against a `head:true, count:'exact'` query and aborts if they disagree
+- [ ] deleteOrphans refuses to run when any source table's paged total differs from its counted total
 
 ---
 
 <a id="xedge-14"></a>
 
-## XEDGE-14 · effectiveWeight mixes work hours and unit weights in the same denominator, so tagging a few tasks with hours silently re-weights the whole project
+## XEDGE-14 · subscribed_plan is read only from Stripe subscription metadata, so a plan change made in the billing portal never reaches the app — and an update event without metadata nulls the plan outright
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/scheduleProgress.ts:41-50`, `lib/scheduleProgress.ts:141`, `lib/scheduleProgress.ts:159-165`, `lib/executionReport.ts:158-159`, `lib/milestones.ts:663-669`, `components/projects/TaskDetailPanel.tsx:520`
-- **Also surfaced independently as** [`SCHED-14`](../projects-and-cost/02-scheduling.md#sched-14) — two lenses found this separately. Fix once.
+- **Locations:** `app/api/stripe/webhook/route.ts:50-66`, `app/api/stripe/checkout/route.ts:119-122`, `app/api/stripe/portal/route.ts:140-145`, `lib/stripe.ts:30-36`
 
-**Mechanism.** effectiveWeight resolves per node, not per list: `const d = m.durationHours; if (d != null && Number.isFinite(d) && d > 0) return d; const w = m.weight; if (w != null && ... w > 0) return w; return 1;` (:45-49). The values it returns are in incompatible units — hours for rows that carry duration_hours, an abstract weight (import always writes 1, scheduleParsers.ts:308 etc.) for rows that do not — and every consumer sums them into one denominator: `wsum += w; wpct += w * lp` (executionReport.ts:159, scheduleProgress.ts:163, milestones.ts:663-669 for SPI and earned value). Because no parser populates durationHours (finding 3), the mixed state is exactly what a planner produces by filling in the "Work hours" field (TaskDetailPanel.tsx:520) on the tasks they care about.
+**Mechanism.** On `customer.subscription.created|updated` the handler takes the plan from metadata only: `const plan = (sub.metadata?.plan as string) || null;` (:56) and writes it unconditionally: `subscribed_plan: plan` (:63). Checkout stamps `subscription_data.metadata.plan` at purchase (checkout:119-122), but Stripe does not rewrite subscription metadata when a customer switches price in the Customer Portal — which this app deliberately opens for exactly that purpose ("update their card, see invoices, cancel, or change plan", portal:142-144). There is no price→plan mapping anywhere: lib/stripe.ts:32-36 maps plan→priceId only, and `sub.items` is never read in the webhook.
 
-**Failure scenario.** A planner tags the eight biggest jobs on a 400-task turnaround with their real hours (say 40h each) and leaves the rest untouched. Those eight now carry weight 40 against 392 rows carrying weight 1: 320 of 712 total weight, 45% of the project, sits on 2% of the tasks. Overall completion, every phase's pctComplete, SPI and earned value swing by tens of points the moment those eight tasks change state — and the number is presented as "Earned weight" (ScheduleProgress.tsx:71) with no indication that the weighting basis is inconsistent across rows. The prior audit's "verified sound" note (division by zero is unreachable) is about a different property and does not cover this.
+**Failure scenario.** An admin upgrades Starter→Growth in the portal. Stripe bills Growth; the webhook fires with the original metadata and writes `subscribed_plan: "starter"`. The org is refused cloud backup destinations with "require the Growth plan. Upgrade in Billing" (destinations/route.ts:91) while paying for Growth. The reverse is equally live: a downgrade leaves `subscribed_plan: "growth"` and the entitlement stays open. And any subscription updated outside checkout (a dashboard edit, a migration, a metadata clear) sets plan to NULL on an active, paying workspace.
 
 **Evidence.**
 
 ```
-lib/scheduleProgress.ts:44-50 verbatim, showing the per-node fallback chain; lib/executionReport.ts:158-159 verbatim: `const w = effectiveWeight(m);\n    wsum += w; wpct += w * lp;`. The tests pin only the homogeneous cases — "prefers work hours" (scheduleProgress.test.ts:35) and "falls back to weight then 1" (:38) — never a list containing both kinds.
+app/api/stripe/webhook/route.ts:56 `const plan = (sub.metadata?.plan as string) || null;` → :63 `subscribed_plan: plan,`. `grep -rn "items.data\|price\b" app/api/stripe/webhook/route.ts` returns nothing; `grep -rn getPriceIdForPlan app lib` returns only lib/stripe.ts:32 and app/api/stripe/checkout/route.ts:79 — there is no inverse mapping in the codebase.
 ```
-
-> **Verifier correction.** Scope note: the Report's separate "Work hours" card is NOT affected — executionReport.ts:106 `hoursOf` returns 0 for a missing durationHours rather than falling back to weight, so plannedHours/earnedHours stay in pure hours. The unit-mixing is confined to effectiveWeight's consumers: the percent rollups, overallPercent, and the SPI/earned-value block.
 
 **Done when.**
 
-- [ ] The weighting basis is chosen once per list: use hours only if every leaf has them, otherwise use weight for all
-- [ ] When the basis falls back, the UI says which basis is in use
-- [ ] A test mixes an hours-bearing leaf with a weight-only leaf and asserts the chosen basis is uniform
+- [ ] the webhook derives the plan from `sub.items.data[0].price.id` through a priceId→plan map, falling back to metadata
+- [ ] a null/unmapped plan leaves the stored value unchanged rather than overwriting it with NULL
+- [ ] a test replays a subscription.updated event whose metadata lacks `plan` and asserts subscribed_plan is untouched
 
 ---

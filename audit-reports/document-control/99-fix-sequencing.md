@@ -41,10 +41,18 @@ identical bug on the ticket verify endpoint (`EDGE-2`) — it reads
 | `ORG-1` | admin-and-org | `/api/admin/restore/apply` writes caller-supplied rows into **arbitrary orgs and arbitrary tables** |
 | `EGR-1` | document-control | The transmittal portal signs the R2 key of **any document version** from member-controlled input |
 | `PKG-1` | document-control | Any active member can **overwrite the bytes of an ISSUED revision in place** |
+| `XEDGE-1` | document-control (critic) | `/api/templates/generate` reads **any object in the R2 bucket** by caller-supplied key and returns its parsed cell contents |
 
-These are the four most serious findings in the entire engagement across all nine
+These are the five most serious findings in the entire engagement across all nine
 areas. None of them requires a role, a session in the right org, or a guessed id
 beyond what the surface hands out.
+
+⚠ **`XEDGE-1` came from the completeness critic, which ran after the verification
+stage** — it is the only member of this cluster that has not been adversarially
+refuted. It cites the repo's own sibling route stating the rule it breaks
+(`app/api/templates/route.ts:84-85`), which is strong, but per `DEC-29` reproduce
+it before writing the fix. It is listed here rather than lower down because if it
+holds it is the same class as the other four.
 
 ---
 
@@ -64,7 +72,9 @@ narrowed too.
 
 ## This area, in order
 
-1. **`DRLS-2`, `EGR-1`, `PKG-1`** — the unauthenticated / unguarded write paths above.
+1. **`DRLS-2`, `EGR-1`, `PKG-1`, `XEDGE-1`** — the unauthenticated / unguarded
+   paths above. `XEDGE-1` is a *read* rather than a write, and it is the one item
+   here to reproduce first.
 2. **The field-verdict cluster** — `REV-1`, `DIST-2`, `PKG-2`, with the
    public-surfaces half.
 3. **`DRLS-1` first, then `DCK-2`/`DCK-3`** — the permissive-policy problem before
@@ -74,9 +84,20 @@ narrowed too.
    review gate is the product's central safety claim.
 5. **`DCK-1`** — the PSM MOC gate for drawing revisions is enforced **only in
    browser JavaScript**. No lib mutator, no RPC, no trigger.
-6. **`RET-1`** — a legal hold does not stop the shed permanently deleting the R2
-   binaries of held revisions. Destructive and irreversible.
-7. **`PKG-3`, `PKG-4`, `PKG-5`, `DIST-1`, `DIST-3`, `REV-2`** in severity order.
+6. **`RET-1`, then `XEDGE-4` and `XEDGE-13`** — the destructive, irreversible
+   deletes. `RET-1`: a legal hold does not stop the shed permanently deleting the
+   R2 binaries of held revisions. `XEDGE-4`: an export destination with a
+   retention policy and **no prefix** enumerates and deletes the customer's entire
+   bucket by age, and the run still records `succeeded`. `XEDGE-13`: the storage
+   orphan sweep paginates its reference scan with no `ORDER BY`, then permanently
+   deletes every object it did not happen to see. Both `XEDGE-*` are critic
+   findings — reproduce before acting, but treat "a scheduled job can delete
+   customer bytes it never wrote" as the class.
+7. **`PKG-3`, `PKG-4`, `PKG-5`, `DIST-1`, `DIST-3`, `REV-2`** in severity order,
+   with the remaining `XEDGE-*` folded in — several of them
+   (`XEDGE-3` unaudited restore primitive, `XEDGE-9` SSRF-by-redirect,
+   `XEDGE-10` encrypted credentials exported verbatim) extend findings already
+   listed above rather than standing alone.
 
 ⚠ **`DCK-1` deserves a note.** A control enforced only in the client is not a
 control; it is a suggestion with a confirmation dialog. This is the same shape as

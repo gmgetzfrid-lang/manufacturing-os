@@ -12,8 +12,8 @@
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
-      "HIGH": 20,
-      "MEDIUM": 30
+      "HIGH": 17,
+      "MEDIUM": 33
     },
     "by_status": {
       "OPEN": 55
@@ -182,50 +182,6 @@
     },
     {
       "id": "ALOG-4",
-      "title": "Every destructive admin operation's audit insert is written so a failure cannot be detected — seven service-role routes plus the two permission-change writers all discard the result",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "app/api/admin/purge/route.ts:173-184",
-        "app/api/admin/restore/apply/route.ts:129-139",
-        "app/api/admin/shed/commit/route.ts:113-120",
-        "app/api/admin/ticket-shed/commit/route.ts:197-204",
-        "app/api/admin/ticket-shed/restore/route.ts:210-217",
-        "app/api/admin/archive-cancel/route.ts:64-71",
-        "app/api/admin/orphans/route.ts:48-53",
-        "lib/capabilityPolicy.ts:237-246",
-        "components/permissions/PermissionDrawer.tsx:291-302"
-      ],
-      "summary": "A DocCtrl edits the ACL on the P&ID library to grant a contractor write, and the audit insert is rejected (session refreshed mid-action so auth.getUser() returns no user, or any RLS/constraint fault). The ACL update at PermissionDrawer.tsx:284 already committed and was checked; the audit row at :291 did not and was not. The drawer closes normally. Six months later, reconstructing \"who granted this",
-      "area": "admin-and-org",
-      "report": "audit-reports/admin-and-org/03-audit-log.md"
-    },
-    {
-      "id": "ALOG-5",
-      "title": "The capability-policy save is a whole-grid read-modify-write off a mount-time snapshot behind a 60-second cache — two admins silently clobber each other, and the `before` half of the CAPABILITY_POLICY_CHANGED record can be a state that was never current",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "components/permissions/CapabilityPolicyEditor.tsx:35-43",
-        "components/permissions/CapabilityPolicyEditor.tsx:59-91",
-        "lib/capabilityPolicy.ts:161-196",
-        "lib/capabilityPolicy.ts:215-246",
-        "lib/capabilityPolicy.ts:252-283"
-      ],
-      "summary": "Two controllers respond to the same incident. Admin A opens /admin/permissions and narrows \"Force close\" to Admin only. Admin B, whose console has been open since before that change, grants a temporary ticket.assign delegation to a supervisor through the View-as panel — addUserGrant reads the cached policy, rebuilds grants, and saves the whole object, restoring Manager and Supervisor on \"Force clo",
-      "area": "admin-and-org",
-      "report": "audit-reports/admin-and-org/03-audit-log.md"
-    },
-    {
-      "id": "ALOG-6",
       "title": "The entire user and role administration surface writes no audit row at all: granting a role, removing a role, adding a member and removing a member are all unrecorded",
       "severity": "HIGH",
       "status": "OPEN",
@@ -247,29 +203,7 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
-      "id": "ALOG-7",
-      "title": "The permissions console's headline panel is a hand-maintained 52-row string matrix that has drifted from the code — at least five rows assert authority boundaries the app does not have",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "components/permissions/PermissionsExplorer.tsx:14-80",
-        "app/(protected)/admin/permissions/page.tsx:148",
-        "app/(protected)/admin/holds/page.tsx:32",
-        "app/(protected)/admin/scope/page.tsx:36",
-        "app/(protected)/admin/assets/page.tsx:56",
-        "app/api/admin/create-user/route.ts:62",
-        "app/(protected)/documents/[libraryId]/page.tsx:3372-3379"
-      ],
-      "summary": "An IT auditor is asked to produce the workspace's access-control matrix. They open /admin/permissions, screenshot the top panel, and hand it over. It says the audit log is restricted to five roles — a Drafter or a Safety staffer can read every row of it — and it says Doc Control cannot manage users, release stale checkouts, edit operational scope or edit the equipment registry, all four of which D",
-      "area": "admin-and-org",
-      "report": "audit-reports/admin-and-org/03-audit-log.md"
-    },
-    {
-      "id": "ALOG-8",
+      "id": "ALOG-5",
       "title": "`/activity` renders the entire org audit log to every role with no gate of any kind, sitting in the same tab strip as /admin/audit's \"Admin-class roles only\" banner",
       "severity": "HIGH",
       "status": "OPEN",
@@ -563,7 +497,7 @@
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     },
     {
-      "id": "ALOG-9",
+      "id": "ALOG-6",
       "title": "\"Export CSV\" exports only the rows currently on screen — by default the last 7 days capped at 200 — with no truncation notice, and drops the `metadata` column entirely from the evidence file",
       "severity": "MEDIUM",
       "status": "OPEN",
@@ -583,7 +517,7 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
-      "id": "ALOG-10",
+      "id": "ALOG-7",
       "title": "Audit rows record self-declared identity: `user_email` and `user_role` come from the caller, `timestamp` is client-settable, and the one field `AuditEntry` declares for it is never written",
       "severity": "MEDIUM",
       "status": "OPEN",
@@ -604,7 +538,31 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
-      "id": "ALOG-11",
+      "id": "ALOG-8",
+      "title": "Every destructive admin operation's audit insert is written so a failure cannot be detected — seven service-role routes plus the two permission-change writers all discard the result",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/admin/purge/route.ts:173-184",
+        "app/api/admin/restore/apply/route.ts:129-139",
+        "app/api/admin/shed/commit/route.ts:113-120",
+        "app/api/admin/ticket-shed/commit/route.ts:197-204",
+        "app/api/admin/ticket-shed/restore/route.ts:210-217",
+        "app/api/admin/archive-cancel/route.ts:64-71",
+        "app/api/admin/orphans/route.ts:48-53",
+        "lib/capabilityPolicy.ts:237-246",
+        "components/permissions/PermissionDrawer.tsx:291-302"
+      ],
+      "summary": "A DocCtrl edits the ACL on the P&ID library to grant a contractor write, and the audit insert is rejected (session refreshed mid-action so auth.getUser() returns no user, or any RLS/constraint fault). The ACL update at PermissionDrawer.tsx:284 already committed and was checked; the audit row at :291 did not and was not. The drawer closes normally. Six months later, reconstructing \"who granted this",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/03-audit-log.md"
+    },
+    {
+      "id": "ALOG-9",
       "title": "The action-permissions grid can only grant to 12 hardcoded role tokens; five of the system's nineteen real roles — Accounting, Safety, HR, Maintenance, Operations — have no column, so authority already held by those roles is invisible in the console that governs it",
       "severity": "MEDIUM",
       "status": "OPEN",
@@ -625,7 +583,7 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
-      "id": "ALOG-12",
+      "id": "ALOG-10",
       "title": "The audit INSERT policy explicitly admits `org_id IS NULL`, but the SELECT policy and both viewers can never return such a row — a write-only sink for audit evidence, reachable through optional-orgId signatures",
       "severity": "MEDIUM",
       "status": "OPEN",
@@ -646,7 +604,7 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
-      "id": "ALOG-13",
+      "id": "ALOG-11",
       "title": "The audit viewer can filter 36 action types out of the 110 the app writes; every admin-authority action — permission changes, ACL changes, recertifications, purges, restores, e-signatures, folder deletes — is unreachable through any filter, and the compliance KPI miscounts in both directions",
       "severity": "MEDIUM",
       "status": "OPEN",
@@ -667,7 +625,27 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
-      "id": "ALOG-14",
+      "id": "ALOG-12",
+      "title": "The capability-policy save is a whole-grid read-modify-write off a mount-time snapshot behind a 60-second cache — two admins silently clobber each other, and the `before` half of the CAPABILITY_POLICY_CHANGED record can be a state that was never current",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/permissions/CapabilityPolicyEditor.tsx:35-43",
+        "components/permissions/CapabilityPolicyEditor.tsx:59-91",
+        "lib/capabilityPolicy.ts:161-196",
+        "lib/capabilityPolicy.ts:215-246",
+        "lib/capabilityPolicy.ts:252-283"
+      ],
+      "summary": "Two controllers respond to the same incident. Admin A opens /admin/permissions and narrows \"Force close\" to Admin only. Admin B, whose console has been open since before that change, grants a temporary ticket.assign delegation to a supervisor through the View-as panel — addUserGrant reads the cached policy, rebuilds grants, and saves the whole object, restoring Manager and Supervisor on \"Force clo",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/03-audit-log.md"
+    },
+    {
+      "id": "ALOG-13",
       "title": "The permissions console asserts the legacy read/write/admin matrix \"is GONE\" and that nothing depended on it, while /admin/libraries still writes all three columns and the documents home page still filters library cards on two of them",
       "severity": "MEDIUM",
       "status": "OPEN",
@@ -684,6 +662,28 @@
         "lib/libraryCollections.ts:129-131"
       ],
       "summary": "A controller reads the permissions console, believes the legacy matrix was removed, and does not think about it again. Meanwhile another controller sets up a new restricted library through /admin/libraries, ticks the view/upload/admin role boxes, and believes the library is restricted. Upload and admin authority were never enforced by those settings; view is enforced only by a client-side filter o",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/03-audit-log.md"
+    },
+    {
+      "id": "ALOG-14",
+      "title": "The permissions console's headline panel is a hand-maintained 52-row string matrix that has drifted from the code — at least five rows assert authority boundaries the app does not have",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/permissions/PermissionsExplorer.tsx:14-80",
+        "app/(protected)/admin/permissions/page.tsx:148",
+        "app/(protected)/admin/holds/page.tsx:32",
+        "app/(protected)/admin/scope/page.tsx:36",
+        "app/(protected)/admin/assets/page.tsx:56",
+        "app/api/admin/create-user/route.ts:62",
+        "app/(protected)/documents/[libraryId]/page.tsx:3372-3379"
+      ],
+      "summary": "An IT auditor is asked to produce the workspace's access-control matrix. They open /admin/permissions, screenshot the top panel, and hand it over. It says the audit log is restricted to five roles — a Drafter or a Safety staffer can read every row of it — and it says Doc Control cannot manage users, release stale checkouts, edit operational scope or edit the equipment registry, all four of which D",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
