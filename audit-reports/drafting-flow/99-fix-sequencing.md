@@ -9,6 +9,51 @@ worked against. Judgment calls shared with the roles model are settled in
 
 ---
 
+## Phase −1 — Before any of this means anything
+
+> **Every gate described in this area is currently advisory.**
+
+`supabase/schema.sql:1079-1080` is the only policy on the `tickets` table:
+
+```sql
+CREATE POLICY "tickets_org_access" ON tickets FOR ALL
+  USING (org_id IN (SELECT my_org_ids()));
+```
+
+`FOR ALL` with **only** a `USING` clause and no `WITH CHECK`: Postgres reuses
+`USING` as the check for `INSERT` and `UPDATE`. There is no `RESTRICTIVE` policy
+and no later migration tightening it — one policy, confirmed by searching every
+`.sql` file in `supabase/`.
+
+So any authenticated member of the org can `UPDATE` any ticket row directly:
+`status`, `assigned_engineer_id`, `engineer_approved_at`, and every column
+`GAP-110` and `GAP-111` are about to add. **The state machine, the capability
+policy, the compare-and-set and the audit log are all client-side conventions
+against a row anyone can write.**
+
+This does not make the rest of the area pointless — most people use the UI, and
+the UI is where friction and mistakes live. But it does fix the order:
+
+1. **`ENF-2`** — constrain `tickets` writes at the database. A permissive
+   `SELECT` policy plus a `RESTRICTIVE` policy limiting `UPDATE` to the service
+   role (the workflow route already uses `supabaseAdmin`), or column-level
+   grants. **Ship this before `GAP-110`/`GAP-111`**, or the declaration and the
+   engineering flag are advisory too.
+2. **`ENF-6`** — `my_org_ids()` is `SECURITY DEFINER` with no `SET search_path`,
+   and it is the sole gate on every ticket RLS decision. One line.
+3. **`ENF-1`** — "Approve with Minor Correction" goes straight to `PENDING_IFC`
+   (`lib/ticketTransitions.ts:230-235`) and is offered to **every** requester at
+   `PENDING_REVIEW` including the branch the engineer gate blocks
+   (`lib/workflow.ts:222-228`). It is a one-click bypass of engineering sign-off,
+   in the UI, today. This is the single finding most directly opposed to the
+   stated policy that unapproved packages must not reach the field.
+
+⚠ **Do not read this as "fix the database and the rest can wait."** The
+friction work in Phase 0 is what stops people leaving the app, and someone who
+has left the app is not constrained by RLS either.
+
+---
+
 ## The governing principle
 
 > **A wait on a specific person is where backlog comes from. Treat every one as a

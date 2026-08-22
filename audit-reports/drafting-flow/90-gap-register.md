@@ -791,19 +791,26 @@ already exist in this repository.**
 
 They exist on the **check-in door only.**
 
-There are **five** ways a ticket gets created:
+There are **three** ways a ticket gets created. Enumerated by searching for
+`.insert` against the `tickets` table across `app/`, `lib/` and `components/`,
+excluding tests — several other files call `.from("tickets")` and are reads:
 
 | Door | File | Declaration asked for? |
 |---|---|---|
 | Intake form | `app/(protected)/requests/new/page.tsx:328` | **No** |
 | Check-in outcome | `components/documents/CheckInPanel.tsx:236` | Yes — MOC position + typed note |
-| Transition-in wizard | `lib/transitionIn.ts:304` | **No** |
-| Impact / collision flag | `lib/impact.ts:114` | **No** |
-| External intake portal | `app/api/intake/resolve/route.ts:142` | **No** |
+| Transition-in collision scan | `lib/transitionIn.ts:304` | **No** |
 
-Four of five doors reach the same outcome — a revised controlled drawing — with
-no declaration at all. **That is the leak this gap closes**, and it is a policy
-leak rather than a code defect, which is why no existing finding names it.
+Two of three doors reach the same outcome — a revised controlled drawing — with
+no declaration at all, and one of them is the **main** door. **That is the leak
+this gap closes**, and it is a policy leak rather than a code defect, which is
+why no existing finding names it.
+
+There is a fourth writer worth knowing about and **not** treating as a door:
+`app/api/admin/ticket-shed/restore/route.ts:191` UPDATEs archived stubs back to
+life. It is guarded — `.not("archived_at", "is", null)`, described in its own
+comment as *"defence-in-depth against a TOCTOU flip"* — and it restores a
+declaration that already existed rather than creating one. **Leave it alone.**
 
 ### The half that is worse than missing
 
@@ -872,8 +879,8 @@ used honestly.
 
 ### Acceptance
 
-1. All five creation paths either capture a declaration or record its absence,
-   and a test enumerates all five so a sixth door cannot be added silently.
+1. All three creation paths either capture a declaration or record its absence,
+   and a test enumerates all three so a fourth door cannot be added silently.
 2. A statement shorter than the minimum is rejected server-side, not only in the
    form.
 3. No code path anywhere sets `engineering_required` from `true` to `false`. A
