@@ -13,7 +13,7 @@
   ],
   "totals": {
     "findings": 105,
-    "gaps": 0,
+    "gaps": 7,
     "by_severity": {
       "CRITICAL": 3,
       "HIGH": 30,
@@ -2100,5 +2100,95 @@
     }
   ],
   "gaps_note": "Gaps are build specs for capabilities that do not exist. They are work, but they carry a verdict and a dependency chain rather than a severity — check `verdict` and `depends_on` before starting one. DECLINE and FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is false and the spec names what to do instead. Build order is in 99-fix-sequencing.md.",
-  "gaps": []
+  "gaps": [
+    {
+      "id": "GAP-201",
+      "title": "Exhaustive kind → section mapping, enforced at build time",
+      "kind": "gap",
+      "verdict": "BUILD_NARROW",
+      "actionable": true,
+      "effort": "S",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/notifications/90-gap-register.md"
+    },
+    {
+      "id": "GAP-202",
+      "title": "The badge trail — per-container roll-up",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "L",
+      "depends_on": [
+        "GAP-201"
+      ],
+      "related": [],
+      "report": "audit-reports/notifications/90-gap-register.md"
+    },
+    {
+      "id": "GAP-203",
+      "title": "Preferences that can actually be saved",
+      "kind": "gap",
+      "verdict": "BUILD_NARROW",
+      "actionable": true,
+      "effort": "S",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/notifications/90-gap-register.md"
+    },
+    {
+      "id": "GAP-204",
+      "title": "The login nudge",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [
+        "GAP-203",
+        "NEDGE-5"
+      ],
+      "related": [],
+      "report": "audit-reports/notifications/90-gap-register.md"
+    },
+    {
+      "id": "GAP-205",
+      "title": "Web Push — connect the two built ends",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [
+        "GAP-203"
+      ],
+      "related": [],
+      "report": "audit-reports/notifications/90-gap-register.md"
+    },
+    {
+      "id": "GAP-206",
+      "title": "The person-to-person nudge",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [
+        "OS-1",
+        "GAP-201"
+      ],
+      "related": [],
+      "report": "audit-reports/notifications/90-gap-register.md"
+    },
+    {
+      "id": "GAP-207",
+      "title": "One kind taxonomy",
+      "kind": "gap",
+      "verdict": "BUILD_NARROW",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [
+        "GAP-201"
+      ],
+      "related": [],
+      "report": "audit-reports/notifications/90-gap-register.md"
+    }
+  ]
 }

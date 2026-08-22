@@ -37,7 +37,8 @@ audit-reports/
     ├── README.md                ← the direct answers live here
     ├── findings.json
     ├── 01–07 … verified
-    ├── 08 … ⚠ UNVERIFIED
+    ├── 08 … verified by hand (record in-file)
+    ├── 90-gap-register.md
     └── 99-fix-sequencing.md
 ```
 
@@ -258,9 +259,11 @@ the findings; prove each one.
 
 ## The gap register
 
-`roles-and-permissions/90-gap-register.md` holds `GAP-` entries: capabilities the
-system needs and does not have, several of them stated requirements from the
-system's owner.
+Three areas carry a `90-gap-register.md` holding `GAP-` entries: capabilities the
+system needs and does not have, most of them stated requirements from the
+system's owner. The numbering never collides —
+`roles-and-permissions` uses `GAP-1`…`GAP-15`, `drafting-flow` `GAP-101`…`GAP-114`,
+`notifications` `GAP-201`…`GAP-207`.
 
 **These are build work.** Each carries a verdict, a scope, a design direction, its
 dependencies, its acceptance criteria, and a `Do not` list naming the specific
@@ -294,7 +297,7 @@ was deliberately cut are stated in each spec.
 |---|---|---|---|---|
 | **Projects tab** | The Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 133 | — | [`projects-tab/`](./projects-tab/README.md) |
 | **Roles & permissions** | The whole authority model: roles, additive roles, capability policy, content ACL, ownership & publish, the drafting workflow, document lifecycle, delegation & teams, non-document surfaces, content egress, and the database functions underneath | 124 | 15 | [`roles-and-permissions/`](./roles-and-permissions/README.md) |
-| **Notifications & alerts** | Every way the app tells a person something: the bell, sidebar badges, toasts, the corner dock, progress indicators, email, and the service worker — producers, delivery, taxonomy, the badge trail, realtime, stacking, and the OS-notification substrate | 105 | — | [`notifications/`](./notifications/README.md) |
+| **Notifications & alerts** | Every way the app tells a person something: the bell, sidebar badges, toasts, the corner dock, progress indicators, email, and the service worker — producers, delivery, taxonomy, the badge trail, realtime, stacking, and the OS-notification substrate | 105 | 7 | [`notifications/`](./notifications/README.md) |
 | **Drafting request flow** | The request flow end to end — intake, triage, assignment, drafting, review, approval, issue, closure — plus review tiering, document-control wiring, friction and latency, leaks, discoverability, and a second deep pass over the state machine, RLS, routing, authority surfaces, audit evidence, the document handoff and the Projects boundary | 139 | 14 | [`drafting-flow/`](./drafting-flow/README.md) |
 
 **Areas overlap deliberately.** `roles-and-permissions` covered *authority* in

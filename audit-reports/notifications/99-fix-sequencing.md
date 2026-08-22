@@ -1,7 +1,9 @@
 # 99 · Execution order
 
 **Binding, not advisory.** No findings of its own — this is the plan the 105
-findings are worked against. Judgment calls shared with the other areas are
+findings and 7 gap specs are worked against. The specs live in
+[`90-gap-register.md`](./90-gap-register.md); this file says what order they go
+in and what must not ship before what. Judgment calls shared with the other areas are
 settled in [`../DECISIONS.md`](../DECISIONS.md).
 
 ---
@@ -138,6 +140,20 @@ Then `TAX-3` and `TAX-4`, the duplicate-signal defects.
 ---
 
 ## Phase 5 — The new capability
+
+**Every item below is a spec in [`90-gap-register.md`](./90-gap-register.md).**
+Build from the spec, not from the finding — each carries a `Do not` list naming
+the specific wrong turn.
+
+| Order | Spec | Gate |
+|---|---|---|
+| 1 | `GAP-203` — preferences that can be saved | nothing below ships without it |
+| 2 | `GAP-201` — kind → section, build-error enforced | already Phase 0; restated because `GAP-202` and `GAP-206` both depend on it |
+| 3 | `GAP-204` — the login nudge | needs `GAP-203` **and** `NEDGE-5` |
+| 4 | `GAP-202` — the badge trail | the largest, and the one the owner asked for first |
+| 5 | `GAP-207` — one kind taxonomy | before the next two, or they add an eighth |
+| 6 | `GAP-205` — Web Push | needs `GAP-203` for `push_enabled` |
+| 7 | `GAP-206` — the person-to-person nudge | needs `OS-1` closed first |
 
 In this order, and not before the phases above.
 

@@ -15,6 +15,11 @@ stacking, and what a real OS notification would attach to.
    [`../DECISIONS.md`](../DECISIONS.md).
 2. **Read [`99-fix-sequencing.md`](./99-fix-sequencing.md).** One fix here is
    worth more than the other hundred and has to go first.
+3. **The four things the owner asked for are specs, not findings** —
+   [`90-gap-register.md`](./90-gap-register.md) holds `GAP-201`…`GAP-207`,
+   including the badge roll-up, the login nudge, Web Push and the
+   person-to-person poke. Read **the signal ladder** at the top of it before
+   adding any signal anywhere.
 3. **This area overlaps `drafting-flow` deliberately.** That area owns the
    ticket-shaped notification defects (`LEAK-1`, `ROUTE-*`, `EVID-13`); this one
    owns the notification *system*. Where a defect belongs to both it is recorded
@@ -24,7 +29,7 @@ stacking, and what a real OS notification would attach to.
 
 ## Findings
 
-**105 findings** — 3 CRITICAL, 30 HIGH, 72 MEDIUM.
+**105 findings** — 3 CRITICAL, 30 HIGH, 72 MEDIUM — plus **7 gap specs**, all buildable.
 
 | # | Report | Findings | Focus |
 |---|---|---|---|
@@ -36,6 +41,7 @@ stacking, and what a real OS notification would attach to.
 | 06 | [Stacking & progress](./06-stacking-and-progress.md) | 13 | The bottom-right corner: how many things live there and whether failures are seen |
 | 07 | [OS notifications & nudges](./07-os-notifications-and-nudges.md) | 12 | Web Push, login nudges, person-to-person pokes |
 | 08 | [Edges & invariants](./08-edges-and-invariants.md) | 13 | Egress, lifecycle edges, accessibility, and what is sound. **Verified by hand** — record at the top of the file |
+| 90 | [**Gap register**](./90-gap-register.md) | 7 specs | What has to be built. `GAP-201`+ so they never collide with the other areas |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Read before claiming a file |
 
 **`01`–`07` were adversarially verified** — a second agent read the cited code
