@@ -9,17 +9,22 @@
     "audit-reports/roles-and-permissions/05-ownership-publish.md",
     "audit-reports/roles-and-permissions/06-request-workflow.md",
     "audit-reports/roles-and-permissions/07-document-lifecycle.md",
-    "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
+    "audit-reports/roles-and-permissions/08-delegation-and-teams.md",
+    "audit-reports/roles-and-permissions/09-non-document-surfaces.md",
+    "audit-reports/roles-and-permissions/10-content-egress.md",
+    "audit-reports/roles-and-permissions/11-database-authority.md",
+    "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
   ],
   "totals": {
-    "findings": 89,
+    "findings": 124,
+    "gaps": 15,
     "by_severity": {
-      "CRITICAL": 14,
-      "HIGH": 39,
-      "MEDIUM": 36
+      "CRITICAL": 21,
+      "HIGH": 53,
+      "MEDIUM": 50
     },
     "by_status": {
-      "OPEN": 89
+      "OPEN": 124
     }
   },
   "status_vocabulary": [
@@ -58,6 +63,58 @@
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
     },
     {
+      "id": "DB-1",
+      "title": "`org_configurations.value` does not exist — the capability layer is inert and the holds policies raise",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (in code) / SUSPECTED (deployed state may differ)",
+      "blast_radius": "availability / access-control",
+      "related": [
+        "WF-1",
+        "WF-23",
+        "SURF-3",
+        "SURF-4"
+      ],
+      "locations": [
+        "supabase/schema.sql:52-59",
+        "supabase/migrations/20260901_db_hard_enforcement.sql:44",
+        "lib/capabilityPolicy.ts:174",
+        "supabase/migrations/20260701_perf_indexes.sql:21",
+        "lib/capabilityPolicy.ts:193-195",
+        "lib/holds.ts:105-107",
+        "lib/capabilityPolicy.ts:19-22"
+      ],
+      "summary": "There are exactly two possibilities and both are bad:",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
+    },
+    {
+      "id": "DB-2",
+      "title": "`acl_index_denies` queries `team_members.user_id`; the column is `uid`",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (defect) / SUSPECTED (runtime blast radius)",
+      "blast_radius": "availability / access-control",
+      "related": [
+        "DB-1",
+        "OWN-10",
+        "DB-4"
+      ],
+      "locations": [
+        "supabase/migrations/20260901_db_hard_enforcement.sql:141-145",
+        "supabase/migrations/20260707_teams.sql:19-26",
+        "lib/teams.ts:116,122",
+        "lib/knowledgeAccess.ts:35",
+        "app/api/storage/download-url/route.ts:74,100",
+        "components/permissions/ViewAsSimulator.tsx:59"
+      ],
+      "summary": "The first org that actually sets a folder- or document-level ACL discovers that non-controllers can no longer update documents in it at all, with an opaque column tm.userid does not exist error. Because controllers are (usually) exempt, it is invisible to exactly the person who would investigate.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
+    },
+    {
       "id": "DRAFT-1",
       "title": "Authority cannot vary by request type",
       "severity": "CRITICAL",
@@ -77,6 +134,79 @@
       "summary": "This is the gap you named. A civil engineer holding Engineer-2 can sign off the engineering review on a pressure-envelope modification to a PSM-covered vessel. Nothing in the model — not the tier (ROLE-2), not the capability, not the policy — can express \"electrical requests are approved by electrical engineers.\" The reviewer sees an Approve button and the audit log will record a valid, authorized",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
+    },
+    {
+      "id": "EGRESS-1",
+      "title": "Any active member can publish any document to the public internet via a share link",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (same-org) / SUSPECTED (cross-org — the resolve path was not traced to a conclusion)",
+      "blast_radius": "security / confidentiality",
+      "related": [
+        "EGRESS-2",
+        "EGRESS-4",
+        "SURF-2"
+      ],
+      "locations": [
+        "supabase/migrations/20260623_document_shares.sql:36-53",
+        "app/api/share/resolve/route.ts:20-48",
+        "app/api/share/file/route.ts:31-58",
+        "lib/orchestrator/tools.ts:84-120"
+      ],
+      "summary": "A Contractor-role member inserts one row into documentshares naming a restricted drawing's UUID, then fetches /api/share/file?token=… from any browser, logged out. They get the stamped PDF of a document the ACL denies them.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
+    },
+    {
+      "id": "EGRESS-2",
+      "title": "`/d/[number]` is an unauthenticated, cross-tenant document enumeration oracle",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / confidentiality / cross-tenant",
+      "related": [
+        "EGRESS-1",
+        "EGRESS-4"
+      ],
+      "locations": [
+        "app/d/[number]/route.ts:10",
+        "app/d/[number]/route.ts:26-32",
+        "app/d/[number]/route.ts:30",
+        "app/d/[number]/route.ts:31-32",
+        "app/d/[number]/route.ts:1-7"
+      ],
+      "summary": "A competitor walks /d/ with common drawing-number fragments from an unauthenticated script. They learn a customer's drawing numbering scheme, which numbers exist, roughly when each was last revised (by ordering), and a live document UUID for each. They then hand those UUIDs to a low-privileged account inside their own trial org and create documentshares rows (EGRESS-1).",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
+    },
+    {
+      "id": "EGRESS-3",
+      "title": "The AI orchestrator acts with service-role authority the caller does not have",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / confidentiality / data-integrity",
+      "related": [
+        "EGRESS-1",
+        "EGRESS-2",
+        "ADD-1"
+      ],
+      "locations": [
+        "lib/orchestrator/tools.ts:92-119",
+        "lib/orchestrator/tools.ts:129-145",
+        "lib/orchestrator/tools.ts:227-256",
+        "lib/orchestrator/tools.ts:530-551",
+        "lib/orchestrator/tools.ts:473-517",
+        "app/api/orchestrator/execute/route.ts:41-60",
+        "lib/knowledgeAccess.ts:1-77",
+        "app/api/orchestrator/execute/route.ts:42"
+      ],
+      "summary": "A Contractor asks the assistant \"find the Unit 30 hazard review.\" finddocuments returns number, title, rev, status and openurl for documents whose library ACL denies them. They then ask about content and searchdocuments returns passages. Separately they say \"mark sheet P-2030-001 rev C as passed\" and overwrite a real audit-completion record (the upsert conflict target is orgid,sheetnumber,revision",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
     },
     {
       "id": "LIFE-1",
@@ -278,6 +408,50 @@
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
     },
     {
+      "id": "SURF-1",
+      "title": "\"Remove from workspace\" is a silent no-op — there is no working way to revoke a member",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security",
+      "related": [
+        "OWN-12",
+        "SURF-2",
+        "SURF-14"
+      ],
+      "locations": [
+        "supabase/schema.sql:1050",
+        "supabase/migrations/20260817_org_members_escalation_and_config.sql:44-53",
+        "supabase/REMEDIATION_APPLY_ALL.sql:196-202",
+        "app/(protected)/admin/users/page.tsx:178",
+        "supabase/schema.sql:1013"
+      ],
+      "summary": "An engineer is fired. The Admin opens Team Management, clicks the trash icon, the row disappears. The ex-employee's session and JWT keep working indefinitely — myorgids() still returns the org.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-2",
+      "title": "`/api/storage/delete` — any active member can permanently destroy any file in the org, unaudited",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "data-integrity / safety / compliance",
+      "related": [
+        "SURF-3",
+        "EGRESS-1"
+      ],
+      "locations": [
+        "app/api/storage/delete/route.ts:6-44",
+        "app/api/storage/download-url/route.ts:29"
+      ],
+      "summary": "A Viewer enumerates fileurl values from documentversions (readable to any member) and DELETEs each one. Every controlled drawing's bytes are gone. The documents and documentversions rows remain, pointing at nothing.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
       "id": "WF-1",
       "title": "The capability policy reads and writes a column that does not exist",
       "severity": "CRITICAL",
@@ -457,6 +631,150 @@
       "summary": "Two documents in the same library, governed by policies from different eras, answer the same authority question differently for the same person. An admin cannot reason about the system from any single rule — whether a secondary role counts depends on which month the policy was written.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
+    },
+    {
+      "id": "CHAIN-1",
+      "title": "Restriction-style checks read the headline role, so adding a role *removes* a restriction",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / access-control",
+      "related": [
+        "ROLE-1",
+        "ADD-1",
+        "DB-7"
+      ],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx:4010",
+        "components/navigation/Sidebar.tsx:241-248",
+        "lib/roleCapabilities.ts:74-94",
+        "lib/roleCapabilities.ts:120-123",
+        "components/navigation/Sidebar.tsx:248"
+      ],
+      "summary": "An Auditor — a role that exists specifically to be read-only — is additively given Requester so they can file a ticket. primaryRole now returns Requester. At app/(protected)/documents/[libraryId]/page.tsx:4010, activeRole !== \"Auditor\" is now true, so canEdit is true: the read-only auditor gains inline document editing. The same shape applies to Contractor and reduced navigation.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
+    },
+    {
+      "id": "CHAIN-2",
+      "title": "`primaryRole()` is a four-line browser function that 200+ authority checks treat as truth",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "access-control / model-complexity",
+      "related": [
+        "DB-3",
+        "DB-7",
+        "ADD-1",
+        "OWN-3"
+      ],
+      "locations": [
+        "lib/roleCapabilities.ts:118-123",
+        "app/(protected)/admin/users/page.tsx:130,137",
+        "components/providers/RoleContext.tsx:200-206",
+        "lib/dataRestore.ts",
+        "app/api/admin/restore/begin/route.ts",
+        "app/api/auth/signup/route.ts"
+      ],
+      "summary": "lib/dataRestore.ts and app/api/admin/restore/begin/route.ts write orgmembers rows with whatever role the backup names, and app/api/auth/signup/route.ts writes role without roles at all (DB-3). After a restore, a member's headline can disagree with their collection, and every check in the singular family will believe the headline.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
+    },
+    {
+      "id": "CHAIN-3",
+      "title": "\"Who acts on this ticket?\" is answered by three subsystems with three different models",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "ux / access-control",
+      "related": [
+        "WF-7",
+        "WF-19",
+        "WF-24"
+      ],
+      "locations": [
+        "lib/ticketAttention.ts:22-27",
+        "lib/workflow.ts:65",
+        "lib/ticketRouting.ts:79,91,99",
+        "lib/ticketAttention.ts:21"
+      ],
+      "summary": "A DraftingSupervisor sees a badge count of 14 (attention says they must act), opens each ticket and finds \"View Only — No Actions Available\" (the workflow engine disagrees), and never receives the routing email (routing matched on their headline Manager). Three subsystems, three answers, one confused person.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
+    },
+    {
+      "id": "DB-3",
+      "title": "`COALESCE(roles, ARRAY[role])` is a no-op — a new org's sole Admin fails every additive check",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "availability / access-control",
+      "related": [
+        "DB-1",
+        "DB-2",
+        "ADD-1",
+        "OWN-3"
+      ],
+      "locations": [
+        "supabase/schema.sql:41",
+        "supabase/migrations/20260722_member_roles_collection.sql:13",
+        "supabase/migrations/20260901_db_hard_enforcement.sql:38",
+        "supabase/migrations/20260907_milestone_batch_move.sql:33",
+        "app/api/auth/signup/route.ts"
+      ],
+      "summary": "Signup creates the founding Admin with role = 'Admin' and roles = '{}'. Every function using this idiom — orgcapabilityallows, aclindexdenies, and the milestone batch move — evaluates the additive check against an empty array. The org's only Admin fails it. Both restore paths seed roles the same way.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
+    },
+    {
+      "id": "DB-4",
+      "title": "`acl_index` has no propagation — revoking at a library leaves every descendant granting",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "access-control",
+      "related": [
+        "DB-2",
+        "DB-5",
+        "OWN-7",
+        "OWN-20"
+      ],
+      "locations": [
+        "components/permissions/PermissionDrawer.tsx:273-284",
+        "app/(protected)/documents/[libraryId]/page.tsx:600-605",
+        "supabase/migrations/20260901_db_hard_enforcement.sql:124-125"
+      ],
+      "summary": "An admin revokes a contractor's grant at the library level. Every document and folder beneath it still carries an aclindex that names them. nodevisible reads the node's own index, so the contractor keeps seeing the documents. The revocation appears to have taken effect and has not.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
+    },
+    {
+      "id": "DB-5",
+      "title": "Three writers of `acl` and `acl_index`, with three different semantics",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "access-control",
+      "related": [
+        "DB-4",
+        "OWN-1",
+        "OWN-8"
+      ],
+      "locations": [
+        "components/permissions/PermissionDrawer.tsx:273-284",
+        "app/(protected)/admin/libraries/page.tsx:101-108",
+        "app/(protected)/admin/libraries/LibraryWizard.tsx:252-262",
+        "supabase/migrations/20260812_per_library_publish_authority.sql:56-58"
+      ],
+      "summary": "An admin grants someone publish on Drawings via the drawer. Months later they edit the library in the wizard to add a metadata column. The wizard rewrites acl from its own form state — the grant is gone from acl, so the UI stops offering the publish button. But aclindex still names them, so usercanpublishonlibrary returns true and the database still accepts their revisions. Revocation appears to h",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
     },
     {
       "id": "DEL-1",
@@ -687,6 +1005,46 @@
       "summary": "Your stated goal is \"so people don't ask for stupid nonsense we don't or can't do.\" Achieving that needs the rejection to teach — a taxonomy the requester sees and the org can count. Free text cannot:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
+    },
+    {
+      "id": "EGRESS-4",
+      "title": "`knowledge_chunks` is readable by every member, bypassing the ACL-aware ask pipeline",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "confidentiality",
+      "related": [
+        "EGRESS-3"
+      ],
+      "locations": [
+        "supabase/migrations/20260911_knowledge_ai.sql:136-140",
+        "supabase/migrations/20260911_knowledge_ai.sql:134-135",
+        "supabase/migrations/20260911_knowledge_ai.sql:146-149",
+        "lib/knowledgeAccess.ts:1-16"
+      ],
+      "summary": "A member denied the restricted procedures library queries knowledgechunks directly through PostgREST and reads the full text of every mirrored procedure. The careful per-asker filtering in /api/knowledge/ask never runs. knowledgequestions similarly exposes the whole org's Q&A history, which contains answer text extracted from restricted sources.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
+    },
+    {
+      "id": "EGRESS-5",
+      "title": "`access_requests` — cross-tenant read, and the requests go nowhere",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "confidentiality / cross-tenant",
+      "related": [
+        "SURF-9"
+      ],
+      "locations": [
+        "supabase/migrations/20260819_orphan_tables_backfill.sql:26-30",
+        "app/api/auth/request-access/route.ts:46-53"
+      ],
+      "summary": "A competitor starts a free trial (becoming Admin of their own org) and reads the name, email and target company of everyone requesting access to every customer's workspace.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
     },
     {
       "id": "LIFE-3",
@@ -1114,6 +1472,124 @@
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
     },
     {
+      "id": "SURF-3",
+      "title": "Legal holds and retention have zero server-side enforcement",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "compliance / safety",
+      "related": [
+        "OWN-2",
+        "SURF-2"
+      ],
+      "locations": [
+        "lib/retention.ts:120-145",
+        "lib/retention.ts",
+        "components/documents/RetentionSection.tsx:29-34,79,86",
+        "components/documents/InspectorPanel.tsx:283",
+        "supabase/migrations/20260816_documents_access_change_guard.sql:84-86",
+        "supabase/schema.sql:1068"
+      ],
+      "summary": "The employee under investigation opens devtools and PATCHes legalhold=false on the held records. The database delete guard now passes. Nothing in the audit trail says who cleared it, because logEvent only runs on the app path they bypassed.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-4",
+      "title": "The force-release database guard is defeated by a second, unguarded write",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "data-integrity / availability",
+      "related": [
+        "OWN-14",
+        "DB-1"
+      ],
+      "locations": [
+        "lib/checkoutEpisodes.ts:616-627",
+        "lib/checkoutEpisodes.ts:630-640",
+        "supabase/migrations/20260901_db_hard_enforcement.sql:109-121",
+        "components/documents/CheckoutStatusCell.tsx:238",
+        "lib/capabilityPolicy.ts:89-91"
+      ],
+      "summary": "A Drafter clears another engineer's lock on a P&ID mid-edit, then publishes over it. publishrevision's lock check reads vdoc.checkedoutby — which is now NULL — so it publishes cleanly. Meanwhile the checkoutsessions row is still active, so the episode state is split-brained.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-5",
+      "title": "`/api/notifications/send-queued` — any authenticated user drains every tenant's mail queue; any member can queue arbitrary mail",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / cross-tenant",
+      "related": [
+        "WF-19"
+      ],
+      "locations": [
+        "app/api/notifications/send-queued/route.ts:50-59",
+        "app/api/notifications/send-queued/route.ts:105-114",
+        "supabase/migrations/20260605_rls_policies_new_tables.sql:121-124"
+      ],
+      "summary": "Someone signs up for a free trial (creating their own org), takes their JWT, and repeatedly calls the endpoint — controlling other companies' outbound mail timing and re-sending suppressed backlogs. Separately, a Viewer inserts emailnotifications rows addressed to customers, with HTML bodies of their choosing, from the product's verified sender, then triggers the drain: a functioning phishing rela",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-6",
+      "title": "Migration `20260901_db_hard_enforcement.sql` references two columns that do not exist",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (in code) / SUSPECTED (the live database may carry ad-hoc drift)",
+      "blast_radius": "availability / access-control",
+      "related": [],
+      "locations": [],
+      "summary": null,
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-7",
+      "title": "The AI orchestrator acts with service-role authority the caller does not have",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / confidentiality",
+      "related": [],
+      "locations": [],
+      "summary": null,
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-8",
+      "title": "Restore is an unaudited service-role write path into tables the database makes immutable",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "compliance / data-integrity",
+      "related": [
+        "SURF-13",
+        "WF-11"
+      ],
+      "locations": [
+        "app/api/admin/restore/apply-table/route.ts:24",
+        "lib/exportTables.ts:53",
+        "lib/dataRestore.ts:86-93",
+        "app/api/admin/restore/begin/route.ts:63-70",
+        "supabase/migrations/20260720_e_signatures.sql:47-61"
+      ],
+      "summary": "An Admin fabricates a backup JSON containing an esignatures row — \"Approved for Construction\", signer set to a different engineer, backdated signedat — and posts it to /api/admin/restore/apply-table. It lands. No auditlogs row records the import (only the single-shot /apply path writes one). The forged approval is indistinguishable from a real ceremony.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
       "id": "WF-6",
       "title": "Server re-derivation is incomplete — `requiresFile` is never enforced",
       "severity": "HIGH",
@@ -1347,6 +1823,98 @@
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
     },
     {
+      "id": "CHAIN-4",
+      "title": "The app's own answer to \"do I have dead roles?\" is stale",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "ux / trust",
+      "related": [
+        "OWN-7",
+        "OWN-10",
+        "DEL-6"
+      ],
+      "locations": [
+        "components/permissions/RoleModelTree.tsx:79,89,90",
+        "components/permissions/RoleModelTree.tsx:101",
+        "components/permissions/RoleModelTree.tsx:106",
+        "components/permissions/RoleModelTree.tsx:113-120",
+        "components/permissions/RoleModelTree.tsx:117",
+        "components/permissions/PermissionsExplorer.tsx"
+      ],
+      "summary": "An admin preparing for an access recertification reads the role model tree, concludes the model is sound apart from the \"few older checks\" it admits to, and signs off. Every discrepancy above was invisible to them.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
+    },
+    {
+      "id": "CHAIN-5",
+      "title": "No stored permission blob carries a version, so no role can safely be removed",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "data-integrity",
+      "related": [
+        "ROLE-1",
+        "CHAIN-1"
+      ],
+      "locations": [
+        "types/schema.ts:96-126",
+        "lib/acl.ts:256-272",
+        "lib/capabilityPolicy.ts:112-117",
+        "../README.md"
+      ],
+      "summary": "A future decision to delete Accounting (say) has no safe execution path: a customer's documents.acl may name it in a live rule; a capabilitypolicy blob may list it as a token; the role picker may have written it into aclindex at any node. Removing the string from ALLROLES orphans every stored reference silently — the rule stays in the JSON and simply stops matching, so an access grant quietly evap",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
+    },
+    {
+      "id": "CHAIN-6",
+      "title": "Change-impact map — what each candidate change actually touches",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "model-complexity",
+      "related": [],
+      "locations": [],
+      "summary": null,
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
+    },
+    {
+      "id": "DB-6",
+      "title": "Thirteen `SECURITY DEFINER` functions do not set `search_path`, while their neighbours do",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security",
+      "related": [
+        "OWN-5",
+        "DB-1"
+      ],
+      "locations": [],
+      "summary": "The exposure depends on whether any role in this deployment can create schemas or objects, which was not verified. What is verified is the inconsistency: the codebase clearly knows the pattern and applies it to ticket numbering and archive invariants while omitting it from the publish guard, nodevisible, canmanagenode and publishrevision — the four functions that carry the most authority in the sy",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
+    },
+    {
+      "id": "DB-7",
+      "title": "The authority-function census — what reads what",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "model-complexity",
+      "related": [],
+      "locations": [],
+      "summary": "The net effect, stated precisely:",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
+    },
+    {
       "id": "DEL-6",
       "title": "Owners are told to recertify library access and cannot",
       "severity": "MEDIUM",
@@ -1512,6 +2080,25 @@
       "summary": "If the intent is that the drafting manager assigns work — so load, priority and skill match are decided deliberately — then ticket.selfassign is a hole in that intent, and it is on by default for every drafter. A drafter can cherry-pick easy tickets out of the queue before the manager has triaged them.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
+    },
+    {
+      "id": "EGRESS-6",
+      "title": "`document_versions` has no RESTRICTIVE UPDATE or INSERT guard",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "data-integrity",
+      "related": [
+        "OWN-5",
+        "OWN-17"
+      ],
+      "locations": [
+        "supabase/schema.sql:1072"
+      ],
+      "summary": "This is the table-level reason OWN-5 (the publishrevision branch path) and OWN-17 (backfillVersion, revision-label correction) work at all. Even with those two application paths fixed, the raw PostgREST route remains.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
     },
     {
       "id": "LIFE-8",
@@ -1890,6 +2477,175 @@
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
     },
     {
+      "id": "SURF-9",
+      "title": "Every `/admin/*` surface is gated differently, and most are UI-only",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "access-control",
+      "related": [
+        "WF-20"
+      ],
+      "locations": [
+        "../README.md"
+      ],
+      "summary": "Two of these are load-bearing:",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-10",
+      "title": "`authorizeOrgRole` reads `role`; the database reads `role OR roles[]`",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "access-control / availability",
+      "related": [
+        "ADD-1",
+        "OWN-3"
+      ],
+      "locations": [
+        "lib/serverAuth.ts:49-58",
+        "supabase/migrations/20260814_documents_delete_controllers.sql:31-40",
+        "app/api/ai/usage/route.ts:29-35",
+        "app/api/admin/schema-health/route.ts:35-40",
+        "app/api/collections/delete/route.ts:44-48",
+        "app/api/ai/connection/route.ts",
+        "lib/roleCapabilities.ts"
+      ],
+      "summary": "A doc-control manager who also holds Manager cannot run any maintenance route, with a \"Insufficient role\" error that names a role they hold.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-11",
+      "title": "`project_members.role` is dead — an \"Observer\" has manager authority",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "access-control",
+      "related": [
+        "OWN-4"
+      ],
+      "locations": [
+        "supabase/migrations/20260527_projects_and_collaboration.sql:61-62",
+        "supabase/migrations/20260818_followups_rls.sql:10-21",
+        "app/(protected)/projects/[id]/page.tsx:952"
+      ],
+      "summary": "A contractor is added as an Observer \"so they can see progress\" and can delete the project's milestones and transmittals.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-12",
+      "title": "Distribution acknowledgments are forgeable by any member",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "compliance",
+      "related": [
+        "SURF-13"
+      ],
+      "locations": [
+        "supabase/migrations/20260825_work_packages_acks.sql:135-139",
+        "lib/distributionAcks.ts:186-194",
+        "supabase/migrations/20260828_integrity_hardening.sql:264-273"
+      ],
+      "summary": "A distribution list shows 12/12 acknowledged for a revised P&ID. One person clicked twelve times. Eleven people have never seen it.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-13",
+      "title": "`document_review_signoffs` UPDATE does not pin reviewer identity",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "compliance / safety",
+      "related": [
+        "DEL-5",
+        "SURF-14"
+      ],
+      "locations": [
+        "supabase/migrations/20260828_integrity_hardening.sql:229-242",
+        "supabase/migrations/20260828_integrity_hardening.sql:274-277",
+        "supabase/migrations/20260822_review_completion_guard.sql:48-53"
+      ],
+      "summary": "A revision is published with a review roster showing two signatures. One of them names an engineer who never signed.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-14",
+      "title": "Signature re-authentication is client-side only",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "compliance",
+      "related": [
+        "SURF-8",
+        "SURF-13"
+      ],
+      "locations": [
+        "components/signatures/SignatureCeremony.tsx:75-86",
+        "lib/eSignatures.ts:73-77",
+        "supabase/migrations/20260720_e_signatures.sql:55-61"
+      ],
+      "summary": "An engineer steps away from an unlocked workstation. A colleague signs three pending reviews in their name. The esignatures rows are indistinguishable from genuine ones, and esignatures is deliberately immutable so they cannot be corrected — only annotated.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-15",
+      "title": "`assertOrgHasAccess` has zero callers — subscription enforcement is client-only",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "business-logic",
+      "related": [
+        "SURF-9"
+      ],
+      "locations": [
+        "lib/serverAuth.ts:78-98",
+        "components/subscription/SubscriptionGate.tsx:48-57"
+      ],
+      "summary": null,
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-16",
+      "title": "Teams are ACL subjects with no audit trail, and `/api/admin/create-user` disagrees with its own page",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "compliance / ux",
+      "related": [
+        "DEL-3",
+        "DEL-4",
+        "SURF-1"
+      ],
+      "locations": [
+        "lib/teams.ts:66-118",
+        "supabase/migrations/20260707_teams.sql:37-49",
+        "supabase/migrations/20260707_teams.sql:52-55",
+        "app/api/admin/create-user/route.ts:62",
+        "app/(protected)/admin/users/page.tsx:231",
+        "app/api/admin/create-user/route.ts:70-72"
+      ],
+      "summary": "An investigation asks who granted a contractor access to the restricted library. The answer is \"they added themselves to a team six weeks ago,\" and there is no record of it.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
       "id": "WF-15",
       "title": "`RequestType` is an open `string`, unvalidated, and gates a terminal transition",
       "severity": "MEDIUM",
@@ -2106,6 +2862,200 @@
       "summary": "A DraftingSupervisor's sidebar badge shows 14 items. They open each one and see \"View Only — No Actions Available.\" The badge never clears because it is derived from role + status, not from getActions. Users learn to ignore the badge — which then hides the real work.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
+    }
+  ],
+  "gaps_are_not_work": "The `gaps` array below is NOT a backlog. Each entry is a requirement with no implementation. Do not implement one. If a gap blocks a finding you are fixing, stop and ask a human.",
+  "gaps": [
+    {
+      "id": "GAP-1",
+      "title": "Only certain people can approve certain types of requests",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "DRAFT-1",
+        "WF-13",
+        "WF-15",
+        "WF-8"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-2",
+      "title": "Nobody approves their own work (separation of duties)",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "WF-4",
+        "WF-14",
+        "DEL-5"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-3",
+      "title": "A library owner delegates a specific file to a person, without transferring ownership",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "DEL-1",
+        "OWN-19"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-4",
+      "title": "Ownership means being the approver of revision and supersession",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "OWN-11",
+        "DEL-5"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-5",
+      "title": "Owner succession, and a real \"no owner\" state",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "OWN-12",
+        "DEL-3",
+        "SURF-1"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-6",
+      "title": "The drafting loop's return path — \"then send the file to a drafting request to be added\"",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "LIFE-1",
+        "LIFE-2",
+        "LIFE-5",
+        "LIFE-6",
+        "LIFE-11"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-7",
+      "title": "Markup as a durable, addressable artifact",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "LIFE-3",
+        "LIFE-8"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-8",
+      "title": "A drafting request can reference more than one source document",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "LIFE-4",
+        "LIFE-13"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-9",
+      "title": "Field verification has currency and expiry",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "LIFE-10"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-10",
+      "title": "A first-class hand-off record",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "LIFE-9",
+        "LIFE-13",
+        "LIFE-14"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-11",
+      "title": "A document event declares what approval its downstream work requires",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "LIFE-5",
+        "LIFE-12",
+        "GAP-1"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-12",
+      "title": "Library ownership has an admin surface, and libraries cannot be born unowned",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "DEL-7",
+        "DEL-8"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-13",
+      "title": "Triage has a first-class \"we don't do that\" outcome",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "DRAFT-4",
+        "WF-19"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-14",
+      "title": "\"Profiles\" instead of stacking roles",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "ADD-1",
+        "ADD-2",
+        "WF-1",
+        "WF-13",
+        "WF-16"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
+    },
+    {
+      "id": "GAP-15",
+      "title": "Ownership carries read access",
+      "kind": "gap",
+      "actionable": false,
+      "note": "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+      "related": [
+        "DEL-2",
+        "DEL-9"
+      ],
+      "report": "audit-reports/roles-and-permissions/90-gap-register.md"
     }
   ]
 }

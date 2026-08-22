@@ -1,0 +1,299 @@
+# 12 · Coupling & change impact
+
+What a change to the role model actually touches, which changes are safe, and
+which look safe and are not.
+
+**6 findings** — 0 CRITICAL, 3 HIGH, 3 MEDIUM.
+
+> See [`../README.md`](../README.md) for the resolution protocol. Code in
+> `Remediation` blocks is **illustrative, untested, and not a patch.** Line
+> numbers drift — **match on the quoted code.**
+>
+> **This report is mostly analysis.** Its findings are real defects, but its
+> primary job is to tell a resolving agent what *not* to touch and in what order.
+> Read it before working any finding in reports 01–11 that mentions roles.
+
+---
+
+## The one rule that governs everything else
+
+Authority checks in this codebase come in two shapes, and they fail in opposite
+directions:
+
+| Shape | Example | If the role resolution is wrong |
+|---|---|---|
+| **Grant** — "you may, if your role is in this set" | `if (role === 'Admin' \|\| role === 'DocCtrl')` | **Fail-closed.** Can wrongly deny. Never wrongly allows. |
+| **Restriction** — "you may, unless your role is in this set" | `activeRole !== "Viewer" && activeRole !== "Auditor"` | **Fail-open.** Rank collapse is a genuine **escalation**. |
+
+Almost every role check in the app is a grant, which is why the additive model's
+incompleteness is mostly an *availability* problem rather than a security one.
+
+**The exceptions are what matter.** Two restriction-style checks were found, both
+reading the singular headline role:
+
+- `app/(protected)/documents/[libraryId]/page.tsx:4010` —
+  `canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}`
+- `components/navigation/Sidebar.tsx:248` —
+  `activeRole === 'Viewer' || activeRole === 'Contractor'` (reduced navigation)
+
+See `CHAIN-1`.
+
+---
+
+## CHAIN-1 · Restriction-style checks read the headline role, so adding a role *removes* a restriction
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** security / access-control
+- **Locations:**
+  - `app/(protected)/documents/[libraryId]/page.tsx:4010` — `canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}`
+  - `components/navigation/Sidebar.tsx:241-248` — `activeRole === 'Viewer' || activeRole === 'Contractor'`, with the comment *"Viewers/Contractors hold few or no capabilities"*
+  - `lib/roleCapabilities.ts:74-94` — `ROLE_RANK`: `Requester: 40` outranks `Auditor` and `Contractor`
+  - `lib/roleCapabilities.ts:120-123` — `primaryRole()` returns the highest-ranked role
+- **Related:** `ROLE-1`, `ADD-1`, `DB-7`
+
+**Mechanism.** `primaryRole` is a *max-rank* projection. For a **grant** check
+that is harmless-to-restrictive. For a **restriction** check it is an escalation:
+adding any higher-ranked role to a restricted user makes the restriction stop
+matching.
+
+**Failure scenario.** An Auditor — a role that exists specifically to be
+read-only — is additively given `Requester` so they can file a ticket.
+`primaryRole` now returns `Requester`. At
+`app/(protected)/documents/[libraryId]/page.tsx:4010`, `activeRole !== "Auditor"`
+is now true, so `canEdit` is true: **the read-only auditor gains inline document
+editing.** The same shape applies to `Contractor` and reduced navigation.
+
+**Chain reaction.** ⚠ **This correction matters for report 01.** `ROLE-1`
+classifies `Contractor` as a pure label with no authority branch. That is wrong:
+`Contractor` is load-bearing at `components/navigation/Sidebar.tsx:248` as a
+*restriction*. It was missed because a first-pass search matched only
+double-quoted role literals and the codebase uses both quote styles.
+**`Contractor` must not be treated as removable.** `ROLE-1`'s conclusion about the
+other five department roles is unaffected.
+
+**Done when.**
+1. Restriction-style checks evaluate against the full role collection — a user
+   who holds `Auditor` is restricted whether or not they also hold something
+   higher-ranked.
+2. `ROLE-1` in report 01 is annotated to reflect that `Contractor` carries a
+   restriction.
+3. A test covers `roles = ['Auditor','Requester']` against the document edit
+   gate.
+
+---
+
+## CHAIN-2 · `primaryRole()` is a four-line browser function that 200+ authority checks treat as truth
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** access-control / model-complexity
+- **Locations:**
+  - `lib/roleCapabilities.ts:118-123` — the function
+  - `app/(protected)/admin/users/page.tsx:130,137` — **the only place the headline is computed and written**: `const headline = primaryRole(cleaned); … .update({ roles: cleaned, role: headline })`
+  - `components/providers/RoleContext.tsx:200-206` — mirrored into `activeRole`
+  - consumed as truth by the headline-only census in [`11-database-authority.md`](./11-database-authority.md) (`DB-7`)
+- **Related:** `DB-3`, `DB-7`, `ADD-1`, `OWN-3`
+
+**Mechanism.** `org_members.role` is a **denormalized cache of a computation that
+happens in the browser**. Nothing in the database enforces that
+`role = primaryRole(roles)`. Any write that sets one without the other — a
+restore, a direct PATCH, a service-role path, a future API route — silently
+desynchronizes the headline from the collection.
+
+An approximate census of the two access patterns across `app/`, `lib/` and
+`components/` returns roughly 237 singular-role reads against roughly 50
+collection-aware ones. **Treat those as orders of magnitude, not exact counts** —
+they are pattern matches, not a compiler-accurate census, and the two patterns
+overlap. The structural point stands regardless: the singular projection is the
+dominant access path by a wide margin, and it is computed client-side.
+
+**Failure scenario.** `lib/dataRestore.ts` and `app/api/admin/restore/begin/route.ts`
+write `org_members` rows with whatever `role` the backup names, and
+`app/api/auth/signup/route.ts` writes `role` without `roles` at all (`DB-3`).
+After a restore, a member's headline can disagree with their collection, and
+every check in the singular family will believe the headline.
+
+**Chain reaction.** This is the pivot for most of the additive-roles work in this
+audit. A database invariant making `role` derived from `roles` would make the
+singular-family checks correct by construction — including
+`prevent_last_admin_removal`, which currently protects against a headline the
+database does not control. **But that is a schema change with a backfill
+(`DB-3`) and a behaviour change for every desynchronized row, so it is a design
+decision for a human, not an agent fix.**
+
+**Done when.** A human has decided whether `role` becomes a database-maintained
+projection of `roles`. Until then, no finding in this audit should convert a
+singular check to additive without reading `DB-3` and `DB-7`.
+
+---
+
+## CHAIN-3 · "Who acts on this ticket?" is answered by three subsystems with three different models
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** ux / access-control
+- **Locations:**
+  - badges / attention: `lib/ticketAttention.ts:22-27`, `:79-108` — hardcoded role list, **additive-aware**
+  - buttons / actions: `lib/workflow.ts:65` — capability policy, **headline-only** (`extraRoles: null`)
+  - email / routing: `lib/ticketRouting.ts:79,91,99` — hardcoded role list, **headline-only**
+  - `lib/ticketAttention.ts:21` carries a comment claiming it is in sync with routing
+- **Related:** `WF-7`, `WF-19`, `WF-24`
+
+**Mechanism.** Three subsystems answer the same question with three different
+role resolutions and three different role lists. The comment asserting they are
+aligned is not true.
+
+**Failure scenario.** A DraftingSupervisor sees a badge count of 14 (attention
+says they must act), opens each ticket and finds "View Only — No Actions
+Available" (the workflow engine disagrees), and never receives the routing email
+(routing matched on their headline `Manager`). Three subsystems, three answers,
+one confused person.
+
+**Chain reaction.** Recorded in full as `WF-7`, `WF-19` and `WF-24`. It appears
+here because it is the clearest illustration of the general pattern: **the same
+authority question is re-implemented per surface rather than resolved once.** Any
+fix must move all three together or it makes the divergence worse rather than
+better.
+
+**Done when.** The three surfaces agree for every role/status combination — see
+`WF-24`'s acceptance criteria.
+
+---
+
+## CHAIN-4 · The app's own answer to "do I have dead roles?" is stale
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** ux / trust
+- **Locations:**
+  - `components/permissions/RoleModelTree.tsx:79,89,90` — role summaries
+  - `components/permissions/RoleModelTree.tsx:101` — asserts *"expiry dates honored"* (contradicted by `OWN-7`)
+  - `components/permissions/RoleModelTree.tsx:106` — correctly describes the auto-finalize authority quirk
+  - `components/permissions/RoleModelTree.tsx:113-120` — a "Known gaps" section that admits some inconsistencies
+  - `components/permissions/RoleModelTree.tsx:117` — *"a few older checks still read only the headline role"*
+  - `components/permissions/PermissionsExplorer.tsx` — the capability matrix, including a row claiming access recertification works *"If library owner"* (contradicted by `DEL-6`)
+- **Related:** `OWN-7`, `OWN-10`, `DEL-6`, `ROLE-*`
+
+**Mechanism.** The product contains a self-documenting authority model. It is
+**the right idea** and unusual to find — but several of its claims no longer
+match the code, and an admin reasoning about permissions is reasoning from it.
+
+The most consequential inaccuracies:
+
+| The app says | Reality |
+|---|---|
+| *"expiry dates honored"* | `acl_index` discards `expiresAt` entirely (`OWN-7`) |
+| *"a few older checks still read only the headline role"* | The publish guard is one of them, and it is *the* check (`OWN-3`) |
+| Access recertification: *"If library owner"* | The menu item is inside `{isController && …}` (`DEL-6`) |
+| `RoleModelTree.tsx:232` renders `ownerName \|\| team` | A library with `owner_user_id` set and `owner_name` null displays the **team** as owner (`DEL-8`) |
+| `publishGrants` reads `allow.users` and `allow.roles` | `allow.teams` is never read, so team publish grants are invisible in the only place they are listed (`OWN-6`) |
+
+**Failure scenario.** An admin preparing for an access recertification reads the
+role model tree, concludes the model is sound apart from the "few older checks"
+it admits to, and signs off. Every discrepancy above was invisible to them.
+
+**Chain reaction.** ⚠ **Do not remove these components.** A self-documenting
+authority model with an explicit "Known gaps" section is a genuine asset and
+worth keeping. The finding is that its claims must be re-derived from the code
+rather than maintained by hand — and, in the interim, corrected.
+
+**Done when.** Every claim in `RoleModelTree` and `PermissionsExplorer` either
+matches the enforced behaviour or is explicitly listed under "Known gaps."
+
+---
+
+## CHAIN-5 · No stored permission blob carries a version, so no role can safely be removed
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** data-integrity
+- **Locations:**
+  - `types/schema.ts:96-126` — `AccessRule` / `AclIndexBucket`; **no version field**
+  - `lib/acl.ts:256-272` — `buildAclIndexFromRules` writes role names as bare strings into `allow.roles.<action>`
+  - `lib/capabilityPolicy.ts:112-117` — `CapabilityPolicy`; role tokens are bare strings, no version
+  - `documents.acl` / `acl_index`, `collections.acl` / `acl_index`, `libraries.acl` / `acl_index`, `org_configurations.data` — all JSONB blobs holding role **names**
+- **Related:** `ROLE-1`, `ROLE-*`, `CHAIN-1`
+
+**Mechanism.** Role identity is the role's *name*, stored as a string inside
+customer JSON in at least seven places. There is no id, no version stamp, and no
+migration hook.
+
+**Failure scenario.** A future decision to delete `Accounting` (say) has no safe
+execution path: a customer's `documents.acl` may name it in a live rule; a
+`capability_policy` blob may list it as a token; the role picker may have written
+it into `acl_index` at any node. Removing the string from `ALL_ROLES` orphans
+every stored reference **silently** — the rule stays in the JSON and simply stops
+matching, so an access grant quietly evaporates with no error and no audit event.
+
+**Chain reaction.** This is why `ROLE-1`'s "six department roles gate nothing"
+conclusion **is not a removal authorization**, and why the protocol in
+`../README.md` says never to delete a role because a report calls it dead. The
+prerequisite for any role removal is stable role ids plus a migration that
+rewrites stored blobs — which is a project, not a cleanup.
+
+**Done when.** A human has decided whether role identity becomes a stable id. No
+role is removed before then.
+
+---
+
+## CHAIN-6 · Change-impact map — what each candidate change actually touches
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** model-complexity
+
+**Mechanism.** This entry exists so that a resolving agent can check a proposed
+change against its real reach before starting. It is reference material, not a
+defect.
+
+| Candidate change | Reaches | Verdict |
+|---|---|---|
+| Add `DraftingSupervisor` to the ACL role pickers (`OWN-9`) | 2 arrays | **Safe.** Additive; no stored data changes. |
+| Fix `tm.user_id` → `tm.uid` (`DB-2`) | 1 word | **Not safe alone.** Activates `documents_deny_write_guard` for the first time, against possibly-stale indexes (`DB-4`). |
+| Backfill `roles` from `role` (`DB-3`) | 1 migration | **Safe and enabling.** Prerequisite for nearly all additive work. |
+| Pin `search_path` on 13 functions (`DB-6`) | 13 definitions | **Safe.** No behavioural change. Identify which `enforce_document_publish_guard` definition is live first. |
+| Add `owner_user_id` to the access-change guard (`OWN-2`) | 1 trigger + 1 UI flow | **Mostly safe.** Blocks owner-to-owner reassignment unless explicitly allowed. |
+| Add RESTRICTIVE policies to `libraries` (`OWN-1`) | 6+ call sites | **Not safe alone.** Every one uses `.update()` without `.select()` and will fail **silently** (`OWN-14`). |
+| Thread `teamIds` into the publish principal (`OWN-6`) | ~1 function | **Widens authority.** Audit existing `allow.teams.publish` grants first — they have been inert. |
+| Make publish-path SQL additive (`OWN-3`) | 3 functions | **Widens authority.** Needs `DB-3` first, and an inventory of secondary-DocCtrl holders. |
+| Reorder `ROLE_RANK` to lift `DocCtrl` (`OWN-3` alt) | 1 constant | **Resist.** Silently removes Manager-tier ticket authority from the same people. Do not do this *and* the additive fix. |
+| Narrow `tickets` RLS (`WF-2`) | 3 client writers | **Not safe alone.** Read `WF-23` first — the SQL capability defaults deny everyone. |
+| Fix `org_configurations.value` (`DB-1`, `WF-1`) | 2 files | **Activates three latent findings** (`WF-10`, `WF-11`, `WF-23`). |
+| Delete any role (`ROLE-1`) | customer JSON in 7 places | **Resist.** No stored blob is versioned (`CHAIN-5`). |
+| Restore `org_members` DELETE (`SURF-1`) | 1 policy | **Makes `OWN-12` bite.** Ownership has no succession. |
+| Give ownership a read branch (`DEL-2`) | `node_visible` | **Widens read access.** A design decision — implicit branch versus auto-granted ACL rule. |
+
+**Done when.** Nothing — this is reference material. It carries an ID so it can
+be cited from a `Resolution` block, and so an agent that finds it wrong can mark
+it `INVALID` with evidence rather than silently working around it.
+
+---
+
+## Verified sound — do not break
+
+1. **`RoleModelTree` and `PermissionsExplorer` as artifacts.** Even with the
+   stale claims in `CHAIN-4`, a self-documenting authority model *inside the
+   product*, with an explicit "Known gaps" section that admits its own
+   inconsistencies, is unusual and valuable. **Fix the claims; keep the
+   components.**
+2. **Identity rights are non-configurable** (`lib/workflow.ts:69-75`). A ticket's
+   requester, drafter or engineer can never be locked out of their own ticket by
+   a policy edit — so no capability-policy change can strand a ticket. Frozen by
+   a test.
+3. **The additive/singular split is *documented* in the code**
+   (`lib/roleCapabilities.ts:10-11` describes the rollout as surface-by-surface).
+   The incompleteness is known, not accidental — which means the remaining work
+   is finishing a plan, not discovering one.
+4. **The grant/restriction asymmetry works in the codebase's favour.** Because
+   nearly every check is a grant, an incorrect role resolution nearly always
+   *denies* rather than *allows*. `CHAIN-1`'s two exceptions are the whole
+   security surface of the additive-roles gap — which is a much smaller problem
+   than the raw count of divergent checks suggests. **Preserve that property:
+   prefer grant-shaped checks when adding new ones.**

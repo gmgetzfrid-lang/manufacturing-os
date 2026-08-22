@@ -30,7 +30,8 @@ before and after.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see
-[`../findings.json`](../findings.json) for the machine-readable index.
+[`findings.json`](./findings.json) for this area's machine-readable index (it
+covers **this area only** — audit areas are never mixed).
 
 ---
 

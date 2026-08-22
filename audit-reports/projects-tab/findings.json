@@ -15,6 +15,7 @@
   ],
   "totals": {
     "findings": 133,
+    "gaps": 0,
     "by_severity": {
       "CRITICAL": 29,
       "HIGH": 72,
@@ -2626,5 +2627,7 @@
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
     }
-  ]
+  ],
+  "gaps_are_not_work": "The `gaps` array below is NOT a backlog. Each entry is a requirement with no implementation. Do not implement one. If a gap blocks a finding you are fixing, stop and ask a human.",
+  "gaps": []
 }

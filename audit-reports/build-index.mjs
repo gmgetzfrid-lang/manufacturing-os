@@ -105,11 +105,18 @@ function summary(block) {
   return m[1].replace(/\s+/g, " ").replace(/[*`_]/g, "").trim().slice(0, 400);
 }
 
-/** Parse one area folder's reports into a findings array. */
+/**
+ * Parse one area folder into findings + gaps.
+ *
+ * `GAP-` entries are kept in a SEPARATE array and never mixed into `findings`.
+ * A gap describes a feature that does not exist; it is not work, and an agent
+ * iterating `findings` must never be handed one. See the run README.
+ */
 function parseArea(area) {
   const dir = join(ROOT, area);
   const files = readdirSync(dir).filter((f) => /^\d\d-.*\.md$/.test(f)).sort();
   const found = [];
+  const gaps = [];
 
   for (const file of files) {
     const path = join(dir, file);
@@ -121,6 +128,22 @@ function parseArea(area) {
       const head = part.slice(0, part.indexOf("\n"));
       const [id, ...titleBits] = head.split(" · ");
       const block = part.slice(0, part.indexOf("\n## ") === -1 ? undefined : part.indexOf("\n## "));
+
+      // Gaps are requirements, not defects. Record them separately, never as
+      // findings, and never with a severity that would put them in a queue.
+      if (/^GAP-\d+$/.test(id.trim())) {
+        gaps.push({
+          id: id.trim(),
+          title: titleBits.join(" · ").trim(),
+          kind: "gap",
+          actionable: false,
+          note: "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+          related: (block.match(/\*\*Related findings:\*\*(.+)/)?.[1] ?? "")
+            .match(/[A-Z0-9]+-\d+/g) ?? [],
+          report: relative(REPO, path),
+        });
+        continue;
+      }
 
       const severity = field(block, "Severity");
       if (!severity) continue;
@@ -148,7 +171,8 @@ function parseArea(area) {
     const s = (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9);
     return s !== 0 ? s : a.id.localeCompare(b.id, "en", { numeric: true });
   });
-  return found;
+  gaps.sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
+  return { findings: found, gaps };
 }
 
 const areas = readdirSync(ROOT)
@@ -156,7 +180,7 @@ const areas = readdirSync(ROOT)
   .sort();
 
 for (const area of areas) {
-  const findings = parseArea(area);
+  const { findings, gaps } = parseArea(area);
 
   const byStatus = {};
   const bySeverity = {};
@@ -174,14 +198,19 @@ for (const area of areas) {
     generated_from: findings.length
       ? [...new Set(findings.map((f) => f.report))].sort()
       : [],
-    totals: { findings: findings.length, by_severity: bySeverity, by_status: byStatus },
+    totals: { findings: findings.length, gaps: gaps.length, by_severity: bySeverity, by_status: byStatus },
     status_vocabulary: ["OPEN", "IN_PROGRESS", "RESOLVED", "WONTFIX", "INVALID"],
     findings,
+    gaps_are_not_work:
+      "The `gaps` array below is NOT a backlog. Each entry is a requirement " +
+      "with no implementation. Do not implement one. If a gap blocks a finding " +
+      "you are fixing, stop and ask a human.",
+    gaps,
   };
 
   writeFileSync(join(ROOT, area, "findings.json"), JSON.stringify(index, null, 2) + "\n");
 
-  console.log(`${area}/findings.json — ${findings.length} findings`);
+  console.log(`${area}/findings.json — ${findings.length} findings, ${gaps.length} gaps (gaps are not work)`);
   console.log(`  by severity: ${JSON.stringify(bySeverity)}`);
   console.log(`  by status:   ${JSON.stringify(byStatus)}`);
 }

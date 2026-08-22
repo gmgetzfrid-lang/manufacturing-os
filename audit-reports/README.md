@@ -3,17 +3,39 @@
 Findings from read-only audits of this codebase, written so that an agent can
 pick up a report, work it end to end, and record what it did.
 
-Each audit run lives in its own dated folder. Each report inside a run is a
-self-contained file covering one domain, sized to be worked in a single agent
-context.
+**One folder per area of the app.** Everything about the Projects tabs lives in
+`projects-tab/`; everything about roles and permissions lives in
+`roles-and-permissions/`. **Areas are never mixed** — an agent working one area
+never has to filter out another's findings, and each area carries its own
+machine-readable index covering only itself.
+
+Each report inside an area is a self-contained file covering one domain, sized to
+be worked in a single agent context.
 
 ```
 audit-reports/
-├── README.md                        ← you are here (the protocol)
-├── findings.json                    ← machine-readable index of every finding
-└── <YYYY-MM-DD>-<run-name>/
-    ├── README.md                    ← that run's index, scope, and method
-    └── NN-<domain>.md               ← one report per domain
+├── README.md                    ← you are here (the protocol — applies to every area)
+├── build-index.mjs              ← regenerates every area's findings.json
+├── projects-tab/
+│   ├── README.md                ← that area's index, scope, and method
+│   ├── findings.json            ← THIS AREA ONLY
+│   └── NN-<domain>.md           ← one report per domain
+└── roles-and-permissions/
+    ├── README.md
+    ├── findings.json            ← THIS AREA ONLY
+    ├── NN-<domain>.md
+    ├── 90-gap-register.md       ← requirements, NOT work (see below)
+    └── 99-fix-sequencing.md     ← order matters; read before starting
+```
+
+**Pick one area and stay in it.** Work one report at a time, one finding at a
+time. There is deliberately no combined index — a cross-area sweep is not a
+supported unit of work.
+
+To regenerate the indexes after editing any report:
+
+```
+node audit-reports/build-index.mjs
 ```
 
 ---
@@ -121,14 +143,20 @@ outcome than a fix that broke a working surface.
 
 ### Pick up work
 
-1. Read `findings.json` for the full index, or a single report file for one
-   domain's worth of context. `findings.json` is generated from the reports —
-   **the reports are the source of truth**; regenerate the JSON if they diverge.
-2. Work findings in severity order: `CRITICAL` → `HIGH` → `MEDIUM`. Within a
+1. **Pick one area folder.** Read its `README.md` first — it carries that area's
+   scope, its headline, and any ordering constraints.
+2. **If the area has a `99-fix-sequencing.md`, read it before starting.** Some
+   areas have fixes that are safe alone and dangerous together, or that activate
+   dormant problems. That file says which.
+3. Read that area's `findings.json` for the index, or a single report file for
+   one domain's worth of context. `findings.json` is generated from the reports —
+   **the reports are the source of truth**; regenerate if they diverge.
+4. Work findings in severity order: `CRITICAL` → `HIGH` → `MEDIUM`. Within a
    severity, prefer findings whose `blast_radius` is `data-integrity`,
-   `security`, or `safety` over `ux` and `performance`.
-3. One report file per session is the intended unit of work. Do not try to
-   resolve a whole run in one pass.
+   `security`, or `safety` over `ux` and `performance` — **unless the sequencing
+   file says otherwise, in which case it wins.**
+5. One report file per session is the intended unit of work. Do not try to
+   resolve a whole area in one pass, and never work two areas at once.
 
 ### Every finding carries
 
@@ -202,8 +230,12 @@ Then update the run's `README.md` progress table and regenerate `findings.json`.
 
 ---
 
-## Runs
+## Areas
 
-| Run | Date | Scope | Findings | Index |
+| Area | Scope | Findings | Gaps | Index |
 |---|---|---|---|---|
-| Project Controls | 2026-08-21 | Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 133 | [`2026-08-21-project-controls/`](./2026-08-21-project-controls/README.md) |
+| **Projects tab** | The Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 133 | — | [`projects-tab/`](./projects-tab/README.md) |
+| **Roles & permissions** | The whole authority model: roles, additive roles, capability policy, content ACL, ownership & publish, the drafting workflow, document lifecycle, delegation & teams, non-document surfaces, content egress, and the database functions underneath | 124 | 15 | [`roles-and-permissions/`](./roles-and-permissions/README.md) |
+
+Both audits were **read-only**. No application code, test, or migration was
+modified by either.
