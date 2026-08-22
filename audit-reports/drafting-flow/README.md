@@ -186,6 +186,30 @@ ticket to assignment carrying nothing, and `PENDING_REVIEW` consults only
 be self-approved to IFC by a Manager requester. The flag buys a conversation and
 no gate. The missing piece is one persisted boolean (`GAP-111`, effort `S`).
 
+**And the gate belongs on delivery, not on drafting.** *"No deliverable without
+official approval"* is a condition on the **issue** transitions — which means
+drafting starts immediately and the approval roster runs alongside it. Only
+issuing waits. That is the same safety outcome as today's pre-drafting scope
+review, one wait state cheaper: a drafted package that later needs changing is
+what revisions are for; a drafter idle behind a scope note is pure loss.
+
+Two consequences worth stating plainly:
+
+- **`approve_minor_correction` must be inside the gate.** It routes straight to
+  `PENDING_IFC` and is offered to every requester, including the one the engineer
+  gate just blocked. A delivery gate that misses it is not a gate.
+- **"Routed people" is plural and derived.** The flag today carries
+  `requiresEngineerPick: true` — the assigner hand-picks one engineer. Flagging
+  is a judgement about the work; choosing who reviews is a routing question they
+  should not have to answer (`FRIC-4`), and one engineer is not what *"routed
+  people"* means. Under `GAP-112` the assigner flags and the router resolves who;
+  on a parallel roster N approvers still cost one wait state.
+
+**This is the case where a blocking signature is right**, and the flag is what
+makes it countable: a facility should be able to say *"we had N official
+approvals last month, all flagged, here is who flagged each and why."* Everything
+not flagged advances with nobody in the way. That is the trade.
+
 ### "I'm the drafting manager and the QA/QC — but that's not true elsewhere"
 
 `DEC-37`: **one person may satisfy any number of slots.** Independence is a

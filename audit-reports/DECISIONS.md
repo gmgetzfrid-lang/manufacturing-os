@@ -67,7 +67,7 @@ about the system.
 | [DEC-30](#dec-30) | How to work a finding whose fix needs a migration or unobservable DB state | — | protocol |
 | [DEC-31](#dec-31) | The scope rule, without a human to ask | — | protocol |
 | [DEC-32](#dec-32) | How parallel agents claim work without colliding | — | protocol |
-| [DEC-33](#dec-33) | **Engineering is the default.** Only the requester's like-in-kind declaration removes it; the assigner may only add it back | high | `TIER-1`, `TIER-2`, `GAP-101`, `GAP-111` |
+| [DEC-33](#dec-33) | **Engineering is the default**, and it gates **delivery, not drafting**. Only the requester's declaration removes it; the assigner may only add it back | high | `TIER-1`, `TIER-2`, `TIER-7`, `GAP-101`, `GAP-111` |
 | [DEC-34](#dec-34) | The declaration is a **typed statement in a column**, not a checkbox and not `metadata` | low | `GAP-110`, `INTAKE-*` |
 | [DEC-35](#dec-35) | **No facility vocabulary in code.** No `QAQC`, no `B31.3`, no role-name branching | medium | `TIER-3`, `TIER-4`, `GAP-112` |
 | [DEC-36](#dec-36) | The routing table lives in `org_configurations` and resolves through the container chain | medium | `GAP-112`, `GAP-104`, `DCW-6` |
@@ -1113,6 +1113,27 @@ field.
 (`lib/workflow.ts:37-43`) is the inversion this decision deletes. Engineering is
 required or not because of **what the work is**, never because of **who asked**.
 
+**What "required" gates: delivery, not drafting.** Stated by the owner as *"no
+deliverable without official approval."* The requirement is a condition on the
+**issue transitions** — `approve_draft_ifc`, `engineer_approve_final`,
+`submit_final`, `approve_minor_correction` — not a stage inserted before work may
+begin. Drafting proceeds in parallel with the approval roster; only issuing
+waits.
+
+This is not a softening. It is the same safety outcome one wait state cheaper: a
+drafted package that later needs changing is what revisions are for, whereas a
+drafter idle behind a scope note is pure loss. `PENDING_ENG_TEAM` remains
+available as an *optional* pre-drafting scope review for an assigner who wants
+one before spending the hours — it must not be the only route to requiring
+engineering, and must not be mandatory.
+
+**And approval goes to routed people, plural.** The assigner flags; the router
+(`DEC-36`) resolves who. Requiring the assigner to hand-pick one engineer —
+today's `requiresEngineerPick: true` — is a routing question dressed as a
+judgement call, and it caps official approval at one person when the library and
+the work class may require several. Hand-pick survives only as the fallback for
+an org with no routing configured.
+
 **Implementation.** Two persisted fields, both first-class columns:
 
 - `like_in_kind_declared_at` / `_by` / `_statement` — set only at creation, only
@@ -1132,8 +1153,10 @@ required or not because of **what the work is**, never because of **who asked**.
 > piece is one persisted boolean, not a feature.
 
 **Acceptance.**
-- A ticket with no like-in-kind declaration cannot reach IFC without the
+- A ticket with no like-in-kind declaration cannot **issue** without the
   engineering slot satisfied, whoever the requester is — Manager included.
+- Every issue transition is gated, `approve_minor_correction` included.
+- Drafting on a flagged ticket is not blocked; the roster runs alongside it.
 - A ticket with a declaration reaches IFC through the assigner, with no engineer
   involved and no additional wait state.
 - `request_eng_review` on a declared like-in-kind ticket sets

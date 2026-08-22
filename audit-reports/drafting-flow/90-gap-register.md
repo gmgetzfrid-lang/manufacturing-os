@@ -960,16 +960,107 @@ requester happened to be a Manager, Admin or DocCtrl — the requester self-appr
 straight to IFC with no engineering sign-off on the deliverable. The flag bought a
 conversation and no gate.
 
+### What the flag actually means
+
+Stated by the owner in the clearest form yet:
+
+> *"The drafting manager can be the gate and say: hey wait, this requires
+> engineering — no deliverable without official approval. And it goes through the
+> ringer to get official approvals from routed people."*
+
+Three things in that sentence, and each one changes the build:
+
+#### 1. The flag gates **delivery**, not drafting
+
+*"No deliverable without official approval"* is a constraint on the **issue
+point**, not on when work may start. That distinction is worth a whole wait
+state:
+
+| | Sequence | Waits |
+|---|---|---|
+| **Today** | flag → `PENDING_ENG_TEAM` → engineer reviews scope → back to `PENDING_ASSIGNMENT` → assign → draft → review | drafting waits on engineering |
+| **What the owner described** | flag → **drafting starts now**, approval roster opens **in parallel** → deliverable cannot be **issued** until the roster is complete | only the issue point waits |
+
+Drafting a package that later needs a change is cheap — that is what revisions
+are for. **Making a drafter sit idle while an engineer reads a scope note is
+not.** Gating the issue point instead of the start point gets the identical
+safety outcome and gives the drafting time back.
+
+So `engineering_required` must gate the **issue transitions** —
+`approve_draft_ifc`, `engineer_approve_final`, `submit_final` and
+`approve_minor_correction` — not merely insert a status early on. Today
+`PENDING_ENG_TEAM` sits *before* assignment, which is the expensive placement.
+
+⚠ **`approve_minor_correction` is the one that matters most here.** It routes
+straight to `PENDING_IFC` (`lib/ticketTransitions.ts:230-235`) and is offered to
+every requester at `PENDING_REVIEW` — including the branch the engineer gate
+blocks. A delivery gate that does not cover it is not a gate.
+
+#### 2. "Routed people" is plural, and derived — not picked
+
+The flag currently carries `requiresEngineerPick: true`: the assigner must
+personally choose **one** engineer from a list. Two problems.
+
+- It is `FRIC-4` — making someone hand-pick a reviewer is a routing question that
+  demands more domain knowledge than the review itself.
+- It caps official approval at one person, when *"routed people"* plainly means
+  whoever that library and that class of work require — which may be several.
+
+Under `GAP-112` the assigner **flags, and the router resolves who**. The assigner
+does not need to know, and on a parallel roster (`GAP-103`) N approvers still cost
+**one** wait state.
+
+Keep `requiresEngineerPick` as the fallback for an org with no routing configured.
+Do not keep it as the only path.
+
+#### 3. The flag must be available later than assignment
+
+A drafting manager who realises at review time that something needs engineering
+must be able to say so. Today the action exists only at `NEW` and
+`PENDING_ASSIGNMENT` (`lib/workflow.ts:93-101`, `:146-153`).
+
+Offer it wherever `ticket.manage` / `ticket.assign` holds and the ticket has not
+yet issued. Because the gate is now on delivery rather than on starting, a late
+flag does not restart anything — it just adds the requirement the deliverable
+must satisfy before it can be issued.
+
 ### Scope
 
-**In:** `request_eng_review` sets `engineering_required = true`, permanently.
-`getActions` at `PENDING_REVIEW` reads `ticket.engineeringRequired` instead of
-`requiresEngineerApproval(ticket.requesterRole)`.
+**In:**
 
-**Out:** changing when or how the flag is offered. It is already offered at the
-right two places to the right person.
+1. `request_eng_review` sets `engineering_required = true`, permanently.
+2. `engineering_required` gates **every issue transition**, including
+   `approve_minor_correction`.
+3. Drafting is **not** blocked by the flag; the approval roster runs alongside it.
+4. The flag is available at any pre-issue status to whoever can assign.
+5. Where a router exists, the flag resolves approvers through it rather than
+   requiring a hand-pick.
 
-### Why this costs zero waits
+**Out:** removing `PENDING_ENG_TEAM`. A pre-drafting scope review is genuinely
+useful when the assigner wants one *before* spending drafting hours — it just
+must not be the only way to require engineering, and must not be mandatory.
+
+### Why a blocking signature is correct here
+
+`99-fix-sequencing.md` says a wait on a specific person is a defect *until its
+consequence justifies it*. **This is the case where it does.** An unapproved
+construction package reaching the field is the consequence the whole system
+exists to prevent, and there is no clock-based substitute for a signature that
+says a qualified person accepted the design.
+
+That is precisely why the flag matters: it makes blocking signatures
+**countable**. A facility should be able to say *"we had N official approvals last
+month, all of them flagged, and here is who flagged each one and why."* If that
+number is not small and not explainable, the problem is the flagging policy — not
+the flow.
+
+**Everything not flagged advances without a person in the way.** That is the
+trade: a small, deliberate, named set of real gates, in exchange for no ceremony
+anywhere else.
+
+### Why the *checking* costs zero waits
+
+The gate above is deliberate. The **decision to apply it** costs nothing.
 
 The drafting manager is **already in the loop on every ticket** —
 `PENDING_ASSIGNMENT` is the initial status for every request from every door
@@ -990,15 +1081,33 @@ was already there. Compare a QA/QC status, which inserts a person who was not.
 - **Do not delete `requiresEngineerApproval` in this change.** Leave it in place
   as the seeded fallback for tickets predating `GAP-110`'s columns, and remove it
   in a later, separate change once no rows depend on it.
-- **Do not add a new status.** The flag reuses `PENDING_ENG_TEAM`, which exists
-  and works.
+- **Do not add a new status.** The delivery gate is a *condition on existing
+  transitions*, not a stage. `PENDING_ENG_TEAM` stays available as the optional
+  pre-drafting scope review.
+- **Do not block drafting on the flag.** The constraint is *"no deliverable
+  without official approval"* — not *"no drafting without official approval"*.
+  Blocking the start is the expensive misreading and buys nothing.
+- **Do not leave `approve_minor_correction` outside the gate.** It routes
+  straight to `PENDING_IFC` and is offered to every requester. A delivery gate
+  that misses it is not a gate.
+- **Do not force the assigner to hand-pick the approver** once a router exists.
+  Flagging is a judgement about the work; choosing who reviews is a routing
+  question they should not have to answer (`FRIC-4`).
 
 ### Acceptance
 
-1. A flagged ticket cannot reach IFC without engineering sign-off, whoever the
+1. A flagged ticket cannot **issue** without official approval, whoever the
    requester is — Manager, Admin and DocCtrl included. A test pins each.
-2. `approve_team` leaves `engineering_required = true`.
-3. No path sets it false.
+2. **Every** issue transition is gated, `approve_minor_correction` included. A
+   test pins that one by name.
+3. A flagged ticket can still be drafted and submitted while approval is pending
+   — the roster runs alongside drafting, not in front of it.
+4. The flag can be raised at any pre-issue status by whoever can assign, and a
+   late flag does not reset the ticket or discard drafting work.
+5. Where routing is configured, flagging resolves approvers through it; N
+   approvers cost one wait state on the roster.
+6. `approve_team` leaves `engineering_required = true`.
+7. No path sets it false.
 4. The ticket shows *why* engineering is required — declaration absent, or
    flagged by a named person on a date with their stated reason. "Because of your
    job title" disappears as an answer.
