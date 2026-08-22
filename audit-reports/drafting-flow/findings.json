@@ -10,7 +10,7 @@
   ],
   "totals": {
     "findings": 40,
-    "gaps": 8,
+    "gaps": 9,
     "by_severity": {
       "CRITICAL": 7,
       "HIGH": 20,
@@ -897,14 +897,12 @@
     },
     {
       "id": "GAP-102",
-      "title": "QA/QC as a reviewer slot, not a role",
+      "title": "QA/QC assurance with **zero added stops**",
       "kind": "gap",
       "verdict": "BUILD_NARROW",
       "actionable": true,
-      "effort": "M",
-      "depends_on": [
-        "GAP-103"
-      ],
+      "effort": "S",
+      "depends_on": [],
       "related": [
         "TIER-3",
         "TIER-4",
@@ -1011,6 +1009,24 @@
         "UI-2",
         "UI-4",
         "UI-7"
+      ],
+      "report": "audit-reports/drafting-flow/90-gap-register.md"
+    },
+    {
+      "id": "GAP-109",
+      "title": "Engineering review without a stop",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [
+        "GAP-101"
+      ],
+      "related": [
+        "TIER-1",
+        "TIER-5",
+        "FRIC-1",
+        "FRIC-4"
       ],
       "report": "audit-reports/drafting-flow/90-gap-register.md"
     }

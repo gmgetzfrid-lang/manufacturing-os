@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**40 findings** — 7 CRITICAL, 20 HIGH, 13 MEDIUM — plus **8 gap specs**, all
+**40 findings** — 7 CRITICAL, 20 HIGH, 13 MEDIUM — plus **9 gap specs**, all
 buildable.
 
 | # | Report | Findings | Focus |
@@ -38,7 +38,7 @@ buildable.
 | 03 | [Document control wiring](./03-doc-control-wiring.md) | 7 | Routing drawings to the library's document controller for review and release |
 | 04 | [Flow leaks](./04-flow-leaks.md) | 9 | Where work, state and attention escape without saying so |
 | 05 | [Discoverability](./05-ui-discoverability.md) | 7 | Can a first-time user work this without studying it? |
-| 90 | [**Gap register**](./90-gap-register.md) | 8 specs | What has to be built. `GAP-101`+ so they never collide with the other area |
+| 90 | [**Gap register**](./90-gap-register.md) | 9 specs | What has to be built. `GAP-101`+ so they never collide with the other area |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. The keystone build, and what must not ship before it |
 
 ---
@@ -115,9 +115,13 @@ Expressible today: **none of it.**
 **The good news is the shape you described is cheap — if built in the right
 order.** `GAP-101` puts the class on the ticket at **triage**, a step that
 already exists with the right person in it, so classification costs zero hops.
-`GAP-102` makes QA/QC a **capability plus a reviewer slot** — no new role, and
-because the roster is parallel, requiring QA/QC on like-in-kind adds **zero
-wait states**.
+`GAP-102` gives QA/QC **visibility plus stop-work authority instead of a
+signature** — both already built, both costing nothing when unused. `GAP-109`
+does the same for engineering review via consent windows and standing
+pre-authorization. See **the friction ladder** in the gap register: the question
+is never "who reviews this?" but "what is the cheapest mechanism that delivers
+the assurance?" — and most requirements that present as reviews turn out to be
+data completeness or visibility, which are free.
 
 ### "I'm not boxing myself into a new role or extra friction"
 

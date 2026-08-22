@@ -3,9 +3,35 @@
 **Binding, not advisory.** This area has one ordering constraint that outweighs
 everything else, and getting it wrong produces a workflow people abandon.
 
-No findings of their own — this is the plan the 40 findings and 8 gap specs are
+No findings of their own — this is the plan the 40 findings and 9 gap specs are
 worked against. Judgment calls shared with the roles model are settled in
 [`../DECISIONS.md`](../DECISIONS.md).
+
+---
+
+## The governing principle
+
+> **A wait on a specific person is where backlog comes from. Treat every one as a
+> defect until its consequence justifies it.**
+
+This is not a preference about polish. It is queue mechanics: a stage that
+requires a *named human* forms a backlog the moment that person's availability
+drops below the arrival rate — and their availability is not something the system
+controls. A stage that advances on a **clock** cannot form a backlog. It can only
+produce objections, which are rare, self-limiting, and carry information.
+
+So the design default inverts. The question is not *"who should approve this?"*
+It is **"what happens if nobody does anything?"** — and for most work the right
+answer is *it advances, and the record says nobody objected.*
+
+Blocking signatures still exist. They should be **countable**: an org should be
+able to say "we have N blocking approvals a month and they are all new design in
+code-governed service." If that number is not small and not explainable, the flow
+has a defect, not a policy.
+
+**Corollary for anyone working this area:** if a fix adds a stage where the ticket
+waits on a person, it is the wrong fix. Check the friction ladder in the gap
+register first.
 
 ---
 
@@ -35,9 +61,15 @@ model was implemented correctly.
 
 There is a second-order version of the same trap: **`GAP-102` (QA/QC) is the most
 tempting thing in this audit to build early**, because the requirement is
-concrete and the stated need is urgent. Built as a status, it adds a hop to every
+concrete and the stated need is urgent. Built as a status it adds a hop to every
 ticket in the plant — including the like-in-kind work it is meant to cover
-cheaply.
+cheaply. Built as a *roster slot* it is better but still a touch.
+
+**Read the friction ladder in the gap register before building any assurance
+mechanism.** Waits and touches are different currencies. A parallel roster fixes
+waits and not touches, and most requirements that present as reviews turn out to
+be data completeness or visibility — both of which cost nothing. `GAP-102` and
+`GAP-109` are the worked examples.
 
 ---
 
@@ -131,12 +163,17 @@ Only after Phase 3. In this order.
    `requiresEngineerApproval(requesterRole)`. **This is the inversion fix** and
    the single highest-value change in the area: it improves safety and reduces
    friction simultaneously.
-3. **`GAP-102`** — QA/QC as a capability plus a roster slot. Safe now, because
-   the roster is parallel.
-4. **`TIER-4`** / `DEC-13` — the code-governed dimension, as part of the
+3. **`GAP-109`** — consent windows and standing pre-authorization, per class.
+   **This is where the backlog actually goes away**: it converts "wait for an
+   engineer to say yes" into "an engineer may object", which is a clock rather
+   than a person. Do it immediately after `TIER-1`, before anything else keys off
+   the class.
+4. **`GAP-102`** — QA/QC visibility plus stop-work authority. No signature, no
+   slot, no status. Both mechanisms already exist.
+5. **`TIER-4`** / `DEC-13` — the code-governed dimension, as part of the
    resource-dimension work already committed in the roles area.
-5. **`GAP-104`** — document-control release routing, per library, on the roster.
-6. **`TIER-7`** — convert "Approve with Minor Correction" from an unconditional
+6. **`GAP-104`** — document-control release routing, per library, on the roster.
+7. **`TIER-7`** — convert "Approve with Minor Correction" from an unconditional
    bypass into a declared minor-correction class. Ships with `WF-3` + `WF-14`
    from the roles area, which must go together.
 
@@ -173,6 +210,9 @@ reproduces is `INVALID`, and that is a real outcome** (`DEC-28`).
 | Tempting | Why not |
 |---|---|
 | Add a `PENDING_QAQC` status | A serial hop on every ticket, including the like-in-kind work it is meant to cover cheaply. `GAP-102`. |
+| Add a QA/QC **roster slot** | Better than a status — fixes the wait, not the touch. QA/QC's real needs are data completeness and a veto, and both are free. `GAP-102`. |
+| Let QA/QC gate on design method | If an engineer specified it, that is settled. QA/QC's recourse is the hold — deliberate, visible, audited. `GAP-102`. |
+| Apply silence-is-consent to the highest work class | A new tie-in auto-advancing because an engineer was on leave is the PSM failure the system exists to prevent. `GAP-109`. |
 | Add a `QAQC` role | Nineteen roles exist, six gate nothing, and role identity is unversioned customer JSON. Use a capability. `DEC-3`, `DEC-5`. |
 | Add a `PENDING_DOC_CTRL` status | Same serial cost. `GAP-104` puts release review on the roster. |
 | Put work class on the intake form as required | The requester often cannot answer it, and a required field they cannot answer is `UI-5` again. Triage sets it. |

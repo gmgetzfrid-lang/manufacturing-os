@@ -1,6 +1,6 @@
 # 90 · Gap register — build specs
 
-**8 capabilities the drafting flow needs and does not have.**
+**9 capabilities the drafting flow needs and does not have.**
 
 Numbered from **101** so they never collide with the `roles-and-permissions`
 area's `GAP-1`…`GAP-15`.
@@ -17,13 +17,63 @@ area's `GAP-1`…`GAP-15`.
 | Gap | Capability | Verdict | Effort | Blocked on |
 |---|---|---|---|---|
 | [GAP-101](#gap-101) | Work class on the ticket | **BUILD** | M | `WF-15` |
-| [GAP-102](#gap-102) | QA/QC as a reviewer slot, not a role | **BUILD_NARROW** | M | `GAP-103` |
+| [GAP-102](#gap-102) | QA/QC assurance with zero added stops | **BUILD_NARROW** | S | — |
 | [GAP-103](#gap-103) | Parallel reviewer roster on the ticket | **BUILD** | L | `GAP-105` |
 | [GAP-104](#gap-104) | Doc-control release routing per library | **BUILD** | M | `GAP-105`, `GAP-103` |
 | [GAP-105](#gap-105) | Ticket → library binding | **BUILD** | S | — |
 | [GAP-106](#gap-106) | SLA escalation that actually fires | **BUILD** | M | `LEAK-1` |
 | [GAP-107](#gap-107) | Leak accounting — non-standard outcomes | **BUILD_NARROW** | S | `DEC-14` |
 | [GAP-108](#gap-108) | "Where is my request" | **BUILD_NARROW** | S | — |
+| [GAP-109](#gap-109) | Engineering review without a stop | **BUILD** | M | `GAP-101` |
+
+---
+
+## The friction ladder
+
+**Every assurance mechanism has a cost measured in two currencies: waits and
+touches.** They are not the same, and conflating them is how a review model that
+looks cheap on paper becomes the thing people route around.
+
+- A **wait** is elapsed time before the ticket can advance.
+- A **touch** is a human being who has to stop what they are doing and act.
+
+A parallel roster fixes waits and not touches. That distinction drove the
+rewrite of `GAP-102`.
+
+| Mechanism | Waits added | Touches added | Use when |
+|---|---|---|---|
+| Serial status per reviewer | **N** | **N** | Never. This is what the flow does today. |
+| Parallel roster | 1 | **N** | The signature is genuinely the point — a code-governed new design |
+| Silence-is-consent window | 1, **bounded by a clock, not a person** | **0** in the happy path | The reviewer needs the chance to object, not the obligation to bless |
+| Standing pre-authorization | **0** | **0** | Recurring known work an engineer has already ruled on |
+| Completeness gate on a field | **0** | **0** (whoever is already in the flow fills it) | The need is *data present*, not *judgement rendered* |
+| Notify + stop-work authority | **0** | **0** unless exercised | The need is *visibility* and *a veto* |
+
+**Read the ladder downward before adding anything.** The question is never "who
+should review this?" — it is **"what is the cheapest mechanism that delivers the
+assurance?"** Most requirements that present as reviews turn out to be data
+completeness or visibility, and both of those are free.
+
+Two mechanisms at the bottom of the ladder **already exist and are already
+universal**, which is why `GAP-102` and `GAP-109` are `S` and `M` rather than
+`L`:
+
+- `holds.open` / `holds.release` default to `["*"]` (`lib/capabilityPolicy.ts:85-88`)
+  and a hold is a hard block enforced in three layers
+  (`lib/documentGuards.ts:109-125`). **Stop-work authority for everyone, costing
+  nothing when unused.**
+- `lib/subscriptions.ts` supports watching a `"library"` with follower fan-out.
+  **Standing visibility, costing nothing.**
+
+### What the work class is actually for
+
+`GAP-101` reads like it exists to *add* review tiers. It does not.
+
+**It exists to let you remove them.** Silence-is-consent is safe for a
+like-in-kind swap and unsafe for a new tie-in in a hazardous service. Standing
+pre-authorization is safe for a standard detail and unsafe for a novel one. You
+cannot skip a review you cannot classify — so the classification is the thing
+that makes *most* work cheap, not the thing that makes *all* work expensive.
 
 ---
 
@@ -91,67 +141,101 @@ server-side, which is exactly what `WF-15` builds for `request_type`.
 ---
 
 <a id="gap-102"></a>
-## GAP-102 · QA/QC as a reviewer slot, not a role
+## GAP-102 · QA/QC assurance with **zero added stops**
 
-**Verdict: BUILD_NARROW** · Effort: **M** · Depends on: `GAP-103`
+**Verdict: BUILD_NARROW** · Effort: **S** · Depends on: nothing
+
+> **This spec was rewritten.** The first version made QA/QC a reviewer slot on
+> the parallel roster. That was wrong: a parallel roster fixes *latency* (three
+> reviewers cost one wait instead of three) but not *touches* — someone still has
+> to sign. The objection was to the touch.
+>
+> It also had the authority backwards. **QA/QC does not review the engineer's
+> design.** If an engineer specifies a method, that is an engineering decision.
+> QA/QC's legitimate interests here are *what examination applies* and *is the
+> code data present* — both of which are **outputs** of the design, not
+> judgements on it.
+
+### The reframe
+
+Look at what QA/QC actually needs from a drawing package:
+
+| Need | Is it a judgement on the design? | What it actually is |
+|---|---|---|
+| NDE / radiography scope | No | **Data that must be present** |
+| Governing code + service class | No | **Data that must be present** |
+| Design factors per that code | **Yes — and it is the engineer's** | Engineering, already reviewed |
+| "This looks wrong to me" | Sometimes | **Stop-work authority** |
+
+Three of the four are not reviews at all. The fourth is a *veto*, and a veto
+costs nothing when it is not exercised.
+
+**So QA/QC gets visibility and a stop, not a signature.**
 
 ### Scope
 
-**In:** a QA/QC review requirement, expressible per library and per work class,
-satisfied by a person holding a QA/QC capability.
+**In:** three things, none of which is a status, a role, or a signature.
 
-**Out (deliberately):** a `QAQC` role, and a `PENDING_QAQC` status. Both were
-considered and both are rejected — see `Do not`.
+1. **A completeness gate on the deliverable** — the issued package must carry its
+   examination scope, governing code and service class. Enforced as *fields on
+   the record*, not as a person's approval.
+2. **Standing visibility** — QA/QC watches the libraries they are responsible
+   for and is notified on every issue, with that data attached.
+3. **Stop-work authority** — already exists, see below.
 
-**Out:** an NDE scope calculator, a radiography-extent engine, or code
-compliance checking. Those are engineering tools, not workflow. What is in scope
-is that the **right person is required to look**, and that the requirement is
-recorded.
+**Out (deliberately):** a QA/QC approval step, a QA/QC reviewer slot, a
+`PENDING_QAQC` status, a QAQC role. All four add a touch.
 
-### Design
+### Design — all three parts already exist
 
-QA/QC becomes a **capability** (`review.qaqc`) in the existing
-`CAPABILITY_DEFS` list, plus a **reviewer slot** on the roster from `GAP-103`.
+**Stop-work authority is already built and already universal.**
+`lib/capabilityPolicy.ts:85-88` defines `holds.open` and `holds.release` with
+`defaultRoles: ["*"]` — **every member can already place a do-not-advance hold.**
+And `lib/documentGuards.ts:109-125` makes a hold a hard block that only the
+controller tier can force past, enforced in the pure function, in the trigger and
+in the RPC.
 
-That combination satisfies the stated constraint — *"I'm not boxing myself into a
-new role or extra friction"* — on both counts:
+That is precisely how a QA/QC function works in a real plant: they do not
+countersign every drawing, they hold stop-work authority. **The mechanism is
+built, correct, and costs exactly nothing when unused.**
 
-- **No new role.** The capability layer already supports per-person grants with
-  an expiry (`lib/capabilityPolicy.ts:98-110`). The person who does QA/QC is
-  usually an engineer or an inspector who already exists; they get the
-  capability, not a new identity.
-- **No new friction.** Because the roster is parallel (`GAP-103`), adding QA/QC
-  to a like-in-kind review adds **zero wait states**. The QA/QC reviewer signs
-  concurrently with the design reviewer.
+**Visibility is already built.** `lib/subscriptions.ts` supports watching a
+`"library"` with `listFollowerIds` fan-out. A QA/QC inspector watches the piping
+library and is notified on every issue. Zero stops.
 
-That is what makes "QA/QC reviews everything, even like-in-kind" affordable. On
-the current serial machine the same rule would add a hop to every ticket in the
-plant.
+**The completeness gate is the only new work**, and it is a field-presence check,
+not a review. Where the engineer already specified the NDE scope — which is the
+normal case, and the case the objection is about — the field is already populated
+and **the gate is invisible**. It only bites when the data is genuinely missing,
+and the person who fills it is the drafter or engineer already in the flow.
+
+Attach the required fields to the **work class** (`GAP-101`) and the **library**,
+so a like-in-kind swap in a non-code service requires nothing and a B31.3 spool
+requires its examination scope.
 
 ### Do not
 
-- **Do not add a `PENDING_QAQC` status.** It is a serial hop on every ticket —
-  precisely the friction the requirement says to avoid, and `TIER-5` explains why
-  the serial machine makes every requirement expensive.
-- **Do not create a QAQC role.** Nineteen roles already exist, six of them
-  gate nothing (`ROLE-1`), and role identity is unversioned customer JSON
-  (`CHAIN-5`, `DEC-5`). Capabilities are the mechanism that exists for exactly
-  this.
-- **Do not gate QA/QC on work class.** The requirement is explicitly *all work,
-  including like-in-kind*. Class scopes the **engineering** review, not this one.
-- **Do not conflate it with the document-side review roster's existing
-  reviewers.** A QA/QC signature answers a different question than a design
-  signature, and the roster must record which was which.
+- **Do not add a QA/QC approval step in any form** — status, roster slot, or
+  sign-off. Even parallel, it is a touch, and the touch is the objection.
+- **Do not let QA/QC gate on design method.** If an engineer specified it, that
+  is settled. QA/QC's recourse is the hold, which is deliberate, visible and
+  audited — not a silent veto in a review queue.
+- **Do not build a new stop-work mechanism.** Holds exist, default to everyone,
+  and are enforced at three layers.
+- **Do not make the completeness gate a free-text box.** A field nobody can
+  validate is a field everyone types "N/A" into. Constrain it to the org's
+  configured examination and code vocabulary.
 
 ### Acceptance
 
-1. A library can require QA/QC review, and it applies to every work class
-   including like-in-kind.
-2. The requirement is satisfied by a person holding `review.qaqc`, granted
-   through the existing per-person mechanism — no new role exists.
-3. Adding it to a ticket that already requires a design review adds no status and
-   no additional wait.
-4. The resulting record distinguishes a QA/QC sign-off from a design sign-off.
+1. A like-in-kind package with its examination data already specified by the
+   engineer issues with **zero additional touches by anyone**.
+2. QA/QC is notified of every issue in a library they watch, with the examination
+   scope and code attached.
+3. QA/QC can stop a package at any point via a hold, and that hold is audited.
+4. A package missing required examination data for its class cannot issue — and
+   the person prompted is someone already in the flow.
+5. No new role and no new status exists.
 
 **Related findings:** `TIER-3`, `TIER-4`, `TIER-5`.
 
@@ -474,6 +558,94 @@ first-time requester can see the process before committing to it.
 4. No user-facing surface shows a raw status identifier as the primary label.
 
 **Related findings:** `UI-1`, `UI-2`, `UI-4`, `UI-7`.
+
+---
+
+<a id="gap-109"></a>
+## GAP-109 · Engineering review without a stop
+
+**Verdict: BUILD** · Effort: **M** · Depends on: `GAP-101`
+
+> The objection driving this spec: *"I'm complaining even over the engineer
+> review."* That is a fair complaint and the audit under-served it. `TIER-1`
+> establishes the engineering gate is pointed the wrong way; this spec is about
+> making it cost less even when it points the right way.
+
+### Scope
+
+**In:** three mechanisms that let an engineering requirement be satisfied without
+an engineer stopping their day, applied by work class.
+
+1. **Silence-is-consent windows** — the reviewer gets a bounded period to object;
+   no objection advances the ticket.
+2. **Standing pre-authorization** — an engineer pre-approves a *class* of work,
+   and tickets in that class carry their authority without touching them.
+3. **Exception-only review** — where a standard detail was used, there is nothing
+   to review; review the deviation.
+
+**Out (deliberately):** removing engineering review from new design in a
+code-governed service. That one genuinely needs a signature, and `GAP-103`'s
+roster is where it belongs.
+
+**Out:** silence-is-consent on the highest class. See `Do not`.
+
+### Design
+
+**Silence-is-consent is the highest-leverage of the three**, because it inverts
+who must act. Today an engineer must act to say *yes*. Under a consent window
+they act only to say *no* — and the happy path, which is most paths, costs zero
+touches.
+
+The document side already has the shape: `lib/reviewControl.ts` has
+timeout-driven alternate activation, so the concept of "a reviewer had their
+window and did not use it" is already modelled and already tested. This extends
+that from *escalate to an alternate* to *advance on no objection*, per class.
+
+**Standing pre-authorization** is how plants already work — approved standard
+details, pre-approved repair procedures. An engineer records "any like-in-kind
+gasket replacement in Unit 200, standing until I revoke it", and matching tickets
+carry that authority with an audit reference to the standing approval. Zero
+touches, and the engineer's prior instruction *is* the approval — which is
+exactly the intent behind *"if an engineer says to do it a certain way."*
+
+The per-person grant mechanism with expiry already exists
+(`lib/capabilityPolicy.ts:98-110`) and is the right storage shape; what it lacks
+is the resource dimension (`DEC-13`, `GAP-1`) to say *which* work a standing
+approval covers.
+
+**Exception-only review** depends on knowing a standard detail was used, which
+means the detail must be a linked artifact rather than a copied block. That is
+the largest of the three and the most deferrable.
+
+### Do not
+
+- **Do not apply silence-is-consent to the highest work class.** A new tie-in in
+  a hazardous service auto-advancing because an engineer was on leave is exactly
+  the PSM failure this system exists to prevent. Classify first (`GAP-101`), then
+  choose the mechanism per class — that is what the classification is *for*.
+- **Do not make the consent window silent.** The reviewer must be told the clock
+  started, told again before it expires, and the advance must be audited as
+  *advanced on no objection*, naming who did not object. A consent window that
+  nobody knew about is not consent.
+- **Do not let a standing pre-authorization be open-ended.** It expires, it is
+  revocable, and every ticket that used it names it.
+- **Do not build this before `GAP-101`.** Applied without a class, a consent
+  window is either useless (set long enough for the riskiest work) or dangerous
+  (set short enough for the routine).
+
+### Acceptance
+
+1. A like-in-kind ticket whose reviewer does not respond within the configured
+   window advances, with an audit entry naming the reviewer and the window.
+2. The reviewer was notified at window start and before expiry.
+3. An engineer can record a standing pre-authorization scoped to a work class and
+   an area, with an expiry, and matching tickets cite it instead of waiting.
+4. Revoking a standing approval stops future tickets citing it, and the ones that
+   already did remain traceable.
+5. The highest work class is **not** eligible for either mechanism, and a test
+   pins that.
+
+**Related findings:** `TIER-1`, `TIER-5`, `FRIC-1`, `FRIC-4`.
 
 ---
 

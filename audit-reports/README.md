@@ -276,7 +276,7 @@ was deliberately cut are stated in each spec.
 |---|---|---|---|---|
 | **Projects tab** | The Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 133 | — | [`projects-tab/`](./projects-tab/README.md) |
 | **Roles & permissions** | The whole authority model: roles, additive roles, capability policy, content ACL, ownership & publish, the drafting workflow, document lifecycle, delegation & teams, non-document surfaces, content egress, and the database functions underneath | 124 | 15 | [`roles-and-permissions/`](./roles-and-permissions/README.md) |
-| **Drafting request flow** | The request flow end to end — intake, triage, assignment, drafting, review, approval, issue, closure — plus its review tiering, document-control wiring, friction and latency, leaks, and discoverability | 40 | 8 | [`drafting-flow/`](./drafting-flow/README.md) |
+| **Drafting request flow** | The request flow end to end — intake, triage, assignment, drafting, review, approval, issue, closure — plus its review tiering, document-control wiring, friction and latency, leaks, and discoverability | 40 | 9 | [`drafting-flow/`](./drafting-flow/README.md) |
 
 **Areas overlap deliberately.** `roles-and-permissions` covered *authority* in
 the drafting flow; `drafting-flow` covers *friction, wiring and
