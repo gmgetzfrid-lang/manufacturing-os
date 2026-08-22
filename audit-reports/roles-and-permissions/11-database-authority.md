@@ -116,7 +116,11 @@ almost anywhere else in this audit; see
 2. A document whose `acl_index` denies `write` to one of the user's teams rejects
    the update **with a policy denial, not a SQL error**.
 3. A controller is unaffected in both cases.
-4. The inventory of newly-activated denies has been reviewed by a human.
+4. The inventory of newly-activated denies was run **before** the fix shipped and
+   its result is recorded in the `Resolution` block:
+   `SELECT count(*) FROM documents WHERE acl_index->'deny' IS NOT NULL`. Per
+   `DEC-30`, if you cannot run it, this finding is `BLOCKED` with that query as
+   the unblocking step — do not enable a dormant guard against unknown data.
 
 ---
 
@@ -190,9 +194,16 @@ dangerous: activating the deny guard against **stale** indexes could block the
 wrong people. It also compounds `OWN-7` (expiry is not carried into the index at
 all), which means the index can be stale in two independent ways.
 
-A nightly rebuild from `acl` is the cheapest containment for both this and
-`OWN-7` and touches no SQL function. Making `acl_index` a database-derived column
-is the durable fix and is a design decision.
+**`DEC-10` settles it: nightly rebuild now, derived column deferred.** A rebuild
+from `acl` in the existing maintenance cron is the cheapest thing that fixes two
+findings at once — it propagates ancestor changes to descendants **and** drops the
+expired rules `buildAclIndexFromRules` never carried into the index (`OWN-7`). It
+touches no SQL function and no JSON shape. A trigger-derived column is the durable
+answer but is a schema change that would land while `DB-2`'s deny guard is being
+switched on — too much moving at once.
+
+Say plainly in your `Resolution` block that this narrows the stale-grant window
+from *forever* to *one day*. Do not describe it as closed.
 
 **Done when.** Changing a node's ACL is reflected in its descendants' effective
 authority — by propagation, by rebuild, or by resolving the chain at read time —
@@ -282,7 +293,9 @@ carry the most authority in the system.
 change, which makes it a good one to land early — but note that four separate
 definitions of `enforce_document_publish_guard` exist, and only the last one
 applied is live. Fixing "the" guard means identifying which definition is
-deployed. That same multiplicity is itself worth a human's attention.
+deployed. **Determine which one is live before editing any of them**, and record
+the answer — four definitions of the load-bearing publish guard is itself a
+hazard, and the next agent should not have to re-derive it.
 
 **Done when.** Every `SECURITY DEFINER` function in the migration set pins
 `search_path`, and a lint or test asserts it for new ones.
@@ -338,12 +351,22 @@ function.** Two specific traps:
   *denies* everyone.
 - Reordering `ROLE_RANK` to put `DocCtrl` above `Manager` looks like a
   one-line fix and silently **removes** Manager-tier ticket authority from the
-  same people. Do not do both, and do not do either without a human deciding.
+  same people.
 
-**Done when.** A human has chosen one definition of "controller" and one
-resolution rule, recorded it, and the conversion is being done deliberately —
-function by function, in the order set out in
-[`99-fix-sequencing.md`](./99-fix-sequencing.md) — rather than as a sweep.
+**`DEC-2` settles it: route the headline-only checks through the existing
+`is_org_controller`, and do NOT reorder `ROLE_RANK`. These are mutually
+exclusive — applying both strips Manager-tier authority from exactly the people
+the first fix was meant to help.**
+
+**Done when.**
+1. The five sites in the table above evaluate controller status through
+   `is_org_controller`, converted one at a time in the order in
+   [`99-fix-sequencing.md`](./99-fix-sequencing.md) — **`node_visible` last and
+   separately**, since it gates all document read visibility.
+2. `DB-3`'s backfill landed first, so "additive" does not mean "denied".
+3. The widening inventory was run and recorded:
+   `SELECT uid, role, roles FROM org_members WHERE roles && ARRAY['Admin','DocCtrl'] AND role NOT IN ('Admin','DocCtrl')`.
+4. `ROLE_RANK` is byte-identical to its current value.
 
 ---
 

@@ -2628,6 +2628,6 @@
       "report": "audit-reports/projects-tab/07-interface-truth.md"
     }
   ],
-  "gaps_are_not_work": "The `gaps` array below is NOT a backlog. Each entry is a requirement with no implementation. Do not implement one. If a gap blocks a finding you are fixing, stop and ask a human.",
+  "gaps_note": "Gaps are build specs for capabilities that do not exist. They are work, but they carry a verdict and a dependency chain rather than a severity — check `verdict` and `depends_on` before starting one. DECLINE and FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is false and the spec names what to do instead. Build order is in 99-fix-sequencing.md.",
   "gaps": []
 }

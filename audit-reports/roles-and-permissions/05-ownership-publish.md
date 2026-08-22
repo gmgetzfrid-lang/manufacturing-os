@@ -507,7 +507,11 @@ publish (`canDiscover`, `canWithAclChain`, `canBlindDrill`, `isDiscoverable`).
 Changing the admin/deny ordering there changes read and discover visibility
 across the whole app. Changing `canPublishViaIndex` and the SQL to match
 `lib/acl.ts` is the narrower blast radius — but it is also the *less safe*
-precedence. This is a design decision for a human, not an agent.
+precedence, which is why **`DEC-8` chooses the other direction: explicit deny
+always wins, including over `admin`.** Move `lib/acl.ts` to check denies before
+the `admin` short-circuit, and add the missing `deny…admin` check to the SQL.
+That narrows access, so expect "I lost a permission" reports; a revocation that
+does not visibly take effect is the worse failure in a regulated system.
 
 **Done when.** All three evaluators return the same answer for
 `{allow: admin} + {deny: publish}` and for `{allow: admin} + {deny: admin}`, the
@@ -958,8 +962,10 @@ trusting the stored index.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 
-> ⚠ **Per the protocol: do not delete any of these.** Removal is irreversible
-> and this is a human's decision. This entry exists so the roster is known.
+> **Dispositions are settled in `DEC-11`** — per item, below. Two are real
+> defects rather than cleanup: `revision_branches` resolution is open to any
+> active member, and `p_actor_role` reads as a check on a security-relevant RPC
+> while being referenced nowhere.
 
 | Item | Location | State |
 |---|---|---|
@@ -972,9 +978,19 @@ trusting the stored index.
 | `EffectiveOwner.source === "collection"` | `lib/ownership.ts:19,25` | Produced but never branched on by any consumer. |
 | `revision_branches` resolution | `20260823_publish_contract.sql:113-116` | *"Any active org member may resolve"* — branch debt on a controlled document can be closed as `merged` by anyone, no owner or controller involved. **This one is a real authority gap, not just dead weight.** |
 
-**Done when.** A human has reviewed the list and recorded a keep/remove decision
-per row. The `revision_branches` resolution policy is the one item here that
-should be treated as a defect rather than a cleanup.
+**Done when.** Per `DEC-11`, each row reaches its stated disposition:
+
+- **Removed:** `p_actor_role` (from both signatures and from
+  `lib/revisions.ts:541,1199`), `canBlindDrillAccess`, `filterDiscoverable`.
+- **Fixed as a defect:** `revision_branches` resolution restricted to a
+  controller or the document's effective owner.
+- **Added:** indexes on `libraries.owner_user_id` and
+  `collections.owner_user_id`.
+- **Kept:** `org_has_active_subscription()` (wired per `DEC-18`), `owner_name`
+  as a cache that nothing branches on (`DEL-8`), and
+  `EffectiveOwner.source === "collection"` (made live by `DEL-7`).
+
+Every removal is recoverable from git; every retention has a recorded reason.
 
 ---
 

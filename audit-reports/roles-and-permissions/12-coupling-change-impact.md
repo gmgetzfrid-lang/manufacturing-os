@@ -120,13 +120,27 @@ every check in the singular family will believe the headline.
 audit. A database invariant making `role` derived from `roles` would make the
 singular-family checks correct by construction — including
 `prevent_last_admin_removal`, which currently protects against a headline the
-database does not control. **But that is a schema change with a backfill
-(`DB-3`) and a behaviour change for every desynchronized row, so it is a design
-decision for a human, not an agent fix.**
+database does not control. It is a schema change with a backfill (`DB-3`) and a
+behaviour change for every desynchronized row.
 
-**Done when.** A human has decided whether `role` becomes a database-maintained
-projection of `roles`. Until then, no finding in this audit should convert a
-singular check to additive without reading `DB-3` and `DB-7`.
+**`DEC-1` settles it: yes. Add a `BEFORE INSERT OR UPDATE` trigger on
+`org_members` setting `NEW.role := primaryRole(NEW.roles)`, and make `roles` the
+only column application code writes.** Three steps in order, and step 1 is not
+optional: backfill `roles` from `role` (`DB-3` — the column is
+`NOT NULL DEFAULT '{}'`, so it is empty rather than null and every additive check
+currently denies the founding Admin); port `primaryRole` / `ROLE_RANK` into SQL as
+a `STABLE` function pinned byte-identical to
+`lib/roleCapabilities.ts:118-123` by a test walking all 19 roles; then add the
+trigger, **not** service-role exempt, so restore also produces a consistent
+headline.
+
+**Done when.**
+1. A query for `org_members` rows where `role <> primaryRole(roles)` returns zero.
+2. A direct PATCH setting only `role` does not change the effective headline.
+3. Signup produces `roles = ARRAY['Admin']`, not `'{}'`.
+4. A test asserts the SQL and TypeScript rank functions agree for all 19 roles.
+5. No finding was converted from a singular check to additive before step 1
+   landed.
 
 ---
 
@@ -237,8 +251,16 @@ conclusion **is not a removal authorization**, and why the protocol in
 prerequisite for any role removal is stable role ids plus a migration that
 rewrites stored blobs — which is a project, not a cleanup.
 
-**Done when.** A human has decided whether role identity becomes a stable id. No
-role is removed before then.
+**`DEC-5` settles it: roles stay string-identified, and no role may be renamed or
+removed until that is revisited.** Converting to ids means a migration rewriting
+`acl` and `acl_index` on `documents`, `collections` and `libraries` plus
+`org_configurations.data`, across every customer, with no version field to key
+off — a project with real risk and, given `DEC-3` and `DEC-4`, no forcing
+function.
+
+**Done when.** `ALL_ROLES` contains the same 19 strings at the end of this audit
+as at the start, and the constraint is recorded where a future rename would hit
+it.
 
 ---
 
@@ -268,7 +290,7 @@ defect.
 | Fix `org_configurations.value` (`DB-1`, `WF-1`) | 2 files | **Activates three latent findings** (`WF-10`, `WF-11`, `WF-23`). |
 | Delete any role (`ROLE-1`) | customer JSON in 7 places | **Resist.** No stored blob is versioned (`CHAIN-5`). |
 | Restore `org_members` DELETE (`SURF-1`) | 1 policy | **Makes `OWN-12` bite.** Ownership has no succession. |
-| Give ownership a read branch (`DEL-2`) | `node_visible` | **Widens read access.** A design decision — implicit branch versus auto-granted ACL rule. |
+| Give ownership a read branch (`DEL-2`) | `node_visible` | **Widens read access.** `DEC-7` picks the implicit branch — an auto-granted ACL rule adds a second dependent write to the call site with the known silent-failure bug. |
 
 **Done when.** Nothing — this is reference material. It carries an ID so it can
 be cited from a `Resolution` block, and so an agent that finds it wrong can mark

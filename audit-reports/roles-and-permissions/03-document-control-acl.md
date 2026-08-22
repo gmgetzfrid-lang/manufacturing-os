@@ -91,7 +91,7 @@ use the same `bool_or` shape it already uses for teams. Mirror the change in
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Blast radius:** access-control / design decision
+- **Blast radius:** access-control
 - **Locations:**
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:52-55` — `IF p_visibility IS NULL OR p_visibility = 'normal' THEN RETURN true;`
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:10-15` — the header, which states this is deliberate: *"FAIL-SAFE by design (chosen to avoid lockouts)"*

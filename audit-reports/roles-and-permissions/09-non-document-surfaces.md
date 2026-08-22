@@ -376,13 +376,20 @@ names.
 
 **Chain reaction.** ⚠ **This finding is a census, not an authorization to
 refactor twenty surfaces.** The narrow, resolvable defects are the two named
-above, plus the `/admin/settings` client/API mismatch. Consolidating on one
-authority hook is a design decision for a human — see the scope rules in
-`../README.md`.
+above, plus the `/admin/settings` client/API mismatch.
 
-**Done when.** `audit_logs` and the asset tables are readable/writable only by
-the roles their own UI claims, and the `/admin/settings` gate matches its API.
-Everything else in the table is documented for a human to decide on.
+**`DEC-17` settles the scope: fix those three now, defer the consolidation.**
+Most of the census is inconsistency rather than exposure — a client gate stricter
+than its API is untidy, not a hole. Consolidating twenty pages onto one authority
+hook means twenty surfaces changing behaviour at once with no reviewer, which
+`DEC-31` puts out of scope for a single finding.
+
+**Done when.**
+1. A Viewer cannot read `audit_logs` via PostgREST — a RESTRICTIVE SELECT policy
+   matches the roles the page itself claims.
+2. A Viewer cannot write `assets`, `asset_types`, `asset_photos` or `plot_plans`.
+3. The `/admin/settings` client gate matches its Admin-only API.
+4. The remaining seventeen rows stay documented in the table above, unchanged.
 
 ---
 
@@ -409,8 +416,9 @@ maintenance route, with a "Insufficient role" error that names a role they hold.
 
 **Chain reaction.** Separately, `lib/roleCapabilities.ts` defines a whole
 `Capability` vocabulary (`manage_users`, `audit`, `doc_control`…) used **only by
-the role picker** — no gate anywhere reads `capabilitiesFor()`. Per the protocol,
-do not delete it; record the decision.
+the role picker** — no gate anywhere reads `capabilitiesFor()`. `DEC-11` keeps
+it: it is the picker's descriptive layer, not an authority layer. Add a header
+comment saying so — the confusion is the naming, not the code.
 
 **Done when.** `authorizeOrgRole` computes the union of `role` and `roles`,
 matching `is_org_controller`, and a test pins the `['Manager','DocCtrl']` case.
@@ -545,8 +553,18 @@ continues to write freely through PostgREST and every API route. The file's own
 comment carefully explains which routes *should not* call the helper — for a
 helper nothing calls.
 
-**Done when.** A human has decided whether subscription state is enforced
-server-side; if yes, the helper is wired into the routes its comment names.
+**`DEC-18` settles it: wire the helper into the routes its own comment names,
+with the refusal behind an env-gated flag defaulting to OFF.** A helper with zero
+callers drifts; but switching on server-side subscription enforcement during an
+audit remediation could lock a paying customer out of their own document-control
+system over a billing webhook. Wiring it inert gets the path exercised without
+that risk, and logging what it *would* have refused shows the blast radius before
+anyone enables it.
+
+**Done when.**
+1. `assertOrgHasAccess` is called from the routes its comment names.
+2. With the flag off, behaviour is byte-identical to today.
+3. The log records what enforcement would have blocked.
 
 ---
 

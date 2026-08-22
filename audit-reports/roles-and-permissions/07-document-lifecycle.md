@@ -75,10 +75,17 @@ Rev 3, still shows no bypass.** The corrected drawing exists only as an
 attachment on a closed ticket. Six months later an operator pulls Rev 3 for a
 line-break permit. Nothing in the document register ever indicated a problem.
 
-**Chain reaction.** ⚠ **This is a feature, not a bug fix** — see `GAP-7`. It is
-recorded here as `CRITICAL` because the *absence* of the seam causes a concrete
-PSM record failure, but building it is a design decision for a human. If it is
-built, the guards it must respect are already known: the publish guard
+**Chain reaction.** ⚠ **This is a build, not a repair** — the spec is `GAP-6`
+and the shape is settled by `DEC-22`: an explicit, authority-gated "Publish as
+revision of DOC-xxx" action on the ticket, offered to whoever holds publish
+authority **on that document's library** — not to whoever can close tickets — that
+pre-seeds the existing rev-up flow and then calls `revUpDocument` unchanged.
+
+⚠ **`LIFE-2` / `DEC-23` must land first.** An agent building this will naturally
+set `related_ticket_id` for provenance, and until the waiver is deleted that
+silently disables required reviewer sign-off on every ticket-originated revision.
+
+The guards it must respect are already known: the publish guard
 (`lib/documentGuards.ts:109` — an active hold blocks, and only Admin/DocCtrl can
 force); the MOC gate (`components/documents/RevUpModal.tsx:214-217`); the review
 gate — which `LIFE-2` will silently waive if `related_ticket_id` is set; and

@@ -136,10 +136,14 @@ reads `documents` and `collections` under the caller's own RLS: **an owner who
 cannot SELECT the row is told they are not the owner**, so the Inspector hides
 the publish button the database would have honoured. See `DEL-9`.
 
-Two candidate directions, and the choice matters: an ownership branch inside
-`node_visible` is implicit and invisible in the permissions UI; auto-granting an
-ACL read rule when ownership is assigned is more auditable and shows up in the
-drawer where an admin can see it. That is a design decision.
+**`DEC-7` settles it: add the branch inside `node_visible`, after the controller
+short-circuit and before the `acl_index` check. Do not auto-grant an explicit ACL
+read rule at assignment.** The explicit rule is more auditable and was the
+tempting option, but it adds a *second dependent write* to `setOwner` — the exact
+call site with the known silent-failure bug (`OWN-13`). A rule that fails to write
+leaves an owner recorded as owner who cannot see their documents, with a success
+audit row. The implicit branch has one definition, cannot drift, and needs no
+backfill. Ownership visibility is solved separately by `DEL-7`. Spec: `GAP-15`.
 
 **Done when.**
 1. A non-controller assigned as owner of a `private` library can open a document
@@ -200,11 +204,12 @@ sees no effect and no warning. And two of the six owner resolvers ignore the tea
 rung entirely (`OWN-16`), so the same library reads as "owned" in the register
 and "unowned" in the review-due cron.
 
-**A cheaper and more honest direction worth considering:** given that teams must
-stay optional, demote team ownership to a *convenience that writes
-`owner_user_id`* at assignment time — one rung fewer, one fewer place to diverge,
-and it behaves identically in a zero-team org. That is a design decision for a
-human.
+**`DEC-9` settles it: keep the rung, fix its four gaps.** Demoting team
+ownership to a convenience that writes `owner_user_id` at assignment is
+architecturally cleaner and was seriously considered — it is rejected because it
+silently changes who owns things in orgs already using it: a library resolving to
+a team's supervisor would be frozen to whoever holds that role at migration time,
+with no signal. The four fixes below are the whole of the work.
 
 **Done when.**
 1. Changing a supervisor writes an audit row naming both people and every
@@ -461,8 +466,13 @@ are likewise per-viewer, though the page presents them as facts about the org.
 **The structural direction:** owner resolution is an authorization question and
 should not run under the asker's read privileges. Exposing the existing
 `SECURITY DEFINER` SQL resolver as an RPC would also collapse `OWN-16`'s six
-implementations into one by construction — but that is a multi-file change, so
-treat it as a design decision rather than a bug fix.
+implementations into one by construction.
+
+That is a multi-file change, so **apply `DEC-31`: ship the narrow fix first.**
+`DEC-7`'s ownership branch in `node_visible` makes the owner's own folder row
+visible to them, which resolves this finding's sharpest case — an owner told they
+are not the owner — without touching six files. If the register and the guard
+still disagree afterwards, open a new finding for the resolver consolidation.
 
 **Done when.**
 1. Two users with different folder visibility see the same owner for the same

@@ -1,7 +1,8 @@
 # Audit Reports
 
-Findings from read-only audits of this codebase, written so that an agent can
-pick up a report, work it end to end, and record what it did.
+Findings from read-only audits of this codebase, written so an agent can pick up
+a report, **work it to completion without asking anyone**, and record what it
+did.
 
 **One folder per area of the app.** Everything about the Projects tabs lives in
 `projects-tab/`; everything about roles and permissions lives in
@@ -9,12 +10,10 @@ pick up a report, work it end to end, and record what it did.
 never has to filter out another's findings, and each area carries its own
 machine-readable index covering only itself.
 
-Each report inside an area is a self-contained file covering one domain, sized to
-be worked in a single agent context.
-
 ```
 audit-reports/
-├── README.md                    ← you are here (the protocol — applies to every area)
+├── README.md                    ← you are here (the protocol)
+├── DECISIONS.md                 ← every judgment call, pre-made and binding
 ├── build-index.mjs              ← regenerates every area's findings.json
 ├── projects-tab/
 │   ├── README.md                ← that area's index, scope, and method
@@ -24,13 +23,9 @@ audit-reports/
     ├── README.md
     ├── findings.json            ← THIS AREA ONLY
     ├── NN-<domain>.md
-    ├── 90-gap-register.md       ← requirements, NOT work (see below)
-    └── 99-fix-sequencing.md     ← order matters; read before starting
+    ├── 90-gap-register.md       ← build specs for missing capabilities
+    └── 99-fix-sequencing.md     ← the execution order. Read it first.
 ```
-
-**Pick one area and stay in it.** Work one report at a time, one finding at a
-time. There is deliberately no combined index — a cross-area sweep is not a
-supported unit of work.
 
 To regenerate the indexes after editing any report:
 
@@ -42,100 +37,79 @@ node audit-reports/build-index.mjs
 
 ## ⚠ READ THIS FIRST — how to treat code in these reports
 
-**These reports are an audit, not a patch set. Nothing in them is authorization
-to change anything.**
+**These reports are an audit, not a patch set.**
 
-Every code block, SQL snippet, schema sketch and `Remediation` section in every
-report is **illustrative** — written to make a finding concrete and show one
-plausible direction. It is:
+Every code block, SQL snippet, schema sketch and `Remediation` section is
+**illustrative** — written to make a finding concrete and show one plausible
+direction. It is:
 
 - **NOT tested.** None of it has been compiled, run, or executed against a
   database.
 - **NOT written against the current file.** It was written from a snapshot and
   the code has almost certainly moved.
 - **NOT a patch.** Do not apply any snippet verbatim, ever.
-- **NOT a design decision.** Where a remediation offers options A and B, the
-  choice is the owner's, not yours.
 
 ### What IS binding
 
-Three fields, and only these three:
-
-| Field | Why it binds |
+| Source | Why it binds |
 |---|---|
 | **Mechanism** | What the code actually does today. Verify it; if it no longer holds, the finding is `INVALID`. |
 | **Failure scenario** | Why it matters. This is the problem you are solving. |
 | **Done when** | The acceptance criteria. This is the contract. |
+| **[`DECISIONS.md`](./DECISIONS.md)** | The judgment calls, already made. You do not re-litigate these. |
+| **Verified sound — do not break** | Load-bearing invariants. A fix that requires changing one of these is a design error in the fix. |
 
 **Solve the `Failure scenario` so the `Done when` criteria hold.** How you get
 there is your engineering judgement against the real code, not the report's
 guess.
 
-### Before you change one line
+---
 
-1. **Re-read the cited code.** Line numbers drift; whole files get rewritten.
-2. **Reproduce the finding.** If it does not reproduce, mark it `INVALID` with
-   evidence and stop. That is a valid, valuable outcome.
-3. **Design the fix yourself** against what is actually there.
-4. **If the report's suggestion conflicts with the code, the code wins.** Note
-   the divergence in your `Resolution` block.
-5. **Check the `Chain reaction` / `Related` notes** before touching anything
-   shared. Several findings share a root cause; fixing the root once beats
-   fixing five symptoms five ways.
+## You are working autonomously
 
-### Scope discipline — this is the important one
+There is no reviewer. Nobody is going to catch your mistake, and nobody is
+waiting to answer a question. That cuts both ways, and the protocol reflects
+both halves:
 
-**No report in this directory ever authorizes a sweeping refactor, a rewrite, a
-migration of the whole role model, or "changing everything."** If a report reads
-that way to you, you are reading it wrong.
+**You have more authority than a reviewed process would give you.** You may
+mark a finding `INVALID`. You may mark it `WONTFIX`. You may delete dead code
+where a decision says to. You may build the capabilities in the gap register.
+You do not need permission for any of it.
 
-- Findings are deliberately **narrow and independently resolvable**. Work **one
-  finding at a time.**
-- A finding that describes a systemic pattern (e.g. "94% of the app reads the
-  primary role") is describing **why** a specific narrow defect exists. It is
-  **not** an instruction to convert 204 call sites.
-- Where a report proposes a phased sequence, **the phases are separate pieces of
-  work.** Do not collapse them.
-- If a fix appears to require touching more than a handful of files, **stop and
-  ask a human.** That is a design decision, not a bug fix.
-- Never delete a role, a column, a capability or a policy because a report calls
-  it "dead." Dead-code findings are for a human to decide on — removal is
-  irreversible and the report may be wrong.
+**You carry the whole evidence burden.** Every `RESOLVED` has to stand on its
+own to a reader who was not there — see `DEC-29`. "It looked right" is not a
+result. A green build is not a result. A reproduction, a test that failed before
+and passes after, and the `Done when` criteria individually checked — that is a
+result.
 
-### Two different kinds of entry — do not confuse them
+### Where a judgment call is needed
 
-Reports contain two kinds of item, and they carry **completely different
-authority**:
+**[`DECISIONS.md`](./DECISIONS.md) has already made it.** Thirty-two calls
+covering the role model, ownership, the workflow, the admin surfaces, the
+document lifecycle, and this protocol. A report that used to say *"a human must
+decide"* now cites a `DEC-` id. Follow it.
 
-| | **Finding** | **Gap-register entry** |
-|---|---|---|
-| Says | Something is **wrong** | Something is **missing** |
-| Evidence | Traced code that misbehaves | A requirement the owner stated, and what exists nearest |
-| Has an ID | Yes (`SEC-3`, `OWN-2`, …) | Yes, prefixed `GAP-` |
-| You may | Fix it, within its narrow scope | **Nothing — read only** |
+If you hit a call that genuinely is not covered: **do not stop.** Make it
+yourself using the same standard — pick the option that fails safe for a
+PSM/OSHA-regulated document-control system, record it in your `Resolution` block
+with your reasoning, and keep going. Then add it to `DECISIONS.md` as the next
+free `DEC-` number so the next agent inherits it rather than re-deciding it.
 
-**A `GAP-` entry is not a work order.** It is a requirement captured during the
-audit so it is not lost. Gaps describe *features that do not exist*. Building a
-feature is a design decision with a cost, a schema, a UI and a migration — it
-needs a human to scope it and approve it.
+### Where you stop
 
-**If you are an agent working this directory: never implement a `GAP-` entry.**
-Read it, understand it, and if it blocks a finding you were fixing, stop and say
-so. Gaps exist to inform a human's roadmap, not to authorize construction.
+There is still a halt condition. It just does not involve waiting — see
+`DEC-27`. Set `Status: BLOCKED`, write a `Blocker` block saying exactly what is
+unresolvable and what you tried, and **move to the next finding.** Halt on:
 
-The same applies to any "what would need to exist" or "required capabilities"
-prose in a report. That is analysis. It is not a specification and it is not
-permission.
+1. The finding does not reproduce → `INVALID` (with quoted contradicting code).
+2. The fix would require changing a "Verified sound" invariant.
+3. Two readings give materially different behaviour and the code does not settle
+   it.
+4. The fix needs live database state you cannot observe → `DEC-30`.
+5. The blast radius exceeds the scope rule → `DEC-31`.
 
-### This is a running production system
-
-It is a PSM/OSHA-regulated document-control system. A permissions or
-document-control change that is wrong does not merely cause a bug — it can hide
-a drawing from the person who needs it, or expose one that should be
-restricted, or let an unqualified person approve a safety review.
-
-**Bias toward doing less.** A finding left `OPEN` with a good note is a better
-outcome than a fix that broke a working surface.
+A `BLOCKED` finding is a result. It is worth more than a guessed fix and far
+more than silence.
 
 ---
 
@@ -143,20 +117,17 @@ outcome than a fix that broke a working surface.
 
 ### Pick up work
 
-1. **Pick one area folder.** Read its `README.md` first — it carries that area's
-   scope, its headline, and any ordering constraints.
-2. **If the area has a `99-fix-sequencing.md`, read it before starting.** Some
-   areas have fixes that are safe alone and dangerous together, or that activate
-   dormant problems. That file says which.
-3. Read that area's `findings.json` for the index, or a single report file for
-   one domain's worth of context. `findings.json` is generated from the reports —
-   **the reports are the source of truth**; regenerate if they diverge.
-4. Work findings in severity order: `CRITICAL` → `HIGH` → `MEDIUM`. Within a
-   severity, prefer findings whose `blast_radius` is `data-integrity`,
-   `security`, or `safety` over `ux` and `performance` — **unless the sequencing
-   file says otherwise, in which case it wins.**
-5. One report file per session is the intended unit of work. Do not try to
-   resolve a whole area in one pass, and never work two areas at once.
+1. **Pick one area folder.** Read its `README.md` — scope, headline, ordering
+   constraints.
+2. **Read that area's `99-fix-sequencing.md` if it has one, before you start.**
+   In `roles-and-permissions` this is not advisory. Three one-line fixes activate
+   guards that have never executed, and one RLS fix converts a security hole into
+   silent data loss if shipped alone. The order is the safety.
+3. **Claim the report file** (`DEC-32`) — one agent owns one file end to end.
+   Commit the claim before starting.
+4. Work findings in severity order — `CRITICAL` → `HIGH` → `MEDIUM` — **unless
+   the sequencing file says otherwise, in which case it wins.**
+5. One report file per session. Never two areas at once.
 
 ### Every finding carries
 
@@ -164,18 +135,64 @@ outcome than a fix that broke a working surface.
 |---|---|
 | **ID** | Stable handle, e.g. `SEC-3`. Never renumber. Cite it in commits and PRs. |
 | **Severity** | `CRITICAL` / `HIGH` / `MEDIUM` |
-| **Status** | `OPEN` / `IN_PROGRESS` / `RESOLVED` / `WONTFIX` / `INVALID` |
+| **Status** | `OPEN` / `IN_PROGRESS` / `RESOLVED` / `WONTFIX` / `INVALID` / `BLOCKED` |
 | **Verification** | `CONFIRMED` (code path traced) or `SUSPECTED` (mechanism real, consequence unobserved) |
 | **Locations** | `path:line` anchors. **Line numbers drift** — match on the quoted code, not the number. |
 | **Mechanism** | What the code actually does. |
 | **Failure scenario** | The concrete way it hurts someone. |
-| **Remediation** | **Illustrative only.** One plausible direction, untested, written against a snapshot. Not a patch, not a spec, not a decision. |
+| **Remediation** | **Illustrative only.** Not a patch, not a spec, not a decision. |
 | **Chain reaction** | What else is coupled to this. Read before touching shared code. |
-| **Done when** | Acceptance criteria. **This is the contract.** Do not mark `RESOLVED` until these hold. |
+| **Done when** | Acceptance criteria. **This is the contract.** |
+
+### Before you change one line
+
+1. **Re-read the cited code.** Line numbers drift; whole files get rewritten.
+2. **Reproduce the finding.** If it does not reproduce, mark it `INVALID` with
+   quoted contradicting code and stop. That is a valid, valuable outcome.
+3. **Design the fix yourself** against what is actually there.
+4. **If the report's suggestion conflicts with the code, the code wins.** Note
+   the divergence in your `Resolution` block.
+5. **Check the `Chain reaction` / `Related` notes** before touching anything
+   shared. Several findings share a root cause; fixing the root once beats fixing
+   five symptoms five ways.
+
+### The bar for `RESOLVED` (`DEC-29`)
+
+All five, every time:
+
+1. **Reproduce first** — demonstrate the finding is real against current code.
+2. **Test first where testable** — a failing test before, passing after, named in
+   the `Resolution` block. If genuinely untestable, say so and say how you
+   verified instead.
+3. **Every `Done when` criterion checked individually.**
+4. **The ship loop passes:** `npx tsc --noEmit` → `npx eslint <touched files>` →
+   `npx vitest run` → full `next build`.
+5. **Nothing in "Verified sound" changed.** Diff-check it.
+
+### Migrations are applied by hand (`DEC-30`)
+
+**Never assume a migration is applied, and never mark a finding `RESOLVED`
+because a migration file exists.** Write the file *and* paste the complete SQL in
+your response, mark the code half `RESOLVED`, and add an explicit
+`Pending migration:` line. Where a fix depends on production data you cannot
+observe, write the inventory query into the `Resolution` block and mark the
+finding `BLOCKED` with that query as the unblocking step.
+
+### Scope (`DEC-31`)
+
+**Fix the finding, not the neighbourhood.** If a fix would touch more than
+roughly five files, or change a public signature used in more than three places:
+implement the narrowest piece that satisfies `Done when`, mark that `RESOLVED`,
+and open a new finding with the next free ID for the remainder.
+
+A finding that describes a systemic pattern is describing **why** a specific
+narrow defect exists. It is not authorization to convert every call site. When a
+report says a change is "a signature change across four evaluators", ship those
+four together and nothing else.
 
 ### Record what you did
 
-Edit the finding in place. Change `Status`, and append a `Resolution` block:
+Edit the finding in place. Change `Status`, and append:
 
 ```markdown
 - **Status:** RESOLVED
@@ -184,7 +201,9 @@ Edit the finding in place. Change `Status`, and append a `Resolution` block:
 - Commit: `<sha>`
 - Files: `path/to/file.ts`, `path/to/other.ts`
 - Tests: `lib/__tests__/foo.test.ts::"pins the zero-match case"`
+- Reproduced: <how you confirmed the finding was real before fixing it>
 - Verified: <how you know it works — test output, traced path, manual check>
+- Pending migration: `supabase/migrations/<file>.sql` (if any)
 ```
 
 Then update the run's `README.md` progress table and regenerate `findings.json`.
@@ -192,41 +211,62 @@ Then update the run's `README.md` progress table and regenerate `findings.json`.
 ### Rules
 
 - **Do not renumber, merge, or delete findings.** A finding you disagree with
-  gets `Status: INVALID` and a `Resolution` block explaining why. The record of
-  what was looked at matters as much as the record of what was fixed.
-- **Do not mark `RESOLVED` without a test** where the finding is testable
-  (logic, data layer, API authorization). If it genuinely is not testable, say
-  so in the `Resolution` block and explain how you verified it instead.
-- **Verify before you fix.** Several findings are `SUSPECTED` and some
-  `CONFIRMED` ones may have been overtaken by later commits. Re-read the cited
-  code first. If it no longer reproduces, mark it `INVALID` with evidence —
-  that is a real outcome, not a failure.
-- **Fix the finding, not the neighbourhood.** Findings are deliberately narrow
-  so they can be resolved independently. If you spot something new while
-  working one, add it to the report as a new ID with the next free number
-  rather than silently folding it into the fix.
-- **Respect the dependency notes.** Some findings share a root cause; the ones
-  that do say so under `Related`. Resolving the root first is usually cheaper.
-- **Run the project's ship loop before committing:**
-  `npx tsc --noEmit` → `npx eslint <touched files>` → `npx vitest run` →
-  full `next build`. See `CLAUDE.md` / `docs/ARCHITECTURE.md`.
-- **Migrations are applied by hand.** If a fix needs schema changes, write the
-  migration file *and* paste the SQL in your response — do not assume it will
-  be applied automatically.
+  gets `INVALID` and a `Resolution` block explaining why. The record of what was
+  looked at matters as much as the record of what was fixed.
+- **Do not mark `RESOLVED` without a test** where the finding is testable.
+- **Verify before you fix.** Some findings are `SUSPECTED`; some `CONFIRMED` ones
+  may have been overtaken by later commits.
+- **Never upgrade a `SUSPECTED` verification to `CONFIRMED`** unless you actually
+  observed the consequence. Convenience is not evidence.
+- **New defects you spot while working get a new ID** in the same report, not a
+  silent fold-in.
+- **Respect the dependency notes.** Resolving a shared root first is usually
+  cheaper.
+
+---
+
+## This is a running production system
+
+It is a PSM/OSHA-regulated document-control system. A permissions or
+document-control change that is wrong does not merely cause a bug — it can hide a
+drawing from the person who needs it, expose one that should be restricted, or
+let an unqualified person approve a safety review.
+
+That is not a reason to do less. It is the reason the evidence bar above is what
+it is, and the reason `99-fix-sequencing.md` is binding rather than advisory. Work
+the findings; prove each one.
+
+---
+
+## The gap register
+
+`roles-and-permissions/90-gap-register.md` holds `GAP-` entries: capabilities the
+system needs and does not have, several of them stated requirements from the
+system's owner.
+
+**These are build work.** Each carries a verdict, a scope, a design direction, its
+dependencies, its acceptance criteria, and a `Do not` list naming the specific
+wrong turn an implementing agent would otherwise take. Build them in the order
+`99-fix-sequencing.md` gives.
+
+They are held to the same evidence bar as findings, and several are explicitly
+scoped **narrower** than the original requirement — the reduced version and what
+was deliberately cut are stated in each spec.
 
 ---
 
 ## Status vocabulary
 
 - **OPEN** — untouched.
-- **IN_PROGRESS** — claimed by an agent or a person. Include who and when, so a
-  stalled claim is visible.
+- **IN_PROGRESS** — claimed. Never leave a session with a finding in this state.
 - **RESOLVED** — fixed, verified, and the `Done when` criteria hold.
-- **WONTFIX** — real, but a deliberate decision not to fix. Requires a reason
-  and, for anything `CRITICAL` or `HIGH`, a human sign-off recorded in the
-  `Resolution` block.
-- **INVALID** — does not reproduce, or the analysis was wrong. Requires
-  evidence.
+- **BLOCKED** — cannot proceed for one of the five reasons in `DEC-27`. Requires
+  a `Blocker` block saying what is unresolvable and what you tried.
+- **WONTFIX** — real, but deliberately not fixed. Requires the cost, the rejected
+  alternative, and what would change the answer. On a `CRITICAL`, requires an
+  independent second verification pass recorded in the block.
+- **INVALID** — does not reproduce, or the analysis was wrong. Requires quoted
+  contradicting code with `file:line`.
 
 ---
 

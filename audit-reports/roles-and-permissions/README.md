@@ -12,25 +12,31 @@ database functions underneath all of it.
 
 ## ⚠ Before you touch anything
 
-1. **Read [`../README.md`](../README.md)** — the resolution protocol. In
-   particular: code in `Remediation` sections is **illustrative, untested, and
-   never a patch**, and no report here authorizes a sweeping refactor.
-2. **Read [`99-fix-sequencing.md`](./99-fix-sequencing.md)** — in this area, fix
-   *order* matters more than the fixes. Three one-line changes activate problems
-   that are currently dormant, and one RLS fix converts a security hole into
-   silent data loss if shipped alone.
-3. **`GAP-` entries in [`90-gap-register.md`](./90-gap-register.md) are not
-   work.** They describe features that do not exist. Never implement one.
+1. **Read [`../README.md`](../README.md)** — the resolution protocol — and
+   [`../DECISIONS.md`](../DECISIONS.md), which settles every judgment call this
+   area would otherwise stop at. Code in `Remediation` sections is
+   **illustrative, untested, and never a patch**.
+2. **Read [`99-fix-sequencing.md`](./99-fix-sequencing.md).** In this area it is
+   binding, not advisory. Three one-line changes switch on guards that have never
+   executed; one RLS fix converts a security hole into silent data loss if
+   shipped alone; one dead code path silently disables the document review gate
+   the moment someone wires a feature to it.
+3. **`GAP-` entries in [`90-gap-register.md`](./90-gap-register.md) are build
+   work** — 12 buildable specs plus 3 marked `DECLINE` / `FOLD_INTO_FINDING`.
+   Each carries a verdict, scope, design direction, dependencies, acceptance
+   criteria, and a `Do not` list. Build order is in the sequencing file.
 
 ---
 
 ## Findings
 
-**124 findings** — 21 CRITICAL, 53 HIGH, 50 MEDIUM — plus **15 gaps** (read-only).
+**124 findings** — 21 CRITICAL, 53 HIGH, 50 MEDIUM — plus **15 gap specs**, of
+which 12 are buildable.
 
-Machine-readable index: [`findings.json`](./findings.json). It carries `findings`
-and `gaps` in **separate arrays**; the gaps array is explicitly marked
-non-actionable.
+Machine-readable index: [`findings.json`](./findings.json). `findings` and `gaps`
+are separate arrays — both are work, but a gap carries a verdict and a dependency
+chain rather than a severity, so a severity-sorted queue does not interleave
+feature builds. Check `verdict` and `depends_on` before starting a gap.
 
 | # | Report | Findings | Focus |
 |---|---|---|---|
@@ -46,8 +52,8 @@ non-actionable.
 | 10 | [Content egress](./10-content-egress.md) | 6 | Every door content can leave through |
 | 11 | [Database authority functions](./11-database-authority.md) | 7 | The SQL layer: what reads what, and what is broken |
 | 12 | [Coupling & change impact](./12-coupling-change-impact.md) | 6 | What a change reaches; what looks safe and is not |
-| 90 | [**GAP REGISTER**](./90-gap-register.md) | — | Requirements with no implementation. **Read-only.** |
-| 99 | [**Fix sequencing**](./99-fix-sequencing.md) | — | Order, traps, and pairs that must ship together |
+| 90 | [**Gap register**](./90-gap-register.md) | 15 specs | Capabilities that do not exist. Verdict, scope, design, `Do not` traps |
+| 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Phases, traps, and pairs that must ship together |
 
 ---
 
@@ -99,13 +105,18 @@ But **none of them is free to delete.** Role identity is the role's *name*,
 stored as a bare string inside customer JSON in seven places, with no version
 field anywhere (`CHAIN-5`). And `Contractor` turned out to be load-bearing in a
 place a first pass missed — it drives reduced navigation as a *restriction*
-(`CHAIN-1`). Removal needs stable role ids and a blob migration first.
+(`CHAIN-1`). Removal needs stable role ids and a blob migration first — which
+`DEC-5` defers, so **`DEC-3` deprecates the five inert department roles in the
+picker instead of deleting them**, and `DEC-4` keeps the Engineer tiers as the
+labels they already are.
 
 ### "Only certain people can approve certain types of requests"
 
-**Not supported, and the capability layer structurally cannot express it** —
-`policyAllows` takes no resource argument, and `RequestType` reaches an authority
-decision in exactly one place in the codebase. `GAP-1`, `WF-13`.
+**Not supported today** — `policyAllows` takes no resource argument, and
+`RequestType` reaches an authority decision in exactly one place in the codebase.
+**`DEC-13` says build the resource dimension**, staged behind `WF-15` (validating
+request types first, since authority keyed to unvalidated free text is a hole
+rather than a feature). Spec: `GAP-1`.
 
 ### "Route requests to the drafting manager first for triage"
 

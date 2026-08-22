@@ -217,9 +217,15 @@ self-assignment or check that the assignee can draft.
 
 **Chain reaction.** ⚠ These loops are partly *intentional* — the codebase
 supports a "small shop where one person does everything" mode. **Separation of
-duties must be an org toggle, not a hard rule**, or every single-operator
-customer breaks on upgrade. It changes the `DRAFTING` and `PENDING_REVIEW` cells
-of the transition matrix. This is a design decision for a human; see `GAP-2`.
+duties must not be a hard rule**, or every single-operator customer breaks on
+upgrade. It changes the `DRAFTING` and `PENDING_REVIEW` cells of the transition
+matrix.
+
+**`DEC-12` settles the shape: derive it from active member count, not a toggle.**
+Enforce all three predicates when the org has three or more active members; allow
+the loop below that. A toggle defaulting off is a control nobody sets; one
+defaulting on is a control people switch off. Member count means the protection
+appears exactly when it becomes possible to honour. Build spec: `GAP-2`.
 
 **Done when.**
 1. An org can require that the assigned drafter is not the requester, that the
@@ -640,9 +646,19 @@ gets worse.** This is architecture, not a bug fix. See `GAP-1`. What *is* in
 scope as a finding: the gate at `lib/workflow.ts:37-43` being hardcoded while the
 UI presents the capability grid as the place authority is configured.
 
-**Done when.** A human has decided whether the resource dimension is being
-added. Until then, the permissions editor should not imply it can express
-per-type or per-discipline authority.
+**`DEC-13` settles it: build the resource dimension, staged.** Stage 1 is
+`WF-15` (validate `request_type` — authority keyed to unvalidated free text is a
+hole, not a feature). Stage 2 widens the signature to
+`policyAllows(policy, cap, subject, resource?)` with `caps` entries gaining an
+optional `when` clause, so an absent `when` behaves exactly as today. Stage 3
+makes the hardcoded engineer gate a real capability. Full spec: `GAP-1`.
+
+**Done when.**
+1. An org can express "ASBUILT may only be approved by DocCtrl" and it is
+   enforced in `getActions`, re-enforced in the route, and honoured by
+   `org_capability_allows`.
+2. An org that has configured no `when` clause behaves byte-identically to today.
+3. All four call sites move together, and the simulator agrees with the route.
 
 ---
 
@@ -774,9 +790,10 @@ say a delegation was used.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 
-> ⚠ **Per the protocol: do not delete any of these.** Several become live the
-> moment a planned feature lands. This entry exists so the roster is known and a
-> human can decide.
+> **Dispositions are settled in `DEC-14` and `DEC-11`.** `CANCELED` gets
+> implemented — it is documented to users as a real state and no action produces
+> it. `NEW` and `PENDING_ENG_INITIAL` get removed. The three dormant capabilities
+> are kept and visibly marked.
 
 | Dead thing | Location | Why it is unreachable |
 |---|---|---|
@@ -797,9 +814,18 @@ decorative** — precisely the failure mode that
 `app/(protected)/admin/permissions/page.tsx:12-16` says was removed for being
 "worse than none."
 
-**Done when.** A human has recorded a keep/implement/remove decision per row, and
-capabilities that gate nothing are visibly marked as dormant in the editor rather
-than rendering as live controls.
+**Done when.** Per `DEC-14` and `DEC-11`:
+
+1. A requester can cancel their own open request with a reason, from
+   `PENDING_ASSIGNMENT` or `DRAFTING`; the cancellation is audited.
+2. `NEW` and `PENDING_ENG_INITIAL` are gone from `types/schema.ts`,
+   `WorkflowDiagramModal`, `lib/ticketRouting.ts:98-100` and
+   `lib/ticketAttention.ts:100-102`. Any existing rows in those statuses were
+   found and migrated to `PENDING_ASSIGNMENT`, and the count is recorded.
+3. `ticket.initial_review`, `ticket.eng_review` and `ticket.final_approve` carry
+   `dormant: true` and render greyed with a tooltip — not as live controls.
+4. `approve_initial`'s dead client path and `metadata.minor_correction` have
+   their recorded dispositions.
 
 ---
 
@@ -962,9 +988,17 @@ engineering-sign-off dot stays "pending" forever on a ticket the engineer *did*
 approve.
 
 **Chain reaction.** `deliverable_rev` is stamped onto printed travelers, the file
-viewer header, and the QR payload. **Any fix must decide whether a reopen starts
-a new cycle (safer, but renumbers a distributed package) or is barred once
-issued.** That is a human's call.
+viewer header, and the QR payload.
+
+**`DEC-15` settles it: a reopen starts a new cycle.** Increment
+`revision_count`, reset `draft_iteration` to 0, null `deliverable_rev`, so the
+next submission is `3A` and the next approval `3`. Barring reopen after issue is
+cleaner in theory and worse in practice — it pushes people to a raw PATCH
+(`WF-2`), which produces no audit row at all. Renumbering is the honest outcome.
+
+Ship with it: `approve_minor_correction` at `PENDING_FINAL_APPROVAL` must also
+write `engineer_approved_at`, or the sign-off indicator stays "pending" forever
+on a ticket the engineer did approve.
 
 **Done when.** Two approvals of the same ticket cannot produce the same issued
 revision label, and a ticket back under review does not verify as current.

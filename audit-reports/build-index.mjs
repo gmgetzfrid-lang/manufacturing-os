@@ -108,9 +108,11 @@ function summary(block) {
 /**
  * Parse one area folder into findings + gaps.
  *
- * `GAP-` entries are kept in a SEPARATE array and never mixed into `findings`.
- * A gap describes a feature that does not exist; it is not work, and an agent
- * iterating `findings` must never be handed one. See the run README.
+ * `GAP-` entries stay in their own array rather than being mixed into
+ * `findings`. Both are work, but they are worked differently: a finding is a
+ * defect with a severity, a gap is a build spec with a verdict and a dependency
+ * chain. Keeping them separate means an agent sorting findings by severity does
+ * not get a feature build interleaved into its queue.
  */
 function parseArea(area) {
   const dir = join(ROOT, area);
@@ -129,15 +131,20 @@ function parseArea(area) {
       const [id, ...titleBits] = head.split(" · ");
       const block = part.slice(0, part.indexOf("\n## ") === -1 ? undefined : part.indexOf("\n## "));
 
-      // Gaps are requirements, not defects. Record them separately, never as
-      // findings, and never with a severity that would put them in a queue.
+      // Gaps are build specs, not defects: they carry a verdict and a dependency
+      // chain instead of a severity. Kept in their own array so a severity-sorted
+      // finding queue does not interleave feature builds.
       if (/^GAP-\d+$/.test(id.trim())) {
+        const verdict = block.match(/\*\*Verdict:\s*([A-Z_]+)\*\*/)?.[1] ?? null;
         gaps.push({
           id: id.trim(),
           title: titleBits.join(" · ").trim(),
           kind: "gap",
-          actionable: false,
-          note: "A requirement with no implementation. NOT a work order — do not implement. Read-only context for a human's roadmap.",
+          verdict,
+          actionable: verdict !== "DECLINE" && verdict !== "FOLD_INTO_FINDING",
+          effort: block.match(/Effort:\s*\*\*([SMLX]+)\*\*/)?.[1] ?? null,
+          depends_on: (block.match(/Depends on:([^\n·]*)/)?.[1] ?? "")
+            .match(/[A-Z0-9]+-\d+/g) ?? [],
           related: (block.match(/\*\*Related findings:\*\*(.+)/)?.[1] ?? "")
             .match(/[A-Z0-9]+-\d+/g) ?? [],
           report: relative(REPO, path),
@@ -201,16 +208,23 @@ for (const area of areas) {
     totals: { findings: findings.length, gaps: gaps.length, by_severity: bySeverity, by_status: byStatus },
     status_vocabulary: ["OPEN", "IN_PROGRESS", "RESOLVED", "WONTFIX", "INVALID"],
     findings,
-    gaps_are_not_work:
-      "The `gaps` array below is NOT a backlog. Each entry is a requirement " +
-      "with no implementation. Do not implement one. If a gap blocks a finding " +
-      "you are fixing, stop and ask a human.",
+    gaps_note:
+      "Gaps are build specs for capabilities that do not exist. They are work, " +
+      "but they carry a verdict and a dependency chain rather than a severity — " +
+      "check `verdict` and `depends_on` before starting one. DECLINE and " +
+      "FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is " +
+      "false and the spec names what to do instead. Build order is in " +
+      "99-fix-sequencing.md.",
     gaps,
   };
 
   writeFileSync(join(ROOT, area, "findings.json"), JSON.stringify(index, null, 2) + "\n");
 
-  console.log(`${area}/findings.json — ${findings.length} findings, ${gaps.length} gaps (gaps are not work)`);
+  const buildable = gaps.filter((g) => g.actionable).length;
+  console.log(
+    `${area}/findings.json — ${findings.length} findings` +
+    (gaps.length ? `, ${gaps.length} gaps (${buildable} buildable)` : ""),
+  );
   console.log(`  by severity: ${JSON.stringify(bySeverity)}`);
   console.log(`  by status:   ${JSON.stringify(byStatus)}`);
 }

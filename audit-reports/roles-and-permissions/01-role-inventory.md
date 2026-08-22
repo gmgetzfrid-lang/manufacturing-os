@@ -35,7 +35,7 @@ code path branches on it.
 | `HR` | create_requests | ❌ | ❌ | **Label** |
 | `Maintenance` | create_requests | ❌ | ❌ | **Label** |
 | `Operations` | create_requests | ❌ | ❌ | **Label** |
-| `Contractor` | create_requests | ❌ | ❌ | **Label** |
+| `Contractor` | create_requests | ❌ | ✅ 1 site (**restriction** — reduced nav) | **Real (subtractive)** — see `CHAIN-1` |
 
 **10 distinct capability sets across 19 roles.**
 
@@ -49,6 +49,7 @@ code path branches on it.
 - **Blast radius:** model-complexity / access-control
 - **Locations:**
   - `lib/roleCapabilities.ts:63-69` — Accounting, Safety, HR, Maintenance, Operations, Contractor, all `["create_requests"]`
+  - ⚠ **Correction:** `components/navigation/Sidebar.tsx:241-248` — `Contractor` **is** load-bearing, as a *restriction* (`activeRole === 'Viewer' || activeRole === 'Contractor'` → reduced navigation). The first pass missed it because the search matched only double-quoted role literals. **`Contractor` is not removable.** See `CHAIN-1`. The other five department roles are unaffected by this correction, and per `DEC-3` they are deprecated in the picker rather than deleted — no stored permission blob is versioned (`CHAIN-5`).
   - `lib/roleCapabilities.ts:87-92` — their ranks (30–35), all below `Requester` (40)
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:58` — `SELECT role INTO v_role FROM org_members` (singular)
   - `app/(protected)/admin/libraries/LibraryWizard.tsx:91-93` — the only non-label use: preset groupings

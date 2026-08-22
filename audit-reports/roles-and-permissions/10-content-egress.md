@@ -289,8 +289,12 @@ unbounded direct anonymous inserts. `/api/auth/signup` is rate-limited via
 **Done when.**
 1. An Admin reads only their own org's access requests.
 2. The public route is rate-limited the way signup is.
-3. A human has decided whether to build the pending-requests surface or remove
-   the feature — the current state (collected, never shown) is the worst of both.
+3. The `org_id` column drift between the backfill migration and the route is
+   resolved.
+4. Per `DEC-19`, a pending-requests list exists on `/admin/users` and a submitted
+   request appears in it. The current state — collected, never shown — is the
+   worst of both; the security fixes above land regardless, and having landed
+   them the remaining surface is a list view.
 
 ---
 
