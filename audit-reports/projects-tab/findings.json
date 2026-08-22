@@ -15,7 +15,7 @@
   ],
   "totals": {
     "findings": 133,
-    "gaps": 0,
+    "gaps": 10,
     "by_severity": {
       "CRITICAL": 29,
       "HIGH": 72,
@@ -2629,5 +2629,122 @@
     }
   ],
   "gaps_note": "Gaps are build specs for capabilities that do not exist. They are work, but they carry a verdict and a dependency chain rather than a severity — check `verdict` and `depends_on` before starting one. DECLINE and FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is false and the spec names what to do instead. Build order is in 99-fix-sequencing.md.",
-  "gaps": []
+  "gaps": [
+    {
+      "id": "GAP-401",
+      "title": "The unauthenticated upload door as a real boundary",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-402",
+      "title": "A write that cannot silently fail",
+      "kind": "gap",
+      "verdict": "BUILD_NARROW",
+      "actionable": true,
+      "effort": "S",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-403",
+      "title": "Stable row identity for schedule re-import",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-404",
+      "title": "Evidence that actually evidences",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [
+        "GAP-402"
+      ],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-405",
+      "title": "Gates with teeth",
+      "kind": "gap",
+      "verdict": "BUILD_NARROW",
+      "actionable": true,
+      "effort": "S",
+      "depends_on": [
+        "GAP-402"
+      ],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-406",
+      "title": "The award as a transaction, with a repair path",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [
+        "GAP-402"
+      ],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-407",
+      "title": "One number, one source, on the bid tab",
+      "kind": "gap",
+      "verdict": "BUILD_NARROW",
+      "actionable": true,
+      "effort": "S",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-408",
+      "title": "The timeline sees the controls program",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-409",
+      "title": "The registry at scale",
+      "kind": "gap",
+      "verdict": "BUILD_NARROW",
+      "actionable": true,
+      "effort": "S",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    },
+    {
+      "id": "GAP-410",
+      "title": "An accessibility baseline for safety surfaces",
+      "kind": "gap",
+      "verdict": "BUILD",
+      "actionable": true,
+      "effort": "M",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/projects-tab/90-gap-register.md"
+    }
+  ]
 }

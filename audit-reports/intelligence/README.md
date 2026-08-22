@@ -80,13 +80,20 @@ It is not a missing brain. It is a missing memory.
 | 18 | [Lifecycle](./18-lifecycle.md) | 13 | Export, restore, delete, orphans |
 | 19 | [Wiring](./19-wiring.md) | 10 | De-facto links, dead FKs, one-directional joins |
 | 20 | [Prompts](./20-prompts.md) | 12 | Every prompt read as a contract |
-| 21 | [Edges & invariants](./21-edges-and-invariants.md) | 12 | ⚠ **unverified** — the critic, plus what is sound |
+| 21 | [Edges & invariants](./21-edges-and-invariants.md) | 12 | The critic, plus what is sound. **Verified by hand** — record at the top of the file |
 | 90 | [**Gap register**](./90-gap-register.md) | 12 specs | `GAP-301`+ |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Three redo-pairs |
 
 **`01`–`20` were adversarially verified** — 273 raw findings, **246 survived**,
 27 refuted and dropped. Several severities were lowered by that pass and the
-lowered value is what is recorded. **`21` was not verified** and says so in-file.
+lowered value is what is recorded.
+
+**`21` has since been verified by hand.** Both `CRITICAL`s and the RLS-shaped
+`HIGH`s were confirmed against the source; its remaining `HIGH`s and `MEDIUM`s
+are marked unverified in-file. Four of the confirmed findings share one root —
+**a table carrying AI-derived or ACL-derived content whose policy checks only
+active org membership** — which is the same class as the `tickets` and
+`notifications` policies in the other areas. One migration, not four.
 
 Each report opens with a **substrate table** — what already exists, works, or is
 load-bearing. That is deliberately as prominent as the defects, because in this

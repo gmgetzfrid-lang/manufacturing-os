@@ -57,6 +57,25 @@ Work these in order. The numbering reflects priority, not just grouping —
 Report `11` is not a findings list. It is the control set requested for the
 unauthenticated upload door, written as a design to be decided on and
 implemented. It supports `SEC-1`, `SEC-5`, `SEC-6`, `SEC-7`, and `SEC-8`.
+**[`90-gap-register.md`](./90-gap-register.md) supersedes it as a buildable spec**
+(`GAP-401`); the note stays as the reasoning behind it.
+
+---
+
+## Gap register
+
+[`90-gap-register.md`](./90-gap-register.md) — **10 build specs, `GAP-401`+.**
+
+⚠ **It differs from the other areas' registers and says so at the top.** Those
+came from dedicated design agents. This area was audited before that pattern
+existed, so its register was **derived from the findings** — the cases where
+fixing a finding means building something that does not exist, rather than
+repairing something that does. Each spec names its source findings and inherits
+their verification status, which was first-hand at commit `6a14d7d` and is now
+several sessions old. **Re-read the cited code before building** (`DEC-29`).
+
+A closing table records what deliberately did **not** become a gap, so nobody
+hunts for a spec that should not exist.
 
 ---
 

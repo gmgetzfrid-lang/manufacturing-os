@@ -4,11 +4,38 @@
 
 What twenty lenses did not look at — plus what is sound and must not break.
 
-> ### ⚠ NOT adversarially verified
+> ### Verification record — this file has now been checked
 >
-> This is the completeness critic's output, produced after the verification stage.
-> **Treat every entry as `SUSPECTED` regardless of its stated verification, and
-> reproduce before acting** (`DEC-29`).
+> This report was the completeness critic's output and originally shipped with a
+> banner saying its findings had **not** been through the adversarial refutation
+> pass the other twenty reports had. That pass has now been run by hand against
+> the source. The banner is replaced by this record.
+>
+> **Method.** Both `CRITICAL`s and the RLS-shaped `HIGH`s were re-read against the
+> cited code, including the migration text for every policy claim. The remaining
+> `HIGH`s and all `MEDIUM`s were not individually re-verified and are marked
+> below — treat those as `SUSPECTED` and reproduce first (`DEC-29`).
+>
+> **They share one root.** Four of the confirmed findings are the same defect
+> wearing different clothes: **a table carrying AI-derived or ACL-derived content
+> whose SELECT (or INSERT) policy checks only active org membership.** That is
+> the same class as the `tickets`, `notifications` and `email_notifications`
+> policies found in the drafting-flow and notifications areas. Fix them as one
+> migration, not four.
+>
+> | ID | Result |
+> |---|---|
+> | `IEDGE-1` | **CONFIRMED, and the code documents the opposite.** The route header says *"the corpus RPC runs SECURITY INVOKER under the caller's own RLS, so this can never widen what the person is allowed to read"* (`graph/ask/route.ts:21-23`) and the migration repeats it (`20260929_mention_engine.sql:97-98`). The call is `supabaseAdmin.rpc("graph_ask", …)` (`:83`). SECURITY INVOKER runs as the **caller** — and the caller is the service role, which bypasses RLS. The security model stated in two places is defeated by which client makes the call. |
+> | `IEDGE-2` | **CONFIRMED, and the file knows half of it.** `lib/orchestrator/tools.ts:21` imports `supabaseAdmin`; every read tool uses it. The comment at `:137-138` explicitly acknowledges *"graph_ask runs on the service role here, so the ai_excluded boundary…"* and post-filters for `ai_excluded` at `:144-149`. **It never compensates for the ACL.** Two searches (`acl\|node_visible\|knowledgeAccess\|canRead`, and a read of the whole file) find no permission check of any kind. The orchestrator searches the whole org's corpus regardless of who is asking. |
+> | `IEDGE-5` | **CONFIRMED verbatim.** `knowledge_questions_select` is `USING (EXISTS (… org_members … status = 'active'))` (`20260911_knowledge_ai.sql:147-151`). Answers synthesised under a per-asker ACL filter are stored org-wide readable. |
+> | `IEDGE-6` | **CONFIRMED verbatim.** `entity_mentions_read` has the identical shape (`20260929_mention_engine.sql:73-76`). `context_snippet` is the sentence lifted from the source document, so sentences from ACL-restricted documents are readable by every active member. |
+> | `IEDGE-7` | **CONFIRMED, and slightly sharper than stated.** `process_flows_insert` (`20261017_process_flows.sql:50-54`) constrains org membership **and** `created_by = auth.uid()` — but nothing else. `status` and `origin` are unconstrained, so any active member can insert `status='confirmed', origin='ai'`: a flow that claims a machine read it off a drawing and a human confirmed it, when neither happened. |
+> | `IEDGE-3`, `IEDGE-4` | `HIGH`, not individually re-verified. Treat as `SUSPECTED`. |
+> | `IEDGE-8`–`IEDGE-12` | `MEDIUM`, not individually re-verified. Treat as `SUSPECTED`. |
+>
+> **Relationship to report `05`.** `IEDGE-1`, `IEDGE-2`, `IEDGE-5` and `IEDGE-6`
+> are the same boundary [`05-knowledge-acl.md`](./05-knowledge-acl.md) audits from
+> the retrieval side. Read both before touching either; they are one fix.
 
 
 ### Already there — substrate and sound invariants

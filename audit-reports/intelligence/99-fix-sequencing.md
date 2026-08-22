@@ -139,8 +139,12 @@ reproduced against a real provider before it is acted on.
 
 Per `DEC-29`, reproduce before fixing. Two specifically:
 
-- **`21-edges-and-invariants.md` is unverified** — the completeness critic ran
-  after the verification stage. Its banner says so.
+- **`21-edges-and-invariants.md` has since been verified by hand** — both
+  `CRITICAL`s and the RLS-shaped `HIGH`s confirmed; the rest marked. Its record
+  is at the top of the file. **`IEDGE-1` and `IEDGE-2` belong in Phase 1** with
+  the other ACL work: `graph/ask` and every orchestrator read tool run the corpus
+  search on the **service role**, so the ACL enforcement both files document in
+  their own comments never happens.
 - **The table-chunking finding in `01-ingestion.md`** was demonstrated by
   transcribing the functions and executing them on both paths. That is strong
   evidence but it is not the running system: **re-run it against a real ingested
