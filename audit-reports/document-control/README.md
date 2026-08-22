@@ -1,0 +1,62 @@
+# Document control — audit area
+
+Checkout and the lock, revisions and publish, the review gate and e-signatures, holds, distribution and acknowledgment, transmittals, packages, retention and archive, content egress, and the RLS underneath all of it.
+
+**No application code, test, or migration was modified at any point.**
+
+**This is the core of the product.** A defect here does not merely cause a bug — it can put a superseded or unapproved drawing in a worker's hands, or hide a controlled document from the person who needs it.
+
+---
+
+## ⚠ Before you touch anything
+
+1. **Read [`../README.md`](../README.md)** — the resolution protocol — and
+   [`../DECISIONS.md`](../DECISIONS.md).
+2. **Read [`99-fix-sequencing.md`](./99-fix-sequencing.md)** before claiming a file.
+3. **This area came from a 47-agent run covering four areas at once.** The
+   completeness critic's report spans all four and lives in
+   [`../document-control/11-edges-and-invariants.md`](../document-control/11-edges-and-invariants.md)
+   — read it alongside this area's reports.
+
+---
+
+## Findings
+
+**147 findings** — 19 CRITICAL, 59 HIGH, 69 MEDIUM.
+
+| # | Report | n | Note |
+|---|---|---|---|
+| 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |
+| 02 | [Revisions, publish & supersession](./02-revisions-publish.md) | 14 |  |
+| 03 | [The review gate & e-signatures](./03-review-gate.md) | 13 |  |
+| 04 | [Holds & stop-work](./04-holds.md) | 14 |  |
+| 05 | [Distribution, acknowledgment & recall](./05-distribution.md) | 14 |  |
+| 06 | [Transmittals & the external portal](./06-transmittals.md) | 14 |  |
+| 07 | [Doc packs, work packages & the field bundle](./07-packages.md) | 14 |  |
+| 08 | [Retention, legal hold, archive & restore](./08-retention.md) | 14 |  |
+| 09 | [Content egress](./09-egress.md) | 8 |  |
+| 10 | [RLS & persistence — table by table](./10-rls.md) | 14 |  |
+| 11 | [Edges, modalities & load-bearing invariants](./11-edges-and-invariants.md) | 14 |  |
+
+Every report except the critic was **adversarially verified** — a second agent
+read the cited code and tried to refute each finding. Across the whole run, 333
+raw findings were produced and **311 survived**; 22 were refuted and dropped, and
+several severities were lowered by that pass. The lowered value is what is
+recorded.
+
+Each report opens with a **substrate table** — what already exists, works, or is
+load-bearing. That is deliberately as prominent as the defects.
+
+---
+
+## Method & limits
+
+- **No live database, no browser, no running app.** RLS policies, call graphs and
+  deterministic logic are read from code and are exact. Anything about what a user
+  *sees* is read from render conditions and is marked `SUSPECTED`.
+- The run was seeded with the recurring defect shapes the five earlier audits
+  found — the `FOR ALL` policy with only `USING`, the swallowed `supabase-js`
+  error, dead FK columns, comments describing unbuilt behaviour, hardcoded
+  facility vocabulary — so the lenses hunted those directly rather than
+  rediscovering them.
+- Per `DEC-29`, reproduce before fixing.

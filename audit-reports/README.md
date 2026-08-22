@@ -40,14 +40,22 @@ audit-reports/
 │   ├── 08 … verified by hand (record in-file)
 │   ├── 90-gap-register.md
 │   └── 99-fix-sequencing.md
-└── intelligence/
+├── intelligence/
     ├── README.md                ← the one idea, and the direct answers
     ├── findings.json
     ├── 01–20 … verified (246 of 273 survived refutation)
     ├── 21 … ⚠ UNVERIFIED
-    ├── 90-gap-register.md       ← GAP-301+
-    └── 99-fix-sequencing.md     ← three redo-pairs
+│   ├── 90-gap-register.md       ← GAP-301+
+│   └── 99-fix-sequencing.md     ← three redo-pairs
+├── document-control/            ← the core of the product
+├── projects-and-cost/
+├── admin-and-org/
+└── public-surfaces/
 ```
+
+The four areas above came from one 47-agent run and **share a cross-area cluster**
+restated at the top of each of their sequencing files: seven CRITICALs saying the
+field is told the wrong answer. Fix that as one piece of work, not seven.
 
 To regenerate the indexes after editing any report:
 
@@ -304,6 +312,10 @@ was deliberately cut are stated in each spec.
 |---|---|---|---|---|
 | **Projects tab** | The Projects tabs + the Project Controls program merged in PR #181 (`6a14d7d`) | 133 | 10 | [`projects-tab/`](./projects-tab/README.md) |
 | **Roles & permissions** | The whole authority model: roles, additive roles, capability policy, content ACL, ownership & publish, the drafting workflow, document lifecycle, delegation & teams, non-document surfaces, content egress, and the database functions underneath | 124 | 15 | [`roles-and-permissions/`](./roles-and-permissions/README.md) |
+| **Document control** | Checkout & the lock, revisions & publish, the review gate & e-signatures, holds, distribution & acknowledgment, transmittals, packages, retention & archive, content egress, and the RLS underneath | 147 | — | [`document-control/`](./document-control/README.md) |
+| **Projects & cost** | The project model and server behaviour beneath the tabs, scheduling & critical path, the quality program, cost & bid tabulation, and the external contractor door | 69 | — | [`projects-and-cost/`](./projects-and-cost/README.md) |
+| **Admin & org** | Org lifecycle & membership, export/backup/restore, the audit log & admin rails, billing & quotas | 55 | — | [`admin-and-org/`](./admin-and-org/README.md) |
+| **Public & field** | The unauthenticated verify endpoints, share links, the physical bridge (QR/labels/stamps/print), and offline | 54 | — | [`public-surfaces/`](./public-surfaces/README.md) |
 | **Intelligence layer** | Knowledge ingestion, ask & retrieval, embeddings, AI governance, the org graph, link proposals, the Site Codebook, the equipment Bridge, operating areas, process flows, drawing intelligence and the orchestrator — plus the document section's permission boundary | 258 | 12 | [`intelligence/`](./intelligence/README.md) |
 | **Notifications & alerts** | Every way the app tells a person something: the bell, sidebar badges, toasts, the corner dock, progress indicators, email, and the service worker — producers, delivery, taxonomy, the badge trail, realtime, stacking, and the OS-notification substrate | 105 | 7 | [`notifications/`](./notifications/README.md) |
 | **Drafting request flow** | The request flow end to end — intake, triage, assignment, drafting, review, approval, issue, closure — plus review tiering, document-control wiring, friction and latency, leaks, discoverability, and a second deep pass over the state machine, RLS, routing, authority surfaces, audit evidence, the document handoff and the Projects boundary | 139 | 14 | [`drafting-flow/`](./drafting-flow/README.md) |
