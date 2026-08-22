@@ -1,6 +1,11 @@
 # 90 · Gap register — build specs
 
-**9 capabilities the drafting flow needs and does not have.**
+**14 capabilities the drafting flow needs and does not have.**
+
+`GAP-110`–`GAP-114` were added after the review-model decisions
+(`DEC-33`…`DEC-40`) and carry the facility's stated policy. **`GAP-110` and
+`GAP-111` are the two that implement it**, and between them they are the
+cheapest high-value work in this area — most of `GAP-111` is already built.
 
 Numbered from **101** so they never collide with the `roles-and-permissions`
 area's `GAP-1`…`GAP-15`.
@@ -24,7 +29,12 @@ area's `GAP-1`…`GAP-15`.
 | [GAP-106](#gap-106) | SLA escalation that actually fires | **BUILD** | M | `LEAK-1` |
 | [GAP-107](#gap-107) | Leak accounting — non-standard outcomes | **BUILD_NARROW** | S | `DEC-14` |
 | [GAP-108](#gap-108) | "Where is my request" | **BUILD_NARROW** | S | — |
-| [GAP-109](#gap-109) | Engineering review without a stop | **BUILD** | M | `GAP-101` |
+| [GAP-109](#gap-109) | Engineering review without a stop | **BUILD** | M | `GAP-101`, **`GAP-113`** |
+| [GAP-110](#gap-110) | **The like-in-kind declaration** — the stated policy | **BUILD** | S | — |
+| [GAP-111](#gap-111) | **The assigner's flag becomes binding** — 80% built | **BUILD_NARROW** | S | `GAP-110` |
+| [GAP-112](#gap-112) | The routing table — no facility vocabulary in code | **BUILD** | M | `GAP-105` |
+| [GAP-113](#gap-113) | The availability record — proving it was asked | **BUILD** | M | `LEAK-1` |
+| [GAP-114](#gap-114) | Projects ↔ requests, by reference | **BUILD** | M | `GAP-105` |
 
 ---
 
@@ -82,44 +92,94 @@ that makes *most* work cheap, not the thing that makes *all* work expensive.
 
 **Verdict: BUILD** · Effort: **M** · Depends on: `WF-15`
 
+> ### ⚠ Revised by `DEC-33`. Read this before the spec below.
+>
+> An earlier version of this spec said the class is set **at triage, not at
+> intake**, and listed *"requiring the requester to classify"* as deliberately
+> out of scope. **That is now wrong**, and an agent following it would build
+> something that violates the facility's stated policy.
+>
+> The policy, verbatim: *"only use engineered packages unless the requester has
+> declared on request this is like-in-kind."*
+>
+> The reasoning that produced the old version was not wrong, it was answering a
+> different question. Asking a requester to **pick a work class from a taxonomy**
+> is expensive and they often cannot do it. Asking a requester to **declare one
+> exception, with a safe default if they say nothing**, is one question whose
+> unanswered state is both cheap and correct. See "Why this does not reintroduce
+> `UI-5`" below.
+
 ### Scope
 
-**In:** a declared work class on the ticket — at minimum
-`minor_correction` / `like_in_kind` / `new_design` — that review requirements key
-off.
+**In:** a persisted classification on the ticket that review requirements key
+off, established as follows:
+
+| Set by | When | What it does |
+|---|---|---|
+| **Requester** | Intake, optional | Declares like-in-kind. Removes the engineering requirement. Requires a typed statement (`DEC-34`). |
+| **Nobody** | — | **Default: engineered.** No declaration means the rigorous lane. |
+| **Assigner** | `PENDING_ASSIGNMENT`, optional | May add engineering back (`GAP-111`). **May never remove it.** |
 
 **Out (deliberately):** a drawing-type taxonomy (P&ID vs isometric vs loop
 sheet). `DCW-3` establishes that the **library** is the better routing proxy and
 already has an inheritance mechanism. A second taxonomy would have to be kept in
 sync with the first.
 
-**Out:** requiring the requester to classify. See the design note — this is the
-whole point.
+**Out:** a required intake field. The declaration is optional *because* its
+absence is the safe answer.
 
 ### Design
 
-The class is set **at triage**, not at intake. `PENDING_ASSIGNMENT` already
-exists, already has the right person in it (the drafting supervisor), and already
-requires them to open the ticket and act. Adding a class selector to the
-assignment step costs **zero additional hops** (`FRIC-3` explains why asking the
-requester costs several).
+**The default is the whole design.** A ticket with no declaration is engineered
+work. That single fact means:
 
-Prefill it where evidence exists: a request carrying
-`metadata.source_document` whose `docClass` is `drawing`, with a `request_type`
-the org has marked as like-in-kind, defaults accordingly. A **suggestion is never
-enforcement** — `lib/docClass.ts` already establishes that principle for document
-class and it applies identically here.
+- The requester who does not understand the question is not blocked, not
+  confused, and not routed into a lane they should not be in — they simply get
+  the rigorous one.
+- The form cannot be gamed by clicking through, because clicking through *is*
+  the conservative outcome.
+- No triage step is required for correctness. `GAP-111`'s assigner check is a
+  safety valve on the declaration, not the thing that establishes the class.
 
-Make the class org-extensible rather than a closed union. Different orgs will
-need different tiers, and `DCW-3`'s lesson is that hardcoding a taxonomy creates
-a maintenance burden — but validate against the org's configured list
-server-side, which is exactly what `WF-15` builds for `request_type`.
+Beyond the declaration, finer classes (`minor_correction`, and whatever a
+facility adds) remain org-configurable and settable at assignment — but they
+modulate routing **within** the two lanes the declaration establishes. They never
+override it.
+
+Prefill where hard evidence exists — a request carrying
+`metadata.source_document` whose `docClass` is `drawing`, raised from a check-in
+whose outcome was already `correction_requested` — and mark the prefill visibly
+as a suggestion. `lib/docClass.ts` establishes this principle in this codebase
+and it applies identically: **a suggestion is never enforcement**, and guessing
+from filenames is explicitly rejected there as a way to misroute safety-critical
+documents.
+
+### Why this does not reintroduce `UI-5`
+
+`UI-5` is the finding that submitting an incomplete request does nothing at all —
+a bare `return` with no message and no field highlight. It is about **required
+fields the user cannot satisfy and is not told about**.
+
+The declaration is not that. It is optional, its unanswered state is valid, and
+the consequence of leaving it blank is stated on the form in one line: *"Leave
+this blank and the request goes to engineering."* Nobody is ever blocked by it.
+
+**The one way to get this wrong** is to make the declaration required *or* to
+make the finer work class required at intake. Both turn a safe default into a
+wall. Do neither.
 
 ### Do not
 
-- **Do not put the class on the intake form as a required field.** The requester
-  frequently cannot answer it, and a required field they cannot answer is `UI-5`
-  all over again. Optional-with-prefill at intake, confirmed at triage.
+- **Do not make the declaration required.** Its optionality is what makes it
+  safe.
+- **Do not let the assigner, an admin, or anyone else clear a declaration or
+  lower the lane.** Only the requester's own declaration lowers rigor, and only
+  at creation. See `DEC-33`.
+- **Do not store it in `metadata`.** `CheckInPanel` already writes
+  `metadata.moc`, `metadata.minor_correction` and `metadata.undocumented_change`
+  (`components/documents/CheckInPanel.tsx:263-266`) and **nothing reads any of
+  them for any decision.** Untyped JSON nothing enforces is a record, not a
+  control (`DEC-34`).
 - **Do not derive it from `changeType`.** That lives on `DocumentVersion` and is
   chosen at publish — weeks after the review decision needs to be made.
 - **Do not build it before `WF-15`.** An authority-bearing classification keyed
@@ -130,18 +190,36 @@ server-side, which is exactly what `WF-15` builds for `request_type`.
 
 ### Acceptance
 
-1. Every ticket has a work class by the time it leaves `PENDING_ASSIGNMENT`.
-2. The class is prefilled from the source document where one exists, and the
-   prefill is visibly a suggestion.
-3. It is validated server-side against the org's configured list.
-4. A report can count tickets by class.
+1. A ticket created with no declaration has `engineering_required = true`, and
+   cannot reach IFC without the engineering slot satisfied — **including when the
+   requester is a Manager, Admin or DocCtrl**. This is the `TIER-1` inversion.
+2. A ticket created with a declaration reaches IFC with no engineer involved and
+   **no additional wait state versus today**.
+3. The declaration is immutable after creation and renders attributed on the
+   ticket, the deliverable and the audit trail.
+4. Leaving the declaration blank never blocks submission and never produces a
+   silent no-op.
+5. A report can count, for any period: tickets by lane, and every declaration
+   with its author and text. This is the number that tells you whether the
+   like-in-kind lane is being used honestly.
 
-**Related findings:** `TIER-1`, `TIER-2`, `TIER-7`, `LEAK-3`.
+**Related findings:** `TIER-1`, `TIER-2`, `TIER-7`, `LEAK-3`, `UI-5`.
+**Related gaps:** `GAP-110` (the declaration UI and storage), `GAP-111` (the
+assigner's flag).
+**Decisions:** `DEC-33`, `DEC-34`.
 
 ---
 
 <a id="gap-102"></a>
 ## GAP-102 · QA/QC assurance with **zero added stops**
+
+> ### ⚠ Build the mechanism as `GAP-112`, not as a bespoke feature
+>
+> Everything below about *what assurance is needed and what it must cost* still
+> stands and is the reasoning to follow. But per `DEC-35` the word "QA/QC" must
+> not appear in application code — it is one facility's vocabulary. Express this
+> as a **slot in the routing table** (`GAP-112`) with `mode: "notify_only"`, and
+> the facility names it whatever it names it.
 
 **Verdict: BUILD_NARROW** · Effort: **S** · Depends on: nothing
 
@@ -314,6 +392,12 @@ review roster, an engineer is not asked to review the same drawing twice.
 
 <a id="gap-104"></a>
 ## GAP-104 · Document-control release routing, per library
+
+> ### ⚠ Build the mechanism as `GAP-112`
+>
+> The need below is real and the per-library reasoning is right. The mechanism is
+> a routing slot filled by `{ owner_of: "library" }` (`GAP-112`), not a
+> doc-control-specific code path. `DEC-35`, `DEC-36`.
 
 **Verdict: BUILD** · Effort: **M** · Depends on: `GAP-105`, `GAP-103`
 
@@ -564,7 +648,21 @@ first-time requester can see the process before committing to it.
 <a id="gap-109"></a>
 ## GAP-109 · Engineering review without a stop
 
-**Verdict: BUILD** · Effort: **M** · Depends on: `GAP-101`
+**Verdict: BUILD** · Effort: **M** · Depends on: `GAP-110`, `GAP-111`, **`GAP-113`**
+
+> ### ⚠ Hard precondition: `GAP-113`
+>
+> A consent window may not advance a ticket unless the system can prove it asked
+> (`DEC-38`). `notify()` is documented fire-and-forget and swallows its error
+> (`lib/inAppNotifications.ts:74-97`), and the workflow route does not resolve
+> recipients at all (`LEAK-1`) — so today a window would advance on silence that
+> nobody was ever given the chance to break.
+>
+> **Build `GAP-113` first. This spec is not safe without it.**
+>
+> Note also that `GAP-110`/`GAP-111` now supply the lane this keys off — the
+> requester's declaration and the assigner's flag — rather than `GAP-101`'s
+> triage-set class.
 
 > The objection driving this spec: *"I'm complaining even over the engineer
 > review."* That is a fair complaint and the audit under-served it. `TIER-1`
@@ -646,6 +744,659 @@ the largest of the three and the most deferrable.
    pins that.
 
 **Related findings:** `TIER-1`, `TIER-5`, `FRIC-1`, `FRIC-4`.
+
+---
+
+<a id="gap-110"></a>
+## GAP-110 · The like-in-kind declaration
+
+**Verdict: BUILD** · Effort: **S** · Depends on: — · Decisions: `DEC-33`, `DEC-34`
+
+### The requirement it implements
+
+Verbatim from the system's owner, and the most important sentence in this audit:
+
+> *"Unapproved construction packages can not be pushed into the field. One of our
+> policies is only use engineered packages unless the requester has declared it
+> on request this is like-in-kind — meaning it is inferred this was already
+> engineered at some point, we are putting back exactly the same, we just need to
+> replace something."*
+
+### Scope
+
+**In:** one optional question on every intake path, a typed statement when
+answered, three immutable columns, and one boolean that the state machine reads.
+
+**Out:** any change to who reviews what. That is `GAP-101` + `GAP-111` consuming
+this. Build the declaration first; it is independently correct and independently
+useful even if nothing else ships.
+
+### The half that already exists — and the door it is missing from
+
+`lib/checkinOutcomes.ts` already models this policy correctly. Read its header
+before writing a line:
+
+```
+//   * every claim-creating branch requires a TYPED note (no canned text,
+//     no get-out-of-jail-free cards — same bar as approve_minor_correction),
+//   * a real change to a DRAWING-class document demands an MOC position
+//     (OSHA 1910.119(l)) …
+//   * minor corrections are replacement-in-kind: no MOC, mirroring the
+//     existing Minor/Correction review-gate exemption.
+```
+
+It is pure, unit-tested, derives an MOC requirement from the declared doc class,
+and requires a typed note for every claim. **The vocabulary and the standard both
+already exist in this repository.**
+
+They exist on the **check-in door only.**
+
+There are **five** ways a ticket gets created:
+
+| Door | File | Declaration asked for? |
+|---|---|---|
+| Intake form | `app/(protected)/requests/new/page.tsx:328` | **No** |
+| Check-in outcome | `components/documents/CheckInPanel.tsx:236` | Yes — MOC position + typed note |
+| Transition-in wizard | `lib/transitionIn.ts:304` | **No** |
+| Impact / collision flag | `lib/impact.ts:114` | **No** |
+| External intake portal | `app/api/intake/resolve/route.ts:142` | **No** |
+
+Four of five doors reach the same outcome — a revised controlled drawing — with
+no declaration at all. **That is the leak this gap closes**, and it is a policy
+leak rather than a code defect, which is why no existing finding names it.
+
+### The half that is worse than missing
+
+The one door that *does* ask writes the answer to `metadata`:
+
+```ts
+// components/documents/CheckInPanel.tsx:263-266
+...(card.moc === "required" ? { moc: { status: mocStatus, number: … } } : {}),
+...(card.ticketKind === "minor" ? { minor_correction: true } : {}),
+...(undocumented ? { undocumented_change: true } : {}),
+```
+
+A repo-wide search across `app/`, `lib/`, `components/` and `types/` finds **no
+reader of `metadata.moc`, `metadata.minor_correction` or
+`metadata.undocumented_change` for any authority decision.** `getActions` never
+reads `ticket.metadata` at all.
+
+So today: a person can declare at check-in that they are making an **undocumented
+change to a drawing with no MOC**, and the resulting ticket flows through the
+identical path as any other. The declaration is captured and inert.
+
+That is arguably the most defensible thing in this audit to fix first. It is
+already being asked. Nothing listens.
+
+### Design
+
+**Storage — columns, never JSON:**
+
+| Column | Set by | Mutable |
+|---|---|---|
+| `like_in_kind_statement` | requester, at creation | **never** |
+| `like_in_kind_declared_by` | server, from the session | never |
+| `like_in_kind_declared_at` | server | never |
+| `engineering_required` | server: `true` unless a statement exists | **true-ward only** |
+
+The typed statement carries a minimum length. No canned options, no dropdown. The
+same bar `checkinOutcomes` sets: *no get-out-of-jail-free cards.*
+
+**Every door asks the same question.** One shared component, one shared
+server-side validator. A door that cannot show UI (the external portal) defaults
+to no declaration, which is the safe lane — and says so in the portal's
+confirmation text.
+
+**Backfill:** existing tickets get `engineering_required = false` — not `true`.
+Retroactively blocking every open ticket in production on a gate that did not
+exist when they were filed would strand live work, which is how a safety feature
+teaches people to bypass the app. New tickets get the new default from day one,
+and the report in `GAP-101` acceptance #5 is what tells you the lane is being
+used honestly.
+
+### Do not
+
+- **Do not make it required.** Its optionality is what makes it safe: an
+  unanswered question yields the rigorous lane. A required field the requester
+  cannot answer is `UI-5` again.
+- **Do not offer canned text or a picker.** A checkbox is clicked without
+  reading. A sentence is a statement someone can be held to, and it is the
+  artifact a regulator asks for.
+- **Do not let it be edited, by anyone, including an admin.** A wrong declaration
+  is corrected by the assigner flagging engineering (`GAP-111`) — recorded as an
+  override on top, never as a rewrite underneath.
+- **Do not store it in `metadata`.** See above. That is the exact mistake already
+  present.
+- **Do not skip the four silent doors.** A policy enforced at one of five
+  entrances is not enforced.
+
+### Acceptance
+
+1. All five creation paths either capture a declaration or record its absence,
+   and a test enumerates all five so a sixth door cannot be added silently.
+2. A statement shorter than the minimum is rejected server-side, not only in the
+   form.
+3. No code path anywhere sets `engineering_required` from `true` to `false`. A
+   test pins this.
+4. The declaration renders attributed on the ticket, on the issued deliverable,
+   and in ticket history.
+5. `metadata.moc` / `metadata.minor_correction` / `metadata.undocumented_change`
+   are either promoted to columns that something reads, or explicitly documented
+   as informational. **Not left as-is.**
+
+**Related findings:** `TIER-1`, `TIER-2`, `LEAK-3`, `UI-5`.
+
+---
+
+<a id="gap-111"></a>
+## GAP-111 · The assigner's flag becomes binding
+
+**Verdict: BUILD_NARROW** · Effort: **S** · Depends on: `GAP-110` · Decisions: `DEC-33`
+
+### The requirement it implements
+
+> *"Being that there is always a drafting manager that is assigning these, part
+> of his responsibility can be to flag engineering — then it becomes required.
+> Otherwise it's opportunistic and can close and be considered approved by the
+> drafting manager."*
+
+### This is 80% built. The missing 20% is one boolean.
+
+The action already exists, at two statuses, with the right ergonomics:
+
+```ts
+// lib/workflow.ts:93-101 (NEW) and :146-153 (PENDING_ASSIGNMENT)
+actions.push({
+  label: 'Flag for Engineering Review',
+  action: 'request_eng_review',
+  requiresComment: true,
+  requiresEngineerPick: true,
+  description: 'Route to a specific engineer for scope review before assigning a drafter.'
+});
+```
+
+It already persists a real record:
+
+```ts
+// lib/ticketTransitions.ts:179-189
+case "request_eng_review":
+  updates.status = "PENDING_ENG_TEAM";
+  if (input.engineer) {
+    updates.assigned_engineer_id = input.engineer.id;
+    updates.engineer_review_requested_at = now;
+    updates.engineer_review_reason = finalComment || null;
+    …
+```
+
+And the flow's own author already intended exactly the model the owner described:
+
+```ts
+// lib/workflow.ts:46-50 — getInitialStatus
+// Every new request lands in the assignment queue … Engineering review is
+// an OPTIONAL branch the assigner triggers via "Flag for Engineering
+// Review", never an automatic gate.
+```
+
+**What it does not do is bind the approval end.** `approve_team` sets status back
+to `PENDING_ASSIGNMENT` and carries nothing forward
+(`lib/ticketTransitions.ts:190-192`). At `PENDING_REVIEW` the only thing consulted
+is:
+
+```ts
+// lib/workflow.ts:78
+const needsEngineerApproval = requiresEngineerApproval(ticket.requesterRole);
+```
+
+**Consequence, confirmed by reading the state machine:** a drafting manager flags
+a ticket for engineering, an engineer reviews the scope, and then — if the
+requester happened to be a Manager, Admin or DocCtrl — the requester self-approves
+straight to IFC with no engineering sign-off on the deliverable. The flag bought a
+conversation and no gate.
+
+### Scope
+
+**In:** `request_eng_review` sets `engineering_required = true`, permanently.
+`getActions` at `PENDING_REVIEW` reads `ticket.engineeringRequired` instead of
+`requiresEngineerApproval(ticket.requesterRole)`.
+
+**Out:** changing when or how the flag is offered. It is already offered at the
+right two places to the right person.
+
+### Why this costs zero waits
+
+The drafting manager is **already in the loop on every ticket** —
+`PENDING_ASSIGNMENT` is the initial status for every request from every door
+(`lib/workflow.ts:44-51`). They already open the ticket, already read it, already
+act on it.
+
+Reading a one-line declaration while doing that is not a new stop. **That is the
+entire reason this model satisfies the governing principle** — the checking party
+was already there. Compare a QA/QC status, which inserts a person who was not.
+
+### Do not
+
+- **Do not let the flag be cleared.** True-ward only. If an assigner flags in
+  error, the engineer's review resolves it — that costs one review, and the
+  alternative is a clearable safety gate.
+- **Do not let the assigner clear a like-in-kind declaration**, or set
+  `engineering_required = false`. `DEC-33`'s ratchet only turns one way.
+- **Do not delete `requiresEngineerApproval` in this change.** Leave it in place
+  as the seeded fallback for tickets predating `GAP-110`'s columns, and remove it
+  in a later, separate change once no rows depend on it.
+- **Do not add a new status.** The flag reuses `PENDING_ENG_TEAM`, which exists
+  and works.
+
+### Acceptance
+
+1. A flagged ticket cannot reach IFC without engineering sign-off, whoever the
+   requester is — Manager, Admin and DocCtrl included. A test pins each.
+2. `approve_team` leaves `engineering_required = true`.
+3. No path sets it false.
+4. The ticket shows *why* engineering is required — declaration absent, or
+   flagged by a named person on a date with their stated reason. "Because of your
+   job title" disappears as an answer.
+5. An unflagged, declared like-in-kind ticket closes through the assigner with
+   the assigner recorded as the approver of record — which is what the owner
+   described, made explicit rather than implicit.
+
+**Related findings:** `TIER-1`, `TIER-5`, `LEAK-3`, `UI-1`.
+
+---
+
+<a id="gap-112"></a>
+## GAP-112 · The routing table — no facility vocabulary in code
+
+**Verdict: BUILD** · Effort: **M** · Depends on: `GAP-105` · Decisions: `DEC-35`, `DEC-36`, `DEC-37`
+
+### The requirement it implements
+
+> *"I don't want to bake in anything that says QA/QC — I'd rather have a dynamic
+> router, a router configuration. Having it baked into roles boxes the app into
+> names and conventions other people don't subscribe to at their facility."*
+>
+> *"This assign should exist in the doc ctrl so we could use it here."*
+>
+> *"Where I work I'm the drafting manager and the QA/QC, so I can approve a
+> drawing. But that might not be true elsewhere."*
+
+All three sentences describe one thing: **routing is data, resolved through
+document control, and one person may fill several slots.**
+
+### This replaces the reviewer-shaped parts of GAP-102 and GAP-104
+
+`GAP-102` and `GAP-104` each describe a specific routing need — quality
+assurance, and per-library release review. Both were written before the router
+existed as a concept. **Neither should be built as a bespoke mechanism.** Build
+the router; express both as configuration in it. Their `Do not` lists still
+apply — especially "no new status, no new role."
+
+### The substrate is already there
+
+Nothing here needs a new table.
+
+| Piece | Where | What it gives you |
+|---|---|---|
+| Per-org config JSON + admin editor | `org_configurations` (`org_id`, `key`, `data`); editor at `app/(protected)/admin/requests/page.tsx:72-101` | The drafting form's request types, units and priorities are **already** org-configured exactly this way. A router is one more `key`. |
+| Container-chain resolution | `resolveEffectiveDocClass` — `lib/docClass.ts:49-58` | Six lines. Document → folder → library, most specific **defined** level wins. Already mirrored by `review_control`. |
+| Roster mechanics | `lib/reviewControl.ts` | Required primaries, alternates, content-hash-bound signatures, invalidation on change, timeout-driven alternates, auto-finalize. Done. |
+| Named-person grants with expiry | `lib/capabilityPolicy.ts:98-110` | Fills a slot with a person rather than a role. |
+| Standing visibility | `lib/subscriptions.ts` | A slot can be *notified* rather than *blocking*. |
+| Stop-work authority | `holds` — defaults `["*"]`, `lib/capabilityPolicy.ts:85-88`; enforced `lib/documentGuards.ts:109-125` | A slot's recourse when it has no signature. |
+
+### Design
+
+A **slot** is the unit. Code knows slot *properties*; it never knows slot
+*names*.
+
+```
+slot := {
+  key:            <facility's own string — "qa", "insp", "process-safety", anything>
+  label:          <what the facility calls it, shown in the UI>
+  fill:           { roles: [...] } | { users: [...] } | { owner_of: "library" }
+  mode:           "blocking" | "consent_window" | "notify_only"
+  applies_when:   { lane: "engineered" | "like_in_kind" | "any", … }
+  independent_of: [<slot keys>]        // DEC-37
+  window_hours:   <number>             // mode = consent_window only
+}
+```
+
+**`mode` is the friction ladder made configurable.** The same facility can put
+its quality function on `notify_only` (zero waits, zero touches, keeps its hold
+authority) and its process-safety function on `blocking` for the engineered lane
+only. Neither choice is in the code.
+
+`applies_when.lane` keys off `GAP-110`'s declaration, which is why that ships
+first.
+
+**Resolution** copies `resolveEffectiveDocClass` exactly — document → folder →
+library, most specific defined level wins — and copies two of its properties that
+are not merely stylistic:
+
+1. **Declared, never guessed.** *"guessing from filenames would misroute
+   safety-critical documents."* A router must never infer a slot from a title or
+   a filename.
+2. **Fail closed on transient error.** *"'we couldn't check' must never silently
+   read as 'no class declared' — that's how a PSM gate quietly turns itself
+   off."* A router that cannot load its config **blocks with a legible message**.
+   It does not default to permissive.
+
+**Seeding.** An org with no configuration gets a seed that reproduces today's
+behaviour exactly, built from the existing helpers — `isEngineerRole`,
+`isManagementRole`, `isDocCtrlRole`. Those functions become *seed data*, not dead
+code and not deleted code.
+
+### One person, many slots
+
+Per `DEC-37`, a person satisfies every slot they can fill, in one action, and the
+record shows each slot satisfied and by whom. The only constraint is
+`independent_of`, seeded so that the approval slot cannot be filled by the
+drafter — which is about **one deliverable's producer versus its checker**, not
+about how many hats someone wears.
+
+This is the concrete answer to *"I'm the drafting manager and the QA/QC."* Both
+slots resolve to the same person, both are satisfied, and the audit trail says so
+explicitly rather than pretending one of them did not apply.
+
+### A defect to fix before storing anything here
+
+The admin editor's access guard is **client-side only**:
+
+```tsx
+// app/(protected)/admin/requests/page.tsx:63-67
+useEffect(() => {
+  if (activeRole && !['Admin', 'DocCtrl'].includes(activeRole)) {
+    router.push('/dashboard');
+  }
+}, [activeRole, router]);
+```
+
+The write goes straight to the table via `supabase.upsert` — so whether a
+non-admin can edit org configuration depends entirely on `org_configurations`
+RLS, which must be read and confirmed **before** the routing table is stored
+there. **A routing table with a weaker guard than the roles it routes is worse
+than no router**, because it looks like a control.
+
+### Do not
+
+- **Do not create a new table.** `org_configurations` already exists with an
+  editor and a proven pattern.
+- **Do not write a second chain-walk.** One resolver. Two will drift and then
+  disagree about which library governs a document.
+- **Do not delete the role helpers in the same change.** They become the seed. An
+  org that has configured nothing must behave byte-for-byte as it does today.
+- **Do not put any facility's vocabulary in code.** Not `QAQC`, not `B31.3`, not
+  `NDE`. If you find yourself typing one, it belongs in seed data or the org's
+  configuration.
+- **Do not default an unconfigured slot to blocking.** Unconfigured means absent,
+  not maximal.
+- **Do not build this before `GAP-105`.** With no `library_id` on the ticket
+  there is no chain to walk (`DCW-1`).
+
+### Acceptance
+
+1. `grep -rn 'QAQC\|B31\|NDE\|radiograph' app lib components` returns nothing
+   outside seed data, test fixtures and user-visible copy.
+2. An org defines a slot named anything, filled from any role or named person,
+   in any mode, and the drafting flow honours it with no code change.
+3. An org with no configuration behaves exactly as today — pinned by a test that
+   runs the current state machine's expectations against the seeded router.
+4. One person filling three slots satisfies all three in one action, and the
+   record names all three.
+5. A config load failure blocks and says so. A test forces the failure.
+6. The resolver passes the same chain-resolution cases as
+   `resolveEffectiveDocClass`.
+
+**Related findings:** `TIER-3`, `TIER-4`, `TIER-8`, `DCW-2`, `DCW-6`.
+**Supersedes the mechanism (not the reasoning) of:** `GAP-102`, `GAP-104`.
+
+---
+
+<a id="gap-113"></a>
+## GAP-113 · The availability record — proving it was asked
+
+**Verdict: BUILD** · Effort: **M** · Depends on: `LEAK-1` · Decisions: `DEC-38`, `DEC-39`
+**`GAP-109` MUST NOT SHIP WITHOUT THIS.**
+
+### The requirement it implements
+
+> *"There needs to be warnings. The system has to log it was available to them
+> and it didn't get taken care of."*
+
+This is the condition that makes silence-is-consent defensible instead of
+reckless. *"Nobody objected"* is only a record if *"everybody was asked"* is a
+fact on disk.
+
+### The substrate exists and is currently unsafe for this purpose
+
+The `notifications` table already stores **one row per (recipient, event)** with
+a `read_at` column (`lib/inAppNotifications.ts:79-97`, `:188`). That is precisely
+the "it was available to them, and whether they looked" record.
+
+But the writer is fire-and-forget with the error swallowed:
+
+```ts
+// lib/inAppNotifications.ts:74-97
+/**
+ * Insert one notification row. Fire-and-forget by design — callers
+ * shouldn't block their main flow on the bell-icon write. Errors are
+ * logged but never re-raised.
+ */
+    if (error) console.warn("[notify] insert failed", error.message);
+```
+
+For a bell icon that is the correct engineering call. For a consent window it is
+disqualifying: **the insert can fail, nobody is told, and the clock runs anyway.**
+The ticket then advances with an audit trail that says nobody objected, when the
+truth is nobody was asked.
+
+There is a second, independent hole feeding the same failure: `LEAK-1` — the
+workflow route never calls `resolveTicketRecipients`. Confirmed by reading the
+route's imports (`app/api/tickets/workflow-action/route.ts:1-13`): it imports
+`WorkflowEngine` and `loadCapabilityPolicy` and not the router. So after
+creation, transitions notify the requester and drafter and nobody else. **A
+consent window opened by a transition would today notify the wrong people, or
+none.**
+
+### The pattern to copy is already in this codebase
+
+The acknowledged-distribution feature is the same shape with the polarity
+flipped — it *blocks* on silence where a consent window *advances* on it — and it
+is already built with durable rows rather than bell entries. Its notification
+vocabulary is instructive:
+
+```
+| "ack_requested"      // you must read & acknowledge an issued revision
+| "ack_complete"       // (to owner) every assignee has acknowledged
+| "ack_overdue"        // (to owner/Admin/DocCtrl) an assignee is long overdue
+| "ack_unsatisfiable"  // (to owner/Admin/DocCtrl) an ack policy resolved to
+                       //   nobody / has gaps
+```
+
+**`ack_unsatisfiable` is the one to internalise.** A consent window has the
+identical failure mode: a slot that resolves to **zero people**. A window with an
+empty recipient set must never advance on silence — nobody was asked, so nobody
+declined to object. Whoever built acknowledgments already found this; do not
+rediscover it the expensive way.
+
+### Design
+
+**Three guarantees, in order:**
+
+1. **Delivery is a precondition, not a side effect.** Consent-window
+   notifications take a different path from bell notifications: awaited,
+   error-checked, retried. The window's start timestamp is written **in the same
+   transaction as** the delivery rows. No rows, no timestamp, no clock — the
+   ticket stays put and says why.
+2. **The record lives on the ticket.** `consent_window_opened_at`,
+   `consent_window_recipients` (uids **frozen at open time**, not recomputed at
+   expiry — people move roles), `consent_window_warned_at`,
+   `consent_window_expired_at`, plus an explicit ticket-history entry:
+   *"Advanced without objection — asked N people on <date>, warned <date>, window
+   closed <date>"*, naming them. Evidence cannot live in a feed that gets marked
+   read, archived or pruned.
+3. **At least one warning before expiry**, to the same recipients plus the
+   assigner, itself recorded.
+
+**What "it didn't get taken care of" means, precisely.** Three distinguishable
+states, and the record must tell them apart:
+
+| State | Evidence | Reading |
+|---|---|---|
+| Never delivered | no notification row | **Blocks.** Not consent. |
+| Delivered, unopened | row, `read_at` null | Advances. Recorded as *not opened*. |
+| Opened, no action | row, `read_at` set | Advances. Recorded as *seen, no objection*. |
+
+Collapsing the last two into "nobody objected" throws away the most useful signal
+you have about whether the window length is right.
+
+### Do not
+
+- **Do not reuse `notify()` unchanged and assume the record exists.** It is
+  documented as fire-and-forget. That is a correct design for its purpose and the
+  wrong one for this.
+- **Do not start the clock at the transition.** Start it at confirmed delivery.
+- **Do not recompute the recipient set at expiry.** Freeze it at open. Otherwise
+  a role change mid-window silently rewrites who was asked.
+- **Do not advance on an empty recipient set.** Escalate to the assigner.
+- **Do not build this after `GAP-109`.** It is the safety condition on it, not a
+  follow-up.
+- **Do not rely on the bell alone for the record.** Notifications get pruned;
+  evidence must not.
+
+### Acceptance
+
+1. Forcing the notification insert to fail leaves the ticket un-advanced, with a
+   visible reason. A test forces it.
+2. Every auto-advanced ticket answers, from its own history with no reference to
+   the notifications table: who was asked, when, whether they opened it, when
+   they were warned, when it expired.
+3. A window resolving to zero recipients blocks and escalates.
+4. A recipient who changes role mid-window is still shown as asked.
+5. The warning fires at the configured fraction and is recorded.
+6. `LEAK-1` is fixed first, and a test asserts the workflow route resolves
+   recipients through `resolveTicketRecipients`.
+
+**Related findings:** `LEAK-1`, `FRIC-1`, `UI-1`.
+
+---
+
+<a id="gap-114"></a>
+## GAP-114 · Projects ↔ requests, by reference
+
+**Verdict: BUILD** · Effort: **M** · Depends on: `GAP-105` · Decisions: `DEC-40`
+
+### The requirement it implements
+
+> *"What about projects — what if a bidirectional portal for situations like a
+> project manager wants to link or push the request and its files to a project's
+> documents."*
+
+### The project side is built. The ticket is the one object it cannot see.
+
+Every other work object in the system already carries a project reference:
+
+| Type | Field | Location |
+|---|---|---|
+| `CheckoutSession` | `projectId?` — *"nullable: ad-hoc checkouts have none"* | `types/schema.ts:929` |
+| `Milestone` | `projectId?`, `documentId?` | `types/schema.ts:456-457` |
+| `MarkupRequest` | `projectId?`, `documentId` | `types/schema.ts:1002-1004` |
+| **`Ticket`** | **none** | `types/schema.ts:1113-1157` |
+
+And the project activity feed already has a typed vocabulary with the right
+events in it:
+
+```ts
+// types/schema.ts:980-983
+export type ProjectActivityType =
+  | "comment" | "checkout_added" | "checkout_released"
+  | "member_joined" | "member_left" | "status_changed"
+  | "markup_requested" | "markup_shared"
+  | "doc_added" | "doc_removed" | "ownership_transferred";
+```
+
+**A ticket has no `projectId`, no `libraryId`, no `collectionId` — no container
+reference of any kind** (`DCW-1`). It is the only work object a project cannot
+see, and it is the one that produces drawings. That is the entire gap. The
+attachment point on the project side exists and is in use.
+
+### The trap inside the word "push"
+
+The requirement says *"push the request and its files to a project's
+documents."* The requirement is right and the word hides a document-control
+violation.
+
+Copying a controlled drawing into project storage creates an uncontrolled copy
+that:
+
+- does not supersede when the source is revised,
+- does not carry a hold,
+- does not appear in distribution recall,
+- and does not visibly go stale.
+
+**That is precisely the failure the entire system exists to prevent**, and it is
+what the most natural implementation of "push the files" produces. `DEC-40`
+settles it: **reference, never copy.**
+
+A reference gets the right behaviour for free — it shows the current revision,
+goes visibly stale when superseded, and a hold on the document is a hold
+everywhere it appears.
+
+### Scope
+
+**In, both directions:**
+
+- **Project → request.** From a project, raise a drafting request already bound
+  to it. The existing intake form with `project_id` pre-set.
+- **Request → project.** From a ticket, link it to a project the actor is a
+  member of. One foreign key, one `ProjectActivity` row.
+- **Deliverable → project documents.** When a linked ticket issues, the issued
+  revision appears in the project's document list **as a reference**, and the
+  project activity feed gets a `doc_added` event.
+
+**Out (deliberately):**
+
+- **Any file copy.** `DEC-40`.
+- **A project-local document record.** It would duplicate a controlled one and
+  the two would diverge on the first revision.
+- **Cross-permission-model reach-through.** A project member who cannot read the
+  library must see that a deliverable exists and be unable to open it — not have
+  the reference silently vanish (which reads as "the drafting team did nothing")
+  and not have it silently open (which is an egress hole). This is the same
+  discover-without-read distinction as `DCW-5`, and it is the single most likely
+  thing to be got wrong here.
+
+### Do not
+
+- **Do not copy bytes.** Ever. Not "just for the bid package" — that is the
+  existing export/snapshot path, which already watermarks, and is a different,
+  already-solved problem.
+- **Do not show a revision without showing whether it is current.** A project
+  view of a superseded drawing that does not say so is worse than no project
+  view, because it is trusted.
+- **Do not grant read through the project link.** Project membership is not
+  library access. Show existence; gate content on the library ACL.
+- **Do not add the reverse link as a second source of truth.** One foreign key on
+  the ticket. The project's list is a query, not a stored set.
+- **Do not build before `GAP-105`.** `library_id` and `project_id` are the same
+  shape of problem and the same migration; doing them together avoids two
+  backfills over the same table.
+
+### Acceptance
+
+1. Linking writes exactly one foreign key and one activity row. No bytes move.
+2. A project's document list shows the live current revision of every referenced
+   deliverable and marks superseded ones as superseded.
+3. A hold on a referenced document is visible from the project.
+4. A project member without library read sees that a deliverable exists, sees its
+   status, and cannot open it — verified in a test, both directions.
+5. A request raised from a project arrives with `project_id` set and appears in
+   the project's activity feed.
+6. Unlinking removes the reference and leaves the ticket and the document
+   untouched.
+
+**Related findings:** `DCW-1`, `DCW-5`, `LEAK-9`.
+**Related gaps:** `GAP-105` (ticket → library binding — same migration).
+
 
 ---
 

@@ -67,6 +67,14 @@ about the system.
 | [DEC-30](#dec-30) | How to work a finding whose fix needs a migration or unobservable DB state | — | protocol |
 | [DEC-31](#dec-31) | The scope rule, without a human to ask | — | protocol |
 | [DEC-32](#dec-32) | How parallel agents claim work without colliding | — | protocol |
+| [DEC-33](#dec-33) | **Engineering is the default.** Only the requester's like-in-kind declaration removes it; the assigner may only add it back | high | `TIER-1`, `TIER-2`, `GAP-101`, `GAP-111` |
+| [DEC-34](#dec-34) | The declaration is a **typed statement in a column**, not a checkbox and not `metadata` | low | `GAP-110`, `INTAKE-*` |
+| [DEC-35](#dec-35) | **No facility vocabulary in code.** No `QAQC`, no `B31.3`, no role-name branching | medium | `TIER-3`, `TIER-4`, `GAP-112` |
+| [DEC-36](#dec-36) | The routing table lives in `org_configurations` and resolves through the container chain | medium | `GAP-112`, `GAP-104`, `DCW-6` |
+| [DEC-37](#dec-37) | **One person may hold many slots.** Independence is per-slot, not per-person. Amends `DEC-12` | medium | `DEC-12`, `WF-14`, `GAP-112` |
+| [DEC-38](#dec-38) | **No delivery record, no silent advance.** The consent clock starts at confirmed delivery | high | `GAP-109`, `GAP-113` |
+| [DEC-39](#dec-39) | Warn before expiry; the non-response record lives on the **ticket**, not the bell | medium | `GAP-113`, `GAP-106` |
+| [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
 
 ---
 
@@ -1050,3 +1058,403 @@ fine enough to parallelize — there are 16 report files across the two areas.
 
 **Do not** work two areas at once, and **do not** work a report whose
 dependencies in `99-fix-sequencing.md` are unmet.
+
+---
+
+# The review model
+
+These eight decisions were made after the drafting-flow audit, in response to
+stated policy from the system's owner. They are the ones an agent is most likely
+to get backwards, because the intuitive design — add a reviewer, add a status —
+is the wrong one in every case.
+
+Two of them (`DEC-33`, `DEC-35`) override earlier guidance in the drafting-flow
+gap register. Where they conflict, these win.
+
+<a id="dec-33"></a>
+## DEC-33 · What makes engineering review required?
+
+**Decision. Engineering review is the DEFAULT. Exactly one thing removes it: the
+requester declares, at intake and in their own name, that the work is
+like-in-kind. The drafting manager who assigns the ticket may add engineering
+back at any point before drafting starts; the drafting manager may NEVER remove
+it.**
+
+This is a ratchet, and the direction matters:
+
+| Who | May raise rigor | May lower rigor |
+|---|---|---|
+| Requester | yes (declare new design) | yes — **by taking responsibility for the claim** |
+| Drafting manager / assigner | yes (flag for engineering) | no |
+| Anyone else | no | no |
+
+**Rationale.** The stated policy is *"only use engineered packages unless the
+requester has declared on request this is like-in-kind — meaning it is inferred
+this was already engineered at some point, we are putting back exactly the same,
+we just need to replace something."*
+
+That sentence contains the whole design. Like-in-kind is not a *category of
+work*, it is a **claim about work already engineered**. The person who knows
+whether the thing going back is identical to the thing that came out is the
+requester — they are standing in front of it. So the requester is who declares,
+and the declaration is what removes the engineering requirement.
+
+The assigner's flag is the check on that claim, and it costs **zero waits**: a
+drafting manager already sits at `PENDING_ASSIGNMENT` on every ticket. Reading a
+one-line declaration while assigning is not a new stop. This is why the model
+works — the reviewing party was already in the loop.
+
+The asymmetry is deliberate. Lowering rigor requires someone to put their name on
+a factual claim. Raising it requires nothing, because a false positive costs one
+engineer's glance and a false negative can put an unengineered package in the
+field.
+
+**Consequence for the code.** `requiresEngineerApproval(requesterRole)`
+(`lib/workflow.ts:37-43`) is the inversion this decision deletes. Engineering is
+required or not because of **what the work is**, never because of **who asked**.
+
+**Implementation.** Two persisted fields, both first-class columns:
+
+- `like_in_kind_declared_at` / `_by` / `_statement` — set only at creation, only
+  by the requester, never editable afterwards.
+- `engineering_required` — set true at creation when no like-in-kind declaration
+  exists; settable true (never false) by `request_eng_review`.
+
+`getActions` reads `ticket.engineeringRequired`, not `ticket.requesterRole`.
+
+> **Half of this already exists.** `request_eng_review` is already an action at
+> `NEW` and `PENDING_ASSIGNMENT`, already requires a comment and an engineer
+> pick, and already persists `assigned_engineer_id`,
+> `engineer_review_requested_at` and `engineer_review_reason`
+> (`lib/ticketTransitions.ts:179-189`). What it does **not** do is bind the
+> approval end — `PENDING_REVIEW` consults only `requesterRole`, so a flagged
+> ticket can still be self-approved to IFC by a Manager requester. The missing
+> piece is one persisted boolean, not a feature.
+
+**Acceptance.**
+- A ticket with no like-in-kind declaration cannot reach IFC without the
+  engineering slot satisfied, whoever the requester is — Manager included.
+- A ticket with a declaration reaches IFC through the assigner, with no engineer
+  involved and no additional wait state.
+- `request_eng_review` on a declared like-in-kind ticket sets
+  `engineering_required = true` and it stays true.
+- No action anywhere sets `engineering_required` from true to false.
+
+**Reversal.** If a facility wants the assigner to be able to waive engineering,
+that is a router slot property (`waivable_by`), added then — not a code branch.
+
+**Risk:** high — this is the gate.
+
+<a id="dec-34"></a>
+## DEC-34 · What form does the like-in-kind declaration take?
+
+**Decision. A typed statement, not a checkbox, and not a dropdown value. Stored
+as first-class columns with the declarer's identity and timestamp — never in
+`metadata`.**
+
+The requester types what is being replaced with what. Minimum length enforced.
+No canned text, no preset options.
+
+**Rationale.** This is the exact bar `lib/checkinOutcomes.ts` already sets for
+every claim-creating branch of check-in: *"every claim-creating branch requires a
+TYPED note (no canned text, no get-out-of-jail-free cards — same bar as
+`approve_minor_correction`)"*. That module already models replacement-in-kind
+correctly, already derives an MOC position from the declared doc class, and is
+pure and unit-tested. **The vocabulary and the standard both already exist in
+this codebase — on the check-in door only.**
+
+A checkbox is clicked without reading. A sentence someone has to compose is a
+statement they can be held to, and it is the artifact a regulator asks for.
+
+**On `metadata`.** `CheckInPanel` already writes
+`metadata.moc`, `metadata.minor_correction` and `metadata.undocumented_change`
+(`components/documents/CheckInPanel.tsx:263-266`). A repo-wide search finds **no
+reader of any of them** for any authority decision. Untyped JSON that nothing
+enforces is a record, not a control. The declaration must be a column that
+`getActions` reads.
+
+**Acceptance.**
+- The declaration cannot be saved empty or with fewer than ~20 characters.
+- It renders on the ticket, on the deliverable, and in the audit trail, attributed.
+- It cannot be edited after creation by anyone, including an admin. A wrong
+  declaration is corrected by the assigner flagging engineering, which is
+  recorded as an override rather than a rewrite of history.
+
+**Reversal.** The minimum length is a preference. The typed-not-clicked shape is
+not.
+
+**Risk:** low.
+
+<a id="dec-35"></a>
+## DEC-35 · No facility vocabulary in application code
+
+**Decision. No file under `app/`, `lib/`, or `components/` may branch on a
+facility-specific role name, review name, or code name. Not `QAQC`, not `B31.3`,
+not `NDE`, and not `DraftingSupervisor` as a routing target. Routing is data.**
+
+Code knows **slot kinds** and their properties. It never knows what a facility
+calls the person who fills one.
+
+**Rationale.** Stated requirement, verbatim: *"I dont want to bake in anything
+that says qaqc I rather have dynamic router a router configuration. Having it
+baked into roles boxes the app in to names and conventions other people dont
+subscribe to at their facility."*
+
+This is correct and it is also the fix for a defect the roles audit already
+found independently: role identity is unversioned customer-editable JSON
+(`DEC-5`), so a facility that renames a role silently breaks every code branch
+that string-matches it. `isEngineerRole` matching the **substring** `"Engineer"`
+(`lib/workflow.ts:17-19`) is the clearest instance — it is one rename away from
+matching nothing, or from matching a facility's "Engineering Clerk".
+
+**Implementation.** Existing name-matching helpers are **quarantined, not
+deleted**: `isEngineerRole`, `isManagementRole`, `isDocCtrlRole` become the
+seeded default routing configuration for an org that has never configured one, so
+behaviour on upgrade is unchanged. New code calls the router.
+
+**Do not** delete the helpers in the same change that introduces the router. A
+facility with no configuration must keep working exactly as it does today.
+
+**Acceptance.**
+- `grep -rn 'QAQC\|B31\|NDE\|radiograph' app lib components` returns nothing
+  outside seed data, test fixtures and user-visible copy.
+- An org can define a slot called anything, fill it from any role or named
+  person, and the drafting flow honours it without a code change.
+- An org that has configured nothing behaves byte-for-byte as it does today.
+
+**Reversal.** None available. This is a structural constraint, not a preference.
+
+**Risk:** medium — wide, but mechanical.
+
+<a id="dec-36"></a>
+## DEC-36 · Where the routing table lives, and how it resolves
+
+**Decision. In `org_configurations`, under a new key, resolved through the
+document container chain exactly as `doc_class` and `review_control` already
+are: document → folder → library, most specific DEFINED level wins.**
+
+**Rationale.** Stated requirement: *"this assign should exist in the doc ctrl so
+we could use it here."* That is right, and the substrate is already built:
+
+| Piece | Where | Why it fits |
+|---|---|---|
+| Per-org JSON config with an admin editor | `org_configurations` (`org_id`,`key`,`data`); editor at `app/(protected)/admin/requests/page.tsx` | The drafting form's request types, units and priorities are already org-configured this way. A router is one more key. |
+| Container-chain resolution | `resolveEffectiveDocClass` (`lib/docClass.ts:49-58`) | Three lines, already the house pattern, already mirrored by `review_control`. Copy the shape exactly. |
+| Reviewer slots with primaries, alternates, timeouts | `lib/reviewControl.ts` | The roster mechanics are done. The router decides *which* roster applies. |
+| Per-person grants with expiry | `lib/capabilityPolicy.ts:98-110` | Fills a slot with a named person rather than a role. |
+
+**Two properties of `docClass.ts` must be copied, not just its shape:**
+
+1. **Declared, never guessed.** *"guessing from filenames would misroute
+   safety-critical documents."* A router must never infer a slot from a title.
+2. **Fail closed on transient error.** *"'we couldn't check' must never silently
+   read as 'no class declared' — that's how a PSM gate quietly turns itself
+   off."* A router that cannot load its configuration must block, not default
+   to permissive.
+
+**Do not** create a new table. **Do not** write a second resolution function —
+if the chain walk is duplicated it will drift, and the two will disagree about
+which library governs a document.
+
+**Note a real defect while you are here:** the admin config editor's access guard
+is client-side only — `router.push('/dashboard')` in a `useEffect`
+(`app/(protected)/admin/requests/page.tsx:63-67`) — with the write going straight
+to `org_configurations` via `supabase.upsert`. Whether that is exploitable
+depends on the table's RLS, which must be checked before the router is stored
+there. A routing table with a weaker guard than the roles it routes is worse than
+no router.
+
+**Acceptance.**
+- One resolver, unit-tested against the same cases as `resolveEffectiveDocClass`.
+- A library-level rule applies to every document in it; a folder-level rule
+  overrides for that folder; a document-level rule overrides for that document.
+- A config load failure blocks the transition with a legible message.
+
+**Reversal.** The storage key is a detail. The single-resolver rule is not.
+
+**Risk:** medium.
+
+<a id="dec-37"></a>
+## DEC-37 · One person, many hats
+
+**Decision. A person may satisfy any number of routing slots simultaneously.
+Independence is a property of a SLOT, not of a person. This amends `DEC-12`.**
+
+`DEC-12` stands as written — its three predicates are about **one deliverable's
+producer versus its checker**, which is a real control. What it must not be read
+to mean is that a person who holds two functions may only exercise one.
+
+**Rationale.** Stated fact from the system's owner: *"where I work im the
+drafting manager and the qaqc so I can approve a drawing. But that might not be
+true elsewhere."*
+
+That is the normal condition in a mid-size facility, not an edge case. A model
+that assumes one function per person is wrong about how plants are actually
+staffed, and a system that enforces it teaches people to route around it — which
+is the failure this whole audit exists to prevent.
+
+The genuine control is narrower and survives hat-stacking intact: **the person
+who produced a deliverable may not be the person who accepts it.** That is about
+one artifact and two acts, not about job titles.
+
+**Implementation.** Each slot in the routing configuration carries an optional
+`independent_of: string[]` naming other slot kinds it may not share an occupant
+with. Seeded default: the approval slot is `independent_of: ["drafter"]` and
+nothing else is constrained. `DEC-12`'s member-count derivation still gates
+whether independence is enforced at all.
+
+**Acceptance.**
+- One person holding both the assigner slot and the quality slot satisfies both
+  with one action, and the record shows both were satisfied and by whom.
+- The same person cannot both draft a deliverable and accept it, in an org above
+  the `DEC-12` threshold.
+- A blocked action says which independence constraint blocked it. A missing
+  button is not an explanation.
+
+**Reversal.** Per-slot, in configuration.
+
+**Risk:** medium — reduces enforcement relative to a naive reading of `DEC-12`,
+deliberately.
+
+<a id="dec-38"></a>
+## DEC-38 · A consent window may not advance without a delivery record
+
+**Decision. If the system cannot prove it told someone, the clock does not
+start. No delivery record, no silent advance — the ticket waits and says why.**
+
+**Rationale.** Stated requirement: *"there needs to be warnings. The system has
+to log it was available to them and it didnt get taken care of."*
+
+This is the load-bearing condition under `GAP-109`. "Nobody objected" is only a
+defensible record if "everybody was asked" is a fact on disk. Otherwise
+silence-is-consent degrades into advancing work nobody ever saw, which is
+strictly worse than the backlog it replaces.
+
+**The substrate exists and is currently unsafe for this purpose.** The
+`notifications` table already stores one row per (recipient, event) with a
+`read_at` column — that is exactly the "it was available to them, and whether
+they looked" record. But `notify()` is **fire-and-forget with the error
+swallowed**:
+
+```ts
+// lib/inAppNotifications.ts:79-97 — "Fire-and-forget by design"
+if (error) console.warn("[notify] insert failed", error.message);
+```
+
+For the bell icon that is the right call. For a consent window it is
+disqualifying: the insert can fail, nobody is told, and the clock runs anyway.
+
+**Implementation.** Consent-window notifications take a different path from
+bell-icon notifications: awaited, error-checked, retried, and the window's start
+timestamp is written **in the same transaction as** the delivery rows. If the
+rows cannot be written, no timestamp is written and the ticket stays put with a
+visible reason.
+
+**Do not** reuse `notify()` unchanged for this and assume the record is there.
+**Do not** start the clock at the moment of the transition; start it at the
+moment delivery is confirmed.
+
+**Acceptance.**
+- Forcing the notification insert to fail leaves the ticket un-advanced and
+  surfaces the failure.
+- Every auto-advanced ticket can produce: who was told, when, whether they opened
+  it, when they were warned, and when the window expired.
+- That record survives any notification retention/cleanup — see `DEC-39`.
+
+**Reversal.** None. Without this, `GAP-109` must not ship.
+
+**Risk:** high — this is the safety condition on the whole consent-window model.
+
+<a id="dec-39"></a>
+## DEC-39 · Warnings, and where the non-response record lives
+
+**Decision. At least one warning before expiry, to the same people plus the
+assigner. The non-response record is written onto the TICKET, not left implicit
+in the notification feed.**
+
+**Rationale.** Two different things are being asked for and only one of them is a
+notification. The warning is a courtesy that makes the window fair. The
+**record** is evidence, and evidence cannot live in a feed that gets marked read,
+archived, or pruned.
+
+The pattern to copy already exists: the acknowledged-distribution feature tracks
+per-assignee acknowledgment state with `ack_requested` / `ack_complete` /
+`ack_overdue` / `ack_unsatisfiable` notification kinds
+(`lib/inAppNotifications.ts`) backed by durable acknowledgment rows, not by the
+bell. A consent window is the same shape with the polarity flipped: it advances
+on silence instead of blocking on it.
+
+Note `ack_unsatisfiable` — *"an ack policy resolved to nobody / has gaps."* A
+consent window has the identical failure mode: a slot that resolves to zero
+people. **A window whose recipient set is empty must never advance on silence.**
+Nobody was asked, so nobody declined to object.
+
+**Implementation.** On the ticket: `consent_window_opened_at`,
+`consent_window_recipients` (uids at open time — frozen, not recomputed),
+`consent_window_warned_at`, `consent_window_expired_at`, and the resulting
+advance recorded in ticket history as an explicit *"advanced without objection"*
+entry naming everyone who was asked.
+
+**Acceptance.**
+- A window that resolves to an empty recipient set blocks and escalates to the
+  assigner.
+- The warning fires at a configured fraction of the window and is itself recorded.
+- The ticket's own history answers the regulator's question with no reference to
+  the notification table.
+
+**Reversal.** Warning count and timing are configuration.
+
+**Risk:** medium.
+
+<a id="dec-40"></a>
+## DEC-40 · Projects link by reference, never by copy
+
+**Decision. A controlled document associated with a project is a reference to
+(document id, revision), resolved live. Never a file copied into project
+storage.**
+
+**Rationale.** Stated requirement: *"a bidirectional portal for situations like a
+project manager wants to link or push the request and its files to a projects
+documents."* The requirement is right; the word *push* hides the trap.
+
+Copying a controlled drawing into a project folder creates an uncontrolled copy
+that does not supersede, does not carry a hold, does not appear in distribution
+recall, and does not go stale visibly. That is the precise failure this system
+exists to prevent, and it would be introduced by the most natural reading of
+"push the files".
+
+A reference gets the opposite behaviour for free: it shows the current revision,
+it goes visibly stale when superseded, and a hold on the document is a hold
+everywhere it is referenced.
+
+**The seam already exists on one side.** `CheckoutSession`, `Milestone` and
+`MarkupRequest` all carry `projectId` (`types/schema.ts:929`, `:456`, `:1004`).
+`ProjectActivity` already has a typed event vocabulary including `doc_added`,
+`doc_removed` and `markup_requested` (`types/schema.ts:980-983`).
+
+**`Ticket` carries no `projectId` and no container reference of any kind.** It is
+the only work object in the system that a project cannot see. That is the whole
+gap — the project side is built.
+
+**Implementation.** `project_id` on the ticket (nullable, set at creation or
+later), plus a `ProjectActivity` event when a request is linked and when its
+deliverable is issued. The deliverable appears in the project as a reference to
+the issued revision.
+
+**Do not** copy files. **Do not** create a project-local document record that
+duplicates a controlled one. **Do not** let a project surface show a revision
+without showing that it is the current one — a project view of a superseded
+drawing that does not say so is worse than no project view.
+
+**Acceptance.**
+- Linking a request to a project writes one foreign key and one activity row.
+- The project's document list shows the live current revision and marks
+  superseded ones.
+- A hold on a referenced document is visible from the project.
+- No bytes are duplicated.
+
+**Reversal.** If a facility genuinely needs a frozen snapshot for a bid package,
+that is the existing export/snapshot path with its own watermarking — a separate,
+already-solved problem, not a change to this rule.
+
+**Risk:** medium.
