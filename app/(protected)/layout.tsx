@@ -23,6 +23,7 @@ import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
 import UpdatePill from "@/components/system/UpdatePill";
 import { Spinner } from "@/components/ui/Spinner";
+import { resolveProtectedView } from "@/lib/protectedGate";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading, uid, userEmail, membershipState } = useRole();
@@ -32,7 +33,15 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const openMobileNav = React.useCallback(() => setMobileNavOpen(true), []);
   const closeMobileNav = React.useCallback(() => setMobileNavOpen(false), []);
 
-  if (loading) {
+  // All four membership states are handled — the decision lives in
+  // resolveProtectedView so the contract is pinned by lib/__tests__.
+  // "resolving" is the state this ladder used to fall through: the watchdogs
+  // force-clear `loading` while the membership answer is still in flight, and
+  // rendering the app then means rendering it at the placeholder role
+  // ("Viewer", roles: []) — a fake Viewer app for a signed-in Admin.
+  const view = resolveProtectedView({ loading, uid, membershipState });
+
+  if (view === "authenticating") {
     return (
       <div className="h-dvh w-full flex flex-col items-center justify-center bg-[var(--color-canvas)] animate-in fade-in">
         <Spinner size="lg" className="mb-4" />
@@ -41,13 +50,15 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
     );
   }
 
+  if (view === "resolving") return <ResolvingMembershipScreen />;
+
   // A signed-in account with no workspace membership gets a HARD STOP, not a
   // fake empty Viewer app. There are exactly two doors into a workspace —
   // an admin adds you, or you start a trial with a brand-new workspace — and
   // this screen says so. Likewise, a failed membership lookup gets a retry,
   // never a silent downgrade to Viewer.
-  if (uid && membershipState === "none") return <NotAMemberScreen email={userEmail} />;
-  if (uid && membershipState === "error") return <MembershipErrorScreen />;
+  if (view === "no-membership") return <NotAMemberScreen email={userEmail} />;
+  if (view === "membership-error") return <MembershipErrorScreen />;
 
   return (
     <div className="flex h-dvh bg-[var(--color-canvas)] text-[var(--color-text)] flex-col">
@@ -107,6 +118,32 @@ function NotAMemberScreen({ email }: { email: string | null }) {
             Start a free trial
           </a>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** The honest slow-path screen (SESS-3). Shown when the membership lookup is
+ *  still in flight after the spinner watchdogs gave up on it. Says what the
+ *  error screen says — access unchanged — because the alternative was a
+ *  silent, plausible, wrong render: a Viewer app for an Admin. */
+function ResolvingMembershipScreen() {
+  return (
+    <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
+      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8 text-center">
+        <Spinner size="lg" className="mb-4 mx-auto" />
+        <h1 className="text-lg font-black text-[var(--color-text)]">Still loading your workspace…</h1>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2">
+          This is taking longer than usual — likely a slow connection or a cold
+          database start. Your access is unchanged; this is a delay, not a
+          permissions change.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow"
+        >
+          Reload
+        </button>
       </div>
     </div>
   );

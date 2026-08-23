@@ -4,6 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useLayoutEffe
 import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
+import type { MembershipState } from "@/lib/protectedGate";
 
 type OrgMember = {
   orgId: string;
@@ -14,7 +15,22 @@ type OrgMember = {
   email?: string;
 };
 
-type MembershipState = "resolving" | "member" | "none" | "error";
+// ─── Resolution budgets (SESS-2) ─────────────────────────────────────
+// ONE budget for membership resolution, shared by the boot path and the
+// SIGNED_IN user-switch path. 15s because Supabase cold-start on the
+// free/shared tier can spend 5-10s on the first RLS-gated query of a
+// session, and the retry ladder below adds up to three sequential attempts
+// plus 1.8s of deliberate backoff. A safety net, not a normal-case
+// constraint. When it trips, membership resolves to "error" — the honest
+// retry screen — never to a rendered placeholder role.
+const RESOLVE_BUDGET_MS = 15_000;
+// The spinner watchdogs are deliberately SHORTER than the resolve budget:
+// they only decide when the full-screen "Authenticating…" spinner yields to
+// the layout's still-resolving screen. They never decide what role renders —
+// the layout branches on membershipState (SESS-1), so force-clearing
+// `loading` early costs an honest waiting screen, not a wrong render.
+const LOADING_WATCHDOG_MS = 6_000;
+const BOOT_SPINNER_MS = 8_000;
 
 type RoleContextValue = {
   loading: boolean;
@@ -77,17 +93,43 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { uidRef.current = uid; }, [uid]);
 
   // Watchdog: never let `loading` stay true forever. Whenever loading flips
-  // to true post-boot, give it 6 seconds to resolve; after that, force it
+  // to true post-boot, give it a few seconds to resolve; after that, force it
   // false so the user is never staring at a blank "Authenticating…" spinner.
-  // Auth-gated queries still work — they'll surface their own errors.
+  // Auth-gated queries still work — they'll surface their own errors. The
+  // layout's membershipState branch keeps this from ever rendering a
+  // placeholder role (SESS-1).
   useEffect(() => {
     if (!loading) return;
     const t = window.setTimeout(() => {
       console.warn("[RoleContext] loading watchdog tripped — force-clearing spinner");
       setLoading(false);
-    }, 6000);
+    }, LOADING_WATCHDOG_MS);
     return () => window.clearTimeout(t);
   }, [loading]);
+
+  // If a resolve outruns its budget, land on the honest terminal state: the
+  // retry screen. Never leave the user parked on "resolving" forever, and
+  // never fall through to a placeholder render. A late-landing resolve still
+  // wins — it overwrites "error" with the real answer when it arrives.
+  const failResolveIfStillPending = useCallback(() => {
+    setMembershipState((s) => (s === "resolving" ? "error" : s));
+  }, []);
+
+  // Shared budget wrapper (SESS-2): both resolve paths race the same clock.
+  const raceWithBudget = useCallback(async (p: Promise<void>) => {
+    let timer: number | undefined;
+    const budget = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(
+        () => reject(new Error(`membership resolve exceeded ${RESOLVE_BUDGET_MS}ms budget`)),
+        RESOLVE_BUDGET_MS
+      );
+    });
+    try {
+      await Promise.race([p, budget]);
+    } finally {
+      if (timer !== undefined) window.clearTimeout(timer);
+    }
+  }, []);
 
   const persistOrgId = useCallback(async (nextOrgId: string | null, nextUid: string) => {
     try {
@@ -231,14 +273,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    // Safety: never let "Authenticating..." spin forever. If boot stalls past
-    // 8 seconds (slow network, stuck supabase call), drop the spinner and let
-    // the rest of the app render — auth-gated queries will either work or
-    // redirect on their own.
+    // Safety: never let "Authenticating..." spin forever. If boot stalls
+    // (slow network, stuck supabase call), drop the spinner and let the
+    // layout show its still-resolving screen — auth-gated queries will
+    // either work or redirect on their own.
     const bootTimeout = window.setTimeout(() => {
       setLoading(false);
       bootedRef.current = true;
-    }, 8000);
+    }, BOOT_SPINNER_MS);
 
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -246,7 +288,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         const u = session.user;
         setUid(u.id);
         setUserEmail(u.email ?? null);
-        await resolveOrgAndRole(u.id, u.email ?? null);
+        // Same budget as the SIGNED_IN path (SESS-2) — the boot resolve used
+        // to have no timeout at all, so a hung query parked the app on a
+        // placeholder forever. On budget exhaustion, land on "error" (the
+        // retry screen); a resolve that limps in later still overwrites it.
+        try {
+          await raceWithBudget(resolveOrgAndRole(u.id, u.email ?? null));
+        } catch (err) {
+          console.warn("[RoleContext] boot membership resolve exceeded its budget", err);
+          failResolveIfStillPending();
+        }
       }
       setLoading(false);
       bootedRef.current = true;
@@ -306,22 +357,17 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         if (event === "SIGNED_IN") {
           const isSameUser = uidRef.current === u.id;
           if (!isSameUser) {
-            // Actual user switch (rare). Resolve their org/role, with a
-            // hard timeout so a slow query can't lock the UI.
-            // Bumped from 5s → 15s — Supabase cold-start on the
-            // free/shared tier can spend 5-10s on the first
-            // RLS-gated query of a session. The timeout is a
-            // safety net, not a normal-case constraint.
+            // Actual user switch (rare). Resolve their org/role under the
+            // shared budget (SESS-2) so a slow query can't lock the UI. On
+            // exhaustion, land on the honest "error" state — the old code
+            // "proceeded", which meant rendering whatever placeholder was
+            // in the context at the time.
             setLoading(true);
             try {
-              await Promise.race([
-                resolveOrgAndRole(u.id, u.email ?? null),
-                new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error("resolveOrgAndRole timeout")), 15000)
-                ),
-              ]);
+              await raceWithBudget(resolveOrgAndRole(u.id, u.email ?? null));
             } catch (err) {
-              console.warn("[RoleContext] role resolve timed out — proceeding", err);
+              console.warn("[RoleContext] role resolve exceeded its budget", err);
+              failResolveIfStillPending();
             } finally {
               setLoading(false);
             }
