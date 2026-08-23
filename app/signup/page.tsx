@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { writeStoredOrgId } from '@/lib/workspaceDeviceState';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Layout, ArrowRight, Loader2, Building2, User, Mail, Lock, AlertCircle, Users } from 'lucide-react';
@@ -70,9 +71,9 @@ export default function SignupPage() {
 
       if (signInError) throw new Error("Account created. Please sign in.");
 
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('manufacturingos.activeOrgId', result.orgId);
-      }
+      // Remember the new workspace for this device, stamped with its owner
+      // (IDENT-4) — result.userId is the freshly created account.
+      writeStoredOrgId(result.orgId, result.userId ?? null);
 
       // Land new users on the inbox — the guided cockpit (daily brief,
       // setup checklist, My Desk) — not the bare dual-viewer power tool.
@@ -90,14 +91,21 @@ export default function SignupPage() {
     setError(null);
 
     try {
-      await fetch('/api/auth/request-access', {
+      const res = await fetch('/api/auth/request-access', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData),
       });
+      // The success screen must not lie: this used to ignore the response
+      // entirely, so "No organization named…", "already have a pending
+      // request" and server errors all rendered as "Request Sent" (IDENT-6).
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error((body as { error?: string } | null)?.error || "Failed to send request. Please try again.");
+      }
       setRequestSent(true);
-    } catch {
-      setError("Failed to send request. Please try again.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to send request. Please try again.");
     } finally {
       setLoading(false);
     }

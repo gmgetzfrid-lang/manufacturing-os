@@ -5,6 +5,9 @@ import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import type { MembershipState } from "@/lib/protectedGate";
+import { pickBestMembership } from "@/lib/membershipSelection";
+import { readStoredOrgId, readStoredOrgIdFor, writeStoredOrgId, clearStoredOrgId } from "@/lib/workspaceDeviceState";
+import { logWorkspaceRelocation } from "@/lib/audit";
 
 type OrgMember = {
   orgId: string;
@@ -32,11 +35,32 @@ const RESOLVE_BUDGET_MS = 15_000;
 const LOADING_WATCHDOG_MS = 6_000;
 const BOOT_SPINNER_MS = 8_000;
 
+/** A self-heal moved this session to a different workspace than the one the
+ *  device/profile pointed at (ORGSEL-4). Non-null until the user
+ *  acknowledges it, switches workspace, or signs out. */
+export type WorkspaceRelocation = {
+  fromOrgId: string | null;
+  toOrgId: string;
+  /** How many active memberships were in the running. >1 means the resolver
+   *  CHOSE (highest role rank, then oldest membership — see
+   *  lib/membershipSelection.ts) and did NOT persist the choice as the new
+   *  default. */
+  candidateCount: number;
+};
+
 type RoleContextValue = {
   loading: boolean;
+  /** ⚠ Placeholder until `membershipState === "member"`. The literal
+   *  "Viewer" here means "not known yet", not "is a Viewer" — the protected
+   *  layout guarantees the app shell never renders during resolution
+   *  (SESS-1), but code that runs OUTSIDE the gated shell (providers, the
+   *  notification center) must check `membershipState` before acting on
+   *  role state. Making this `Role | null` at the type level is tracked as
+   *  SESS-6 in the identity-and-session audit. */
   activeRole: Role;
   /** Full additive role collection for the active org. `activeRole` is the
-   *  headline (highest-ranked) of these. */
+   *  headline (highest-ranked) of these. Same placeholder caveat: `[]`
+   *  until `membershipState === "member"`. */
   roles: Role[];
   /** True if the member holds `role` among their collection. */
   hasRole: (role: Role) => boolean;
@@ -53,11 +77,14 @@ type RoleContextValue = {
    *  membership lookup itself failed after retries (show retry, never
    *  silently downgrade to Viewer). */
   membershipState: MembershipState;
+  /** Set when a self-heal relocated this session — the layout shows a
+   *  notice so a workspace change is never indistinguishable from a normal
+   *  sign-in (ORGSEL-4). */
+  workspaceRelocation: WorkspaceRelocation | null;
+  acknowledgeWorkspaceRelocation: () => void;
 };
 
 const RoleContext = createContext<RoleContextValue | null>(null);
-
-const LS_ORG_KEY = "manufacturingos.activeOrgId";
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -73,15 +100,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   // transient-null loading state) and both hydration renders start null.
   const [activeOrgId, _setActiveOrgId] = useState<string | null>(null);
   useLayoutEffect(() => {
-    try {
-      const v = window.localStorage.getItem(LS_ORG_KEY);
-      if (v) _setActiveOrgId((cur) => cur ?? v);
-    } catch { /* private mode — boot resolves the org from the profile */ }
+    // Owner validation is impossible here (no session yet) — resolution
+    // re-validates with readStoredOrgIdFor(uid) before trusting the value.
+    const v = readStoredOrgId();
+    if (v) _setActiveOrgId((cur) => cur ?? v);
   }, []);
   const [activeRole, setActiveRole] = useState<Role>("Viewer");
   const [roles, setRoles] = useState<Role[]>([]);
   const [member, setMember] = useState<OrgMember | null>(null);
   const [membershipState, setMembershipState] = useState<MembershipState>("resolving");
+  const [workspaceRelocation, setWorkspaceRelocation] = useState<WorkspaceRelocation | null>(null);
   const bootedRef = useRef(false);
   // Track the *current* uid in a ref so the auth-state callback (which
   // captures the initial closure) can detect "this SIGNED_IN is just a
@@ -132,13 +160,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const persistOrgId = useCallback(async (nextOrgId: string | null, nextUid: string) => {
-    try {
-      if (typeof window !== "undefined") {
-        if (nextOrgId) localStorage.setItem(LS_ORG_KEY, nextOrgId);
-        else localStorage.removeItem(LS_ORG_KEY);
-      }
-    } catch {}
-
+    writeStoredOrgId(nextOrgId, nextUid);
     try {
       await supabase.from("users").upsert({
         id: nextUid,
@@ -150,30 +172,40 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveOrgId = useCallback(async (orgId: string | null) => {
     _setActiveOrgId(orgId);
+    // A deliberate switch resolves any pending relocation notice — the user
+    // has now chosen where they are.
+    setWorkspaceRelocation(null);
     // Always write localStorage immediately so a refresh restores the workspace,
     // even if uid hasn't propagated yet (which would skip the DB upsert).
-    try {
-      if (typeof window !== "undefined") {
-        if (orgId) localStorage.setItem(LS_ORG_KEY, orgId);
-        else localStorage.removeItem(LS_ORG_KEY);
-      }
-    } catch {}
+    writeStoredOrgId(orgId, uid ?? null);
     if (uid) await persistOrgId(orgId, uid);
   }, [uid, persistOrgId]);
 
+  const acknowledgeWorkspaceRelocation = useCallback(() => {
+    setWorkspaceRelocation(null);
+  }, []);
+
   const resolveOrgAndRole = async (userId: string, email: string | null) => {
     setMembershipState("resolving");
+    setWorkspaceRelocation(null);
+
+    type Attempt = {
+      orgId: string | null;
+      mem: Record<string, unknown> | null;
+      /** Set when the self-heal picked a workspace: where resolution started
+       *  from and how many candidates were in the running (ORGSEL-1/4). */
+      relocation: { fromOrgId: string | null; candidateCount: number } | null;
+    };
 
     // Every query THROWS on error so the retry loop below can tell "the
     // lookup failed" apart from "this account truly has no membership". The
     // old code swallowed errors and answered Viewer for both — on a flaky
     // phone connection that dressed an Admin up as a locked-out stranger.
-    const attempt = async (): Promise<{ orgId: string | null; mem: Record<string, unknown> | null }> => {
-      // 1) Candidate org: this device's last workspace → profile default.
-      let orgId: string | null = null;
-      try {
-        if (typeof window !== "undefined") orgId = localStorage.getItem(LS_ORG_KEY);
-      } catch {}
+    const attempt = async (): Promise<Attempt> => {
+      // 1) Candidate org: this device's last workspace (only if this uid
+      //    stored it — a second identity on the same browser must not
+      //    inherit it, IDENT-4) → profile default.
+      let orgId: string | null = readStoredOrgIdFor(userId);
       if (!orgId) {
         const { data: profile, error } = await supabase
           .from("users").select("default_org_id").eq("id", userId).maybeSingle();
@@ -192,23 +224,29 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       }
 
       // 3) Self-heal: no ACTIVE membership in the candidate (stale device
-      //    workspace, revoked access, fresh phone) → their first active
-      //    membership anywhere wins instead of a dead end.
+      //    workspace, revoked access, fresh phone) → a DETERMINISTIC pick
+      //    among their active memberships instead of a dead end. The old
+      //    `limit(1)` with no ORDER BY was an arbitrary pick that could land
+      //    an Admin in the one workspace where they are a Viewer — and then
+      //    persisted the accident as the new default (ORGSEL-1).
+      let relocation: Attempt["relocation"] = null;
       if (!mem || mem.status !== "active") {
         const { data, error } = await supabase
           .from("org_members").select("*")
           .eq("uid", userId).eq("status", "active")
-          .limit(1).maybeSingle();
+          .limit(20);
         if (error) throw new Error(error.message);
-        if (data) {
-          mem = data as Record<string, unknown>;
-          orgId = mem.org_id as string;
+        const pick = pickBestMembership((data ?? []) as Array<Record<string, unknown>>);
+        if (pick) {
+          relocation = { fromOrgId: orgId, candidateCount: pick.candidateCount };
+          mem = pick.row;
+          orgId = pick.orgId;
         }
       }
-      return { orgId, mem };
+      return { orgId, mem, relocation };
     };
 
-    let resolved: { orgId: string | null; mem: Record<string, unknown> | null } | null = null;
+    let resolved: Attempt | null = null;
     let lastErr: unknown = null;
     for (let i = 0; i < 3 && !resolved; i++) {
       try {
@@ -228,13 +266,8 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const { orgId, mem } = resolved;
+    const { orgId, mem, relocation } = resolved;
     _setActiveOrgId(orgId);
-    if (orgId) {
-      try {
-        if (typeof window !== "undefined") localStorage.setItem(LS_ORG_KEY, orgId);
-      } catch {}
-    }
 
     if (orgId && mem) {
       // Additive collection from `roles`, falling back to the legacy single
@@ -254,7 +287,33 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       setRoles(active ? collection : []);
       setActiveRole(active ? headline : "Viewer");
       setMembershipState(active ? "member" : "none");
-      if (active) void persistOrgId(orgId, userId);
+
+      // Persist the workspace as the new default ONLY when it wasn't a
+      // choice among several (ORGSEL-1): the normal candidate path and the
+      // sole-membership self-heal keep today's behavior; a pick among
+      // multiple workspaces stays unpersisted until the user confirms it
+      // (the relocation notice offers that).
+      const chosenAmongSeveral = (relocation?.candidateCount ?? 0) > 1;
+      if (active && !chosenAmongSeveral) void persistOrgId(orgId, userId);
+
+      // A self-heal that moved away from a real candidate is announced and
+      // recorded, never silent (ORGSEL-4). Fresh-device resolution
+      // (no candidate at all) stays silent, as designed.
+      if (active && relocation?.fromOrgId && relocation.fromOrgId !== orgId) {
+        setWorkspaceRelocation({
+          fromOrgId: relocation.fromOrgId,
+          toOrgId: orgId,
+          candidateCount: relocation.candidateCount,
+        });
+        void logWorkspaceRelocation({
+          toOrgId: orgId,
+          fromOrgId: relocation.fromOrgId,
+          candidateCount: relocation.candidateCount,
+          userId,
+          userEmail: email ?? undefined,
+          userRole: headline,
+        });
+      }
     } else {
       setMember(null);
       setRoles([]);
@@ -316,7 +375,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setRoles([]);
         setMember(null);
         setMembershipState("resolving");
+        setWorkspaceRelocation(null);
         setLoading(false);
+        // The device workspace must not outlive the account that stored it —
+        // the next identity on this browser would inherit it as its first
+        // resolution candidate (IDENT-4). The next sign-in of the SAME
+        // account restores its workspace from users.default_org_id.
+        // (preferMicrosoft is deliberately NOT cleared here: expiry-driven
+        // sign-outs also emit SIGNED_OUT, and the silent-SSO flag must
+        // survive those — explicit sign-out buttons clear it themselves.)
+        clearStoredOrgId();
         // Status snapshots persist in localStorage for instant paints —
         // they must not outlive the account that fetched them.
         try {
@@ -374,12 +442,18 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } else {
+        // Session evaporated without a SIGNED_OUT (edge events). The device
+        // workspace key is left in place deliberately — the same account
+        // re-establishing its session keeps its instant restore, and a
+        // DIFFERENT account is protected by the owner check in
+        // readStoredOrgIdFor (IDENT-4).
         setUid(null);
         setUserEmail(null);
         _setActiveOrgId(null);
         setActiveRole("Viewer");
         setRoles([]);
         setMember(null);
+        setWorkspaceRelocation(null);
         setLoading(false);
       }
     });
@@ -419,8 +493,10 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       setActiveOrgId,
       member,
       membershipState,
+      workspaceRelocation,
+      acknowledgeWorkspaceRelocation,
     }),
-    [loading, activeRole, roles, userEmail, uid, activeOrgId, member, membershipState, setActiveOrgId]
+    [loading, activeRole, roles, userEmail, uid, activeOrgId, member, membershipState, workspaceRelocation, acknowledgeWorkspaceRelocation, setActiveOrgId]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;

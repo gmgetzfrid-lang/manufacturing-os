@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Layout, Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
+import { Layout, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
 
 /** Microsoft's four-square logo (lucide has no brand marks). */
 function MicrosoftLogo({ className }: { className?: string }) {
@@ -18,7 +18,7 @@ function MicrosoftLogo({ className }: { className?: string }) {
   );
 }
 
-type View = "checking" | "login" | "no-workspace";
+type View = "checking" | "login";
 
 // Per-tab guard so a failed silent sign-in attempt can't loop.
 const SILENT_TRIED_KEY = "manufacturingos.silentSSOAttempted";
@@ -41,11 +41,26 @@ export default function LoginPage() {
   const [keepSignedIn, setKeepSignedIn] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("checking");
-  const [authedEmail, setAuthedEmail] = useState<string | null>(null);
+  // Whether this device auto-attempts silent Microsoft sign-in — surfaced so
+  // someone stuck in the wrong identity can turn it off from the sign-in
+  // screen itself (IDENT-4). Hydration-safe localStorage read (same
+  // useSyncExternalStore pattern as FirstRunHint): the server snapshot is
+  // false on both sides of hydration, then the client value applies.
+  const autoMicrosoftStored = useSyncExternalStore(
+    () => () => {},
+    () => prefersMicrosoft(),
+    () => false,
+  );
+  const [autoMicrosoftDisabled, setAutoMicrosoftDisabled] = useState(false);
+  const autoMicrosoft = autoMicrosoftStored && !autoMicrosoftDisabled;
 
-  // Decide where an authenticated user belongs: into the app if they hold an
-  // active membership, otherwise the "no workspace" screen. Also ensures a
-  // profile row exists so an admin can later attach them to an org by email.
+  // Forward an authenticated user into the app. Membership resolution is
+  // OWNED BY RoleProvider — this page used to run its own copy of the
+  // membership query (same table, same filters, its error discarded), so
+  // the routing decision and the provider's answer could disagree, and a
+  // transient failure sent a full Admin to a "no workspace has admitted
+  // you" hard stop (ORGSEL-2/SESS-4). Now the provider resolves once, with
+  // retries and honest screens for every outcome.
   const routeAuthedUser = useCallback(async (user: User) => {
     const uid = user.id;
     const userEmail = user.email ?? null;
@@ -59,6 +74,7 @@ export default function LoginPage() {
       setPreferMicrosoft(true);
     }
 
+    // Ensure a profile row exists so an admin can attach them by email.
     try {
       await supabase.from("users").upsert({
         id: uid,
@@ -69,20 +85,7 @@ export default function LoginPage() {
       /* non-fatal */
     }
 
-    const { data: membership } = await supabase
-      .from("org_members")
-      .select("org_id")
-      .eq("uid", uid)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
-
-    if (membership?.org_id) {
-      router.replace("/dashboard");
-    } else {
-      setAuthedEmail(userEmail);
-      setView("no-workspace");
-    }
+    router.replace("/dashboard");
   }, [router]);
 
   // Kick off the Microsoft OAuth redirect. `silent` adds prompt=none so an
@@ -218,14 +221,9 @@ export default function LoginPage() {
     startMicrosoft({ silent: false, remember: keepSignedIn });
   };
 
-  const handleSignOut = async () => {
-    // Explicit sign-out: disable silent auto sign-in so we don't immediately
-    // log them back in.
+  const handleDisableAutoMicrosoft = () => {
     setPreferMicrosoft(false);
-    await supabase.auth.signOut();
-    setAuthedEmail(null);
-    setError(null);
-    setView("login");
+    setAutoMicrosoftDisabled(true);
   };
 
   // ─── Checking / OAuth redirect in progress ──────────────────────
@@ -238,46 +236,10 @@ export default function LoginPage() {
     );
   }
 
-  // ─── Authenticated, but not attached to any workspace ───────────
-  if (view === "no-workspace") {
-    return (
-      <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden relative z-20 border border-slate-800">
-          <div className="bg-slate-900 p-8 text-center border-b border-slate-800">
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl mb-4 shadow-lg shadow-orange-900/40 ring-1 ring-white/10">
-              <Building2 className="w-7 h-7 text-white" />
-            </div>
-            <h1 className="text-xl font-black text-white tracking-tight">No workspace found</h1>
-            {authedEmail && (
-              <p className="text-slate-400 text-xs mt-2 font-medium break-all">{authedEmail}</p>
-            )}
-          </div>
-          <div className="p-8 bg-white">
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Your Microsoft account isn&rsquo;t linked to a workspace yet. Ask your
-              organization&rsquo;s admin to add you using this email address — once they do,
-              just sign in with Microsoft again and you&rsquo;ll go straight in.
-            </p>
-            <div className="mt-6 space-y-3">
-              <a
-                href="/signup"
-                className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center"
-              >
-                Request access or create a workspace
-              </a>
-              <button
-                onClick={handleSignOut}
-                className="w-full py-3 text-slate-500 hover:text-slate-900 font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
-              >
-                <LogOut className="w-4 h-4" /> Sign out
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // The old "no-workspace" view lived here. It was reachable only from this
+  // page's own (duplicate, error-discarding) membership probe — RoleProvider
+  // now owns that decision, and the protected layout's NotAMemberScreen is
+  // the single no-membership surface (ORGSEL-2/SESS-4).
 
   // ─── Login ──────────────────────────────────────────────────────
   return (
@@ -382,6 +344,19 @@ export default function LoginPage() {
               <><MicrosoftLogo className="w-5 h-5" /> Sign in with Microsoft</>
             )}
           </button>
+
+          {autoMicrosoft && (
+            <p className="mt-3 text-[11px] text-slate-500 text-center font-medium">
+              Automatic Microsoft sign-in is on for this device.{' '}
+              <button
+                type="button"
+                onClick={handleDisableAutoMicrosoft}
+                className="text-orange-600 hover:text-orange-700 font-bold hover:underline"
+              >
+                Turn off
+              </button>
+            </p>
+          )}
         </div>
 
         <div className="bg-slate-50 p-6 text-center border-t border-slate-100 flex flex-col items-center gap-3">

@@ -80,6 +80,7 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   PROJECT_CREATED:       { icon: Briefcase,     tone: "bg-indigo-50 text-indigo-700 border-indigo-200" },
   MARKUP_REQUESTED:      { icon: FileSignature, tone: "bg-violet-50 text-violet-700 border-violet-200" },
   DATA_EXPORT:           { icon: Download,      tone: "bg-sky-50 text-sky-700 border-sky-200" },
+  WORKSPACE_SELF_HEAL:   { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
 };
 
 const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -87,6 +88,7 @@ const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>>
   project: Briefcase,
   milestone: Zap,
   asset: KeyRound,
+  org: Layers,
 };
 
 export default function AuditLogPage() {
@@ -278,6 +280,7 @@ export default function AuditLogPage() {
             { value: "project", label: "Projects" },
             { value: "milestone", label: "Milestones" },
             { value: "asset", label: "Assets" },
+            { value: "org", label: "Workspace" },
           ]} />
           <Select value={libraryFilter} onChange={setLibraryFilter} options={[
             { value: "ALL", label: "Any library" },

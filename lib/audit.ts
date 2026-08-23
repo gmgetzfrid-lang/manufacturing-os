@@ -72,6 +72,31 @@ export async function logFileDownload(params: {
   });
 }
 
+/** The workspace self-heal moved someone to a different org than the one
+ *  their device/profile pointed at (audit finding ORGSEL-4). org_id MUST be
+ *  the DESTINATION org — the user is an active member there, so the insert
+ *  passes RLS; the stale origin org may no longer admit them, so it rides in
+ *  details instead. */
+export async function logWorkspaceRelocation(params: {
+  toOrgId: string;
+  fromOrgId: string | null;
+  candidateCount: number;
+  userId: string;
+  userEmail?: string;
+  userRole?: string;
+}) {
+  return logAuditAction({
+    action: "WORKSPACE_SELF_HEAL",
+    resourceId: params.toOrgId,
+    resourceType: "org",
+    orgId: params.toOrgId,
+    userId: params.userId,
+    userEmail: params.userEmail,
+    userRole: params.userRole,
+    details: { fromOrgId: params.fromOrgId, candidateCount: params.candidateCount },
+  });
+}
+
 export async function logCheckoutEvent(params: {
   orgId: string;
   fileId: string;

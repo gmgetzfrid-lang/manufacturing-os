@@ -122,6 +122,13 @@ export function primaryRole(roles: Role[]): Role {
   return [...roles].sort((a, b) => (ROLE_RANK[b] ?? 0) - (ROLE_RANK[a] ?? 0))[0];
 }
 
+/** Numeric rank of a role (higher = more capable). Read-only view of the
+ *  same table `primaryRole` sorts by, for callers that need to ORDER
+ *  memberships by capability (e.g. the workspace self-heal picker). */
+export function roleRank(role: Role): number {
+  return ROLE_RANK[role] ?? 0;
+}
+
 /** Normalize whatever is stored (roles array and/or legacy single role) into a
  *  deduped collection. Tolerates the pre-migration shape where only `role`
  *  exists. */

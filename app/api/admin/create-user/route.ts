@@ -177,8 +177,14 @@ export async function POST(req: NextRequest) {
   // DocCtrl could re-add an existing Admin and alter their membership — an
   // unintended privilege change that the Admin-only guard above doesn't
   // catch because the NEW role isn't Admin. Only an Admin may alter an
-  // existing Admin's membership.
-  if (existingMember && String(existingMember.role) === "Admin" && (callerMember.role as string) !== "Admin") {
+  // existing Admin's membership. Checked against the roles COLLECTION too,
+  // not just the mirrored headline, so a drifted headline can't hide an
+  // Admin hat.
+  const existingIsAdmin =
+    existingMember &&
+    (String(existingMember.role) === "Admin" ||
+      normalizeRoles(existingMember.roles, existingMember.role as Role | undefined).includes("Admin"));
+  if (existingIsAdmin && (callerMember.role as string) !== "Admin") {
     return NextResponse.json({ error: "Only an Admin can change an existing Admin's role" }, { status: 403 });
   }
 
@@ -239,6 +245,19 @@ export async function POST(req: NextRequest) {
     if (createdNewUser && userId) {
       await supabaseAdmin.auth.admin.deleteUser(userId);
     }
+    // The org_members_org_email_active_unique_ci index refuses a second
+    // ACTIVE membership on this email under a different identity — that is
+    // the IDENT-2 collision reaching the database backstop. Say what it
+    // means instead of relaying the raw unique-violation message.
+    const code = (memberError as { code?: string }).code;
+    if (code === "23505" || /org_members_org_email_active_unique/i.test(memberError.message ?? "")) {
+      return NextResponse.json(
+        {
+          error: `Another account already holds an active membership for ${email} in this workspace — contact your admin. No role was granted.`,
+        },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: memberError.message }, { status: 500 });
   }
 
@@ -249,11 +268,16 @@ export async function POST(req: NextRequest) {
   // existing member's collection.
   await supabaseAdmin.from("org_members").update({ roles: [role] }).eq("org_id", orgId).eq("uid", userId);
 
-  // Create / update the user profile.
+  // Create / update the user profile. A brand-new account also gets this org
+  // as its profile default — without it, an admin-created member's first
+  // sign-in has no candidate workspace and resolves through the self-heal
+  // pick (ORGSEL-1). An existing account's default is left alone: it may
+  // deliberately point at another workspace.
   await supabaseAdmin.from("users").upsert({
     id: userId,
     email,
     display_name: displayName ?? null,
+    ...(createdNewUser ? { default_org_id: orgId } : {}),
     updated_at: new Date().toISOString(),
   });
 

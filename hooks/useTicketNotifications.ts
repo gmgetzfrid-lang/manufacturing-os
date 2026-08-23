@@ -132,7 +132,7 @@ function emptySectionCounts(): SectionCounts {
 }
 
 export function useTicketNotifications() {
-  const { roles, activeOrgId, uid } = useRole();
+  const { roles, activeOrgId, uid, membershipState } = useRole();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [notifs, setNotifs] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +143,13 @@ export function useTicketNotifications() {
   useEffect(() => {
     let alive = true;
 
-    if (!uid || !activeOrgId) {
+    // This hook is also mounted PRE-GATE (the notification center panel
+    // exists before the protected layout admits the app), where `roles` is
+    // still the unresolved placeholder []. Acting then would fetch under the
+    // wrong (least-privileged) scope and run the mark-read reconciliation as
+    // a not-yet-resolved identity — then refetch everything when the real
+    // roles land (SESS-5). Wait for the answer instead.
+    if (!uid || !activeOrgId || membershipState !== 'member') {
       void (async () => { if (alive) { setTickets([]); setNotifs([]); setLoading(false); } })();
       return () => { alive = false; };
     }
@@ -227,7 +233,7 @@ export function useTicketNotifications() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [roles, activeOrgId, uid, channelId]);
+  }, [roles, activeOrgId, uid, channelId, membershipState]);
 
   const { items, actionRequiredCount, unreadCount, sectionCounts } = useMemo(() => {
     const out: AttentionItem[] = [];
