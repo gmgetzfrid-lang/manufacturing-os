@@ -21,6 +21,7 @@ Who can reach what, and what an outsider can put inside the perimeter.
   - `components/viewers/SecureDocViewer.tsx:129-140` — `response.blob()` → `URL.createObjectURL(blob)`
   - `components/viewers/SecureDocViewer.tsx:274` — `<iframe>` with no `sandbox`
 - **Related:** `SEC-6` (no type validation), `SEC-7` (inline disposition), `SEC-5` (link never expires)
+- **Re-verified:** hardening pass — **SURVIVES**. Both halves confirmed. `ContentType: file.type || "application/octet-stream"` (`intake/upload:270`) takes the type from the uploader unvalidated; `SecureDocViewer.tsx:274-275` renders the fetched bytes as `<iframe src={blobUrl}>`, and a `blob:` URL inherits the creating origin. Unauthenticated upload → script execution on the app's own origin.
 
 **Mechanism.** The intake route stores the object with `ContentType: file.type`
 — whatever the client claimed — with no sniffing and no allowlist.
@@ -63,6 +64,7 @@ of the chain.
   - `supabase/migrations/20261013_project_controls_program.sql:256` — the generated `%I_member_read` policy template
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:40` — `project_visible_to_me()` defined
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:91` — its only consumer
+- **Re-verified:** hardening pass — **SURVIVES**. The loop at `20261013…:253-258` creates `%I_member_read … FOR SELECT USING (EXISTS … org_members … status = 'active')` for `change_orders`, `project_checklists`, `checklist_items`, `turnover_items` and `punch_items` — the predicate is **org-wide membership**, with no project-membership term. Private projects are not private for any of that data.
 
 **Mechanism.** `project_visible_to_me()` is defined, granted to `authenticated`,
 and then referenced by **exactly one policy in the entire schema** — the one on
@@ -106,6 +108,7 @@ Write it as a new migration; do not edit `20261013` in place.
   - `app/api/intake/upload/route.ts:246-249` — `linkAuthored` computation
   - `app/api/intake/upload/route.ts:257` — the pending-submission guard it defeats
   - `app/api/intake/upload/route.ts:302` — `autoNow`
+- **Re-verified:** hardening pass — **SURVIVES**, and the mechanism is exact. `linkAuthored` is true once a version authored by this link exists (`:246-248`); the pending-review block is `if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored))` (`:257`). So the first submission is held for review and every later one takes the auto path. The route's own comment two hundred lines down — *"an assigned org-authored controlled drawing ALWAYS goes through review"* — is false from the second submission onward.
 
 **Mechanism.** `linkAuthored` is computed as "a version row on this record
 carries this link's id":
@@ -158,6 +161,7 @@ implement it.
   - `app/api/intake/upload/route.ts:322-334` — the publish write, via `supabaseAdmin`
   - `supabase/migrations/20260822_review_completion_guard.sql:32-34` — the skip
 - **Related:** `SEC-13`, `SEC-14`, `SAF-5`
+- **Re-verified:** hardening pass — **SURVIVES**. Every write on this route uses `supabaseAdmin`; the publish-guard trigger exempts service-role writes by design, so no hold, lock or review gate is consulted.
 
 **Mechanism.** The publish-guard trigger opens with:
 

@@ -28,6 +28,7 @@ number the table shows is not the number the award posts.
   - `lib/costDocs.ts:226` — `const total = fresh.totalAmount ?? parsedQuoteFrom(fresh)?.total`
   - `lib/costDocs.ts:323-334` — `setManualTotal`, which writes only `total_amount`
 - **Related:** `BID-2`, `BID-9`, `MON-3`
+- **Re-verified:** hardening pass — **SURVIVES**, and the two numbers are named in the code. `awardQuote` commits `fresh.totalAmount ?? parsedQuoteFrom(fresh)?.total` with the comment *"total_amount is the human-visible number … it outranks the stored extraction"* (`costDocs.ts:234-236`), while the tabulation renders `computeBidEconomics(parsed…)` built purely from `parsedQuoteFrom` (`QuotesPanel.tsx:195-203`). The table scores the extraction; the award posts the correction.
 
 **Mechanism.** Three facts that do not agree:
 
@@ -74,6 +75,7 @@ lost.
 - **Blast radius:** decision-quality / governance
 - **Locations:** `components/projects/cost/QuotesPanel.tsx` (whole file — a grep for `fileUrl` / `file_url` across `components/projects/cost/` returns zero hits)
 - **Related:** `BID-1`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The only navigation in `QuotesPanel.tsx` is `<Link href={`/companies/${known.id}`}>` at `:282`. No viewer, no document href, no `window.open` — there is no way to open the quote from the award screen.
 
 **Mechanism.** The PDF is stored (`cost_documents.file_url`). The panel's own
 copy says "You review before anything posts," and the Read button's tooltip
@@ -102,6 +104,7 @@ file through the existing secure viewer / presigned-download path. Given
 - **Locations:**
   - `lib/bidTab.ts:168` — `const gaps = e.missingScope.length + e.exclusionCount;`
   - `lib/rfqDocx.ts:65` — the promise made to bidders in writing
+- **Re-verified:** hardening pass — **SURVIVES**. `const gaps = e.missingScope.length + e.exclusionCount; const coverage = (1 - gaps / maxGaps) * 100;` (`bidTab.ts:168-169`) — a **stated** exclusion is counted identically to scope the bidder never mentioned, so disclosure lowers the score.
 
 **Mechanism.** A **declared** exclusion and an **undeclared** silent gap are
 weighted identically in the coverage term. The RFQ this same codebase generates
@@ -143,6 +146,7 @@ and say so in the RFQ letter so the two agree.
   - `lib/bidTab.ts:82-99` — `scopeUnion` and the mention test
   - `lib/bidTab.ts:107-112` — positional head-word selection
 - **Related:** `BID-5`
+- **Re-verified:** hardening pass — **SURVIVES**. `mentions()` keys on two or three head words and requires `Math.ceil(key.length * 2 / 3)` of them to appear (`bidTab.ts:87-98`), matched against line items and exclusions only. Two bids describing the same scope in different words fail that test in one direction, and the miss is recorded as `missingScope`.
 
 **Mechanism.** `scopeUnion` is the set of distinct normalized line-item strings
 across all bids. A bid "mentions" a union item only if **two of the item's first

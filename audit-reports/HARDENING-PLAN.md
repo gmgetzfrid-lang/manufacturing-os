@@ -28,7 +28,7 @@ every `CRITICAL` in the engagement. Each item below means: open the cited code,
 try to **refute** the claim, and record `SURVIVES` / `REFUTED` / a severity
 correction in the report body.
 
-- [ ] `projects-tab` — 29 CRITICALs
+- [x] `projects-tab` — 29 CRITICALs — **29/29 SURVIVE, 0 refuted** (2 headline query counts restated as per-item formulas)
 - [ ] `drafting-flow` — 8 author-only CRITICALs (the area was only PARTIALLY adversarially verified — reports 06/07/08 carry the banner, the rest do not)
 - [ ] `intelligence` — 2 author-only CRITICALs
 - [ ] `notifications` — 2 author-only CRITICALs

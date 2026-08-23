@@ -18,6 +18,7 @@ that matters — plus the audit trail that is supposed to prove what happened.
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:** `lib/checklists.ts:250-266` — `gatherProjectEvidenceState`
+- **Re-verified:** hardening pass — **SURVIVES**. `documentTitles` is assembled from `documents.title ?? name` across the project's intake collection and turnover items (`checklists.ts:257-266, 275-281`) and handed to `runAutoEvidence`, described in its own docblock as *"the deterministic sweep: gather what the platform can prove."* For an intake-submitted document that title is the contractor's filename.
 
 **Mechanism.** The evidence gather pulls document titles with no filter on
 status, revision, review state, effective date, or equipment identity:
@@ -75,6 +76,7 @@ green."
   - `components/projects/QualityTab.tsx:293-319` — the confirm and apply
   - `lib/checklists.ts:150-176` — `applyAssessment`
 - **Related:** `SAF-4` (the manual-note immunization), `PERF-7` (the sequential writes)
+- **Re-verified:** hardening pass — **SURVIVES**, and the confirm text is the evidence. The proposals carry a `rationale` per item, and the dialog says only *"proposes applicability for N items (M look not-applicable to this job, with reasons attached). Apply it?"* — the reasons are never rendered. One click applies all.
 
 **Mechanism.** The confirmation dialog reports counts only — "(N look
 not-applicable to this job, with reasons attached)" — and then writes all of
@@ -111,6 +113,7 @@ ticked. Keep the existing "a human already decided this" skip.
   - `lib/turnover.ts:207, 275` — `reviewTurnoverItem`, punch status
   - `lib/costs.ts:111-116` — `addEntry` audit
   - Contrast: `lib/changeOrders.ts:151-161`, which gets it right
+- **Re-verified:** hardening pass — **SURVIVES**. `const { error } = await supabase…update(…)` **is** checked, but an RLS denial is not an error — PostgREST filters the row out and returns `{data: null, error: null}`, so the function proceeds to write the audit row and return `{ok: true}`. Confirmed at both cited sites (`checklists.ts:204, 226`).
 
 **Mechanism.** PostgREST returns `{ data: null, error: null }` for an UPDATE
 that matched zero rows because a policy filtered it out — success with nothing
@@ -148,6 +151,7 @@ error when it is empty. Only write the audit row after a confirmed match.
   - `components/projects/QualityTab.tsx:698-699` — punch Void, no prompt at all
   - `lib/turnover.ts:204` — `review_note: input.note?.trim() || null`
   - `lib/turnover.ts:225` — `computeTurnoverProgress` counts waived as accepted
+- **Re-verified:** hardening pass — **SURVIVES**. `DialogProvider.tsx:107` — `onSubmit` settles with `inputRef.current?.value ?? ""` and applies no non-empty test, so Enter on an untouched prompt returns the empty string.
 
 **Mechanism.** The load-bearing defect is in the dialog layer:
 
@@ -210,6 +214,7 @@ green in about a dozen keystrokes, and the audit log will record
   - `lib/postPublish.ts:91-145` — `runPostPublishSideEffects`, which is skipped
   - `lib/reviewControl.ts:495-510` — the approve path, which calls it correctly
 - **Related:** `SEC-4` (same root cause: service-role bypass)
+- **Re-verified:** hardening pass — **SURVIVES**, verified by absence: `grep -c postPublish app/api/intake/upload/route.ts` returns **0**. The auto-supersede branch sets `current_version_id` and `status: "Issued"` with a raw `supabaseAdmin` update (`:322-329`) and never enters the post-publish pipeline.
 
 **Mechanism.** The approve path calls `runPostPublishSideEffects`. The
 auto-supersede path does a bare column update plus a `superseded_at` stamp on
@@ -257,6 +262,7 @@ arguments the approve path passes.
   - `lib/timeline.ts:416-427` — `getProjectTimeline`'s query set
   - `lib/timeline.ts:441-443` — `.eq("resource_type", "document")`, the only audit query
   - `lib/timeline.ts:287-292` — the `MILESTONE_*` summarizers that can never execute
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `buildTimeline` reads `project_activity` and `project_documents` and nothing else (`timeline.ts:416-427`) — no read of `change_orders`, `project_checklists`, `punch_items` or `turnover_items` anywhere in the file.
 
 **Mechanism.** `getProjectTimeline` queries `audit_logs` only where
 `resource_type = 'document'`. There is no query for

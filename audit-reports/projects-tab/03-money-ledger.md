@@ -23,6 +23,7 @@ inconsistent with no way to detect or repair it.
   - `lib/costDocs.ts:170-192` — `claimDocTransition`, which is otherwise correct
   - `app/api/projects/cost-docs/route.ts:87-92` — the 409 that then blocks recovery
 - **Related:** `MON-11` (`posted_entry_id` unread — the field that would detect this)
+- **Re-verified:** hardening pass — **SURVIVES**. `claimDocTransition` moves the document to `awarded` before the money is posted; the unreadable-total branch reverts (`costDocs.ts:240`), but the `addEntry` failure branch at `:245` returns `{ok: false}` **without** calling `revertDocTransition`. The document stays awarded with no commitment. `revertDocTransition` itself ends in `.then(() => undefined, () => undefined)`, so even the paths that do revert cannot report a failed revert.
 
 **Mechanism.** The compare-and-swap discipline is right: claim the transition,
 then move the money, and revert if the money fails. But the revert is
@@ -73,6 +74,7 @@ money.
 - **Blast radius:** correctness / decision-quality
 - **Locations:** `components/projects/CostsTab.tsx:76-79`
 - **Related:** `MON-6` (span definitions), `SCH-6`
+- **Re-verified:** hardening pass — **SURVIVES**. `const dates = rows.map((m) => m.planned_at)…sort()` then `start: dates[0]` (`CostsTab.tsx:76-79`). `planned_at` is the milestone **finish**, so the planned curve begins on the earliest completion date.
 
 **Mechanism.**
 

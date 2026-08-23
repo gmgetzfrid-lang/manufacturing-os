@@ -28,6 +28,7 @@ the tool.
   - `components/projects/ProjectWizard.tsx:203-204` — then routes to the project as if everything worked
   - `components/projects/EditProjectModal.tsx:36-42` — patches only `name`/`description`/`mocReference`/`targetCompletionDate`/`visibility`
   - `components/projects/ProjectWizard.tsx:153` — the comment claiming "typed input is never silently discarded"
+- **Re-verified:** hardening pass — **SURVIVES**. `if (accErr) console.warn(…)` and the equivalent at `:149-151` log and continue — nothing reaches the user and nothing aborts the wizard, so a rejected write reads as a successful step.
 
 **Mechanism.** Only the first write reports failure. Compounding it,
 `Number("1,200,000")` is `NaN`, so a budget typed the way people type money is

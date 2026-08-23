@@ -20,6 +20,7 @@ and a wrong health score.
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleParsers.ts:918-925` — `coerceIso`
+- **Re-verified:** hardening pass — **SURVIVES** — the strongest of the schedule findings. The docblock at `scheduleParsers.ts:910` promises *"we treat as M/D/Y **if first part ≤ 12**"*; the code at `:923` is `const month = a; const day = b;` with no such test. `15/08/2026` yields `2026-15-08T00:00:00Z`, which is not a date at all — the value is destroyed rather than merely swapped.
 
 **Mechanism.** The comment above the function reads:
 
@@ -72,6 +73,7 @@ their locale) and apply the answer to the whole file. Never guess per row.
   - `lib/milestones.ts:958-969` — `baseFields` includes `status`, `percent_complete`, `actual_at`, `actual_start_at`
   - `lib/milestones.ts:1005-1019` — `update({...baseFields, ...})` on the matched `external_ref`
   - `components/projects/ScheduleImportModal.tsx` — the tip strip, which is the only warning
+- **Re-verified:** hardening pass — **SURVIVES**. `baseFields` writes `status`, `percent_complete`, `actual_at` and `actual_start_at` unconditionally from the imported file (`milestones.ts:962-967`), so a re-import overwrites progress the crew logged in the app.
 
 **Mechanism.** The upsert's field set is derived purely from the file and
 applied to every row matched by external reference.
@@ -104,6 +106,7 @@ all-or-nothing choice.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleParsers.ts:710` — `externalRef: id ? \`${refTag}:${id}\` : \`${refTag}-row:${rowIndex}\``
+- **Re-verified:** hardening pass — **SURVIVES**. `externalRef: id ? `${refTag}:${id}` : `${refTag}-row:${rowIndex}`` (`scheduleParsers.ts:710`) — with no id column the identity **is** the row index, so inserting a row re-points every ref after it.
 
 **Mechanism.** Rows without an id column get `csv-row:{index}` as their "stable"
 reference — stable only if nobody ever edits the spreadsheet.
@@ -147,6 +150,7 @@ keys on is the outline position, which renumbers on every insert — only
   - `components/projects/ExecutionView.tsx:449-461` — `withCascade`, which merges the cascade into the write
   - `components/projects/MovePreviewSheet.tsx` — fed `pendingMove.ids`, not the computed change set
 - **Related:** `SCH-8` (import creates the cycles), `SCH-14` (the guard is bypassable)
+- **Re-verified:** hardening pass — **SURVIVES**. The `guard = nodes.length * 4 + 32` bounds the iteration count but not the dates: each pass through a cycle pushes the successor out again. `ExecutionView.tsx:449-461` merges the cascade into the primary change set specifically so *"it persists + undoes as one set"*, so the far-future dates are written.
 
 **Mechanism.** The cascade is "cycle-safe" only in the sense that it
 *terminates*. Inside a cycle each pass pushes the successor forward and
@@ -192,6 +196,7 @@ rows in `all`.
   - `components/projects/ScheduleTab.tsx:518`, `lib/executionReport.ts:136`, `lib/scheduleFilter.ts:101`, `lib/projectSnapshot.ts:115-119`, `lib/projectReport.ts:88-91` — `planned < Date.now()`
   - `components/projects/ScheduleProgress.tsx:41, 49-53` — `planned < local midnight`
   - `components/projects/ExecutionView.tsx:949` — `planned < startOfDayUTC(now)`
+- **Re-verified:** hardening pass — **SURVIVES**. Two of the three verified directly and they disagree: `ScheduleTab.tsx:518` is `!actual && planned < now && effStatus !== "completed"`, `executionReport.ts:136` is `m.status !== "completed" && finishMs(m) < now` — different inputs, different answers for the same row. `planned` is midnight-anchored, so a task due today reads overdue from 00:00.
 
 **Mechanism.** Planned dates are stored wall-clock-as-UTC
 (`2026-08-21T00:00:00Z` means "due 21 Aug"). Overdue is computed three different
@@ -237,6 +242,7 @@ through it. Delete the other two rules.
   - `components/projects/ScheduleTab.tsx:317` — `visible`, the ghost-filtered list
   - `components/projects/ScheduleTab.tsx:233` — `ScheduleProgress`, the one component fed the full list
 - **Related:** `MON-6`
+- **Re-verified:** hardening pass — **SURVIVES**, and the tooltip is quotable. `ScheduleTab.tsx:259` reads *"Hide the read-only rows imported from your scheduling tool (they still count in the metrics)"* — while `:317` passes the filtered `visible` set into `ExecutionView`, so they do not.
 
 **Mechanism.** The interface states twice that imported rows "still count in the
 metrics" and "still count toward the earned-value rollup." That is true of
@@ -283,6 +289,7 @@ from the unfiltered list so a summary can never present as a leaf.
   - `lib/milestones.ts:1221` — `rebaseSchedule`'s optimistic lock, for contrast
   - `components/projects/ScheduleTab.tsx:105-120` — the realtime subscription
   - `grep "ALTER PUBLICATION supabase_realtime" supabase/migrations/` → `checkout_messages`, `notifications`, `checkout_episodes` — **not `milestones`**
+- **Re-verified:** hardening pass — **SURVIVES**. `20260907_milestone_batch_move.sql:50-55` updates `WHERE id = … AND org_id = p_org` with no `updated_at` predicate. Contrast `rebaseSchedule` (`milestones.ts:1209-1229`), which does hold an optimistic lock — the pattern exists in the same file and was not applied here.
 
 **Mechanism.** Two defects that compound.
 

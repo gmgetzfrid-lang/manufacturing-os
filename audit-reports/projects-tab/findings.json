@@ -48,7 +48,7 @@
         "app/(protected)/plot-plans/page.tsx:166"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A keyboard-only user cannot upload a quote PDF, cannot submit a drawing, and cannot upload redlines. On /submit/[token] that is the entire purpose of the page — and that page is public and unauthenticated, making it the highest-exposure accessibility surface in the product.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -70,7 +70,7 @@
         "components/dashboard/viz.tsx"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A screen-reader user cannot tell a proven item from one nobody has looked at. Emerald against amber is the canonical deutan/protan confusion pair. The tooltip gives touch users nothing. And this sits inside the safety-critical PSSR/MI/QA-QC surface.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -91,7 +91,7 @@
         "components/projects/ScheduleTab.tsx:578, 582"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Every completed, missed, blocked, on-hold and overdue milestone — precisely the rows a field user needs — becomes unreadable in dark mode. This is the single worst rendering defect found.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -117,7 +117,7 @@
         "lib/costDocs.ts:323-334"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The AI misreads $1,182,000 as $182,000. A controller corrects it. The Price column, the $ / hr column, the minTotal normalization for the entire field, and every value score still use $182,000 — so the corrected bidder keeps a price part of 100 and the best value badge. Only the confirm dialog shows $1,182,000. Click through it and a $1.18M commitment posts against a table that said $182K.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -137,7 +137,7 @@
         "components/projects/cost/QuotesPanel.tsx"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The reviewer's only option is to trust the extraction. Combined with BID-1, the system holds two different numbers for the same bid, shows the reviewer the wrong one, and gives them no way to adjudicate.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -156,7 +156,7 @@
         "lib/rfqDocx.ts:65"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -177,7 +177,7 @@
         "lib/bidTab.ts:107-112"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -200,7 +200,7 @@
         "app/api/projects/cost-docs/route.ts:87-92"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The user clicks Award. The claim succeeds, so the document is now awarded. The network drops, addEntry fails, and the revert also fails and is swallowed. The quote is awarded with no commitment in the rollup. It cannot be re-read (the route returns 409 \"already moved money — its extraction is locked\") and cannot be re-awarded (the claim requires draft|parsed). There is no interface, no reconciliat",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -221,7 +221,7 @@
         "components/projects/CostsTab.tsx:76-79"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A schedule whose first activity runs 1–12 June and whose last finishes 30 September has a real span of 122 days. The planned budget line is drawn across 110 days, starting eleven days late and climbing eleven percent steeper — so it reads above actuals for the whole first month and the on-track comparison is wrong from day one. plannedManpowerSeries inherits the same compression, inflating the cre",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -243,7 +243,7 @@
         "app/(protected)/companies/[id]/page.tsx:54-71"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Fifteen to forty seconds of background querying. Navigate away mid-sweep and the four workers drain the queue to completion — and because supabase-js multiplexes over one HTTP/2 connection, the page you left slows down the page you went to. Press Back and all 1,141 run again. Adding one company restarts the whole sweep.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -264,7 +264,7 @@
         "app/(protected)/projects/page.tsx:103-114"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The button gives no feedback and stays clickable, so an impatient user fires a second and third 360-round-trip sweep on top of the first.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -282,7 +282,7 @@
         "lib/checklists.ts:250-266"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A contractor uploads a file and types the title \"Hydrotest Report.\" It lands in the project's intake collection as a Draft, unreviewed, from an unauthenticated link. The evidence sweep matches the phrase, marks the pressure-test checklist item satisfied, and attaches the citation Document on file: \"Hydrotest Report\". Nobody checked that the document contains a hydrotest, covers this equipment, or ",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -304,7 +304,7 @@
         "lib/checklists.ts:150-176"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A rookie clicks OK and thirty safety lines go not-applicable sight-unseen. Because a not-applicable item is excluded from the progress count (computeChecklistProgress, lib/checklists.ts:339), the checklist jumps to complete. And because the write sets a manual note, no future sweep or assessment will ever revisit those items (lib/checklistEngine.ts:141 — if (item.manualNote) continue).",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -325,7 +325,7 @@
         "lib/changeOrders.ts:151-161"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A user without write authority accepts a turnover item. The interface says accepted. The audit log says accepted, by them, at that time. The database still says open. The record and the reality disagree, and the record is the one that gets exported.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -348,7 +348,7 @@
         "lib/turnover.ts:225"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A user who wants a clean closeout can turn every gate green in about a dozen keystrokes, and the audit log will record \"decided by reviewer\", null, and nothing at all as the reasons.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -370,7 +370,7 @@
         "lib/reviewControl.ts:495-510"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A contractor supersedes an operating procedure that forty operators had acknowledged. No new acknowledgment roster is issued, the periodic-review clock never resets, and retention is never recomputed — so the compliance record still shows everyone signed off on the previous revision. The only signal is one docsuperseded notification to Admin, Document Control and the project owner.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -390,7 +390,7 @@
         "lib/timeline.ts:287-292"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An auditor opens a project's Activity tab and sees comments and checkouts. Invisible:",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -408,7 +408,7 @@
         "lib/scheduleParsers.ts:918-925"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A planner outside the United States imports a P6 XER or an MS Project CSV with dd/mm/yyyy dates. Rows dated 1–12 of the month land on a wrong but entirely plausible date. Rows dated 13–31 fail with a raw Postgres error. The modal reports \"Inserted: 140 / 12 errors\" and there is no way to discover that the 140 are wrong.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -428,7 +428,7 @@
         "components/projects/ScheduleImportModal.tsx"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The crew marks forty tasks 60–100% complete over a shift. The scheduler re-imports the weekly refresh from P6, where those tasks still read zero. All forty reset to percentcomplete = 0, status = 'planned', actualat = null. Earned value, CPI, SPI, the S-curve and the health score all snap backwards. The only warning is \"Re-importing the same file upserts rows with stable IDs.\" No diff, no confirmat",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -446,7 +446,7 @@
         "lib/scheduleParsers.ts:710"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -469,7 +469,7 @@
         "components/projects/MovePreviewSheet.tsx"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "This is not a preview. withCascade merges the cascade into the primary change set, and commitMove / resizeEdge / resizeSummaryEdge / sequencePhase persist the whole set through the batch-move RPC. The preview sheet is fed the originally-dragged ids, so it says \"Move 1 task 1 day later\", the user confirms, and two tasks jump fourteen years. Undo exists but the toast lives 7 seconds and its snapshot",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -493,7 +493,7 @@
         "components/projects/ExecutionView.tsx:949"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The Date.now() rule marks a task overdue from 00:01 UTC on its own due date — for a US user, from five or eight in the evening the day before. Simultaneously visible: SchedulePulse says \"5 overdue tasks\" directly above SummaryStrip saying \"Overdue 0\", two inches apart, from the same data. And projectSnapshot.overdueMilestones feeds the health penalty, so the score is docked for tasks that are not ",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -515,7 +515,7 @@
         "components/projects/ScheduleTab.tsx:233"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -535,7 +535,7 @@
         "components/projects/ScheduleTab.tsx:105-120"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -559,7 +559,7 @@
         "components/viewers/SecureDocViewer.tsx:274"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A vendor holding the link uploads payload.html declaring Content-Type: text/html. Anyone who opens it in the document viewer runs the attacker's script as themselves, on the application's origin, with access to localStorage — which holds the Supabase session and refresh token. On a trusted auto-supersede link no approval click is needed first.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -579,7 +579,7 @@
         "supabase/migrations/20260913_projects_rls_recursion_fix.sql:91"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Any active org member can read the budgets, bid prices, change orders, PSSR findings and turnover records of a project marked private. Not by crafting a query — the data surfaces on the ordinary /companies/[id] profile page.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -599,7 +599,7 @@
         "app/api/intake/upload/route.ts:302"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Document Control assigns a PSM-covered P&ID to a trusted contractor link. Submission one routes to review, correctly. Submission two sees linkAuthored = true, skips the pending-submission 409, and publishes: status: \"Issued\", new currentversionid, pendingversionid cleared — orphaning the first review in the same write.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -622,7 +622,7 @@
         "supabase/migrations/20260822_review_completion_guard.sql:32-34"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An engineer has a drawing checked out for as-built verification and Document Control has an active \"Field Verification Needed\" hold on it. A trusted contractor link supersedes it anyway. The engineer's lock stays open on a document whose current revision changed underneath them; the hold is silently ignored.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -647,7 +647,7 @@
         "components/projects/ProjectWizard.tsx:153"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The user types a purpose, three goals, four budget lines, two milestones and two contractors, and lands on a project with none of it — where the coach immediately asks for all of it back. This is the impatience tax inverted: you invest the effort and the system throws it away without saying so.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"

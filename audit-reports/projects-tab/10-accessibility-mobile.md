@@ -25,6 +25,7 @@ the app had already solved. Most fixes are substitutions, not new engineering.
   - `components/projects/cost/QuotesPanel.tsx:478` — `<input type="file" className="hidden" …>`
   - `app/submit/[token]/page.tsx:173, 245, 274` — the same, on the **public, unauthenticated** portal
   - `app/(protected)/plot-plans/page.tsx:166` — the working pattern already in the repo: `className="sr-only"`
+- **Re-verified:** hardening pass — **SURVIVES**. Every file input on both surfaces carries `className="hidden"` — `QuotesPanel.tsx:478` and `app/submit/[token]/page.tsx:173, 245, 274` — and a grep for `sr-only` on the public portal returns **0**. `display: none` removes an element from the tab order, so on the vendor portal there is no keyboard path to submit at all.
 
 **Mechanism.** `hidden` compiles to `display: none`, which removes the element
 from the tab order entirely. The wrapping `<label>` is not focusable and carries
@@ -59,6 +60,7 @@ working one, so fix these four and consider a sweep.)
   - `app/(protected)/companies/[id]/page.tsx:313` — the rubric dot, also no title
   - `components/projects/QualityTab.tsx:439-485` — the row, which renders item text, AI rationale, manual note and evidence chips, and never the status
   - `components/dashboard/viz.tsx` — the house rule this breaks: "identity never colour-alone"
+- **Re-verified:** hardening pass — **SURVIVES**. `StatusDot` is `<span className="w-2 h-2 rounded-full …" title={m.t} />` (`QualityTab.tsx:488-497`) — colour plus a `title`, with no text, no `aria-label` and no `role`. `title` is not reliably announced and is unreachable without a pointer.
 
 **Mechanism.** `satisfied` / `needs_evidence` / `open` / `na` are distinguished
 only by hue in an 8×8 px dot with no text, no glyph, no `aria-label` and no
@@ -98,6 +100,7 @@ the checklist card. Three components, one pattern.
   - `components/projects/ScheduleTab.tsx:545` — the milestone name
   - `components/projects/ScheduleTab.tsx:558` — the date / duration / responsible-party line
   - `components/projects/ScheduleTab.tsx:578, 582` — the overdue and slip text
+- **Re-verified:** hardening pass — **SURVIVES**. The tints at `ScheduleTab.tsx:527-532` are `bg-emerald-50/50`, `bg-red-50/50`, `bg-amber-50/50` with **no `dark:` variant**, while the row's text is `text-[var(--color-text)]`, which flips light in dark mode. Light text on a light tint.
 
 **Mechanism.**
 

@@ -60,6 +60,7 @@ more times.
   - `lib/companies.ts:233-323` — `gatherCompanyProfile`, 9 queries in 3 waves
   - `app/(protected)/companies/page.tsx:74-79` — the kind and text filters, client-side only
   - `app/(protected)/companies/[id]/page.tsx:54-71` — runs the gather a **second** time for the clicked company
+- **Re-verified:** hardening pass — **SURVIVES** as a mechanism, with the count restated. `listCompanies` is a single query; the N+1 is the block beneath it — `gatherCompanyProfile(c)` per company, four workers deep (`companies/page.tsx:55-65`) — and that function issues **8** queries. Total is `1 + 8N`, so the headline "over eleven hundred" corresponds to roughly 137 companies rather than being a fixed number. The defect, the absence of caching and the severity are unchanged; only the figure is conditional.
 
 **Mechanism.** Each profile costs nine queries. Across 150 companies:
 **1 + (150 × 9) = 1,351** ceiling; realistically ≈**1,141** (companies with no
@@ -108,6 +109,7 @@ company restarts the whole sweep.
   - `lib/projectExport.ts:34-61` — `loadProjectBundle`, itself 3 serial waves
   - `lib/projectExport.ts:40-42` — unbounded `checkout_sessions` and `project_documents` per project
   - `app/(protected)/projects/page.tsx:103-114` — the button, no busy state, not disabled while running
+- **Re-verified:** hardening pass — **SURVIVES** as a mechanism, with the same caveat as `PERF-1`. `for (const p of projects) { const bundle = await loadProjectBundle(p.id, orgId); }` (`projectExport.ts:121-122`) is a strictly sequential await with no concurrency and no progress feedback; the round-trip total scales with project count rather than being fixed at 360.
 
 **Mechanism.** 120 projects × 3 serial round trips = **360 sequential**. At 80ms
 that is ≈29 s; at 150ms (mobile or a distant region) ≈54 s. Everything
