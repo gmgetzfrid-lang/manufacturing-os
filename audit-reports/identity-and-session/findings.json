@@ -41,7 +41,7 @@
         "app/(protected)/projects/[id]/page.tsx:870-872"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Your Microsoft sign-in resolves to uidB, distinct from the uidA your password created. An admin (possibly you) uses Team Management to add your email; the row lands on one of them — see IDENT-2 for why which one is not deterministic — as Admin. The other uid either has no row (you get the no-workspace hard stop) or has an older row at a lower role (you get that role). Same email, same person, same",
       "area": "identity-and-session",
       "report": "audit-reports/identity-and-session/02-identity-collision.md"
@@ -62,7 +62,7 @@
         "components/providers/RoleContext.tsx:238-241"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "You open the app on a cold connection. resolveOrgAndRole is waiting on the first RLS-gated query of the session. At 6 seconds the watchdog clears the spinner. uid is set, membershipState is \"resolving\", so the layout falls past both guards and paints the full shell — with the Sidebar built from roles: [] and activeRole: \"Viewer\". Admin nav is gone, admin buttons are gone. Somewhere between a momen",
       "area": "identity-and-session",
       "report": "audit-reports/identity-and-session/01-the-viewer-window.md"

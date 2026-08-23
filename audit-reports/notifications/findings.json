@@ -50,7 +50,7 @@
         "lib/inAppNotifications.ts:38-58"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Document control places a legal hold on a P&ID. lib/retention.ts fans out legalholdplaced to the owner and every Admin/DocCtrl. Each recipient gets a bell row and an email. sectionForKind('legalholdplaced') hits the default branch and returns 'other'; sectionCounts.other is incremented; nothing renders it. The Documents sidebar entry shows no badge, the Projects entry shows no badge, the Requests ",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -74,7 +74,7 @@
         "supabase/schema.sql:660"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An engineer is drowning in watcher-activity email. They open /settings/notifications (linked from the bell at NotificationBell.tsx:153, from /profile, from /admin/settings, and from the g n command-palette shortcut), toggle \"Watched activity\" off, and click Save preferences. The upsert carries digestfrequency='immediate'. Postgres raises new row for relation \"notificationpreferences\" violates chec",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"

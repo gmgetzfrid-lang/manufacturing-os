@@ -24,6 +24,7 @@ does not come back.
   - `lib/ticketTransitions.ts:140-142` — the recipient set for every transition: `[ticket.requesterId, ticket.assignedDrafterId]`
   - `app/api/tickets/workflow-action/route.ts:309` — `if (recipients.length === 0) return;`
 - **Related:** `FRIC-1`, `WF-19` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `resolveTicketRecipients` has exactly one production import in the entire codebase — `app/(protected)/requests/new/page.tsx:11`. Every other reference is a test. Routing is computed at creation and never recomputed.
 
 **Mechanism.** At creation, the right people are notified. After that, every
 transition notifies only the requester and the assigned drafter — regardless of
@@ -113,6 +114,7 @@ receives the queue notifications for it.
   - `types/schema.ts:1019` — `RequestType = string`, unvalidated at insert
   - `lib/capabilityPolicy.ts:70-71` — `ticket.draft_work` defaults to `["Drafter"]`, and per `WF-8` it is **org-wide, not ticket-scoped**
 - **Related:** `WF-15`, `WF-8`, `TIER-2`
+- **Re-verified:** hardening pass — **SURVIVES**. The `Answer & Close RFI` action is pushed on `requestType === 'RFI'` (`workflow.ts:185-192`) and `close_rfi` sets `status = "CLOSED"` outright (`ticketTransitions.ts:285-287`). Compounded by `TIER-2`: `RequestType` is an unconstrained `string`, so the value that unlocks the one-click close is client-set.
 
 **Mechanism.** `close_rfi` is the only `DRAFTING → CLOSED` edge in the machine.
 It is gated on a **free-text string** that nothing validates, offered to anyone

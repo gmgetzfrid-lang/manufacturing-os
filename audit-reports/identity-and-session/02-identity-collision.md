@@ -33,6 +33,7 @@ has already happened is a thirty-second query, given below.
 - **Status:** OPEN
 - **Verification:** CONFIRMED (the absence of the constraint); SUSPECTED (whether duplicates exist in your data today — see the query)
 - **Locations:** `supabase/schema.sql:8-16`, `supabase/schema.sql:33-49`, `app/(protected)/projects/[id]/page.tsx:870-872`
+- **Re-verified:** hardening pass — **SURVIVES** with its stated split intact — **and the same independence caveat as `SESS-1`.** The absence of any unique constraint on `users.email` is CONFIRMED and mechanically checkable. Whether duplicates exist in production remains SUSPECTED and is not answerable from this repository; the three queries in the finding are still the way to settle it.
 
 **Mechanism.** `users` is declared with no uniqueness on `email`:
 

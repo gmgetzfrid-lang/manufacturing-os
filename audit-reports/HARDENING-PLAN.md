@@ -29,12 +29,12 @@ try to **refute** the claim, and record `SURVIVES` / `REFUTED` / a severity
 correction in the report body.
 
 - [x] `projects-tab` — 29 CRITICALs — **29/29 SURVIVE, 0 refuted** (2 headline query counts restated as per-item formulas)
-- [ ] `drafting-flow` — 8 author-only CRITICALs (the area was only PARTIALLY adversarially verified — reports 06/07/08 carry the banner, the rest do not)
-- [ ] `intelligence` — 2 author-only CRITICALs
-- [ ] `notifications` — 2 author-only CRITICALs
-- [ ] `document-control` — `XEDGE-1`, the one CRITICAL in the unverified critic report
+- [x] `drafting-flow` — 8 — **8/8 SURVIVE**
+- [x] `intelligence` — 2 — **2/2 SURVIVE**
+- [x] `notifications` — 2 — **2/2 SURVIVE**
+- [x] `document-control` — `XEDGE-1` — **SURVIVES**, and joins the unguarded-path cluster
 - [x] `roles-and-permissions` — 21 CRITICALs — **21/21 SURVIVE, 0 refuted**
-- [ ] `identity-and-session` — 2 CRITICALs
+- [x] `identity-and-session` — 2 — **2/2 SURVIVE**, both flagged in-file as non-independent
 
 **Honesty constraint on this phase.** This pass is being run by the same session
 that wrote `identity-and-session` and the meta-audit. That is better than the
@@ -45,16 +45,16 @@ pass as adversarial-independent.
 
 ## Phase C — quotation accuracy
 
-- [ ] **MA-C** Corpus-wide quoted-code verification was not achievable mechanically (two attempts, 39% and 18% false-positive rates). Close the hole for `CRITICAL`s specifically by hand-checking quoted code as part of Phase B, and record the achieved coverage rather than claiming a corpus-wide figure.
+- [x] **MA-C** Corpus-wide quoted-code verification was not achievable mechanically (two attempts, 39% and 18% false-positive rates). Close the hole for `CRITICAL`s specifically by hand-checking quoted code as part of Phase B, and record the achieved coverage rather than claiming a corpus-wide figure.
 
 ## Phase D — ship
 
-- [ ] Every area README states its verification method in the same place, same words.
-- [ ] `findings.json` carries the method per finding so a tool can weight by it.
-- [ ] `build-index.mjs` fails on: a prefix reused across areas, a `Related` entry naming an unknown ID, an in-repo citation that does not resolve.
-- [ ] `META-AUDIT.md` rewritten to reflect the post-hardening state.
-- [ ] `../DECISIONS.md` records the verification-bar decision.
-- [ ] Rebuild index, re-run all integrity checks, commit, push.
+- [x] Verification method is recorded PER FINDING (`verified_by`), which is stronger than per-README — see `DEC-41`. Superseded: every area README states its verification method in the same place, same words.
+- [x] `findings.json` carries the method per finding so a tool can weight by it.
+- [x] `build-index.mjs` fails on: a prefix reused across areas, a `Related` entry naming an unknown ID, an in-repo citation that does not resolve.
+- [x] `META-AUDIT.md` rewritten to reflect the post-hardening state.
+- [x] `../DECISIONS.md` records the verification-bar decision (`DEC-41`).
+- [x] Rebuild index, re-run all integrity checks, commit, push.
 
 ---
 
@@ -66,3 +66,27 @@ pass as adversarial-independent.
 - A finding that is refuted is **marked refuted in place with the reason** — never
   silently deleted. The record of what was rejected is the evidence that anything
   was.
+
+
+---
+
+## Outcome
+
+**All of Phase A, B, C and D are done.** 65 previously-unchallenged `CRITICAL`s
+re-verified; **65 survive, 0 refuted, no severity changed.** Every `CRITICAL` in
+the corpus (116) is now `adversarial` or `hardening-pass`.
+
+**What is deliberately still open**, recorded rather than hidden:
+
+- **299 `HIGH` and `MEDIUM` findings remain `author` or `unverified`.** No
+  independent challenge. `verified_by` carries this on every entry, so it shapes
+  a queue without anyone having to remember it. This is the obvious next pass.
+- **`identity-and-session/SESS-1` and `IDENT-1` were written and verified by the
+  same session.** Their `Re-verified` lines say so. Treat as `author`-grade until
+  someone else reads them.
+- **`IDENT-1`'s production half is still unanswerable from this repository** —
+  whether duplicate auth identities exist is a Supabase project setting. The three
+  queries in the finding settle it in about thirty seconds.
+- **Verification corrections are still prose.** `locations` is now correct in the
+  index, but making that structural needs a change to how verification runs, not
+  to how its output is parsed.

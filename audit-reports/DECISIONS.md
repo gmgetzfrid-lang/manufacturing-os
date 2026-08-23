@@ -1535,3 +1535,41 @@ that is the existing export/snapshot path with its own watermarking — a separa
 already-solved problem, not a change to this rule.
 
 **Risk:** medium.
+
+---
+
+### DEC-41 · Verification grade is a field, not a caveat
+
+**Decision.** Every finding declares how hard it was challenged, in
+`findings.json` as `verified_by`, with four values: `adversarial`,
+`hardening-pass`, `author`, `unverified`. Prose caveats about verification are
+not an acceptable substitute, and a report-level banner is not either.
+
+**Why.** The corpus is consumed by agents that read the index rather than the
+reports — that is what the index is for, and `audit-reports/README.md` says so.
+A warning that lives only in a report header is invisible to the one consumer the
+design optimises for. `META-AUDIT.md` `MA-6` is exactly that failure: a report
+that skipped verification carried a correct banner, and its findings still
+published `Verification: CONFIRMED` into the index with nothing to mark them.
+
+**Consequences.**
+
+- `Verification` (`CONFIRMED` / `SUSPECTED`) is the **finder's** assessment.
+  `verified_by` is **who tried to prove them wrong.** They are different fields
+  and neither substitutes for the other.
+- A queue is sorted by severity **and** grade. A `HIGH` that survived an
+  adversarial pass outranks an `author`-graded `CRITICAL` for confidence, though
+  not for consequence.
+- Refuted findings are marked refuted in place with the reason. They are never
+  deleted. The record of what was rejected is the evidence that anything was —
+  and its absence is what made `MA-2` unanswerable until the pass was re-run.
+- A verifier who is not independent says so on the finding. Two entries do
+  (`identity-and-session/SESS-1`, `IDENT-1`), because the same session wrote and
+  checked them.
+
+**Reversal.** If verification is ever restructured to emit corrected fields as
+data rather than prose, `verified_by` stays and gains values; it does not go away.
+The failure it guards against — a challenge that happened but was invisible to the
+consumer, or one that never happened but looked the same — is permanent.
+
+**Risk:** low.

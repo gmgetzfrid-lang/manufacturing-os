@@ -24,6 +24,7 @@ does not know which library it belongs to.**
   - `app/(protected)/requests/new/page.tsx:286-330` — the insert row: `org_id, ticket_id, title, description, unit, request_type, priority, status, requester_*, attachments, history, comments, unread_by, watchers, target_completion_at`. No library.
   - `app/(protected)/requests/new/page.tsx:290-298` — the only document linkage is `metadata.source_document`, written **only when `sourceDocId` is present**
 - **Related:** `DCW-2`, `DCW-3`, `TIER-2`, `GAP-104`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The `Ticket` type carries **zero** fields naming a library or collection, so there is no value for a library-scoped rule to key on.
 
 **Mechanism.** Every document-control rule in this system resolves through the
 container chain — document → folder → library, most specific defined level wins.
@@ -70,6 +71,7 @@ not exist on the ticket.
   - `lib/ticketRouting.ts:70-117` — routes to `DraftingSupervisor` → Admins, and to engineers. Never to document control.
   - `lib/ticketAttention.ts:106-108` — nonetheless tells DocCtrl they must act at `FINAL_DRAFT` and `PENDING_IFC`
 - **Related:** `DCW-1`, `FRIC-7`, `GAP-104`
+- **Re-verified:** hardening pass — **SURVIVES**. `DocCtrl` appears in `lib/workflow.ts` four times, all as a role-list membership test, never as an actor in a drafting state; in `capabilityPolicy.ts` its entries are `admin.*` capabilities (`:91, :93, :95`). Its only role in the flow is as an *exemption* — `isDocCtrlRole` short-circuits `requiresEngineerApproval` (`workflow.ts:41`).
 
 **Mechanism.** The one appearance of `DocCtrl` in the workflow treats it as a
 **senior approver who does not need engineering review** — grouped with

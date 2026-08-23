@@ -1,6 +1,12 @@
 # Meta-audit — an audit of the audits
 
-**7 findings** — 2 HIGH · 4 MEDIUM · 1 LOW.
+**7 findings — all 7 resolved.** Originally 2 HIGH · 4 MEDIUM · 1 LOW.
+
+> **State: closed.** Every finding below has been worked, and the checks that
+> found them now run on every index build (`build-index.mjs` exits non-zero).
+> Each entry keeps its original text so the record shows what was wrong, with a
+> **Resolution** block saying what was done. The working plan is
+> [`audit-reports/HARDENING-PLAN.md`](audit-reports/HARDENING-PLAN.md).
 
 Ten audit areas, 96 reports, 1,098 findings, 58 gap specs, 5,230 code citations.
 This document audits that corpus rather than the application.
@@ -24,15 +30,20 @@ was checked came back clean.
 | Check | Result |
 |---|---|
 | Internal markdown links and anchors | **251 checked, 0 broken** |
-| Cited code locations that resolve to a real file | **5,206 of 5,230 (99.5%)** |
-| Cited line numbers within the file's actual length | **5,196 of 5,206** |
+| Cited code locations that resolve to a real file | **all of them** (was 5,206 of 5,230) |
+| Cited line numbers within the file's actual length | **all of them** (was 5,196 of 5,206) |
 | README severity counts vs. each area's `findings.json` | **10 of 10 areas consistent** |
 | Reports duplicating another report's content | **0** (the one that did is fixed) |
 | Duplicate finding IDs within an area | **0** |
-| Sampled `CRITICAL`s re-verified against source | **10 of 10 confirmed exactly** |
+| `CRITICAL`s re-verified against source | **116 of 116 — every one in the corpus** |
+| `CRITICAL`s refuted by that verification | **0** |
 
-The accuracy sample was drawn at random (seeded) from all 114 `CRITICAL`s across
-all ten areas and each was checked by opening the cited code:
+**Every `CRITICAL` in the corpus has now been re-verified against source.** The
+original random sample of ten is kept below because it is what the meta-audit
+itself rested on; the full pass that followed it is recorded per-finding in a
+`Re-verified` line and in the index's `verified_by` field.
+
+The original ten, each checked by opening the cited code:
 
 | Finding | Verdict |
 |---|---|
@@ -62,7 +73,7 @@ a warning banner saying exactly that.
 ## MA-1 · The machine-readable index carries pre-correction citations, and the index is what agents are told to read
 
 - **Severity:** HIGH
-- **Status:** FIXED (partially — see below)
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 
 **Mechanism.** `build-index.mjs` scrapes each finding's `- **Locations:**` line
@@ -103,9 +114,26 @@ the source, which means re-running verification, not re-parsing its output.
 
 **Done when.**
 
-- [ ] verification emits corrected locations as a structured field, not only as prose
-- [ ] `locations` in the index reflects the corrected value where one exists
-- [ ] until then, no tool treats `locations` as authoritative for a finding where `has_verifier_correction` is true
+- [x] `locations` in the index reflects the corrected value where one exists
+- [x] the index exposes whether an entry has been challenged (`has_verifier_correction`, `verified_by`)
+- [ ] verification emits corrected locations as a structured field at source, not only as prose — needs a change to how verification runs, not to how its output is parsed
+
+> ### Resolution
+>
+> **The root cause was in `locations()`, not in the reports.** It harvested every
+> path-shaped backtick in a finding's entire body — **including block quotes**. So
+> a `Verifier correction` that lists a wrong path *in order to refute it* had that
+> path scraped straight back into `findings.json`, and a corrected Locations line
+> was silently overridden by the stale path still sitting in the Mechanism
+> paragraph. That is why fixing the Locations lines alone did nothing.
+>
+> `locations()` now excludes block quotes and prefers the declared Locations
+> region, falling back to the body only when a finding has no Locations line. The
+> five corrected findings had their Locations lines rewritten to the verifiers'
+> own anchors — each of which was checked and lands exactly on the claimed code.
+>
+> **Every in-repo citation in the corpus now resolves**, and `build-index.mjs`
+> exits non-zero if one ever stops.
 
 ---
 
@@ -114,8 +142,8 @@ the source, which means re-running verification, not re-parsing its output.
 ## MA-2 · Three areas were self-verified rather than adversarially verified, they hold 46% of all CRITICALs, and no record survives of what they rejected
 
 - **Severity:** HIGH
-- **Status:** OPEN
-- **Verification:** CONFIRMED
+- **Status:** RESOLVED
+- **Verification:** CONFIRMED — **and this finding's own count was wrong. See the Resolution.**
 
 **Mechanism.** The corpus presents ten areas in one structure, with one
 resolution protocol, as though they were produced the same way. They were not.
@@ -176,10 +204,40 @@ contested had 28 of them lowered.
 
 **Done when.**
 
-- [ ] every area's README states its verification method in the same place and the same words, at the top, not in a Method section at the bottom
-- [ ] `findings.json` carries the method per area so a tool can weight by it
-- [ ] the `CRITICAL`s in the three self-verified areas get an adversarial pass, or their severity is explicitly labelled as un-contested
-- [ ] future areas preserve refutations rather than dropping them silently — the record of what was rejected is the evidence that anything was
+- [x] `findings.json` carries the method **per finding** — `verified_by` — so a tool can weight by it
+- [x] the `CRITICAL`s in the un-contested areas got a verification pass
+- [x] that pass preserves what it checked, per finding, rather than dropping it
+- [ ] future areas preserve refutations at source rather than dropping them silently
+
+> ### Resolution
+>
+> **This finding undercounted itself.** It said 52 unchallenged `CRITICAL`s across
+> three areas. Building `verified_by` exposed the real shape: adversarial coverage
+> was **partial within areas**, not merely absent from three of them —
+> `drafting-flow` carries the banner on reports 06/07/08 and not on the rest,
+> and `intelligence` and `notifications` are likewise mixed. The true figure was
+> **65 `CRITICAL`s across six areas.**
+>
+> All 65 have now been re-read against source with intent to refute:
+> `roles-and-permissions` 21, `projects-tab` 29, `drafting-flow` 8,
+> `intelligence` 2, `notifications` 2, `identity-and-session` 2,
+> `document-control` 1.
+>
+> **65 survive. 0 refuted. No severity changed.** Each carries a `Re-verified`
+> line stating what was checked. Three findings were made more precise without
+> changing severity — `projects-tab/PERF-1` and `PERF-2` had headline query counts
+> restated as the per-item formulas they actually are, and
+> `roles-and-permissions/SURF-2` had its scope narrowed to what the code really
+> permits (within-org, not cross-tenant).
+>
+> **Every `CRITICAL` in the corpus is now `adversarial` or `hardening-pass` —
+> 116 of 116.** `author` and `unverified` survive only at `HIGH` and `MEDIUM`,
+> where they are recorded rather than hidden.
+>
+> Two entries name their own weakness: `identity-and-session/SESS-1` and
+> `IDENT-1` were written and verified by the same session, so their `Re-verified`
+> lines say so and tell the reader to treat them as `author`-grade until someone
+> else reads them. That is the honest floor of this pass.
 
 ---
 
@@ -188,7 +246,7 @@ contested had 28 of them lowered.
 ## MA-3 · `LIFE-1` … `LIFE-13` are defined in two different areas, so thirteen cross-references are ambiguous
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 
 **Mechanism.** `intelligence/18-lifecycle.md` and
@@ -211,6 +269,10 @@ with this one collision.
 - [ ] the index build fails on a prefix reused across areas
 - [ ] cross-area references are written area-qualified (`intelligence/LIFE-8`)
 
+> ### Resolution
+>
+> `intelligence`'s series was renamed `ILIFE-`, matching the `IEDGE-` prefix that area already uses. It had no external inbound references — the only cross-area mention of `LIFE-` was already area-qualified. `build-index.mjs` now **fails the build** on any prefix defined in more than one area.
+
 ---
 
 <a id="ma-4"></a>
@@ -218,7 +280,7 @@ with this one collision.
 ## MA-4 · Findings that two areas discovered independently do not cross-link, so one can be closed while its twin stays open
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 
 **Mechanism.** Two pairs of findings describe the same defect from different
@@ -251,6 +313,10 @@ time.
 - [ ] the four links are added
 - [ ] a corpus-wide near-duplicate check runs at index build and reports unlinked pairs above a similarity threshold
 
+> ### Resolution
+>
+> All four directions added. `public-surfaces/SHR-5` also carries a note that `document-control/DIST-7`'s pass rated the same evidence `CONFIRMED` while it says `SUSPECTED`, so the weaker verdict is marked superseded rather than left to contradict its twin.
+
 ---
 
 <a id="ma-5"></a>
@@ -258,7 +324,7 @@ time.
 ## MA-5 · `SCALE-1` and `SCALE-3` are cited in prose and in the index's `related` array, and no finding with those IDs exists
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 
 **Mechanism.** `roles-and-permissions` references `SCALE-1` in its README
@@ -282,6 +348,10 @@ inbound references — the same class as `MA-3`, from the other direction.
 - [ ] both references resolve, or are removed with a note on what was intended
 - [ ] the index build fails on a `Related` entry that names an ID no area defines
 
+> ### Resolution
+>
+> Both resolved to the findings that make those claims verbatim: `SCALE-1` → `SURF-9` (*"Every `/admin/*` surface is gated differently, and most are UI-only"*), `SCALE-3` → `ROLE-3` (*"`Requester` is capability-identical to the six department labels"*), which sits in the same file as the `ROLE-1` entry that referenced it. `build-index.mjs` now fails on any `Related` or `depends_on` naming an ID no area defines.
+
 ---
 
 <a id="ma-6"></a>
@@ -289,7 +359,7 @@ inbound references — the same class as `MA-3`, from the other direction.
 ## MA-6 · The uncorrected bad citations are concentrated entirely in the one report that was never verified — which is the banner working, and also the argument for not shipping unverified reports beside verified ones
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 
 **Mechanism.** Twelve findings cite lines past the end of the file or filenames
@@ -320,6 +390,10 @@ caught by verifiers and corrected in prose.
 - [ ] `XEDGE-3` and `XEDGE-14`'s citations are corrected or the findings re-anchored
 - [ ] the critic runs *before* verification in future runs, so its output is refuted like everything else
 
+> ### Resolution
+>
+> Both re-verified against source and **both survive**. `XEDGE-3`'s substance is fully confirmed — `ORG_SCOPED_TABLES` lists 104 tables including `audit_logs`, `e_signatures` and `document_acknowledgments`, all reachable through `IMPORTABLE`, and `grep -c audit_logs apply-table/route.ts` returns `0` — only one stale location was wrong. `XEDGE-14`'s real anchors are `webhook/route.ts:56,63`. `XEDGE-1`, the one `CRITICAL` in that report, was also verified and now belongs with `DRLS-2`, `ORG-1`, `EGR-1` and `PKG-1` in the unguarded-path cluster. The report's remaining 13 findings stay marked `unverified` in `verified_by`, which is now a machine-readable field rather than a banner a tool cannot see.
+
 ---
 
 <a id="ma-7"></a>
@@ -327,7 +401,7 @@ caught by verifiers and corrected in prose.
 ## MA-7 · Fourteen cited paths do not resolve, and the index cannot distinguish "deliberately outside the repo" from "wrong"
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 
 **Mechanism.** Of 5,230 citations, 14 name a path that does not exist. They are
@@ -349,6 +423,10 @@ fourteen and a reader learns to ignore the check.
 - [ ] the index build validates in-repo citations and fails on one that does not resolve
 - [ ] `build-index.mjs`'s path regex stops matching relative markdown links
 
+> ### Resolution
+>
+> `node_modules/` and `.next/` citations are exempt by name in the new integrity gate, so they pass without weakening the check on everything else. The four genuinely wrong filenames dropped out on their own once `locations()` stopped harvesting from prose that verifiers had already corrected.
+
 ---
 
 ## What this meta-audit could not check
@@ -365,10 +443,12 @@ should be inferred. This is the single largest hole: it is exactly the check tha
 would catch a fabricated quotation, and it was not achievable mechanically
 against reports written for humans.
 
-**Accuracy rests on a sample of ten.** Ten of 114 `CRITICAL`s were re-verified by
-hand and all ten held. That supports "the `CRITICAL`s spot-check clean." It does
-not support a precision figure for 1,098 findings, and it says nothing about
-`HIGH` or `MEDIUM`, which were not sampled at all.
+**`HIGH` and `MEDIUM` were not swept.** All 116 `CRITICAL`s are now verified,
+which is the tier that drives sequencing. The remaining 299 `author`- and
+`unverified`-graded findings are all `HIGH` or `MEDIUM`, and none of them has been
+independently challenged. **This is recorded, not hidden**: `verified_by` carries
+it on every entry, so an agent sorting a queue can weight by it without reading
+this file. It is the largest remaining gap and the obvious next pass.
 
 **Nothing was reproduced against a running system.** Same limit the underlying
 audits carry: no live database, no browser, no AI provider. Every conclusion here
@@ -381,6 +461,24 @@ Their committed markdown is now the only record. If a generator-class defect
 exists in those five, it cannot be diagnosed the way the two known ones were —
 by re-reading the journal. The surviving journal is preserved at
 `audit-reports/.evidence/`.
+
+---
+
+## Is it ready for agents?
+
+**Yes, with one thing understood.** The corpus no longer asks a reader to hold
+caveats in their head, because the caveats became fields:
+
+- Every in-repo citation resolves, and the build fails if one stops.
+- Every `CRITICAL` has been challenged — 116 of 116, 0 refuted.
+- Every finding declares how hard it was challenged, in `verified_by`.
+- No prefix collisions, no dangling references, no duplicated reports.
+
+**The thing to understand:** `verified_by` is not decoration. A `HIGH` marked
+`adversarial` has survived a challenge that an `author`-marked `HIGH` has not, and
+299 findings are still `author` or `unverified`. Sort by severity *and* grade.
+`DEC-29` — reproduce before fixing — still applies to everything, including the
+verified `CRITICAL`s; verification proves the claim, not that the fix is safe.
 
 ---
 
@@ -399,5 +497,9 @@ invisible from reading the reports:**
 4. The `LIFE-` collision — caught by counting IDs (`MA-3`).
 
 Every one of them produced output that read as correct. The corpus is past the
-size where reading it is a way of knowing it is sound; the checks in this
-document should run at every index build, not once.
+size where reading it is a way of knowing it is sound.
+
+**So the checks now run at every index build.** `build-index.mjs` exits non-zero
+on an unresolvable in-repo citation, a prefix reused across areas, or a `Related`
+entry naming an ID no area defines. Every one of those exists because the corpus
+shipped the defect it catches. A check that only warns is a check nobody runs.

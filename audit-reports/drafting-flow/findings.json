@@ -122,7 +122,7 @@
         "app/(protected)/requests/new/page.tsx:290-298"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A drafting supervisor wants P&IDs to route to the P&ID library's document controller for release, while sketches route straight back to the requester. There is no field to hang that rule on. The rule cannot be written regardless of how the reviewer model is designed.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -147,7 +147,7 @@
         "lib/ticketAttention.ts:106-108"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The IFC package is issued and the requester acknowledges. The ticket closes. Document control never saw it. Whether the deliverable is numbered correctly, carries the right title block, supersedes the right revision, or belongs in that library at all — none of it was checked by the function whose job that is. The controlled register learns about the drawing only if somebody separately uploads it (",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -168,7 +168,7 @@
         "app/verify-ticket/[ticketId]/page.tsx:35-38"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A drafting request for a tie-in isometric reaches PENDINGIFC, Rev 1 is issued, and a stamped print with the QR goes to a contractor. Two weeks later the MOC is withdrawn and the request is CANCELED. The contractor's foreman, holding the print at the unit, scans the QR to do the right thing. He gets a full-screen green 'LATEST ISSUE — This copy is the latest issued revision of this deliverable.' No",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -215,7 +215,7 @@
         "lib/search.ts:376"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A request sits at PENDINGASSIGNMENT because the drafting supervisor is on nights. Day 3, the requester wonders. Day 5, they walk to drafting and ask. At that moment the app has lost. The work now happens outside it, and the ticket becomes a stale record nobody closes — which makes the next person trust the queue even less.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -242,7 +242,7 @@
         "app/api/tickets/workflow-action/route.ts:309"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A ticket goes out for engineering review, comes back approved, and sits in the assignment queue. The requester sees \"engineering review complete\" and assumes it is moving. The supervisor never hears. Three days later the requester walks over to ask. The app has now taught someone that the app does not work.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -267,7 +267,7 @@
         "lib/capabilityPolicy.ts:70-71"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A ticket is created with requesttype: \"RFI\" — by mistake, by a misconfigured org dropdown, or deliberately. It routes normally to PENDINGASSIGNMENT, gets assigned, reaches DRAFTING. Any drafter in the org now sees \"Answer & Close RFI\" and can move it straight to CLOSED — skipping PENDINGREVIEW, PENDINGFINALAPPROVAL, PENDINGIFC, FINALDRAFT, every approval, and every deliverable-rev assignment.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -358,7 +358,7 @@
         "lib/roleCapabilities.ts:63-69"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A Manager files a request for a new 6\" process line tie-in. It reaches PENDINGREVIEW. requiresEngineerApproval(\"Manager\") is false, so their branch offers \"Approve (Issue for Construction)\" — one button, no second person, no engineering calculation, no code check. The drawing is issued for construction. The audit trail shows a legitimate, permitted approval.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -384,7 +384,7 @@
         "lib/docClass.ts:28"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A drafting supervisor triaging the queue sees \"Revision — Unit 200 — replace relief valve\" and has no way to record whether the replacement is identical-for-identical or a resize. The ticket carries the same metadata either way, routes identically, and reaches the same reviewer set. The distinction survives only in the description prose and in whatever the supervisor remembers.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"

@@ -31,6 +31,7 @@ behind it.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/layout.tsx:35-51`, `components/providers/RoleContext.tsx:65-68`, `components/providers/RoleContext.tsx:83-90`, `components/providers/RoleContext.tsx:238-241`
+- **Re-verified:** hardening pass — **SURVIVES** — **but see the independence caveat.** Re-checked against source: `layout.tsx:35-51` branches on `loading`, then `"none"`, then `"error"`, then renders; there is no `"resolving"` branch. `RoleContext.tsx:65` seeds `activeRole` to `"Viewer"` and `:88`/`:241` clear `loading` on timers without touching `membershipState`. **This area was written by the same session that is verifying it**, so this is a re-read rather than an independent challenge — the weakest verification in the corpus. Treat it as `author`-grade until someone else reads it. `roles-and-permissions/WF-5` was found to depend on it during this pass, which is corroboration from a different direction.
 
 **Mechanism.** `ProtectedContent` gates on exactly three conditions, in order:
 

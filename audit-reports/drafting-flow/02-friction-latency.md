@@ -67,6 +67,7 @@ Three of the six are avoidable without loosening a single control.
   - `lib/notifications.ts:257-271` — `isPastDue` / `isNearingDue`
   - a repo-wide search shows `target_completion_at` has **no server-side reader**: `lib/search.ts:376` (a type), and test files. Nothing else.
 - **Related:** `LEAK-1`, `FRIC-7`, `WF-19` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**, by absence, and checked two ways. `grep -n ticket app/api/cron/maintenance/route.ts` returns **nothing** — the only scheduled job in the product does no ticket work at all — and a repo-wide search for escalation logic finds it only in the document-control modules (`distributionAcks.ts`, `reviewControl.ts`, `reviewCycles.ts`), never for a drafting ticket.
 
 **Mechanism.** The SLA clock is set at creation
 (`defaultSlaTargetDate`, 14 days default, 21 for `ASBUILT`) and then **read only

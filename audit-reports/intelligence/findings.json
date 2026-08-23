@@ -193,7 +193,7 @@
         "app/(protected)/graph/page.tsx:278"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A Viewer is explicitly denied read on the folder holding the incident-investigation reports. Those documents are mirrored into a knowledge library by knowledgesources. The Viewer opens /graph, types \"root cause of the 2025 reboiler failure\" into the ask box (app/(protected)/graph/page.tsx:278). The route returns hits[].snippet — tsheadline excerpts, MaxFragments=2, up to 40 rows — plus documentNam",
       "area": "intelligence",
       "report": "audit-reports/intelligence/21-edges-and-invariants.md"
@@ -215,7 +215,7 @@
         "lib/orchestrator/tools.ts:26-32"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A contractor with a Viewer seat, denied read on the HAZOP library, opens /assistant and asks \"what do we have on E-101?\". The loop calls equipmentmentions and searchdocuments; both return the proving sentences and page citations from HAZOP documents the contractor cannot open in document control. The answer is written back to them on their own AI key, so the spend meter records a normal ask and no",
       "area": "intelligence",
       "report": "audit-reports/intelligence/21-edges-and-invariants.md"

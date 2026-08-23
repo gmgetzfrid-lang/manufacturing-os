@@ -118,6 +118,7 @@ lib/notify/dispatch.ts:105-106
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-ticket/route.ts:71-88`, `app/api/verify-ticket/route.ts:100`, `app/verify-ticket/[ticketId]/page.tsx:26`, `app/verify-ticket/[ticketId]/page.tsx:35-38`
+- **Re-verified:** hardening pass — **SURVIVES** — and this is the eighth instance of the field-verdict cluster. The verdict chain at `verify-ticket/route.ts:72-88` is built entirely from `printedRev`, `currentRev`, `latestIssued` and `inReview`. There is **no status term anywhere in it**: nothing consults whether the ticket was cancelled or the document voided or held, so a cancelled ticket's deliverable still scans `current`.
 
 > **Verified, and retitled to the general case.** The original title led with a
 > `CANCELED` ticket, which is the **weakest** instance: `SM-8` establishes that

@@ -52,6 +52,7 @@ Everything else in this report follows from that.
   - `lib/workflow.ts:200` — `if (needsEngineerApproval && !isEng)` — the fork
   - `lib/roleCapabilities.ts:63-69` — Maintenance, Operations, Safety, HR, Accounting, Contractor all grant exactly `["create_requests"]`
 - **Related:** `TIER-2`, `FRIC-1`, `WF-5`, `WF-12` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `requiresEngineerApproval(requesterRole)` takes the requester's role as its **only** argument (`workflow.ts:37-43`) and is called as `requiresEngineerApproval(ticket.requesterRole)` (`:78`). Nothing about the work reaches the decision. Read with `roles-and-permissions/WF-5`: that one input is client-stamped.
 
 **Mechanism.** `isManagementRole` returns true for `Admin`, `Manager`,
 `Supervisor`. So the gate produces exactly this:
@@ -110,6 +111,7 @@ are needed.
   - `types/schema.ts:761` — `changeType?: "Major" | "Minor" | "Correction"` — **exists, but on `DocumentVersion`, not on the ticket**
   - `lib/docClass.ts:28` — `DocClass = "drawing" | "procedure"` — **exists, but on the document, not on the ticket**
 - **Related:** `TIER-1`, `TIER-3`, `GAP-101`
+- **Re-verified:** hardening pass — **SURVIVES**. `export type RequestType = string;` (`types/schema.ts:1019`) — no union, no enum, no CHECK — and a repo-wide search for `likeInKind`, `work_class` or `scopeTier` returns nothing. There is no field in which a like-in-kind declaration could be recorded, which is the mechanism `DEC-33`/`DEC-34` depend on.
 
 **Mechanism.** The ticket carries `request_type` — a free string an org
 configures as a dropdown (`app/(protected)/admin/requests/page.tsx:179-195`),

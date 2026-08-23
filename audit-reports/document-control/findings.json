@@ -470,7 +470,7 @@
         "lib/knowledgeAccess.ts:31-46"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "A Viewer in org A is denied read on a private cost model or a controlled drawing's native source (documentversions.sourcefilekey holds .xlsx natives, lib/revisions.ts:506,524). They POST {orgId: <their own org>, templateId: <any template of theirs>, sourceFileKey: \"orgs/<orgB>/documents/…/schedule.xlsx\"}. The route authorizes them against THEIR org, fetches org B's object, parses it and returns it",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"

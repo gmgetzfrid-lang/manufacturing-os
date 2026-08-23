@@ -170,13 +170,38 @@ more than silence.
 | **ID** | Stable handle, e.g. `SEC-3`. Never renumber. Cite it in commits and PRs. |
 | **Severity** | `CRITICAL` / `HIGH` / `MEDIUM` |
 | **Status** | `OPEN` / `IN_PROGRESS` / `RESOLVED` / `WONTFIX` / `INVALID` / `BLOCKED` |
-| **Verification** | `CONFIRMED` (code path traced) or `SUSPECTED` (mechanism real, consequence unobserved) |
+| **Verification** | `CONFIRMED` (code path traced) or `SUSPECTED` (mechanism real, consequence unobserved). This is the *finder's* assessment — see `verified_by` for who challenged it. |
+| **`verified_by`** | **How hard the claim was challenged, and by whom.** Index-only field; see the table below. |
 | **Locations** | `path:line` anchors. **Line numbers drift** — match on the quoted code, not the number. |
 | **Mechanism** | What the code actually does. |
 | **Failure scenario** | The concrete way it hurts someone. |
 | **Remediation** | **Illustrative only.** Not a patch, not a spec, not a decision. |
 | **Chain reaction** | What else is coupled to this. Read before touching shared code. |
 | **Done when** | Acceptance criteria. **This is the contract.** |
+
+### How much to trust a finding — `verified_by`
+
+`findings.json` carries a `verified_by` on every entry. **It is not the same as
+`Verification`.** `Verification` is what the finder concluded; `verified_by` is
+who, if anyone, tried to prove them wrong.
+
+| Value | What happened | How to treat it |
+|---|---|---|
+| `adversarial` | A second agent read the cited code specifically to refute the claim during the original run. Refuted findings were dropped; survivors may carry a `Verifier correction` that overrides the finder's severity or citations. | Strongest grade in the corpus. Still reproduce before fixing (`DEC-29`). |
+| `hardening-pass` | Re-read against source in the corpus hardening pass, with intent to refute. Carries a `Re-verified` line saying exactly what was checked. | Equivalent in rigour to `adversarial`, but by one reader rather than a separate agent. |
+| `author` | Checked only by whoever wrote it. No independent challenge, and **no record survives of what that author rejected.** | Reproduce before acting, and weight severity as the author's own estimate. |
+| `unverified` | From a completeness critic that ran *after* the verification stage. | Treat as `SUSPECTED` regardless of the stated `Verification`. |
+
+**Every `CRITICAL` in the corpus is `adversarial` or `hardening-pass`** — 116 of
+116. `author` and `unverified` appear only at `HIGH` and `MEDIUM`.
+
+Two `hardening-pass` entries name their own weakness in the `Re-verified` line:
+`identity-and-session/SESS-1` and `IDENT-1` were written and verified in the same
+session, so they are re-reads rather than independent challenges. That is stated
+on the findings themselves rather than left for you to discover.
+
+**When you sort a queue, sort by severity *and* `verified_by`.** A `HIGH` marked
+`adversarial` has survived something an `author`-marked `CRITICAL` has not.
 
 ### Before you change one line
 
