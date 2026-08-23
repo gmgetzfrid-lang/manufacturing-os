@@ -590,6 +590,12 @@ async function run(
     const n = cfg.dense.maxPoints;
     const xyz = new Float32Array(n * 3);
     const rgb = new Uint8Array(n * 3);
+    // Thinning must carry the normals with the points it keeps. PointCloud
+    // makes them optional, so dropping them here type-checks and silently
+    // costs the viewer every oriented splat — and this path is reached on
+    // exactly the devices that most need cheap rendering.
+    const src0 = points.normals;
+    const normals = src0 ? new Float32Array(n * 3) : undefined;
     for (let i = 0; i < n; i++) {
       const src = Math.floor(i * stride);
       xyz[i * 3] = points.xyz[src * 3];
@@ -598,8 +604,13 @@ async function run(
       rgb[i * 3] = points.rgb[src * 3];
       rgb[i * 3 + 1] = points.rgb[src * 3 + 1];
       rgb[i * 3 + 2] = points.rgb[src * 3 + 2];
+      if (normals && src0) {
+        normals[i * 3] = src0[src * 3];
+        normals[i * 3 + 1] = src0[src * 3 + 1];
+        normals[i * 3 + 2] = src0[src * 3 + 2];
+      }
     }
-    points = { xyz, rgb, count: n };
+    points = { xyz, rgb, normals, count: n };
   }
 
   const report: ReconReport = {

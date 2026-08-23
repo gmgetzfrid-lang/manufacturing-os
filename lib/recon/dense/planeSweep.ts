@@ -182,6 +182,8 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   var costLow   : f32 = 0.0;
   var costHigh  : f32 = 0.0;
   var prevCost  : f32 = 0.0;
+  var prevIdx   : i32 = -2;
+  var hasPrev   : bool = false;
   var awaitHigh : bool = false;
 
   for (var d = 0u; d < params.depthSamples; d = d + 1u) {
@@ -243,19 +245,28 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
     // favours the planes where the hardest sources happened to disappear.
     if (used < params.minSources) { continue; }
     let cost = costSum / f32(used);
+
+    // The neighbours the parabola needs must be the ADJACENT evaluated planes.
+    // Planes are skipped whenever a source falls behind the camera or the patch
+    // leaves the frame, so "the previous iteration" is not necessarily the
+    // previous plane, and before the first evaluated plane there is no previous
+    // cost at all — feeding the initial 0.0 in would look like a perfect
+    // correlation and drag the fit half a plane toward the far end.
     if (awaitHigh) {
-      costHigh = cost;
+      costHigh = select(bestCost, cost, i32(d) == bestIdx + 1);
       awaitHigh = false;
     }
     if (cost < bestCost) {
       bestCost = cost;
       bestDepth = depth;
       bestIdx = i32(d);
-      costLow = select(cost, prevCost, d > 0u);
+      costLow = select(cost, prevCost, hasPrev && prevIdx == i32(d) - 1);
       costHigh = cost;
       awaitHigh = true;
     }
     prevCost = cost;
+    prevIdx = i32(d);
+    hasPrev = true;
   }
 
   if (bestCost <= params.maxCost) {
@@ -265,7 +276,8 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
     // cost and its two neighbours recovers the minimum between the planes, in
     // the same inverse-depth space the planes are spaced in.
     let last = i32(params.depthSamples) - 1;
-    if (bestIdx > 0 && bestIdx < last) {
+    let bracketed = costLow > bestCost && costHigh > bestCost;
+    if (bestIdx > 0 && bestIdx < last && bracketed) {
       let denom = costLow - 2.0 * bestCost + costHigh;
       if (abs(denom) > 1e-9) {
         let shift = clamp(0.5 * (costLow - costHigh) / denom, -0.5, 0.5);
@@ -669,19 +681,24 @@ export class PointFuser {
     type Cell = ReturnType<PointFuser["bucketList"]>[number];
     const all = this.bucketList();
 
-    const survives = (c: Cell) =>
-      c.views.size >= minViews &&
-      // Views that agree on where a surface is but not on its colour did not
-      // see the same surface. This is the direct test for a stereo mismatch,
-      // and it is only meaningful once more than one view has landed here.
-      (c.views.size < 2 || this.colourSpread(c) <= this.colourTolerance);
+    // Views that agree on where a surface is but not on its colour did not see
+    // the same surface. This is the direct test for a stereo mismatch, and it
+    // is only meaningful once more than one view has landed in the cell.
+    const colourAgrees = (c: Cell) =>
+      c.views.size < 2 || this.colourSpread(c) <= this.colourTolerance;
 
-    let kept = all.filter(survives);
-    // If the consistency test was too strict for this capture, fall back rather
-    // than handing the viewer an empty scene.
-    if (kept.length < 20000 && minViews > 1) {
-      kept = all.filter((c) => c.views.size < 2 || this.colourSpread(c) <= this.colourTolerance * 1.6);
-      if (kept.length < 20000) kept = all;
+    let kept = all.filter((c) => c.views.size >= minViews && colourAgrees(c));
+
+    // A safety valve, not a way to switch the tests off. It used to be an
+    // absolute count, so any scene under 20k voxels fell straight through it to
+    // `kept = all` — which discarded the colour test too, leaving the mismatch
+    // rejection above completely inert on small captures.
+    //
+    // What can legitimately be too strict here is demanding several views agree
+    // on geometry: a surface only one camera ever saw is real, just unverified.
+    // Colour disagreement is never legitimate, so it is never relaxed.
+    if (minViews > 1 && kept.length < all.length * 0.15) {
+      kept = all.filter(colourAgrees);
     }
 
     const xyz = new Float32Array(kept.length * 3);
