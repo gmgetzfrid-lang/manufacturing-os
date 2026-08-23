@@ -38,8 +38,7 @@
       "locations": [
         "supabase/schema.sql:8-16",
         "supabase/schema.sql:33-49",
-        "app/(protected)/projects/[id]/page.tsx:870-872",
-        "supabase/schema.sql"
+        "app/(protected)/projects/[id]/page.tsx:870-872"
       ],
       "has_verifier_correction": false,
       "summary": "Your Microsoft sign-in resolves to uidB, distinct from the uidA your password created. An admin (possibly you) uses Team Management to add your email; the row lands on one of them — see IDENT-2 for why which one is not deterministic — as Admin. The other uid either has no row (you get the no-workspace hard stop) or has an older row at a lower role (you get that role). Same email, same person, same",
@@ -77,8 +76,7 @@
       "related": [],
       "locations": [
         "app/api/admin/create-user/route.ts:80-107",
-        "app/api/admin/create-user/route.ts:8-19",
-        "app/(protected)/projects/[id]/page.tsx:870-872"
+        "app/api/admin/create-user/route.ts:8-19"
       ],
       "has_verifier_correction": false,
       "summary": "You add yourself — or an admin re-adds you — as Admin. The lookup silently mis-reads, the fallback picks your password identity, and the Admin row lands there. You next sign in with Microsoft, which is your other identity, and the app resolves its membership: a stale Viewer row, or none. The Team Management screen shows you as Admin, because it is reading the row that was written. Both screens are",
@@ -135,9 +133,7 @@
       "locations": [
         "app/api/admin/create-user/route.ts:127-135",
         "app/(protected)/admin/users/page.tsx:133-137",
-        "lib/roleCapabilities.ts:1-15",
-        "lib/roleCapabilities.ts:76-83",
-        "supabase/schema.sql:1044,1052"
+        "lib/roleCapabilities.ts:1-15"
       ],
       "has_verifier_correction": false,
       "summary": "This is the configuration you described — one person holding both the drafting-manager hat and the QA/QC hat, which the additive model exists to support. An admin uses \"Add member\" to correct a display name or reactivate a suspended account, picks the role they think of that person by, and the second hat is deleted. The next drafting request routes past them because routerequests no longer resolve",
@@ -197,8 +193,7 @@
         "components/providers/RoleContext.tsx:44",
         "components/providers/RoleContext.tsx:130-140",
         "app/(protected)/profile/page.tsx:77",
-        "components/providers/RoleContext.tsx:260-280",
-        "lib/supabase.ts:39"
+        "components/providers/RoleContext.tsx:260-280"
       ],
       "has_verifier_correction": false,
       "summary": "You sign out of your Microsoft identity and sign in with your password identity on the same browser. The stale activeOrgId is still there and is consulted before your profile default. If your password identity holds a different membership set, the resolution starts from the wrong candidate and lands wherever ORGSEL-1 sends it.",
@@ -215,8 +210,7 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/api/auth/signup/route.ts:77-95",
-        "app/page.tsx:63-67"
+        "app/api/auth/signup/route.ts:77-95"
       ],
       "has_verifier_correction": false,
       "summary": "Someone signs in with Microsoft first — profile row upserted client-side by app/page.tsx:63-67, which may or may not have completed — then later starts a trial from the signup form with a differently-cased email. The guard misses, a second auth user is created, and the person now has the two identities that IDENT-1 describes, with the second one owning a brand-new org.",
@@ -274,8 +268,7 @@
         "app/page.tsx:147-150",
         "app/page.tsx:156-159",
         "app/page.tsx:177",
-        "components/providers/RoleContext.tsx:244-254",
-        "app/page.tsx:72-78"
+        "components/providers/RoleContext.tsx:244-254"
       ],
       "has_verifier_correction": false,
       "summary": "You open the app; the device prefers Microsoft; a silent sign-in redirects out and back; the login page's query cold-starts; you are routed to /dashboard; RoleProvider mounts and re-issues the query on a connection that has served exactly one request. Six seconds later the watchdog clears the spinner and you are looking at a Viewer dashboard. Your reasonable conclusion — \"this happens when I use t",

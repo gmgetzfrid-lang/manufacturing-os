@@ -63,8 +63,7 @@
         "app/api/intake/upload/route.ts:322-334",
         "lib/postPublish.ts:1-13,79-90",
         "lib/reviewControl.ts:490-509",
-        "app/api/intake/upload/route.ts:349-358",
-        "lib/impact.ts:186-193"
+        "app/api/intake/upload/route.ts:349-358"
       ],
       "has_verifier_correction": true,
       "summary": "A trusted vendor publishes Rev D of a controlled P&ID through their link. documentacknowledgments still records the crew as having read-and-understood Rev C, and no new ack roster opens; lib/impact.ts:186-193 will keep reporting pendingDistributionAcks against the old revision's roster. A pipefitter who acknowledged Rev C is never asked to acknowledge Rev D, holds a printed Rev C at the weld, and ",
@@ -191,8 +190,7 @@
         "app/api/intake/upload/route.ts:284-296",
         "lib/transitionIn.ts:211-217",
         "supabase/migrations/20260619_document_uniqueness_configurable.sql:39-46",
-        "lib/uniqueness.ts:22-42",
-        "lib/transitionIn.ts"
+        "lib/uniqueness.ts:22-42"
       ],
       "has_verifier_correction": true,
       "summary": "A contractor submits a sheet numbered D-25-1042 while the org's own D-25-1042 is live. The row inserts with uniquenesskey NULL, so the unique index does not see it. A controller adopts it into the same controlled library — possibly renumbering it, which still leaves the key NULL. The library now holds two non-superseded documents carrying D-25-1042 and the database will never object, because the o",
@@ -491,9 +489,7 @@
         "supabase/migrations/20261013_project_controls_program.sql:174-175",
         "supabase/migrations/20261013_project_controls_program.sql:193-194",
         "app/(protected)/projects/[id]/page.tsx:407",
-        "supabase/migrations/20261013_project_controls_program.sql:253-288",
-        "supabase/migrations/20260820_retention.sql",
-        "supabase/migrations/20260826_legal_hold_delete_guard.sql"
+        "supabase/migrations/20261013_project_controls_program.sql:253-288"
       ],
       "has_verifier_correction": true,
       "summary": "A project owner or any Admin/DocCtrl deletes a completed capital project to tidy the list, reading a confirmation that promises only the schedule will go. Gone in one statement: the completed PSSR with 120 items and their evidence citations, the turnover package with the QA/QC reviewer's name and date on each accepted NDE and MTR package, and the punch history. The PROJECTDELETED audit row says {n",
@@ -968,8 +964,7 @@
       "locations": [
         "components/projects/cost/QuotesPanel.tsx:536-548",
         "components/projects/cost/QuotesPanel.tsx:613-635",
-        "components/projects/IntakePanel.tsx:62-64,354-359",
-        "components/projects/QuotesPanel.tsx:546-548"
+        "components/projects/IntakePanel.tsx:62-64,354-359"
       ],
       "has_verifier_correction": true,
       "summary": "A buyer creates quote links for five bidders. The award goes out; the losing bidders' links stay live forever. Months later a bidder replays their link and submits a new 'quote' that appears in the project's bid tabulation with status: 'draft' → the portal shows it 'under review' — for an award already made. To stop it, the buyer must know to go to a different tab, where the link is presented as a",
@@ -1235,8 +1230,7 @@
         "lib/evidencePack.ts:146-162",
         "lib/evidencePack.ts:218-228",
         "lib/evidencePack.ts:230",
-        "app/(protected)/projects/[id]/page.tsx:340-348",
-        "lib/exportTables.ts"
+        "app/(protected)/projects/[id]/page.tsx:340-348"
       ],
       "has_verifier_correction": true,
       "summary": "An auditor asks for the compliance package on the Unit 300 repipe. The owner clicks \"Evidence pack\" and prints a PDF containing the team roster, the Gantt task list, the transmittal receipts, and a wall of audit JSON. The completed PSSR, the accepted turnover package with reviewer names and dates, and the closed punch list — the documents the auditor actually asked for — are not in it. There is no",
@@ -1277,8 +1271,7 @@
         "supabase/migrations/20261013_project_controls_program.sql:272-278",
         "supabase/migrations/20261013_project_controls_program.sql:250-260",
         "lib/checklists.ts:130-134",
-        "supabase/migrations/20261013_project_controls_program.sql:153-155",
-        "lib/exportTables.ts:104"
+        "supabase/migrations/20261013_project_controls_program.sql:153-155"
       ],
       "has_verifier_correction": true,
       "summary": "A project owner in workspace A inserts checklistitems rows against their own checklist while setting orgid to workspace B's id. The rows satisfy checklistitemswrite (they own the parent project) and thereafter satisfy checklistitemsmemberread for every active member of workspace B. Workspace B's users can read attacker-authored text — item wording, evidence labels, manual notes — attributed to the",

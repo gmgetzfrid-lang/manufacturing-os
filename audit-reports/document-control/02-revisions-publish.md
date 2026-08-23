@@ -282,7 +282,7 @@ lib/revisions.ts:83 — `if (err.code === "PGRST202" || err.code === "42883") re
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/effectiveDate.ts:91`, `lib/effectiveDate.ts:96-103`, `lib/effectiveDate.ts:106-112`, `lib/effectiveDate.ts:118-126`, `lib/effectiveDate.ts:131-138`, `app/api/verify/route.ts:93-94`, `lib/__tests__/effectiveDate.test.ts:5`
+- **Locations:** `lib/effectiveDate.ts:16`, `lib/effectiveDate.ts:23-24`, `lib/effectiveDate.ts:33-34`, `lib/effectiveDate.ts:45`, `lib/effectiveDate.ts:49`, `lib/effectiveDate.ts:62-63`, `app/api/verify/route.ts:93-94`, `lib/__tests__/effectiveDate.test.ts:5`
 
 **Mechanism.** Two different "today" definitions coexist. The badge path is LOCAL: `effectiveStatusFor` does `const today = new Date(); today.setHours(0, 0, 0, 0);` and parses the stored date as `new Date(\`${effectiveDate.slice(0,10)}T00:00:00\`)` — a bare datetime string, which JS parses in the **local** zone — then compares (lines 97-102). `daysUntilEffective` is identical (106-112). The persistence and notification paths are UTC: `const todayISO = () => new Date().toISOString().slice(0, 10);` (line 91), used by `applyEffectiveDate` as `const suppress = !eff || eff <= todayISO();` (line 120) and by `scanEffectiveDates` as `.lte("effective_date", todayISO())` (line 137). `/api/verify` uses the UTC form too (route.ts:94). When `suppress` is true, `applyEffectiveDate` pre-stamps `effective_notified_at: new Date().toISOString()` (line 124) — the watermark that permanently prevents `scanEffectiveDates` from ever announcing that revision, since the scan filters `.is("effective_notified_at", null)` (line 138).
 
@@ -406,7 +406,7 @@ lib/documentLifecycle/reverse.ts:117-118 — "// Un-supersede the source. Restor
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/revisions.ts:1146-1312`, `lib/revisions.ts:642-647`, `lib/reviewControl.ts:482-484`, `lib/effectiveDate.ts:118-126`, `lib/effectiveDate.ts:131-168`, `lib/docControlRegister.ts:186-187`
+- **Locations:** `lib/revisions.ts:1146-1312`, `lib/revisions.ts:642-647`, `lib/reviewControl.ts:482-484`, `lib/effectiveDate.ts:45`, `lib/effectiveDate.ts:62-63`, `lib/docControlRegister.ts:186-187`
 
 **Mechanism.** `documents.effective_date` and `documents.effective_notified_at` are denormalized copies kept in step by exactly one function, `applyEffectiveDate`. A repo-wide grep for `applyEffectiveDate` finds two call sites: `revisions.ts:646` (direct rev-up, non-branch only) and `reviewControl.ts:484` (finalize after review). `revertToVersion` — which changes the controlled revision exactly as those two do, and even runs the identical `runPostPublishSideEffects` pipeline afterwards (revisions.ts:1304-1309) — contains no such call, and its `revertPayload` (revisions.ts:1171-1184) has no `effective_date` field, so the new version row's effective date is NULL while the document's stays whatever the retired revision set.
 

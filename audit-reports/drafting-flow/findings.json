@@ -160,8 +160,7 @@
         "app/api/verify-ticket/route.ts:71-88",
         "app/api/verify-ticket/route.ts:100",
         "app/verify-ticket/[ticketId]/page.tsx:26",
-        "app/verify-ticket/[ticketId]/page.tsx:35-38",
-        "app/api/verify-ticket/route.ts:72-89"
+        "app/verify-ticket/[ticketId]/page.tsx:35-38"
       ],
       "has_verifier_correction": false,
       "summary": "A drafting request for a tie-in isometric reaches PENDINGIFC, Rev 1 is issued, and a stamped print with the QR goes to a contractor. Two weeks later the MOC is withdrawn and the request is CANCELED. The contractor's foreman, holding the print at the unit, scans the QR to do the right thing. He gets a full-screen green 'LATEST ISSUE — This copy is the latest issued revision of this deliverable.' No",
@@ -182,8 +181,7 @@
         "lib/ticketTransitions.ts:139",
         "lib/ticketTransitions.ts:144-148",
         "lib/projects.ts:826-841",
-        "app/api/verify-ticket/route.ts:51-56",
-        "supabase/schema.sql:1079-1081"
+        "app/api/verify-ticket/route.ts:51-56"
       ],
       "has_verifier_correction": false,
       "summary": "A drafter whose revision was rejected opens devtools (or any REST client with their own session token) and PATCHes the ticket row: history replaced with a fabricated 'Engineer approved final — issued Rev 2' entry naming a real engineer's email and role, status set to PENDINGIFC, deliverablerev set to '2'. The ticket page renders the forged history as the record of approval. Worse, /api/verify-tick",
@@ -319,8 +317,7 @@
         "supabase/schema.sql:405",
         "app/api/tickets/workflow-action/route.ts:15-26",
         "app/(protected)/requests/page.tsx:620",
-        "app/(protected)/requests/[id]/page.tsx:1328",
-        "supabase/schema.sql:1079-1081"
+        "app/(protected)/requests/[id]/page.tsx:1328"
       ],
       "has_verifier_correction": false,
       "summary": "A contractor with a Viewer seat opens devtools on the requests page, copies the Supabase URL and anon key already present in the bundle, and issues PATCH /rest/v1/tickets?id=eq.<uuid> with {\"status\":\"PENDINGIFC\",\"deliverablerev\":\"2\"}. The ticket now shows as approved for construction. No auditlogs row exists (that insert only happens inside the route), no notification fires, and the ticket page re",
@@ -345,8 +342,7 @@
         "lib/workflow.ts:37-43",
         "lib/workflow.ts:78",
         "lib/workflow.ts:200",
-        "lib/roleCapabilities.ts:63-69",
-        "app/(protected)/requests/new/page.tsx:309"
+        "lib/roleCapabilities.ts:63-69"
       ],
       "has_verifier_correction": false,
       "summary": "A Manager files a request for a new 6\" process line tie-in. It reaches PENDINGREVIEW. requiresEngineerApproval(\"Manager\") is false, so their branch offers \"Approve (Issue for Construction)\" — one button, no second person, no engineering calculation, no code check. The drawing is issued for construction. The audit trail shows a legitimate, permitted approval.",
@@ -371,8 +367,7 @@
         "lib/workflow.ts:185",
         "lib/notifications.ts:283-287",
         "types/schema.ts:761",
-        "lib/docClass.ts:28",
-        "app/(protected)/admin/requests/page.tsx:179-195"
+        "lib/docClass.ts:28"
       ],
       "has_verifier_correction": false,
       "summary": "A drafting supervisor triaging the queue sees \"Revision — Unit 200 — replace relief valve\" and has no way to record whether the replacement is identical-for-identical or a resize. The ticket carries the same metadata either way, routes identically, and reaches the same reviewer set. The distinction survives only in the description prose and in whatever the supervisor remembers.",
@@ -565,8 +560,7 @@
         "lib/notifications.ts:147",
         "lib/notify/dispatch.ts:105",
         "app/(protected)/requests/new/page.tsx:342",
-        "supabase/migrations/20260605_rls_policies_new_tables.sql:112",
-        "lib/notifications.ts:59-61"
+        "supabase/migrations/20260605_rls_policies_new_tables.sql:112"
       ],
       "has_verifier_correction": false,
       "summary": "A DraftingSupervisor turns off 'Assignments' (or Email notifications entirely) on /settings/notifications because she works her queue through the portal. She still receives an email for every new drafting request filed by anyone in the org, forever, because the requester's browser cannot read her preference row. She filters the sender to spam — and the one email class that DOES honor her preferenc",
@@ -867,8 +861,7 @@
         "app/(protected)/requests/new/page.tsx:469",
         "app/(protected)/requests/new/page.tsx:272-280",
         "components/documents/CheckInPanel.tsx:236-267",
-        "lib/transitionIn.ts:304-331",
-        "app/(protected)/requests/new/page.tsx:139-150"
+        "lib/transitionIn.ts:304-331"
       ],
       "has_verifier_correction": false,
       "summary": "A contractor or a new hire opens the request form, does not know the unit code for the area they are standing in, guesses, and creates a ticket that the supervisor's unit-filtered queue view will not match — or gives up and calls someone.",
@@ -939,8 +932,7 @@
         "lib/workflow.ts:301-316",
         "lib/workflow.ts:319-324",
         "lib/capabilityPolicy.ts:73-77",
-        "app/(protected)/requests/[id]/page.tsx:1605",
-        "lib/ticketAttention.ts:60"
+        "app/(protected)/requests/[id]/page.tsx:1605"
       ],
       "has_verifier_correction": false,
       "summary": "A document controller's badge shows a number. They open each ticket. Every one says \"View Only — No Actions Available.\" The badge never clears, because it is computed from role + status rather than from getActions. They learn to ignore the badge — and the badge is also how real work reaches them.",
@@ -1065,8 +1057,7 @@
         "lib/docClass.ts:49",
         "lib/docClass.ts:85",
         "components/documents/ReviewGateSection.tsx:52",
-        "lib/reviewControl.ts:545",
-        "supabase/schema.sql:94"
+        "lib/reviewControl.ts:545"
       ],
       "has_verifier_correction": false,
       "summary": "DocCtrl opens the \"P&IDs\" folder, sets change-control to require with the process-safety engineer as reviewer, and reasonably expects everything beneath it to inherit. Drawings actually live in \"P&IDs / Unit 400 / Current\". For those documents doc.collectionId is the \"Current\" folder, which has no reviewcontrol, so resolution falls straight through to the library — which is unset — and returns {mo",
@@ -1387,8 +1378,7 @@
       "locations": [
         "lib/workflow.ts:80-342",
         "lib/ticketTransitions.ts:140-142",
-        "lib/reviewControl.ts:196-238",
-        "lib/reviewControl.ts"
+        "lib/reviewControl.ts:196-238"
       ],
       "has_verifier_correction": false,
       "summary": "The moment the review model in TIER-1 through TIER-4 is implemented on the current serial machine, a new-design B31.3 package becomes: triage → drafter → requester review → engineering review → QA/QC review → code review → IFC → acknowledge. Eight hops, six people, seven waits. People will route around it — which is the outcome this whole audit exists to prevent.",
@@ -2053,8 +2043,7 @@
       "locations": [
         "components/documents/RevUpModal.tsx:279",
         "components/documents/RevUpModal.tsx:293",
-        "lib/revisions.ts:546",
-        "lib/documentLifecycle/merge.ts:170"
+        "lib/revisions.ts:546"
       ],
       "has_verifier_correction": false,
       "summary": "Two engineers work the same P&ID. The second to publish hits the conflict screen and, rather than reconciling, types a branch reason and publishes. In a library configured mode: \"require\", that revision is created without any reviewer being notified. It lands in the DocCtrl open-items queue as debt, but it is a real Issued-labelled version row with a file that can be fetched, and nothing on it rec",
@@ -2694,8 +2683,7 @@
         "lib/ticketRouting.ts:90",
         "lib/notify/recipients.ts:48",
         "supabase/migrations/20260722_member_roles_collection.sql:12",
-        "app/(protected)/admin/users/page.tsx:136",
-        "lib/ticketRouting.ts"
+        "app/(protected)/admin/users/page.tsx:136"
       ],
       "has_verifier_correction": true,
       "summary": "A workspace names its Maintenance Manager as the drafting supervisor by stacking roles: roles = ['Manager','DraftingSupervisor'], headline role = 'Manager'. From then on every new drafting request — portal, check-in, and intake-collision — resolves byRole(\"DraftingSupervisor\") = [], falls through to return admins, and blasts the whole Admin list while the person who actually runs the assignment qu",
@@ -2800,8 +2788,7 @@
         "app/(protected)/requests/[id]/page.tsx:920",
         "app/api/intake/upload/route.ts:182-190",
         "app/api/tickets/comment/route.ts:205-216",
-        "app/api/tickets/workflow-action/route.ts:155-191",
-        "requests/page.tsx:620,639"
+        "app/api/tickets/workflow-action/route.ts:155-191"
       ],
       "has_verifier_correction": true,
       "summary": "A reviewer clicks \"Approve (Issue for Construction)\". The route reads the row, computes attachments with the staged→submitted flips plus the redline, and writes it. Two seconds earlier the drafter had started a file upload; the upload's R2 put finishes just after, and handleFileUpload writes attachments: [...snapshot, newFile] and history: [...snapshot, uploadEntry] from state captured BEFORE the ",

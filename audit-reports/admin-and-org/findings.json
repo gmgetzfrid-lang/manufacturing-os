@@ -202,8 +202,7 @@
         "app/api/admin/create-user/route.ts:127-170",
         "app/(protected)/admin/settings/page.tsx:103-118",
         "app/(protected)/admin/libraries/page.tsx:110-129",
-        "lib/orgBranding.ts:32-38",
-        "lib/teams.ts:66-118"
+        "lib/orgBranding.ts:32-38"
       ],
       "has_verifier_correction": false,
       "summary": "A Manager promotes a contractor to Engineer-3 on Tuesday, the contractor approves a piping revision on Wednesday, and the Manager removes the role on Thursday. The audit log contains the approval, attributed to \"Engineer-3\", and contains nothing about the grant or the revocation. An investigator reconstructing \"was this person authorised to approve at the time?\" finds the answer nowhere in the sys",
@@ -508,10 +507,7 @@
         "app/signup/page.tsx:83-100",
         "app/signup/page.tsx:236-241",
         "app/api/auth/request-access/route.ts:1-64",
-        "supabase/migrations/20260819_orphan_tables_backfill.sql:15-30",
-        "lib/schemaExpectations.ts:31",
-        "lib/exportTables.ts:91",
-        "lib/dataRestore.ts:315"
+        "supabase/migrations/20260819_orphan_tables_backfill.sql:15-30"
       ],
       "has_verifier_correction": true,
       "summary": "A new process engineer at a customer plant types their org name, sends an access request, and sees \"Request Sent — your organization's admin will receive your request\". No admin ever sees it: nothing reads the table. Meanwhile an attacker signs up a throwaway trial org (making themselves Admin), then GET /rest/v1/accessrequests and receives every access request ever filed against every customer or",
@@ -600,8 +596,7 @@
         "components/permissions/CapabilityPolicyEditor.tsx:145-160",
         "types/schema.ts:5-46",
         "lib/capabilityPolicy.ts:57",
-        "app/(protected)/admin/users/page.tsx:56-62",
-        "types/schema.ts"
+        "app/(protected)/admin/users/page.tsx:56-62"
       ],
       "has_verifier_correction": true,
       "summary": "A plant narrows hold authority — holds.open / holds.release default to [\"\"], and a controller decides only certain roles should be able to freeze a drawing. Operations and Safety are exactly the two groups who need to place a do-not-advance hold when something is found in the field, and neither has a column in the grid. The controller cannot grant it to them through the console at all; the only ro",
@@ -1088,8 +1083,7 @@
         "lib/accessRecert.ts:59-78",
         "lib/ownership.ts:44-57",
         "lib/acl.ts:26-34",
-        "supabase/schema.sql:33-48",
-        "lib/projects.ts:530"
+        "supabase/schema.sql:33-48"
       ],
       "has_verifier_correction": true,
       "summary": "An engineer with an explicit per-user ALLOW grant on the Isometrics library and a seat on the Piping team leaves. The Admin removes them. Six months later the annual access recertification runs: the reviewer opens the access list and sees a row reading 8f2c1d64-… with actions read, download and no name — the one entry that most needs a name is the only one without one. They attest anyway (the UI o",
@@ -1187,9 +1181,7 @@
       "locations": [
         "supabase/migrations/20261010_signup_rate_limit.sql:34-40",
         "app/api/auth/signup/route.ts:31-34",
-        "app/api/cron/maintenance/route.ts:286-291",
-        "lib/schemaExpectations.ts:102",
-        "lib/exportTables.ts:179"
+        "app/api/cron/maintenance/route.ts:286-291"
       ],
       "has_verifier_correction": true,
       "summary": "The table grows monotonically with one row per signup attempt forever — including every bot probe, which is exactly the traffic the limiter is designed to attract. The index signupattemptsiptimeidx (ip, createdat DESC) keeps the hot count query fast, so nothing degrades visibly; the failure is that the table is on the export contract (lib/exportTables.ts:179) and the restore contract, so every dat",

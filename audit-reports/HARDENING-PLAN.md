@@ -14,12 +14,12 @@ Tracked against `../META-AUDIT.md`.
 
 ## Phase A — mechanical integrity
 
-- [ ] **MA-3** `LIFE-1`…`LIFE-13` defined in both `intelligence` and `roles-and-permissions`. Rename one series, update inbound references.
-- [ ] **MA-4** Add the four missing cross-links: `AUTHZ-3`↔`WF-5`, `DIST-7`↔`SHR-5`.
-- [ ] **MA-5** `SCALE-1` / `SCALE-3` are referenced but undefined. Resolve or remove.
-- [ ] **MA-7** Distinguish deliberately-out-of-repo citations (`node_modules/`, build artifacts) from wrong ones so a validator can pass them.
-- [ ] **MA-6a** Correct `XEDGE-3` and `XEDGE-14` citations (both cite past end-of-file).
-- [ ] **MA-1** Apply verifier-corrected locations into `findings.json` for the five findings whose citations were corrected in prose.
+- [x] **MA-3** `LIFE-1`…`LIFE-13` defined in both `intelligence` and `roles-and-permissions`. Rename one series, update inbound references.
+- [x] **MA-4** Add the four missing cross-links: `AUTHZ-3`↔`WF-5`, `DIST-7`↔`SHR-5`.
+- [x] **MA-5** `SCALE-1` / `SCALE-3` are referenced but undefined. Resolve or remove.
+- [x] **MA-7** Distinguish deliberately-out-of-repo citations (`node_modules/`, build artifacts) from wrong ones so a validator can pass them.
+- [x] **MA-6a** Correct `XEDGE-3` and `XEDGE-14` citations (both cite past end-of-file).
+- [x] **MA-1** Apply verifier-corrected locations into `findings.json` for the five findings whose citations were corrected in prose.
 
 ## Phase B — the load-bearing work: verify the 52 unchallenged CRITICALs
 

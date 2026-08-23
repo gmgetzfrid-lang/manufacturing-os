@@ -26,9 +26,9 @@ What survives a backup, and what a delete leaves behind.
 ---
 
 
-<a id="life-1"></a>
+<a id="ilife-1"></a>
 
-## LIFE-1 · Orphan sweeper does not know about cost_documents.file_url — every vendor quote and cost document is deletable 7 days after upload
+## ILIFE-1 · Orphan sweeper does not know about cost_documents.file_url — every vendor quote and cost document is deletable 7 days after upload
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -55,9 +55,9 @@ lib/storageOrphans.ts:41-44 `// Each source: [label, query, extractor]. Tables a
 
 ---
 
-<a id="life-2"></a>
+<a id="ilife-2"></a>
 
-## LIFE-2 · Restore FK order puts process_flows and entity_mentions BEFORE knowledge_documents — both foreign-key to it, so the intelligence layer fails to restore
+## ILIFE-2 · Restore FK order puts process_flows and entity_mentions BEFORE knowledge_documents — both foreign-key to it, so the intelligence layer fails to restore
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -86,9 +86,9 @@ lib/dataRestore.ts:292-298 `"asset_aliases", "proposed_links", "link_rules", "an
 
 ---
 
-<a id="life-3"></a>
+<a id="ilife-3"></a>
 
-## LIFE-3 · The only full backup an admin can download cannot be read by the restore page — two incompatible ZIP layouts
+## ILIFE-3 · The only full backup an admin can download cannot be read by the restore page — two incompatible ZIP layouts
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -118,9 +118,9 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 
 ---
 
-<a id="life-4"></a>
+<a id="ilife-4"></a>
 
-## LIFE-4 · The restore path the UI actually uses never aborts on a failed parent table — the abort logic lives in a dead route
+## ILIFE-4 · The restore path the UI actually uses never aborts on a failed parent table — the abort logic lives in a dead route
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -149,9 +149,9 @@ app/(protected)/admin/restore/page.tsx:200-209 `const body = await res.json().ca
 
 ---
 
-<a id="life-5"></a>
+<a id="ilife-5"></a>
 
-## LIFE-5 · knowledge_documents.source_document_id has no foreign key — deleting a controlled document leaves its whole AI shadow alive
+## ILIFE-5 · knowledge_documents.source_document_id has no foreign key — deleting a controlled document leaves its whole AI shadow alive
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -178,9 +178,9 @@ supabase/migrations/20260917_knowledge_sources.sql:51-56 `ALTER TABLE knowledge_
 
 ---
 
-<a id="life-6"></a>
+<a id="ilife-6"></a>
 
-## LIFE-6 · Every paginated dump uses .range() with no .order() — the backup and the orphan reference set can silently skip rows
+## ILIFE-6 · Every paginated dump uses .range() with no .order() — the backup and the orphan reference set can silently skip rows
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -209,9 +209,9 @@ lib/dataExport.ts:299-311 `while (true) { let q = sb.from(table).select("*").ran
 
 ---
 
-<a id="life-7"></a>
+<a id="ilife-7"></a>
 
-## LIFE-7 · Manager and DocCtrl can export the entire organization database, contradicting dataExport's own admin-only contract and the Admin-only restore
+## ILIFE-7 · Manager and DocCtrl can export the entire organization database, contradicting dataExport's own admin-only contract and the Admin-only restore
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -240,9 +240,9 @@ app/api/data-export/structured/route.ts:55-57 `if (!['Admin', 'Manager', 'DocCtr
 
 ---
 
-<a id="life-8"></a>
+<a id="ilife-8"></a>
 
-## LIFE-8 · Orphan scan and delete are bucket-global with no org scoping — one tenant's DocCtrl reclaims every tenant's storage
+## ILIFE-8 · Orphan scan and delete are bucket-global with no org scoping — one tenant's DocCtrl reclaims every tenant's storage
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -271,9 +271,9 @@ app/api/admin/orphans/route.ts:42-46 `const actor = await authorizeOrgRole(req, 
 
 ---
 
-<a id="life-9"></a>
+<a id="ilife-9"></a>
 
-## LIFE-9 · Site Codebook config, library numbering and recently-viewed have no `id` column but restore upserts them ON CONFLICT (id)
+## ILIFE-9 · Site Codebook config, library numbering and recently-viewed have no `id` column but restore upserts them ON CONFLICT (id)
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -302,9 +302,9 @@ lib/dataRestore.ts:336-348 `export const CONFLICT_TARGETS: Record<string, string
 
 ---
 
-<a id="life-10"></a>
+<a id="ilife-10"></a>
 
-## LIFE-10 · Tables with their own unique constraints are upserted ON CONFLICT (id), so a merge restore errors instead of deduping
+## ILIFE-10 · Tables with their own unique constraints are upserted ON CONFLICT (id), so a merge restore errors instead of deduping
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -331,9 +331,9 @@ lib/dataRestore.ts:345-348 `/** The ON CONFLICT target to use when additively re
 
 ---
 
-<a id="life-11"></a>
+<a id="ilife-11"></a>
 
-## LIFE-11 · The export inlines every 1024-dimension chunk embedding into one JSON response with no exclusion or streaming
+## ILIFE-11 · The export inlines every 1024-dimension chunk embedding into one JSON response with no exclusion or streaming
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -362,9 +362,9 @@ lib/dataExport.ts:300 `let q = sb.from(table).select("*").range(from, from + pag
 
 ---
 
-<a id="life-12"></a>
+<a id="ilife-12"></a>
 
-## LIFE-12 · schemaExpectations does not cover the newest intelligence tables, contains a phantom, and has no tripwire test — schema-health reports on a list nobody validates
+## ILIFE-12 · schemaExpectations does not cover the newest intelligence tables, contains a phantom, and has no tripwire test — schema-health reports on a list nobody validates
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
@@ -393,9 +393,9 @@ lib/schemaExpectations.ts:10-13 `// Generated from supabase/migrations (CREATE T
 
 ---
 
-<a id="life-13"></a>
+<a id="ilife-13"></a>
 
-## LIFE-13 · syncAllKnowledgeSources takes an unordered slice of 25 libraries platform-wide — libraries past the cut never sync, ever
+## ILIFE-13 · syncAllKnowledgeSources takes an unordered slice of 25 libraries platform-wide — libraries past the cut never sync, ever
 
 - **Severity:** MEDIUM
 - **Status:** OPEN

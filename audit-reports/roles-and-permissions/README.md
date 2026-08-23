@@ -179,7 +179,7 @@ ticket→publish will silently disable reviewer sign-off on every as-built
 design that would carry the whole app. It currently covers requests, holds,
 checkouts and two admin pages. The entire Project Controls program was built on
 hardcoded checks with no capability ids at all. Every new surface has so far
-re-invented its own authority instead of registering a capability (`SCALE-1`).
+re-invented its own authority instead of registering a capability (`SURF-9`).
 
 ---
 

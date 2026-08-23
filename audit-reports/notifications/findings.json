@@ -219,9 +219,7 @@
         "lib/notify/recipients.ts:48-62",
         "app/api/admin/restore/begin/route.ts:68",
         "app/api/admin/restore/apply/route.ts:64",
-        "supabase/schema.sql:42",
-        "lib/notify/recipients.ts:47-62",
-        "lib/notify/recipients.ts:22-45"
+        "supabase/schema.sql:42"
       ],
       "has_verifier_correction": false,
       "summary": "An engineer is suspended pending an investigation (status → 'suspended'). They remain a watcher on 40 drawings and 6 tickets. Over the following weeks every rev-up, every hold, every branch on those documents resolves them through resolveFollowers, inserts a bell row, finds their still-present email in orgmembers, and mails them the document number and the hold reason at their personal-forwarded a",
@@ -553,8 +551,7 @@
         "hooks/useTicketNotifications.ts:71-103",
         "hooks/useTicketNotifications.ts:100-102",
         "components/navigation/Sidebar.tsx:229-235",
-        "app/api/cron/maintenance/route.ts:361-374",
-        "lib/reviewCycles.ts"
+        "app/api/cron/maintenance/route.ts:361-374"
       ],
       "has_verifier_correction": true,
       "summary": "A controlled P&ID hits its periodic-review date. lib/reviewCycles.ts writes a reviewdue row and the cron emails a digest. The bell's total count goes up by one, but sectionCounts.documents does not move, so the Documents nav row shows no badge. The engineer sees the bell number rise, opens Documents looking for what changed, and finds nothing highlighted anywhere - exactly the owner's \"the trail g",
@@ -619,8 +616,7 @@
         "components/cockpit/AttentionFeed.tsx:36-53",
         "components/cockpit/AttentionFeed.tsx:64-75",
         "components/providers/NotificationListener.tsx:90",
-        "app/api/cron/maintenance/route.ts:361-374",
-        "lib/notificationKinds.ts"
+        "app/api/cron/maintenance/route.ts:361-374"
       ],
       "has_verifier_correction": true,
       "summary": "A markuprequest row: sectionForKind returns 'documents' so it badges the Documents nav row, but groupOf('markuprequest') hits KINDGROUPS \"requests\" (k.includes(\"markup\")) so inside the Notification Center it files under \"Requests\" - the badge points one way, the feed files it the other. A reviewrequested row: KINDICON has no entry so the bell draws a generic Bell; attentionVisual matches k.include",
@@ -1473,8 +1469,7 @@
         "components/navigation/Sidebar.tsx:229",
         "components/navigation/Sidebar.tsx:231",
         "components/navigation/Sidebar.tsx:235",
-        "lib/inAppNotifications.ts:10-58",
-        "lib/inAppNotifications.ts"
+        "lib/inAppNotifications.ts:10-58"
       ],
       "has_verifier_correction": true,
       "summary": "A controlled P&ID is issued and ackrequested rows are written to fourteen operators (lib/acknowledgments.ts:375). Each operator's bell count goes up by one and a 6-second toast appears. The toast expires. Nothing in the sidebar changes — Documents, Projects and Drafting Requests all still read zero, because ackrequested tallies into other. The operator remembers 'something popped up' and has no ba",
@@ -1496,8 +1491,7 @@
         "supabase/migrations/20260804_push_subscriptions.sql",
         "lib/schemaExpectations.ts:99",
         "components/pwa/ServiceWorkerManager.tsx:30-50",
-        "app/layout.tsx:93",
-        "public/sw.js"
+        "app/layout.tsx:93"
       ],
       "has_verifier_correction": false,
       "summary": "The owner's complaint #2 — 'the app needs real OS-level notification presence' — is one client-side wiring step and one server-side sender away, not a from-scratch build. But as shipped, a user who grants the site notification permission in browser settings will still never receive a push, because the browser has no subscription to deliver to, and the app never asks.",
@@ -1600,8 +1594,7 @@
         "lib/tableViews.ts:259-264",
         "supabase/schema.sql:1139-1147",
         "supabase/migrations/20260727_checkout_activity_fix.sql:50-54",
-        "supabase/migrations/20260729_checkout_episodes.sql:97-98",
-        "lib/tableViews.ts:261"
+        "supabase/migrations/20260729_checkout_episodes.sql:97-98"
       ],
       "has_verifier_correction": true,
       "summary": "Two planners work the same project schedule. ScheduleTab's comment promises 'another planner's edits stream in (debounced) so two people can work the same schedule without silently overwriting each other's view' — but if milestones is not published, planner B never sees planner A's changes and both keep editing a stale board, which is precisely the silent-overwrite the comment claims to prevent. L",
@@ -1989,8 +1982,7 @@
         "supabase/migrations/20260804_push_subscriptions.sql:1-36",
         "supabase/migrations/20260723_notifications_unify.sql:85-87",
         "lib/notify/dispatch.ts:20",
-        "components/pwa/ServiceWorkerManager.tsx:30-51",
-        "public/sw.js"
+        "components/pwa/ServiceWorkerManager.tsx:30-51"
       ],
       "has_verifier_correction": true,
       "summary": "A user closes the tab. Nothing can reach them - no OS banner, no badge, no sound. The pushenabled toggle they'd expect isn't even rendered on /settings/notifications. The one place the app claims otherwise is the sw.js comment \"fires whether the app is open or closed\", which is currently false.",

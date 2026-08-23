@@ -141,8 +141,7 @@
         "app/api/graph/ask/route.ts:21-23",
         "supabase/migrations/20260917_knowledge_sources.sql:69-82",
         "supabase/migrations/20260929_mention_engine.sql:112-134",
-        "app/api/knowledge/ask/route.ts:157-186",
-        "lib/supabaseAdmin.ts"
+        "app/api/knowledge/ask/route.ts:157-186"
       ],
       "has_verifier_correction": false,
       "summary": "A Viewer-role member with no ACL grant on the restricted Legal/HSE library opens /graph, types \"settlement terms\" and presses Enter. graphask matches chunks whose parent knowledgedocument has a non-null sourcedocumentid pointing at a controlled document they cannot open. The answer panel (app/(protected)/graph/page.tsx:796-812) renders the document name, the page number and a 42-word tsheadline ex",
@@ -250,8 +249,7 @@
         "app/(protected)/knowledge/[id]/page.tsx:1410-1415",
         "app/(protected)/knowledge/[id]/page.tsx:1690-1720",
         "app/api/knowledge/ask/route.ts:1632-1650",
-        "app/api/knowledge/ask/route.ts:1739-1744",
-        "lib/knowledge.ts"
+        "app/api/knowledge/ask/route.ts:1739-1744"
       ],
       "has_verifier_correction": true,
       "summary": "An Admin asks \"what is the design pressure on V-201?\"; the answer cites the confidential vendor data sheet with a 1600-character verbatim quote. Tomorrow a Viewer who is denied read on that document types the same question. Before any AI call, searchAskHistory(activeOrgId, q, 3) fires (page.tsx:1411-1412), the memory card appears, they click \"Show this answer — no AI call\", and they get the Admin'",
@@ -317,12 +315,7 @@
         "lib/equipmentBridgeServer.ts:260-276",
         "supabase/migrations/20260609_phase1_normalization.sql:80-120",
         "app/(protected)/assets/[tag]/page.tsx:52-57",
-        "lib/orgGraph.ts:118-119,262",
-        "lib/documentLifecycle/common.ts:179",
-        "lib/documentLifecycle/merge.ts:150",
-        "lib/impact.ts:68-79",
-        "lib/revisionImpact.ts:63-67",
-        "lib/linkProposerServer.ts:233-237"
+        "lib/orgGraph.ts:118-119,262"
       ],
       "has_verifier_correction": true,
       "summary": "An org configures the bridge on its P&ID library, sweeps 400 sheets, and 3,000 tags are applied. The tags render as chips on each document row (lib/documentTags.ts:collectTagGroups reads metadata). Then: (a) /assets/E-22 — the \"digital twin\" hub — runs .contains(\"assettags\", [{ tag }]) and shows \"0 documents\"; the QR sticker on the vessel leads to an empty page. (b) The unit hub's file list (getDo",
@@ -856,9 +849,7 @@
         "lib/orgGraph.ts:190-203",
         "lib/assets.ts:196-213",
         "supabase/migrations/20260928_site_codebook.sql:78",
-        "supabase/migrations/20260606_operational_entity_graph.sql:113",
-        "lib/assets.ts:197",
-        "lib/assets.ts:206"
+        "supabase/migrations/20260606_operational_entity_graph.sql:113"
       ],
       "has_verifier_correction": true,
       "summary": "An org runs the Site Codebook (assets get unitcode=\"20\") and files drawings with documents.unitid pointing at a units row also named Crude Unit. On /graph the map draws TWO violet unit nodes both labelled Crude Unit: one (cbunit:20) surrounded by 400 pieces of equipment and zero documents, one (unit:<uuid>) surrounded by 60 documents and zero equipment. There is no path between them at any depth, ",
@@ -1070,8 +1061,7 @@
         "supabase/migrations/20261015_connection_skills.sql:62-70",
         "app/(protected)/intelligence/skills/page.tsx:68-79",
         "app/(protected)/intelligence/skills/page.tsx:162-173",
-        "components/intelligence/ConnectionSkillsPanel.tsx:50-58",
-        "app/(protected)/layout.tsx"
+        "components/intelligence/ConnectionSkillsPanel.tsx:50-58"
       ],
       "has_verifier_correction": true,
       "summary": "A brand-new workspace. A field engineer with role Viewer (or Contractor, Manager, Supervisor) types /intelligence/skills into the URL bar — the route has no role guard, app/(protected)/layout.tsx gates only on membership. The six built-in Reasoning Skills and the built-in Connection Skills seed with createdby = that person's uid. From then on, every card shows them a live On/Off toggle. They switc",
@@ -1188,6 +1178,117 @@
       "summary": "A member posts {orgid, fromkind:'asset', fromref:<V-101 id>, tokind:'asset', toref:<E-201 id>, label:'crude feed', status:'confirmed', origin:'ai', sourcedocumentid:<a real PFD>, sourcepage:3, decidedbyname:'J. Smith (DocCtrl)', createdby:<self>} directly to PostgREST. The graph's Process lens now draws a flow that no drawing shows, carrying a citation to a real PFD page and a controller's name as",
       "area": "intelligence",
       "report": "audit-reports/intelligence/21-edges-and-invariants.md"
+    },
+    {
+      "id": "ILIFE-1",
+      "title": "Orphan sweeper does not know about cost_documents.file_url — every vendor quote and cost document is deletable 7 days after upload",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/storageOrphans.ts:44",
+        "lib/storageOrphans.ts:76",
+        "lib/costDocs.ts:105",
+        "lib/costDocs.ts:116",
+        "app/api/intake/upload/route.ts:70",
+        "app/api/intake/upload/route.ts:82",
+        "app/api/admin/orphans/route.ts:46"
+      ],
+      "has_verifier_correction": false,
+      "summary": "A vendor submits a quote PDF through the intake portal in January. In February an admin opens the storage page and clicks reclaim orphans. deleteOrphans() re-scans (storageOrphans.ts:156), finds orgs/<org>/project-costs/<project>/quote-….pdf unreferenced and older than MINAGEDAYS=7, and issues DeleteObjectsCommand. The costdocuments row survives with a fileurl pointing at nothing; the bid tabulati",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-2",
+      "title": "Restore FK order puts process_flows and entity_mentions BEFORE knowledge_documents — both foreign-key to it, so the intelligence layer fails to restore",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/dataRestore.ts:292",
+        "lib/dataRestore.ts:294",
+        "lib/dataRestore.ts:298",
+        "lib/dataRestore.ts:327",
+        "supabase/migrations/20261017_process_flows.sql:27",
+        "supabase/migrations/20260929_mention_engine.sql:33",
+        "app/api/flows/read/route.ts:160"
+      ],
+      "has_verifier_correction": true,
+      "summary": "An org that has run the mention indexer (Pillar B backlinks — every /assets/[tag] hub depends on it) or accepted any AI-read PFD flow restores a backup. orderTablesForRestore hands processflows/entitymentions to the server before knowledgedocuments exists in the target. Postgres raises 23503 foreignkeyviolation on the upsert; the code falls back to a plain insert (apply-table/route.ts:79) which ra",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-3",
+      "title": "The only full backup an admin can download cannot be read by the restore page — two incompatible ZIP layouts",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/clientBackup.ts:124",
+        "app/(protected)/admin/restore/page.tsx:113",
+        "app/(protected)/admin/restore/page.tsx:117",
+        "lib/exportRunner.ts:134",
+        "lib/exportRunner.ts:159",
+        "app/(protected)/admin/data-export/page.tsx:140"
+      ],
+      "has_verifier_correction": true,
+      "summary": "An admin loses the workspace. They open /admin/data-export, click \"Download Full ZIP with binaries\" (the one advertised as JSON + every PDF/DWG, SHA-256 verified), get backup-<org>-<date>-part1.zip … partN.zip. They open /admin/restore — whose own header says \"Drop a backup — the Full ZIP (records + binaries) or the JSON export\" (restore/page.tsx:5) — drop part1.zip, and get \"No manifest.json — th",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-4",
+      "title": "The restore path the UI actually uses never aborts on a failed parent table — the abort logic lives in a dead route",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/(protected)/admin/restore/page.tsx:190",
+        "app/(protected)/admin/restore/page.tsx:202",
+        "app/(protected)/admin/restore/page.tsx:207",
+        "app/api/admin/restore/apply/route.ts:115",
+        "app/api/admin/restore/apply-table/route.ts:80"
+      ],
+      "has_verifier_correction": true,
+      "summary": "processflows fails on its FK (previous finding). The client records it in failedTables and proceeds to entitymentions (fails too), then to every remaining table. Restore \"completes\" with a done phase and a totalInserted count. Children whose parents never landed are inserted wherever the FK is nullable or absent — e.g. knowledgedocuments.sourcedocumentid has no FK at all (see the dangling-mirror f",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-5",
+      "title": "knowledge_documents.source_document_id has no foreign key — deleting a controlled document leaves its whole AI shadow alive",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20260917_knowledge_sources.sql:54",
+        "supabase/migrations/20260911_knowledge_ai.sql:81",
+        "supabase/migrations/20260921_drawing_entities.sql:24",
+        "lib/knowledge.ts:467",
+        "app/(protected)/documents/[libraryId]/page.tsx:1011",
+        "lib/knowledgeSourceSync.ts:286"
+      ],
+      "has_verifier_correction": false,
+      "summary": "A superseded P&ID is deleted from doc control for a PSM reason. Its knowledge mirror, chunks, embeddings and extracted page entities survive. The library keeps answering questions from it with citations; entitymentions rows keep the asset↔document backlink alive on /assets/[tag] pointing at a knowledge document whose controlled source no longer exists; the Bridge's gate if (!kdoc?.sourcedocumentid",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
     },
     {
       "id": "ING-1",
@@ -1352,8 +1453,7 @@
         "app/(protected)/admin/assets/page.tsx:56",
         "lib/roleCapabilities.ts:48-61",
         "supabase/migrations/20260807_link_proposals.sql:119-123",
-        "supabase/migrations/20260929_mention_engine.sql:28",
-        "lib/assets.ts"
+        "supabase/migrations/20260929_mention_engine.sql:28"
       ],
       "has_verifier_correction": true,
       "summary": "An Accounting member (ROLECAPABILITIES grants them only createrequests) issues DELETE /rest/v1/assets?id=eq.<uuid> with their own session token. RLS permits it. The tag disappears from the registry, and the cascade takes its entire photo history, its file links, its human aliases, and every mention row that proved which drawings reference it. No auditlogs entry is written (deleteAsset calls no aud",
@@ -1420,117 +1520,6 @@
       "summary": "A document is restricted by an allow-list rule on its folder (read granted to team \"Process Engineering\", visibility left normal). A Viewer opens the knowledge library, gets the filekey from the org-member-readable knowledgedocuments row (or from a leaked history citation's documentId), and requests /api/storage/download-url?path=<filekey>. The document is normal-visibility so the private/hidden b",
       "area": "intelligence",
       "report": "audit-reports/intelligence/05-knowledge-acl.md"
-    },
-    {
-      "id": "LIFE-1",
-      "title": "Orphan sweeper does not know about cost_documents.file_url — every vendor quote and cost document is deletable 7 days after upload",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/storageOrphans.ts:44",
-        "lib/storageOrphans.ts:76",
-        "lib/costDocs.ts:105",
-        "lib/costDocs.ts:116",
-        "app/api/intake/upload/route.ts:70",
-        "app/api/intake/upload/route.ts:82",
-        "app/api/admin/orphans/route.ts:46"
-      ],
-      "has_verifier_correction": false,
-      "summary": "A vendor submits a quote PDF through the intake portal in January. In February an admin opens the storage page and clicks reclaim orphans. deleteOrphans() re-scans (storageOrphans.ts:156), finds orgs/<org>/project-costs/<project>/quote-….pdf unreferenced and older than MINAGEDAYS=7, and issues DeleteObjectsCommand. The costdocuments row survives with a fileurl pointing at nothing; the bid tabulati",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-2",
-      "title": "Restore FK order puts process_flows and entity_mentions BEFORE knowledge_documents — both foreign-key to it, so the intelligence layer fails to restore",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/dataRestore.ts:292",
-        "lib/dataRestore.ts:294",
-        "lib/dataRestore.ts:298",
-        "lib/dataRestore.ts:327",
-        "supabase/migrations/20261017_process_flows.sql:27",
-        "supabase/migrations/20260929_mention_engine.sql:33",
-        "app/api/flows/read/route.ts:160"
-      ],
-      "has_verifier_correction": true,
-      "summary": "An org that has run the mention indexer (Pillar B backlinks — every /assets/[tag] hub depends on it) or accepted any AI-read PFD flow restores a backup. orderTablesForRestore hands processflows/entitymentions to the server before knowledgedocuments exists in the target. Postgres raises 23503 foreignkeyviolation on the upsert; the code falls back to a plain insert (apply-table/route.ts:79) which ra",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-3",
-      "title": "The only full backup an admin can download cannot be read by the restore page — two incompatible ZIP layouts",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/clientBackup.ts:124",
-        "app/(protected)/admin/restore/page.tsx:113",
-        "app/(protected)/admin/restore/page.tsx:117",
-        "lib/exportRunner.ts:134",
-        "lib/exportRunner.ts:159",
-        "app/(protected)/admin/data-export/page.tsx:140"
-      ],
-      "has_verifier_correction": true,
-      "summary": "An admin loses the workspace. They open /admin/data-export, click \"Download Full ZIP with binaries\" (the one advertised as JSON + every PDF/DWG, SHA-256 verified), get backup-<org>-<date>-part1.zip … partN.zip. They open /admin/restore — whose own header says \"Drop a backup — the Full ZIP (records + binaries) or the JSON export\" (restore/page.tsx:5) — drop part1.zip, and get \"No manifest.json — th",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-4",
-      "title": "The restore path the UI actually uses never aborts on a failed parent table — the abort logic lives in a dead route",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "app/(protected)/admin/restore/page.tsx:190",
-        "app/(protected)/admin/restore/page.tsx:202",
-        "app/(protected)/admin/restore/page.tsx:207",
-        "app/api/admin/restore/apply/route.ts:115",
-        "app/api/admin/restore/apply-table/route.ts:80"
-      ],
-      "has_verifier_correction": true,
-      "summary": "processflows fails on its FK (previous finding). The client records it in failedTables and proceeds to entitymentions (fails too), then to every remaining table. Restore \"completes\" with a done phase and a totalInserted count. Children whose parents never landed are inserted wherever the FK is nullable or absent — e.g. knowledgedocuments.sourcedocumentid has no FK at all (see the dangling-mirror f",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-5",
-      "title": "knowledge_documents.source_document_id has no foreign key — deleting a controlled document leaves its whole AI shadow alive",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "supabase/migrations/20260917_knowledge_sources.sql:54",
-        "supabase/migrations/20260911_knowledge_ai.sql:81",
-        "supabase/migrations/20260921_drawing_entities.sql:24",
-        "lib/knowledge.ts:467",
-        "app/(protected)/documents/[libraryId]/page.tsx:1011",
-        "lib/knowledgeSourceSync.ts:286"
-      ],
-      "has_verifier_correction": false,
-      "summary": "A superseded P&ID is deleted from doc control for a PSM reason. Its knowledge mirror, chunks, embeddings and extracted page entities survive. The library keeps answering questions from it with citations; entitymentions rows keep the asset↔document backlink alive on /assets/[tag] pointing at a knowledge document whose controlled source no longer exists; the Bridge's gate if (!kdoc?.sourcedocumentid",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
     },
     {
       "id": "LNK-1",
@@ -1766,8 +1755,7 @@
         "app/api/knowledge/embed/route.ts:139-149",
         "app/api/knowledge/embed/route.ts:178-183",
         "lib/knowledgeEmbedDrain.ts:88-95",
-        "lib/knowledgeEmbedDrain.ts:123-128",
-        "lib/ai/governedCall.ts:87"
+        "lib/knowledgeEmbedDrain.ts:123-128"
       ],
       "has_verifier_correction": true,
       "summary": "A DocCtrl user with a $10 cap presses Rebuild index on a 250,000-passage library. Each pass calls getMonthUsage, which returns only their chat-ask spend (say $0.40), so the gate at embed/route.ts:143 never trips. The drain then continues the same build on the daily maintenance cron and on every page-load nudge, re-checking the same blind number each time. The Voyage/OpenAI invoice arrives with hun",
@@ -1830,9 +1818,7 @@
         "lib/assets.ts:170-202,206-215",
         "lib/documentLifecycle/common.ts:181-182",
         "lib/orgGraph.ts:253-261,321-325",
-        "lib/search.ts:176-184,540-542",
-        "lib/search.ts:180-184",
-        "lib/search.ts:540-542"
+        "lib/search.ts:176-184,540-542"
       ],
       "has_verifier_correction": true,
       "summary": "An admin builds out Plant → Crude Unit → Feed System in /admin/scope, then goes to the org graph expecting to pivot on Crude Unit. orgGraph.ts:259 if (d.unitid) addEdge(...) never fires and :256 if (a.unitid) addEdge(...) never fires, so every unit:<uuid> and plant:<uuid> node ends at degree 0 and is deleted by the prune at orgGraph.ts:321-325. The units they just created are invisible. Separately",
@@ -2733,9 +2719,7 @@
         "supabase/migrations/20261007_line_traces.sql:19",
         "supabase/migrations/20261007_retire_line_traces.sql:9",
         "supabase/migrations/20261009_trace_method.sql:16-21",
-        "lib/exportTables.ts:176-177",
-        "lib/pipeTrace.ts",
-        "lib/drawingTrace.ts"
+        "lib/exportTables.ts:176-177"
       ],
       "has_verifier_correction": true,
       "summary": "Anyone provisioning a new environment (a fresh Supabase project, a restore, a self-host) applies the migrations in order and gets a hard error at 20261009. Because the drawing features degrade silently on missing tables (the 424 'needs migration 20260921' paths), the operator's instinct is to skip the failing file and continue — which works, but leaves no signal that the ledger is inconsistent, an",
@@ -3021,9 +3005,7 @@
         "lib/orchestrator/tools.ts:287-312",
         "lib/pidTrace.ts:105-216",
         "lib/orgGraph.ts:286-289",
-        "app/(protected)/setup/page.tsx:94",
-        "lib/impact.ts",
-        "lib/revisionImpact.ts"
+        "app/(protected)/setup/page.tsx:94"
       ],
       "has_verifier_correction": true,
       "summary": "An org confirms 200 directional flows off its PFD book — real, human-verified topology. A user then asks the assistant \"what's between P-101 and E-204?\" The orchestrator answers from page co-occurrence, which for two tags on the same crowded P&ID sheet asserts a connection that may not exist, and for two tags one sheet apart asserts none even though a confirmed flow row says otherwise. The 200 con",
@@ -3934,6 +3916,176 @@
       "report": "audit-reports/intelligence/21-edges-and-invariants.md"
     },
     {
+      "id": "ILIFE-6",
+      "title": "Every paginated dump uses .range() with no .order() — the backup and the orphan reference set can silently skip rows",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "SUSPECTED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/dataExport.ts:299",
+        "lib/dataExport.ts:300",
+        "lib/storageOrphans.ts:97",
+        "lib/storageOrphans.ts:99"
+      ],
+      "has_verifier_correction": true,
+      "summary": "An export runs while the embed drain is writing knowledgechunks.embedding (both ride the same maintenance cron — cron/maintenance/route.ts:293 drainEmbedBacklog with a 100s budget). The concurrent UPDATEs move rows; page 3 of the dump skips 40 chunks. The manifest still reports complete: true because complete is computed from failedTables.length === 0 (dataExport.ts:248) — a skipped row is not an ",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-7",
+      "title": "Manager and DocCtrl can export the entire organization database, contradicting dataExport's own admin-only contract and the Admin-only restore",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/data-export/structured/route.ts:55",
+        "lib/dataExport.ts:18",
+        "app/api/admin/restore/apply-table/route.ts:21",
+        "app/api/admin/restore/begin/route.ts:24",
+        "lib/exportTables.ts:15"
+      ],
+      "has_verifier_correction": true,
+      "summary": "A Manager (or any DocCtrl, including a contractor-facing coordinator) clicks Download JSON on /admin/data-export and receives, in one file, every row of auditlogs, downloadaudits, esignatures, documentacknowledgments, accessrecertificationevents, aikeyagreements and aiusageevents, plus 24h presigned R2 URLs for every binary in the workspace — bypassing every per-document ACL, library scope and aie",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-8",
+      "title": "Orphan scan and delete are bucket-global with no org scoping — one tenant's DocCtrl reclaims every tenant's storage",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/admin/orphans/route.ts:23",
+        "app/api/admin/orphans/route.ts:42",
+        "lib/storageOrphans.ts:33",
+        "lib/storageOrphans.ts:99",
+        "lib/storageOrphans.ts:126",
+        "lib/storageOrphans.ts:156"
+      ],
+      "has_verifier_correction": true,
+      "summary": "Org A's DocCtrl clicks reclaim orphans. Every unreferenced object in the shared R2 bucket is deleted, including org B's and org C's — under keys orgs/<other-org-uuid>/…. Coupled with the costdocuments gap above, org A's DocCtrl permanently deletes every other tenant's vendor quotes and cost-document PDFs. The audit row is written to org A's auditlogs only (orphans/route.ts:50-54 orgid: orgId), so ",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-9",
+      "title": "Site Codebook config, library numbering and recently-viewed have no `id` column but restore upserts them ON CONFLICT (id)",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/dataRestore.ts:336",
+        "lib/dataRestore.ts:346",
+        "app/api/admin/restore/apply-table/route.ts:77",
+        "supabase/migrations/20260928_site_codebook.sql:38",
+        "supabase/migrations/20260806_intelligence_layer.sql:106",
+        "supabase/migrations/20260806_intelligence_layer.sql:121"
+      ],
+      "has_verifier_correction": true,
+      "summary": "An admin restores into a workspace that already has a Site Codebook (the common case: re-running a restore, or merging a backup into a live workspace). The upsert errors on the missing id column, the plain-insert fallback hits the existing codebookconfig row's orgid primary key (23505), and apply-table returns 500. codebookentries — the vocabulary — restores fine, but codebookconfig — the drawing-",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-10",
+      "title": "Tables with their own unique constraints are upserted ON CONFLICT (id), so a merge restore errors instead of deduping",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/dataRestore.ts:346",
+        "supabase/migrations/20261017_process_flows.sql:36",
+        "supabase/migrations/20260929_mention_engine.sql:60",
+        "supabase/migrations/20260807_link_proposals.sql:70",
+        "app/api/admin/restore/apply-table/route.ts:77"
+      ],
+      "has_verifier_correction": false,
+      "summary": "An admin restores a backup into a workspace that is not empty — the documented use case (\"Existing data is kept — this is additive\", restore/page.tsx:162). The target has since re-run the mention indexer, so entitymentions already holds a row for (asset, knowledgedoc, page) with a different id. The restore's row collides on entitymentionsuniqueidx, apply-table returns 500, and the mentions table i",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-11",
+      "title": "The export inlines every 1024-dimension chunk embedding into one JSON response with no exclusion or streaming",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "SUSPECTED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/dataExport.ts:300",
+        "lib/exportTables.ts:139",
+        "supabase/migrations/20260930_semantic_layer.sql:49",
+        "app/api/data-export/structured/route.ts:69",
+        "lib/exportRunner.ts:213"
+      ],
+      "has_verifier_correction": true,
+      "summary": "An org indexes a few standards and a P&ID set — tens of thousands of chunks. The export accumulates hundreds of megabytes of vector text in the function's heap, then JSON.stringify doubles it, then the browser holds the parsed envelope AND re-stringifies it into the zip (clientBackup.ts:124). The backup either OOMs the serverless function (maxDuration is raised to 300 at structured/route.ts:9 but ",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-12",
+      "title": "schemaExpectations does not cover the newest intelligence tables, contains a phantom, and has no tripwire test — schema-health reports on a list nobody validates",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/schemaExpectations.ts:1",
+        "lib/schemaExpectations.ts:29",
+        "lib/schemaExpectations.ts:104",
+        "app/api/admin/schema-health/route.ts:45",
+        "app/api/admin/schema-health/route.ts:78",
+        "lib/processFlows.ts:44",
+        "lib/linkRules.ts:48"
+      ],
+      "has_verifier_correction": true,
+      "summary": "Migrations are applied by hand in the Supabase SQL editor (the file's own header says so). An operator pastes through 20261013 and stops. /admin/schema-health probes 88 tables, all present except the phantom statements, so healthy is false and migrationsToRun always contains 20260819orphantablesbackfill.sql — a permanent false alarm that trains the admin to ignore the panel. Meanwhile processflows",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-13",
+      "title": "syncAllKnowledgeSources takes an unordered slice of 25 libraries platform-wide — libraries past the cut never sync, ever",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/knowledgeSourceSync.ts:299",
+        "lib/knowledgeSourceSync.ts:303",
+        "lib/knowledgeSourceSync.ts:309",
+        "app/api/cron/maintenance/route.ts:245"
+      ],
+      "has_verifier_correction": true,
+      "summary": "A deployment reaches 30 knowledge libraries with sources. Libraries in positions 26+ are never reconciled: newly filed controlled documents never appear in them, rev-ups never flip their mirrors to 'stale' so answers keep citing a superseded revision, and — the lifecycle half — the REMOVE pass at knowledgeSourceSync.ts:286-292 (for (const [dcDocId, row] of existingByDcDoc) { if (wanted.has(dcDocId",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
       "id": "ING-5",
       "title": "'anchor' is a fifth entity kind written on every page, but ENTITY_KINDS documents itself as complete and omits it — and the guard test exempts the writer",
       "severity": "MEDIUM",
@@ -3947,8 +4099,7 @@
         "lib/knowledgeEntityKinds.ts:25-33",
         "lib/__tests__/entityKindGuard.test.ts:26-33",
         "lib/knowledgeIngest.ts:417-425",
-        "app/api/knowledge/ask/route.ts:1296-1299",
-        "lib/knowledgeIngest.ts"
+        "app/api/knowledge/ask/route.ts:1296-1299"
       ],
       "has_verifier_correction": true,
       "summary": "A maintainer adds a sixth kind (say 'note' or 'linelabel'), consults ENTITYKINDS to see what exists, adds it to both arrays, and ships. The next bulk reader written against TAGENTITYKINDS now pulls anchor-adjacent volume it never accounted for — or, more likely, someone writes a new kind the way anchor was written (straight into the insert, nowhere else) and the guard test passes because the write",
@@ -4362,176 +4513,6 @@
       "summary": "A restore or bulk import writes documents with visibility='private' and acl NULL (the drawer is not involved). Those documents are mirrored by a linked source, indexed, and then retrieved and quoted for every org member, because knowledge's fallback only excludes 'hidden'. The document screens hide them; the AI answers from them.",
       "area": "intelligence",
       "report": "audit-reports/intelligence/05-knowledge-acl.md"
-    },
-    {
-      "id": "LIFE-6",
-      "title": "Every paginated dump uses .range() with no .order() — the backup and the orphan reference set can silently skip rows",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "SUSPECTED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/dataExport.ts:299",
-        "lib/dataExport.ts:300",
-        "lib/storageOrphans.ts:97",
-        "lib/storageOrphans.ts:99"
-      ],
-      "has_verifier_correction": true,
-      "summary": "An export runs while the embed drain is writing knowledgechunks.embedding (both ride the same maintenance cron — cron/maintenance/route.ts:293 drainEmbedBacklog with a 100s budget). The concurrent UPDATEs move rows; page 3 of the dump skips 40 chunks. The manifest still reports complete: true because complete is computed from failedTables.length === 0 (dataExport.ts:248) — a skipped row is not an ",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-7",
-      "title": "Manager and DocCtrl can export the entire organization database, contradicting dataExport's own admin-only contract and the Admin-only restore",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "app/api/data-export/structured/route.ts:55",
-        "lib/dataExport.ts:18",
-        "app/api/admin/restore/apply-table/route.ts:21",
-        "app/api/admin/restore/begin/route.ts:24",
-        "lib/exportTables.ts:15"
-      ],
-      "has_verifier_correction": true,
-      "summary": "A Manager (or any DocCtrl, including a contractor-facing coordinator) clicks Download JSON on /admin/data-export and receives, in one file, every row of auditlogs, downloadaudits, esignatures, documentacknowledgments, accessrecertificationevents, aikeyagreements and aiusageevents, plus 24h presigned R2 URLs for every binary in the workspace — bypassing every per-document ACL, library scope and aie",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-8",
-      "title": "Orphan scan and delete are bucket-global with no org scoping — one tenant's DocCtrl reclaims every tenant's storage",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "app/api/admin/orphans/route.ts:23",
-        "app/api/admin/orphans/route.ts:42",
-        "lib/storageOrphans.ts:33",
-        "lib/storageOrphans.ts:99",
-        "lib/storageOrphans.ts:126",
-        "lib/storageOrphans.ts:156"
-      ],
-      "has_verifier_correction": true,
-      "summary": "Org A's DocCtrl clicks reclaim orphans. Every unreferenced object in the shared R2 bucket is deleted, including org B's and org C's — under keys orgs/<other-org-uuid>/…. Coupled with the costdocuments gap above, org A's DocCtrl permanently deletes every other tenant's vendor quotes and cost-document PDFs. The audit row is written to org A's auditlogs only (orphans/route.ts:50-54 orgid: orgId), so ",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-9",
-      "title": "Site Codebook config, library numbering and recently-viewed have no `id` column but restore upserts them ON CONFLICT (id)",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/dataRestore.ts:336",
-        "lib/dataRestore.ts:346",
-        "app/api/admin/restore/apply-table/route.ts:77",
-        "supabase/migrations/20260928_site_codebook.sql:38",
-        "supabase/migrations/20260806_intelligence_layer.sql:106",
-        "supabase/migrations/20260806_intelligence_layer.sql:121"
-      ],
-      "has_verifier_correction": true,
-      "summary": "An admin restores into a workspace that already has a Site Codebook (the common case: re-running a restore, or merging a backup into a live workspace). The upsert errors on the missing id column, the plain-insert fallback hits the existing codebookconfig row's orgid primary key (23505), and apply-table returns 500. codebookentries — the vocabulary — restores fine, but codebookconfig — the drawing-",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-10",
-      "title": "Tables with their own unique constraints are upserted ON CONFLICT (id), so a merge restore errors instead of deduping",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/dataRestore.ts:346",
-        "supabase/migrations/20261017_process_flows.sql:36",
-        "supabase/migrations/20260929_mention_engine.sql:60",
-        "supabase/migrations/20260807_link_proposals.sql:70",
-        "app/api/admin/restore/apply-table/route.ts:77"
-      ],
-      "has_verifier_correction": false,
-      "summary": "An admin restores a backup into a workspace that is not empty — the documented use case (\"Existing data is kept — this is additive\", restore/page.tsx:162). The target has since re-run the mention indexer, so entitymentions already holds a row for (asset, knowledgedoc, page) with a different id. The restore's row collides on entitymentionsuniqueidx, apply-table returns 500, and the mentions table i",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-11",
-      "title": "The export inlines every 1024-dimension chunk embedding into one JSON response with no exclusion or streaming",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "SUSPECTED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/dataExport.ts:300",
-        "lib/exportTables.ts:139",
-        "supabase/migrations/20260930_semantic_layer.sql:49",
-        "app/api/data-export/structured/route.ts:69",
-        "lib/exportRunner.ts:213"
-      ],
-      "has_verifier_correction": true,
-      "summary": "An org indexes a few standards and a P&ID set — tens of thousands of chunks. The export accumulates hundreds of megabytes of vector text in the function's heap, then JSON.stringify doubles it, then the browser holds the parsed envelope AND re-stringifies it into the zip (clientBackup.ts:124). The backup either OOMs the serverless function (maxDuration is raised to 300 at structured/route.ts:9 but ",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-12",
-      "title": "schemaExpectations does not cover the newest intelligence tables, contains a phantom, and has no tripwire test — schema-health reports on a list nobody validates",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/schemaExpectations.ts:1",
-        "lib/schemaExpectations.ts:29",
-        "lib/schemaExpectations.ts:104",
-        "app/api/admin/schema-health/route.ts:45",
-        "app/api/admin/schema-health/route.ts:78",
-        "lib/processFlows.ts:44",
-        "lib/linkRules.ts:48"
-      ],
-      "has_verifier_correction": true,
-      "summary": "Migrations are applied by hand in the Supabase SQL editor (the file's own header says so). An operator pastes through 20261013 and stops. /admin/schema-health probes 88 tables, all present except the phantom statements, so healthy is false and migrationsToRun always contains 20260819orphantablesbackfill.sql — a permanent false alarm that trains the admin to ignore the panel. Meanwhile processflows",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
-    },
-    {
-      "id": "LIFE-13",
-      "title": "syncAllKnowledgeSources takes an unordered slice of 25 libraries platform-wide — libraries past the cut never sync, ever",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "verification": "CONFIRMED",
-      "verification_note": null,
-      "blast_radius": null,
-      "related": [],
-      "locations": [
-        "lib/knowledgeSourceSync.ts:299",
-        "lib/knowledgeSourceSync.ts:303",
-        "lib/knowledgeSourceSync.ts:309",
-        "app/api/cron/maintenance/route.ts:245"
-      ],
-      "has_verifier_correction": true,
-      "summary": "A deployment reaches 30 knowledge libraries with sources. Libraries in positions 26+ are never reconciled: newly filed controlled documents never appear in them, rev-ups never flip their mirrors to 'stale' so answers keep citing a superseded revision, and — the lifecycle half — the REMOVE pass at knowledgeSourceSync.ts:286-292 (for (const [dcDocId, row] of existingByDcDoc) { if (wanted.has(dcDocId",
-      "area": "intelligence",
-      "report": "audit-reports/intelligence/18-lifecycle.md"
     },
     {
       "id": "LNK-5",
@@ -5367,10 +5348,7 @@
         "lib/impact.ts:111-118",
         "lib/transitionIn.ts:321-322",
         "app/(protected)/requests/new/page.tsx:290-297",
-        "app/api/intake/resolve/route.ts:151-154",
-        "lib/transitionIn.ts:322",
-        "app/(protected)/requests/new/page.tsx:291-296",
-        "components/documents/CheckInPanel.tsx:262"
+        "app/api/intake/resolve/route.ts:151-154"
       ],
       "has_verifier_correction": true,
       "summary": "On a site with a few thousand transmittals, opening the inspector's \"Which transmittals carried this document?\" panel (components/documents/InspectorPanel.tsx:1033-1041) full-scans the table; the same happens for the where-used open-tickets slice in lib/impact.ts. And any future consumer that reads sourcedocument.number gets undefined for tickets raised from the request form or from check-in, beca",
@@ -5392,8 +5370,7 @@
         "app/(protected)/documents/[libraryId]/page.tsx:1893",
         "lib/reviewControl.ts:55-61",
         "components/documents/RevUpModal.tsx:210",
-        "lib/documentLifecycle/setRevUp.ts:83",
-        "lib/reviewControl.ts"
+        "lib/documentLifecycle/setRevUp.ts:83"
       ],
       "has_verifier_correction": true,
       "summary": "An org sets a library's ReviewControl mode to require. types/schema.ts:189-190 promises \"a rev that came from a drafting ticket always skips the gate.\" A drafter completes a ticket, the deliverable is published as a new revision — and it is routed into the pre-publish reviewer queue anyway, because (a) nothing ever stamped relatedticketid on the version and (b) neither caller would read it if some",

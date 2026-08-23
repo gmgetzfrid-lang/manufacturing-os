@@ -157,6 +157,7 @@ InspectorPanel.tsx:575-580 `<button onClick={() => setShareOpen(true)} title="Ge
 <a id="shr-5"></a>
 
 ## SHR-5 · Every external share download writes ZERO rows to download_audits — the insert names a `source` column that does not exist, and the failure is doubly swallowed
+- **Also surfaced independently as** [`DIST-7`](../document-control/05-distribution.md#dist-7) — two areas found this separately. Fix once. **DIST-7's pass rated this CONFIRMED** on the same evidence; treat the `SUSPECTED` above as superseded.
 
 - **Severity:** HIGH
 - **Status:** OPEN
@@ -288,7 +289,7 @@ file/route.ts:109-117 — the StampOptions object contains no sourceBytes key. s
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `public/sw.js:196-213`, `public/sw.js:113-118`, `app/api/share/file/route.ts:145-151`, `app/layout.tsx:103`, `components/pwa/ServiceWorkerManager.tsx:30-33`
+- **Locations:** `public/sw.js:196-213`, `public/sw.js:113-118`, `app/api/share/file/route.ts:145-151`, `app/layout.tsx:93`, `components/pwa/ServiceWorkerManager.tsx:30-33`
 
 **Mechanism.** ServiceWorkerManager is mounted in the ROOT layout (app/layout.tsx:103 `<ServiceWorkerManager />`), not the (protected) layout, so it registers /sw.js for every visitor to /share/[token] — including outsiders with no account. The page fetches the file with `fetch(data.fileUrl)` (share/[token]/page.tsx:67), a same-origin non-navigate GET to /api/share/file. sw.js routes it: not cross-origin (line 118 guard passes), no _rsc header (line 145-152), not mode 'navigate', and /api/share/file matches neither the /_next/static prefix nor the static-extension regex at line 172-175 — so it falls through to the final 'Other same-origin GETs → network-first with cache fallback' handler at lines 196-213, which calls `cachePut(RUNTIME_CACHE, request, res)` on every successful response. cachePut (lines 113-118) gates only on `response.ok` and `response.type === "opaque"`; it never inspects Cache-Control. The route sets `"Cache-Control": "no-store"` at file/route.ts:149 specifically to prevent this, and the Cache API ignores it. The identical path caches /api/share/resolve's JSON. Both entries survive until VERSION is bumped (sw.js:36), because activate only deletes caches not starting with the current VERSION (lines 54-64).
 

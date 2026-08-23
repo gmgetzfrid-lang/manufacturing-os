@@ -455,8 +455,7 @@
         "app/offline/page.tsx:14-18",
         "public/sw.js:15-17",
         "public/sw.js:125",
-        "app/(protected)/layout.tsx:1-26",
-        "app/(protected)/layout.tsx:1"
+        "app/(protected)/layout.tsx:1-26"
       ],
       "has_verifier_correction": true,
       "summary": "A technician loses signal mid-inspection. The amber pill appears and says the app is showing cached data, so he trusts what is on screen and keeps working from it. In reality every panel is empty or erroring, and the shell above them is whatever React rendered before the queries failed — and if he navigates or reloads he lands on the membership-failure screen. The pill has converted \"this app has ",
@@ -624,8 +623,7 @@
       "locations": [
         "public/sw.js:33-39",
         "public/sw.js:52-65",
-        "components/pwa/ServiceWorkerManager.tsx:36-46",
-        "public/pdf.worker.min.mjs"
+        "components/pwa/ServiceWorkerManager.tsx:36-46"
       ],
       "has_verifier_correction": true,
       "summary": "A release ships the correct supersede logic and a corrected verify verdict. Every field device keeps answering from mfgos-v5-runtime whenever it is offline, and no device shows an update prompt, because sw.js has not changed since v5. The team's stated escape hatch is intact but nobody pulls it, and there is nothing that would tell them to.",
@@ -667,8 +665,7 @@
         "app/api/data-export/structured/route.ts:17",
         "app/api/admin/shed/route.ts:204",
         "app/api/admin/ticket-shed/route.ts:256",
-        "app/api/version/route.ts:20",
-        "app/api/data-export/run/route.ts"
+        "app/api/version/route.ts:20"
       ],
       "has_verifier_correction": true,
       "summary": "An engineer shares a P&ID with an outside contractor. The contractor opens the link on a tablet and downloads the stamped copy. /api/share/file responds no-store — but the service worker has already forked a clone into mfgos-v5-runtime. The PDF now lives on that tablet's disk under an origin the contractor's IT department does not know is storing plant drawings, survives closing the browser, and i",
@@ -857,7 +854,7 @@
         "public/sw.js:196-213",
         "public/sw.js:113-118",
         "app/api/share/file/route.ts:145-151",
-        "app/layout.tsx:103",
+        "app/layout.tsx:93",
         "components/pwa/ServiceWorkerManager.tsx:30-33"
       ],
       "has_verifier_correction": true,

@@ -55,7 +55,7 @@ code path branches on it.
   - `app/(protected)/admin/libraries/LibraryWizard.tsx:91-93` — the only non-label use: preset groupings
   - `components/permissions/RoleTreeSelector.tsx:17-22` — the same
   - `components/permissions/PermissionDrawer.tsx:66-71` — the ACL subject picker
-- **Related:** `DOCACL-1`, `SCALE-3`
+- **Related:** `DOCACL-1`, `ROLE-3`
 
 **Mechanism.** These six grant exactly what `Requester` grants and appear in no
 capability-policy default. An exhaustive search for authority branches on them

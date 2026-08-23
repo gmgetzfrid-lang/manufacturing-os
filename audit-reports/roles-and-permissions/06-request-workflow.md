@@ -237,6 +237,7 @@ appears exactly when it becomes possible to honour. Build spec: `GAP-2`.
 ---
 
 ## WF-5 · `requester_role` is stamped by the client at INSERT and is the sole input to the engineer gate
+- **Also surfaced independently as** [`AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3) — two areas found this separately. Fix once.
 
 - **Severity:** CRITICAL
 - **Status:** OPEN

@@ -98,7 +98,16 @@ Executed under this repo's Node (v22.22.2): `new Response("x", { headers: { "con
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/restore/apply-table/route.ts:24,38-43,74-89`, `lib/exportTables.ts:53,67,130`, `lib/dataRestore.ts:86-93,249-251`, `app/api/admin/restore/apply/route.ts:214-224`, `app/api/admin/restore/begin/route.ts:78-85`
+- **Locations:** `app/api/admin/restore/apply-table/route.ts:24,38-43,74-89`, `lib/exportTables.ts:53,67,130`, `lib/dataRestore.ts:86-93,249-251`, `app/api/admin/restore/apply/route.ts:130`, `app/api/admin/restore/begin/route.ts:78-85`
+
+> **Post-hoc verification (hardening pass).** **SURVIVES.** Re-checked against source:
+> `IMPORTABLE` is `new Set([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES])`
+> (`apply-table/route.ts:24`) and `ORG_SCOPED_TABLES` lists 104 tables including
+> `audit_logs`, `e_signatures` and `document_acknowledgments` — all three importable, as
+> claimed. `grep -c audit_logs apply-table/route.ts` returns **0**: the chunked route
+> writes no audit row, while the single-shot sibling does. **One citation was wrong** —
+> `apply/route.ts:214-224` (the file is 154 lines); the Mechanism already names the
+> correct anchor, `:130`, and the Locations line now matches it. Severity held at HIGH.
 
 **Mechanism.** `IMPORTABLE = new Set([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES])` (apply-table:24). ORG_SCOPED_TABLES includes `"e_signatures"` (exportTables.ts:53), `"document_acknowledgments"` (:67) and `"audit_logs"` (:130). The SKIP set that would refuse them contains only orgs, org_members, users, notification_preferences, subscriptions, push_subscriptions (dataRestore.ts:86-93). So a POST of `{table:"audit_logs", rows:[…], idRemap:{orgId,uid}}` upserts caller-authored rows straight through the service-role client (:77-86) with no per-table schema validation, no provenance flag marking the row as restored, and no cap beyond 1000 rows per call. The route's own security note — "the caller is an org Admin who fully controls the row content anyway" (:8-12) — is false for exactly these tables: e_signatures and document_acknowledgments are the app's evidence that a named human signed or acknowledged, and audit_logs is the tamper-evidence for everything else. Worse, the chunked path is silent: `grep -n audit_logs app/api/admin/restore/*/route.ts` returns ONE hit, apply/route.ts:130 (the single-shot path). /begin and /apply-table write nothing, and the single-shot path is documented as unusable at real size ("a real org's envelope JSON is tens of MB, far over the ~4.5MB request cap that broke the single-shot apply", begin:5-7).
 
@@ -403,7 +412,17 @@ lib/storageOrphans.ts:95 `const { data, error } = await sb.from(table).select(se
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/stripe/webhook/route.ts:50-66`, `app/api/stripe/checkout/route.ts:119-122`, `app/api/stripe/portal/route.ts:140-145`, `lib/stripe.ts:30-36`
+- **Locations:** `app/api/stripe/webhook/route.ts:52`, `app/api/stripe/webhook/route.ts:56`, `app/api/stripe/webhook/route.ts:63`, `app/api/stripe/checkout/route.ts:79-81`
+
+> **Post-hoc verification (hardening pass).** **SURVIVES — the citations were wrong.**
+> The finding cited `checkout/route.ts:119-122` (98 lines) and `portal/route.ts:140-145`
+> (49 lines); neither line exists. The real anchors are `webhook/route.ts:56` —
+> `const plan = (sub.metadata?.plan as string) || null;` — and `:63`,
+> `subscribed_plan: plan`, with the metadata written at `checkout/route.ts:79-81`.
+> Both claims hold: the plan is read only from subscription metadata, so a change made in
+> the billing portal never reaches the app, and an update event carrying no metadata
+> resolves `plan` to `null` and writes that null over the stored value. Locations
+> corrected above; severity held.
 
 **Mechanism.** On `customer.subscription.created|updated` the handler takes the plan from metadata only: `const plan = (sub.metadata?.plan as string) || null;` (:56) and writes it unconditionally: `subscribed_plan: plan` (:63). Checkout stamps `subscription_data.metadata.plan` at purchase (checkout:119-122), but Stripe does not rewrite subscription metadata when a customer switches price in the Customer Portal — which this app deliberately opens for exactly that purpose ("update their card, see invoices, cancel, or change plan", portal:142-144). There is no price→plan mapping anywhere: lib/stripe.ts:32-36 maps plan→priceId only, and `sub.items` is never read in the webhook.
 

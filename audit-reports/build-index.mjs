@@ -40,12 +40,33 @@ const PATH_RE = /^[\w./[\]()@-]+\/[\w.[\]()@-]+\.(ts|tsx|sql|mjs|js|jsx|css|json
 
 /**
  * Locations sit on a `- **Locations…:**` line, in the bullet list beneath it,
- * or — for a few findings — in a `**Mechanism and locations…:**` list. Scan
- * every backticked span in the block and keep the ones shaped like paths;
- * that is robust to all three layouts.
+ * or — for a few findings — in a `**Mechanism and locations…:**` list.
+ *
+ * Two rules, both learned from shipping the wrong thing (META-AUDIT.md MA-1):
+ *
+ *  1. **Block quotes are excluded.** A `> **Verifier correction.**` block often
+ *     quotes the paths it is refuting — REV-9's correction lists `:96-103` in
+ *     order to say that line does not exist. Harvesting from it republishes
+ *     exactly the citation the verifier removed.
+ *  2. **The declared Locations region wins.** Only when a finding has no
+ *     Locations line do we fall back to scanning the whole body, because then
+ *     prose is the only source. Scanning the body unconditionally meant a
+ *     corrected Locations line was silently overridden by the stale path still
+ *     sitting in the Mechanism paragraph.
  */
 function locations(block) {
-  const candidates = [...block.matchAll(/`([^`\n]+)`/g)].map((m) => m[1].trim());
+  const live = block
+    .split("\n")
+    .filter((l) => !/^\s*>/.test(l))
+    .join("\n");
+
+  // The Locations line plus any indented bullets directly beneath it.
+  const declared = live.match(
+    /^- \*\*(?:Locations|Mechanism and locations)[^:]*:\*\*[^\n]*\n(?:(?:[ \t]+[-*][^\n]*|[ \t]+[^\n-][^\n]*)\n)*/m,
+  );
+  const scope = declared ? declared[0] : live;
+
+  const candidates = [...scope.matchAll(/`([^`\n]+)`/g)].map((m) => m[1].trim());
   return [...new Set(candidates.filter((c) => PATH_RE.test(c)).map(resolvePath))];
 }
 
@@ -192,6 +213,8 @@ function parseArea(area) {
 
 // Dot-directories are support, not audit areas — `.evidence/` holds the
 // regeneration inputs. Without this filter they get an empty findings.json.
+const ALL = [];
+
 const areas = readdirSync(ROOT)
   .filter((d) => !d.startsWith(".") && statSync(join(ROOT, d)).isDirectory())
   .sort();
@@ -237,4 +260,69 @@ for (const area of areas) {
   );
   console.log(`  by severity: ${JSON.stringify(bySeverity)}`);
   console.log(`  by status:   ${JSON.stringify(byStatus)}`);
+
+  ALL.push(...findings.map((f) => ({ ...f, kind: "finding" })));
+  ALL.push(...gaps.map((g) => ({ ...g, area, kind: "gap" })));
 }
+
+// ── Corpus integrity gate ─────────────────────────────────────────────
+//
+// Every one of these checks exists because the corpus shipped the defect it
+// catches (META-AUDIT.md). They run on every build and exit non-zero, because a
+// check that only warns is a check nobody runs.
+//
+// Citations under node_modules/ and .next/ are deliberate references to
+// third-party or built code and are exempt from resolution — see MA-7.
+const EXEMPT_PREFIX = ["node_modules/", ".next/"];
+const problems = [];
+
+// 1. Every in-repo citation resolves, to a real file and a line inside it.
+for (const f of ALL) {
+  for (const loc of f.locations ?? []) {
+    const [path, lineSpec] = loc.split(":");
+    if (EXEMPT_PREFIX.some((p) => path.startsWith(p))) continue;
+    let lines;
+    try {
+      lines = readFileSync(join(REPO, path), "utf8").split("\n").length;
+    } catch {
+      problems.push(`${f.area}/${f.id}: cites a path that does not exist — ${loc}`);
+      continue;
+    }
+    const first = Number((lineSpec ?? "").match(/^\d+/)?.[0]);
+    if (first && first > lines) {
+      problems.push(`${f.area}/${f.id}: cites line ${first} of a ${lines}-line file — ${loc}`);
+    }
+  }
+}
+
+// 2. An ID prefix may not be reused across areas — a bare cross-reference to it
+//    would be ambiguous (MA-3).
+const prefixAreas = new Map();
+for (const f of ALL) {
+  const prefix = f.id.replace(/-\d+$/, "");
+  if (prefix === "GAP") continue; // gap ids are area-scoped by construction
+  if (!prefixAreas.has(prefix)) prefixAreas.set(prefix, new Set());
+  prefixAreas.get(prefix).add(f.area);
+}
+for (const [prefix, areaSet] of prefixAreas) {
+  if (areaSet.size > 1) {
+    problems.push(`prefix \`${prefix}-\` is defined in ${[...areaSet].join(" and ")} — cross-references to it are ambiguous`);
+  }
+}
+
+// 3. Every `Related` / `depends_on` entry names an ID that exists (MA-5).
+const knownIds = new Set(ALL.map((f) => f.id));
+for (const f of ALL) {
+  for (const rel of [...(f.related ?? []), ...(f.depends_on ?? [])]) {
+    if (!knownIds.has(rel) && !/^DEC-\d+$/.test(rel)) {
+      problems.push(`${f.area}/${f.id}: references \`${rel}\`, which no area defines`);
+    }
+  }
+}
+
+if (problems.length) {
+  console.error(`\n✗ corpus integrity: ${problems.length} problem(s)\n`);
+  for (const p of problems) console.error(`  ${p}`);
+  process.exit(1);
+}
+console.log(`\n✓ corpus integrity: ${ALL.length} entries — every in-repo citation resolves, no prefix collisions, no dangling references.`);

@@ -55,8 +55,7 @@
         "lib/workflow.ts:65",
         "app/(protected)/admin/analytics/page.tsx:95",
         "app/(protected)/admin/archive-view/page.tsx:25",
-        "lib/__tests__/capabilityPolicy.test.ts:130-131",
-        "components/providers/RoleContext.tsx:366-369"
+        "lib/__tests__/capabilityPolicy.test.ts:130-131"
       ],
       "has_verifier_correction": false,
       "summary": "A member is added as Drafter and later promoted, so their collection becomes [\"Manager\", \"Drafter\"]. primaryRole is Manager (rank 90 > 50). In the drafting workflow:",
@@ -81,10 +80,7 @@
         "supabase/schema.sql:52-59",
         "supabase/migrations/20260901_db_hard_enforcement.sql:44",
         "lib/capabilityPolicy.ts:174",
-        "supabase/migrations/20260701_perf_indexes.sql:21",
-        "lib/capabilityPolicy.ts:193-195",
-        "lib/holds.ts:105-107",
-        "lib/capabilityPolicy.ts:19-22"
+        "supabase/migrations/20260701_perf_indexes.sql:21"
       ],
       "has_verifier_correction": false,
       "summary": "There are exactly two possibilities and both are bad:",
@@ -207,8 +203,7 @@
         "lib/orchestrator/tools.ts:530-551",
         "lib/orchestrator/tools.ts:473-517",
         "app/api/orchestrator/execute/route.ts:41-60",
-        "lib/knowledgeAccess.ts:1-77",
-        "app/api/orchestrator/execute/route.ts:42"
+        "lib/knowledgeAccess.ts:1-77"
       ],
       "has_verifier_correction": false,
       "summary": "A Contractor asks the assistant \"find the Unit 30 hazard review.\" finddocuments returns number, title, rev, status and openurl for documents whose library ACL denies them. They then ask about content and searchdocuments returns passages. Separately they say \"mark sheet P-2030-001 rev C as passed\" and overwrite a real audit-completion record (the upsert conflict target is orgid,sheetnumber,revision",
@@ -235,10 +230,7 @@
         "lib/ticketTransitions.ts:280-282",
         "app/api/tickets/workflow-action/route.ts:263-270",
         "app/(protected)/requests/[id]/page.tsx:1360",
-        "lib/revisions.ts:398-540",
-        "lib/documentGuards.ts:109",
-        "components/documents/RevUpModal.tsx:214-217",
-        "lib/postPublish.ts:91"
+        "lib/revisions.ts:398-540"
       ],
       "has_verifier_correction": false,
       "summary": "A reliability engineer walks Unit 200, finds a bypass line that is not on P-200-301. She checks in with \"Field is different — report it\", states MOC-2026-014 in progress, and a ticket is created. A drafter draws the as-built, issues the IFC package, and the ticket closes. P-200-301 still shows Rev 3, still shows no bypass. The corrected drawing exists only as an attachment on a closed ticket. Six ",
@@ -264,8 +256,7 @@
         "lib/documentLifecycle/setRevUp.ts:83",
         "lib/revisions.ts:958",
         "app/(protected)/documents/[libraryId]/page.tsx:1893",
-        "lib/__tests__/reviewControl.test.ts:42",
-        "lib/evidencePack.ts"
+        "lib/__tests__/reviewControl.test.ts:42"
       ],
       "has_verifier_correction": false,
       "summary": "LIFE-1 gets built. Ticket-originated publishes now carry relatedticketid. The Process Safety library is configured reviewcontrol.mode = \"require\" with two required reviewers. Every as-built revision now publishes with zero document-side sign-offs, and documentreviewsignoffs gets no rows at all. The stated rationale (\"they already had review\") is false: ticket approval is approvedraftifc by the req",
@@ -290,13 +281,7 @@
         "supabase/schema.sql:1031-1034",
         "supabase/migrations/20260824_team_departments.sql:33",
         "supabase/migrations/20260812_per_library_publish_authority.sql:56",
-        "supabase/migrations/20261011_collections_guard_and_trash.sql:30-34",
-        "lib/ownership.ts:66",
-        "lib/ownership.ts:130",
-        "lib/reviewControl.ts:144",
-        "lib/reviewCycles.ts",
-        "components/permissions/PermissionDrawer.tsx:284",
-        "app/(protected)/admin/libraries/page.tsx"
+        "supabase/migrations/20261011_collections_guard_and_trash.sql:30-34"
       ],
       "has_verifier_correction": false,
       "summary": "A contractor with Viewer on a P&ID library issues one HTTP request, becomes the library owner, and publishes a modified Rev 4 of a PSM-covered P&ID. The publish guard approves it, because by the time the guard runs the attacker genuinely is the owner. auditlogs records a legitimate REVUP by an authorized owner. Doc Control sees nothing anomalous: the ownership change itself is only audited by the ",
@@ -319,18 +304,7 @@
         "supabase/migrations/20260816_documents_access_change_guard.sql:84-86",
         "supabase/schema.sql:1068",
         "supabase/migrations/20260901_db_hard_enforcement.sql:152-162",
-        "supabase/migrations/20260822_review_completion_guard.sql:70",
-        "lib/ownership.ts:130",
-        "components/documents/ReviewSection.tsx:194",
-        "lib/ownership.ts:79",
-        "lib/docControlRegister.ts:155",
-        "lib/reviewCycles.ts:283",
-        "lib/acknowledgments.ts:589",
-        "lib/reviewControl.ts:576",
-        "lib/retention.ts:189",
-        "lib/effectiveDate.ts:74",
-        "components/documents/InspectorPanel.tsx:277",
-        "components/documents/CheckInPanel.tsx:99"
+        "supabase/migrations/20260822_review_completion_guard.sql:70"
       ],
       "has_verifier_correction": false,
       "summary": "Any org member picks the one drawing they want changed, claims it, publishes a revision over the real owner's work, and the database records them as the accountable owner who approved it.",
@@ -357,8 +331,7 @@
         "supabase/migrations/20260822_review_completion_guard.sql:60-64",
         "supabase/migrations/20260812_per_library_publish_authority.sql:48-52",
         "supabase/migrations/20260828_integrity_hardening.sql:85-89",
-        "supabase/migrations/20260814_documents_delete_controllers.sql:31-38",
-        "components/permissions/RoleModelTree.tsx:117"
+        "supabase/migrations/20260814_documents_delete_controllers.sql:31-38"
       ],
       "has_verifier_correction": false,
       "summary": "The owner promotes their doc-control manager to also cover people-management. Next morning nobody can publish, and the only fix — visible nowhere in the UI — is to remove the Manager role. components/permissions/RoleModelTree.tsx:117 lists this as a \"known gap\" (\"a few older checks still read only the headline role\"), which understates it: the publish guard is not an old check, it is the check.",
@@ -382,9 +355,7 @@
         "app/api/intake/upload/route.ts:322-329",
         "supabase/migrations/20260822_review_completion_guard.sql:32-34",
         "components/projects/IntakePanel.tsx:146-152",
-        "supabase/migrations/20260902_project_intake.sql:52-60",
-        "components/projects/IntakePanel.tsx:237",
-        "components/projects/IntakePanel.tsx:143"
+        "supabase/migrations/20260902_project_intake.sql:52-60"
       ],
       "has_verifier_correction": false,
       "summary": "A vendor drawing is placed on an active hold (MOC pending, or an incident investigation). The vendor uploads through their trusted link. The document flips to Issued with the vendor's file as the controlled copy, documentholds untouched, and the notification reads \"published a new revision through their trusted intake link. It is now current.\" The library owner and Doc Control had no veto and were",
@@ -410,11 +381,7 @@
         "supabase/migrations/20260828_integrity_hardening.sql:94-96",
         "supabase/migrations/20260828_integrity_hardening.sql:150-155",
         "supabase/migrations/20260828_integrity_hardening.sql:170-180",
-        "lib/revisions.ts:534-546",
-        "lib/revisions.ts:242-243,267-307",
-        "supabase/migrations/20260823_publish_contract.sql:286-288",
-        "lib/revisions.ts:407-409",
-        "lib/revisions.ts:98-106"
+        "lib/revisions.ts:534-546"
       ],
       "has_verifier_correction": false,
       "summary": "A member calls the RPC directly with pactor: <the doc control manager's uuid>, pasbranch: true, and a createdbyname of their choosing. A version row appears in the controlled chain of a PSM drawing attributed to someone who never touched it. There is no trigger to stop it and no audit row that contradicts it.",
@@ -486,9 +453,7 @@
         "lib/capabilityPolicy.ts:228-234",
         "supabase/schema.sql:52-59",
         "supabase/migrations/20260901_db_hard_enforcement.sql:44",
-        "supabase/migrations/20260701_perf_indexes.sql:21",
-        "lib/holds.ts:104-107",
-        "lib/schemaExpectations.ts"
+        "supabase/migrations/20260701_perf_indexes.sql:21"
       ],
       "has_verifier_correction": false,
       "summary": "An admin opens Admin → Permissions, sees the shipped defaults (because the load silently returned nothing), unchecks Engineer from ticket.directapprove, confirms the impact preview, and gets an error toast from saveCapabilityPolicy's throw. Nothing is ever persisted. Every per-person UserGrant fails the same way. The entire 17-capability org-configurable layer, the delegation UI, and the \"enforced",
@@ -514,10 +479,7 @@
         "supabase/schema.sql:1031-1034",
         "app/(protected)/requests/[id]/page.tsx:1010-1014,978,1328",
         "app/(protected)/requests/page.tsx:620,638",
-        "app/(protected)/requests/new/page.tsx:328",
-        "lib/impact.ts",
-        "lib/inbox.ts",
-        "hooks/useTicketNotifications.ts"
+        "app/(protected)/requests/new/page.tsx:328"
       ],
       "has_verifier_correction": false,
       "summary": "A Viewer with a valid session runs:",
@@ -673,8 +635,7 @@
         "app/(protected)/documents/[libraryId]/page.tsx:4010",
         "components/navigation/Sidebar.tsx:241-248",
         "lib/roleCapabilities.ts:74-94",
-        "lib/roleCapabilities.ts:120-123",
-        "components/navigation/Sidebar.tsx:248"
+        "lib/roleCapabilities.ts:120-123"
       ],
       "has_verifier_correction": false,
       "summary": "An Auditor — a role that exists specifically to be read-only — is additively given Requester so they can file a ticket. primaryRole now returns Requester. At app/(protected)/documents/[libraryId]/page.tsx:4010, activeRole !== \"Auditor\" is now true, so canEdit is true: the read-only auditor gains inline document editing. The same shape applies to Contractor and reduced navigation.",
@@ -698,10 +659,7 @@
       "locations": [
         "lib/roleCapabilities.ts:118-123",
         "app/(protected)/admin/users/page.tsx:130,137",
-        "components/providers/RoleContext.tsx:200-206",
-        "lib/dataRestore.ts",
-        "app/api/admin/restore/begin/route.ts",
-        "app/api/auth/signup/route.ts"
+        "components/providers/RoleContext.tsx:200-206"
       ],
       "has_verifier_correction": false,
       "summary": "lib/dataRestore.ts and app/api/admin/restore/begin/route.ts write orgmembers rows with whatever role the backup names, and app/api/auth/signup/route.ts writes role without roles at all (DB-3). After a restore, a member's headline can disagree with their collection, and every check in the singular family will believe the headline.",
@@ -824,9 +782,7 @@
         "app/(protected)/admin/permissions/page.tsx:35,58",
         "lib/permissions.ts:18-20",
         "components/permissions/PermissionDrawer.tsx:258",
-        "supabase/migrations/20260816_documents_access_change_guard.sql:72-76",
-        "components/permissions/PermissionsExplorer.tsx",
-        "components/permissions/RoleModelTree.tsx:96-99"
+        "supabase/migrations/20260816_documents_access_change_guard.sql:72-76"
       ],
       "has_verifier_correction": false,
       "summary": "The Drawings library owner needs the piping lead to update sheet P-102 while she is on rotation. Her options today are exactly two:",
@@ -848,14 +804,7 @@
       "locations": [
         "supabase/migrations/20260708_acl_rls_enforcement.sql:42-82",
         "supabase/migrations/20260708_acl_rls_enforcement.sql:85-91",
-        "supabase/migrations/20260630_document_ownership.sql:4-5",
-        "lib/reviewCycles.ts",
-        "lib/retention.ts",
-        "lib/effectiveDate.ts",
-        "lib/acknowledgments.ts",
-        "lib/reviewControl.ts",
-        "lib/accessRecert.ts",
-        "lib/ownership.ts:77-88"
+        "supabase/migrations/20260630_document_ownership.sql:4-5"
       ],
       "has_verifier_correction": false,
       "summary": "An admin assigns the safety lead as owner of the private Incident Procedures library. She receives \"review due\", \"retention reached\", \"acknowledgment overdue\" and \"access recert due\" notifications for documents she cannot open — the row is filtered out by documentsaclselect. The /register row is invisible to her too. She can, bizarrely, still publish a revision blind, because the restrictive polic",
@@ -906,8 +855,7 @@
         "supabase/migrations/20260707_teams.sql:37-49",
         "supabase/migrations/20260824_team_departments.sql:35-38",
         "supabase/migrations/20260816_owner_publish_access.sql:60-62",
-        "components/permissions/RoleModelTree.tsx:47",
-        "lib/teams.ts:1-4"
+        "components/permissions/RoleModelTree.tsx:47"
       ],
       "has_verifier_correction": false,
       "summary": "A Manager — explicitly not a document controller — opens /admin/teams, creates a team, sets themselves as supervisor, and clicks the Drawings chip under \"Owns libraries.\" They are now the effective owner of every document in Drawings and can publish revisions. setLibraryOwnerTeam logs OWNERTEAMASSIGNED (so this half is audited, unlike the supervisor half), but nothing prevents it and nothing alert",
@@ -955,8 +903,7 @@
         "supabase/migrations/20260708_acl_rls_enforcement.sql:58-59",
         "supabase/migrations/20260708_acl_rls_enforcement.sql:74-75",
         "lib/acl.ts:69-70",
-        "lib/acl.ts:20",
-        "lib/acl.ts"
+        "lib/acl.ts:20"
       ],
       "has_verifier_correction": false,
       "summary": "Document Control grants read on the pressure-vessel folder to the role Drafter. A senior drafter holds [\"Manager\", \"Drafter\"]; primaryRole resolves to Manager (rank 90 > 50). The database compares the rule against Manager, finds no match, and the folder stays invisible to the one person the grant was written for. No error, no warning — the rule is simply inert.",
@@ -1107,8 +1054,7 @@
         "components/viewers/FullScreenViewer.tsx:1093-1107",
         "components/viewers/MultiDocViewer.tsx:353-355",
         "lib/draftHandoff.ts:53-66",
-        "app/(protected)/requests/new/page.tsx:104-115",
-        "lib/checkinOutcomes.ts:169-170"
+        "app/(protected)/requests/new/page.tsx:104-115"
       ],
       "has_verifier_correction": false,
       "summary": "An engineer marks up eight pages of P-200-301 over twenty minutes and clicks \"Send to Drafting\". /requests/new loads, the stash is consumed and deleted, the files sit in form state. The form requires Title, Unit, and Detailed Scope. She opens another tab to look up the unit code, comes back and refreshes out of habit — or her session token refreshes and the page remounts. Every markup is gone. Not",
@@ -1133,10 +1079,7 @@
         "lib/draftHandoff.ts:8-13",
         "app/(protected)/requests/new/page.tsx:110",
         "app/(protected)/requests/new/page.tsx:290-298",
-        "lib/impact.ts:113-119",
-        "lib/impact.ts:117",
-        "app/api/tickets/workflow-action/route.ts:231-233",
-        "app/(protected)/requests/new/page.tsx:408"
+        "lib/impact.ts:113-119"
       ],
       "has_verifier_correction": false,
       "summary": "A reviewer marks up three sheets of a 14-sheet isometric book and sends them to drafting as one request. Two weeks later someone opens ISO-4471 to publish an unrelated revision. The Impact panel says \"no open drafting requests\". They publish. The three marked-up sheets are now redlines against a superseded revision, and no overlap advisory fired because no documentintents row existed.",
@@ -1161,10 +1104,7 @@
         "components/documents/CheckInPanel.tsx:378-384",
         "components/documents/RevUpModal.tsx:214-217",
         "lib/revisions.ts:522",
-        "components/documents/RevUpModal.tsx:739",
-        "components/documents/RevUpModal.tsx",
-        "lib/documentLifecycle/common.ts:266",
-        "lib/revisions.ts:1135"
+        "components/documents/RevUpModal.tsx:739"
       ],
       "has_verifier_correction": false,
       "summary": "The field report says \"No MOC exists\" — correctly, honestly. The system flags it as an undocumented field change. Weeks later the as-built is published and RevUpModal asks for an MOC number; the publisher types MOC-2026-088, a different change they happen to remember. The \"undocumented field change\" finding has been laundered into a documented one. The only record that contradicts it is metadata.u",
@@ -1190,11 +1130,7 @@
         "supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql:27-29",
         "lib/holds.ts:70-162",
         "lib/ticketTransitions.ts:284-287",
-        "components/documents/CheckInPanel.tsx:626-629",
-        "lib/inbox.ts:148",
-        "app/(protected)/assets/[tag]/page.tsx:75",
-        "lib/timeline.ts",
-        "lib/evidencePack.ts:22"
+        "components/documents/CheckInPanel.tsx:626-629"
       ],
       "has_verifier_correction": false,
       "summary": "The engineer checks the box. A \"Field Verification Needed\" hold blocks P-200-301. The drafter completes the as-built; the ticket closes. The hold is still open. Combined with LIFE-1 (nothing publishes anyway) the document is permanently frozen at the wrong revision with an open block nobody can trace to a resolved cause. When someone eventually tries to publish, the guard refuses them — a library ",
@@ -1218,8 +1154,7 @@
         "lib/inAppNotifications.ts:104-137",
         "lib/notify/dispatch.ts:22-45",
         "lib/transitionIn.ts:339-352",
-        "lib/checkinOutcomes.ts:200",
-        "lib/reviewControl.ts:243-256"
+        "lib/checkinOutcomes.ts:200"
       ],
       "has_verifier_correction": false,
       "summary": "An engineer reports a bypass line with no MOC on record at 4:45pm Friday. The escalation writes bell rows for two controllers. Neither opens the app until Monday. Meanwhile the P&ID — unless the hold box was also checked — remains publishable and distributable, and a night-shift operator pulls it for a permit.",
@@ -1267,10 +1202,7 @@
         "supabase/migrations/20260812_per_library_publish_authority.sql:75-85",
         "lib/permissions.ts:80-90",
         "lib/documentGuards.ts:220-226",
-        "components/permissions/RoleModelTree.tsx:101",
-        "types/schema.ts:116-126",
-        "components/permissions/RoleModelTree.tsx:159-165",
-        "app/api/storage/download-url/route.ts:95"
+        "components/permissions/RoleModelTree.tsx:101"
       ],
       "has_verifier_correction": false,
       "summary": "A terminated contractor retains database-level publish authority on a PSM library indefinitely. They reach it through CheckInPanel (a different code path using canPublish || isOwner), through the publishrevision RPC directly, or through any surface that does not recompute from the raw ACL.",
@@ -1293,9 +1225,7 @@
         "lib/acl.ts:108-110",
         "lib/acl.ts:133-137",
         "lib/permissions.ts:80-90",
-        "supabase/migrations/20260812_per_library_publish_authority.sql:64-71",
-        "lib/acl.ts:134",
-        "lib/acl.ts"
+        "supabase/migrations/20260812_per_library_publish_authority.sql:64-71"
       ],
       "has_verifier_correction": false,
       "summary": "Doc Control grants a lead \"admin\" on a library for convenience, then later adds deny publish to take publishing back after an incident. The button stays visible, the click fails with a confusing error, and database-side they are denied — three different answers, none of which reads as \"your revocation took effect.\"",
@@ -1342,8 +1272,7 @@
         "supabase/migrations/20260707_teams.sql:19-26",
         "components/permissions/ViewAsSimulator.tsx:61",
         "components/permissions/ViewAsSimulator.tsx:161-164",
-        "components/permissions/ViewAsSimulator.tsx:5-6",
-        "supabase/migrations/20260821_access_recert.sql"
+        "components/permissions/ViewAsSimulator.tsx:5-6"
       ],
       "has_verifier_correction": false,
       "summary": "During an access recertification (supabase/migrations/20260821accessrecert.sql) the reviewer uses View-as to confirm nobody unexpected can publish. Every team-derived grant is invisible. The recertification is signed on false evidence — which in a PSM audit is worse than having no recertification.",
@@ -1368,8 +1297,7 @@
         "lib/reviewControl.ts:196-238",
         "lib/reviewControl.ts:316-332",
         "lib/reviewControl.ts:429-434",
-        "components/permissions/RoleModelTree.tsx:106",
-        "lib/reviewControl.ts:315"
+        "components/permissions/RoleModelTree.tsx:106"
       ],
       "has_verifier_correction": false,
       "summary": "A procedure's review completes Friday afternoon; the last signer is an Engineer; the promote silently fails; the \"Ready to publish\" notification goes only to the owner (lib/reviewControl.ts:315 — owner.userId ? [owner.userId] : controllers, so controllers are excluded when an owner exists); the owner is on leave, and nothing checks their orgmembers.status (OWN-13). The approved revision sits unpub",
@@ -1490,7 +1418,7 @@
       "blast_radius": "model-complexity / access-control",
       "related": [
         "DOCACL-1",
-        "SCALE-3"
+        "ROLE-3"
       ],
       "locations": [
         "lib/roleCapabilities.ts:63-69",
@@ -1499,8 +1427,7 @@
         "supabase/migrations/20260708_acl_rls_enforcement.sql:58",
         "app/(protected)/admin/libraries/LibraryWizard.tsx:91-93",
         "components/permissions/RoleTreeSelector.tsx:17-22",
-        "components/permissions/PermissionDrawer.tsx:66-71",
-        "app/(protected)/admin/teams/page.tsx"
+        "components/permissions/PermissionDrawer.tsx:66-71"
       ],
       "has_verifier_correction": false,
       "summary": "A safety engineer holds [\"Requester\", \"Safety\"]. primaryRole resolves to Requester (rank 40 > 33). Document Control writes an ACL rule granting read to the role Safety on the incident-procedure folder. nodevisible compares the rule against Requester and returns false. The grant silently does nothing — no error, no warning, the folder simply stays invisible. The only way to make the rule bite is to",
@@ -1572,8 +1499,7 @@
         "lib/checkoutEpisodes.ts:616-627",
         "lib/checkoutEpisodes.ts:630-640",
         "supabase/migrations/20260901_db_hard_enforcement.sql:109-121",
-        "components/documents/CheckoutStatusCell.tsx:238",
-        "lib/capabilityPolicy.ts:89-91"
+        "components/documents/CheckoutStatusCell.tsx:238"
       ],
       "has_verifier_correction": false,
       "summary": "A Drafter clears another engineer's lock on a P&ID mid-edit, then publishes over it. publishrevision's lock check reads vdoc.checkedoutby — which is now NULL — so it publishes cleanly. Meanwhile the checkoutsessions row is still active, so the episode state is split-brained.",
@@ -1670,9 +1596,7 @@
       "locations": [
         "app/api/tickets/workflow-action/route.ts:104-109",
         "lib/workflow.ts:181",
-        "app/(protected)/requests/[id]/page.tsx:1028-1031",
-        "lib/archive.ts",
-        "lib/ticketTransitions.ts:172,282"
+        "app/(protected)/requests/[id]/page.tsx:1028-1031"
       ],
       "has_verifier_correction": false,
       "summary": "POST /api/tickets/workflow-action {\"ticketId\":…,\"actionType\":\"submitfinal\"} with no finalAttachment. computeTransition sets status = FINALDRAFT and appends nothing. The ticket now presents as \"Final package issued\" with no Final attachment; the requester acknowledges and closes it, and the closed record is archived by ticket-shed with an empty deliverable. (submitdraft is safe only by accident — i",
@@ -1746,8 +1670,7 @@
         "app/(protected)/requests/[id]/page.tsx:991-1026",
         "app/(protected)/requests/[id]/page.tsx:966-988",
         "app/(protected)/requests/[id]/page.tsx:1322-1330",
-        "app/(protected)/requests/[id]/page.tsx:1546",
-        "app/(protected)/requests/page.tsx:620,638"
+        "app/(protected)/requests/[id]/page.tsx:1546"
       ],
       "has_verifier_correction": false,
       "summary": "Three distinct failures from one defect:",
@@ -1797,8 +1720,7 @@
         "lib/capabilityPolicy.ts:201-217",
         "lib/capabilityPolicy.ts:254-276",
         "supabase/migrations/20260831_capability_policy_and_rails.sql:31",
-        "app/(protected)/admin/permissions/page.tsx:35,58",
-        "lib/workflow.ts:67"
+        "app/(protected)/admin/permissions/page.tsx:35,58"
       ],
       "has_verifier_correction": false,
       "summary": "Three variants, all reachable:",
@@ -1821,8 +1743,7 @@
         "lib/workflow.ts:30-43",
         "app/(protected)/requests/new/page.tsx:309",
         "lib/ticketTransitions.ts:65",
-        "types/schema.ts:1120",
-        "lib/workflow.ts:30-36"
+        "types/schema.ts:1120"
       ],
       "has_verifier_correction": false,
       "summary": "A Manager files 30 requests. Three months later they move to Operations and are demoted to Requester. Every one of those 30 open tickets still carries requesterrole = 'Manager' → needsEngineerApproval is false → they reach PENDINGREVIEW and are offered \"Approve (Issue for Construction)\" as a plain Requester. Conversely a promoted engineer's old tickets still say Requester, but the !isEng clause re",
@@ -1845,11 +1766,7 @@
       "locations": [
         "lib/capabilityPolicy.ts:26-96",
         "lib/capabilityPolicy.ts:112-117",
-        "lib/capabilityPolicy.ts:141-155",
-        "lib/workflow.ts:65",
-        "lib/holds.ts:100",
-        "components/permissions/ViewAsSimulator.tsx:128",
-        "lib/workflow.ts:37-43"
+        "lib/capabilityPolicy.ts:141-155"
       ],
       "has_verifier_correction": false,
       "summary": "A plant wants \"instrumentation drawings must be signed by an I&C engineer, and never by the person who drew them.\" There is no way to say either half. The nearest approximation — narrowing ticket.directapprove to Engineer — is already the default and blocks nothing, because WF-3 and WF-4 route around it.",
@@ -1939,8 +1856,7 @@
       "locations": [
         "types/schema.ts:96-126",
         "lib/acl.ts:256-272",
-        "lib/capabilityPolicy.ts:112-117",
-        "../README.md"
+        "lib/capabilityPolicy.ts:112-117"
       ],
       "has_verifier_correction": false,
       "summary": "A future decision to delete Accounting (say) has no safe execution path: a customer's documents.acl may name it in a live rule; a capabilitypolicy blob may list it as a token; the role picker may have written it into aclindex at any node. Removing the string from ALLROLES orphans every stored reference silently — the rule stays in the JSON and simply stops matching, so an access grant quietly evap",
@@ -2062,8 +1978,7 @@
         "lib/ownership.ts:27",
         "lib/docControlRegister.ts:233",
         "components/permissions/RoleModelTree.tsx:232",
-        "lib/docControlRegister.ts:216",
-        "lib/dataRestore.ts:259"
+        "lib/docControlRegister.ts:216"
       ],
       "has_verifier_correction": false,
       "summary": "An owner changes their surname. Every register row, every CSV export and every role-tree line keeps the old name indefinitely. Worse in the RoleModelTree case: because the render is ownerName || team, a row where owneruserid is set but ownername is null — which happens for any owner written outside setOwner, e.g. lib/dataRestore.ts:259 remaps owneruserid with no corresponding name repair — display",
@@ -2233,11 +2148,7 @@
         "components/documents/CheckInPanel.tsx:236-267",
         "lib/transitionIn.ts:304-331",
         "components/documents/CheckInPanel.tsx:246,252",
-        "app/(protected)/requests/page.tsx:400,545,984,1046,1151",
-        "components/documents/CheckInPanel.tsx:244-246",
-        "components/viewers/FullScreenViewer.tsx:891",
-        "components/viewers/MultiDocViewer.tsx:863",
-        "app/(protected)/requests/new/page.tsx:139-150"
+        "app/(protected)/requests/page.tsx:400,545,984,1046,1151"
       ],
       "has_verifier_correction": false,
       "summary": "A drafting supervisor works the queue by unit, filtering \"200\" to batch the Unit 200 work. The as-built ticket has no unit, so it does not match, and renders with an empty unit chip that reads as a data glitch. It sits while unit-filtered work moves around it. Separately, an intake collision ticket — the highest-priority kind, a genuine two-sources-of-truth conflict — never goes past due and its f",
@@ -2260,9 +2171,7 @@
         "lib/checkoutEpisodes.ts:461-467",
         "supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql:47-51",
         "components/documents/CheckoutHistoryPanel.tsx:150-151",
-        "components/documents/CheckInPanel.tsx:338-347",
-        "lib/reviewCycles.ts",
-        "lib/acknowledgments.ts:217"
+        "components/documents/CheckInPanel.tsx:338-347"
       ],
       "has_verifier_correction": false,
       "summary": "Someone asks the question the index was built for: \"when was P-200-301 last verified against the field?\" The data exists. There is no screen, no query, no report and no API that answers it. A P&ID verified three years ago and one verified yesterday are visually identical everywhere in the app. There is also no staleness concept — no expiry, no reminder, no overdue state — unlike periodic review (l",
@@ -2285,9 +2194,7 @@
         "components/documents/RevUpModal.tsx:75",
         "components/documents/LifecycleBoard.tsx:67",
         "components/documents/CheckInPanel.tsx:234",
-        "lib/checkinOutcomes.ts:133",
-        "lib/filenameParser.ts:36",
-        "lib/turnover.ts:76"
+        "lib/checkinOutcomes.ts:133"
       ],
       "has_verifier_correction": false,
       "summary": "The as-built is published and issueType is left at its default, \"Issued for Construction\". The Lifecycle board shows P-200-301 in the IFC column, not As-Built. Anyone using that board to answer \"which drawings reflect installed condition?\" gets the wrong answer.",
@@ -2335,8 +2242,7 @@
         "lib/transitionIn.ts:322",
         "lib/impact.ts:113-119",
         "app/api/tickets/workflow-action/route.ts:231-233",
-        "app/(protected)/requests/[id]/page.tsx:1351,1796",
-        "lib/postPublish.ts:23-47"
+        "app/(protected)/requests/[id]/page.tsx:1351,1796"
       ],
       "has_verifier_correction": false,
       "summary": "A drafter picks up the as-built ticket. The attached marked-up PDF says Rev 3. He drafts against it. Meanwhile Rev 4 was published for an unrelated change. He has no way to notice: the ticket shows a filename, not a live document reference, and metadata.sourcedocument.rev (which is \"3\") is not rendered even though it is the exact fact that would reveal the drift. He delivers an as-built built on a",
@@ -2405,8 +2311,7 @@
         "lib/revisions.ts:1058-1063",
         "supabase/schema.sql:1072",
         "supabase/migrations/20260822_review_completion_guard.sql:36-38",
-        "lib/revisions.ts:1594-1683",
-        "lib/reviewControl.ts:444-446"
+        "lib/revisions.ts:1594-1683"
       ],
       "has_verifier_correction": false,
       "summary": null,
@@ -2619,8 +2524,7 @@
         "app/api/ai/usage/route.ts:29-35",
         "app/api/admin/schema-health/route.ts:35-40",
         "app/api/collections/delete/route.ts:44-48",
-        "app/api/ai/connection/route.ts",
-        "lib/roleCapabilities.ts"
+        "app/api/ai/connection/route.ts"
       ],
       "has_verifier_correction": false,
       "summary": "A doc-control manager who also holds Manager cannot run any maintenance route, with a \"Insufficient role\" error that names a role they hold.",
@@ -2751,8 +2655,7 @@
         "supabase/migrations/20260707_teams.sql:37-49",
         "supabase/migrations/20260707_teams.sql:52-55",
         "app/api/admin/create-user/route.ts:62",
-        "app/(protected)/admin/users/page.tsx:231",
-        "app/api/admin/create-user/route.ts:70-72"
+        "app/(protected)/admin/users/page.tsx:231"
       ],
       "has_verifier_correction": false,
       "summary": "An investigation asks who granted a contractor access to the restricted library. The answer is \"they added themselves to a team six weeks ago,\" and there is no record of it.",
@@ -2871,8 +2774,7 @@
         "lib/ticketTransitions.ts:140-142",
         "lib/ticketTransitions.ts:176",
         "lib/ticketRouting.ts:70-117",
-        "app/api/tickets/workflow-action/route.ts:283-291",
-        "lib/ticketRouting.ts:79,91,99"
+        "app/api/tickets/workflow-action/route.ts:283-291"
       ],
       "has_verifier_correction": false,
       "summary": "An engineer completes scope review and clicks \"Engineering Review Complete.\" The ticket lands in PENDINGASSIGNMENT. The DraftingSupervisor is notified only if they happened to be the requester or a prior watcher. Tickets stall silently after every engineering-review round-trip.",

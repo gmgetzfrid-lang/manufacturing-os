@@ -268,8 +268,7 @@
       "blast_radius": "safety",
       "related": [],
       "locations": [
-        "lib/checklists.ts:250-266",
-        "lib/checklistEngine.ts:69"
+        "lib/checklists.ts:250-266"
       ],
       "has_verifier_correction": false,
       "summary": "A contractor uploads a file and types the title \"Hydrotest Report.\" It lands in the project's intake collection as a Draft, unreviewed, from an unauthenticated link. The evidence sweep matches the phrase, marks the pressure-test checklist item satisfied, and attaches the citation Document on file: \"Hydrotest Report\". Nobody checked that the document contains a hydrotest, covers this equipment, or ",
@@ -290,9 +289,7 @@
       ],
       "locations": [
         "components/projects/QualityTab.tsx:293-319",
-        "lib/checklists.ts:150-176",
-        "lib/checklists.ts:339",
-        "lib/checklistEngine.ts:141"
+        "lib/checklists.ts:150-176"
       ],
       "has_verifier_correction": false,
       "summary": "A rookie clicks OK and thirty safety lines go not-applicable sight-unseen. Because a not-applicable item is excluded from the progress count (computeChecklistProgress, lib/checklists.ts:339), the checklist jumps to complete. And because the write sets a manual note, no future sweep or assessment will ever revisit those items (lib/checklistEngine.ts:141 — if (item.manualNote) continue).",
@@ -355,8 +352,7 @@
       "locations": [
         "app/api/intake/upload/route.ts:322-334",
         "lib/postPublish.ts:91-145",
-        "lib/reviewControl.ts:495-510",
-        "lib/postPublish.ts:1-13"
+        "lib/reviewControl.ts:495-510"
       ],
       "has_verifier_correction": false,
       "summary": "A contractor supersedes an operating procedure that forty operators had acknowledged. No new acknowledgment roster is issued, the periodic-review clock never resets, and retention is never recomputed — so the compliance record still shows everyone signed off on the previous revision. The only signal is one docsuperseded notification to Admin, Document Control and the project owner.",
@@ -473,8 +469,7 @@
         "lib/projectSnapshot.ts:115-119",
         "lib/projectReport.ts:88-91",
         "components/projects/ScheduleProgress.tsx:41, 49-53",
-        "components/projects/ExecutionView.tsx:949",
-        "lib/scheduleProgress.ts"
+        "components/projects/ExecutionView.tsx:949"
       ],
       "has_verifier_correction": false,
       "summary": "The Date.now() rule marks a task overdue from 00:01 UTC on its own due date — for a US user, from five or eight in the evening the day before. Simultaneously visible: SchedulePulse says \"5 overdue tasks\" directly above SummaryStrip saying \"Overdue 0\", two inches apart, from the same data. And projectSnapshot.overdueMilestones feeds the health penalty, so the score is docked for tasks that are not ",
@@ -537,8 +532,7 @@
       "locations": [
         "app/api/intake/upload/route.ts:270",
         "components/viewers/SecureDocViewer.tsx:129-140",
-        "components/viewers/SecureDocViewer.tsx:274",
-        "app/api/transmittal/route.ts:73"
+        "components/viewers/SecureDocViewer.tsx:274"
       ],
       "has_verifier_correction": false,
       "summary": "A vendor holding the link uploads payload.html declaring Content-Type: text/html. Anyone who opens it in the document viewer runs the attacker's script as themselves, on the application's origin, with access to localStorage — which holds the Supabase session and refresh token. On a trusted auto-supersede link no approval click is needed first.",
@@ -576,8 +570,7 @@
       "locations": [
         "app/api/intake/upload/route.ts:246-249",
         "app/api/intake/upload/route.ts:257",
-        "app/api/intake/upload/route.ts:302",
-        "docs/ARCHITECTURE.md:752-756"
+        "app/api/intake/upload/route.ts:302"
       ],
       "has_verifier_correction": false,
       "summary": "Document Control assigns a PSM-covered P&ID to a trusted contractor link. Submission one routes to review, correctly. Submission two sees linkAuthored = true, skips the pending-submission 409, and publishes: status: \"Issued\", new currentversionid, pendingversionid cleared — orphaning the first review in the same write.",
@@ -836,8 +829,7 @@
         "components/projects/cost/QuotesPanel.tsx:218",
         "components/projects/cost/QuotesPanel.tsx:154, 351",
         "lib/costs.ts:352",
-        "components/projects/CostsTab.tsx:159-164",
-        "app/api/projects/cost-docs/route.ts:127"
+        "components/projects/CostsTab.tsx:159-164"
       ],
       "has_verifier_correction": false,
       "summary": "A €150,000 bid displays as $150,000 and is scored head-to-head against dollar bids as though the numbers were commensurate (minTotal / e.total).",
@@ -951,8 +943,7 @@
       "locations": [
         "lib/costDocs.ts:310-319",
         "lib/costDocs.ts:323-334",
-        "lib/costDocs.ts:170-192",
-        "app/api/intake/resolve/route.ts:86"
+        "lib/costDocs.ts:170-192"
       ],
       "has_verifier_correction": false,
       "summary": "A document awarded in another tab gets voided anyway: the paper says void, the commitment stays posted, and the contractor portal flips their bid to \"not selected\" (app/api/intake/resolve/route.ts:86). Or a total is overwritten on an already-awarded document, so the paper stops matching the posted cost entry — which is also the input to BID-1.",
@@ -1039,8 +1030,7 @@
         "components/projects/ProjectWizard.tsx:179-183",
         "lib/turnover.ts:143, 168, 247",
         "components/projects/cost/QuotesPanel.tsx:461",
-        "lib/companies.ts:240-252",
-        "lib/turnover.ts:8"
+        "lib/companies.ts:240-252"
       ],
       "has_verifier_correction": false,
       "summary": "Turnover acceptance never reaches any scorecard, so the company Quality dimension is permanently Unrated. Bid history never appears, so \"N/M bids won\" never renders and the Bid-history panel never shows. The coach's promise that \"their performance record starts building\" is false as wired, and so is lib/turnover.ts:8's claim that \"acceptance rates roll up to the contractor's permanent scorecard.\"",
@@ -1212,8 +1202,7 @@
         "app/(protected)/companies/page.tsx:46",
         "components/providers/RoleContext.tsx:58",
         "components/providers/RoleContext.tsx:315-325",
-        "app/(protected)/projects/page.tsx:64",
-        "app/loading.tsx"
+        "app/(protected)/projects/page.tsx:64"
       ],
       "has_verifier_correction": false,
       "summary": "\"Loading the registry…\" forever — no error, no retry, no timeout. And because the route has no loading.tsx, the nearest ancestor is app/loading.tsx, which renders outside the protected shell — so a cold navigation flashes the entire application away, sidebar included.",
@@ -1478,8 +1467,7 @@
       "locations": [
         "components/projects/TransitionInPanel.tsx:241-245",
         "lib/transitionIn.ts:216",
-        "lib/transitionIn.ts:10-12",
-        "lib/uniqueness.ts"
+        "lib/transitionIn.ts:10-12"
       ],
       "has_verifier_correction": false,
       "summary": "The panel shows \"P&ID-2101 — ⚠ number collision: P&ID-2101 (Rev 4) already exists.\" The manager expands it, does not type a new number, and clicks Adopt. Both documents are now live in the controlled register under the same number, in different libraries, neither superseded — the exact \"two sources of truth\" the module header declares impossible.",
@@ -1766,8 +1754,7 @@
         "components/projects/IntakePanel.tsx:215-232",
         "app/api/intake/resolve/route.ts:119",
         "app/api/intake/resolve/route.ts:144",
-        "supabase/migrations/20260903_intake_assignments.sql:20",
-        "app/api/intake/resolve/route.ts"
+        "supabase/migrations/20260903_intake_assignments.sql:20"
       ],
       "has_verifier_correction": false,
       "summary": "A non-controller project owner adds a restricted HSE document's UUID to a contractor's assigneddocids. The contractor's portal now lists it by number and title, and can push revisions into its pendingversionid. Nothing in the UI, the audit summary, or the timeline says an out-of-project restricted document was exposed.",
@@ -1865,8 +1852,7 @@
       "related": [],
       "locations": [
         "lib/projectHealth.ts",
-        "lib/companyScore.ts:153-164",
-        "lib/companyScore.ts"
+        "lib/companyScore.ts:153-164"
       ],
       "has_verifier_correction": false,
       "summary": "The first thing a new user sees after creating their first project is a red \"Concern\" verdict on a project they have not started. It is also actively misleading on a dashboard of many projects, where a new project is indistinguishable from a failing one.",
@@ -2751,10 +2737,7 @@
       "verification_note": null,
       "blast_radius": "ux / rookie-readability",
       "related": [],
-      "locations": [
-        "lib/costs.ts:151",
-        "app/(protected)/projects/[id]/page.tsx:323-373"
-      ],
+      "locations": [],
       "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",

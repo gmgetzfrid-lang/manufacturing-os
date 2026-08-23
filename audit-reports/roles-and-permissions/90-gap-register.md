@@ -872,4 +872,4 @@ Recorded because each looks like a gap and is not.
 | **Assigning a library owner, a different person per library** | **Built.** Hidden, unvalidated, unprotected — `DEL-7`, `OWN-1`, `OWN-13` — but the mechanism is there. |
 | **Teams being optional** | **Built and verified.** Every team lookup degrades correctly at zero teams. See report 08. |
 | **Delegating one capability to one person with an expiry** | **Built** (`UserGrant`), currently inert (`WF-1`), scoped to tickets/holds rather than documents (`GAP-3`). |
-| **A capability layer that could carry the whole app** | **Built.** 17 capabilities, org-configurable, per-person grants, critical-capability guardrails, audited. Covers requests, holds, checkouts and two admin pages and nothing else — that is `SCALE-1`, a coverage gap, not a missing design. |
+| **A capability layer that could carry the whole app** | **Built.** 17 capabilities, org-configurable, per-person grants, critical-capability guardrails, audited. Covers requests, holds, checkouts and two admin pages and nothing else — that is `SURF-9`, a coverage gap, not a missing design. |

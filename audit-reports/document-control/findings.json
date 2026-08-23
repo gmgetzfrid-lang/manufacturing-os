@@ -1307,8 +1307,7 @@
         "components/viewers/FullScreenViewer.tsx:1184",
         "components/viewers/MultiDocViewer.tsx:668",
         "components/documents/VersionHistoryPanel.tsx:336",
-        "app/(protected)/documents/[libraryId]/page.tsx:3024-3032,4238-4241",
-        "app/(protected)/documents/[libraryId]/page.tsx:4238"
+        "app/(protected)/documents/[libraryId]/page.tsx:3024-3032,4238-4241"
       ],
       "has_verifier_correction": true,
       "summary": "An operator opens P-200-301 and clicks the eye icon on Rev 2 in Version History to check what a line looked like before the tie-in. The viewer fills with the Rev 2 drawing and the badge in the corner reads, in green, \"Controlled · Rev 5\". Rev 5 added an isolation valve that Rev 2 does not show. The operator writes the line-break permit from what is on screen, having been told by the application th",
@@ -1354,9 +1353,7 @@
         "lib/revisions.ts:1325-1355",
         "lib/documentLifecycle/common.ts:253-313",
         "lib/documentLifecycle/reverse.ts:104-126",
-        "lib/reviewControl.ts:402-439",
-        "app/api/intake/upload/route.ts:325,332",
-        "components/projects/IntakePanel.tsx:258"
+        "lib/reviewControl.ts:402-439"
       ],
       "has_verifier_correction": true,
       "summary": "Draft 3A is in review on P-101. Doc Control splits P-101 into P-101A and P-101B; markSupersededAndLink sets P-101 to Superseded and writes the lineage rows. P-101 is now retired and its replacements are the controlled sheets. Its pendingversionid still points at 3A. The last reviewer signs 3A from her inbox; auto-finalize promotes it and sets P-101 back to Issued at Rev 3. The plant now has three ",
@@ -1632,7 +1629,7 @@
         "app/api/admin/restore/apply-table/route.ts:24,38-43,74-89",
         "lib/exportTables.ts:53,67,130",
         "lib/dataRestore.ts:86-93,249-251",
-        "app/api/admin/restore/apply/route.ts:214-224",
+        "app/api/admin/restore/apply/route.ts:130",
         "app/api/admin/restore/begin/route.ts:78-85"
       ],
       "has_verifier_correction": false,
@@ -2086,8 +2083,7 @@
         "lib/dataExport.ts:300",
         "lib/exportRunner.ts:159-162",
         "lib/exportRunner.ts:277-314",
-        "app/api/data-export/structured/route.ts:53-57",
-        "tables/document_shares.json"
+        "app/api/data-export/structured/route.ts:53-57"
       ],
       "has_verifier_correction": true,
       "summary": "An org configures a nightly backup to their contractor's S3 bucket. Every night the ZIP carries every live, unexpired, unrevoked share token and transmittal portal token in the org. Anyone who can read that bucket — the contractor's staff, a mis-scoped IAM policy, a stale credential — can paste any token into /share/<token> or /transmittal/<token> and pull controlled drawings with no account, inde",
@@ -2237,8 +2233,7 @@
         "supabase/migrations/20260826_legal_hold_delete_guard.sql:37-38",
         "supabase/migrations/20260828_integrity_hardening.sql:39-54",
         "supabase/schema.sql:564-588",
-        "supabase/schema.sql:1011-1028",
-        "supabase/schema.sql"
+        "supabase/schema.sql:1011-1028"
       ],
       "has_verifier_correction": true,
       "summary": "searchpath: an unpinned SECURITY DEFINER function resolves documentholds, orgmembers and documents against the caller's searchpath. Any path that lets a role prepend a schema turns the hold check into a lookup against attacker-controlled objects, and the trigger that refuses to publish over a hold silently returns clean. RLS: an environment bootstrapped from schema.sql alone (a demo, a staging reb",
@@ -2260,8 +2255,7 @@
         "app/(protected)/assets/[tag]/page.tsx:1",
         "app/(protected)/layout.tsx:27-45",
         "lib/physicalBridge.ts:219-221",
-        "lib/physicalBridge.ts:272-275",
-        "app/(protected)/assets/[tag]/page.tsx"
+        "lib/physicalBridge.ts:272-275"
       ],
       "has_verifier_correction": true,
       "summary": "Every pump and exchanger in the unit carries a sticker that says scanning it shows drawings and holds. An operator who notices something wrong scans the label on E-204, lands on a sign-in screen, has no account, and gives up. The hold badge that the /assets/[tag] page renders (line 215) — the one place in the product where a hold is visible next to an equipment tag — is unreachable by exactly the ",
@@ -2554,11 +2548,12 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/effectiveDate.ts:91",
-        "lib/effectiveDate.ts:96-103",
-        "lib/effectiveDate.ts:106-112",
-        "lib/effectiveDate.ts:118-126",
-        "lib/effectiveDate.ts:131-138",
+        "lib/effectiveDate.ts:16",
+        "lib/effectiveDate.ts:23-24",
+        "lib/effectiveDate.ts:33-34",
+        "lib/effectiveDate.ts:45",
+        "lib/effectiveDate.ts:49",
+        "lib/effectiveDate.ts:62-63",
         "app/api/verify/route.ts:93-94",
         "lib/__tests__/effectiveDate.test.ts:5"
       ],
@@ -2583,8 +2578,7 @@
         "lib/documentShares.ts:46,61,69",
         "lib/revisions.ts:1414-1539",
         "lib/revisions.ts:1325-1355",
-        "lib/documentLifecycle/common.ts:266-281",
-        "lib/documentShares.ts"
+        "lib/documentLifecycle/common.ts:266-281"
       ],
       "has_verifier_correction": true,
       "summary": "A fabricator is sent a share link to P-101 for a bid. Six weeks later P-101 is split into P-101A and P-101B; the source goes Superseded. The fabricator's link still works. /api/share/file fetches the retired document's current version, stamps it \"UNCONTROLLED — SHARED COPY\" with the footer P-101 Rev 4 at time of download — scan the QR to confirm it is still current. (route.ts:110) and serves it. N",
@@ -2651,11 +2645,9 @@
         "lib/revisions.ts:1146-1312",
         "lib/revisions.ts:642-647",
         "lib/reviewControl.ts:482-484",
-        "lib/effectiveDate.ts:118-126",
-        "lib/effectiveDate.ts:131-168",
-        "lib/docControlRegister.ts:186-187",
-        "lib/retention.ts:86",
-        "app/api/intake/upload/route.ts:325"
+        "lib/effectiveDate.ts:45",
+        "lib/effectiveDate.ts:62-63",
+        "lib/docControlRegister.ts:186-187"
       ],
       "has_verifier_correction": true,
       "summary": "A procedure is issued at Rev 4 with an effective date of 1 December (after a training window); documents.effectivedate = '2026-12-01' and effectivenotifiedat = NULL. On 10 November the revision is found to be defective and Doc Control reverts to Rev 3. Rev 3 is effective immediately and has no future date — but documents.effectivedate is untouched. The register keeps rendering the \"Effective 1 Dec",
@@ -3123,10 +3115,10 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/api/stripe/webhook/route.ts:50-66",
-        "app/api/stripe/checkout/route.ts:119-122",
-        "app/api/stripe/portal/route.ts:140-145",
-        "lib/stripe.ts:30-36"
+        "app/api/stripe/webhook/route.ts:52",
+        "app/api/stripe/webhook/route.ts:56",
+        "app/api/stripe/webhook/route.ts:63",
+        "app/api/stripe/checkout/route.ts:79-81"
       ],
       "has_verifier_correction": false,
       "summary": "An admin upgrades Starter→Growth in the portal. Stripe bills Growth; the webhook fires with the original metadata and writes subscribedplan: \"starter\". The org is refused cloud backup destinations with \"require the Growth plan. Upgrade in Billing\" (destinations/route.ts:91) while paying for Growth. The reverse is equally live: a downgrade leaves subscribedplan: \"growth\" and the entitlement stays o",

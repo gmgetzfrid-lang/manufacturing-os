@@ -209,6 +209,7 @@ lib/acknowledgments.ts:79 quoted verbatim; 20260722_member_roles_collection.sql:
 <a id="dist-7"></a>
 
 ## DIST-7 · Share-link downloads are never written to download_audits: the insert names a `source` column that does not exist, and the error is discarded
+- **Also surfaced independently as** [`SHR-5`](../public-surfaces/02-share-links.md#shr-5) — two areas found this separately. Fix once.
 
 - **Severity:** HIGH
 - **Status:** OPEN
