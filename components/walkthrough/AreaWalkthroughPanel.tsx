@@ -7,14 +7,15 @@
 // private filesystem — the proof of concept deliberately has no backend, and
 // nothing here talks to a server.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Boxes, ChevronDown, ChevronRight, Loader2, Play, Trash2,
+  Boxes, ChevronDown, ChevronRight, Loader2, Play, Trash2, Upload,
 } from "lucide-react";
 
 import { formatBytes } from "@/lib/recon/jobRunner";
 import {
-  deleteScene, listScenes, loadSceneManifest, loadScenePoints, type SavedSceneEntry,
+  deleteScene, listScenes, loadSceneManifest, loadScenePoints, saveScene, unpackScene,
+  type SavedSceneEntry,
 } from "@/lib/recon/store";
 import type { SceneData } from "@/lib/recon/types";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -41,6 +42,7 @@ export default function AreaWalkthroughPanel({
   const [active, setActive] = useState<{ scene: SceneData; points: ArrayBuffer } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement | null>(null);
 
   const prefix = areaPrefix(unitCode);
 
@@ -77,6 +79,24 @@ export default function AreaWalkthroughPanel({
     await deleteScene(id);
     void refresh();
   }, [refresh]);
+
+  // Bring back a scene exported from another browser or machine.
+  const importFile = useCallback(async (file: File) => {
+    setLoadError(null);
+    try {
+      const { manifest, points } = await unpackScene(file);
+      const m = manifest as SceneData;
+      const base = String(m.id ?? "imported").replace(/^area-[^-]*-/, "");
+      const id = `${prefix}${base}`;
+      await saveScene(id, { ...m, id, points: undefined }, points);
+      await refresh();
+      setActive({ scene: { ...m, id, points }, points });
+    } catch (err) {
+      setLoadError(
+        `That file could not be read as a 3D environment${err instanceof Error ? ` — ${err.message}` : ""}.`,
+      );
+    }
+  }, [prefix, refresh]);
 
   const handleSceneReady = useCallback((scene: SceneData, points: ArrayBuffer) => {
     setActive({ scene, points });
@@ -172,13 +192,33 @@ export default function AreaWalkthroughPanel({
           )}
 
           {!studioOpen ? (
-            <button
-              type="button"
-              onClick={() => setStudioOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-sky-500"
-            >
-              <Boxes className="h-4 w-4" /> Create 3D environment
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setStudioOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-sky-500"
+              >
+                <Boxes className="h-4 w-4" /> Create 3D environment
+              </button>
+              <button
+                type="button"
+                onClick={() => importRef.current?.click()}
+                className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3.5 py-2.5 text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface)]"
+              >
+                <Upload className="h-4 w-4" /> Import .mos3d
+              </button>
+              <input
+                ref={importRef}
+                type="file"
+                accept=".mos3d"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) void importFile(f);
+                }}
+              />
+            </div>
           ) : (
             <ReconstructionStudio
               areaLabel={unitLabel}

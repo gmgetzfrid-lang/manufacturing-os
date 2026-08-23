@@ -192,3 +192,78 @@ export async function deleteScene(id: string): Promise<void> {
     // Already gone.
   }
 }
+
+// ── Storage adapter seam ────────────────────────────────────────────────────
+//
+// Scenes live in the browser today and that is the whole point of the proof of
+// concept — nothing is uploaded. But the shape of "where a finished scene
+// lives" is worth pinning down now, because the intended next step is that the
+// USER's machine still does the reconstruction and only the finished dataset is
+// stored remotely (e.g. Cloudflare R2). A remote adapter implements this same
+// interface; no caller changes.
+
+export interface SceneStore {
+  save(id: string, manifest: unknown, points: ArrayBuffer): Promise<void>;
+  loadManifest(id: string): Promise<unknown | null>;
+  loadPoints(id: string): Promise<ArrayBuffer | null>;
+  list(): Promise<SavedSceneEntry[]>;
+  remove(id: string): Promise<void>;
+}
+
+/** The only implementation in this proof of concept: the browser's own disk. */
+export const localSceneStore: SceneStore = {
+  save: saveScene,
+  loadManifest: loadSceneManifest,
+  loadPoints: loadScenePoints,
+  list: listScenes,
+  remove: deleteScene,
+};
+
+// ── Single-file export ──────────────────────────────────────────────────────
+//
+// A scene is a JSON manifest plus a binary payload. Handing the user two files
+// invites them to be separated, so export packs both into one container:
+//
+//   magic "MOS3D\0"          6 bytes
+//   version                  uint16  little-endian
+//   manifest length          uint32  little-endian
+//   manifest                 UTF-8 JSON
+//   points                   raw payload
+//
+// Deliberately trivial to parse — no zip dependency, and a future importer is
+// a dozen lines.
+
+const EXPORT_MAGIC = "MOS3D\0";
+const EXPORT_VERSION = 1;
+
+export function packScene(manifest: unknown, points: ArrayBuffer): Blob {
+  const json = new TextEncoder().encode(JSON.stringify(manifest));
+  const header = new ArrayBuffer(EXPORT_MAGIC.length + 2 + 4);
+  const bytes = new Uint8Array(header);
+  for (let i = 0; i < EXPORT_MAGIC.length; i++) bytes[i] = EXPORT_MAGIC.charCodeAt(i);
+  const view = new DataView(header);
+  view.setUint16(EXPORT_MAGIC.length, EXPORT_VERSION, true);
+  view.setUint32(EXPORT_MAGIC.length + 2, json.byteLength, true);
+  return new Blob([header, json, points], { type: "application/octet-stream" });
+}
+
+export async function unpackScene(
+  file: Blob,
+): Promise<{ manifest: unknown; points: ArrayBuffer }> {
+  const headerSize = EXPORT_MAGIC.length + 6;
+  const head = new DataView(await file.slice(0, headerSize).arrayBuffer());
+  const magic = new Uint8Array(head.buffer, 0, EXPORT_MAGIC.length);
+  for (let i = 0; i < EXPORT_MAGIC.length; i++) {
+    if (magic[i] !== EXPORT_MAGIC.charCodeAt(i)) {
+      throw new Error("This is not a 3D environment file.");
+    }
+  }
+  const version = head.getUint16(EXPORT_MAGIC.length, true);
+  if (version !== EXPORT_VERSION) {
+    throw new Error(`Unsupported environment file version ${version}.`);
+  }
+  const jsonLength = head.getUint32(EXPORT_MAGIC.length + 2, true);
+  const json = await file.slice(headerSize, headerSize + jsonLength).text();
+  const points = await file.slice(headerSize + jsonLength).arrayBuffer();
+  return { manifest: JSON.parse(json), points };
+}

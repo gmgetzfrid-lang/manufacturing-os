@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, Boxes, CheckCircle2, ChevronRight, Cpu, Film, HardDrive,
-  Loader2, MonitorPlay, Play, Save, ShieldCheck, Trash2, Upload, X, XCircle, Zap,
+  Download, Loader2, MonitorPlay, Play, Save, ShieldCheck, Trash2, Upload, X, XCircle, Zap,
 } from "lucide-react";
 
 import {
@@ -24,7 +24,7 @@ import {
   ReconstructionJob, formatBytes, formatDuration, initialJobState,
   overallProgress, type JobState,
 } from "@/lib/recon/jobRunner";
-import { saveScene } from "@/lib/recon/store";
+import { packScene, saveScene } from "@/lib/recon/store";
 import type { SceneData } from "@/lib/recon/types";
 import CaptureGuide from "./CaptureGuide";
 
@@ -163,6 +163,20 @@ export default function ReconstructionStudio({
     await saveScene(id, manifest, job.scene.points);
     setSaved(true);
   }, [job.scene, scenePrefix]);
+
+  // Export to a single file the user owns. Same manifest + payload the browser
+  // store keeps, packed into one blob so it can be moved between machines.
+  const download = useCallback(() => {
+    if (!job.scene) return;
+    const manifest = { ...job.scene, points: undefined };
+    const blob = packScene(manifest, job.scene.points);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${job.scene.id}.mos3d`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }, [job.scene]);
 
   const enter = useCallback(() => {
     if (job.scene) onSceneReady?.(job.scene, job.scene.points);
@@ -453,6 +467,7 @@ export default function ReconstructionStudio({
           job={job}
           saved={saved}
           onSave={save}
+          onDownload={download}
           onEnter={enter}
           onRestart={() => { setJob(initialJobState()); setClips([]); }}
         />
@@ -585,12 +600,13 @@ function Stat({
 }
 
 function ResultPanel({
-  scene, job, saved, onSave, onEnter, onRestart,
+  scene, job, saved, onSave, onDownload, onEnter, onRestart,
 }: {
   scene: SceneData;
   job: JobState;
   saved: boolean;
   onSave: () => void;
+  onDownload: () => void;
   onEnter: () => void;
   onRestart: () => void;
 }) {
@@ -634,6 +650,13 @@ function ResultPanel({
           className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
         >
           <Save className="h-4 w-4" /> {saved ? "Saved to this browser" : "Save environment"}
+        </button>
+        <button
+          type="button"
+          onClick={onDownload}
+          className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+        >
+          <Download className="h-4 w-4" /> Download file
         </button>
         <button
           type="button"
