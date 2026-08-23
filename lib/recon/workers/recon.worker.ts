@@ -386,6 +386,34 @@ async function run(
     }
   }
 
+  // A reconstruction that placed a handful of frames is not a scene, and must
+  // not be presented as one.
+  //
+  // Everything downstream will happily proceed: densification runs on whatever
+  // frames registered, each contributing one camera frustum, and the viewer
+  // then shows two or three cone-shaped clusters of coloured points floating in
+  // the dark. That is not a poor reconstruction of a room — it is a failed
+  // reconstruction being rendered, and handing it over as a result is exactly
+  // the kind of fake success this pipeline is supposed to refuse. Showing
+  // nothing and saying why is more useful than showing that.
+  const usedFrames = kept.length;
+  const registeredFraction = usedFrames > 0 ? sfm.registeredFrames.length / usedFrames : 0;
+  const biggestGroup = sfm.components.reduce((m, c) => Math.max(m, c.length), 0);
+  if (registeredFraction < 0.35 || biggestGroup < 8) {
+    throw new Error(
+      `The capture did not reconstruct. Only ${sfm.registeredFrames.length} of ${usedFrames} ` +
+      `frames could be positioned` +
+      `${sfm.components.length > 1
+        ? `, and they fell into ${sfm.components.length} disconnected groups, the largest holding ` +
+          `${biggestGroup}`
+        : ""}` +
+      `. That is far too little to build a space from: densifying it would produce a couple of ` +
+      `cones of points where those few cameras happened to look, not a room. ` +
+      `${sfm.points.length.toLocaleString()} sparse points were triangulated at ` +
+      `${sfm.rmsePx.toFixed(2)}px reprojection error.`,
+    );
+  }
+
   // ── Stage 3: densify ────────────────────────────────────────────────────
   t0 = performance.now();
   let densePoints: PointCloud = { xyz: new Float32Array(0), rgb: new Uint8Array(0), count: 0 };
@@ -754,6 +782,13 @@ function hintFor(message: string): string {
     return "Plenty of detail matched, but it did not agree on one camera motion — usually " +
       "repeating patterns like grating, tiles or identical panels matching the wrong copy of " +
       "themselves. Include some distinctive, non-repeating objects in shot.";
+  }
+  if (m.includes("did not reconstruct") || m.includes("could be positioned")) {
+    return "Almost none of the frames could be located relative to each other. The usual " +
+      "causes, in order: the camera moved too fast so consecutive frames share too little; " +
+      "the light was too low, which both blurs and flattens detail; or the camera mostly " +
+      "turned on the spot instead of travelling, which gives no depth to work from. Walk " +
+      "steadily forward past things rather than sweeping the camera across them.";
   }
   if (m.includes("stalled") || m.includes("could be grown")) {
     return "The pieces that matched could not be joined into one space. Walk the route as one " +
