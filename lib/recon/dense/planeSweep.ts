@@ -571,7 +571,7 @@ export function depthToPoints(
   const inv = sweep.depth;
   const normalAt = (
     x: number, y: number, depth: number,
-  ): { normal: [number, number, number]; residual: number } | null => {
+  ): { normal: [number, number, number]; residual: number; fitted: boolean } | null => {
     let n = 0;
     let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0, su = 0, sxu = 0, syu = 0;
     for (let dy = -RADIUS; dy <= RADIUS; dy++) {
@@ -588,7 +588,7 @@ export function depthToPoints(
         n++;
       }
     }
-    if (n < 8) return null;
+    if (n < 8) return { normal: [0, 0, 0], residual: 0, fitted: false };
 
     // Solve the 3x3 normal equations for u = a*dx + b*dy + c.
     const m = [sxx, sxy, sx, sxy, syy, sy, sx, sy, n];
@@ -597,7 +597,7 @@ export function depthToPoints(
       m[0] * (m[4] * m[8] - m[5] * m[7]) -
       m[1] * (m[3] * m[8] - m[5] * m[6]) +
       m[2] * (m[3] * m[7] - m[4] * m[6]);
-    if (Math.abs(det) < 1e-12) return null;
+    if (Math.abs(det) < 1e-12) return { normal: [0, 0, 0], residual: 0, fitted: false };
     const solve = (col: number) => {
       const c = m.slice();
       for (let r = 0; r < 3; r++) c[r * 3 + col] = rhs[r];
@@ -631,18 +631,22 @@ export function depthToPoints(
     }
     const rms = Math.sqrt(sse / Math.max(1, count));
     const u0 = 1 / depth;
-    if (rms > u0 * 0.06) return null;
+    // Only a genuinely ragged window is a flying pixel. Real surfaces are not
+    // perfectly planar over a 7x7 patch, so the bar has to leave room for
+    // curvature and texture-driven depth wobble or it deletes the scene.
+    if (rms > u0 * 0.12) return null;
 
     const nx = fx * a;
     const ny = fy * b;
     const nz = u0 - (x - cx) * a - (y - cy) * b;
     const len = Math.hypot(nx, ny, nz);
-    if (!(len > 1e-12)) return null;
+    if (!(len > 1e-12)) return { normal: [0, 0, 0], residual: 0, fitted: false };
     // Face the camera: a surface we can see cannot point away from it.
     const sign = nz > 0 ? -1 : 1;
     return {
       normal: [(nx / len) * sign, (ny / len) * sign, (nz / len) * sign],
       residual: rms / Math.max(1e-9, u0),
+      fitted: true,
     };
   };
 
@@ -653,9 +657,11 @@ export function depthToPoints(
       if (!(depth > 0) || !Number.isFinite(depth)) continue;
 
       const fit = normalAt(x, y, depth);
-      // No plane fit means either too few neighbours or a depth edge running
-      // through the window. Either way this sample cannot be trusted to lie on
-      // a surface, so it is dropped rather than drawn as an unoriented dot.
+      // null means a depth edge ran through the window: the sample floats
+      // between foreground and background and belongs to neither, so it goes.
+      // A fit that simply could not be computed — too few neighbours at the
+      // edge of the map — is different, and keeping that point as an
+      // unoriented dot costs nothing and preserves coverage.
       if (!fit) continue;
 
       const cam = [((x - cx) / fx) * depth, ((y - cy) / fy) * depth, depth];
@@ -668,7 +674,7 @@ export function depthToPoints(
       // let a ragged plane fit discount the sample as well.
       const cost = sweep.cost[i];
       const matched = Number.isFinite(cost) ? Math.max(0, Math.min(1, 1 - cost * 2)) : 0;
-      const flat = Math.max(0, 1 - fit.residual / 0.06);
+      const flat = fit.fitted ? Math.max(0, 1 - fit.residual / 0.12) : 0.35;
 
       out.push({
         xyz: [world[0], world[1], world[2]],

@@ -111,3 +111,38 @@ describe("normals from the depth map", () => {
     expect(depthToPoints(IDENTITY, empty, OPTS, 1)).toHaveLength(0);
   });
 });
+
+describe("coverage versus flying-pixel rejection", () => {
+  // Rejecting too eagerly deletes the scene; rejecting too little leaves
+  // samples floating in mid-air between a foreground and a background surface.
+  it("keeps almost every sample on a clean plane", () => {
+    const n = unit([0.1, 0.4, 0.91]);
+    const pts = depthToPoints(IDENTITY, planeSweepResult(n, 5), OPTS, 1);
+    const usable = (W - 1) * (H - 1);
+    expect(pts.length).toBeGreaterThan(usable * 0.9);
+  });
+
+  it("tolerates a surface that is noisy without being discontinuous", () => {
+    const s = planeSweepResult(unit([0, 0, 1]), 5);
+    let seed = 7;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let i = 0; i < s.depth.length; i++) {
+      if (s.depth[i] > 0) s.depth[i] *= 1 + (rand() - 0.5) * 0.02;
+    }
+    const pts = depthToPoints(IDENTITY, s, OPTS, 1);
+    expect(pts.length).toBeGreaterThan((W - 1) * (H - 1) * 0.7);
+  });
+
+  it("still drops the samples straddling a real depth cliff", () => {
+    const s = planeSweepResult(unit([0, 0, 1]), 4);
+    for (let y = 0; y < H; y++) {
+      for (let x = W / 2; x < W; x++) s.depth[y * W + x] = 12;
+    }
+    const pts = depthToPoints(IDENTITY, s, OPTS, 1);
+    const straddling = pts.filter((p) => {
+      const px = (p.xyz[0] / p.xyz[2]) * FOCAL + OPTS.principal[0];
+      return Math.abs(px - W / 2) < 2;
+    });
+    expect(straddling.length).toBe(0);
+  });
+});
