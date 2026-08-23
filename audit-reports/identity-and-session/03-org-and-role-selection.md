@@ -122,6 +122,22 @@ it from the `ORGSEL-4` banner's "Make default".
 - Reproduced: `.limit(1).maybeSingle()` with no `.order()` re-confirmed at HEAD, with the result persisted at the old `:215`.
 - Verified: ship loop green. `maybeSingle()`'s can't-see-the-collision property (called out in the Mechanism) is gone with it — the code now *counts* the candidates and behaves differently on >1.
 
+**Addendum — adversarial review round (same day, commit `8d167f7`).** Two
+review findings landed here and both were real:
+- *The NaN tiebreak.* For two equal-rank rows both lacking a parseable
+  `created_at`, the comparator computed `Infinity - Infinity = NaN`, which
+  `Array.sort` treats as "equal" while **skipping the org_id tiebreak** —
+  the pick was input-order-dependent again, proven by execution in review.
+  The comparator now compares instead of subtracting; a regression test
+  pins both input orders.
+- *The subset cap.* `limit(20)` with no `ORDER BY` moved the arbitrariness
+  one level up for a >20-org member: the deterministic picker ranked an
+  unstable subset. The query now carries a server-side
+  `ORDER BY created_at, org_id` so the fetched subset is itself stable; the
+  cap remains (ranking by role can't be expressed server-side) and is
+  documented in-code — a >20-org member deterministically gets the best of
+  their 20 oldest memberships.
+
 **What this brought to light.**
 - The DB census confirmed `created_at` exists on every insert path (explicit
   or column default) but is nullable — hence the nulls-last handling in the
@@ -285,7 +301,7 @@ the audit log captured of a "re-add".
 **Done when.**
 
 - [x] the re-add path **merges** into the existing collection, or refuses and directs the caller to the role editor
-- [x] any write that shrinks a member's collection is explicit, confirmed, and written to the audit log as a role removal — satisfied vacuously on this path: with merge semantics no write here can shrink a collection; the only shrink path left is the role editor, which is explicit by design (its own audit trail is `roles-and-permissions` territory, noted there via `CHAIN-2`'s cluster)
+- [x] any write that shrinks a member's collection is explicit, confirmed, and written to the audit log as a role removal — with merge semantics no write on THIS route can shrink; the one remaining shrink path (the role editor's chip removal) was then completed in the adversarial-review round: it now requires a confirmation naming the removed role(s) and writes a `ROLE_REMOVED` audit row with before/after (commit `8d167f7`, `app/(protected)/admin/users/page.tsx`)
 - [x] `:161`'s follow-up `update({ roles: [role] })` on the insert path is checked against the same rule — it is correct for a genuinely new member and wrong if it can ever reach an existing one → checked: it is keyed on `(org_id, uid)` inside the no-existing-member branch, so it can only ever reach the row inserted two statements earlier; a clarifying comment now says so in-code
 - [x] a test gives a member two roles, re-adds them with one, and asserts both survive
 
@@ -409,6 +425,14 @@ resource filters know the new vocabulary.
   audit row is best-effort — but it is the same substrate weakness
   `DEC-38` names for consent windows; nothing new to fix, one more consumer
   aware of it.
+- The security pass over this work noted two **pre-existing** `audit_logs`
+  policy properties the new events inherit: SELECT is granted to any active
+  org member (no role filter), so `WORKSPACE_SELF_HEAL` and `ROLE_REMOVED`
+  details are org-readable down to Viewers; and INSERT checks only
+  `user_id = auth.uid()` with `org_id IS NULL` allowed, permitting orgless
+  audit noise. Both stem from unchanged policies and belong to
+  `admin-and-org`'s audit-log findings (`ALOG-*`), noted here so the
+  cross-reference exists.
 
 ---
 

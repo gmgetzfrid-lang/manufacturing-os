@@ -76,16 +76,50 @@ production and fixed the screen in front of them. It was never generalised.
 
 ## Findings
 
-**14 findings** — 1 CRITICAL, 6 HIGH, 7 MEDIUM.
+**17 findings** — 1 CRITICAL, 6 HIGH, 9 MEDIUM, 1 LOW. *(Originally 14; the
+resolution session added `SESS-6` — the DEC-31 split of `SESS-5` — and
+`IDENT-6`/`ORGSEL-5`, both found and fixed while working their neighbours.)*
 
 > **One finding here carries `Status: REFUTED`** — `IDENT-5`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
 | # | Report | n | Focus |
 |---|---|---|---|
-| 01 | [**The Viewer window**](./01-the-viewer-window.md) | 5 | **Your symptom**, traced to four lines |
-| 02 | [**Identity collision**](./02-identity-collision.md) | 5 | **Your dual-login question** — and the query that settles it |
-| 03 | [Which workspace, which role](./03-org-and-role-selection.md) | 4 | Arbitrary picks in workspace and role selection |
+| 01 | [**The Viewer window**](./01-the-viewer-window.md) | 6 | **Your symptom**, traced to four lines |
+| 02 | [**Identity collision**](./02-identity-collision.md) | 6 | **Your dual-login question** — and the query that settles it |
+| 03 | [Which workspace, which role](./03-org-and-role-selection.md) | 5 | Arbitrary picks in workspace and role selection |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Phase 0 is a few lines |
+
+---
+
+## Resolution status — worked 2026-08-23
+
+**14 of 17 closed. One `BLOCKED` on production access, one `OPEN` by
+deliberate scope split, one `REFUTED` (pre-existing).** Every phase of
+[`99-fix-sequencing.md`](./99-fix-sequencing.md) was worked in order; a
+six-lens consumer census ran before the changes and a five-lens adversarial
+review ran over the finished diff, whose confirmed findings were fixed in a
+follow-up round. Ship loop green throughout: `tsc`, `eslint`, 1384 vitest
+tests (24 added for this area, plus 5 new test files), full `next build`.
+
+| Status | Findings |
+|---|---|
+| `RESOLVED` | `SESS-1` `SESS-2` `SESS-3` `SESS-4` `SESS-5`* `IDENT-2` `IDENT-3` `IDENT-4` `IDENT-6` `ORGSEL-1` `ORGSEL-2` `ORGSEL-3` `ORGSEL-4` `ORGSEL-5` |
+| `BLOCKED` | `IDENT-1` — code + migration halves done; the three inventory queries need production (`DEC-30`). Unblocking step is STEP 0 of `supabase/migrations/20261018_identity_email_unique.sql`. |
+| `OPEN` | `SESS-6` — the `Role \| null` type migration, split from `SESS-5` under `DEC-31` (11 breaking files, census-counted; worklist on the finding). |
+| `REFUTED` | `IDENT-5` (unchanged; its surviving copy fix landed under `IDENT-3`). |
+
+Commits: `92b69b5` (Phase 0 — the Viewer window), `8fef0f6` (Phase 1 —
+identity), `c111433` (Phases 2–3 — selection, device state, relocation),
+`8d167f7` (adversarial-review round). New decision: `DEC-42` (identity
+linking required). **Pending hand-applied migration:**
+`supabase/migrations/20261018_identity_email_unique.sql` — run its STEP 0
+inventory first and record the results in `IDENT-1`.
+
+**The owner's symptom, in terms of the three composing defects:** `SESS-1`
+(the render race) is closed and pinned by test; `ORGSEL-1` (the arbitrary
+workspace) is closed and pinned by test; `IDENT-1` (the second identity) is
+closed at the application layer, and the database backstop awaits the
+hand-applied migration plus the `DEC-42` linking check.
 
 Each report opens with a **substrate table** — what already exists, works, or is
 load-bearing. In this area that table matters more than usual: the four-state

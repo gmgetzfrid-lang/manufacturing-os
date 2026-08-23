@@ -115,7 +115,8 @@ describe("POST /api/admin/create-user — identity collisions (IDENT-2)", () => 
     const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "DocCtrl" }));
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.collidingUids).toEqual(["uid-a", "uid-b"]);
+    expect(body.collisionCount).toBe(2);
+    expect(body).not.toHaveProperty("collidingUids"); // global auth uids must not leave the server
     expect(String(body.error)).toContain("Multiple accounts");
     expect(memberWrites()).toHaveLength(0);
   });
@@ -134,7 +135,8 @@ describe("POST /api/admin/create-user — identity collisions (IDENT-2)", () => 
     const res = await POST(makeRequest({ email: "GREG@corp.com", password: "x", orgId: "org-1", role: "Drafter" }));
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.collidingUids).toEqual(["uid-a", "uid-b"]);
+    expect(body.collisionCount).toBe(2);
+    expect(body).not.toHaveProperty("collidingUids");
     expect(memberWrites()).toHaveLength(0);
   });
 
@@ -256,7 +258,8 @@ describe("POST /api/admin/create-user — auth fallback failure and pagination (
     const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "Drafter" }));
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.collidingUids).toEqual(["uid-a", "uid-b"]);
+    expect(body.collisionCount).toBe(2);
+    expect(body).not.toHaveProperty("collidingUids");
     expect(memberWrites()).toHaveLength(0);
   });
 });

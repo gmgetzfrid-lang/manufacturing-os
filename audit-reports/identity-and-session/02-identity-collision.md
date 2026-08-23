@@ -270,7 +270,7 @@ destructures its error and refuses on failure. The database backstop's
 this org) maps to the same collision refusal.
 - Commits: `8fef0f6`, `c111433`
 - Files: `app/api/admin/create-user/route.ts`, `lib/identity.ts`
-- Tests: `lib/__tests__/createUserRoute.test.ts::"returns 409 naming both uids and writes NO membership when two profiles share the email"`, `::"refuses to guess when the auth fallback finds two identities on one address"`, `::"fails closed (500, no writes) when the profile lookup itself errors"`
+- Tests: `lib/__tests__/createUserRoute.test.ts::"returns 409 naming both uids and writes NO membership when two profiles share the email"` *(later amended: the refusal reports a collision COUNT; see the security note below)*, `::"refuses to guess when the auth fallback finds two identities on one address"`, `::"fails closed (500, no writes) when the profile lookup itself errors"`
 - Reproduced: the pre-fix mechanism was re-confirmed at HEAD (`error` never destructured at `:80-84`; `find(...)` first-match at `:14`); the new tests were written against the contract and fail against the old code by construction (the old route returned 200 and wrote a membership in the two-profile scenario the first test seeds).
 - Verified: full suite (1360 tests) + ship loop green. The caller census confirmed the admin users page surfaces any `{error}` body verbatim in its modal and reads nothing but `error`/`uid`, so the 409 shape is safe, and the promised remove→re-add flow cannot trip the refusal (removal keeps exactly one profile row).
 
@@ -279,9 +279,15 @@ this org) maps to the same collision refusal.
   human; the other admitting door (`signup`) mints a fresh identity instead,
   which is why its guard is a courtesy and `createUser` its enforcement
   (see `IDENT-5`'s refutation — consistent with what was found here).
-- The response now carries `collidingUids` so an admin's error message can
-  name what to clean up. The uids are already visible to org admins in Team
-  Management; no new information class leaves the server.
+- The first version of the refusal returned the colliding auth uids in the
+  response body, on the reasoning that org admins already see member uids.
+  The security review pass corrected that reasoning: the collision lookups
+  are **system-wide** (the `users` table and `auth.admin.listUsers`), so
+  the uids can belong to accounts in *other workspaces* — handing them to
+  an org admin was a cross-org account-existence oracle. The response now
+  carries only a `collisionCount`; the uids are logged server-side for
+  whoever reconciles (landed in the same commit as this resolution record,
+  pinned by the updated tests asserting the ids never leave the server).
 
 ---
 
@@ -363,6 +369,31 @@ canonical form.
 - Reproduced: the three case-sensitive `eq("email", …)` sites and the one case-folded matcher were re-confirmed at HEAD before changing anything.
 - Verified: ship loop green. Lookups use `ilike` rather than `eq`-on-lowercase deliberately: stored rows written before normalization may be mixed-case, and an `eq` on the canonical form would miss exactly the accounts this finding is about.
 
+**Addendum — adversarial review round (same day, commit `8d167f7`).** Three
+lenses independently caught the same hole in the fix itself, plus two
+residuals:
+- *The `*` wildcard.* PostgREST rewrites every `*` in a like/ilike value to
+  `%` with no escape sequence, so `emailLikePattern` — written to make the
+  lookup exact — still let a `*`-containing address match a *different
+  person* (`greg*@corp.com` ⇒ `ILIKE 'greg%@corp.com'` ⇒ gregory@corp.com,
+  role granted to the wrong human). Every email lookup now routes through
+  `applyEmailLookup`, which sends `*`-addresses to an exact match on the
+  canonical form instead; unit tests pin the routing, and the pattern
+  helper's docblock warns against direct use.
+- *Residual sites.* The projects member-picker (this report's own exemplar
+  substrate!) still compared with a case-sensitive `eq`, and two client-side
+  profile upserts (login page, RoleContext) still wrote Azure's directory
+  casing back over the canonical value. All three now normalize.
+- *Pre-migration tolerance.* Naming the `roles` column in the create-user
+  membership lookup would have turned every "Add member" into a 500 on a
+  pre-migration database; the lookup selects `*` and tolerates the column's
+  absence, matching the promise the roles seed already made.
+- *23505 disambiguation.* The insert path's unique-violation handler
+  conflated the email-collision index with `UNIQUE(org_id, uid)` — a
+  concurrent double-add of the same person would have been reported as
+  "another account holds this email", which is false. The two now get
+  distinct, honest 409s, both pinned by tests.
+
 **What this brought to light.**
 - The independent verifier's correction stands confirmed in the fix: the
   observable damage was the confusing raw auth error (now the friendly 409 —
@@ -372,6 +403,10 @@ canonical form.
 - Nobody could ever *see* a request-access failure: the signup page ignored
   the response entirely and showed "Request Sent" on any outcome. That is
   now `IDENT-6` (below), found by the caller census and fixed.
+- A fix can reintroduce the defect class it closes through its own
+  mechanism — the `*` wildcard rode in on the very helper built to make
+  matching exact. The adversarial pass over one's own diff earned its cost
+  here.
 
 ---
 

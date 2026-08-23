@@ -7,16 +7,19 @@
     "audit-reports/identity-and-session/03-org-and-role-selection.md"
   ],
   "totals": {
-    "findings": 14,
+    "findings": 17,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 1,
       "HIGH": 6,
-      "MEDIUM": 7
+      "MEDIUM": 9,
+      "LOW": 1
     },
     "by_status": {
-      "OPEN": 13,
-      "REFUTED": 1
+      "RESOLVED": 14,
+      "BLOCKED": 1,
+      "REFUTED": 1,
+      "OPEN": 1
     }
   },
   "status_vocabulary": [
@@ -32,7 +35,7 @@
       "id": "SESS-1",
       "title": "The protected layout has no branch for `membershipState === \"resolving\"`, so any forced spinner-clear renders the full app at the initial `activeRole` of `\"Viewer\"`",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -58,7 +61,7 @@
       "id": "IDENT-1",
       "title": "Nothing anywhere makes an email address unique, so two auth identities for one person can hold two memberships with two different roles in the same org",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "BLOCKED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (the absence of the constraint); SUSPECTED (whether duplicates exist in your data today — see the query)",
       "blast_radius": null,
@@ -83,7 +86,7 @@
       "id": "IDENT-2",
       "title": "Team Management's email lookup uses `maybeSingle()` and discards its error, so two profiles sharing an email are read as \"no profile\" and the membership is attached to an arbitrary identity",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -107,7 +110,7 @@
       "id": "ORGSEL-1",
       "title": "The workspace self-heal takes the first row of an unordered query, so a member of more than one org lands in an arbitrary one — and can land in a different one on each sign-in",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -131,7 +134,7 @@
       "id": "ORGSEL-3",
       "title": "Re-adding an existing member through \"Add member\" overwrites their additive role collection with a single role, silently deleting every other hat they hold",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -156,7 +159,7 @@
       "id": "SESS-2",
       "title": "Both spinner watchdogs are shorter than the cold-start budget the same file documents, and shorter than the retry ladder it runs",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -182,7 +185,7 @@
       "id": "SESS-3",
       "title": "A resolve that exhausts its retries lands on the error screen, but a resolve that is merely slow lands on a Viewer app — the two failure modes are inverted in severity",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -207,7 +210,7 @@
       "id": "IDENT-3",
       "title": "Email matching is case-sensitive in three server routes and case-folded in a fourth, so the same address can both miss an existing account and create a second one",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -233,7 +236,7 @@
       "id": "IDENT-4",
       "title": "The device-wide \"prefer Microsoft\" flag and the workspace key are not scoped to an identity, so one browser's state carries across two accounts",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -280,10 +283,33 @@
       "report": "audit-reports/identity-and-session/02-identity-collision.md"
     },
     {
+      "id": "IDENT-6",
+      "title": "The signup page renders \"Request Sent\" on every request-access outcome — 404, 409 and 500 all show success",
+      "severity": "MEDIUM",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/signup/page.tsx:93-104",
+        "app/api/auth/request-access/route.ts:20-45"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A field hand mistypes the facility's workspace name and requests access. The server answers 404; the screen says the request was sent and an admin will respond. Nobody ever comes, because no request exists — and the person has been explicitly told not to follow up. The admin-side pending-requests surface (DEC-19) makes this worse, not better: even once admins can see requests, this one was never c",
+      "area": "identity-and-session",
+      "report": "audit-reports/identity-and-session/02-identity-collision.md"
+    },
+    {
       "id": "ORGSEL-2",
       "title": "The login page makes the same unordered pick a second time, so the routing decision and the resolver's decision can disagree",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -307,7 +333,7 @@
       "id": "ORGSEL-4",
       "title": "A relocation to a different workspace is indistinguishable from a normal sign-in — nothing tells the user their workspace changed",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -332,7 +358,7 @@
       "id": "SESS-4",
       "title": "The Microsoft path pays the cold-start twice and starts it later, which is why the symptom clusters on SSO sign-ins",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -359,7 +385,7 @@
       "id": "SESS-5",
       "title": "`activeRole` has no \"unknown\" value, so a placeholder is indistinguishable from a real answer at every consumer",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -379,6 +405,52 @@
       "summary": "Any new surface written against useRole() inherits the defect without its author doing anything wrong. It reads activeRole, sees \"Viewer\", hides its admin affordance, and is bug-compatible with the rest of the app.",
       "area": "identity-and-session",
       "report": "audit-reports/identity-and-session/01-the-viewer-window.md"
+    },
+    {
+      "id": "SESS-6",
+      "title": "`activeRole: Role` → `Role | null` type migration — the remainder of `SESS-5`, split out under DEC-31",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (blast radius measured against HEAD by a dedicated consumer census, 2026-08-23)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/providers/RoleContext.tsx:79-92",
+        "app/(protected)/requests/page.tsx:349",
+        "app/(protected)/documents/[libraryId]/page.tsx:4013"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A new provider or always-mounted panel reads activeRole without checking membershipState, sees \"Viewer\", and acts on it — nothing in the type system objects. The eleven files below are the measured set that fail to compile under Role | null, i.e. the true worklist for the migration:",
+      "area": "identity-and-session",
+      "report": "audit-reports/identity-and-session/01-the-viewer-window.md"
+    },
+    {
+      "id": "ORGSEL-5",
+      "title": "The same re-add write nulls the member's display name whenever none is provided",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/admin/create-user/route.ts:196-208"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An admin reactivates a suspended member through \"Add member\" using a caller that omits displayName. The member's name vanishes from every roster, review sign-off and audit attribution that renders display names, with no signal that anything was changed.",
+      "area": "identity-and-session",
+      "report": "audit-reports/identity-and-session/03-org-and-role-selection.md"
     }
   ],
   "gaps_note": "Gaps are build specs for capabilities that do not exist. They are work, but they carry a verdict and a dependency chain rather than a severity — check `verdict` and `depends_on` before starting one. DECLINE and FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is false and the spec names what to do instead. Build order is in 99-fix-sequencing.md.",

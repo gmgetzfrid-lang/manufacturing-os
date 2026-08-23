@@ -169,3 +169,35 @@ four cited lines, but the honest reproduction is a browser with the membership
 query throttled past six seconds. That test is worth writing before the fix, not
 after — it is the one that tells you whether you have found *your* bug or only *a*
 bug.
+
+---
+
+## Execution record — 2026-08-23
+
+Worked to completion in this order by a single session (claimed per
+`DEC-32`, claim removed with the resolutions):
+
+- **Phase 0** — `SESS-1` shipped first as prescribed, with `SESS-2`/`SESS-3`
+  in the same commit (`92b69b5`) since they share the two files and `SESS-1`
+  landing first in the edit sequence preserved the "honest spinner before
+  longer budget" ordering this file demands.
+- **Phase 1** — `IDENT-3` → (`IDENT-5` copy fix only, refuted stands) →
+  `IDENT-2` → `IDENT-1`'s constraints as a hand-apply migration with the
+  inventory queries in-file (`8fef0f6`). The indexes are written, not
+  applied: STEP 0 against production is the remaining step, exactly the
+  fail-to-create-while-duplicates-exist ordering described here.
+- **Phase 2** — `ORGSEL-1` (rank-then-oldest, as this file recommends) →
+  `ORGSEL-2` (resolved by deletion: the login page no longer decides) →
+  `IDENT-4` (cleared on sign-out AND owner-stamped) — `c111433`.
+- **Phase 3** — `SESS-2`/`SESS-3` (landed with Phase 0), `SESS-4` (provider
+  owns the one query), `ORGSEL-4` (banner + audit row), `SESS-5` narrowed
+  per `DEC-31` with the remainder split to `SESS-6`.
+- `ORGSEL-3` was fixed in the pass that touched `create-user` (Phase 1), as
+  this file directs, plus `ORGSEL-5` found on the adjacent field.
+- **Not in the plan but demanded by it:** an adversarial review of the
+  finished diff refuted parts of the fixes themselves (a `*`-wildcard hole
+  in the new email matcher, a NaN tiebreak in the new picker, a
+  boot-quadrant gap in the new gate, a token-refresh rescue gap) — all
+  fixed in `8d167f7`. The "Do not do these" table held: watchdogs kept,
+  no Admin fail-open default, Microsoft login untouched, unique index
+  written to apply only after reconciliation, rank-not-newest ordering.

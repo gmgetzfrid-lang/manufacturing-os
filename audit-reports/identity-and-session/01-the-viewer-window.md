@@ -146,12 +146,31 @@ through now renders a dedicated still-resolving screen (built under
   same contract, zero new test infrastructure. If a component-level harness
   is ever added, a mount-and-advance-timers test is the first one to write.
 
+**Addendum — adversarial review round (same day, commit `8d167f7`).** Five
+independent review lenses were run against the fix diff and two of their
+findings landed here:
+- *The boot quadrant.* `{loading:false, uid:null, membershipState:"resolving"}`
+  still mapped to `"app"` — reachable when the 6 s watchdog clears the
+  spinner while `getSession` is still refreshing an expired token, i.e. the
+  placeholder shell again, before identity is even known. The provider now
+  exposes `booted` (getSession settled, or the boot timeout gave up) and the
+  gate keeps the honest spinner until boot has identified someone or
+  genuinely settled signed-out. Pinned by two new gate tests.
+- *The rescue gap.* `TOKEN_REFRESHED` can be the FIRST event that
+  establishes an identity (boot saw no session on a flaky network; the
+  auto-refresh ticker succeeds seconds later) — and nothing then scheduled a
+  resolve, parking the user on the new resolving screen with nothing in
+  flight. Both `TOKEN_REFRESHED` and the same-user `SIGNED_IN` re-emit now
+  rescue an unresolved membership, and every resolve runs through one
+  generation-guarded `startResolve` so a superseded resolve can no longer
+  clobber a newer one's state.
+
 **What this brought to light.**
 - The consumer census run for this fix found that `resolveProtectedView`
   deliberately returns `"app"` for a signed-out (`uid === null`) settled
-  state — pre-existing behaviour, preserved and now pinned by a test so the
-  choice is at least explicit. Per-page guards and the `SIGNED_OUT` redirect
-  own that case today.
+  state — pre-existing behaviour, preserved (behind the new `booted` guard)
+  and pinned by a test so the choice is at least explicit. Per-page guards
+  and the `SIGNED_OUT` redirect own that case today.
 - Four `useRole()` consumers mount **outside** the gate (`OrgBrandingProvider`,
   `SubscriptionProvider`, the notification center's panel, and the layout
   itself) and still observe placeholder role state during resolution. The one

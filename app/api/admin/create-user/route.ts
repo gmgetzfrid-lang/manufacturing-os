@@ -28,12 +28,17 @@ async function findAuthUsersByEmail(email: string): Promise<string[] | null> {
 
 /** The refusal every ambiguous-identity path lands on. Copies the pattern the
  *  projects member-picker already uses — select two, refuse on two — which was
- *  the only call site in the codebase defending against email collisions. */
+ *  the only call site in the codebase defending against email collisions.
+ *  The colliding auth uids are logged server-side for whoever reconciles,
+ *  but NOT returned: the lookups are system-wide, so the ids can belong to
+ *  other workspaces, and handing them to an org admin is a cross-org
+ *  account-existence oracle (security-review finding). */
 function identityCollisionResponse(email: string, ids: string[]) {
+  console.warn(`[create-user] identity collision on ${email}: ${ids.length} accounts share the address`, ids);
   return NextResponse.json(
     {
       error: `Multiple accounts share the email ${email} — contact your admin. No role was granted.`,
-      collidingUids: ids,
+      collisionCount: ids.length,
     },
     { status: 409 }
   );
