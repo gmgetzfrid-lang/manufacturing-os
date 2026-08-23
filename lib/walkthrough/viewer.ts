@@ -105,7 +105,12 @@ ${SRGB_ENCODE}
 void main() {
   // Rotate into the splat's own frame, then stretch the axis along the normal
   // so a plain unit-circle test carves out the projected ellipse.
-  vec2 offset = (gl_PointCoord - vec2(0.5)) * 2.0;
+  //
+  // gl_PointCoord runs y DOWN from the top-left; vMinorDir comes from view
+  // space, where y runs UP. Flipping y here puts both in the same frame —
+  // without it the ellipse is mirrored on every surface whose normal has a
+  // diagonal screen direction, tilting splats the wrong way across the scene.
+  vec2 offset = vec2(gl_PointCoord.x - 0.5, 0.5 - gl_PointCoord.y) * 2.0;
   vec2 e = vec2(
     dot(offset, vMinorDir),
     dot(offset, vec2(-vMinorDir.y, vMinorDir.x))
@@ -297,7 +302,14 @@ export class WalkthroughViewer {
   // half of the canvas is a thumbstick, the right half looks around. Tracking
   // by pointerId is what lets both happen at once.
   private touchLook: { id: number; x: number; y: number } | null = null;
-  private touchStick: { id: number; ox: number; oy: number; dx: number; dy: number } | null = null;
+  private touchStick: {
+    id: number;
+    /** Where the thumb landed, in client space — the frame the deltas use. */
+    cx: number; cy: number;
+    /** The same point relative to the canvas, which is what the UI draws in. */
+    ox: number; oy: number;
+    dx: number; dy: number;
+  } | null = null;
   private pinch: { a: number; b: number; distance: number } | null = null;
   /** Analog move from a thumbstick, in the range -1..1. Strafe, then forward. */
   private analogMove = { x: 0, y: 0 };
@@ -633,7 +645,7 @@ export class WalkthroughViewer {
   private lastPointer = { x: 0, y: 0 };
 
   /** Radius in px a thumbstick drag needs to reach full speed. */
-  private static readonly STICK_RANGE = 64;
+  static readonly STICK_RANGE = 64;
 
   private onPointerDown = (e: PointerEvent) => {
     // A mouse keeps the pointer-lock path; only direct input steers by touch.
@@ -653,7 +665,12 @@ export class WalkthroughViewer {
     this.trackPinch(e, "down");
 
     if (onStickSide && !this.touchStick) {
-      this.touchStick = { id: e.pointerId, ox: e.clientX, oy: e.clientY, dx: 0, dy: 0 };
+      this.touchStick = {
+        id: e.pointerId,
+        cx: e.clientX, cy: e.clientY,
+        ox: e.clientX - rect.left, oy: e.clientY - rect.top,
+        dx: 0, dy: 0,
+      };
     } else if (!this.touchLook) {
       this.touchLook = { id: e.pointerId, x: e.clientX, y: e.clientY };
     }
@@ -675,16 +692,19 @@ export class WalkthroughViewer {
 
     if (this.touchStick && e.pointerId === this.touchStick.id) {
       const range = WalkthroughViewer.STICK_RANGE;
-      const dx = e.clientX - this.touchStick.ox;
-      const dy = e.clientY - this.touchStick.oy;
+      const dx = e.clientX - this.touchStick.cx;
+      const dy = e.clientY - this.touchStick.cy;
       const length = Math.hypot(dx, dy);
       // Past the ring the stick pegs at full speed rather than the thumb
-      // running off the edge of a small screen.
+      // running off the edge of a small screen; pushing well past it runs.
+      // Pinch cannot do this job in first person — walking and looking are
+      // already two fingers, so a two-finger gesture is ambiguous there.
       const scale = length > range ? range / length : 1;
       this.touchStick.dx = dx * scale;
       this.touchStick.dy = dy * scale;
       this.analogMove.x = this.touchStick.dx / range;
       this.analogMove.y = -this.touchStick.dy / range;
+      this.analogBoost = length > range * 1.6 ? 2.5 : 1;
       this.options.onTouchNav?.(this.touchNavState());
       return;
     }
@@ -706,6 +726,7 @@ export class WalkthroughViewer {
       this.touchStick = null;
       this.analogMove.x = 0;
       this.analogMove.y = 0;
+      this.analogBoost = 1;
     }
     if (this.touchLook?.id === e.pointerId) this.touchLook = null;
     this.renderer.domElement.releasePointerCapture?.(e.pointerId);
@@ -713,9 +734,8 @@ export class WalkthroughViewer {
   };
 
   /**
-   * Two fingers mean zoom in orbit and a speed boost while walking. Returns
-   * true when the gesture consumed the move, so a pinch does not also spin the
-   * camera.
+   * Two fingers pinch to zoom, in orbit only. Returns true when the gesture
+   * consumed the move, so a pinch does not also spin the camera.
    */
   private trackPinch(e: PointerEvent, kind: "down" | "move" | "up"): boolean {
     if (e.pointerType === "mouse") return false;
@@ -747,10 +767,8 @@ export class WalkthroughViewer {
     this.pinch.distance = distance;
     if (this.mode === "orbit") {
       this.orbitDistance = Math.max(0.6, this.orbitDistance / ratio);
-    } else {
-      this.analogBoost = Math.max(1, Math.min(4, this.analogBoost * ratio));
     }
-    return true;
+    return this.mode === "orbit";
   }
 
   private activeTouches = new Map<number, { x: number; y: number }>();

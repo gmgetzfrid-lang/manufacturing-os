@@ -18,6 +18,9 @@ import {
   WalkthroughViewer, type TouchNavState, type ViewMode, type ViewerStats,
 } from "@/lib/walkthrough/viewer";
 
+/** Matches WalkthroughViewer.STICK_RANGE; the ring is drawn at this radius. */
+const STICK_RANGE = 64;
+
 export default function WalkthroughCanvas({
   scene,
   points,
@@ -147,7 +150,7 @@ export default function WalkthroughCanvas({
             <>
               <div>Left side — Drag to walk</div>
               <div>Right side — Drag to look</div>
-              <div>Pinch — Move faster</div>
+              <div>Push further — Run</div>
             </>
           ) : (
             <>
@@ -160,27 +163,35 @@ export default function WalkthroughCanvas({
         </div>
       )}
 
-      {/* The thumbstick, drawn where the thumb actually landed. */}
-      {mode === "first-person" && touchNav?.stick && (
+      {/* The thumbstick. It rests in the bottom-left corner and jumps to wherever
+          the thumb actually lands — a control that only appears once you have
+          already guessed where it is teaches nobody. Coordinates are canvas
+          relative, because this div is positioned against the canvas, not the
+          page. */}
+      {mode === "first-person" && coarse && (
         <div
-          className="absolute z-20 pointer-events-none"
+          className="absolute z-20 pointer-events-none transition-opacity duration-200"
           style={{
-            left: touchNav.stick.originX, top: touchNav.stick.originY,
+            left: touchNav?.stick ? touchNav.stick.originX : 96,
+            bottom: touchNav?.stick ? undefined : 96,
+            top: touchNav?.stick ? touchNav.stick.originY : undefined,
             width: 0, height: 0,
+            opacity: touchNav?.stick ? 1 : 0.45,
           }}
         >
           <div
-            className="absolute rounded-full border-2 border-white/35 bg-white/5"
+            className="absolute rounded-full border-2 border-white/40 bg-white/5"
             style={{
-              width: touchNav.stick.range * 2, height: touchNav.stick.range * 2,
-              left: -touchNav.stick.range, top: -touchNav.stick.range,
+              width: STICK_RANGE * 2, height: STICK_RANGE * 2,
+              left: -STICK_RANGE, top: -STICK_RANGE,
             }}
           />
           <div
-            className="absolute rounded-full bg-white/70"
+            className="absolute rounded-full bg-white/75 shadow-lg"
             style={{
-              width: 44, height: 44,
-              left: touchNav.stick.dx - 22, top: touchNav.stick.dy - 22,
+              width: 46, height: 46,
+              left: (touchNav?.stick?.dx ?? 0) - 23,
+              top: (touchNav?.stick?.dy ?? 0) - 23,
             }}
           />
         </div>
@@ -188,7 +199,7 @@ export default function WalkthroughCanvas({
 
       {touchNav && touchNav.boost > 1.05 && mode === "first-person" && (
         <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 font-mono text-[11px] text-sky-200 backdrop-blur pointer-events-none">
-          {touchNav.boost.toFixed(1)}x speed
+          Running
         </div>
       )}
 
