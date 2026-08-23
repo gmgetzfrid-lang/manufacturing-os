@@ -125,8 +125,8 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
   },
   frames: {
     sampleFps: 6,
-    targetFps: 2,
-    maxFramesPerClip: 70,
+    targetFps: 3.2,
+    maxFramesPerClip: 100,
     workingLongEdge: 1280,
     colorLongEdge: 1280,
     blurFloorRatio: 0.35,
@@ -138,7 +138,7 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
     levels: 8,
     fastThreshold: 18,
     matchRatio: 0.78,
-    sequentialWindow: 6,
+    sequentialWindow: 8,
     loopCandidates: 6,
     minPairInliers: 28,
   },
@@ -181,7 +181,7 @@ export type QualityPreset = "draft" | "balanced" | "high";
 export function applyPreset(base: ReconConfig, preset: QualityPreset): ReconConfig {
   const cfg: ReconConfig = structuredClone(base);
   if (preset === "draft") {
-    cfg.frames.targetFps = 1.2;
+    cfg.frames.targetFps = 2.0;
     cfg.frames.maxFramesPerClip = 45;
     cfg.frames.workingLongEdge = 720;
     cfg.features.maxPerFrame = 1500;
@@ -192,7 +192,7 @@ export function applyPreset(base: ReconConfig, preset: QualityPreset): ReconConf
     cfg.dense.maxPoints = 900_000;
     cfg.sfm.globalBaIterations = 12;
   } else if (preset === "high") {
-    cfg.frames.targetFps = 2.6;
+    cfg.frames.targetFps = 4.0;
     cfg.frames.maxFramesPerClip = 110;
     cfg.frames.workingLongEdge = 1600;
     cfg.features.maxPerFrame = 3500;

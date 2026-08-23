@@ -276,9 +276,28 @@ export async function reconstruct(
   const height = frames[0].height;
   const cx = width / 2;
   const cy = height / 2;
-  // Phone cameras cluster around a 60-70 degree horizontal field of view, which
-  // puts the focal length near 1.2x the long edge. Bundle adjustment refines it.
-  let focal = 1.2 * Math.max(width, height);
+  // A starting guess only. 0.85x the long edge is about a 61-degree horizontal
+  // field of view, which is where phone main cameras sit.
+  //
+  // The previous value of 1.2x came with a comment claiming it matched a 60-70
+  // degree lens. It does not: 1.2x the long edge IS a 45-degree lens, roughly
+  // 44% too long for a phone. That matters far more than a prior normally
+  // would, because pair verification runs on the ESSENTIAL matrix, which needs
+  // the focal to un-project points before it can test them. Feed it a focal
+  // half again too long and the epipolar constraint is violated systematically,
+  // RANSAC finds almost no inliers, and the capture is rejected as having no
+  // overlap. Synthetic test footage hid this: noise-free frames yield so many
+  // matches that enough survive even a badly wrong model.
+  //
+  // Measuring it from the footage does NOT work, and it is worth recording why:
+  // scoring focal hypotheses by how many correspondences survive verification
+  // just picks the smallest hypothesis every time. The RANSAC threshold is
+  // carried in normalised units, so a shorter focal spreads the points and
+  // loosens the test in step — the score measures leniency, not fit. Tested
+  // directly, a 50%-wrong focal costs essentially no inliers on a translating
+  // pair, so this prior is not what decides whether a capture verifies.
+  // Bundle adjustment refines it later, where the residual is in pixels.
+  let focal = 0.85 * Math.max(width, height);
 
   const featureByIndex = new Map<number, FrameFeatures>();
   for (const f of features) featureByIndex.set(f.frameIndex, f);
@@ -298,57 +317,97 @@ export async function reconstruct(
     data: f.descriptors, count: f.count,
   });
 
-  for (let i = 0; i < proposed.length; i++) {
-    checkAbort();
-    const pair = proposed[i];
-    const fa = featureByIndex.get(pair.a);
-    const fb = featureByIndex.get(pair.b);
-    if (!fa || !fb || fa.count < 20 || fb.count < 20) continue;
-
-    let matches: MatchPair[];
+  const matchPair = async (a: number, b: number, ratio: number): Promise<MatchPair[]> => {
+    const fa = featureByIndex.get(a);
+    const fb = featureByIndex.get(b);
+    if (!fa || !fb || fa.count < 20 || fb.count < 20) return [];
     if (useGpu) {
       try {
-        matches = await matchMutual(descriptorSet(fa), descriptorSet(fb), {
-          ratio: cfg.features.matchRatio,
-        });
+        return await matchMutual(descriptorSet(fa), descriptorSet(fb), { ratio });
       } catch {
-        // One GPU failure is enough to distrust it for the rest of the run.
         useGpu = false;
-        report(i / proposed.length, "GPU matching unavailable — using CPU");
-        matches = matchMutualCpu(descriptorSet(fa), descriptorSet(fb), {
-          ratio: cfg.features.matchRatio,
-        });
       }
-    } else {
-      matches = matchMutualCpu(descriptorSet(fa), descriptorSet(fb), {
-        ratio: cfg.features.matchRatio,
-      });
+    }
+    return matchMutualCpu(descriptorSet(fa), descriptorSet(fb), { ratio });
+  };
+
+  // Where pairs die, so a failure can name its own cause instead of blaming the
+  // capture. Two different thresholds reject a pair and they mean opposite
+  // things: too few raw matches is a features-and-overlap problem, too few
+  // inliers after RANSAC is a geometry problem.
+  const reject = { noFeatures: 0, fewMatches: 0, noModel: 0, fewInliers: 0 };
+  const matchCounts: number[] = [];
+
+  /**
+   * Verify one pair at a given strictness.
+   *
+   * Split out because the whole set may need a second, gentler pass. Fixed
+   * thresholds assume a capture much like the one they were tuned on; real
+   * footage carries motion blur, rolling shutter and exposure swings that thin
+   * matches everywhere at once, and a run that verifies almost nothing has
+   * usually hit the threshold rather than run out of overlap.
+   */
+  const verifyPair = async (
+    pair: { a: number; b: number; source: string },
+    index: number,
+    minMatches: number,
+    minInliers: number,
+    count: boolean,
+    ratio = cfg.features.matchRatio,
+  ): Promise<VerifiedPairInternal | null> => {
+    const fa = featureByIndex.get(pair.a);
+    const fb = featureByIndex.get(pair.b);
+    if (!fa || !fb || fa.count < 20 || fb.count < 20) {
+      if (count) reject.noFeatures++;
+      return null;
     }
 
-    if (matches.length < cfg.features.minPairInliers) continue;
+    const matches = await matchPair(pair.a, pair.b, ratio);
+    if (count) matchCounts.push(matches.length);
+    if (matches.length < minMatches) {
+      if (count) reject.fewMatches++;
+      return null;
+    }
 
     const corr = toCorrespondences(fa, fb, matches, focal, cx, cy);
     const geo = ransacEssential(corr, cfg.sfm.ransacThresholdPx / focal, {
       confidence: cfg.sfm.ransacConfidence,
       maxIterations: 700,
-      seed: 0x51ed + i,
+      seed: 0x51ed + index,
     });
-    if (!geo || geo.inlierCount < cfg.features.minPairInliers) continue;
+    if (!geo) {
+      if (count) reject.noModel++;
+      return null;
+    }
+    if (geo.inlierCount < minInliers) {
+      if (count) reject.fewInliers++;
+      return null;
+    }
 
     const inlierMatches: Array<[number, number]> = [];
     for (let k = 0; k < matches.length; k++) {
       if (geo.inliers[k]) inlierMatches.push([matches[k].queryIndex, matches[k].trainIndex]);
     }
-
-    const crossClip = clipOf.get(pair.a) !== clipOf.get(pair.b);
-    if (crossClip) crossClipPairs++;
-
-    verified.push({
-      a: pair.a, b: pair.b, source: pair.source, crossClip,
+    return {
+      a: pair.a, b: pair.b, source: pair.source as VerifiedPairInternal["source"],
+      crossClip: clipOf.get(pair.a) !== clipOf.get(pair.b),
       matches: inlierMatches, pose: geo.pose,
       angleDeg: geo.medianTriangulationAngleDeg,
       wellConditioned: geo.wellConditionedCount,
-    });
+    };
+  };
+
+  const strictMatches = cfg.features.minPairInliers;
+  const strictInliers = cfg.features.minPairInliers;
+
+  for (let i = 0; i < proposed.length; i++) {
+    checkAbort();
+    const pair = proposed[i];
+    const ok = await verifyPair(pair, i, strictMatches, strictInliers, true);
+    if (ok) {
+      verified.push(ok);
+      if (ok.crossClip) crossClipPairs++;
+    }
 
     if (i % 12 === 0) {
       report(
@@ -358,10 +417,70 @@ export async function reconstruct(
     }
   }
 
+  // Sequential pairs are consecutive frames of one walk: they overlap by
+  // construction, so almost all of them should verify. When they do not, the
+  // threshold is the likelier culprit, and a second gentler pass costs one more
+  // matching sweep against losing the capture entirely. RANSAC still has to
+  // find a consistent model — this lowers how much support that model needs,
+  // it does not accept anything unverified.
+  const sequentialCount = proposed.filter((p) => p.source === "sequential").length;
+  const expected = Math.max(1, sequentialCount);
+  let relaxed = false;
+  if (verified.length < expected * 0.35 && strictInliers > 12) {
+    relaxed = true;
+    const gentleMatches = Math.max(12, Math.round(strictMatches * 0.55));
+    const gentleInliers = Math.max(12, Math.round(strictInliers * 0.55));
+    report(
+      0.30,
+      `Only ${verified.length} of ${proposed.length} pairs verified — retrying more leniently`,
+    );
+    const already = new Set(verified.map((v) => `${v.a}:${v.b}`));
+    for (let i = 0; i < proposed.length; i++) {
+      checkAbort();
+      const pair = proposed[i];
+      if (already.has(`${pair.a}:${pair.b}`)) continue;
+      // Loosen the ratio test here too, and only here. Doing it globally buys a
+      // few more matches everywhere at the cost of admitting ambiguous ones into
+      // captures that were verifying perfectly well — measurably worse scale
+      // consistency on a capture that never needed the help.
+      const ok = await verifyPair(pair, i, gentleMatches, gentleInliers, false, 0.86);
+      if (ok) {
+        verified.push(ok);
+        if (ok.crossClip) crossClipPairs++;
+      }
+      if (i % 12 === 0) {
+        report(
+          0.30 + 0.15 * (i / proposed.length),
+          `Verified ${verified.length} of ${proposed.length} pairs · ${crossClipPairs} link clips`,
+        );
+      }
+    }
+  }
+
+  matchCounts.sort((a, b) => a - b);
+  const medianMatches = matchCounts.length
+    ? matchCounts[Math.floor(matchCounts.length / 2)] : 0;
+  const featureCounts = features.map((f) => f.count).sort((a, b) => a - b);
+  const medianFeatures = featureCounts.length
+    ? featureCounts[Math.floor(featureCounts.length / 2)] : 0;
+  /** Everything a failure needs to say to be diagnosable rather than a guess. */
+  const diagnostics =
+    `${frames.length} frames, median ${medianFeatures} features each; ` +
+    `${proposed.length} pairs proposed, ${verified.length} verified` +
+    `${relaxed ? " (after a lenient retry)" : ""}; ` +
+    `median ${medianMatches} raw matches per pair; rejected ` +
+    `${reject.fewMatches} for too few matches, ${reject.fewInliers} for too few ` +
+    `inliers after RANSAC, ${reject.noModel} with no consistent model, ` +
+    `${reject.noFeatures} for having no features`;
+
   if (verified.length === 0) {
     throw new Error(
-      "No image pairs could be verified. The clips probably do not overlap enough, " +
-      "or the footage is too blurry or too dark for features to match.",
+      `No image pairs could be verified. ${diagnostics}. ` +
+      (medianMatches < strictMatches
+        ? "Matches are the bottleneck: the frames are not sharing enough recognisable " +
+          "detail, which is blur, darkness, or moving too fast between frames."
+        : "Matches were plentiful but no consistent camera motion fitted them, which " +
+          "usually means repeated texture matching the wrong parts of the scene."),
     );
   }
   report(0.48, `${verified.length} verified pairs · ${crossClipPairs} link different clips`);
@@ -475,11 +594,11 @@ export async function reconstruct(
     const bestInliers = verified.reduce((m, p) => Math.max(m, p.matches.length), 0);
     throw new Error(
       `No image pair had enough parallax to start a reconstruction. ` +
-      `${verified.length} pairs passed geometric verification; the best had ` +
-      `${bestInliers} matches, of which ${bestConditioned} triangulated at a usable ` +
-      `angle, against the ${SEED_TIERS[SEED_TIERS.length - 1].wellConditioned} needed. ` +
-      `This is what filming from one spot looks like — walk through the space instead ` +
-      `of panning across it.`,
+      `${diagnostics}. The best pair had ${bestInliers} matches, of which ` +
+      `${bestConditioned} triangulated at a usable angle, against the ` +
+      `${SEED_TIERS[SEED_TIERS.length - 1].wellConditioned} needed. This is what ` +
+      `filming from one spot looks like — walk through the space instead of ` +
+      `panning across it.`,
     );
   }
 
@@ -765,14 +884,12 @@ export async function reconstruct(
   if (poses.size < 3) {
     const bestConditioned = verified.reduce((m, p) => Math.max(m, p.wellConditioned), 0);
     throw new Error(
-      `None of the ${attempts} starting ${attempts === 1 ? "pair" : "pairs"} tried could be ` +
-      `grown into a reconstruction. ${verified.length} of ${proposed.length} image pairs ` +
-      `passed geometric verification across ${frames.length} frames, ` +
-      `${seedCandidates.length} were usable as a starting point (best pair had ` +
-      `${bestConditioned} well-triangulated points, threshold ` +
-      `${seedTier.wellConditioned}), and ${tracks.length.toLocaleString()} feature tracks ` +
-      `survived. Registration reached ${poses.size} ` +
-      `${poses.size === 1 ? "frame" : "frames"} before it stalled.`,
+      `None of the ${attempts} starting ${attempts === 1 ? "pair" : "pairs"} tried could ` +
+      `be grown into a reconstruction. ${diagnostics}; ${seedCandidates.length} pairs were ` +
+      `usable as a starting point (best had ${bestConditioned} well-triangulated points, ` +
+      `threshold ${seedTier.wellConditioned}), ${tracks.length.toLocaleString()} feature ` +
+      `tracks survived, and registration reached ${poses.size} ` +
+      `${poses.size === 1 ? "frame" : "frames"} before stalling.`,
     );
   }
 
