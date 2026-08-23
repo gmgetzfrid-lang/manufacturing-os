@@ -127,6 +127,42 @@ were **rejected on licence grounds** during selection:
   Apache-2.0 and would be usable, but no public ONNX export of their *pose*
   head exists yet — see §7.)
 
+### Gaussian-splatting options, audited
+
+Splatting is the representation that would make a scene look photographic
+rather than like a cloud of discs, so the candidates were checked properly. The
+trap in this area is real: the original INRIA 3D Gaussian Splatting
+implementation is under a **non-commercial research licence**, and many
+public repos either vendor it, hand-port its kernels, or carry no licence at
+all. A permissive LICENSE at the top level does not settle the question.
+
+| Project | Licence | Trains, or only views | Usable here |
+| --- | --- | --- | --- |
+| **Brush** (`ArthurBrussee/brush`) | **Apache-2.0**, all 23 crates | **Trains**, and has a `brush-js` WASM target | **Yes** — the one viable trainer |
+| `gsplat.js` (Hugging Face) | MIT | Views only — no optimiser | Viewer only |
+| `WebSplatter` | permissive | Views only | Viewer only |
+| `WebDGS` | **none at all** | Trains, browser-native WebGPU + WGSL | **No** |
+| `splat-local` | MIT wrapper | Wraps Brush + COLMAP as native binaries | Not in a browser |
+| `colmap-openmvs-app` | MIT wrapper over **AGPL-3.0 OpenMVS** | Neither — runs COLMAP in Docker | No |
+| `SegmentAnythingin3D`, `3d_gaussian_sam` | non-commercial | Segmentation, not reconstruction | No |
+
+**WebDGS deserves a note**, because it is technically the closest fit and it is
+still unusable. It is a genuine from-scratch browser-native WebGPU splat
+*trainer* in TypeScript and WGSL — no Rust, no WASM, no Python — which is
+exactly the shape this app wants. But it carries **no licence file in any
+commit**, which under default copyright means all rights reserved: public
+visibility on GitHub grants nothing. An issue asking for a licence is open and
+unanswered. It also hand-ports covariance code from INRIA's rasteriser. Neither
+problem is ours to fix, so it cannot be used — though it does prove the
+approach is feasible in a browser without a Rust toolchain.
+
+**Brush is the one that works**, and the encouraging part is what it needs as
+input: camera poses and a sparse cloud in COLMAP format, which is structurally
+what this pipeline's SfM already produces. Adopting it is a serialisation job
+plus a Rust-to-WASM build step, not new geometry. It is not an `npm install` —
+there is no published package, so it has to be built from source with
+`wasm-pack`, and it wants the WebGPU `subgroups` feature.
+
 ---
 
 ## 3. Requirements
@@ -316,13 +352,13 @@ time for each run.
    all real failure modes that rendered frames do not have. Treat the first run
    on your own video as the actual experiment.
 
-1. **Point cloud, not Gaussian splats.** Splats look markedly better. Training
-   them in-browser is possible — [Brush](https://github.com/ArthurBrussee/brush)
-   (Apache-2.0) is a real WASM+WebGPU 3DGS trainer — but it has no published npm
-   artifact, must be built from Rust with `wasm-pack`, requires the WebGPU
-   `subgroups` feature, and **has no SfM of its own**: it consumes COLMAP-format
-   poses. It is the natural next step precisely because this pipeline already
-   produces what it needs.
+1. **Point cloud, not Gaussian splats.** This is the honest ceiling on how good
+   it can look. From outside, the cloud reads as surfaces; from inside, close
+   up, it is still overlapping discs rather than a photograph, and no amount of
+   tuning changes that — it is the representation, not the parameters.
+   [Brush](https://github.com/ArthurBrussee/brush) (Apache-2.0) is the audited
+   way out; see the licence table in §2 for why it is the only candidate that
+   survives scrutiny, and what adopting it costs.
 2. **Textureless surfaces reconstruct poorly, and this is the dominant failure
    mode.** Plain painted walls give ORB nothing to match and ZNCC no signal.
    Measured on the synthetic capture: the clip that dollies down a textured
