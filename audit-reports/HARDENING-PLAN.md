@@ -86,8 +86,8 @@ severity changes are the point of doing this.
 - [ ] `drafting-flow` — 46 (28H, 18M)
 - [ ] `document-control` — 13 (5H, 8M)
 - [ ] `identity-and-session` — 12 (6H, 6M)
-- [ ] `notifications` — 11 (7H, 4M)
-- [ ] `intelligence` — 10 (5H, 5M)
+- [x] `notifications` — 11 — **11/11 SURVIVE**
+- [x] `intelligence` — 10 — **10/10 SURVIVE**
 
 ## Outcome (Phases A–D)
 

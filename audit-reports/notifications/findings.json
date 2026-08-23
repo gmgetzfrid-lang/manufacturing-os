@@ -230,7 +230,7 @@
         "supabase/schema.sql:42"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An engineer is suspended pending an investigation (status → 'suspended'). They remain a watcher on 40 drawings and 6 tickets. Over the following weeks every rev-up, every hold, every branch on those documents resolves them through resolveFollowers, inserts a bell row, finds their still-present email in orgmembers, and mails them the document number and the hold reason at their personal-forwarded a",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -254,7 +254,7 @@
         "app/api/cron/maintenance/route.ts:425-431"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A hold is placed on a drawing. lib/holds.ts emits; dispatch.ts queues an email whose entire body is Jane Doe placed a \"MOC pending\" hold. Work from this document should stop until it's released. There is no link. The recipient must go find the document by hand. Separately, an engineer is @-mentioned on a ticket; they receive an HTML email whose 'Open ticket' button points at href=\"/requests/8f3a…\"",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -277,7 +277,7 @@
         "components/ui/CornerDock.tsx:23-27"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A screen-reader user on the platform tabs through the header. The bell announces '7, button' — no indication it is notifications, no indication seven items need attention. They activate it; focus stays on the button while a list renders below, unannounced and unreachable by their reading order until they hunt for it. Meanwhile a background AI-ingestion toast fires bottom-right, is never announced,",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -301,7 +301,7 @@
         "app/api/cron/maintenance/route.ts:421-426"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Counsel places a hold with reason 'litigation hold — Baytown incident, do not distribute' on drawing PID-4412-R3, a document ACL-restricted to a three-person team. lib/holds.ts fans out to every Admin and DocCtrl in the org. A DocCtrl who cannot open PID-4412 receives a bell row titled HOLD placed on PID-4412-R3 — litigation hold — Baytown incident, do not distribute and an email with that exact s",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -323,7 +323,7 @@
         "app/api/admin/purge/route.ts:70"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A contract engineer is let go and removed from the workspace. Their orgmembers row is deleted; the app immediately denies them every document. Their Supabase auth account still exists. Using their still-valid session token they query the notifications table directly and receive every title and body ever addressed to them: HOLD placed on PID-4412-R3 — litigation hold, Baytown incident, SPEC-220-A a",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -346,7 +346,7 @@
         "lib/exportTables.ts:159"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An org restores from backup after a data incident. Documents, tickets, holds, acknowledgments and notifications all come back (notifications and emailnotifications are in the restore order list at dataRestore.ts:311). Every user's watch list does not. resolveFollowers now returns an empty set for every document, library, project and asset. Every emit() with audience: { followers: true } — docsuper",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -368,7 +368,7 @@
         "lib/notifications.ts:59-61"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A superintendent sets Delivery cadence to 'Never' on /settings/notifications, expecting silence. (Assume they got past finding #1 by clicking Never before saving — the only path that saves successfully.) queueEmail now correctly suppresses their per-event mail. But at 03:00 UTC the maintenance cron composes a compliance digest, sees emailenabled is still true, and mails them a list of every review",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -966,7 +966,7 @@
         "lib/notifications.ts:168-183"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An engineer is mentioned in a ticket comment reading 'can you check this with @[Mike Leonard](3f2b8c14-9d7a-4e11-b0f3-5a6c9e2d4188) before Friday'. The email they receive contains that string literally, internal user UUID and all. There is no footer, no unsubscribe link, and no List-Unsubscribe header — so when they mark it as spam (the only control their mail client offers), the sending domain's ",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -989,7 +989,7 @@
         "lib/publicOrigin.ts:5-15"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A document controller issues a transmittal from a Vercel preview deploy (a staging URL, a branch review link, a custom domain not matching NEXTPUBLICSITEURL). renderTransmittalEmail embeds https://mfgos-git-feature-xyz.vercel.app/transmittal/<token> as both the button href and the copy-paste fallback. The external contractor clicks it and hits Vercel's own SSO wall. They cannot download the as-iss",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -1009,7 +1009,7 @@
         "app/api/cron/maintenance/route.ts:411"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A contractor acknowledges a transmittal at 6:15 pm Central on 20 March. The confirmation email to the issuer reads '…confirmed receipt of transmittal T-0412 through the recipient portal on 3/20/2026, 11:15:15 PM.' — UTC, unlabelled, and for an acknowledgment landing after 7pm Central it will read as the NEXT calendar day. That sentence is the human-readable record of when a controlled document was",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -1031,7 +1031,7 @@
         "app/api/data-export/run/route.ts:54-58"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A maintainer implementing the owner's request for login-time nudges reads lib/inAppNotifications.ts, sees morningdigest — composed daily digest: overdue + today + aging dateless with a comment describing exactly the feature they were asked to build, and concludes the composition already exists and just needs surfacing. It does not exist. Conversely, an operator whose workspace is 92% full receives",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
