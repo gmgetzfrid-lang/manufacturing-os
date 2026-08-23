@@ -42,6 +42,7 @@ They compound: `/d/[number]` and the orchestrator hand out document UUIDs;
   - `app/api/share/resolve/route.ts:20-48`, `app/api/share/file/route.ts:31-58` — served with the **service-role key**, gated only by token possession
   - `lib/orchestrator/tools.ts:84-120` — where the UUID comes from (`EGRESS-4`)
 - **Related:** `EGRESS-2`, `EGRESS-4`, `SURF-2`
+- **Re-verified:** hardening pass — **SURVIVES**. `document_shares_org_member FOR ALL` predicates both `USING` and `WITH CHECK` on nothing but active membership — no role, no document ACL.
 
 **Mechanism.** Both `USING` and `WITH CHECK` constrain **only `org_id`**:
 
@@ -104,6 +105,7 @@ org. **Trace that before assuming it is contained.**
   - `app/d/[number]/route.ts:31-32` — `.order("updated_at", { ascending: false }).limit(25)`
   - `app/d/[number]/route.ts:1-7` — the file comment: *"The target page enforces auth + RLS as always — this route only translates a number into a location; **it reveals nothing**."*
 - **Related:** `EGRESS-1`, `EGRESS-4`
+- **Re-verified:** hardening pass — **SURVIVES**. `/d/[number]` runs `supabaseAdmin` (service role) against `documents` with **no org filter and no session at all**, then redirects on a match. Its own header comment — *"it reveals nothing"* — is false: a hit discloses that the number exists and leaks `library_id`. Same false-comment shape as `intelligence/IEDGE-1`.
 
 **Mechanism.** The comment is half right and half wrong. The *target page* does
 enforce auth — but the **redirect itself is the disclosure**. The route runs with
@@ -160,6 +162,7 @@ afterwards preserves that.
   - `app/api/orchestrator/execute/route.ts:41-60`
   - the ACL-aware path it does **not** use: `lib/knowledgeAccess.ts:1-77`
 - **Related:** `EGRESS-1`, `EGRESS-2`, `ADD-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `lib/orchestrator/tools.ts` imports `supabaseAdmin` at `:21` and uses it for every read (`:93, :133, :144, :149, :176`). Service role bypasses RLS, so no tool inherits the caller's slice.
 
 **Mechanism.** The file's own contract says *"NOTHING WIDENS ACCESS. Every
 handler is org-scoped and re-checks the caller."* In practice the only re-check

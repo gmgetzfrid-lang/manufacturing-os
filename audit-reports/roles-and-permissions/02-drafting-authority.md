@@ -47,6 +47,7 @@ route, so a tampered client changes nothing. **That part is solid.**
   - `types/schema.ts:1019` — `export type RequestType = string;`
   - `lib/capabilityPolicy.ts:63-65` — `ticket.eng_review` defaults to `["Engineer"]`
 - **Related:** `ROLE-2`
+- **Re-verified:** hardening pass — **SURVIVES**. `capabilityPolicy.ts` contains no reference to request type in any form, so there is no dimension along which authority could vary. Compounded by `drafting-flow/TIER-2` — `RequestType` is an unconstrained `string`.
 
 **Mechanism.** The authority evaluator takes a capability, a role, extra roles
 and a uid. The ticket's `type` never enters the decision. `RequestType` is an

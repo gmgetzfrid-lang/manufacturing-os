@@ -30,6 +30,7 @@ the application, and where they are broken outright.
   - `lib/capabilityPolicy.ts:174`, `:231` — the application reads and writes the same phantom column
   - `supabase/migrations/20260701_perf_indexes.sql:21` — documents the real shape as `select('data')`
 - **Related:** `WF-1`, `WF-23`, `SURF-3`, `SURF-4`
+- **Re-verified:** hardening pass — **SURVIVES**. `org_configurations` is `(id, org_id, key, data JSONB, updated_at)` — `schema.sql:52-59`. There is no `value` column and no migration adds one; `20260901_db_hard_enforcement.sql:44` reads `value` too, so the DB-side holds policy is inert for the same reason.
 
 **Mechanism.** plpgsql bodies are not column-validated at `CREATE FUNCTION`, so
 the migration applies cleanly and fails at **first execution**.
@@ -84,6 +85,7 @@ change or the two layers will disagree about which column is real.**
   - every other reader uses `uid`: `20260812:62`, `20260708:76`, `20260816:62`, `lib/teams.ts:116,122`, `lib/knowledgeAccess.ts:35`, `app/api/storage/download-url/route.ts:74,100`
   - the same typo in the client: `components/permissions/ViewAsSimulator.tsx:59` (`OWN-10`)
 - **Related:** `DB-1`, `OWN-10`, `DB-4`
+- **Re-verified:** hardening pass — **SURVIVES**. `team_members` is keyed `(team_id, uid)` — `20260707_teams.sql:19-26`. The function queries `tm.user_id`, which does not exist, so `acl_index_denies` raises rather than denying.
 
 **Mechanism.** `acl_index_denies` returns early when `p_idx IS NULL`, and returns
 early on a uid- or role-level deny. **Otherwise it reaches the `team_members`

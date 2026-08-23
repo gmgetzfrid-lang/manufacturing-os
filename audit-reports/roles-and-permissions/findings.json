@@ -58,6 +58,7 @@
         "lib/__tests__/capabilityPolicy.test.ts:130-131"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A member is added as Drafter and later promoted, so their collection becomes [\"Manager\", \"Drafter\"]. primaryRole is Manager (rank 90 > 50). In the drafting workflow:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
@@ -83,6 +84,7 @@
         "supabase/migrations/20260701_perf_indexes.sql:21"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "There are exactly two possibilities and both are bad:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
@@ -109,6 +111,7 @@
         "components/permissions/ViewAsSimulator.tsx:59"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "The first org that actually sets a folder- or document-level ACL discovers that non-controllers can no longer update documents in it at all, with an opaque column tm.userid does not exist error. Because controllers are (usually) exempt, it is invisible to exactly the person who would investigate.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
@@ -131,6 +134,7 @@
         "lib/capabilityPolicy.ts:63-65"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "This is the gap you named. A civil engineer holding Engineer-2 can sign off the engineering review on a pressure-envelope modification to a PSM-covered vessel. Nothing in the model — not the tier (ROLE-2), not the capability, not the policy — can express \"electrical requests are approved by electrical engineers.\" The reviewer sees an Approve button and the audit log will record a valid, authorized",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
@@ -155,6 +159,7 @@
         "lib/orchestrator/tools.ts:84-120"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A Contractor-role member inserts one row into documentshares naming a restricted drawing's UUID, then fetches /api/share/file?token=… from any browser, logged out. They get the stamped PDF of a document the ACL denies them.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/10-content-egress.md"
@@ -179,6 +184,7 @@
         "app/d/[number]/route.ts:1-7"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A competitor walks /d/ with common drawing-number fragments from an unauthenticated script. They learn a customer's drawing numbering scheme, which numbers exist, roughly when each was last revised (by ordering), and a live document UUID for each. They then hand those UUIDs to a low-privileged account inside their own trial org and create documentshares rows (EGRESS-1).",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/10-content-egress.md"
@@ -206,6 +212,7 @@
         "lib/knowledgeAccess.ts:1-77"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A Contractor asks the assistant \"find the Unit 30 hazard review.\" finddocuments returns number, title, rev, status and openurl for documents whose library ACL denies them. They then ask about content and searchdocuments returns passages. Separately they say \"mark sheet P-2030-001 rev C as passed\" and overwrite a real audit-completion record (the upsert conflict target is orgid,sheetnumber,revision",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/10-content-egress.md"
@@ -233,6 +240,7 @@
         "lib/revisions.ts:398-540"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A reliability engineer walks Unit 200, finds a bypass line that is not on P-200-301. She checks in with \"Field is different — report it\", states MOC-2026-014 in progress, and a ticket is created. A drafter draws the as-built, issues the IFC package, and the ticket closes. P-200-301 still shows Rev 3, still shows no bypass. The corrected drawing exists only as an attachment on a closed ticket. Six ",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -259,6 +267,7 @@
         "lib/__tests__/reviewControl.test.ts:42"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "LIFE-1 gets built. Ticket-originated publishes now carry relatedticketid. The Process Safety library is configured reviewcontrol.mode = \"require\" with two required reviewers. Every as-built revision now publishes with zero document-side sign-offs, and documentreviewsignoffs gets no rows at all. The stated rationale (\"they already had review\") is false: ticket approval is approvedraftifc by the req",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -284,6 +293,7 @@
         "supabase/migrations/20261011_collections_guard_and_trash.sql:30-34"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A contractor with Viewer on a P&ID library issues one HTTP request, becomes the library owner, and publishes a modified Rev 4 of a PSM-covered P&ID. The publish guard approves it, because by the time the guard runs the attacker genuinely is the owner. auditlogs records a legitimate REVUP by an authorized owner. Doc Control sees nothing anomalous: the ownership change itself is only audited by the ",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -307,6 +317,7 @@
         "supabase/migrations/20260822_review_completion_guard.sql:70"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "Any org member picks the one drawing they want changed, claims it, publishes a revision over the real owner's work, and the database records them as the accountable owner who approved it.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -334,6 +345,7 @@
         "supabase/migrations/20260814_documents_delete_controllers.sql:31-38"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "The owner promotes their doc-control manager to also cover people-management. Next morning nobody can publish, and the only fix — visible nowhere in the UI — is to remove the Manager role. components/permissions/RoleModelTree.tsx:117 lists this as a \"known gap\" (\"a few older checks still read only the headline role\"), which understates it: the publish guard is not an old check, it is the check.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -358,6 +370,7 @@
         "supabase/migrations/20260902_project_intake.sql:52-60"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A vendor drawing is placed on an active hold (MOC pending, or an incident investigation). The vendor uploads through their trusted link. The document flips to Issued with the vendor's file as the controlled copy, documentholds untouched, and the notification reads \"published a new revision through their trusted intake link. It is now current.\" The library owner and Doc Control had no veto and were",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -384,6 +397,7 @@
         "lib/revisions.ts:534-546"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A member calls the RPC directly with pactor: <the doc control manager's uuid>, pasbranch: true, and a createdbyname of their choosing. A version row appears in the controlled chain of a PSM drawing attributed to someone who never touched it. There is no trigger to stop it and no audit row that contradicts it.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -409,6 +423,7 @@
         "supabase/schema.sql:1013"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "An engineer is fired. The Admin opens Team Management, clicks the trash icon, the row disappears. The ex-employee's session and JWT keep working indefinitely — myorgids() still returns the org.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -430,6 +445,7 @@
         "app/api/storage/download-url/route.ts:29"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A Viewer enumerates fileurl values from documentversions (readable to any member) and DELETEs each one. Every controlled drawing's bytes are gone. The documents and documentversions rows remain, pointing at nothing.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -456,6 +472,7 @@
         "supabase/migrations/20260701_perf_indexes.sql:21"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "An admin opens Admin → Permissions, sees the shipped defaults (because the load silently returned nothing), unchecks Engineer from ticket.directapprove, confirms the impact preview, and gets an error toast from saveCapabilityPolicy's throw. Nothing is ever persisted. Every per-person UserGrant fails the same way. The entire 17-capability org-configurable layer, the delegation UI, and the \"enforced",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -482,6 +499,7 @@
         "app/(protected)/requests/new/page.tsx:328"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A Viewer with a valid session runs:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -504,6 +522,7 @@
         "lib/__tests__/workflow.test.ts:163-174"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A Safety officer raises a P&ID revision. The draft comes back. The UI offers \"Send for Engineer Final Approval\" and \"Approve with Minor Correction\". They click the second, type \"fix the typo in the title block\", and the drawing is issued for construction with zero engineering review. PENDINGFINALAPPROVAL and the whole requiresEngineerApproval fork are optional decoration. The server re-derivation ",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -529,6 +548,7 @@
         "app/api/tickets/workflow-action/route.ts:113-132"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -554,6 +574,7 @@
         "lib/ticketTransitions.ts:65"
       ],
       "has_verifier_correction": false,
+      "verified_by": "hardening-pass",
       "summary": "A Contractor posts a ticket with \"requesterrole\":\"Engineer-4\". At PENDINGREVIEW, needsEngineerApproval is false, so their requester-identity branch yields approvedraftifc — a direct, fully audited, apparently legitimate approval to IFC. The audit row records userrole: Contractor, so it is detectable after the fact, but nothing prevents it.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -574,6 +595,7 @@
         "lib/workflow.ts:65"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "This is the worst possible place for the divergence, because the simulator's entire purpose is to be trusted.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
@@ -596,6 +618,7 @@
         "lib/roleCapabilities.ts:8-13"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "It is the wrong choice for a specific authority question, and that is what most call sites ask. The rank ordering encodes seniority, not applicability:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
@@ -614,6 +637,7 @@
       ],
       "locations": [],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Two documents in the same library, governed by policies from different eras, answer the same authority question differently for the same person. An admin cannot reason about the system from any single rule — whether a secondary role counts depends on which month the policy was written.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
@@ -638,6 +662,7 @@
         "lib/roleCapabilities.ts:120-123"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An Auditor — a role that exists specifically to be read-only — is additively given Requester so they can file a ticket. primaryRole now returns Requester. At app/(protected)/documents/[libraryId]/page.tsx:4010, activeRole !== \"Auditor\" is now true, so canEdit is true: the read-only auditor gains inline document editing. The same shape applies to Contractor and reduced navigation.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
@@ -662,6 +687,7 @@
         "components/providers/RoleContext.tsx:200-206"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "lib/dataRestore.ts and app/api/admin/restore/begin/route.ts write orgmembers rows with whatever role the backup names, and app/api/auth/signup/route.ts writes role without roles at all (DB-3). After a restore, a member's headline can disagree with their collection, and every check in the singular family will believe the headline.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
@@ -686,6 +712,7 @@
         "lib/ticketAttention.ts:21"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A DraftingSupervisor sees a badge count of 14 (attention says they must act), opens each ticket and finds \"View Only — No Actions Available\" (the workflow engine disagrees), and never receives the routing email (routing matched on their headline Manager). Three subsystems, three answers, one confused person.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
@@ -712,6 +739,7 @@
         "app/api/auth/signup/route.ts"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Signup creates the founding Admin with role = 'Admin' and roles = '{}'. Every function using this idiom — orgcapabilityallows, aclindexdenies, and the milestone batch move — evaluates the additive check against an empty array. The org's only Admin fails it. Both restore paths seed roles the same way.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
@@ -736,6 +764,7 @@
         "supabase/migrations/20260901_db_hard_enforcement.sql:124-125"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin revokes a contractor's grant at the library level. Every document and folder beneath it still carries an aclindex that names them. nodevisible reads the node's own index, so the contractor keeps seeing the documents. The revocation appears to have taken effect and has not.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
@@ -760,6 +789,7 @@
         "supabase/migrations/20260812_per_library_publish_authority.sql:56-58"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin grants someone publish on Drawings via the drawer. Months later they edit the library in the wizard to add a metadata column. The wizard rewrites acl from its own form state — the grant is gone from acl, so the UI stops offering the publish button. But aclindex still names them, so usercanpublishonlibrary returns true and the database still accepts their revisions. Revocation appears to h",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
@@ -785,6 +815,7 @@
         "supabase/migrations/20260816_documents_access_change_guard.sql:72-76"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The Drawings library owner needs the piping lead to update sheet P-102 while she is on rotation. Her options today are exactly two:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -807,6 +838,7 @@
         "supabase/migrations/20260630_document_ownership.sql:4-5"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin assigns the safety lead as owner of the private Incident Procedures library. She receives \"review due\", \"retention reached\", \"acknowledgment overdue\" and \"access recert due\" notifications for documents she cannot open — the row is filtered out by documentsaclselect. The /register row is invisible to her too. She can, bizarrely, still publish a revision blind, because the restrictive polic",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -834,6 +866,7 @@
         "app/(protected)/admin/teams/page.tsx:204"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin promotes the drafting supervisor and updates the Drafting team's supervisor dropdown. Publish authority over the entire Drawings library moves to a new person in one click, with zero audit trail. Two weeks later, during an incident investigation, \"who could have published this revision on 12 March?\" has no answer.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -858,6 +891,7 @@
         "components/permissions/RoleModelTree.tsx:47"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A Manager — explicitly not a document controller — opens /admin/teams, creates a team, sets themselves as supervisor, and clicks the Drawings chip under \"Owns libraries.\" They are now the effective owner of every document in Drawings and can publish revisions. setLibraryOwnerTeam logs OWNERTEAMASSIGNED (so this half is audited, unlike the supervisor half), but nothing prevents it and nothing alert",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -883,6 +917,7 @@
         "lib/reviewControl.ts"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A document owner sets the review roster to themselves as the single primary reviewer, signs their own row, and the completion guard passes. A revision to a safety-critical procedure is issued with a self-signed review that looks, in the audit trail, exactly like an independent one.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -906,6 +941,7 @@
         "lib/acl.ts:20"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Document Control grants read on the pressure-vessel folder to the role Drafter. A senior drafter holds [\"Manager\", \"Drafter\"]; primaryRole resolves to Manager (rank 90 > 50). The database compares the rule against Manager, finds no match, and the folder stays invisible to the one person the grant was written for. No error, no warning — the rule is simply inert.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/03-document-control-acl.md"
@@ -925,6 +961,7 @@
         "app/(protected)/documents/[libraryId]/page.tsx:2450"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin opens the permission drawer on a sensitive folder and adds an allow rule for the QA team, believing they have restricted it. The folder's visibility is still normal, so every org member can read it — the rule added access for a group that already had it. The drawer shows a rule count; nothing says the node is still open.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/03-document-control-acl.md"
@@ -947,6 +984,7 @@
         "lib/ticketRouting.ts:43-56"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "What is missing is the ability for a type to change the route. A \"New Equipment Datasheet\" and a \"Fix a typo on an as-built\" enter the same queue with the same ceremony, and a type that should always get engineering eyes before assignment cannot say so. The signature is there for exactly this — it was written to take a type and a role — and then ignored.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
@@ -968,6 +1006,7 @@
         "lib/workflow.ts:22-24"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
@@ -989,6 +1028,7 @@
         "lib/capabilityPolicy.ts:66-68"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Your stated goal is \"so people don't ask for stupid nonsense we don't or can't do.\" Achieving that needs the rejection to teach — a taxonomy the requester sees and the org can count. Free text cannot:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
@@ -1011,6 +1051,7 @@
         "lib/knowledgeAccess.ts:1-16"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A member denied the restricted procedures library queries knowledgechunks directly through PostgREST and reads the full text of every mirrored procedure. The careful per-asker filtering in /api/knowledge/ask never runs. knowledgequestions similarly exposes the whole org's Q&A history, which contains answer text extracted from restricted sources.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/10-content-egress.md"
@@ -1031,6 +1072,7 @@
         "app/api/auth/request-access/route.ts:46-53"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A competitor starts a free trial (becoming Admin of their own org) and reads the name, email and target company of everyone requesting access to every customer's workspace.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/10-content-egress.md"
@@ -1057,6 +1099,7 @@
         "app/(protected)/requests/new/page.tsx:104-115"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An engineer marks up eight pages of P-200-301 over twenty minutes and clicks \"Send to Drafting\". /requests/new loads, the stash is consumed and deleted, the files sit in form state. The form requires Title, Unit, and Detailed Scope. She opens another tab to look up the unit code, comes back and refreshes out of habit — or her session token refreshes and the page remounts. Every markup is gone. Not",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -1082,6 +1125,7 @@
         "lib/impact.ts:113-119"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A reviewer marks up three sheets of a 14-sheet isometric book and sends them to drafting as one request. Two weeks later someone opens ISO-4471 to publish an unrelated revision. The Impact panel says \"no open drafting requests\". They publish. The three marked-up sheets are now redlines against a superseded revision, and no overlap advisory fired because no documentintents row existed.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -1107,6 +1151,7 @@
         "components/documents/RevUpModal.tsx:739"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The field report says \"No MOC exists\" — correctly, honestly. The system flags it as an undocumented field change. Weeks later the as-built is published and RevUpModal asks for an MOC number; the publisher types MOC-2026-088, a different change they happen to remember. The \"undocumented field change\" finding has been laundered into a documented one. The only record that contradicts it is metadata.u",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -1133,6 +1178,7 @@
         "components/documents/CheckInPanel.tsx:626-629"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The engineer checks the box. A \"Field Verification Needed\" hold blocks P-200-301. The drafter completes the as-built; the ticket closes. The hold is still open. Combined with LIFE-1 (nothing publishes anyway) the document is permanently frozen at the wrong revision with an open block nobody can trace to a resolved cause. When someone eventually tries to publish, the guard refuses them — a library ",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -1157,6 +1203,7 @@
         "lib/checkinOutcomes.ts:200"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An engineer reports a bypass line with no MOC on record at 4:45pm Friday. The escalation writes bell rows for two controllers. Neither opens the app until Monday. Meanwhile the P&ID — unless the hold box was also checked — remains publishable and distributable, and a night-shift operator pulls it for a permit.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -1181,6 +1228,7 @@
         "app/(protected)/documents/[libraryId]/page.tsx:1642-1657"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "You grant the CAD team publish on the drawings library, as the Permission drawer's team subject type invites you to. Nobody on that team can publish. Support gets \"the button lies.\"",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1205,6 +1253,7 @@
         "components/permissions/RoleModelTree.tsx:101"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A terminated contractor retains database-level publish authority on a PSM library indefinitely. They reach it through CheckInPanel (a different code path using canPublish || isOwner), through the publishrevision RPC directly, or through any surface that does not recompute from the raw ACL.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1228,6 +1277,7 @@
         "supabase/migrations/20260812_per_library_publish_authority.sql:64-71"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Doc Control grants a lead \"admin\" on a library for convenience, then later adds deny publish to take publishing back after an incident. The button stays visible, the click fails with a confusing error, and database-side they are denied — three different answers, none of which reads as \"your revocation took effect.\"",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1250,6 +1300,7 @@
         "components/permissions/RoleTreeSelector.tsx:7-28"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "You try to give your drafting supervisor publish rights on the drawings library, exactly as the migration that built the feature describes, and the role is not in the list.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1275,6 +1326,7 @@
         "components/permissions/ViewAsSimulator.tsx:5-6"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "During an access recertification (supabase/migrations/20260821accessrecert.sql) the reviewer uses View-as to confirm nobody unexpected can publish. Every team-derived grant is invisible. The recertification is signed on false evidence — which in a PSM audit is worse than having no recertification.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1300,6 +1352,7 @@
         "components/permissions/RoleModelTree.tsx:106"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A procedure's review completes Friday afternoon; the last signer is an Engineer; the promote silently fails; the \"Ready to publish\" notification goes only to the owner (lib/reviewControl.ts:315 — owner.userId ? [owner.userId] : controllers, so controllers are excluded when an owner exists); the owner is on leave, and nothing checks their orgmembers.status (OWN-13). The approved revision sits unpub",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1329,6 +1382,7 @@
         "lib/acknowledgments.ts:398,593"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The document-control manager for the P&ID library leaves. Their orgmembers row is deleted. Every P&ID in that library still resolves to them. Effective-date notices, review-complete notices, ack-complete notices and check-in hand-offs all go to a user id that cannot log in — and Admin/DocCtrl are explicitly not told, because the code believes the document is owned.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1355,6 +1409,7 @@
         "supabase/migrations/20260830_publisher_row_management.sql:20-23"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Exactly the scenario the system is meant to support: a document-control manager is designated per library. The assignment does not stick — at folder level today, and at library level the moment OWN-1 is fixed. The audit trail says it did. Six months later a PSM audit asks who owned the procedure and the record is false, which is a worse outcome than having no record.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1380,6 +1435,7 @@
         "lib/reviewControl.ts:429-439"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Any RLS fix in this report, shipped alone, converts a security failure into a silent-data-loss failure. This finding is why fix sequencing matters — see [99-fix-sequencing.md](./99-fix-sequencing.md).",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1404,6 +1460,7 @@
         "components/documents/HistoryDrawer.tsx:45"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A superseded operating procedure — retired because it caused an incident — is flipped back to Issued. documents.status drives the document-control register, /api/verify, work-package retirement alerts, knowledge-source sync, and search. The resurrected procedure re-enters every one of those surfaces as current, and the retirement notice that went out has no counterpart.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -1430,6 +1487,7 @@
         "components/permissions/PermissionDrawer.tsx:66-71"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A safety engineer holds [\"Requester\", \"Safety\"]. primaryRole resolves to Requester (rank 40 > 33). Document Control writes an ACL rule granting read to the role Safety on the incident-procedure folder. nodevisible compares the rule against Requester and returns false. The grant silently does nothing — no error, no warning, the folder simply stays invisible. The only way to make the rule bite is to",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
@@ -1454,6 +1512,7 @@
         "supabase/migrations/20260901_db_hard_enforcement.sql:61"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "It is not a bug today; it becomes one the moment you want what you described: \"only certain people can approve certain types of requests.\" The obvious lever — \"Engineer-3 and up approve pressure-envelope changes\" — does not exist, and the tier field looks like it should provide it. Someone will eventually assume it does.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
@@ -1479,6 +1538,7 @@
         "supabase/schema.sql:1068"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The employee under investigation opens devtools and PATCHes legalhold=false on the held records. The database delete guard now passes. Nothing in the audit trail says who cleared it, because logEvent only runs on the app path they bypassed.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -1502,6 +1562,7 @@
         "components/documents/CheckoutStatusCell.tsx:238"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A Drafter clears another engineer's lock on a P&ID mid-edit, then publishes over it. publishrevision's lock check reads vdoc.checkedoutby — which is now NULL — so it publishes cleanly. Meanwhile the checkoutsessions row is still active, so the episode state is split-brained.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -1523,6 +1584,7 @@
         "supabase/migrations/20260605_rls_policies_new_tables.sql:121-124"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Someone signs up for a free trial (creating their own org), takes their JWT, and repeatedly calls the endpoint — controlling other companies' outbound mail timing and re-sending suppressed backlogs. Separately, a Viewer inserts emailnotifications rows addressed to customers, with HTML bodies of their choosing, from the product's verified sender, then triggers the drain: a functioning phishing rela",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -1538,6 +1600,7 @@
       "related": [],
       "locations": [],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -1553,6 +1616,7 @@
       "related": [],
       "locations": [],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -1577,6 +1641,7 @@
         "supabase/migrations/20260720_e_signatures.sql:47-61"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An Admin fabricates a backup JSON containing an esignatures row — \"Approved for Construction\", signer set to a different engineer, backdated signedat — and posts it to /api/admin/restore/apply-table. It lands. No auditlogs row records the import (only the single-shot /apply path writes one). The forged approval is indistinguishable from a real ceremony.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -1599,6 +1664,7 @@
         "app/(protected)/requests/[id]/page.tsx:1028-1031"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "POST /api/tickets/workflow-action {\"ticketId\":…,\"actionType\":\"submitfinal\"} with no finalAttachment. computeTransition sets status = FINALDRAFT and appends nothing. The ticket now presents as \"Final package issued\" with no Final attachment; the requester acknowledges and closes it, and the closed record is archived by ticket-shed with an empty deliverable. (submitdraft is safe only by accident — i",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1625,6 +1691,7 @@
         "lib/ticketAttention.ts:30-37"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin adds Drafter to a DocCtrl so they can pick up overflow work. The role picker says the role adds draftwork; ViewAsSimulator renders a green check next to \"Self-assign drafting work\" — in the component that advertises itself as \"computed with the SAME evaluators the app enforces with.\" The user opens the queue and sees no \"Pick Up Ticket\" button. Meanwhile isActionRequired does read the col",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1649,6 +1716,7 @@
         "lib/capabilityPolicy.ts:68-73"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A 40-person plant has 25 people with role Requester. Any one of them can open a colleague's ticket at PENDINGREVIEW and click \"Approve with Minor Correction\" — issuing the drawing (WF-3). Any one of them can reopenticket on any closed ticket in the org's history. Any of the six Drafters can submitfinal on a ticket assigned to a different drafter, replacing the IFC package.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1673,6 +1741,7 @@
         "app/(protected)/requests/[id]/page.tsx:1546"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Three distinct failures from one defect:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1698,6 +1767,7 @@
         "components/permissions/ViewAsSimulator.tsx:77"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An engineer is walked out. The admin revokes their standing ticket.directapprove grant at 09:00:00 and the UI confirms instantly. The revoked user's session posts approvedraftifc at 09:00:20; the route's warm instance still holds the pre-revocation policy and approves the drawing. With N warm serverless instances the window is up to 60 seconds each, staggered — and an instance that goes cold and w",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1723,6 +1793,7 @@
         "app/(protected)/admin/permissions/page.tsx:35,58"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Three variants, all reachable:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1746,6 +1817,7 @@
         "types/schema.ts:1120"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A Manager files 30 requests. Three months later they move to Operations and are demoted to Requester. Every one of those 30 open tickets still carries requesterrole = 'Manager' → needsEngineerApproval is false → they reach PENDINGREVIEW and are offered \"Approve (Issue for Construction)\" as a plain Requester. Conversely a promoted engineer's old tickets still say Requester, but the !isEng clause re",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1769,6 +1841,7 @@
         "lib/capabilityPolicy.ts:141-155"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A plant wants \"instrumentation drawings must be signed by an I&C engineer, and never by the person who drew them.\" There is no way to say either half. The nearest approximation — narrowing ticket.directapprove to Engineer — is already the default and blocks nothing, because WF-3 and WF-4 route around it.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1792,6 +1865,7 @@
         "lib/workflow.ts:265-267"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A DraftingSupervisor holding roles = [\"DraftingSupervisor\",\"Engineer-3\"] has headline DraftingSupervisor (rank 75 > 64). requiresEngineerApproval(\"DraftingSupervisor\") → true (because isManagementRole omits DraftingSupervisor), and isEng is false because only the headline is consulted (WF-7). So they are forced down the \"Send for Engineer Final Approval\" path — and the picker offers them themselve",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -1811,6 +1885,7 @@
         "components/providers/RoleContext.tsx:198-201"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Any writer that updates roles without recomputing role — a data restore, a support script, a direct console edit, or a future code path — leaves the mirror stale. Because 41 migration files and 204 component reads trust the mirror, a stale value silently governs authority across most of the app, in whichever direction the stale data points.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/04-additive-roles.md"
@@ -1837,6 +1912,7 @@
         "components/permissions/PermissionsExplorer.tsx"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin preparing for an access recertification reads the role model tree, concludes the model is sound apart from the \"few older checks\" it admits to, and signs off. Every discrepancy above was invisible to them.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
@@ -1859,6 +1935,7 @@
         "lib/capabilityPolicy.ts:112-117"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A future decision to delete Accounting (say) has no safe execution path: a customer's documents.acl may name it in a live rule; a capabilitypolicy blob may list it as a token; the role picker may have written it into aclindex at any node. Removing the string from ALLROLES orphans every stored reference silently — the rule stays in the JSON and simply stops matching, so an access grant quietly evap",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
@@ -1874,6 +1951,7 @@
       "related": [],
       "locations": [],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
@@ -1892,6 +1970,7 @@
       ],
       "locations": [],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The exposure depends on whether any role in this deployment can create schemas or objects, which was not verified. What is verified is the inconsistency: the codebase clearly knows the pattern and applies it to ticket numbering and archive invariants while omitting it from the publish guard, nodevisible, canmanagenode and publishrevision — the four functions that carry the most authority in the sy",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
@@ -1907,6 +1986,7 @@
       "related": [],
       "locations": [],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The net effect, stated precisely:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
@@ -1930,6 +2010,7 @@
         "components/permissions/PermissionsExplorer.tsx"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A non-controller library owner receives \"Access recert overdue: Drawings\" every seven days. The library's 3-dot menu shows them nothing. The recertification never happens, the notification never stops, and the published capability matrix says they can do it.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -1956,6 +2037,7 @@
         "app/(protected)/admin/libraries/LibraryWizard.tsx"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An auditor asks \"show me the owner of every controlled library and folder.\" There is no screen and no export that answers it. The closest artifact, the register CSV, answers it per document and only via the denormalized name string (DEL-8).",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -1981,6 +2063,7 @@
         "lib/docControlRegister.ts:216"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An owner changes their surname. Every register row, every CSV export and every role-tree line keeps the old name indefinitely. Worse in the RoleModelTree case: because the render is ownerName || team, a row where owneruserid is set but ownername is null — which happens for any owner written outside setOwner, e.g. lib/dataRestore.ts:259 remaps owneruserid with no corresponding name repair — display",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -2004,6 +2087,7 @@
         "supabase/migrations/20260824_team_departments.sql:19"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A document sits in a private folder owned by the process lead, inside a library owned by the safety lead. A drafter who can see the document but not the folder opens the Inspector: the app resolves the safety lead as owner. The register shows the same. The publish guard resolves the process lead. Two different people are shown as accountable for the same record depending on who is looking.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/08-delegation-and-teams.md"
@@ -2022,6 +2106,7 @@
         "lib/permissions.ts"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "This is right for Admin — the recoverability rail, and the same reasoning that protects critical capabilities. It is less obviously right for DocCtrl, which is an operational role you may want several of.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/03-document-control-acl.md"
@@ -2043,6 +2128,7 @@
         "supabase/migrations/20260708_acl_rls_enforcement.sql:85-92"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Move a folder to a new parent, or edit a library-level rule, and every descendant's aclindex is now stale — it encodes the old inherited chain. Because the database trusts the index, the stale value is what gets enforced. A revoked grant keeps working, or a new grant does not take effect, and nothing in the UI reveals the divergence: the drawer renders acl, which is correct, while the database enf",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/03-document-control-acl.md"
@@ -2063,6 +2149,7 @@
         "app/api/storage/download-url/route.ts:93-95"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Grant someone discover only — the intent being \"you may see that this document exists, but not open it.\" At the database they pass documentsaclselect and the row is returned, including its title, number, revision and metadata. The app layer is what withholds the content.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/03-document-control-acl.md"
@@ -2081,6 +2168,7 @@
         "lib/capabilityPolicy.ts:66-68"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "If the intent is that the drafting manager assigns work — so load, priority and skill match are decided deliberately — then ticket.selfassign is a hole in that intent, and it is on by default for every drafter. A drafter can cherry-pick easy tickets out of the queue before the manager has triaged them.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/02-drafting-authority.md"
@@ -2101,6 +2189,7 @@
         "supabase/schema.sql:1072"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "This is the table-level reason OWN-5 (the publishrevision branch path) and OWN-17 (backfillVersion, revision-label correction) work at all. Even with those two application paths fixed, the raw PostgREST route remains.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/10-content-egress.md"
@@ -2127,6 +2216,7 @@
         "components/documents/ActivityThread.tsx:474-484"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Someone needs to see a colleague's in-progress redlines before starting the connected sheet. They file a markup request; the colleague clicks \"Share\". They get \"Alice shared markups\" and a markupshared entry on the project feed — and no file, no link, no thread entry. The system recorded a successful collaboration that did not occur.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -2151,6 +2241,7 @@
         "app/(protected)/requests/page.tsx:400,545,984,1046,1151"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A drafting supervisor works the queue by unit, filtering \"200\" to batch the Unit 200 work. The as-built ticket has no unit, so it does not match, and renders with an empty unit chip that reads as a data glitch. It sits while unit-filtered work moves around it. Separately, an intake collision ticket — the highest-priority kind, a genuine two-sources-of-truth conflict — never goes past due and its f",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -2174,6 +2265,7 @@
         "components/documents/CheckInPanel.tsx:338-347"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Someone asks the question the index was built for: \"when was P-200-301 last verified against the field?\" The data exists. There is no screen, no query, no report and no API that answers it. A P&ID verified three years ago and one verified yesterday are visually identical everywhere in the app. There is also no staleness concept — no expiry, no reminder, no overdue state — unlike periodic review (l",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -2197,6 +2289,7 @@
         "lib/checkinOutcomes.ts:133"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The as-built is published and issueType is left at its default, \"Issued for Construction\". The Lifecycle board shows P-200-301 in the IFC column, not As-Built. Anyone using that board to answer \"which drawings reflect installed condition?\" gets the wrong answer.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -2221,6 +2314,7 @@
         "lib/reviewControl.ts:60"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A senior engineer reviews the as-built package on the ticket and clicks \"Approve as Engineer (Issue for Construction)\". He believes he has approved the as-built. When the revision is later published, the library's reviewcontrol roster names him as a required reviewer — so he is notified again to review the same drawing, this time with an e-signature ceremony. He either signs a second time (two app",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -2245,6 +2339,7 @@
         "app/(protected)/requests/[id]/page.tsx:1351,1796"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A drafter picks up the as-built ticket. The attached marked-up PDF says Rev 3. He drafts against it. Meanwhile Rev 4 was published for an unrelated change. He has no way to notice: the ticket shows a filename, not a live document reference, and metadata.sourcedocument.rev (which is \"3\") is not rendered even though it is the exact fact that would reveal the drift. He delivers an as-built built on a",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -2267,6 +2362,7 @@
         "lib/checkoutEpisodes.ts:475-480"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The engineer reports the discrepancy from a tablet on marginal signal. The ticket and PSM alert commit; the session-close write times out. She sees \"Check-in failed\", assumes nothing happened, and taps through again with signal. Now there are two priority-1 ASBUILT tickets for the same finding, two \"undocumented field change\" alerts, and P-200-301 still shows as checked out to her.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
@@ -2291,6 +2387,7 @@
         "lib/acknowledgments.ts:559,588-592"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A department (team) owns the drawings library. The document-control register shows the team supervisor as owner; the periodic-review nudge routes to Admin/DocCtrl instead. The supervisor never learns their department's drawings are overdue for review; Doc Control gets nudges for documents the register says are not theirs. The 20260824 header claims it \"slots a department layer into the existing ow",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -2314,6 +2411,7 @@
         "lib/revisions.ts:1594-1683"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -2339,6 +2437,7 @@
         "supabase/migrations/20260816_owner_publish_access.sql:40"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -2362,6 +2461,7 @@
         "supabase/migrations/20260822_review_completion_guard.sql:38,69-70"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -2383,6 +2483,7 @@
         "supabase/migrations/20260901_db_hard_enforcement.sql:124-125"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -2405,6 +2506,7 @@
         "lib/revisions.ts:541,1199"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
@@ -2426,6 +2528,7 @@
         "lib/workflow.ts:71"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The role-based half of ticket.requesterreview grants every Requester in the org the ability to review anyone's returned draft. That is broader than it looks, and it is the default. Meanwhile someone in Operations who files a request gets the identity right anyway, so the role buys them nothing.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
@@ -2444,6 +2547,7 @@
         "lib/roleCapabilities.ts:110-113"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "It also means that once a member holds any role granting createrequests, all seven of Requester / Accounting / Safety / HR / Maintenance / Operations / Contractor vanish from the picker, and once they hold one Engineer tier the other three vanish. An admin who wants to record \"this person is in Safety\" finds the option simply not there, with no explanation.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
@@ -2467,6 +2571,7 @@
         "app/(protected)/admin/users/page.tsx:82"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "The additive model defeats them. Because authority is the union of held roles and the read-only check tests only activeRole (the highest-ranked), a member holding [\"Drafter\", \"Viewer\"] has primaryRole = \"Drafter\" and is fully editable — the Viewer role subtracts nothing. There is no way to express \"read-only\" in a model where roles only add.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
@@ -2485,6 +2590,7 @@
         "types/schema.ts:5-25"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin reading the explorer to understand the permission model sees twelve entries, three of which do not exist as roles and one of which (Staff) has no definition anywhere. Anything they conclude about Staff is unverifiable. Adding a real role to ALLROLES will not appear here.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/01-role-inventory.md"
@@ -2502,6 +2608,7 @@
       ],
       "locations": [],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Two of these are load-bearing:",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2527,6 +2634,7 @@
         "app/api/ai/connection/route.ts"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A doc-control manager who also holds Manager cannot run any maintenance route, with a \"Insufficient role\" error that names a role they hold.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2548,6 +2656,7 @@
         "app/(protected)/projects/[id]/page.tsx:952"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A contractor is added as an Observer \"so they can see progress\" and can delete the project's milestones and transmittals.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2569,6 +2678,7 @@
         "supabase/migrations/20260828_integrity_hardening.sql:264-273"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A distribution list shows 12/12 acknowledged for a revised P&ID. One person clicked twelve times. Eleven people have never seen it.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2591,6 +2701,7 @@
         "supabase/migrations/20260822_review_completion_guard.sql:48-53"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A revision is published with a review roster showing two signatures. One of them names an engineer who never signed.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2613,6 +2724,7 @@
         "supabase/migrations/20260720_e_signatures.sql:55-61"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An engineer steps away from an unlocked workstation. A colleague signs three pending reviews in their name. The esignatures rows are indistinguishable from genuine ones, and esignatures is deliberately immutable so they cannot be corrected — only annotated.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2633,6 +2745,7 @@
         "components/subscription/SubscriptionGate.tsx:48-57"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2658,6 +2771,7 @@
         "app/(protected)/admin/users/page.tsx:231"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An investigation asks who granted a contractor access to the restricted library. The answer is \"they added themselves to a team six weeks ago,\" and there is no record of it.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
@@ -2682,6 +2796,7 @@
         "app/(protected)/admin/requests/page.tsx:179-195"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Any member creates (or PATCHes, per WF-2) a ticket with requesttype: \"RFI\". It routes normally to PENDINGASSIGNMENT → DRAFTING. Now any Drafter in the org (WF-8) sees \"Answer & Close RFI\" and moves it DRAFTING → CLOSED in one click — skipping PENDINGREVIEW, PENDINGIFC, FINALDRAFT, every approval, and every deliverable-rev assignment. A drawing revision closes as if it were a question, with closeda",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2704,6 +2819,7 @@
         "app/api/tickets/workflow-action/route.ts:214-223"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An engineer goes on leave; their ticket.finalapprove is delegated to a colleague \"until the 14th.\" On the 15th the grant is dead but still in the array. Six months and forty delegations later, the blob holds 40 dead entries, the UI list is unreadable, and an auditor asking \"who was authorised to approve DWG-4471 on March 3rd?\" must diff every CAPABILITYPOLICYCHANGED row by hand — and the ticket's ",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2733,6 +2849,7 @@
         "lib/ticketAttention.ts:100-102"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin unchecks every token on ticket.engreview believing they have locked down engineering review, and nothing changes — the real gate at PENDINGENGTEAM is isAssignedEngineerIdentity || isManagement. Three of the twelve ticket capabilities in the editor grid are decorative — precisely the failure mode that app/(protected)/admin/permissions/page.tsx:12-16 says was removed for being \"worse than n",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2755,6 +2872,7 @@
         "lib/workflow.ts:137-163"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A drafter quits mid-job. The admin opens the ticket, clicks Reassign, picks a replacement, and gets a red toast. There is no supported way to move a ticket to a different drafter once assigned — the workaround is a raw PATCH (WF-2), which produces no audit row and no notification to the new assignee. A DocCtrl gets the button too but ticket.assign defaults to management + DraftingSupervisor, so th",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2777,6 +2895,7 @@
         "app/api/tickets/workflow-action/route.ts:283-291"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An engineer completes scope review and clicks \"Engineering Review Complete.\" The ticket lands in PENDINGASSIGNMENT. The DraftingSupervisor is notified only if they happened to be the requester or a prior watcher. Tickets stall silently after every engineering-review round-trip.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2799,6 +2918,7 @@
         "lib/capabilityPolicy.ts:92-95"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "An admin narrows admin.analyticsview to [\"Admin\"] to keep drafter-performance metrics private. A Contractor opens /admin/analytics, sees the gate, and simply reads the same data from /rest/v1/tickets?orgid=eq.…&select= — every ticket, every comment, every history entry, every requester.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2821,6 +2941,7 @@
         "app/api/verify-ticket/route.ts:59-85"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "DWG-1180 is approved and issued at Rev 2, closed, and the package is distributed. A month later the requester reopens it (allowed to any Requester, per WF-8) to attach a missed detail. Status → PENDINGREVIEW with deliverablerev still \"2\" and revisioncount unchanged. They approve again → issuedRevLabel returns \"2\" a second time. Two materially different construction packages now both carry \"Rev 2.\"",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2843,6 +2964,7 @@
         "app/api/tickets/workflow-action/route.ts:214-223"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A retry, a race, or a crafted request produces a green \"success\" and an auditlogs row named TICKETASSIGN for a ticket nobody was assigned to. An auditor reconstructing custody from auditlogs sees an assignment event with no assignee. selfassign has the same shape.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2865,6 +2987,7 @@
         "lib/capabilityPolicy.ts:57-96"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "Latent today. The moment WF-2 is remediated, the obvious fix is a tickets UPDATE policy calling orgcapabilityallows(orgid, 'ticket.assign', auth.uid()) — which, for every org that has never opened the permissions editor (i.e. the common case, and every org while WF-1 stands), evaluates '[]' and denies everyone including Admins. The app would appear to lock itself out with no error anyone can trace",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
@@ -2887,6 +3010,7 @@
         "lib/capabilityPolicy.ts:55"
       ],
       "has_verifier_correction": false,
+      "verified_by": "author",
       "summary": "A DraftingSupervisor's sidebar badge shows 14 items. They open each one and see \"View Only — No Actions Available.\" The badge never clears because it is derived from role + status, not from getActions. Users learn to ignore the badge — which then hides the real work.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"

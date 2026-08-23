@@ -145,6 +145,16 @@ function parseArea(area) {
     const path = join(dir, file);
     const text = readFileSync(path, "utf8");
 
+    // How this REPORT was verified. It is a property of the report, not of the
+    // individual finding: a finding that survived an adversarial pass cleanly
+    // carries no correction block, so keying off corrections mislabels exactly
+    // the findings that needed no changing. See META-AUDIT.md MA-2.
+    const reportMode = /NOT adversarially verified/.test(text)
+      ? "unverified"
+      : /survived an adversarial verification pass/.test(text)
+        ? "adversarial"
+        : "author";
+
     // Split on "## ID · Title" headings; ignore other h2 sections.
     const parts = text.split(/\n## (?=[A-Z0-9]+-\d+ · )/);
     for (const part of parts.slice(1)) {
@@ -196,6 +206,13 @@ function parseArea(area) {
         // the body can open the wrong lines. Surface the flag so it knows to
         // read. See audit-reports/META-AUDIT.md, MA-1.
         has_verifier_correction: /^> \*\*Verifier correction\.\*\*/m.test(block),
+        // How this finding's severity and claim were challenged. `adversarial`
+        // = a second agent read the code and tried to refute it during the
+        // original run. `hardening-pass` = re-verified against source in the
+        // corpus hardening pass. `author` = checked only by whoever wrote it.
+        // An agent weighting by confidence should read this, not just severity
+        // (META-AUDIT.md MA-2).
+        verified_by: /^- \*\*Re-verified:\*\*/m.test(block) ? "hardening-pass" : reportMode,
         summary: summary(block),
         area,
         report: relative(REPO, path),

@@ -29,6 +29,7 @@ capability policy that is supposed to make it configurable.
   - `supabase/migrations/20260901_db_hard_enforcement.sql:44` — the SQL side reads the same phantom column
   - `supabase/migrations/20260701_perf_indexes.sql:21` — documents the real shape as `select('data')`
 - **Related:** `WF-10`, `WF-11`, `WF-23`, `DB-1`
+- **Re-verified:** hardening pass — **SURVIVES**. Same root as `DB-1` — fix both in one migration. `capabilityPolicy.ts:174` does `.select("value")` and discards the error, so the read fails silently and every policy falls back to `DEFAULTS`; the upsert at `:231` sends `value:` and *does* check its error, so writes fail loudly while reads fail quietly.
 
 **Mechanism.**
 
@@ -82,6 +83,7 @@ which are currently masked. Read those three before shipping this.
   - `supabase/schema.sql:1031-1034` — `my_org_ids()`
   - live browser writers: `app/(protected)/requests/[id]/page.tsx:1010-1014,978,1328`; `app/(protected)/requests/page.tsx:620,638`; `app/(protected)/requests/new/page.tsx:328`
 - **Related:** `WF-5`, `WF-9`, `WF-15`, `WF-20`
+- **Re-verified:** hardening pass — **SURVIVES**. `tickets_org_access FOR ALL USING (org_id IN my_org_ids())` — no `WITH CHECK`, so `USING` governs INSERT and UPDATE too. Same shape as `notifications`, `email_notifications` and `project_documents`; read `document-control/DRLS-1` before patching any of them.
 
 **Mechanism.** `FOR ALL` with `USING` and no `WITH CHECK` means Postgres reuses
 `USING` as the check for INSERT and UPDATE. The only qualification is active
@@ -131,6 +133,7 @@ clock, and the document-intent bridge.
   - `lib/ticketTransitions.ts:221-237` — the effect
   - `lib/__tests__/workflow.test.ts:163-174` — **the test asserts the vulnerability**
 - **Related:** `WF-4`, `WF-14`
+- **Re-verified:** hardening pass — **SURVIVES**. `approve_minor_correction` is pushed unconditionally inside `if (canActAsRequester)` (`workflow.ts:219-226`), as a sibling of the `needsEngineerApproval && !isEng` fork that is supposed to force the engineer route. The code comments it as intentional — *"Available to every requester tier by design"* — which makes it a policy decision to revisit rather than a coding slip, but the stated effect is exact.
 
 **Mechanism.** The engineer fork and its bypass are pushed into the same button
 row:
@@ -194,6 +197,7 @@ bypass as correct behaviour.
   - `lib/workflow.ts:140-162`, `:166-193`, `:198-256`, `:301-323`
   - `app/api/tickets/workflow-action/route.ts:113-132` — `assign` validates the assignee only as "an active member"
 - **Related:** `WF-3`, `WF-8`, `WF-14`, `GAP-2`
+- **Re-verified:** hardening pass — **SURVIVES**, with a scope note: this is a **synthesis** over the engine rather than a claim about the three cited line ranges, so it is not point-checkable the way its siblings are. It is well supported by them — `getInitialStatus` returns `PENDING_ASSIGNMENT` with engineering optional, `WF-3` supplies a requester-side bypass, and `WF-5` lets the one gating input be client-set.
 
 **Mechanism.** `getInitialStatus` sends *every* request straight to
 `PENDING_ASSIGNMENT` — there is no initial-review gate at all. Identity rights
@@ -237,7 +241,6 @@ appears exactly when it becomes possible to honour. Build spec: `GAP-2`.
 ---
 
 ## WF-5 · `requester_role` is stamped by the client at INSERT and is the sole input to the engineer gate
-- **Also surfaced independently as** [`AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3) — two areas found this separately. Fix once.
 
 - **Severity:** CRITICAL
 - **Status:** OPEN
@@ -250,6 +253,8 @@ appears exactly when it becomes possible to honour. Build spec: `GAP-2`.
   - consumed at `lib/workflow.ts:78` → `lib/workflow.ts:37-43`
   - read straight off the row at `lib/ticketTransitions.ts:65`; **never compared to `org_members.role`**
 - **Related:** `WF-2`, `WF-12`
+- **Also surfaced independently as** [`AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3) — two areas found this separately. Fix once.
+- **Re-verified:** hardening pass — **SURVIVES**. `requester_role: activeRole` (`requests/new/page.tsx:309`), `input.actorRole` (`transitionIn.ts:315`), read back unchecked at `ticketTransitions.ts:65`; combined with `WF-2` it is also directly PATCHable. **New interaction found during this pass:** `activeRole` is the `RoleContext` value, which `identity-and-session/SESS-1` shows can be the placeholder `"Viewer"` while membership is still resolving — so a request filed during that window is stamped `Viewer` permanently, which is precisely the input that decides whether engineering review is required.
 
 **Mechanism.** The role that decides whether engineering sign-off is required is
 asserted by the browser at insert time and never re-derived:

@@ -29,7 +29,11 @@ try to **refute** the claim, and record `SURVIVES` / `REFUTED` / a severity
 correction in the report body.
 
 - [ ] `projects-tab` — 29 CRITICALs
-- [ ] `roles-and-permissions` — 21 CRITICALs
+- [ ] `drafting-flow` — 8 author-only CRITICALs (the area was only PARTIALLY adversarially verified — reports 06/07/08 carry the banner, the rest do not)
+- [ ] `intelligence` — 2 author-only CRITICALs
+- [ ] `notifications` — 2 author-only CRITICALs
+- [ ] `document-control` — `XEDGE-1`, the one CRITICAL in the unverified critic report
+- [x] `roles-and-permissions` — 21 CRITICALs — **21/21 SURVIVE, 0 refuted**
 - [ ] `identity-and-session` — 2 CRITICALs
 
 **Honesty constraint on this phase.** This pass is being run by the same session

@@ -66,6 +66,7 @@ from a single role that was chosen by rank, not by relevance.
   - `app/(protected)/admin/archive-view/page.tsx:25` — same
   - `lib/__tests__/capabilityPolicy.test.ts:130-131` — the tests **do** exercise `extraRoles`, so the mechanism is proven to work
 - **Related:** `ROLE-1`, `DRAFT-3`, `DOCACL-1`, `ADD-2`
+- **Re-verified:** hardening pass — **SURVIVES**, verified by enumerating every call site. `policyAllows(policy, cap, role, extraRoles, uid)` receives a real collection in exactly one production path — `lib/holds.ts:100`. `lib/workflow.ts:65` passes `null`, so the entire drafting engine ignores every role but the headline. The remaining callers are two admin pages and `ViewAsSimulator.tsx:128` (a simulator, not authority).
 
 **Mechanism.** The evaluator supports the collection. One production call site
 passes it. The workflow — the largest consumer of the capability policy, and the

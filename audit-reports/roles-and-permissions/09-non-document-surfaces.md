@@ -25,6 +25,7 @@ notifications.
   - `app/(protected)/admin/users/page.tsx:178` — the UI delete, with optimistic local removal
   - `supabase/schema.sql:1013` — RLS is on
 - **Related:** `OWN-12`, `SURF-2`, `SURF-14`
+- **Re-verified:** hardening pass — **SURVIVES** — and the mechanism is subtler than the title. `20260817…:44` **DROPs the `FOR ALL` `org_members_write`** and replaces it with `FOR INSERT` only; `:32` adds `FOR UPDATE`. **No `FOR DELETE` policy exists on `org_members` anywhere.** The UI deletes — `admin/users/page.tsx:178`, `.from('org_members').delete().eq('id', member.id)` — and RLS filters rather than errors, so the call affects zero rows and returns no error. Removal silently does nothing.
 
 **Mechanism.** `schema.sql` shipped a permissive `FOR ALL` policy that covered
 DELETE. Migration `20260817` drops it and recreates it as `FOR INSERT`, adding a
@@ -80,6 +81,7 @@ mutating local state — the silent-success shape is the same one described in
   - `app/api/storage/delete/route.ts:6-44` — the whole route; the delete is at `:42`
   - contrast `app/api/storage/download-url/route.ts:29` (`assertSafeStorageKey`) and `:47-70` (the ACL check)
 - **Related:** `SURF-3`, `EGRESS-1`
+- **Re-verified:** hardening pass — **SURVIVES**, with one clarification: the route **does** close cross-tenant deletion — `:29-40` requires active membership of the org named in the `orgs/<uuid>/` key prefix. What survives is the finding as titled: **within** the org, any active member of any role, including Viewer, may permanently delete any object, and the route writes no audit row.
 
 **Mechanism.** The entire authorization is "is the caller an active member of the
 org named in the key prefix":

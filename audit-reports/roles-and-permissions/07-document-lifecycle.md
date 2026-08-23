@@ -49,6 +49,7 @@ by bug.
   - `app/(protected)/requests/[id]/page.tsx:1360` — `finalFiles`, display only
   - `lib/revisions.ts:398-540` — `revUpDocument`'s input contract: takes a `File`, never a ticket
 - **Related:** `LIFE-2`, `LIFE-5`, `LIFE-6`, `LIFE-11`, `GAP-7`
+- **Re-verified:** hardening pass — **SURVIVES**. `close_ticket` sets `status = "CLOSED"` and nothing else (`ticketTransitions.ts:284-287`); no ticket path calls `revUpDocument` or any revision creator.
 
 **Mechanism.** `computeTransition` for `close_ticket` is three lines:
 `updates.status = "CLOSED"`. The `Final` attachment is appended to the ticket's
@@ -124,6 +125,7 @@ guard and the MOC gate in one move.
   - `lib/revisions.ts:958`, `app/(protected)/documents/[libraryId]/page.tsx:1893` — readers
   - `lib/__tests__/reviewControl.test.ts:42` — a test asserting behavior no user can reach
 - **Related:** `LIFE-1`, `LIFE-12`
+- **Re-verified:** hardening pass — **SURVIVES**. `effectiveModeForRevUp` returns `"none"` on any truthy `relatedTicketId` (`reviewControl.ts:60`). Both occurrences of the column in application code — `documents/[libraryId]/page.tsx:1893` and `revisions.ts:958` — are **reads**. The waiver is unreachable today and fires the moment anything writes the column; "a loaded gun" is the right description.
 
 **Mechanism.** `effectiveModeForRevUp` contains three escape hatches:
 

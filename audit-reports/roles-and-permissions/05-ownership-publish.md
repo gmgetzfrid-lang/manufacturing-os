@@ -95,6 +95,7 @@ reach the database guard.
   - `supabase/migrations/20260812_per_library_publish_authority.sql:56` — `user_can_publish_on_library` reads `libraries.acl_index`
   - `supabase/migrations/20261011_collections_guard_and_trash.sql:30-34` — the pattern `libraries` is missing, present on `collections`
 - **Related:** `OWN-2`, `OWN-14`, `DB-4`
+- **Re-verified:** hardening pass — **SURVIVES**. `libraries_org_access FOR ALL USING (org_id IN my_org_ids())` with no `WITH CHECK` and no role predicate — `USING` is reused as the UPDATE check, so any active member may rewrite `owner_user_id`.
 
 **Mechanism.** `libraries` carries exactly one policy. A `FOR ALL` policy with
 only a `USING` clause reuses that same expression as the `WITH CHECK` for
@@ -164,6 +165,7 @@ only controllers.
   - `supabase/migrations/20260901_db_hard_enforcement.sql:152-162` — the RESTRICTIVE update guard blocks only when an **explicit deny** already exists
   - `supabase/migrations/20260822_review_completion_guard.sql:70` — the guard that then trusts `owner_user_id`
 - **Related:** `OWN-1`, `OWN-5`
+- **Re-verified:** hardening pass — **SURVIVES**. `documents_guard_access_change()` fires only on `visibility`, `acl`, `acl_index` (`20260816…:84-86`); `grep -c owner_user_id` on that migration returns **0**. Ownership — which decides publish authority — is outside the guard, and `documents_org_access FOR ALL` lets any member change it.
 
 **Mechanism.** Migration `20260816` was written specifically to close "a member
 could grant themselves in `acl_index`." It closed the ACL vector and left the
@@ -223,6 +225,7 @@ readers of the column: `lib/ownership.ts:79`, `lib/docControlRegister.ts:155`,
   - `supabase/migrations/20260828_integrity_hardening.sql:85-89` — `publish_revision`'s `v_is_controller`, singular only
   - `supabase/migrations/20260814_documents_delete_controllers.sql:31-38` — `is_org_controller` **is** additive
 - **Related:** `ADD-1`, `ADD-3`, `DB-3`
+- **Re-verified:** hardening pass — **SURVIVES**. `ROLE_RANK` ranks `Manager: 90` and `Supervisor: 80` above `DocCtrl: 70`, and `primaryRole` returns the highest. Adding either role to a DocCtrl flips the mirrored `role` column that the publish policies read. Same defect class as `identity-and-session/ORGSEL-3`, which reaches it from the write side.
 
 **Mechanism.** A person who is `DocCtrl` **and** `Manager` gets
 `org_members.role = 'Manager'` written by the admin UI, because Manager
@@ -275,6 +278,7 @@ publish guard is not an old check, it is *the* check.
   - `components/projects/IntakePanel.tsx:146-152` — link creation with `allow_auto_supersede: trusted`
   - `supabase/migrations/20260902_project_intake.sql:52-60` — link write policy: `is_org_controller(org_id) OR projects.owner_user_id = auth.uid()`
 - **Related:** `OWN-5`, `EGRESS-*`
+- **Re-verified:** hardening pass — **SURVIVES**. `autoNow = !!docId && !!link.allow_auto_supersede && linkAuthored` (`:302`), then a direct `supabaseAdmin` update sets `current_version_id` and `status: "Issued"` and supersedes the prior version (`:322-329`) — never calling `publish_revision`. The publish-guard trigger exempts service-role writes, so no hold, lock or review gate is consulted.
 
 **Mechanism.** Because the write uses the service-role key, `auth.uid()` is
 `NULL` and the publish guard short-circuits on its very first statement. That
@@ -336,6 +340,7 @@ silently confers publish authority into a document library.
   - `supabase/migrations/20260828_integrity_hardening.sql:170-180` — the branch path inserts the version row and **never touches `documents`**
   - `lib/revisions.ts:534-546` — the client passes `p_actor`, `p_actor_role`, `p_override_lock: lockedByOther`
 - **Related:** `OWN-4`, `OWN-17`, `DB-4`
+- **Re-verified:** hardening pass — **SURVIVES**, both halves. (a) `p_actor`, `p_actor_name`, `p_actor_role` are function parameters, so the caller names the actor; membership and controller status are re-derived from the database (`:77-89`), which closes privilege escalation but **not impersonation** — you may publish as a colleague and the recorded name/role are unvalidated. (b) The base-version check is `IF p_op_class = 'content' AND NOT p_as_branch` (`:116`), so `p_as_branch := true` skips it and costs only a non-empty reason string (`:131`).
 
 **Mechanism.** The function is `SECURITY DEFINER` and validates `p_actor` — a
 parameter — instead of `auth.uid()`. **`auth.uid()` does not appear in the
