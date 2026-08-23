@@ -559,12 +559,91 @@ export function depthToPoints(
 
   const Rt = mat3Transpose(view.pose.R);
 
-  /** Camera-space point for a pixel, or null where there is no depth. */
-  const camAt = (x: number, y: number): [number, number, number] | null => {
-    if (x < 0 || y < 0 || x >= sweep.width || y >= sweep.height) return null;
-    const d = sweep.depth[y * sweep.width + x];
-    if (!(d > 0) || !Number.isFinite(d)) return null;
-    return [((x - cx) / fx) * d, ((y - cy) / fy) * d, d];
+  // Inverse depth is an AFFINE function of pixel position across any plane —
+  // that is what makes a least-squares fit here both cheap and far steadier
+  // than differencing neighbouring 3D points. A one-pixel difference on a depth
+  // map is dominated by its own noise, which is why splats on a flat wall were
+  // pointing in every direction; fitting over a window averages that out.
+  //
+  // For a plane, u = 1/z = a(x - cx)/fx + b(y - cy)/fy + c, and the camera-space
+  // normal follows as (fx*a, fy*b, u0 - (x0-cx)a - (y0-cy)b).
+  const RADIUS = 3;
+  const inv = sweep.depth;
+  const normalAt = (
+    x: number, y: number, depth: number,
+  ): { normal: [number, number, number]; residual: number } | null => {
+    let n = 0;
+    let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0, su = 0, sxu = 0, syu = 0;
+    for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+      const yy = y + dy;
+      if (yy < 0 || yy >= sweep.height) continue;
+      for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+        const xx = x + dx;
+        if (xx < 0 || xx >= sweep.width) continue;
+        const d = inv[yy * sweep.width + xx];
+        if (!(d > 0) || !Number.isFinite(d)) continue;
+        const u = 1 / d;
+        sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+        sx += dx; sy += dy; su += u; sxu += dx * u; syu += dy * u;
+        n++;
+      }
+    }
+    if (n < 8) return null;
+
+    // Solve the 3x3 normal equations for u = a*dx + b*dy + c.
+    const m = [sxx, sxy, sx, sxy, syy, sy, sx, sy, n];
+    const rhs = [sxu, syu, su];
+    const det =
+      m[0] * (m[4] * m[8] - m[5] * m[7]) -
+      m[1] * (m[3] * m[8] - m[5] * m[6]) +
+      m[2] * (m[3] * m[7] - m[4] * m[6]);
+    if (Math.abs(det) < 1e-12) return null;
+    const solve = (col: number) => {
+      const c = m.slice();
+      for (let r = 0; r < 3; r++) c[r * 3 + col] = rhs[r];
+      return (
+        c[0] * (c[4] * c[8] - c[5] * c[7]) -
+        c[1] * (c[3] * c[8] - c[5] * c[6]) +
+        c[2] * (c[3] * c[7] - c[4] * c[6])
+      ) / det;
+    };
+    const a = solve(0);
+    const b = solve(1);
+    const cc = solve(2);
+
+    // How well the window really is one plane. A big residual means the window
+    // straddles a depth edge, and the sample sitting between foreground and
+    // background is a flying pixel with no surface to belong to.
+    let sse = 0;
+    let count = 0;
+    for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+      const yy = y + dy;
+      if (yy < 0 || yy >= sweep.height) continue;
+      for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+        const xx = x + dx;
+        if (xx < 0 || xx >= sweep.width) continue;
+        const d = inv[yy * sweep.width + xx];
+        if (!(d > 0) || !Number.isFinite(d)) continue;
+        const e = 1 / d - (a * dx + b * dy + cc);
+        sse += e * e;
+        count++;
+      }
+    }
+    const rms = Math.sqrt(sse / Math.max(1, count));
+    const u0 = 1 / depth;
+    if (rms > u0 * 0.06) return null;
+
+    const nx = fx * a;
+    const ny = fy * b;
+    const nz = u0 - (x - cx) * a - (y - cy) * b;
+    const len = Math.hypot(nx, ny, nz);
+    if (!(len > 1e-12)) return null;
+    // Face the camera: a surface we can see cannot point away from it.
+    const sign = nz > 0 ? -1 : 1;
+    return {
+      normal: [(nx / len) * sign, (ny / len) * sign, (nz / len) * sign],
+      residual: rms / Math.max(1e-9, u0),
+    };
   };
 
   for (let y = 0; y < sweep.height; y += stride) {
@@ -573,69 +652,35 @@ export function depthToPoints(
       const depth = sweep.depth[i];
       if (!(depth > 0) || !Number.isFinite(depth)) continue;
 
+      const fit = normalAt(x, y, depth);
+      // No plane fit means either too few neighbours or a depth edge running
+      // through the window. Either way this sample cannot be trusted to lie on
+      // a surface, so it is dropped rather than drawn as an unoriented dot.
+      if (!fit) continue;
+
       const cam = [((x - cx) / fx) * depth, ((y - cy) / fy) * depth, depth];
       // world = Rᵀ · (cam − t)
       const shifted = [cam[0] - view.pose.t[0], cam[1] - view.pose.t[1], cam[2] - view.pose.t[2]];
       const world = mat3MulVec(Rt, shifted);
+      const wn = mat3MulVec(Rt, fit.normal);
 
-      // Surface normal from neighbouring depths. Without one every point can
-      // only be drawn as a camera-facing dot, which is why a wall reads as a
-      // spray rather than a surface. Central differences where both sides have
-      // depth, one-sided at a depth discontinuity.
-      let normal: [number, number, number] = [0, 0, 0];
-      const c = cam as [number, number, number];
-      const left = camAt(x - stride, y), right = camAt(x + stride, y);
-      const up = camAt(x, y - stride), down = camAt(x, y + stride);
-      const ddx = right && left
-        ? sub3(right, left)
-        : right ? sub3(right, c) : left ? sub3(c, left) : null;
-      const ddy = down && up
-        ? sub3(down, up)
-        : down ? sub3(down, c) : up ? sub3(c, up) : null;
-      if (ddx && ddy) {
-        const n = cross3(ddx, ddy);
-        const len = Math.hypot(n[0], n[1], n[2]);
-        if (len > 1e-9) {
-          // Face the camera: the surface we can see cannot point away from it.
-          const sign = (n[0] * c[0] + n[1] * c[1] + n[2] * c[2]) > 0 ? -1 : 1;
-          const camN: [number, number, number] = [
-            (n[0] / len) * sign, (n[1] / len) * sign, (n[2] / len) * sign,
-          ];
-          const wn = mat3MulVec(Rt, camN);
-          normal = [wn[0], wn[1], wn[2]];
-        }
-      }
-
-      // Cost is 0 (perfect correlation) to 1. Turn it into a usable weight.
+      // Cost is 0 (perfect correlation) to 1. Turn it into a usable weight, and
+      // let a ragged plane fit discount the sample as well.
       const cost = sweep.cost[i];
-      const confidence = Number.isFinite(cost) ? Math.max(0, Math.min(1, 1 - cost * 2)) : 0;
+      const matched = Number.isFinite(cost) ? Math.max(0, Math.min(1, 1 - cost * 2)) : 0;
+      const flat = Math.max(0, 1 - fit.residual / 0.06);
 
       out.push({
         xyz: [world[0], world[1], world[2]],
         rgb: [view.rgb[i * 3], view.rgb[i * 3 + 1], view.rgb[i * 3 + 2]],
-        normal,
-        confidence,
+        normal: [wn[0], wn[1], wn[2]],
+        confidence: matched * (0.5 + 0.5 * flat),
       });
     }
   }
   return out;
 }
 
-function sub3(
-  a: [number, number, number], b: [number, number, number],
-): [number, number, number] {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-
-function cross3(
-  a: [number, number, number], b: [number, number, number],
-): [number, number, number] {
-  return [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-}
 
 /**
  * Voxel-grid fusion with a multi-view agreement test.

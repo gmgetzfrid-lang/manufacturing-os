@@ -69,7 +69,7 @@ void main() {
   gl_Position = projectionMatrix * mv;
   // World-constant splat size: points grow on approach and shrink with
   // distance, which is what closes the gaps between samples on a nearby wall.
-  gl_PointSize = clamp(uPointScale * uSizeMultiplier / max(vDepth, 0.05), 1.0, 22.0);
+  gl_PointSize = clamp(uPointScale * uSizeMultiplier / max(vDepth, 0.05), 1.0, 48.0);
 
   if (dot(splatNormal, splatNormal) > 0.25) {
     // A disc lying on the surface projects to an ellipse: the semi-axis across
@@ -968,7 +968,12 @@ export class WalkthroughViewer {
     // measured sample spacing is what makes a wall read as a surface instead of
     // a spray of dots — a fixed constant only ever suits one scene.
     const focalPx = (size.y * pr) / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
-    mat.uniforms.uPointScale.value = focalPx * this.pointSpacing * 1.3;
+    // Samples sit on a roughly square grid across a surface, so a disc has to
+    // be sqrt(2) times the spacing to reach the diagonal gaps between four
+    // neighbours. Below that the surface is a mesh of holes however dense the
+    // cloud gets; a little above it, neighbouring splats overlap and read as
+    // one continuous surface.
+    mat.uniforms.uPointScale.value = focalPx * this.pointSpacing * 1.7;
 
     // Without the EDL pass the points go straight to the canvas, so they have
     // to do their own sRGB encode.
