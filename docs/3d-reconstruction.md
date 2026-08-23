@@ -34,6 +34,8 @@ phone clips (.mp4 / .mov)
    verified pairs → union-find → feature tracks
         │
         ▼  incremental SfM: seed pair → PnP → triangulate → local BA
+                             (up to 5 seeds tried; a seed that scores well can
+                              still yield a model nothing grows from)
         ▼  global bundle adjustment (poses + points + shared focal)
    camera poses + sparse cloud
         │
@@ -215,7 +217,7 @@ measured. Actual elapsed time is reported when the run finishes.
 
 ## 6. What has been verified, and how
 
-Run `npx vitest run lib/recon`.
+Run `npx vitest run lib/recon lib/walkthrough`.
 
 | Check | Result |
 | --- | --- |
@@ -229,6 +231,9 @@ Run `npx vitest run lib/recon`.
 | Bundle adjustment with unknown focal | focal moves toward truth, fit improves |
 | **Three separate clips → ONE connected model** | **1 component, all clips present, scale consistent to <12% across all camera pairs** |
 | **Two genuinely disjoint clips** | **correctly reported as NOT fused** |
+| Scene export file round-trip, incl. non-ASCII labels | byte-identical payload |
+| Export rejects a foreign file and a future version | rejected, not misread |
+| Point-spacing estimator against known 5/10/20 cm grids | within 2× at every scale |
 
 Verified in a real browser (Chromium + WebGPU):
 
@@ -240,19 +245,49 @@ Verified in a real browser (Chromium + WebGPU):
 ### A real end-to-end run
 
 Two clips through the actual worker, in a browser, start to finish — decode,
-features, SfM, WebGPU densification, scene assembly:
+features, SfM, WebGPU densification, scene assembly. The clips are `video-f`
+and `video-g`: the same hallway-to-room route walked from either side of the
+corridor, which is the overlap the capture guide asks for.
 
 | Stage | Time |
 | --- | --- |
-| Decode (2 clips, 156 frames sampled, 32 kept) | 6.6 s |
-| Structure from Motion (32 frames) | 13.8 s |
-| Densification (17 depth maps) | 696 s |
-| Scene assembly | 0.07 s |
-| **Total** | **718 s** |
+| Decode (2 clips, 288 frames sampled, 73 kept) | 16.0 s |
+| Structure from Motion (73 frames) | 141 s |
+| Densification (22 depth maps) | 551 s |
+| Scene assembly | 0.27 s |
+| **Total** | **709 s** |
 
-Output: a 27.7k-point scene with gravity recovered from the camera track,
-metric scale from the assumed camera height, and the spawn point correctly
-placed at the first frame of the hallway clip.
+What came out:
+
+| | |
+| --- | --- |
+| Frames registered | **73 of 73** — every frame of both clips |
+| Clips merged | **2 of 2, one connected component** |
+| Cross-clip verified pairs | **78** |
+| Reprojection RMSE | **0.84 px** |
+| Sparse / dense points | 5,248 / 83,322 |
+| Recovered focal length | 945 px (rendered at 960 px wide) |
+| Scene extent | 18.4 × 5.9 × 8.3 m |
+
+Gravity came from the camera track, metric scale from the assumed camera
+height, and the spawn point landed at the hallway end of the capture.
+
+### The viewer, on that scene
+
+The same scene loaded into `WalkthroughViewer` in a browser, driven by
+synthesised `keydown`/`keyup` events so the real movement code runs rather than
+the camera being teleported:
+
+| Check | Result |
+| --- | --- |
+| 83,318 points decoded and rendered | mounted, drew every frame |
+| W / A / S / D | moved 1.0–2.2 m per press, in the right direction each time |
+| Floor lock | eye height held at 1.65 m through every move |
+| Sample spacing measured from the cloud | 9.5 cm, used to size splats |
+
+The reconstruction reads as what it is from the orbit view: a corridor with a
+flat floor plane and walls, with both camera paths lying along it — which is
+what "the two clips fused" looks like.
 
 **Read those timings in context.** This machine has no GPU — WebGPU is running
 on SwiftShader, a software rasteriser — so densification, which is almost
@@ -281,23 +316,38 @@ time for each run.
    `subgroups` feature, and **has no SfM of its own**: it consumes COLMAP-format
    poses. It is the natural next step precisely because this pipeline already
    produces what it needs.
-2. **Textureless surfaces reconstruct poorly.** Plain painted walls give ORB
-   nothing to match and give ZNCC no signal. Expect holes on blank walls; the
-   floor, furniture and anything patterned will be much denser.
-3. **Scale is assumed, not measured.** Metric scale comes from assuming the
+2. **Textureless surfaces reconstruct poorly, and this is the dominant failure
+   mode.** Plain painted walls give ORB nothing to match and ZNCC no signal.
+   Measured on the synthetic capture: the clip that dollies down a textured
+   hallway registers 36 of 36 frames, while the one that orbits a flat, plain
+   couch registers 4 of 44 — same code, same settings, same room. Expect holes
+   on blank walls, and expect a pass that fills the frame with one untextured
+   object to contribute almost nothing. Industrial areas are usually far busier
+   than a living room, which should work in your favour.
+3. **Point spacing is around 10 cm at the default preset.** Fusion voxels are
+   sized as a fraction of the scene, so a longer capture gets coarser samples.
+   Close up you see the individual splats. The `high` preset sweeps at a larger
+   resolution and uses more reference views for finer detail, at a
+   correspondingly larger time cost.
+4. **Stereo mismatches survive as brightly coloured stray points.** Fusion
+   requires two reference views to agree geometrically, and depths are trimmed
+   to where a one-pixel matching slip stays within a few voxels, but neither
+   test is photometric — a wrong match that happens to be geometrically
+   consistent keeps its wrong colour.
+5. **Scale is assumed, not measured.** Metric scale comes from assuming the
    phone was held ~1.55 m above the floor. Walking feels right; distances are
    approximate. The viewer labels this (`scaleSource: camera-height`).
-4. **Bundle adjustment uses a dense Cholesky** on the reduced camera system.
+6. **Bundle adjustment uses a dense Cholesky** on the reduced camera system.
    Fine to a few hundred cameras, which is why the frame cap exists; it would
    need a sparse or iterative solver to go much beyond that.
-5. **Collision is a floor constraint and a bounding box**, deliberately. No
+7. **Collision is a floor constraint and a bounding box**, deliberately. No
    physics, no stairs, no climbing — out of scope per the brief.
-6. **Chrome/Edge desktop only**, because of WebGPU and WebCodecs.
-7. **HEVC may not decode at all** (§3) — a platform limit, not a bug.
-8. **Rolling shutter and electronic stabilisation are not modelled.** Both warp
+8. **Chrome/Edge desktop only**, because of WebGPU and WebCodecs.
+9. **HEVC may not decode at all** (§3) — a platform limit, not a bug.
+10. **Rolling shutter and electronic stabilisation are not modelled.** Both warp
    phone video in ways a pinhole camera model cannot express, and both degrade
    accuracy. Walking slowly is the mitigation.
-9. **The synthetic test footage is not proof of real-world success** (§4).
+11. **The synthetic test footage is not proof of real-world success** (§4).
 
 ### If reconstruction fails
 

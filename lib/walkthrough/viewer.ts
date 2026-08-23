@@ -46,7 +46,10 @@ void main() {
   gl_Position = projectionMatrix * mv;
   // World-constant splat size: points grow on approach and shrink with
   // distance, which is what closes the gaps between samples on a nearby wall.
-  gl_PointSize = clamp(uPointScale * uSizeMultiplier / max(vDepth, 0.05), 1.0, 42.0);
+  // Cap the on-screen size: a sample a metre away legitimately wants a splat
+  // tens of pixels across, but letting it grow without limit turns the odd
+  // stray point right in front of the camera into a saucer covering the view.
+  gl_PointSize = clamp(uPointScale * uSizeMultiplier / max(vDepth, 0.05), 1.0, 22.0);
 }
 `;
 
