@@ -35,6 +35,7 @@ import { getDocumentsForAssetsHydrated } from "@/lib/operationalGraph";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import { CategorizeBanner, FlowPanel } from "@/components/assets/UnitOpsPanels";
 import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
+import dynamic from "next/dynamic";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
@@ -48,6 +49,13 @@ import { translatePostgresError } from "@/lib/inputValidation";
 import { normalizeTag } from "@/lib/assets";
 import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+
+// three.js + the reconstruction workers are browser-only and heavy; load the
+// walkthrough panel on demand rather than in this route's initial chunk.
+const AreaWalkthroughPanel = dynamic(
+  () => import("@/components/walkthrough/AreaWalkthroughPanel"),
+  { ssr: false },
+);
 
 // DocCtrl belongs here: document controllers own the asset↔document wiring
 // (categories, codebook areas, file links), so gating them out of asset
@@ -427,6 +435,17 @@ function AssetsPageInner() {
             userName={userEmail ?? "Member"}
             unit={{ code: currentUnit.code, label: currentUnit.label || `Unit ${currentUnit.code}` }}
             unitAssetIds={areaAssetIds}
+          />
+        )}
+
+        {/* A walkable 3D capture of the area itself, reconstructed from phone
+            video in the operator's own browser. Sits beside the registry
+            because "what is in this area" and "what does this area look like"
+            are the same question asked two ways. */}
+        {currentUnit && !loading && (
+          <AreaWalkthroughPanel
+            unitCode={currentUnit.code}
+            unitLabel={currentUnit.label || `Unit ${currentUnit.code}`}
           />
         )}
 

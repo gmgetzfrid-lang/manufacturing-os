@@ -9,7 +9,10 @@ import { resolve } from "node:path";
 
 export default defineConfig({
   test: {
-    include: ["lib/__tests__/**/*.test.ts"],
+    // lib/__tests__ holds the original pure-function suites; lib/**/__tests__
+    // picks up module-local suites such as the reconstruction maths, which is
+    // kept beside the code it verifies.
+    include: ["lib/__tests__/**/*.test.ts", "lib/**/__tests__/**/*.test.ts"],
     environment: "node",
     globals: false,
     setupFiles: ["./lib/__tests__/setup.ts"],
