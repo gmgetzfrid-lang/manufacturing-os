@@ -28,6 +28,13 @@ import {
 import { decodeVideo, probeVideo } from "../video/decode";
 import { cameraCentre } from "../dense/planeSweep";
 
+/**
+ * Share of a clip's frames that must be placed before the clip counts as part
+ * of the scene. Below this the footage is present in name only — usually a
+ * low-texture or too-fast pass that the matcher could not follow.
+ */
+const MIN_CLIP_REGISTRATION = 0.5;
+
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 let cancelled = false;
@@ -329,7 +336,12 @@ async function run(
     ).length;
   }
 
-  const clipsWithFrames = clipStats.filter((c) => c.registeredFrames > 0);
+  // A clip that contributed a couple of frames out of forty is not in the
+  // scene in any sense the user would recognise, so it does not count towards
+  // "all your videos merged" — that headline has to mean what it says.
+  const clipsWithFrames = clipStats.filter(
+    (c) => c.keptFrames > 0 && c.registeredFrames / c.keptFrames >= MIN_CLIP_REGISTRATION,
+  );
   const unified = sfm.components.length === 1 && clipsWithFrames.length === clipStats.length;
 
   if (sfm.components.length > 1) {
@@ -349,7 +361,9 @@ async function run(
         `were placed. It probably does not share enough visible detail with the other clips.`,
         "error",
       );
-    } else if (stat.keptFrames > 0 && stat.registeredFrames / stat.keptFrames < 0.5) {
+    } else if (
+      stat.keptFrames > 0 && stat.registeredFrames / stat.keptFrames < MIN_CLIP_REGISTRATION
+    ) {
       warn(
         "clip-partial",
         `${stat.name}: only ${stat.registeredFrames} of ${stat.keptFrames} frames were placed.`,

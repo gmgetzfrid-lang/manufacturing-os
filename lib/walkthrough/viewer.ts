@@ -158,7 +158,7 @@ void main() {
  * coarsens until cells actually hold several points, since a grid finer than
  * the true spacing just reports its own cell size back.
  */
-function measureSpacing(
+export function measureSpacing(
   positions: Float32Array,
   count: number,
   bounds: SceneData["navigation"]["bounds"],
