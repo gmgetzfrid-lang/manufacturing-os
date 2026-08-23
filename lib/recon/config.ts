@@ -149,7 +149,7 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
     patchRadius: 3,
     maxCost: 0.42,
     minConsistentViews: 2,
-    voxelFraction: 0.0016,
+    voxelFraction: 0.005,
     maxPoints: 2_400_000,
   },
   viewer: {

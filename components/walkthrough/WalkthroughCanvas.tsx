@@ -9,7 +9,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, Compass, Eye, Gauge, Info, Maximize2, Move3d, Route, RotateCcw, X,
+  AlertTriangle, Compass, Eye, Gauge, Info, Maximize2, Minimize2, Move3d, Route,
+  RotateCcw, X,
 } from "lucide-react";
 
 import type { SceneData } from "@/lib/recon/types";
@@ -19,11 +20,16 @@ export default function WalkthroughCanvas({
   scene,
   points,
   onClose,
+  onToggleFullscreen,
+  isFullscreen = false,
   className = "",
 }: {
   scene: SceneData;
   points: ArrayBuffer;
   onClose?: () => void;
+  /** Rendered inside the toolbar so the host does not have to position it. */
+  onToggleFullscreen?: () => void;
+  isFullscreen?: boolean;
   className?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -172,6 +178,14 @@ export default function WalkthroughCanvas({
         <ToolbarButton active={showInfo} onClick={() => setShowInfo((v) => !v)} title="Reconstruction details">
           <Info className="h-4 w-4" />
         </ToolbarButton>
+        {onToggleFullscreen && (
+          <ToolbarButton
+            onClick={onToggleFullscreen}
+            title={isFullscreen ? "Exit full screen" : "Full screen"}
+          >
+            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </ToolbarButton>
+        )}
         {onClose && (
           <ToolbarButton onClick={onClose} title="Close">
             <X className="h-4 w-4" />

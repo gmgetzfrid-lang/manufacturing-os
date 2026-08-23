@@ -9,7 +9,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  Boxes, ChevronDown, ChevronRight, Loader2, Maximize2, Play, Trash2, X,
+  Boxes, ChevronDown, ChevronRight, Loader2, Play, Trash2,
 } from "lucide-react";
 
 import { formatBytes } from "@/lib/recon/jobRunner";
@@ -190,8 +190,9 @@ export default function AreaWalkthroughPanel({
         </div>
       )}
 
-      {/* Viewer */}
-      {active && (
+      {/* Viewer. Only mounted while the panel is open (or in full screen) — a
+          live WebGL context behind a collapsed panel is pure waste. */}
+      {active && (open || fullscreen) && (
         <div
           className={
             fullscreen
@@ -202,16 +203,10 @@ export default function AreaWalkthroughPanel({
           <WalkthroughCanvas
             scene={active.scene}
             points={active.points}
+            isFullscreen={fullscreen}
+            onToggleFullscreen={() => setFullscreen((v) => !v)}
             onClose={() => { setActive(null); setFullscreen(false); }}
           />
-          <button
-            type="button"
-            onClick={() => setFullscreen((v) => !v)}
-            className="absolute top-3 right-[7.5rem] z-30 flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/55 text-slate-300 backdrop-blur hover:bg-black/75 hover:text-white"
-            aria-label={fullscreen ? "Exit full screen" : "Full screen"}
-          >
-            {fullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </button>
         </div>
       )}
     </div>

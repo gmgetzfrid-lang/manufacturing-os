@@ -471,6 +471,11 @@ export function depthToPoints(
  * the depth that happened to correlate best in a textureless region. Requiring
  * agreement between independent views removes most of that noise, at the cost
  * of thinning surfaces only one camera ever saw.
+ *
+ * Voxel size is the tuning that decides whether that test means anything. Set
+ * it finer than the stereo noise and two views never land in the same cell, so
+ * almost everything is discarded as inconsistent; set it too coarse and real
+ * detail is averaged away. It wants to be a few centimetres for a room.
  */
 export class PointFuser {
   private buckets = new Map<number, {
