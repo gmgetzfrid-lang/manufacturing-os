@@ -14,7 +14,9 @@ import {
 } from "lucide-react";
 
 import type { SceneData } from "@/lib/recon/types";
-import { WalkthroughViewer, type ViewMode, type ViewerStats } from "@/lib/walkthrough/viewer";
+import {
+  WalkthroughViewer, type TouchNavState, type ViewMode, type ViewerStats,
+} from "@/lib/walkthrough/viewer";
 
 export default function WalkthroughCanvas({
   scene,
@@ -43,6 +45,9 @@ export default function WalkthroughCanvas({
   const [pointSize, setPointSize] = useState(1.0);
   const [edl, setEdl] = useState(0.55);
   const [error, setError] = useState<string | null>(null);
+  const [touchNav, setTouchNav] = useState<TouchNavState | null>(null);
+  const [coarse, setCoarse] = useState(false);
+  const [touchStarted, setTouchStarted] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -57,8 +62,13 @@ export default function WalkthroughCanvas({
         onModeChange: setMode,
         onPointerLockChange: setLocked,
         onStats: setStats,
+        onTouchNav: (state) => {
+          setTouchNav(state);
+          if (state.stick || state.looking) setTouchStarted(true);
+        },
       });
       viewerRef.current = viewer;
+      setCoarse(viewer.pointerIsCoarse());
     } catch (err) {
       const message = err instanceof Error
         ? `The 3D viewer could not start: ${err.message}`
@@ -133,21 +143,70 @@ export default function WalkthroughCanvas({
       {/* Controls help — small and unobtrusive, per the brief. */}
       {mode === "first-person" && (
         <div className="absolute bottom-3 left-3 z-20 rounded-lg bg-black/55 px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-200 backdrop-blur pointer-events-none">
-          <div>W A S D — Move</div>
-          <div>Mouse — Look</div>
-          <div>Shift — Move faster</div>
-          <div>Esc — Release mouse</div>
+          {coarse ? (
+            <>
+              <div>Left side — Drag to walk</div>
+              <div>Right side — Drag to look</div>
+              <div>Pinch — Move faster</div>
+            </>
+          ) : (
+            <>
+              <div>W A S D — Move</div>
+              <div>Mouse — Look</div>
+              <div>Shift — Move faster</div>
+              <div>Esc — Release mouse</div>
+            </>
+          )}
         </div>
       )}
 
-      {/* Click-to-start prompt. Pointer lock needs a user gesture. */}
-      {mode === "first-person" && !locked && !error && (
+      {/* The thumbstick, drawn where the thumb actually landed. */}
+      {mode === "first-person" && touchNav?.stick && (
+        <div
+          className="absolute z-20 pointer-events-none"
+          style={{
+            left: touchNav.stick.originX, top: touchNav.stick.originY,
+            width: 0, height: 0,
+          }}
+        >
+          <div
+            className="absolute rounded-full border-2 border-white/35 bg-white/5"
+            style={{
+              width: touchNav.stick.range * 2, height: touchNav.stick.range * 2,
+              left: -touchNav.stick.range, top: -touchNav.stick.range,
+            }}
+          />
+          <div
+            className="absolute rounded-full bg-white/70"
+            style={{
+              width: 44, height: 44,
+              left: touchNav.stick.dx - 22, top: touchNav.stick.dy - 22,
+            }}
+          />
+        </div>
+      )}
+
+      {touchNav && touchNav.boost > 1.05 && mode === "first-person" && (
+        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 font-mono text-[11px] text-sky-200 backdrop-blur pointer-events-none">
+          {touchNav.boost.toFixed(1)}x speed
+        </div>
+      )}
+
+      {/* Start prompt. On a mouse this waits for pointer lock, which needs a
+          user gesture; on touch there is no lock to wait for, so it clears as
+          soon as a finger steers — otherwise it would never go away. */}
+      {mode === "first-person" && !error && (coarse ? !touchStarted : !locked) && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <div className="rounded-2xl border border-white/15 bg-black/65 px-6 py-4 text-center backdrop-blur">
             <Move3d className="mx-auto mb-2 h-6 w-6 text-sky-300" />
-            <div className="text-sm font-black text-white">Click to walk through</div>
+            <div className="text-sm font-black text-white">
+              {coarse ? "Drag to walk through" : "Click to walk through"}
+            </div>
             <div className="mt-1 text-[11px] text-slate-300">
-              You start {describeStart(scene)}. Walk toward the room and around the furniture.
+              You start {describeStart(scene)}.{" "}
+              {coarse
+                ? "Drag on the left to move, on the right to look around."
+                : "Walk toward the room and around the furniture."}
             </div>
           </div>
         </div>

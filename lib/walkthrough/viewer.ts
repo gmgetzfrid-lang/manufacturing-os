@@ -22,6 +22,8 @@ export interface ViewerOptions {
   onModeChange?: (mode: ViewMode) => void;
   onPointerLockChange?: (locked: boolean) => void;
   onStats?: (stats: ViewerStats) => void;
+  /** Fires while a finger is steering, so the UI can draw the thumbstick. */
+  onTouchNav?: (state: TouchNavState) => void;
 }
 
 export type ViewMode = "first-person" | "orbit";
@@ -197,6 +199,12 @@ export function measureSpacing(
   return 0.05;
 }
 
+export interface TouchNavState {
+  stick: { originX: number; originY: number; dx: number; dy: number; range: number } | null;
+  looking: boolean;
+  boost: number;
+}
+
 interface KeyState {
   forward: boolean;
   back: boolean;
@@ -233,6 +241,17 @@ export class WalkthroughViewer {
   private mode: ViewMode = "first-person";
   private orbitDistance = 8;
   private orbitTarget = new THREE.Vector3();
+
+  // Touch navigation. A phone has no pointer lock and no keyboard, so the same
+  // two jobs the mouse and WASD do are split by where a finger lands: the left
+  // half of the canvas is a thumbstick, the right half looks around. Tracking
+  // by pointerId is what lets both happen at once.
+  private touchLook: { id: number; x: number; y: number } | null = null;
+  private touchStick: { id: number; ox: number; oy: number; dx: number; dy: number } | null = null;
+  private pinch: { a: number; b: number; distance: number } | null = null;
+  /** Analog move from a thumbstick, in the range -1..1. Strafe, then forward. */
+  private analogMove = { x: 0, y: 0 };
+  private analogBoost = 1;
 
   private frameTimes: number[] = [];
   private lastStatsAt = 0;
@@ -523,33 +542,156 @@ export class WalkthroughViewer {
     this.options.onPointerLockChange?.(locked);
   };
 
-  private onCanvasClick = () => {
+  private onCanvasClick = (e: MouseEvent) => {
+    // A touch already steers directly, and requestPointerLock does not exist on
+    // mobile — asking for it there leaves the "click to walk" prompt up forever.
+    if (e.detail === 0 || this.pointerIsCoarse()) return;
     if (this.mode === "first-person") this.requestPointerLock();
   };
+
+  /** True on touch-first devices, where pointer lock and a keyboard are absent. */
+  pointerIsCoarse(): boolean {
+    return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+  }
 
   private orbitDragging = false;
   private lastPointer = { x: 0, y: 0 };
 
+  /** Radius in px a thumbstick drag needs to reach full speed. */
+  private static readonly STICK_RANGE = 64;
+
   private onPointerDown = (e: PointerEvent) => {
-    if (this.mode !== "orbit") return;
-    this.orbitDragging = true;
-    this.lastPointer = { x: e.clientX, y: e.clientY };
-    this.renderer.domElement.setPointerCapture(e.pointerId);
+    // A mouse keeps the pointer-lock path; only direct input steers by touch.
+    if (e.pointerType === "mouse" && this.mode !== "orbit") return;
+
+    if (this.mode === "orbit") {
+      if (e.pointerType !== "mouse") { this.trackPinch(e, "down"); }
+      this.orbitDragging = true;
+      this.lastPointer = { x: e.clientX, y: e.clientY };
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // First-person, touch or pen.
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const onStickSide = e.clientX - rect.left < rect.width * 0.5;
+    this.trackPinch(e, "down");
+
+    if (onStickSide && !this.touchStick) {
+      this.touchStick = { id: e.pointerId, ox: e.clientX, oy: e.clientY, dx: 0, dy: 0 };
+    } else if (!this.touchLook) {
+      this.touchLook = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    }
+    this.renderer.domElement.setPointerCapture?.(e.pointerId);
+    this.options.onTouchNav?.(this.touchNavState());
   };
 
   private onPointerMove = (e: PointerEvent) => {
-    if (!this.orbitDragging || this.mode !== "orbit") return;
-    const dx = e.clientX - this.lastPointer.x;
-    const dy = e.clientY - this.lastPointer.y;
-    this.lastPointer = { x: e.clientX, y: e.clientY };
-    this.yaw -= dx * 0.006;
-    this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch - dy * 0.006));
+    if (this.mode === "orbit") {
+      if (this.pinch && this.trackPinch(e, "move")) return;
+      if (!this.orbitDragging) return;
+      const dx = e.clientX - this.lastPointer.x;
+      const dy = e.clientY - this.lastPointer.y;
+      this.lastPointer = { x: e.clientX, y: e.clientY };
+      this.yaw -= dx * 0.006;
+      this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch - dy * 0.006));
+      return;
+    }
+
+    if (this.touchStick && e.pointerId === this.touchStick.id) {
+      const range = WalkthroughViewer.STICK_RANGE;
+      const dx = e.clientX - this.touchStick.ox;
+      const dy = e.clientY - this.touchStick.oy;
+      const length = Math.hypot(dx, dy);
+      // Past the ring the stick pegs at full speed rather than the thumb
+      // running off the edge of a small screen.
+      const scale = length > range ? range / length : 1;
+      this.touchStick.dx = dx * scale;
+      this.touchStick.dy = dy * scale;
+      this.analogMove.x = this.touchStick.dx / range;
+      this.analogMove.y = -this.touchStick.dy / range;
+      this.options.onTouchNav?.(this.touchNavState());
+      return;
+    }
+
+    if (this.touchLook && e.pointerId === this.touchLook.id) {
+      const sensitivity = 0.0045;
+      this.yaw -= (e.clientX - this.touchLook.x) * sensitivity;
+      this.pitch -= (e.clientY - this.touchLook.y) * sensitivity;
+      this.touchLook.x = e.clientX;
+      this.touchLook.y = e.clientY;
+      this.applyLook();
+    }
   };
 
   private onPointerUp = (e: PointerEvent) => {
+    this.trackPinch(e, "up");
     this.orbitDragging = false;
+    if (this.touchStick?.id === e.pointerId) {
+      this.touchStick = null;
+      this.analogMove.x = 0;
+      this.analogMove.y = 0;
+    }
+    if (this.touchLook?.id === e.pointerId) this.touchLook = null;
     this.renderer.domElement.releasePointerCapture?.(e.pointerId);
+    this.options.onTouchNav?.(this.touchNavState());
   };
+
+  /**
+   * Two fingers mean zoom in orbit and a speed boost while walking. Returns
+   * true when the gesture consumed the move, so a pinch does not also spin the
+   * camera.
+   */
+  private trackPinch(e: PointerEvent, kind: "down" | "move" | "up"): boolean {
+    if (e.pointerType === "mouse") return false;
+    const active = this.activeTouches;
+    if (kind === "down") {
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (active.size === 2) {
+        const [a, b] = [...active.keys()];
+        const pa = active.get(a)!, pb = active.get(b)!;
+        this.pinch = { a, b, distance: Math.max(1, Math.hypot(pa.x - pb.x, pa.y - pb.y)) };
+      }
+      return false;
+    }
+    if (kind === "up") {
+      active.delete(e.pointerId);
+      if (this.pinch && (e.pointerId === this.pinch.a || e.pointerId === this.pinch.b)) {
+        this.pinch = null;
+        this.analogBoost = 1;
+      }
+      return false;
+    }
+
+    active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (!this.pinch) return false;
+    const pa = active.get(this.pinch.a), pb = active.get(this.pinch.b);
+    if (!pa || !pb) return false;
+    const distance = Math.max(1, Math.hypot(pa.x - pb.x, pa.y - pb.y));
+    const ratio = distance / this.pinch.distance;
+    this.pinch.distance = distance;
+    if (this.mode === "orbit") {
+      this.orbitDistance = Math.max(0.6, this.orbitDistance / ratio);
+    } else {
+      this.analogBoost = Math.max(1, Math.min(4, this.analogBoost * ratio));
+    }
+    return true;
+  }
+
+  private activeTouches = new Map<number, { x: number; y: number }>();
+
+  /** What the UI needs to draw the on-screen stick. */
+  private touchNavState(): TouchNavState {
+    return {
+      stick: this.touchStick
+        ? { originX: this.touchStick.ox, originY: this.touchStick.oy,
+            dx: this.touchStick.dx, dy: this.touchStick.dy,
+            range: WalkthroughViewer.STICK_RANGE }
+        : null,
+      looking: this.touchLook !== null,
+      boost: this.analogBoost,
+    };
+  }
 
   private onWheel = (e: WheelEvent) => {
     if (this.mode !== "orbit") return;
@@ -583,7 +725,14 @@ export class WalkthroughViewer {
     this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
     this.renderer.domElement.addEventListener("pointermove", this.onPointerMove);
     this.renderer.domElement.addEventListener("pointerup", this.onPointerUp);
+    this.renderer.domElement.addEventListener("pointercancel", this.onPointerUp);
     this.renderer.domElement.addEventListener("wheel", this.onWheel, { passive: false });
+
+    // Without these a drag scrolls the page or triggers pull-to-refresh instead
+    // of steering, which is most of what "I couldn't move" feels like.
+    this.renderer.domElement.style.touchAction = "none";
+    this.renderer.domElement.style.overscrollBehavior = "contain";
+    this.renderer.domElement.style.userSelect = "none";
 
     this.resizeObserver = new ResizeObserver(this.onResize);
     this.resizeObserver.observe(this.options.container);
@@ -603,7 +752,7 @@ export class WalkthroughViewer {
       return;
     }
 
-    const speed = this.walkSpeed * (this.keys.fast ? 3.0 : 1.0);
+    const speed = this.walkSpeed * (this.keys.fast ? 3.0 : 1.0) * this.analogBoost;
     const forward = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     const right = new THREE.Vector3(forward.z, 0, -forward.x);
 
@@ -612,7 +761,17 @@ export class WalkthroughViewer {
     if (this.keys.back) wish.sub(forward);
     if (this.keys.right) wish.add(right);
     if (this.keys.left) wish.sub(right);
-    if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed);
+    // Keys are all-or-nothing; a thumbstick is not, so it scales the wish
+    // vector by how far the thumb has moved instead of normalising it away.
+    const analog = Math.hypot(this.analogMove.x, this.analogMove.y);
+    if (analog > 0.06) {
+      wish.addScaledVector(forward, this.analogMove.y);
+      wish.addScaledVector(right, this.analogMove.x);
+      const throttle = Math.min(1, analog);
+      if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed * throttle);
+    } else if (wish.lengthSq() > 0) {
+      wish.normalize().multiplyScalar(speed);
+    }
 
     // Critically-damped-ish smoothing so movement starts and stops softly
     // instead of snapping, which reads as much less jarring in a point cloud.
@@ -709,6 +868,7 @@ export class WalkthroughViewer {
     this.renderer.domElement.removeEventListener("pointerdown", this.onPointerDown);
     this.renderer.domElement.removeEventListener("pointermove", this.onPointerMove);
     this.renderer.domElement.removeEventListener("pointerup", this.onPointerUp);
+    this.renderer.domElement.removeEventListener("pointercancel", this.onPointerUp);
     this.renderer.domElement.removeEventListener("wheel", this.onWheel);
     this.resizeObserver?.disconnect();
 
