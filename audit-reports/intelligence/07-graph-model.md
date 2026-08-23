@@ -32,10 +32,11 @@ Every edge, every cap, and what the graph does not model. **Your comprehensivene
 
 ## GM-1 · All four Insights lenses are computed on the FILTERED view, so orphan/hub/bridge counts change every time you tap a lens — and the orphan copy is false under three of the four
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:239-242`, `app/(protected)/graph/page.tsx:151-180`, `app/(protected)/graph/page.tsx:428-433`, `lib/graphInsights.ts:43`, `lib/graphInsights.ts:67-69`, `app/(protected)/graph/page.tsx:614-616`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanism confirmed exactly, including the badge at page.tsx:581-585 rendering `insights.orphans.length` unqualified. Downgraded from HIGH because view-scoped analysis is a defensible design (the empty-state copy at page.tsx:610 already says 'everything SHOWN is tied into the web') — the actual defect is the non-empty branch's copy asserting a plant-wide fact and an unlabelled count, i.e. misleading UI rather than broken analysis.
 
 **Mechanism.** `computeInsights` is fed `view`, not `graph`:
 
@@ -76,6 +77,7 @@ page.tsx:240 passes `view.nodes, view.edges`. page.tsx:153-155: `const typeOk = 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:254-261`, `lib/orgGraph.ts:190-203`, `lib/assets.ts:196-213`, `supabase/migrations/20260928_site_codebook.sql:78`, `supabase/migrations/20260606_operational_entity_graph.sql:113`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The 'never written' half is confirmed by repo-wide search: `createAsset` (lib/assets.ts:183-203) inserts only org_id/tag/tag_normalized/type_id/description/location/library_id/created_by/updated_by plus unit_code and code; `updateAsset` (assets.ts:206) whitelists `"tag"|"type_id"|"description"|"location"|"library_id"|"archived"|"cover_photo_id"|"unit_code"|"code"` — no unit_id. No migration backfills it either (only the ADD COLUMN and its index). Codebook units come from `codebook_entries` (20260928_site_codebook.sql), a different table entirely, so the two violet nodes are real.
 
 **Mechanism.** Assembly creates two disjoint families of node for the same real-world concept. `units` rows become `unit:<uuid>` (orgGraph.ts:190-195); Site Codebook units become `cbunit:<code>` (orgGraph.ts:198-203). The edges are then wired as:
 
@@ -116,10 +118,11 @@ orgGraph.ts:255-256 adds asset→cbunit and asset→unit; orgGraph.ts:259 adds d
 
 ## GM-3 · Node caps silently sever edges, and the truncation notice that fires ("densest web shown") is factually false — edge pagination has no ORDER BY at all
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:59-62`, `lib/orgGraph.ts:74-94`, `lib/orgGraph.ts:114-117`, `lib/orgGraph.ts:164-167`, `lib/orgGraph.ts:173-181`, `lib/orgGraph.ts:306`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Both halves are true: 'densest web shown' is a fabrication over an unordered PostgREST range, and edges to nodes cut by DOC_CAP/ASSET_CAP vanish uncounted. Downgraded from HIGH because the page does warn about the node caps themselves (page.tsx:737-741 renders 'Showing the 1500 most recently updated documents' / 'Showing the first 2000 equipment items'), so the user is told the map is partial — the defect is that the description of HOW it is partial is false.
 
 **Mechanism.** Nodes are capped independently of edges. Documents: `.order("updated_at", …).limit(DOC_CAP)` = 1500. Assets: `.eq("archived", false).limit(ASSET_CAP)` = 2000 with NO `.order()` at all. Join tables are pulled to EDGE_CAP=8000 org-wide. `addEdge` then drops anything whose endpoint is missing:
 
@@ -164,10 +167,11 @@ lib/orgGraph.ts:59-62 `const DOC_CAP = 1500; const ASSET_CAP = 2000; const EDGE_
 
 ## GM-4 · optional() swallows every query error — a failed assets, units, plants, projects, flows or plot-plan read renders a silently smaller graph with no error and no truncation
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:149-162`, `lib/orgGraph.ts:216-221`, `lib/orgGraph.ts:275-280`, `lib/orgGraph.ts:296-298`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The core claim holds for assets/units/plants/projects/plot-plans, and the contrast is stark against orgGraph.ts:86-87 where pageRows narrows to `if (error.code === "42P01" || /does not exist/i.test(error.message)) return { rows, capped: false }; throw new Error(error.message);`. Corrected because the title is wrong about FLOWS: process_flows goes through pageRows (:133-134), which THROWS on a real error rather than swallowing it. Severity lowered accordingly — the swallowed set is smaller than claimed and the surface is an advisory map.
 
 **Mechanism.** Only documents and libraries are treated as fatal:
 
@@ -207,6 +211,7 @@ lib/orgGraph.ts:152-155 quoted above. Contrast with the correctly narrowed handl
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/graphInsights.ts:79-84`, `lib/graphInsights.ts:142-143`, `lib/orgGraph.ts:262`, `lib/orgGraph.ts:300-305`, `lib/mentionIndexer.ts:104-142`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. lib/mentionIndexer.ts:104-120 writes an entity_mentions row for every asset it finds in the text with no exclusion for already-tagged pairs, so a Bridge-tagged drawing that also names the tag reliably lands at multiplicity 2 and is silently disqualified — while page.tsx:654-656 prints 'No single-thread bridges — every big neighbourhood has redundant connections.'
 
 **Mechanism.** Multiplicity is counted by node PAIR, ignoring edge type:
 
@@ -257,6 +262,7 @@ lib/graphInsights.ts:79-84 and 142 quoted above. lib/orgGraph.ts:175: `const key
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260708_acl_rls_enforcement.sql:41-86`, `lib/orgGraph.ts:109-117`, `supabase/migrations/20260605_rls_policies_new_tables.sql:26-27`, `app/(protected)/graph/page.tsx:581-586`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a controller's document set is a strict superset of a viewer's, assets are identical for both, so orphan/hub/bridge output is viewer-relative by construction. Nothing on the page qualifies it — page.tsx:581-586 and 614-616 print the counts and 'no context yet' with no ACL caveat, and the truncation strip (737-741) carries only cap notices.
 
 **Mechanism.** The documents read IS correctly ACL-filtered — `node_visible()` returns true unconditionally for Admin/DocCtrl (`IF v_role IN ('Admin','DocCtrl') THEN RETURN true;`) and otherwise requires an explicit allow grant, applied as `CREATE POLICY documents_acl_select ON documents AS RESTRICTIVE FOR SELECT USING (node_visible(visibility, acl_index, org_id));`. Assets, by contrast, are org-member-all (`assets_member_all`). So the asset side of the graph is identical for every member while the document side shrinks per viewer. Nothing in the assembly or the UI records that the document list was filtered, so the truncations array stays empty and the Insights badge (page.tsx:581-586) renders a bare count.
 
@@ -284,10 +290,11 @@ lib/graphInsights.ts:79-84 and 142 quoted above. lib/orgGraph.ts:175: `const key
 
 ## GM-7 · Link proposals are drawn as document↔document unconditionally and swallow their own errors, so a failed or capped proposal read is indistinguishable from "no proposals"
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:125-130`, `lib/linkProposals.ts:196-206`, `app/(protected)/graph/page.tsx:744-750`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The truncation/error half is real: 4000 is a hard silent cap, an error resolves to an empty array indistinguishable from 'no proposals', and the on-map chip reports the drawn count as if it were the queue. The 'drawn as document↔document unconditionally' half is REFUTED — both endpoint columns are NOT NULL FKs to `documents`, so the `doc:` prefix at page.tsx:128 is correct by schema, not an unchecked assumption. Impact is a misleading count on a map that links straight to the authoritative /admin/proposed-links queue, so LOW.
 
 **Mechanism.** `listPendingPairs` caps at 4000 and returns `[]` on any error:
 
@@ -329,10 +336,11 @@ lib/linkProposals.ts:200-204 quoted above (`.limit(4000)`, `if (error) return []
 
 ## GM-8 · Process-flow direction is destroyed by the undirected dedup key: A→B and B→A collapse into one edge, so every recycle loop disappears from the Process lens
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/orgGraph.ts:34`, `lib/orgGraph.ts:46-50`, `lib/orgGraph.ts:173-181`, `lib/orgGraph.ts:282-289`, `components/graph/graphTheme.ts:44`, `lib/graphSettings.ts:40`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — two antiparallel flow rows collapse to one edge keeping only the first-seen direction — but the title's consequence and the report's own example are false. The cited distillation loop (tower→condenser, condenser→drum, drum→tower) is three DISTINCT unordered pairs and renders completely; only a true 2-node A⇄B recycle is lost. Compounding the low impact: DEFAULT_GRAPH_SETTINGS.showArrows is `false` (lib/graphSettings.ts:65), so direction is not drawn by default at all.
 
 **Mechanism.** `GraphEdge` has no direction field — `{ a, b, type }` — yet `flow` is documented as directional ("process flow: from FEEDS to (directional in meaning)", orgGraph.ts:34; "Feeds (process flow)", graphTheme.ts:44) and there is a `showArrows` display setting (graphSettings.ts:40). Direction survives only as the insertion order of `a` and `b`. The dedup key, however, is order-insensitive:
 
@@ -367,10 +375,11 @@ lib/orgGraph.ts:46-50 `export interface GraphEdge { a: string; b: string; type: 
 
 ## GM-9 · REGION_ANCHOR_ORDER omits "plot", so indexOf returns -1 and any plot-plan node always hijacks its region's name
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/graphInsights.ts:47`, `lib/graphInsights.ts:166-177`, `lib/orgGraph.ts:23`, `lib/orgGraph.ts:216-221`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Confirmed exactly as claimed: any plot-plan node in a component wins the anchor race outright, so the region is named after the plot plan rather than its unit. Real but purely a display-label defect on the zoomed-out map (and the Process lens hides `plot` entirely, page.tsx:430), so LOW rather than MEDIUM.
 
 **Mechanism.** `GraphNodeType` has seven members including `"plot"` (orgGraph.ts:23), and plot-plan nodes are created at orgGraph.ts:216-221. The region-naming preference list has only six:
 
@@ -414,10 +423,11 @@ lib/graphInsights.ts:47 quoted in full above — six entries, no "plot". lib/gra
 
 ## GM-10 · The graph does not model an entire level of the plant hierarchy (systems) and never reads documents.plant_id or documents.system_id, despite both being persisted FK columns
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:23`, `lib/orgGraph.ts:109-113`, `lib/operationalGraph.ts:172-208`, `supabase/migrations/20260606_operational_entity_graph.sql:113`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — systems are a whole hierarchy level the graph never models, and documents.plant_id/system_id are read nowhere in it. But a repo-wide grep for `system_id`/`systemId` shows NO primary write path: the only writers are lib/documentLifecycle/common.ts:182 (from an `input.systemId` no UI supplies), split.ts:115 and merge.ts:124 which merely copy an existing value. No component or API route sets it, so the described scenario is essentially unreachable through the product. Downgrade to LOW (a modelling gap, not a live defect).
 
 **Mechanism.** `documents` carries three scope FKs — the migration adds `plant_id UUID REFERENCES plants(id)`, `unit_id UUID REFERENCES units(id)` and `system_id UUID REFERENCES systems(id)`. buildOrgGraph selects only one of them:
 
@@ -452,10 +462,11 @@ orgGraph.ts:110 select list quoted above contains `unit_id` and nothing else sco
 
 ## GM-11 · The same node shows two contradictory connection counts on one screen: NodePeek prints the full-graph degree, the Hubs list prints the filtered context degree
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:173-181`, `components/graph/NodePeek.tsx:89`, `lib/graphInsights.ts:39`, `lib/graphInsights.ts:60-65`, `app/(protected)/graph/page.tsx:645`, `app/(protected)/graph/page.tsx:408-418`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Confirmed: the peek header's number comes from the unfiltered full graph, while both the row list beneath it and the Hubs number come from the filtered context web, so the same node can show 3 in the header and 2 rows / 2 in Hubs on one screen. Genuine but cosmetic — no data is lost or wrong, only inconsistently labelled — so LOW.
 
 **Mechanism.** Two independent degree computations exist. `GraphNode.degree` is incremented inside `addEdge` over the WHOLE assembled graph, including library edges and edges to nodes the current lens hides:
 
@@ -487,10 +498,11 @@ lib/orgGraph.ts:179-180 increments GraphNode.degree unconditionally inside addEd
 
 ## GM-12 · The whole graph is rebuilt in the browser on every mount — up to ~47 HTTP round trips and ~48,000 rows, with five sequential eight-deep pagination chains
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/orgGraph.ts:96-144`, `lib/orgGraph.ts:74-94`, `app/(protected)/graph/page.tsx:102-132`, `app/(protected)/graph/page.tsx:106-109`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The rebuild-on-every-mount and the row volume are real (the finding in fact understates both: six chains, not five, and ~56k rows, not 48k). Two corrections lower it: the six chains run CONCURRENTLY inside one Promise.all, not sequentially, and a stale-while-revalidate sessionStorage snapshot (page.tsx:110-122) means a returning user sees the previous map immediately rather than 'no visible progress beyond a spinner' — the spinner only appears on a first visit or an oversized (>2MB) graph. A perf/cost concern, not a correctness one: LOW.
 
 **Mechanism.** `Promise.all` fans out fifteen entries, but five of them are `pageRows` calls that each loop `for (let from = 0; from < cap; from += EDGE_PAGE)` — eight sequential awaits apiece at EDGE_CAP/EDGE_PAGE = 8000/1000. Worst case that is 8 serial round trips deep and 40 requests wide from `pageRows` alone, plus ten more from the direct queries, all from the client. Row volume at cap: 1500 documents + 2000 assets + 5×8000 join rows + 5000 mirror rows ≈ 48,500 rows parsed in the browser. The page comment describes this as "a dozen parallel table pulls" (page.tsx:106) which understates it by roughly 4x. The mitigation is a sessionStorage snapshot that big orgs never get:
 
@@ -529,6 +541,7 @@ lib/orgGraph.ts:79-92 is the sequential paging loop; lib/orgGraph.ts:99-144 show
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:17-18`, `lib/orgGraph.ts:164-167`, `lib/orgGraph.ts:306-315`, `lib/orgGraph.ts:107-108`, `lib/orgGraph.ts:137`, `lib/orgGraph.ts:141-143`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed and the module's own header contract at lines 17-18 is the line that settles it. The kdoc-mirror cap is the sharper defect: a mention on a mirrored PDF beyond the 5000th mirror is misreported to the user as evidence that the PDF was never brought under document control — a false explanation, not merely a missing one. Libraries and projects are also silently capped at 300 (orgGraph.ts:107-108), and plot plans at 300 (:137). MEDIUM stands.
 
 **Mechanism.** The header states an absolute: "Every list is capped and the truncation is reported, never silent." A grep of `truncations\.push|\.capped` over the file returns six lines. `docAssets.capped`, `projectDocs.capped` and `mentions.capped` are reported. `related.capped`, `supersessions.capped` and `flows.capped` are never read. Four more hard limits report nothing at all: libraries `.limit(300)` (line 107), projects `.limit(300)` (line 108), plot_plans `.limit(300)` (line 137), knowledge_documents mirrors `.limit(5000)` (lines 141-143). The mirror cap is the damaging one, because unmapped mentions are then explained wrongly:
 
@@ -567,10 +580,11 @@ lib/orgGraph.ts:17-18 is the contract. The six push/capped sites are lines 164, 
 
 ## GM-14 · knowledge_page_entities — the per-sheet equipment index with x/y positions — is REVOKEd from `authenticated`, and the graph is assembled entirely client-side, so the data the owner's per-sheet question needs is structurally unreachable from the graph
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260921_drawing_entities.sql:15-38`, `lib/orgGraph.ts:20`, `lib/orgGraph.ts:96-144`, `app/(protected)/graph/page.tsx:115`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every factual assertion checks out — the REVOKE is real, the graph is 100% client-assembled, and a sheet edge type added to buildOrgGraph would silently return nothing. But this is a deliberate, documented ACL decision (the table mirrors per-document ACLs the anon client cannot evaluate), and no shipped feature is broken by it — the finding describes a hypothetical future feature. That is a design constraint to note, not a MEDIUM defect: LOW.
 
 **Mechanism.** buildOrgGraph imports the browser client (`import { supabase } from "@/lib/supabase"`) and is invoked directly from the client component (`buildOrgGraph(activeOrgId).then(...)`, page.tsx:115). It therefore runs with the caller's JWT under the `authenticated` role. The table that records which equipment tag appears on which sheet, and where on the sheet, is service-role only:
 

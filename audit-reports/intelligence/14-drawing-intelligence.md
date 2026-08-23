@@ -34,6 +34,7 @@ Tag extraction, OPC references, pipe tracing, and revision staleness.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeSourceSync.ts:239-263`, `lib/knowledgeIngest.ts:399-429`, `app/api/knowledge/drawing/route.ts:414-433`, `app/api/knowledge/drawing/route.ts:368`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The chain holds end to end. The stale index also defeats the 'skipped' safety valve: route.ts:434 `indexed: d.status === "ready" && withEntities.has(d.id)` is satisfied by the surviving Rev-C rows plus the `status: done ? "ready" : "indexing"` write at knowledgeIngest.ts:432, so drawingAuditLog.ts:101-104 files `passed`/`flagged` rather than `skipped` — under Rev D.
 
 **Mechanism.** On rev-up the sync deliberately keeps the `knowledge_documents` row ("The knowledge doc id is stable so past citations keep linking", knowledgeSourceSync.ts:241) and deletes ONLY `knowledge_chunks` (line 242-243). It never touches `knowledge_page_entities`. Because the row survives, the `ON DELETE CASCADE` on `knowledge_page_entities.document_id` never fires either.
 
@@ -74,6 +75,7 @@ lib/knowledgeSourceSync.ts:259 — `source_rev: version.revision_label,` (the ho
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/drawingText.ts:63-85`, `lib/knowledgeVision.ts:36-37`, `lib/equipmentBridgeServer.ts:65-78`, `lib/equipmentBridgeServer.ts:200-222`, `components/knowledge/DrawingIntelPanel.tsx:132`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Searched drawingText.ts / knowledgeIngest.ts / equipmentBridgeServer.ts for any line-number recognizer or suppression and found none (the sole 'line number' mention, drawingText.ts:617, is about SHX geometry). Downstream the phantoms become real asset rows: equipmentBridgeServer.ts:200-216 inserts them with `origin: "drawing"` unless `bridge?.createAssets === false`, under the DrawingIntelPanel.tsx:132 caption "counts you can trust, not AI guesses".
 
 **Mechanism.** `EQUIPMENT_RE = /\b([A-Z]{1,3})[-–](\d{1,5})([A-Z]{1,2})?\b/g` with one false-positive guard: skip when a digit-dash precedes the prefix (drawingText.ts:81), which catches drawing numbers like `2002-D-2001`. There is no guard for the OTHER thing on a P&ID shaped exactly like a tag: the pipe line number, `<size>"-<service>-<number>-<spec>`.
 
@@ -122,6 +124,7 @@ Executed: node script reproducing extractEquipmentTags' exact logic over the nin
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:236-240`, `components/knowledge/CitedPageViewer.tsx:504-512`, `node_modules/pdfjs-dist/build/pdf.mjs:14431-14447`, `node_modules/pdfjs-dist/build/pdf.mjs:1238,1277-1292`, `fixtures/PID-Legend.pdf`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Core defect confirmed on a fixture that ships in this repo. Two caveats on the framing, neither fatal: (a) /UserUnit is immaterial here — pdf.js ignores it on both sides, and since nx/ny are ratios any uniform scale cancels, so only /Rotate and a non-zero CropBox origin actually shift the mark; (b) the node_modules/pdfjs-dist/build/pdf.mjs line citations cannot be checked in this tree — dependencies are not installed and pdfjs-dist is not a declared dependency (package.json pulls it transitively via `unpdf`).
 
 **Mechanism.** Ingest normalizes every text-layer tag with:
 
@@ -172,6 +175,7 @@ Measured: `page.rotate=180 view=[0,0,1224,792] vp=1224x792 chars=209 items=21 / 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/drawingText.ts:285-298`, `lib/knowledgeVision.ts:33-53`, `lib/knowledgeIngest.ts:272-280`, `lib/drawingText.ts:697-748`, `app/api/knowledge/drawing/route.ts:253-258`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claim is exactly right, and the smoking gun is the stale comment at drawingText.ts:288-289 describing a prompt contract that knowledgeVision.ts does not implement. The panel's reassuring "0 connector(s) with no drawing number" (drawing/route.ts:253-258) is therefore a report on an empty set, not a clean one.
 
 **Mechanism.** `parseOpcBoxes` matches only the literal token OPC: `const OPC_BOX_RE = /\bOPC[\s#.:-]*(\d{1,4})\b/g;`. Its header states the contract explicitly: "The vision prompt asks for 'OPC <n>: …' lines, so transcripts carry them machine-readably" (drawingText.ts:289-290).
 
@@ -212,6 +216,7 @@ Searches: `grep -n "OPC" lib/knowledgeVision.ts` → NONE; `grep -ni "opc" lib/k
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/locate/route.ts:216-220`, `app/api/knowledge/locate/route.ts:236-268`, `lib/ai/usageServer.ts:112-127`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the mutation on lines 267-268 is dead weight — the ai_usage_events row was written and awaited before it happens. The cap check (:185-194 `if (cap > 0 && spent.spentUsd >= cap)`) reads getMonthUsage, which is fed by those under-counted rows, so the governance layer sees roughly 1/9th of the real spend. Each refine image (outW 1400) is comparable in size to the coarse 1800px render, so the under-count is close to the order of magnitude claimed.
 
 **Mechanism.** `recordAskUsage` is awaited at locate/route.ts:216 with `usage: out.usage`. It reads the fields synchronously and inserts immediately (`input_tokens: usage.inputTokens, output_tokens: usage.outputTokens, est_cost_usd: estimateCostUsd(model, usage)`, usageServer.ts:118-122).
 
@@ -256,6 +261,7 @@ lib/ai/usageServer.ts:122 — `const { error } = await supabaseAdmin.from("ai_us
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260929_mention_engine.sql:140-153`, `app/api/knowledge/drawing/route.ts:386-392`, `app/api/knowledge/drawing/route.ts:443-456`, `lib/drawingAuditLog.ts:140-149`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg: the key is org-wide, the computation is library-wide-scoped, the upsert is unconditional, and the mirror uniqueness index explicitly permits one controlled sheet in many libraries (so both audits carry the same `rev`, hence the same key). The RANK dedup at route.ts:445-451 protects only within one batch, never against the stored row. lib/orchestrator/tools.ts:268-270 reads the record back by `(org_id, sheet_number)` alone, so the corrupted verdict is what the orchestrator reports as history.
 
 **Mechanism.** The unique key is `(org_id, sheet_number, revision_code)` — no library_id, no document_id. But the verdict is computed from `loadVisibleEntities(orgId, userId, libraryId)` (route.ts:387), and the audit's entire meaning depends on library scope: `auditDrawingRefs` decides `missingInSeries` vs `outOfScope` by whether a series is present IN THAT LIBRARY (`const inScope = scopeAll.some((s) => seriesMatch(s, series));`, drawingText.ts:501). `oneWay` likewise only exists between two sheets both loaded in that library.
 
@@ -299,6 +305,7 @@ app/api/knowledge/drawing/route.ts:445 — `const RANK: Record<string, number> =
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/drawingText.ts:19-25`, `lib/knowledgeIngest.ts:231`, `lib/drawingText.ts:609-636`, `lib/knowledgeIngest.ts:268`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four consequences follow mechanically: >2000 chars means no equipment, no ref, no opc and no 'self' rows, so the census, the reference audit, the CSV register and the equipment bridge are all empty, while chunking/search still succeed. The only vision path for such a page is the manual library-wide `forceAllPages` toggle — nothing automatic, and the drawing route's suggestion for this exact state (route.ts:199-205) tells the user it is 'normal for prose documents' rather than offering vision.
 
 **Mechanism.** Entity extraction on the non-vision path is gated by `isDrawingLikePage`:
 
@@ -344,6 +351,7 @@ Measured on the repo fixture: `p1 rotate=0 view=[0,0,1224,792] chars=176 items=1
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledgeIngest.ts:276`, `lib/drawingText.ts:739-746`, `app/api/knowledge/drawing/route.ts:253-258`, `components/knowledge/DrawingIntelPanel.tsx:344`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The truncation-before-analysis is real and the false 'broken by definition' verdict follows directly. Stronger than the finding states for text-layer sheets: knowledgeIngest.ts:129-134 only closes a line on `item.hasEOL`, so a CAD page with no EOL flags collapses to ONE line and every opc row on it keeps only the page's first 160 characters. Caveat worth recording: knowledgeVision.ts's VISION_SYSTEM never actually asks for `OPC <n>:` lines (contradicting drawingText.ts:289), so today opc rows only arise from literal 'OPC' text on the sheet — the defect is real but its blast radius depends on that.
 
 **Mechanism.** `kind:'opc'` rows store `raw: truncateSafe(line, 160)` (knowledgeIngest.ts:276). `auditOpcBoxes` then decides the most severe finding in the system from that truncated string:
 
@@ -386,6 +394,7 @@ lib/drawingAuditLog.ts:84 — `push(broken, c.sheet, `Connector ${c.box} names n
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261007_line_traces.sql:19`, `supabase/migrations/20261007_retire_line_traces.sql:9`, `supabase/migrations/20261009_trace_method.sql:16-21`, `lib/exportTables.ts:176-177`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep confirms no later migration recreates knowledge_line_traces (only the three files above mention it), and supabase/schema.sql — the documented 'run this to set up your database' file — contains none of the post-base tables (no line_traces, drawing_audit_logs or process_flows), so a fresh environment must apply the migrations in filename order and will hard-fail at 20261009. `IF NOT EXISTS` on the columns gives no protection; the missing relation is the error.
 
 **Mechanism.** In filename order the three files run: `20261007_line_traces.sql` (CREATE TABLE knowledge_line_traces) → `20261007_retire_line_traces.sql` (`DROP TABLE IF EXISTS knowledge_line_traces;`, sorts after because 'l' < 'r') → `20261009_trace_method.sql` (`ALTER TABLE knowledge_line_traces ADD COLUMN IF NOT EXISTS method TEXT, ...`).
 
@@ -425,6 +434,7 @@ lib/exportTables.ts:176-177 — `knowledge_line_traces: "cached AI line traces o
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/knowledge/drawing/route.ts:430`, `app/api/knowledge/drawing/route.ts:299`, `app/api/knowledge/drawing/route.ts:88-95`, `app/api/knowledge/drawing/route.ts:395-400`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Two different selection rules on the same array: the audit key takes element [0] raw (which can be a `-SHn` variant, since knowledgeIngest.ts:288-289 writes both `drawingNumber` and `drawingNumber-SHn` as 'self'), while the on-screen `declared` strips `-SHn` and picks the shortest. With no ORDER BY beyond document_id, a re-index that changes physical row order changes the key, and the unique index on (org, sheet_number, revision) then files the second run as a separate row rather than an update.
 
 **Mechanism.** Ingest writes TWO 'self' entities per title block: the bare drawing number and `<number>-SH<n>` (knowledgeIngest.ts:291-292), and does so on every drawing-like page — so a multi-sheet PDF accumulates several.
 
@@ -470,6 +480,7 @@ lib/knowledgeIngest.ts:291-292 — `self(tb.drawingNumber); if (tb.sheetNumber) 
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/knowledge/drawing/route.ts:88-95`, `app/api/knowledge/drawing/route.ts:180-186`, `app/api/knowledge/drawing/route.ts:278-285`, `components/knowledge/DrawingIntelPanel.tsx:132`, `lib/knowledgeEntityKinds.ts:14-24`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The cap, the absence of any detection, and the exactness promise are all as described. The ordering makes it worse than a random shortfall: `.order("document_id")` means the cut lands on whole trailing documents in each 50-doc slice, so entire sheets vanish from the census and audit. Note knowledgeEntityKinds.ts:34 makes TAG_ENTITY_KINDS = all four kinds, so the `.in("kind", ...)` filter narrows nothing today — every kind competes for the same 50 000.
 
 **Mechanism.** `loadVisibleEntities` pages documents 50 at a time and caps each slice at `.limit(50000)` with `.order("document_id", { ascending: true })`. On a real drawing set — a vision-read P&ID yields hundreds of entities per page — 50 sheets can exceed 50 000 rows. Because the order is by document_id, truncation does not thin the sample evenly: it drops the TRAILING documents of the slice entirely. Those sheets then have zero tags, zero refs, no 'self' declaration, and a full `gapPages` list.
 
@@ -510,6 +521,7 @@ lib/knowledgeEntityKinds.ts:18-22 — `// A bulk read with no kind filter is the
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/__tests__/entityKindGuard.test.ts:28-30`, `app/api/knowledge/locate/route.ts:117-122`, `app/api/knowledge/locate/route.ts:80-83`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The exemption text is stale and the harm is reachable: with no kind filter the hits include kind='ref' rows (a neighbouring sheet's number appearing in an off-page connector note) and kind='opc'/'self' rows, and the scorer at :141-148 ranks only by same-document then page, so a mere reference can win. CitedPageViewer.tsx:449-455 then renders that as `{e.tag} is on {documentName} — jump`. Fair correction to the wording: the read IS bounded to ≤12 tag values (MAX_TAGS at locate/route.ts:35), so 'unfiltered slab' overstates it; the missing kind filter and the stale exemption are the substance and both hold.
 
 **Mechanism.** The guard test exempts the locate route in writing:
 
@@ -553,6 +565,7 @@ lib/knowledgeEntityKinds.ts:34 — `export const TAG_ENTITY_KINDS: readonly Enti
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/drawing/route.ts:10-15`, `app/api/knowledge/drawing/route.ts:386-456`, `lib/drawingAuditLog.ts:118-137`, `lib/drawingLocate.ts:99-115`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both dead-code claims verified by full-repo grep, and the route genuinely recomputes and rewrites all verdicts on every click. A partial mitigation the finding misses: lib/orchestrator/tools.ts:258-285 implements the skip-if-already-audited idea for the AI tool path (`check_audit_history`), so the CONCEPT exists — just not on the route whose header comment claims it. Also note verdictRows omits audited_at, so a rewrite silently keeps the original timestamp on top of the new status.
 
 **Mechanism.** The route header states: "POST { ... action:'record-audit' } → recompute the audit and COMMIT a verdict per sheet to drawing_audit_logs, keyed by (sheet, revision) so an unrevised sheet is never re-audited" (route.ts:10-15). `recordAudit` never reads `drawing_audit_logs` before writing — it recomputes every sheet in the library and upserts all of them. The key does not prevent re-auditing; it only causes overwriting.
 

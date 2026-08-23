@@ -31,10 +31,11 @@ De-facto links in untyped JSONB, one-directional links, and FK columns nothing w
 
 ## WIRE-1 · The Equipment Bridge writes to a column the doc↔asset join table cannot see — every reverse lookup misses AI-extracted equipment
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:260-276`, `supabase/migrations/20260609_phase1_normalization.sql:80-120`, `app/(protected)/assets/[tag]/page.tsx:52-57`, `lib/orgGraph.ts:118-119,262`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The wiring gap is real and I could find no path that closes it — no backfill, no second write, no metadata-aware reader. Severity lowered to HIGH: nothing is corrupted or lost (the tags persist in metadata and render as chips), and one reverse surface is unaffected — assets/[tag]/page.tsx:228 also mounts MentionsPanel, which reads entity_mentions rather than document_assets. CRITICAL overstates a broken reverse index.
 
 **Mechanism.** The Bridge's `populate` step writes tags into the library-configured custom column inside `documents.metadata`: `await admin.from("documents").update({ metadata: { ...metadata, [targetKey]: next }, updated_at: … })` (equipmentBridgeServer.ts:272-274). The only machinery that turns a document's tags into `document_assets` rows is the SQL trigger `documents_resync_assets_trg`, declared `AFTER INSERT OR UPDATE OF asset_tags, org_id ON documents` and reading `NEW.asset_tags` (20260609_phase1_normalization.sql:93-115, 116-120). Updating `metadata` does not fire it, and even if it did the function only reads `asset_tags`. Nothing anywhere writes `documents.asset_tags` except the split/merge lifecycle (`lib/documentLifecycle/common.ts:179`, `lib/documentLifecycle/merge.ts:150`) — grep for `asset_tags` across all .ts/.tsx returns 7 hits, none of them a general write path. So the Bridge — the ONLY automated path from a P&ID to equipment tagging — produces zero `document_assets` rows and zero `documents.asset_tags` entries.
 
@@ -66,6 +67,7 @@ lib/equipmentBridgeServer.ts:272 `const { error: updErr } = await admin.from("do
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/mentionIndexer.ts:136-142`, `supabase/migrations/20260929_mention_engine.sql:59-60`, `lib/linkProposerServer.ts:403-406`, `supabase/migrations/20260807_link_proposals.sql:111-113`, `app/api/knowledge/ingest/route.ts:157-169`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both ON CONFLICT targets raise 42P10 and both paths are non-fatal, so the mention graph and auto-applied links stay empty with a success response. One precision note: the link proposer is not fully silent — it does `notes.push(\`Auto-apply skipped: ${error.message}\`)` at :406 — but it still never throws and autoApplied stays 0. HIGH stands.
 
 **Mechanism.** `entity_mentions`' only unique index is an EXPRESSION index: `CREATE UNIQUE INDEX entity_mentions_unique_idx ON entity_mentions (asset_id, COALESCE(knowledge_document_id, document_id), page)`. The writer passes a plain column list: `.upsert(batch, { onConflict: "asset_id,knowledge_document_id,page", ignoreDuplicates: false })`. PostgREST renders that as `ON CONFLICT (asset_id, knowledge_document_id, page)`; Postgres arbiter inference requires an index whose key matches those columns, and a `COALESCE(...)` expression key does not. The same shape appears for `document_related_resources`, whose arbiter index is PARTIAL (`… (document_id, target_document_id) WHERE target_document_id IS NOT NULL`) while the upsert supplies no index predicate — a partial index is only a valid arbiter when the statement's `WHERE` implies the index predicate. Every other `onConflict` in the codebase (13 of them: document_supersessions, project_documents, distribution_acks, document_acknowledgments, document_intents, work_package_documents, document_assets, codebook_entries, …) targets a plain UNIQUE constraint, so these two are the outliers.
 
@@ -97,6 +99,7 @@ lib/equipmentBridgeServer.ts:272 `const { error: updErr } = await admin.from("do
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260606_operational_entity_graph.sql:105-119`, `lib/assets.ts:170-202,206-215`, `lib/documentLifecycle/common.ts:181-182`, `lib/orgGraph.ts:253-261,321-325`, `lib/search.ts:176-184,540-542`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed dead scaffold. The only write path copies from a field that is always null, so assets.unit_id and documents.unit_id are null in every real row — which makes /admin/scope decorative, the search scope filters silently empty, and every `unit:`/`plant:` node degree-0 and then deleted by orgGraph.ts:321-325. HIGH stands.
 
 **Mechanism.** `assets.plant_id/unit_id/system_id` and `documents.plant_id/unit_id/system_id` are real FKs to `plants`/`units`/`systems`, with partial indexes. `createAsset` (lib/assets.ts:170-202) and `updateAsset` (:206-215) never mention them; the `updateAsset` patch type is literally `Partial<Pick<Asset, "tag"|"type_id"|"description"|"location"|"library_id"|"archived"|"cover_photo_id"|"unit_code"|"code">>` — scope columns are excluded by type. The only writer of any of the six is `lib/documentLifecycle/common.ts:181-182` (`unit_id: input.unitId ?? null, system_id: input.systemId ?? null`), which copies the source document's scope during split/merge — and the source's scope is always NULL because nothing else sets it. `/admin/scope` creates plants/units/systems but assigns nothing to them. Meanwhile the registry actually files equipment by `assets.unit_code` (Site Codebook TEXT code), a completely separate identity with no bridge to `units.code`.
 
@@ -124,10 +127,11 @@ Three differently-shaped searches: (1) `unit_id` across all .ts/.tsx — 30 hits
 
 ## WIRE-4 · Nine entity classes are invisible to the graph, which is why the "Process" and "Equipment" lenses do not describe what they show
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:23-35,99-144`, `app/(protected)/graph/page.tsx:428-433`, `lib/graphSettings.ts`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The countable core is true — the graph has seven node types and no lifecycle entity is among them — but the narrative that convicts the lenses is misattributed: the Process lens does hide plot plans and its label is accurate. What remains is a scope gap (the graph was built as an entity/paper map, not a work-in-flight map) plus one minor label/content mismatch in the Equipment lens, which is LOW, not MEDIUM.
 
 **Mechanism.** `GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot"` — seven kinds. `buildOrgGraph` loads exactly units, plants, libraries, projects, documents, assets, plot_plans and codebook units. There is no node for ticket, hold, checkout_session, transmittal, work_package, milestone, knowledge_document, knowledge_library, or `systems`. knowledge documents are deliberately excluded (orgGraph.ts:138-140) and their mentions are dropped when they have no controlled counterpart (:307-315). Since the four lenses are pure `hiddenTypes` subtraction over that seven-kind vocabulary, "Process" resolves to {asset, unit, plant, plot} and "Equipment ↔ Docs" to {document, asset, plot} — no process *flow* semantics, no equipment *state*.
 
@@ -156,9 +160,10 @@ lib/orgGraph.ts:23 `export type GraphNodeType = "document" | "asset" | "unit" | 
 ## WIRE-5 · Per-sheet equipment (the owner's Q6) exists in three stores and is joined in none — no query can answer "which sheets carry E-22"
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260921_drawing_entities.sql:20-35`, `supabase/migrations/20260928_site_codebook.sql:88-101`, `lib/equipmentBridgeServer.ts:28-34,147-154`, `supabase/migrations/20260609_phase1_normalization.sql:51-63`, `app/api/knowledge/locate/route.ts:115-125`
+- **Independently verified:** ⛔ **REFUTED** by a second independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). REFUTED: two surfaces outside the drawing viewer answer the owner's Q6 — the equipment hub's MentionsPanel (asset → document + page, via entity_mentions) and the knowledge ask route's sheet-citation path (tag → sheet + page, via knowledge_page_entities). The residual truth is that the three stores are not reconciled with each other and that the entity_mentions store is left empty by the separate 42P10 bug in WIRE-2 — but that is WIRE-2's finding, not an absence of any query or surface.
 
 **Mechanism.** Three representations of "tag X is on sheet Y" exist and none is queryable org-wide from the equipment side. (1) `knowledge_page_entities(document_id, page, kind, tag)` is the real per-page fact, but `document_id` is a *knowledge_documents* id, the tag is a raw string never resolved to `assets.id`, and its indexes are `(library_id, kind, tag)` and `(document_id, page)` — there is no `(org_id, tag)` index, so cross-library lookup is per-library. (2) `document_equipment_suggestions.suggested` carries `pages:number[]` per tag (BridgeSuggestion, equipmentBridgeServer.ts:31) but lives in untyped JSONB under `PRIMARY KEY (org_id, document_id)` with no GIN index — you can ask "what's on this document", never "which documents have this tag". The companion `applied` column stores tags only, dropping pages entirely (:280-285). (3) `document_assets` — the one table indexed both ways — has columns `(document_id, asset_id, tag_text, source)` and **no page or sheet column**.
 
@@ -191,6 +196,7 @@ lib/orgGraph.ts:23 `export type GraphNodeType = "document" | "asset" | "unit" | 
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:58-73,167-181`
 - **Also surfaced independently as** [`AREA-5`](./12-operating-areas.md#area-5) — two lenses found this separately. Fix once.
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every point: unordered fetch, hard slice at 300, no warning in the response, and the guard at :62 only fires when the registry is entirely empty. A 2,000-asset plant silently reads its PFD against an arbitrary 15% of its own registry. MEDIUM stands.
 
 **Mechanism.** The grounding roster is built as `assets.slice(0, 300).forEach((a, i) => roster.push({ ref: \`A${i+1}\`, kind: "asset", id: a.id, label: a.tag }))` from a query with `.limit(4000)` and **no `.order(...)`** — Postgres returns rows in whatever physical order it likes. The model is instructed "Use ONLY the roster handles" and any tag it reads that is outside the roster is dropped by `if (!from || !to …) continue`. The response reports only `{ proposed, skippedSettled, pagesRead }` — nothing tells the caller that 1,700 of their 2,000 assets were not offered to the model.
 
@@ -216,10 +222,11 @@ app/api/flows/read/route.ts:59 `supabaseAdmin.from("assets").select("id, tag").e
 
 ## WIRE-7 · Ticket, hold, checkout, work package and milestone carry no reference to equipment or to an operating area at all
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `types/schema.ts:1106-1113`, `types/schema.ts:453-497`, `types/schema.ts:542-556`, `supabase/migrations/20260825_work_packages_acks.sql:21-46`, `app/(protected)/requests/new/page.tsx:136-153`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES_CORRECTED: the underlying observation — no FK from any in-flight work object to assets or units, so "everything in flight on the crude unit" needs a multi-hop join that mostly dead-ends — is fair, but the title's "no reference to equipment or to an operating area at all" is factually wrong for tickets (`unit`) and milestones (`location`, explicitly documented as area/unit/equipment tag). With that overstatement removed this is a schema-scope feature gap, not a defect: LOW.
 
 **Mechanism.** `Ticket.unit: string` is free text: the request form fills it from the Site Codebook when configured (`cfg.units = { options: book.units.map(u => ({ label: \`${u.code} — ${u.label}\`, value: u.code })) }`, requests/new/page.tsx:142-148) but stores the bare code into a nullable `unit TEXT` column with no constraint, no index and no FK. There is no equipment-tag field on the request form at all (grep `tag|asset` over that file returns nothing). `DocumentHold` has only `documentId`. `CheckoutSession` has documentId/libraryId/projectId. `work_packages` joins only to documents (`work_package_documents`). `Milestone.location` is documented as "Where the work happens — area / unit / equipment tag" but is a plain string that lib/milestones.ts only round-trips (:106, :980) — nothing ever resolves it to a unit or an asset.
 
@@ -245,10 +252,11 @@ types/schema.ts:1112 `unit: string;` on Ticket; supabase/schema.sql:403 `unit TE
 
 ## WIRE-8 · Transmittal↔document and ticket↔document are unindexed JSONB scans, and the ticket link is written in two incompatible shapes
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:394-406`, `supabase/migrations/20260717_transmittals.sql:40,53-54`, `lib/impact.ts:111-118`, `lib/transitionIn.ts:321-322`, `app/(protected)/requests/new/page.tsx:290-297`, `app/api/intake/resolve/route.ts:151-154`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES on facts, downgraded on impact. Both queries stay org-scoped, and the finding's own scale ("a few thousand transmittals") is a sub-millisecond scan in Postgres — the performance claim does not carry MEDIUM. The shape mismatch is currently unreachable: intake/resolve pre-filters on `metadata->intake_collision->>intakeLinkId`, which only transitionIn writes, so it only ever sees the `number` shape. Latent inconsistency worth fixing, LOW.
 
 **Mechanism.** A transmittal's contents live in `items JSONB NOT NULL DEFAULT '[]'` with no join table and no GIN index (the only indexes are `(org_id, number)` and `(org_id, status, created_at DESC)`). The reverse question is answered by `.contains("items", JSON.stringify([{ documentId }]))` — a sequential scan over every transmittal, executed on every inspector open. The ticket↔document link is `tickets.metadata->source_document->>id`, likewise unindexed (`tickets` has GIN indexes on `watchers` and `search_tsv` only). Worse, three writers disagree on the shape: `lib/transitionIn.ts:322` writes `{ id, number, title }` while `app/(protected)/requests/new/page.tsx:291-296` and `components/documents/CheckInPanel.tsx:262` write `{ id, document_number, title, rev, path }`; `app/api/intake/resolve/route.ts:151-154` reads `meta.source_document?.number`, which only ever matches the first shape.
 
@@ -274,10 +282,11 @@ lib/transmittals.ts:401 `.contains("items", JSON.stringify([{ documentId }]))`. 
 
 ## WIRE-9 · document_versions.related_ticket_id is read in two places, written in none — and the review-gate escape hatch it feeds is unreachable twice over
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:334`, `lib/revisions.ts:958`, `app/(protected)/documents/[libraryId]/page.tsx:1893`, `lib/reviewControl.ts:55-61`, `components/documents/RevUpModal.tsx:210`, `lib/documentLifecycle/setRevUp.ts:83`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES on the facts — the escape hatch is dead twice over, so a ticket-derived rev never skips the gate as documented. Downgraded because the failure direction is safe: the consequence is an unnecessary trip through the reviewer queue, never a revision publishing without a review it should have had. Dead documented feature + extra friction is LOW, not MEDIUM.
 
 **Mechanism.** `document_versions.related_ticket_id UUID` (schema.sql:334) is mapped into `DocumentVersion.relatedTicketId` by two readers and set by no writer — two search shapes (`related_ticket_id` and `relatedTicketId` across .ts/.tsx/.sql) return only those two reads plus the schema declaration and `lib/reviewControl.ts`. `reviewControl.ts:55-61` implements a documented business rule on it: `export function effectiveModeForRevUp(input: { control; changeType?; relatedTicketId?: string|null }) { … if (input.relatedTicketId) return "none"; … }`. Both call sites omit the field entirely: `effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType })` (RevUpModal.tsx:210) and `effectiveModeForRevUp({ control, changeType })` (setRevUp.ts:83).
 
@@ -305,10 +314,11 @@ lib/reviewControl.ts:60 `if (input.relatedTicketId) return "none";`. RevUpModal.
 
 ## WIRE-10 · process_flows endpoints are untyped TEXT with no FK and no index — the plant's topology dangles the moment an asset is deleted
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261017_process_flows.sql:16-37`, `lib/assets.ts:216-219`, `lib/orgGraph.ts:284-289`, `app/api/flows/read/route.ts:152-165`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The dangling-row and silent-drop halves are correct — nothing anywhere deletes process_flows rows when an asset dies (repo-wide grep: process_flows is touched only by lib/processFlows.ts, app/api/flows/read, lib/orgGraph.ts, exportTables/dataRestore). But the 'no index' half is wrong: `UNIQUE (org_id, from_kind, from_ref, to_kind, to_ref)` (line 36) creates a btree whose leading columns cover from-side lookups, and no query in the repo filters by ref at all (every read is `.eq("org_id", …)`). Impact is also narrower than stated: once the asset is gone the hop is genuinely unrepresentable, so the residue is stale rows in exports/proposal lists rather than a wrong topology — LOW.
 
 **Mechanism.** `from_kind/from_ref` and `to_kind/to_ref` store an `assets.id` uuid as TEXT (kind='asset') or a Site Codebook unit code (kind='unit'), deliberately without FKs ("Endpoints are (kind, ref) pairs rather than hard FKs"). The only index is `process_flows_org_idx ON (org_id, status)` — nothing indexes `from_ref`/`to_ref`. `deleteAsset` is a hard delete: `await supabase.from("assets").delete().eq("id", id)` (lib/assets.ts:217). Nothing cleans up flows.
 

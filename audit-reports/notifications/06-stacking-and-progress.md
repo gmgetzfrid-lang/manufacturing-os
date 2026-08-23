@@ -34,6 +34,7 @@ Progress and completion messaging: how many things render in that corner, whethe
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/knowledge/SemanticIndexPanel.tsx:44-107`, `components/knowledge/SemanticIndexPanel.tsx:194`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. Contrast with the sibling KnowledgeIndexIndicator, which does portal into CornerPortal and sets `alive = false` on cleanup — SemanticIndexPanel does neither, so navigating away leaves an in-browser paid loop running with the Stop button unmounted.
 
 **Mechanism.** The build loop is driven from page-scoped React state (`setBuilding`, `setState` progress) with `stopRef` as the only stop channel, reachable solely through the panel's own Stop button. Grepping the file for useEffect|return () yields exactly one effect — `useEffect(() => { void load(); }, [load]);` — with no cleanup. Nothing sets `stopRef.current = true` on unmount and nothing registers with CornerPortal, uploadActivity, or any module-level store. Navigating away removes the progress bar and the Stop button while the awaited buildSemanticIndex loop continues issuing embedding calls on the user's own paid key.
 
@@ -70,6 +71,7 @@ components/knowledge/SemanticIndexPanel.tsx:76-80
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storage.ts:62-64`, `lib/storage.ts:402-409`, `lib/storage.ts:420-430`, `components/providers/UploadIndicator.tsx:57-75`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contradiction is doubly explicit: MetadataStagingModal.tsx:50-52 documents the contract as "`signal` aborts the in-flight transfers when the user presses Stop ... reports UploadCancelledError as 'the user stopped this', not as a failure", and stopUpload (:424-427) is a real user-facing 'Stop upload' button (:768-771). storage.ts never honours that contract on the corner-indicator channel.
 
 **Mechanism.** UploadCancelledError's constructor is `super("cancelled")`. Both the multipart catch and the single-PUT catch call `emitUpload({ … status: "error", error: (err as Error).message })` BEFORE the `if (err instanceof UploadCancelledError) throw err;` line whose comment says cancellation must not "read like a failure". UploadIndicator has no cancelled state: status "error" renders a rose AlertCircle, the word "Failed", and `<div className="text-[10px] text-rose-600 …">{u.error}</div>` — literally the word "cancelled" in red under "Failed" — held for 7000ms versus 2500ms for done.
 
@@ -107,6 +109,7 @@ components/providers/UploadIndicator.tsx:60
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/KnowledgeIndexIndicator.tsx:97-112`, `app/api/knowledge/ingest/route.ts:179-185`, `lib/knowledge.ts:450-458`, `app/(protected)/knowledge/[id]/page.tsx:1931`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The one mitigation the finding already cites is real but out of the way: knowledge/[id]/page.tsx:1931 does show `Indexing failed — {doc.error}` with a resume button, but only on that library's page — a user anywhere else in the app sees a green 'caught up' card that actively asserts the opposite of what happened.
 
 **Mechanism.** The app-shell background driver awaits ingestKnowledgeDocument inside `try { … } catch { /* row is marked errored server-side; move on */ }`. ingestLoop throws real, actionable prose ("Indexing stalled at page N … Turn off 'Index every page with AI vision' …") and the server writes `status:"error", error: message.slice(0,500)` onto the row. The catch discards the Error object entirely — it is not toasted, not stored in DriveState, and DriveState has no field to hold it (`phase: "working" | "done"` only). When the drain pass ends, `setState((s) => s ? { ...s, phase: "done", finished } : null)` flips the card to the success branch. `finished` is only incremented after a successful await, so a failed document contributes nothing. The three indicator files import no toast at all (grep for showToast across them returns zero hits).
 
@@ -147,10 +150,11 @@ app/api/knowledge/ingest/route.ts:179-184
 
 ## STACK-4 · Bottom-center is a second uncoordinated corner: undo toasts and the graph return chip occupy identical coordinates
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/UndoToastHost.tsx:21`, `components/graph/BackToGraphChip.tsx:24`, `app/(protected)/layout.tsx:68`, `components/projects/ExecutionView.tsx:926`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The collision is exactly as described and reachable. Severity is overstated: useUndoableActions.ts:25 `const TIMEOUT_MS = 7000` caps the occlusion at 7s and caps the stack at 3 (line 39 `t.slice(-2)`), and the chip is NOT the only way back — ViewTabs.tsx:110 has a `/graph` nav entry and graph/page.tsx:299-300 states "layout and settings persist per-org already", so reaching /graph by any route restores the same map.
 
 **Mechanism.** UndoToastHost is `fixed bottom-4 left-1/2 -translate-x-1/2 z-[280]` and is mounted only inside ExecutionView (two differently-shaped greps — bare identifier UndoToastHost and useUndoableActions — return exactly one mount, ExecutionView.tsx:926); it never goes through CornerPortal. BackToGraphChip is mounted globally at layout.tsx:68 and renders `fixed bottom-4 left-1/2 -translate-x-1/2 z-40` whenever the URL carries `from=graph`. Identical anchor, identical translate; z-280 wins. Neither is aware of the other, and neither is aware of the dock.
 
@@ -179,10 +183,11 @@ components/graph/BackToGraphChip.tsx:24
 
 ## STACK-5 · CornerPortal renders its own duplicate fixed corner for the first frame of every appearance
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `components/ui/CornerDock.tsx:32-48`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Accurate: the fallback box carries the identical `fixed bottom-4 right-4 z-[300]` coordinates as the dock (line 25), and because the lookup is deferred into a macrotask the fallback is committed and painted at least once on every mount — and CornerPortal remounts on every appearance (UploadIndicator.tsx:47 `if (list.length === 0) return null`). But the defect is a sub-100ms transient with no state, data or interaction consequence; LOW, not MEDIUM.
 
 **Mechanism.** `target` starts null and is only set from `setTimeout(…, 0)` inside an effect, so on the first committed paint after mount CornerPortal renders the fallback `<div className="fixed bottom-4 right-4 z-[300] flex flex-col items-end gap-2 pointer-events-none">{children}</div>` — pixel-identical coordinates to the dock. Because UploadIndicator and KnowledgeIndexIndicator return null while idle, their CornerPortal remounts on every appearance, not just once at boot. The fallback is documented as a public-page degradation, but it fires on protected pages too.
 
@@ -214,10 +219,11 @@ components/ui/CornerDock.tsx:40-46
 
 ## STACK-6 · Dismissal of the indexing card is silently undone by the next queued document, and no dismissal survives reload
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/KnowledgeIndexIndicator.tsx:50-55`, `components/providers/KnowledgeIndexIndicator.tsx:88-92`, `components/providers/UploadIndicator.tsx:39-44`, `lib/clientBackup.ts:227-229`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The setHidden(false) reset and the non-persistence across reload are both real. Severity is too high because the finding's own cited lines 50-55 contain the mitigation: `const [minimized, setMinimized] = useState(false)` is explicitly sticky across drain passes ("new work must NOT re-expand a card the user deliberately tucked away"), and the X/Dismiss button only renders in the `phase === "done"` state — so what gets re-shown after dismissal is a *new* card for *new* work, not a resurrection of the dismissed 'caught up' card.
 
 **Mechanism.** `hidden` is reset by `setHidden(false)` inside the per-document body of the drain loop, so every document the driver picks up re-expands a card the user closed. `minimized` is correctly sticky within the session, but both are plain useState with no localStorage write (grep for localStorage in the file returns nothing, though the codebase uses it elsewhere, e.g. app/layout.tsx:61 for density), so a reload restores the full card. Positively, neither indicator lets you dismiss a RUNNING job: the X only renders when `!working` (KnowledgeIndexIndicator.tsx:161-167), UploadIndicator's X only when `u.status !== "uploading"`, and dismissBackup is guarded by `if (!running)`. So a still-running job cannot be permanently lost through the dismiss buttons — it is lost through occlusion instead (see the modal and drawer findings).
 
@@ -256,6 +262,7 @@ components/providers/KnowledgeIndexIndicator.tsx:52-55
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/ToastProvider.tsx:63`, `components/providers/UploadIndicator.tsx:51`, `components/providers/KnowledgeIndexIndicator.tsx:150`, `components/documents/StagingTray.tsx:20`, `components/ui/CornerDock.tsx:25`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every count: at 375px viewport a `w-80` toast is 320/375 = 85% of the width, and the dock's z-[300] sits over the tray's z-30 full-width bottom bar whose right-hand Clear/Open controls live exactly under the dock's bottom-right anchor. Only `w-[330px]` on the indexing card has a viewport-relative max-width; the toast and upload cards have none.
 
 **Mechanism.** The dock clamps only itself (`max-w-[calc(100vw-2rem)]`); its children carry fixed widths — toasts `w-80` (320px), upload cards `w-72` (288px), the index card `w-[330px] max-w-[calc(100vw-2.5rem)]` (the only one with a mobile clamp). On a 360px viewport a toast is ~89% of the width, and `items-end` on a column flex container does not shrink a fixed-width child, so on narrower devices a 320px toast overflows leftward out of a 288px dock. There is no `sm:`/`md:` breakpoint anywhere in CornerDock or in the toast/upload card classes. Separately, StagingTray is `fixed bottom-0 left-0 right-0 z-30` — a full-width dark bar on the documents library page — and the dock at bottom-4 z-300 sits directly on top of it.
 
@@ -292,6 +299,7 @@ components/documents/StagingTray.tsx:20
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/BackupIndicator.tsx:27`, `components/pwa/ServiceWorkerManager.tsx:73`, `components/ui/CornerDock.tsx:3-13`, `lib/clientBackup.ts:224`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. I checked the one thing that could refute this — that ServiceWorkerManager might not be mounted on protected pages — and it is: app/layout.tsx:93 `<ServiceWorkerManager />` in the ROOT layout, which wraps app/(protected)/layout.tsx. A 340px x ~130px card at bottom-5/left-5 z-300 fully covers a pill at bottom-4/left-4 z-200, and BackupIndicator is genuinely outside the dock.
 
 **Mechanism.** CornerDock's header comment claims "ONE bottom-right corner for every floating surface", but BackupIndicator never imports CornerPortal (grep for CornerPortal across app/components/lib/hooks returns only CornerDock, KnowledgeIndexIndicator, UploadIndicator and ToastProvider). It pins itself `fixed bottom-5 left-5 z-[300] w-[340px]`. ServiceWorkerManager pins `fixed bottom-4 left-4 z-[200]` for the offline pill and the update-available button. Same corner, backup wins on z-index and is 340px wide over pills that start 4px from the left — the pills are fully occluded. BackupIndicator also has no minimize, and its only in-flight control is `<button onClick={cancelBackup}>Cancel</button>` with no confirmation; cancelBackup just sets a flag with no undo.
 
@@ -328,6 +336,7 @@ components/providers/BackupIndicator.tsx:65
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/ui/CornerDock.tsx:32-48`, `components/providers/ToastProvider.tsx:40-49`, `components/providers/ToastProvider.tsx:57-59`, `components/providers/UploadIndicator.tsx:46`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three legs hold. Inter-widget order is purely `createPortal` append order (i.e. whichever CornerPortal mounted last), and with `bottom-4` and no `top`/`max-h`, the column grows upward off the top of the viewport with nothing to scroll it. Notably the app already knows how to cap a stack — useUndoableActions.ts:39 `[...t.slice(-2), ...] // keep last 3` — the dock and ToastProvider just don't.
 
 **Mechanism.** CornerPortal resolves the dock via `setTimeout(…, 0)` then `createPortal(children, target)`, which appends to the dock element. Grepping ToastProvider/UploadIndicator/CornerDock for slice|sort|MAX|limit yields exactly one hit — UploadIndicator's internal `.sort((a,b) => a._t - b._t)`. There is no cap on `toasts` (showToast unconditionally does `setToasts(prev => [...prev, …])`) and no cap on upload cards. Dock order is therefore portal-append order: ToastProvider's portal mounts at app start and never unmounts (it renders its wrapper even with zero toasts, which also contributes a phantom `gap-2` 8px), while UploadIndicator and KnowledgeIndexIndicator return null when idle and so re-append at the END of the dock every time they transition from hidden to visible. Nothing expresses priority: a 5-second informational toast and a 40-minute indexing job are peers.
 
@@ -364,6 +373,7 @@ components/providers/ToastProvider.tsx:42
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/layout.tsx:59-72`, `components/ui/CornerDock.tsx:25`, `components/documents/MetadataStagingModal.tsx:461`, `app/(protected)/documents/[libraryId]/page.tsx:2537-2547`, `components/assets/AssetPhotoUploader.tsx:140`, `components/documents/CustomizeNodeModal.tsx:98`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the tail of the scenario: MetadataStagingModal.tsx:405-406 documents that "The parent closes the modal on a clean run, but it keeps the modal open when some files failed", and the parent at app/(protected)/documents/[libraryId]/page.tsx:2543 `throw e` is what drives that. MetadataStagingModal does not createPortal (no such import), so the DOM-order tiebreak applies.
 
 **Mechanism.** CornerDock is `fixed … z-[300]` and is rendered at layout.tsx:62, i.e. BEFORE `<SubscriptionGate>{children}</SubscriptionGate>` at line 67. Both are fixed children of the same non-stacking `<main className="flex-1 overflow-auto relative">` (position:relative with z-index:auto creates no stacking context), so they compete in the root stacking context and equal z-index is broken by DOM order — the page's modal, rendered later, wins. MetadataStagingModal is exactly z-[300] with a `bg-slate-900/60 backdrop-blur-sm` full-screen overlay, and the library page only closes it on total success: `setShowStagingModal(false)` sits in the else branch after every file is attempted; on any failure the code comments "Keep the staging modal open so the failures are still in hand." Other upload-starting surfaces sit strictly above z-300: AssetPhotoUploader z-[510], CustomizeNodeModal z-[400], both calling uploadToPath directly.
 
@@ -411,6 +421,7 @@ app/(protected)/documents/[libraryId]/page.tsx:2543-2547
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/InspectorDrawer.tsx:42`, `components/documents/HistoryDrawer.tsx:161`, `components/notifications/NotificationCenter.tsx:102`, `components/ui/CornerDock.tsx:25`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly; there is no bottom offset, right offset, or drawer-aware repositioning anywhere in CornerDock.tsx. Nothing in the drawers raises above 241, so the dock always wins.
 
 **Mechanism.** InspectorDrawer (`fixed top-0 right-0 bottom-0 z-[60] w-[640px]`), HistoryDrawer (`fixed inset-y-0 right-0 w-[600px] … z-[70]`) and NotificationCenter (`fixed top-0 right-0 bottom-0 z-[241] w-[480px]`) each occupy the full right edge including the bottom-right corner. The dock is z-[300] at bottom-4/right-4 with children of w-72/w-80/w-[330px] — geometrically entirely inside every one of those footprints, and above all three on z. Nothing in CornerDock reads drawer state or shifts left when one is open.
 
@@ -440,9 +451,10 @@ components/notifications/NotificationCenter.tsx:102
 ## STACK-12 · Toasts are the only channel for many job outcomes and self-destruct in 5 seconds with no history
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/ToastProvider.tsx:40-49`, `components/knowledge/SemanticIndexPanel.tsx:81-102`, `components/providers/NotificationListener.tsx:64-69`
+- **Independently verified:** ⛔ **REFUTED** by a second independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). The headline ("toasts are the ONLY channel", "has left no trace anywhere in the UI") is false for all three cited sites — each toast has a durable companion surface. The specific scenario is doubly wrong: the semantic build is client-driven and requires the panel to stay mounted ("Leave this page open and it will finish", line 236), so returning to that tab shows the rose buildNote box. What survives is only the narrow, uncited fact that ToastProvider itself keeps no history.
 
 **Mechanism.** showToast defaults `duration = 5000` and `setTimeout(() => removeToast(id), duration)`. Nothing persists a dismissed or expired toast — no store, no bell row written, no replay. The same 5s ephemeral channel carries background-job outcomes (semantic index build errors, upload failures raised by callers) AND person-to-person realtime alerts from NotificationListener, styled identically, which is also why the alert-vs-notification vocabulary reads as arbitrary. SemanticIndexPanel is the one place that noticed and worked around it locally with `buildNote` ("The last build's outcome, pinned under the bar — toasts vanish") — a fix that exists on that one panel only and only while the user stays on it.
 
@@ -480,6 +492,7 @@ components/knowledge/SemanticIndexPanel.tsx:49-50
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storage.ts:28-40`, `lib/storage.ts:378-431`, `components/providers/UploadIndicator.tsx:19-37`, `lib/clientBackup.ts:211-214`, `components/system/UpdatePill.tsx:41-43`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Fully confirmed, and the asymmetry is the sharpest evidence: the backup path deliberately installs `warnUnload` with the message "A backup is still running — leaving this tab will stop it", while the multipart upload path — the one the finding is about — installs nothing. UpdatePill.tsx:41-42 `onClick={() => window.location.reload()}` is a one-tap, unguarded path into that loss.
 
 **Mechanism.** Upload lifecycle is a module-level `Set<UploadListener>` fed by emitUpload from uploadToPath's XHR/multipart path. Nothing is written server-side until the file completes and the `documents` row is inserted. UploadIndicator holds it in `useState<Record<string, Tracked>>`. A reload drops the XHR, the listener set, and the component state — there is no row, no queue entry, no audit event. A beforeunload guard exists for exactly one job: grep for beforeunload across app/components/lib/hooks returns only lib/clientBackup.ts and app/(protected)/plot-plans/[id]/page.tsx. Uploads have none. (In-app navigation IS survived — module-level listeners plus a layout-mounted indicator — so this is reload-specific.)
 

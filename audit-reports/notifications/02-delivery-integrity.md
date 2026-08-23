@@ -36,6 +36,7 @@ What gets dropped between an event happening and a person being told — and whe
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:121-124`, `app/api/notifications/send-queued/route.ts:140-153`, `lib/notifications.ts:124-147`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: that is the only policy on the table in any migration (no UPDATE/SELECT/DELETE, no trigger, no CHECK). Partial mitigation worth recording: lib/transmittals.ts:281 already lets ANY active member (app/(protected)/transmittals/page.tsx does no role gating) queue external mail from the same sender via queueExternalEmail, so the delta an attacker gains is full control of body_html/subject rather than the ability to mail outsiders at all. Still HIGH — arbitrary HTML from the org's verified domain, with no audit row.
 
 **Mechanism.** The only INSERT constraint on email_notifications is org membership. Nothing binds `to_email` to a member's address, nothing constrains `body_html`, nothing checks that `to_user_id` matches the actor. The drain runs with the service-role key and posts whatever it finds straight to Resend using `RESEND_FROM_EMAIL` as the From. The app-layer guards that DO exist — the address shape check in queueExternalEmail (notifications.ts:127-129) and the `external: true` metadata stamp — are pure client-side convention; a direct PostgREST insert with the user's own anon token bypasses them entirely.
 
@@ -83,6 +84,7 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:52-61`, `supabase/migrations/20260605_rls_policies_new_tables.sql:110-115`, `lib/supabase.ts:110`, `app/(protected)/settings/notifications/page.tsx:126-135`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Holds, and the scope qualifier is right: lib/supabase.ts:110/136 hands the browser the anon client, and every emit() producer (postPublish, holds, projects, workPackages, branches, transitionIn, revisionImpact, CheckInPanel, requests/new) runs client-side. The server paths are genuinely exempt — app/api/tickets/comment/route.ts:283-300 and workflow-action/route.ts:349-367 re-read prefs with supabaseAdmin, and the cron swaps in the service-role client (lib/supabase.ts:123) — so the finding does not overreach.
 
 **Mechanism.** `notif_prefs_own` is `FOR ALL ... USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())`. queueEmail queries `.eq("user_id", input.toUserId)` — the RECIPIENT, not the actor — through the shared `supabase` client, which in the browser is the anon/user client. RLS filters the row out, `.maybeSingle()` returns `{data: null}` with no error, so `prefs` is null. All three gates (`prefs?.email_enabled === false`, `prefs?.digest_frequency === "never"`, `shouldSendForEvent(prefs, ...)` which returns `true` when prefs is null at line 153) fall through to send. The only paths where the check works are the ones that use a service-role client: the two ticket API routes (comment/route.ts:354, workflow-action/route.ts:354) and the cron after `__setServerSupabaseClient(sb)`.
 
@@ -129,10 +131,11 @@ CREATE POLICY "notif_prefs_own" ON notification_preferences
 
 ## DELIV-3 · Every compliance notification kind falls into sectionCounts.other, which the sidebar computes and throws away — this is the mechanical cause of "the trail goes cold"
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:246-250`, `components/navigation/Sidebar.tsx:229-235`, `lib/inAppNotifications.ts:37-58`, `lib/storageAlerts.ts:60-62`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanically exact — the 'other' bucket is computed and never rendered. Severity is too high at HIGH: those same rows ARE in items[] (line 285-300), so the header bell lists them with their deep link, and the /inbox cockpit derives the underlying obligations from their own tables (lib/inbox.ts calls listMyPendingAcks/listMyPendingReviews/listMyDueRecerts/listMyDueReviews) rather than from notifications. What is lost is the per-section badge, not the trail.
 
 **Mechanism.** `sectionForKind()` enumerates ~20 kinds across requests/scratchpad/documents/projects and returns `'other'` for everything else. The `NotificationKind` union declares ~50 kinds. Every one added for the regulated workflows — ack_requested, ack_overdue, ack_complete, ack_unsatisfiable, review_due, review_requested, review_signed, review_invalidated, review_complete, review_overdue, review_alternate_activated, effective_now, retention_eligible, legal_hold_placed, legal_hold_released, access_recert_due, owner_assigned, owner_behind, deletion_requested, request_pending_approval (…which IS mapped), library_doc_added, library_doc_revised, revision_published_over_checkout, security_export, orchestrator_message, task_reminder — lands in 'other'. Sidebar.tsx is the only consumer of sectionCounts (grep across all .ts/.tsx returns exactly Sidebar.tsx:124/229/231/235 plus the hook itself) and it badges only `.documents`, `.projects` and `.requests`. `.other` and `.scratchpad` are tallied at line 248 and never read. On top of that, lib/storageAlerts.ts:61 and lib/storageUsage.ts:256 insert kinds (`storage_alert`, `storage_${key}`) that are not even in the NotificationKind union.
 
@@ -178,6 +181,7 @@ CREATE POLICY "notif_prefs_own" ON notification_preferences
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:120-124`, `app/(protected)/admin/settings/page.tsx:66-73`, `app/(protected)/admin/settings/page.tsx:87-100`, `app/(protected)/admin/settings/page.tsx:274-276`, `app/api/notifications/send-queued/route.ts:175`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, and worse than stated: the remedy button is dead too — requeueFailed (lines 92-94) issues an UPDATE against a table with no UPDATE policy, so it silently affects zero rows and then re-reads the same blind 0. HIGH is right for a green 'No failed deliveries' badge that is a constant, not a measurement.
 
 **Mechanism.** 20260605 does `ALTER TABLE email_notifications ENABLE ROW LEVEL SECURITY` and then creates exactly ONE policy — `email_notif_insert ... FOR INSERT`. There is no SELECT and no UPDATE policy (grep for `email_notifications` across supabase/ returns only lines 117-124 of that file; schema.sql defines the table at 628 with no policies at all). The admin settings page queries the dead-letter count and runs the requeue with `supabase` — which is the browser anon/user client (lib/supabase.ts:110 `createClient(url, anon, ...)`). Under RLS with no SELECT policy the count comes back 0 with no error; under no UPDATE policy the requeue matches 0 rows and PostgREST returns success. Neither call checks `error`. So `failedEmails` is always 0, the page renders the green all-clear branch, and the Requeue button is a no-op.
 
@@ -229,10 +233,11 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 
 ## DELIV-5 · Ticket notification emails carry root-relative links that are dead in any mail client — publicOrigin() exists and is not used; ticketUrl() is referenced only by its own test
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/comment/route.ts:264`, `app/api/tickets/comment/route.ts:310-317`, `app/api/tickets/workflow-action/route.ts:313`, `app/api/tickets/workflow-action/route.ts:387-393`, `lib/publicOrigin.ts:18-22`, `lib/notifications.ts:248-253`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Factually exact — every ticket email ships a root-relative href that cannot resolve in a mail client. Downgraded to MEDIUM: the mail still carries the actor, the ticket label and the comment/status text, and the recipient reaches the ticket by opening the app; there is no data loss or security consequence, only a broken call-to-action.
 
 **Mechanism.** Both server fan-outs build `const link = \`/requests/${ticketId}\`` and drop that string straight into `body_text` and into `<a href="${link}">Open ticket</a>` in `body_html`. There is no base URL. The codebase already solved this: `publicOrigin()` (lib/publicOrigin.ts:18) resolves NEXT_PUBLIC_SITE_URL with a documented rationale about links that leave the app, and `ticketUrl()` (notifications.ts:248) prefixes window.location.origin — but ticketUrl is server-unsafe (falls back to the same relative string at line 252) and two greps show its only consumer is lib/__tests__/notificationsLib.test.ts:16/95, whose assertion actually encodes the bug: `expect(ticketUrl("abc-123")).toBe("/requests/abc-123")`.
 
@@ -278,6 +283,7 @@ export function publicOrigin(): string {
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260621_in_app_notifications.sql:52-61`, `supabase/migrations/20260723_notifications_unify.sql:44-52`, `hooks/useTicketNotifications.ts:293-297`, `components/providers/NotificationListener.tsx:84-98`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed; the migration comment itself concedes it ('The kind/body are validated at the app layer' — no such validation exists on the write path). Nothing sanitizes link, so an off-app https:// URL is rendered by the bell exactly like an in-app one; actor_name 'System' is the same string the cron uses (app/api/cron/maintenance/route.ts:352).
 
 **Mechanism.** `notifications_org_insert` WITH CHECK validates only that the inserting user is an active member of `notifications.org_id`. It does not constrain `user_id` (the recipient), `actor_user_id`, `actor_name`, `kind`, `title`, `body`, or `link`. The migration's own comment concedes this — "The kind/body are validated at the app layer" — but the app layer is client code the attacker is replacing. The bell renders `n.title` / `n.body` / `n.link` directly, and NotificationListener pops a toast for every INSERT matching `user_id=eq.${uid}` with no provenance check.
 
@@ -321,6 +327,7 @@ CREATE POLICY notifications_org_insert ON notifications FOR INSERT WITH CHECK (
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:79-98`, `lib/notify/dispatch.ts:83-84`, `app/api/cron/maintenance/route.ts:355-356`, `app/api/cron/maintenance/route.ts:423-437`, `app/api/tickets/comment/route.ts:268-281`, `lib/projects.ts:1116-1118`, `lib/postPublish.ts:171-183`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The substance holds — no notification write anywhere retries, and repo-wide there is no dead-letter path for them. Two citations are off: maintenance/route.ts:355-356 actually DOES check (`const { error: insErr } = …; if (!insErr) escalated += 1;`), it just never surfaces the failure into result.errors; and lib/notify/dispatch.ts:83-84 is `resolveRecipients`/empty-guard, not an error swallow (the swallowing is one level down in notify()). MEDIUM is right.
 
 **Mechanism.** `notify()` catches the PostgREST error, `console.warn`s it, and resolves void — the doc comment states this is intentional ("Errors are logged but never re-raised"). `notifyMany()` Promise.all's those void-returning calls, so a partial fan-out failure is indistinguishable from success. A case-insensitive grep for retry/retries/backoff across lib/inAppNotifications.ts, lib/notifications.ts, lib/notify/ and hooks/useTicketNotifications.ts returns only three console.warn strings about the email cron — there is NO retry for in-app inserts anywhere. Server-side inserts are worse: comment/route.ts:268, workflow-action/route.ts:325 and :335, intake/upload/route.ts:104/197/349, transmittal/route.ts:149, data-export/run/route.ts:54 and projects.ts:1116 all `await ...insert(...)` without destructuring `error` at all. maintenance/route.ts:355 does capture the error but only to gate a counter (`if (!insErr) escalated += 1`) and never pushes to `result.errors`; queueComplianceDigests at 423 does not check at all yet increments `queued`. `emit()` returns silently whenever recipients resolve empty (dispatch.ts:84), so an RLS-filtered follower lookup notifies nobody with no trace.
 
@@ -374,10 +381,11 @@ export async function notify(input: NotificationInput): Promise<void> {
 
 ## DELIV-8 · Suppressed email rows older than 7 days are unrecoverable by design and then purge-eligible — a permanent, silent loss with no record of what was dropped
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/notifications/send-queued/route.ts:85-94`, `app/api/admin/purge/route.ts:70`, `app/api/admin/purge/route.ts:161`, `supabase/migrations/20260529_phase_b_notifications.sql:47-48`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Accurate as written, but repo-wide grep shows NO current code path ever writes status 'suppressed' (only the recovery filter, the purge filter and the type union in types/schema.ts:1071 mention it) — the current route explicitly defers instead (lines 65-83). So the loss can only touch rows created by a build that no longer exists in this repo; the live defect is the purge misclassifying an undelivered state as delivered. LOW.
 
 **Mechanism.** The recovery pass resurrects `status='suppressed'` rows only where `created_at >= now() - 7 days`. Anything older stays suppressed forever: it is excluded from the drain's candidate query (`.in("status",["queued","failed"])`) and there is no other writer or reader of that status — greps for `suppressed` across the repo hit only send-queued:93 and the two purge branches. The purge route then treats `suppressed` as a delivered byproduct alongside `sent` and deletes it after ≥7 days, with the stated rationale "Outbound emails already sent or suppressed. The delivery is done." For suppressed rows the delivery was never attempted.
 
@@ -423,6 +431,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:64-75`, `supabase/migrations/20260605_rls_policies_new_tables.sql:120-124`, `lib/notify/dispatch.ts:107-129`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by the same RLS fact that carries DELIV-1/2/4: no SELECT policy exists on email_notifications in any migration, and the browser client is the anon client (lib/supabase.ts:110). The dedupe only functions where the shared client has been swapped to service role (the cron, lib/supabase.ts:123). dispatch.ts:67-79 does dedupe recipients, so the residual duplication is across independent producers, exactly as the finding scopes it.
 
 **Mechanism.** The dedupe probe SELECTs from `email_notifications`, which (see finding 1) has no SELECT policy for `authenticated`. From the browser the query returns `data: []` with no error, so `dupes && dupes.length > 0` is never true and the guard is permanently open. The comment above it claims it "prevents burst-spam when a workflow action triggers multiple watchers + assignments simultaneously" — exactly the case it cannot handle. It only works from the cron, where `__setServerSupabaseClient(sb)` (maintenance/route.ts:156) has swapped in the service-role client.
 
@@ -466,6 +475,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:176-177`, `hooks/useTicketNotifications.ts:312`, `lib/inAppNotifications.ts:157-174`, `lib/inAppNotifications.ts:176-185`, `lib/inbox.ts:163-165`, `components/notifications/NotificationCenter.tsx:76-80`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves check out: the cap is a hard 50 with DESC ordering (oldest unread fall off), the bell/NotificationCenter (components/notifications/NotificationCenter.tsx:76-80 `all: items.length`) consume the same truncated array, and countUnread is dead. Worth noting lib/inbox.ts:163-165 does compute a true exact unread count, so the cockpit number and the bell number can disagree once past 50 — which reinforces rather than refutes the finding.
 
 **Mechanism.** `listMyNotifications({ onlyUnread: true, limit: 50, orgId })` orders `created_at DESC` and truncates at 50. The hook then returns `count: items.length` — the badge is literally the length of the truncated array. There is no cursor, no "load more", and no total. `countUnread()` (inAppNotifications.ts:176-185), which would give the true number, is called from nowhere — two differently-shaped greps (bare `countUnread` across all .ts/.tsx excluding node_modules/.next, and the same case-insensitively) return only its own definition. Meanwhile lib/inbox.ts:163-165 computes a SECOND unread count that is uncapped AND not org-scoped (`.eq("user_id", userId).is("read_at", null)` with no `org_id` filter), surfaced as `unreadNotificationCount`.
 
@@ -510,6 +520,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/cron/maintenance/route.ts:103-117`, `app/api/cron/maintenance/route.ts:204-214`, `app/api/notifications/send-queued/route.ts:70-83`, `app/api/notifications/send-queued/route.ts:186`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct — `notificationsDrained: 0, errors: []` is byte-identical for 'queue empty', 'all sends failed' and 'RESEND_API_KEY unset', and the `configured:false`/`failed` fields the route does return are never read. The identical bug sits in the 6c re-drain at line 212. MEDIUM stands.
 
 **Mechanism.** The drain loop reads `const batch = body?.sent ?? body?.processed ?? 0`. `??` only falls through on null/undefined, and the route ALWAYS returns a numeric `sent`. So `sent: 0` is taken as the batch size regardless of `processed`. Two consequences: (a) when RESEND_API_KEY is unset the route returns `{processed:0, sent:0, failed:0, deferred: <backlog>, configured:false, note:"..."}` — the loop sees batch 0, breaks, discards `deferred` and `configured`, and sets `notificationsDrained = 0` with `errors: []`; (b) when a full batch of 100 is attempted and every send throws, the route returns `{processed:100, sent:0, failed:100}` — again batch 0, again break, again `notificationsDrained: 0` and no error. The second drain pass (204-214) is worse still: `if (!res.ok) break;` with no error push, wrapped in `catch { /* the daily drain will catch up */ }`.
 
@@ -560,6 +571,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/settings/notifications/page.tsx:29-40`, `app/(protected)/settings/notifications/page.tsx:80-90`, `app/(protected)/settings/notifications/page.tsx:152`, `supabase/schema.sql:660`, `supabase/migrations/20260529_phase_b_notifications.sql:77-78`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide grep: 'immediate' appears only in the page (lines 30/40/69/151) and 'instant' only in the two schema definitions — no migration ever widens the CHECK, and no mapping layer translates the two. First save from the default state raises 23514 and is surfaced raw via `setError((e as Error).message)` (line 91). The user can only save by first selecting Hourly/Daily/Never.
 
 **Mechanism.** The table constrains `digest_frequency TEXT NOT NULL DEFAULT 'instant' CHECK (digest_frequency IN ('instant','hourly','daily','never'))`. The page's `Prefs` type declares `"immediate" | "hourly" | "daily" | "never"`, `DEFAULTS` sets `digest_frequency: "immediate"`, the cadence buttons render the literal list `["immediate","hourly","daily","never"]`, and `save()` upserts the whole `prefs` object. Any save with the default (or explicitly chosen) "immediate" violates the CHECK; the upsert error is thrown and shown in the red banner.
 
@@ -602,10 +614,11 @@ export async function notify(input: NotificationInput): Promise<void> {
 
 ## DELIV-13 · Users can rewrite and delete their own compliance notifications — the UPDATE policy has only USING, so the whole row is editable, not just read_at
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260723_notifications_unify.sql:38-41`, `supabase/migrations/20260621_in_app_notifications.sql:44-46`, `supabase/migrations/20260621_in_app_notifications.sql:65-67`, `lib/inAppNotifications.ts:187-205`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real (title/body/kind/created_at/read_at are all rewritable; the row is deletable — though note Postgres reuses USING as the check when WITH CHECK is omitted, so user_id itself cannot be re-pointed at someone else, and the DELETE policy is a documented 'clear all' affordance). The consequence is overstated, which is why LOW: the obligation lives in its own table, not in notifications — lib/acknowledgments.ts:603 sets the nag cooldown on `document_acknowledgments.notified_at`, so the daily scan re-notifies after the cooldown regardless, and lib/inbox.ts builds the cockpit's pending acks/reviews/recerts from listMyPendingAcks/listMyPendingReviews/listMyDueRecerts, not from the deleted row. Only the 25-hour digest window and the bell entry are actually evadable.
 
 **Mechanism.** `notifications_own_update ... FOR UPDATE USING (user_id = auth.uid())` supplies no WITH CHECK. Per the composition rule, Postgres reuses USING as the check — which correctly stops re-assigning the row to another user, but places no constraint whatsoever on `title`, `body`, `link`, `kind`, `metadata`, or `created_at`. The app only ever writes `read_at` (inAppNotifications.ts:188/195/202), but the policy grants far more. `notifications_own_delete` grants an unconditional hard delete of one's own rows.
 
@@ -648,6 +661,7 @@ CREATE POLICY notifications_own_delete ON notifications FOR DELETE USING (user_i
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:223-238`, `supabase/migrations/20260804_push_subscriptions.sql:7-35`, `supabase/migrations/20260723_notifications_unify.sql:85-87`, `lib/notify/dispatch.ts:20`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg: the SW receiver, the table+RLS, and the preference column all exist, and nothing anywhere calls pushManager.subscribe() or sends a push. The only in-session signal is indeed the toast at components/providers/NotificationListener.tsx:92.
 
 **Mechanism.** `push_subscriptions` exists with full RLS, `notification_preferences.push_enabled BOOLEAN NOT NULL DEFAULT TRUE` exists, and public/sw.js has a complete `push` + `notificationclick` implementation whose comment says "the reminder cron sends" it. But: (a) three differently-shaped greps for `pushManager`, `applicationServerKey`, `vapid`/`VAPID` and `web-push` across all .ts/.tsx/.js/.json outside node_modules return zero hits; (b) `push_subscriptions` appears in .ts only inside lib/schemaExpectations.ts:99, lib/exportTables.ts:167 and lib/dataRestore.ts:92 — metadata lists, never a read or write; (c) `push_enabled`/`pushEnabled` has zero references in any .ts/.tsx; (d) `NotifChannel` in the dispatcher is typed `"inapp" | "email"` only; (e) .env.example has no VAPID keys and package.json has no web-push dependency. No device is ever registered and no sender exists, so `self.addEventListener("push", ...)` can never fire.
 

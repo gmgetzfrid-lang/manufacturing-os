@@ -29,10 +29,11 @@ Where the keys live, what the allowlist enforces, and which calls bypass governa
 
 ## GOV-1 · The monthly spend cap counts only knowledgeAsk — sixteen other AI ops spend on the same key and are invisible to it
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/usageServer.ts:57-67 (getMonthUsage)`, `lib/ai/usageServer.ts:63`, `lib/ai/usageServer.ts:75 (getMonthUsageByUser)`, `lib/ai/usageServer.ts:106-127 (recordAskUsage)`, `lib/ai/governedCall.ts:63-69`, `app/api/knowledge/ask/route.ts:253-262`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Confirmed with no compensating control anywhere: a repo-wide grep found no other ledger reader. Two corrections. The op count is TWELVE, not sixteen — checklistAssess, checklistSegment, codebookImport, drawingLocate, flowRead, graphShape, knowledgeEmbed, knowledgeVision, orchestrator, qualityManualReview, skillAssist, templateDraft. And the exposure is bounded: spend lands on the member's OWN provider key (governedCall.ts:42-48 forbids a workspace fallback), and knowledgeAsk — the highest-volume surface — is correctly metered. Budget-governance failure, not a breach: HIGH, not CRITICAL.
 
 **Mechanism.** `getMonthUsage` is the ONLY spend rollup in the codebase, and it filters the ledger to a single op:
 
@@ -94,6 +95,7 @@ The op-label inventory came from `grep -rnE 'op: *"' app lib`, which returned 17
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261016_reasoning_skills.sql:22-24`, `supabase/migrations/20261016_reasoning_skills.sql:44-49`, `lib/answerSkillsServer.ts:29-48`, `lib/answerSkillsServer.ts:51-66`, `app/api/knowledge/ask/route.ts:1483`, `app/api/orchestrator/route.ts:117-120`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and the line that settles it is the missing role check in answer_skills_insert. I looked for a guard elsewhere and there is none: lib/answerSkills.ts:87 writes through the browser's anon `supabase` client, so RLS is the entire boundary — any UI role gating is bypassable with a direct PostgREST call. A Viewer's row defaults to enabled + org-visible and lands verbatim in every teammate's system prompt on both the ask and orchestrator paths. HIGH stands.
 
 **Mechanism.** The `answer_skills` table defaults new rows to enabled AND org-wide:
 ```sql
@@ -155,6 +157,7 @@ Table defaults confirmed at 20261016_reasoning_skills.sql:22-24 (read in full). 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/ai/usage/route.ts:133-136`, `app/api/ai/usage/route.ts:52`, `lib/ai/usageServer.ts:100`, `lib/ai/governedCall.ts:66`, `components/knowledge/AiSettingsModal.tsx:469-476`, `components/knowledge/AiSettingsModal.tsx:534-537`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end, and worse than a single-surface bug: all EIGHT enforcement sites share the `capUsd > 0` short-circuit, so $0 uncaps every AI surface simultaneously. The UI inversion is exact — capUsd 0 forces percent to 100, painting the bar rose and asserting questions are locked at the precise moment nothing is. AiSettingsModal.tsx:476 `if (!Number.isFinite(cap) || cap < 0)` lets the operator type it. HIGH stands.
 
 **Mechanism.** Every one of the 11 cap gates is written `if (capUsd > 0 && monthSoFar.spentUsd >= capUsd)` — a zero cap short-circuits to "allowed". The write path explicitly accepts zero:
 ```ts
@@ -201,6 +204,7 @@ const capped = usage.percent >= 100;
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/usageServer.ts:65`, `lib/ai/usageServer.ts:42-53 (rollup)`, `lib/ai/usageServer.ts:122-126`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both variants confirmed. The pre-migration path is self-consistent with the reported symptom: rollup at :48 does `if (r.ok !== false) out.asks += 1` so the base rows inflate the visible question count, while :45 `out.spentUsd += Number(r.est_cost_usd ?? 0)` keeps the total at $0.00 — exactly the '$0.00 of $10.00 · 0%' next to a growing 'N questions' the summary describes. A spend control that fails open on its own read error is textbook; HIGH stands.
 
 **Mechanism.** Two independent fail-open paths on the money gate.
 
@@ -245,10 +249,11 @@ usageServer.ts:65 `if (error) return EMPTY_USAGE;` vs usageServer.ts:96 `if (err
 
 ## GOV-5 · Two background crons spend members' provider keys with a cap that structurally always reads $0
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeEmbedDrain.ts:88-95`, `lib/knowledgeEmbedDrain.ts:102-128`, `lib/knowledgeIngest.ts:511-515`, `lib/knowledgeIngest.ts:531-592`, `lib/ai/usageServer.ts:63`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The substance holds — two unattended crons spend a member's key against a cap that can never see their own spend, so they never self-limit no matter how many days they run. Two corrections. The title's 'structurally always reads $0' is false: getMonthUsage returns that member's knowledgeAsk spend, so a sponsor who also asks questions does eventually trip the gate. And this is not an independent defect — it is GOV-1's single root cause (usageServer.ts:63) observed on a second surface, so it should not carry HIGH on top of GOV-1's severity. MEDIUM.
 
 **Mechanism.** Both drains re-check the cap per library/document and then meter under an op the cap cannot see, so the check is permanently a no-op.
 
@@ -299,10 +304,11 @@ knowledgeEmbedDrain.ts:90 and knowledgeIngest.ts:512 both call `getMonthUsage`; 
 
 ## GOV-6 · Voyage AI is a third provider outside the allowlist, receiving the full text of every indexed page, while the signed agreement tells the user only Anthropic/OpenAI see their content
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/pricing.ts:21-27`, `lib/ai/pricing.ts:46-56`, `lib/ai/embeddings.ts:31-50`, `lib/ai/embeddings.ts:141-159`, `app/api/ai/connection/route.ts:174-176`, `app/api/ai/connection/route.ts:204-206`, `lib/__tests__/aiPricing.test.ts (ALLOWED_PROVIDERS block)`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The contradiction is real and the code's own absolutist wording is what convicts it: a third provider receives indexed page text through a validation path that structurally bypasses the allowlist, and the signed agreement text is never updated to say so. Lowered from HIGH because the omission is disclosure, not concealment: the user must deliberately pick 'Voyage AI' from a labelled dropdown (embeddings.ts:31-50, hint at :42) and paste a Voyage key, so no content reaches Voyage without an explicit per-user act. MEDIUM.
 
 **Mechanism.** The stated policy is absolute and scope-wide:
 ```ts
@@ -362,6 +368,7 @@ Two searches confirm no allowlist check on the embedding path: `grep -rn 'ALLOWE
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/ai/connection/route.ts:126-156`, `app/api/ai/connection/route.ts:265-280`, `app/api/ai/connection/route.ts:160-191`, `app/api/ai/connection/route.ts:213-228`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. `action:"test"` is repeatable with no idempotency, no cap read, no ledger insert, and there is no middleware.ts and no rate limiter anywhere in the repo to bound it. The embedding-test path (:177-185) and the save-path embed verify (:215-228) are two more unmetered billed calls the finding does not even count, so if anything it under-states the surface.
 
 **Mechanism.** Four provider-calling paths in this route, none metered:
 ```ts
@@ -404,6 +411,7 @@ The test path also accepts a caller-supplied `model` while using the SAVED key (
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/locate/route.ts:206-220`, `app/api/knowledge/locate/route.ts:236-238`, `app/api/knowledge/locate/route.ts:259-271`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: 1 metered coarse call + up to 4x2 = 8 unmetered refine calls, tokens accumulated into an already-written row's source object. The 8 are bounded further by the 40s budget check at :244, so the real-world miss is often smaller than 8/9 — but the structural bug (meter-before-spend) is exactly as described. Corroborates the cap-exclusion claim: lib/ai/usageServer.ts:63 filters `.eq("op", "knowledgeAsk")`, so drawingLocate rows never count toward the cap at all.
 
 **Mechanism.** The coarse pass is called, then metered, then the refine loop runs:
 ```ts
@@ -452,6 +460,7 @@ Read the file end to end. The write is on line 216, inside `try {` opened at 196
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeVision.ts:32-54`, `lib/knowledgeVision.ts:84-94`, `app/api/knowledge/ask/route.ts:1627-1650`, `supabase/migrations/20260922_vision_pages.sql:13`, `lib/knowledgeIngest.ts:458-470`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: no migration adds any per-chunk source/vision column (only `section` in 20260914 and `tsv` in 20261007 touch knowledge_chunks), so there is nowhere to record that a given chunk came from lib/knowledgeVision.ts's haiku-tier OCR (VISION_MODEL at :26-30). The transcript flows into the normal chunk pipeline and is rendered identically to text-layer extraction.
 
 **Mechanism.** Vision transcripts flow into `knowledge_chunks` alongside real text-layer chunks — knowledgeVision.ts's own header states the intent: "The transcript then flows through the normal pipeline — chunks, tags, references, citations — so a vision-read sheet is a first-class citizen."
 
@@ -499,6 +508,7 @@ CitationOut read in full at ask/route.ts:1627-1650 — enumerated every field, n
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/ai/usage/route.ts:25-37`, `app/api/ai/usage/route.ts:107`, `app/api/ai/usage/route.ts:133-136`, `lib/capabilityPolicy.ts`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every element. One nuance the finding's summary omits: an audit_logs row IS written (:157-162, action AI_CAP_CHANGED, with targetUserId and capUsd), so the change is traceable after the fact — but that is a log, not the approval/second-signature/notification the summary says is absent, and the bypass of the capability-policy layer stands.
 
 **Mechanism.** The cap editor's authority is a hardcoded two-role set:
 ```ts
@@ -540,6 +550,7 @@ authMember read in full (:25-37) — the role set is built inline, not from capa
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:106-133`, `app/api/knowledge/locate/route.ts:172-193`, `app/api/templates/generate/route.ts:177-201`, `app/api/knowledge/embed/route.ts:128-149`, `app/api/ai/connection/route.ts:126-156`, `lib/ai/pricing.ts:30-33`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. lib/ai/governedCall.ts:4-7 names the agreement as one of the five gates every feature route needs, and lib/ai/pricing.ts:29-33 states the ask route refuses to answer for anyone unsigned — yet five direct-calling routes skip it, and connection/route.ts:269 makes a provider call at key-save time before anything can have been signed. The only quibble is arithmetic: I count 8 provider-calling route files (codebook/import, ai/connection, orchestrator, flows/read, templates/generate, knowledge/ask, knowledge/locate, knowledge/embed), not 9; the numerator of 5 is exact.
 
 **Mechanism.** The agreement is documented as mandatory — "Recorded server-side with name, date, and IP; the ask route refuses to answer for anyone who hasn't signed" (pricing.ts:31-32), and `/api/ai/agreement`'s header calls the record "a precondition, not decoration." `grep -rn 'ai_key_agreements' --include=*.ts app lib` finds the gate in exactly five places: governedCall.ts:52, ask/route.ts:234, orchestrator/route.ts:89, codebook/import/route.ts:84, knowledgeIngest.ts:505.
 
@@ -581,6 +592,7 @@ Two searches agree on the gate's five locations: `grep -rn 'ai_key_agreements' -
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/keyVault.ts:17-36`, `lib/ai/keyVault.ts:39-43`, `lib/serverCrypto.ts:22-31`, `app/api/ai/connection/route.ts:284`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contradiction is in-repo: lib/serverCrypto.ts:5-7 states the design intent — "If unset, the API endpoints refuse to save credentials — we never want plaintext secrets on disk by accident" — while keyVault deliberately inverts it. lib/__tests__/keyVault.test.ts:31 pins the behavior ("degrades to plaintext storage when EXPORT_ENCRYPTION_KEY is unset"). Repo-wide grep confirms no UI, health check, or schemaExpectations entry ever reports the unconfigured state; console.warn is the only signal.
 
 **Mechanism.** `sealAiKey` degrades to plaintext rather than refusing:
 ```ts
@@ -628,6 +640,7 @@ keyVault.ts read in full. `cryptoConfigured` at :17-20 checks length only. The c
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/governedCall.ts:63-88`, `app/api/knowledge/ask/route.ts:253-280`, `app/api/orchestrator/route.ts:105-149`, `lib/orchestrator/loop.ts`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly: the gate is `spent >= cap`, so any request that starts at $9.99 of $10 may spend arbitrarily much, and N concurrent requests all read the same pre-spend total. The orchestrator case is worse than described — it meters once at route.ts:145-148 after the entire multi-round loop, and lib/ai/usageServer.ts:63/74 restrict getMonthUsage to `op = "knowledgeAsk"`, so `op:"orchestrator"` rows never enter the cap total on any later request either.
 
 **Mechanism.** Every gate has the same shape — read prior spend, compare, call, meter afterwards:
 ```ts
@@ -670,6 +683,7 @@ All 11 gate sites share the pattern (enumerated via `grep -rn 'getCapUsd|spentUs
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledgeEmbedCore.ts:138-149 (setEmbedBuildMarker)`, `lib/knowledgeEmbedDrain.ts:62-64`, `lib/knowledgeEmbedDrain.ts:73-95`, `lib/ai/usageServer.ts:95`, `supabase/migrations/20260911_knowledge_ai.sql:119-122`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. supabase/migrations/20260911_knowledge_ai.sql:119-122 `CREATE POLICY knowledge_libraries_write ON knowledge_libraries FOR ALL USING (is_org_controller(org_id)) WITH CHECK (is_org_controller(org_id))` means any Admin/DocCtrl can write that JSONB directly, so the marker is controller-writable, not service-role-only. The drain does respect the named user's cap (:89-95) — but it is their cap and their money, which is the finding's point.
 
 **Mechanism.** The drain's entire consent model is one unvalidated field of a JSONB column:
 ```ts

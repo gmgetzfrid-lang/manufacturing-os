@@ -34,6 +34,7 @@ How candidates are chosen, what the prompt promises, and whether the citation is
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledge.ts:504-527`, `app/(protected)/knowledge/[id]/page.tsx:1406-1418`, `app/(protected)/knowledge/[id]/page.tsx:1690-1725`, `app/api/knowledge/ask/route.ts:1632-1650`, `app/api/knowledge/ask/route.ts:1739-1753`, `supabase/migrations/20260911_knowledge_ai.sql:146-150`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end. The republish is not theoretical: knowledge/[id]/page.tsx:1705-1708 rebuilds the answer object with `citations: (Array.isArray(pa.citations) ? pa.citations : []) as KnowledgeCitation[]`, and the renderer prints those quotes verbatim (page.tsx:678-690 `<blockquote>{c.quote}</blockquote>` plus a 'Copy quote' button). The route's own per-asker ACL filter (route.ts:157-187, `excludedDocIds`) governs retrieval only and has no counterpart on the memory path.
 
 **Mechanism.** Citations are persisted with the FULL passage text: route.ts:1643 `quote: truncateSafe(c.content, 1600)`, and the whole `citations` array goes into `knowledge_questions.citations` at :1741. That row is written per-asker, using that asker's ACL-filtered candidate set — so Alice, a controller, gets quotes from restricted mirrors, correctly.
 
@@ -70,6 +71,7 @@ lib/knowledge.ts:513-516 — `.eq("org_id", orgId)` is the only scoping on the p
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:943-956`, `app/api/knowledge/ask/route.ts:1055-1068`, `lib/knowledgeEntityKinds.ts:1-24`, `lib/knowledgeEntityKinds.ts:31-34`, `lib/__tests__/entityKindGuard.test.ts:44-66`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the second half is the sharper point: the guard test (entityKindGuard.test.ts:46-66) asserts only `namesKinds = /\.(in|eq)\(\s*["']kind["']/` on bulk reads — naming all four kinds passes it while providing zero headroom under the same 20,000 cap. Nothing anywhere compares `entRows.length` to the limit or sets a truncation flag, so a 20,000-row read is indistinguishable from a complete one and the census is presented as exact.
 
 **Mechanism.** The drawing-facts block reads raw occurrence rows:
 
@@ -112,6 +114,7 @@ app/api/knowledge/ask/route.ts:1056-1057 — `"\n\nDRAWING FACTS — computed de
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/providerCall.ts:218-230`, `lib/ai/providerCall.ts:93-101`, `app/api/knowledge/ask/route.ts:1535-1542`, `app/api/knowledge/ask/route.ts:1509-1513`, `app/api/knowledge/ask/route.ts:1739-1753`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The provider reports the truncation and the wrapper throws it away; the route then serves, stores in knowledge_questions, and exposes for thumbs-up rating an answer it cannot distinguish from a complete one — and via ASK-1's memory path that truncated answer is later replayed to teammates as the team's record.
 
 **Mechanism.** The answer call is `maxTokens: 4000` (route.ts:1538, and again at :1559 for the Fetch round). Anthropic returns `stop_reason: "max_tokens"` when it hits that ceiling. providerCall.ts inspects `stop_reason` in exactly three places — `refusal` (:211), `pause_turn` (:214), and inside the EMPTY-text branch (:222). If the model produced any text at all, control reaches :218 `const text = blocks.filter(...)` and falls straight through to `return { text, webSources, liveWeb, usage }` at :230. `AiCallResult` (:93-101) has no truncation field, so the ask route is structurally incapable of knowing. The OpenAI branch never reads `finish_reason` at all.
 
@@ -143,6 +146,7 @@ lib/ai/providerCall.ts:218-230 — `const text = blocks.filter((b) => b.type ===
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:1365-1393`, `app/api/knowledge/ask/route.ts:1088-1101`, `app/api/knowledge/ask/route.ts:1484-1530`, `app/api/knowledge/ask/route.ts:1530`, `lib/knowledgeText.ts:17-31`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the absence claim: a repo-wide case-insensitive grep across app/ and lib/ for 'injection', 'ignore previous', 'untrusted' returns zero hits. No delimiting, no instruction-stripping, no 'treat document text as data' directive anywhere in the ~150-line answer system prompt.
 
 **Mechanism.** Three greps of differing shape (see searches_run) find zero instances of any instruction telling the model that retrieved text is data rather than instructions. `sanitizeStorageText` strips lone surrogates and C0 bytes — it is a storage-safety function, not a content boundary; nothing else touches document text on its way to the provider.
 
@@ -179,6 +183,7 @@ app/api/knowledge/ask/route.ts:1390-1392 — `(legendBlock ? \`\n\nP&ID LEGEND /
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:89-100`, `app/api/knowledge/ask/route.ts:346-357`, `app/api/knowledge/ask/route.ts:1530`, `app/api/knowledge/ask/route.ts:1739-1753`, `lib/knowledge.ts:504-527`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no server-side reconstruction of the thread, no ownership check on threadId, and the resulting answer lands in the org-wide record (:1739-1743) that lib/knowledge.ts:504-527 later replays to every member. A client can fabricate an authoritative-sounding prior turn and have the poisoned answer persisted under a real user's name.
 
 **Mechanism.** `body.history` is taken on trust — the only processing is a shape filter and a length clamp (`.slice(-4)`, question 500 chars, answer 1200 chars). It is never checked against `knowledge_questions` for the given `threadId`, and `threadId` itself is only regex-validated as a UUID (:95-96) with no ownership check before being written to the row at :1743. The forged turns are then used twice: to write the retrieval queries ("Resolve pronouns and ellipsis against these turns; carry forward the equipment, documents, and constraints they establish", :354-355) and as `conversationBlock` prefixed to the answer prompt (:1530). The resulting question+answer is inserted into knowledge_questions, which finding #2 shows is served org-wide to any member as "your team's record".
 
@@ -208,6 +213,7 @@ app/api/knowledge/ask/route.ts:89-94 — `const history = (Array.isArray(body.hi
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:1442-1450`, `lib/knowledge.ts:491-494`, `app/(protected)/knowledge/[id]/page.tsx:585-614`, `app/(protected)/knowledge/[id]/page.tsx:1759-1766`, `app/api/knowledge/ask/route.ts:686-693`, `lib/knowledgeText.ts:230-237`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Neither card marks its content as model-authored, and both are reachable from document text given ASK-4 — the calc protocol at route.ts:1442-1450 explicitly instructs the model to emit a bare `**Need:** …` line, which is exactly the channel an injected instruction would use.
 
 **Mechanism.** The calc protocol instructs the model to reply with ONLY `'**Need:** <one specific question naming exactly which value(s) you need and why>'`. `parseNeedPrompt` (lib/knowledge.ts:491) is a deterministic regex that lifts everything after that marker, and `NeedCard` renders it verbatim under an app-authored, first-person header:
 
@@ -246,6 +252,7 @@ app/(protected)/knowledge/[id]/page.tsx:598-599 — `<div className="text-xs fon
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:250-263`, `app/api/knowledge/ask/route.ts:818-850`, `app/api/knowledge/ask/route.ts:605-635`, `app/api/knowledge/ask/route.ts:756-806`, `app/api/knowledge/ask/route.ts:903-919`, `app/api/knowledge/ask/route.ts:1535-1542`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Substance confirmed, with one wording caveat: the answer call does carry a token budget — `maxTokens: 4000` at :1538 — it is the INPUT that is unbounded, which is what the summary actually describes. The cap bypass is real and worse than 'a single ask': because the check is read-then-call with no reservation, concurrent asks all pass the same pre-flight.
 
 **Mechanism.** The 14+8 slot caps from fuseTier are not the final size of `chunks`. Five later stages APPEND past them: proven ground (+up to 12, :623-632), pull-by-name (+10, :786-788), missing-doc probes (+12, :802-805), the graph hop (+9, :916-918), and whole-document mode, which PREPENDS up to 2 documents × 130 chunks under a 170 000-character budget (:820-822). Worst case the passages string is roughly 170 000 + ~65×1600 ≈ 275 000 characters (~70k tokens), on top of a system prompt carrying drawingFacts, 6 000 chars of legend, 9 000 chars of reasoning skills (answerSkillsServer.ts:26), 4 000 chars of org playbooks (aiInstructionsServer.ts:10) and 2 000 of library instructions — plus up to 9 rendered page images. Nothing measures or trims any of it; `maxTokens: 4000` caps only OUTPUT.
 
@@ -277,6 +284,7 @@ app/api/knowledge/ask/route.ts:820-822 — `const WHOLE_DOC_MAX_CHUNKS = 130; co
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/knowledge/ask/route.ts:1366-1385`, `app/api/knowledge/ask/route.ts:150-155`, `lib/knowledge.ts:279-289`, `lib/codebookServer.ts:31`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed as stated. Both id sources are themselves org-scoped today (library.ai_features on an org-checked row at :110-114; codebookServer.ts:31 `legend_doc_ids` from `codebook_config … .eq("org_id", orgId)`), so reaching it needs a bad id written into config rather than an unauthenticated request — but the read itself has no tenant scope, which is out of line with every other read in this route.
 
 **Mechanism.** Every other admin-client read in this route carries an explicit org or library predicate — the file even states the rule at exclusion/route.ts:53-54 ("The service-role key ignores RLS, so the org check has to be in the query, not assumed from the caller"). The legend read does not:
 
@@ -313,6 +321,7 @@ app/api/knowledge/ask/route.ts:1369-1374 — the only filter is `.in("document_i
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:404-434`, `app/api/knowledge/ask/route.ts:482-503`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the exact fix documented on the keyword path was never applied to the vector path, so an ACL-restricted asker's meaning list is silently thinned before it reaches the fusion at :544-547 — and reciprocal-rank fusion over a 2-item list against a full keyword list gives the meaning half almost no influence.
 
 **Mechanism.** The keyword path documents the bug and its fix at :404-408: "Over-fetch 3× the slot count: AI-excluded documents are filtered HERE, after the database already applied its LIMIT — at exactly the slot count, a user whose top-ranked docs are excluded got a silently starved passage set and an empty-state message blaming their phrasing." So `const limit = (lib.tier === "governing" ? 10 : 6) * 3;` and the exclusion filter runs before `.slice(0, 10)`.
 
@@ -347,6 +356,7 @@ app/api/knowledge/ask/route.ts:484-486 `p_limit: lib.tier === "governing" ? 12 :
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:14-19`, `app/api/knowledge/ask/route.ts:268-272`, `app/api/knowledge/ask/route.ts:568`, `app/api/knowledge/ask/route.ts:701-718`, `app/api/knowledge/ask/route.ts:1770-1774`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Round-2 semantic hits can supply the passages that become citations while the response still reports `retrieval: "keyword"`. The module header (:14-19) and the response comment (:1770-1773) both call this flag the invariant that must never lie — the miss is exactly the case they describe, only in the honest-but-understated direction.
 
 **Mechanism.** `semanticUsed` is assigned exactly once, from round 1: `semanticUsed = semantic.length > 0;` (:568). The refine round then runs a SECOND semantic pass — `runSemantic(plan.queries.slice(0, 2))` (:703) — whose results are merged into `chunks` at :706-718, and `semanticUsed` is never touched again. The response field at :1774 (`retrieval: semanticUsed ? "hybrid" : "keyword"`) is therefore computed from round 1 alone. Round 1 embeds the raw question; round 2 embeds the model's refine queries — different vectors, different neighbours, and (per finding #8) different exposure to the post-LIMIT exclusion filter. Round 1 can legitimately return zero while round 2 returns passages that end up in the answer.
 
@@ -375,6 +385,7 @@ app/api/knowledge/ask/route.ts:14-19 — "An Anthropic key gets keyword search a
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeText.ts:163-169`, `lib/knowledgeText.ts:607-623`, `lib/knowledgeText.ts:628-642`, `app/api/knowledge/ask/route.ts:1643`, `app/api/knowledge/ask/route.ts:1739-1753`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end-to-end: lib/knowledgeIngest.ts:141/362 sanitize stored chunk text with sanitizeStorageText, which KEEPS valid surrogate PAIRS (knowledgeText.ts:22-24), so an astral-dense chunk reaches retrieval intact and the RRF slice is the first cut that can land mid-pair. Narrowing worth noting (does not refute): chunkProse caps prose chunks at target=1400 < 1600, so only TABLE chunks (chunkPageText allows up to target*2 = 2800, knowledgeText.ts:106-107) are long enough to be truncated at all — the bug needs an astral-dense table chunk. MEDIUM is right.
 
 **Mechanism.** truncateSafe's own contract: "Use for every slice(0, n) whose result lands in a DB row or a provider JSON body — a plain slice can poison both." Both merge functions violate it:
 

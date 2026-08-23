@@ -34,6 +34,7 @@ Every way bytes — or the knowledge that they exist — leave the system.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:39-55`, `app/api/transmittal/route.ts:66-82`, `lib/transmittals.ts:449`, `lib/transmittals.ts:453`, `lib/transmittals.ts:385-387`, `supabase/migrations/20260910_transmittal_portal.sql:40-51`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives, and the second resolution branch makes it easier than the summary claims: documentId + a guessable revision_label ('0','1','A') is enough, so the attacker never needs a version UUID. The portal GET also only rejects status='voided' (route.ts:61), so a self-created draft-then-issued transmittal the attacker never sends works fine, and the attacker knows its token because the client generated it. No org check exists at any layer of this path.
 
 **Mechanism.** `items` on a transmittal is free-form JSONB written straight from the browser: `items: input.items ?? []` (lib/transmittals.ts:449) via the anon client. The RLS insert policy constrains only authorship and org membership — `WITH CHECK (created_by = auth.uid() AND EXISTS (... org_members ... status='active'))` (20260910:40-44) — and says nothing about what document ids the items name. `portal_token` is minted CLIENT-SIDE (`makePortalToken()`, lib/transmittals.ts:385-387, called at :453), so the creator knows the token before the row exists. The portal route then reads the row with `supabaseAdmin` (service role, RLS bypassed) and resolves the file with:
 
@@ -78,6 +79,7 @@ app/api/transmittal/route.ts:41-43 — `.from("document_versions").select("file_
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260623_document_shares.sql:38-54`, `lib/documentShares.ts:46-54`, `app/api/share/file/route.ts:42-58`, `app/api/share/file/route.ts:92-96`, `app/api/share/resolve/route.ts:43-48`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: `document_shares` appears only in 20260623_document_shares.sql and 20260818_followups_rls.sql (the latter only defines bump_share_access) — there is no trigger, CHECK, or FK pairing (org_id, document_id). The policy is FOR ALL with no role gate, so any active member including a Viewer can insert an attacker-chosen token pointing at any documents.id, and both /api/share/resolve and /api/share/file serve it with the service role, bypassing RLS entirely.
 
 **Mechanism.** This is the established missing-WITH-CHECK-authority pattern, in a subtler form: the policy HAS a WITH CHECK, but it constrains the wrong column.
 
@@ -118,6 +120,7 @@ Both clauses test `document_shares.org_id`. Nothing correlates `document_shares.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:129-141`, `app/api/share/file/route.ts:14-16`, `supabase/schema.sql:789-799`, `lib/staleCopies.ts:40`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep confirms the absence: no migration in supabase/migrations/ mentions download_audits at all, so nothing ever adds `source`. PostgREST rejects the whole insert (unknown column), and supabase-js returns `{error}` rather than throwing — so the catch never even fires and the discarded error means zero external-download rows exist. lib/staleCopies.ts:40 and every other reader query only (document_id, version_id, created_at), so nothing surfaces the gap.
 
 **Mechanism.** share/file writes the distribution record with an extra column:
 
@@ -160,6 +163,7 @@ app/api/share/file/route.ts:139 — `source: stamped ? "share_link" : "share_lin
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/download-url/route.ts:144-153`, `lib/storage.ts:118-154`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified there is no clamp anywhere between parse and sign; SigV4's own 604800s maximum is the only bound, exactly the 7 days the finding claims. The ACL/visibility/deny checks above (lines 55-115) gate WHO may mint the URL at mint time, but they explicitly `catch { /* fail open */ }` and, more importantly, bind nothing to the resulting credential-free URL's lifetime.
 
 **Mechanism.** `const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");` — the value flows straight into `getSignedUrl(r2, command, { expiresIn })` with no upper bound and no validation. SigV4 permits up to 604800 seconds. The resulting URL is a bearer capability: it carries no session, is not tied to the requester, and cannot be revoked short of rotating the R2 credentials. Every authorization the route performs — active membership (:36-46), the private/hidden canDiscover gate (:64-90), the explicit deny-download rule (:91-111) — is evaluated exactly once, at issuance, and then has no further hold on the bytes. A non-numeric value yields NaN, which is passed through unvalidated.
 
@@ -189,6 +193,7 @@ app/api/storage/download-url/route.ts:144 — `const expiresIn = parseInt(req.ne
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:53-81`, `app/api/share/file/route.ts:102-118`, `app/api/verify/route.ts:34-108`, `lib/documentGuards.ts:139-146`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed and the status half is worse than stated: `Void` is a real status that docRetired does not test, so a voided document returns isCurrent:true and app/verify/[docId]/page.tsx:65,99 paints `bg-emerald-600` / "CURRENT". Holds are never consulted on either route — lib/documentGuards.ts:139-148 is the only hold block and it fires solely inside evaluatePublishGuard.
 
 **Mechanism.** share/file selects `id, document_number, title, name, rev, current_version_id` and resolves `current_version_id` (:53-67). It never reads `status`, never reads `superseded_at`, and never queries document_holds. So the share serves whatever is current at download time — which is correct for freshness but means a link created for one revision silently becomes a link to a later one, and a document whose status has since become Void, Superseded or Archived is still delivered. The stamp does not compensate: the footer is `${label} Rev ${rev ?? "?"} at time of download` (:113), which states the rev but not the status, and the watermark is the generic 'UNCONTROLLED — SHARED COPY'. The QR points at /api/verify, which likewise never consults document_holds — it computes `isCurrent` from status and current_version_id only (verify/route.ts:89-90) and returns no hold field. Holds are enforced only against publishing (lib/documentGuards.ts:139-146), never against distribution.
 
@@ -215,10 +220,11 @@ app/api/share/file/route.ts:54-55 — the select list contains no `status` and n
 
 ## EGR-6 · Share revocation and every download-audit write ignore supabase-js {error} — a revoked link can stay live and a failed distribution record reads as success
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/documentShares.ts:68-73`, `lib/documentShares.ts:59-66`, `lib/downloads.ts:131-146`, `lib/docPack.ts:114-123`, `components/viewers/MultiDocViewer.tsx:747`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. REFUTED in its headline mechanism: the share panel is NOT optimistic — it re-fetches after revoke, and the row is rendered from the server value (`const isRevoked = !!s.revokedAt` at line 148, showing "revoked" only at line 204), so a rejected UPDATE leaves the link visibly still live rather than reading as revoked. What survives is the narrower, already-covered point that every download-audit write discards its {error} (the same swallowing that makes EGR-3 silent), so I'd drop this to LOW as a code-hygiene finding.
 
 **Mechanism.** The established pattern, on the two controls that matter most in this lens — revocation and the distribution record.
 
@@ -259,6 +265,7 @@ lib/documentShares.ts:68-73 — the full body of revokeShareLink; no `const { er
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:50-51`, `lib/exportTables.ts:54`, `lib/exportTables.ts:171-181`, `lib/dataExport.ts:300`, `lib/exportRunner.ts:159-162`, `lib/exportRunner.ts:277-314`, `app/api/data-export/structured/route.ts:53-57`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence-search: grep for redact/sanitize/scrub/token over lib/dataExport.ts and lib/exportRunner.ts finds no redaction step — the only `token` hits in exportRunner are S3 ContinuationToken pagination (lines 381-395). lib/exportTables.ts:171-181 (EXPORT_EXCLUDED_TABLES) excludes ai_connections for exactly the 'secrets never leave the database' reason, which shows the omission is an oversight rather than a policy. Export is gated to Admin/Manager/DocCtrl (app/api/data-export/structured/route.ts:55-57), but that does not constrain where the operator points the destination.
 
 **Mechanism.** `ORG_SCOPED_TABLES` includes `"document_shares"` (:50), `"project_intake_links"` (:51) and `"transmittals"` (:54). `dumpTable` selects every column — `sb.from(table).select("*").range(...)` (dataExport.ts:300) — so `document_shares.token`, `project_intake_links.token` and `transmittals.portal_token` land in the envelope in plaintext. These are not descriptive data: each is the sole credential for an unauthenticated route that returns document bytes (/api/share/file, /api/transmittal?file=, /api/intake/*). The envelope is then written to `tables/document_shares.json` inside the ZIP (exportRunner.ts:159-162) and POSTed whole to `dest.webhook_url` (exportRunner.ts:308-312) or PUT to `dest.bucket`, nightly, unattended. The same file already carries the precedent: `ai_connections: "holds live AI provider API keys — secrets never leave the database"` (:173-174). That reasoning was never applied to the token columns. Migration 20260906_projects_hardening.sql:177-183 tightened `project_intake_links` SELECT to controllers and the project owner under the heading "tokens visible only to those who manage them" — the export re-widens exactly that, to Manager and DocCtrl (structured/route.ts:55-57) and to any external endpoint an admin ever configured.
 
@@ -291,6 +298,7 @@ lib/exportTables.ts:50-51,54 list the three token-bearing tables; :173-174 shows
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:71-74`, `app/api/share/file/route.ts:1-16`, `app/api/share/file/route.ts:107-125`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the transmittal portal is a second, parallel outsider egress path that hands back exactly the artifact the share/file route's header comment (lines 5-12) says was the bug it was built to fix ('the page's fallback opened the RAW UNSTAMPED file in a new tab'). The portal is more correct than share/file in one respect — it serves the pinned as-sent revision (fileKeyForItem, lines 39-54) rather than the current one — but the bytes carry no watermark, rev footer, or verify QR.
 
 **Mechanism.** Two routes serve the same audience — an external party holding a token, with no account — and they disagree about the copy-control rule. share/file pulls the bytes server-side and stamps them (watermark 'UNCONTROLLED — SHARED COPY', rev footer, verify QR) before responding, and its header records why the raw path was removed: "the old flow handed the browser a raw presigned R2 URL … its fallback opened the RAW UNSTAMPED file in a new tab. The copy-leak protection silently never applied to the one audience it matters most for: outsiders." The transmittal portal does exactly what that comment describes as the bug it fixed:
 

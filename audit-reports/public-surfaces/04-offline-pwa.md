@@ -35,6 +35,7 @@ The core document-control risk of caching: a superseded drawing served from disk
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:207-220`, `public/sw.js:116-120`, `app/verify/[docId]/page.tsx:44-49`, `app/api/verify/route.ts:96-108`, `app/verify-hold/[holdId]/page.tsx:33-38`, `app/api/verify-hold/route.ts:53-61`, `app/api/verify-package/route.ts:67-76`, `app/api/verify-ticket/route.ts:91-102`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Mechanism confirmed for all four verify routes (verify, verify-hold, verify-ticket, verify-package are all uncached GETs behind the same catch-all). Two small overstatements worth recording: the error branch is not unconditionally unreachable — a first-ever offline scan gets sw.js's 503 `unavailableResponse()` and does show 'Can't verify this code'; and the page prints a stale `Checked {new Date(result.checkedAt).toLocaleString()}` (page.tsx:140-141), though at 10px in white/60 under a full-screen green CURRENT.
 
 **Mechanism.** The four QR endpoints are same-origin GETs whose pathnames carry no file extension (`/api/verify`, `/api/verify-hold`, `/api/verify-package`, `/api/verify-ticket`), so every one of them falls through the worker's RSC bypass (sw.js:148-154), the navigate branch (157), and the static-asset branch (180) into the generic handler at sw.js:207-220:
 
@@ -81,6 +82,7 @@ public/sw.js:117 — `if (!response || !response.ok || response.type === "opaque
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-85`, `app/page.tsx:241-262`, `components/providers/RoleContext.tsx:125-128`, `components/providers/RoleContext.tsx:169-187`, `app/(protected)/layout.tsx:49-50`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The RoleContext locations cited are the contrast, not the bug: RoleContext.tsx:126-128 explicitly comments 'Every query THROWS on error so the retry loop below can tell "the lookup failed" apart from "this account truly has no membership"', retries 3× (169-178) and lands on `setMembershipState("error")` → `MembershipErrorScreen` at app/(protected)/layout.tsx:50. The login page never got that fix, and it is the PWA's start URL.
 
 **Mechanism.** The installed PWA's `start_url` is `/` (app/manifest.ts:15), so launching it lands on app/page.tsx, whose shell is precached (sw.js:41 lists `"/"` in SHELL_ASSETS). If `getSession()` returns a stored session, `routeAuthedUser` runs:
 
@@ -131,6 +133,7 @@ app/page.tsx:72-78 quoted above — the destructure is `const { data: membership
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/pwa/ServiceWorkerManager.tsx:74-79`, `components/pwa/ServiceWorkerManager.tsx:5-7`, `app/offline/page.tsx:14-18`, `public/sw.js:15-17`, `public/sw.js:125`, `app/(protected)/layout.tsx:1-26`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Substance holds — the pill and the offline page both assert cached data that does not exist for any Supabase-backed panel, and the pill appears regardless. One correction to the wording: 'the worker deliberately caches none of the app's data' is too absolute — public/sw.js:203-220 does cache same-origin GET API responses (that is precisely the mechanism OFF-1/OFF-5/OFF-6 rely on); it is the cross-origin data, i.e. nearly all of it, that is uncached.
 
 **Mechanism.** The entire protected application is a client-side SPA: `app/(protected)/layout.tsx:1` is `"use client"` and every screen reads its data through the browser Supabase client (lib/supabase.ts:110), whose origin is `NEXT_PUBLIC_SUPABASE_URL`. The worker's second line of defence is `if (!isSameOrigin(request.url)) return;` (sw.js:125), with the comment at sw.js:15-17 spelling out the intent: "Deliberately NOT cached: cross-origin requests (Supabase, R2 signed URLs, Stripe, fonts)".
 
@@ -167,6 +170,7 @@ public/sw.js:15-17 and 125 — the exclusion is explicit and deliberate. compone
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/pwa/ServiceWorkerManager.tsx:60-70`, `components/pwa/ServiceWorkerManager.tsx:36-46`, `public/sw.js:43-50`, `public/sw.js:52-65`, `public/sw.js:68-70`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: `reg.waiting` (line 45) is also normally null under install-time skipWaiting, so the statechange path is the only one that arms the toast, and it arms it with a worker that is about to activate on its own. The only way the tap works is the sub-millisecond race where the user taps while the worker is still in 'activating'.
 
 **Mechanism.** The worker calls `self.skipWaiting()` unconditionally inside its **install** handler (sw.js:47-48: `.then((cache) => cache.addAll(SHELL_ASSETS).catch(() => undefined)).then(() => self.skipWaiting())`) and `self.clients.claim()` in activate (sw.js:63). A new worker therefore goes installing → installed → activating → activated with no waiting phase.
 
@@ -221,6 +225,7 @@ public/sw.js:47-48 — `.then(() => self.skipWaiting())` is inside the `install`
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:207-220`, `app/api/share/file/route.ts:42-51`, `app/api/share/resolve/route.ts:32-41`, `app/share/[token]/page.tsx:42-58`, `app/share/[token]/page.tsx:67-74`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and stronger than stated: app/api/share/file/route.ts:149 sets `"Cache-Control": "no-store"`, but the Cache Storage API ignores it — sw.js's cachePut stores the response anyway. The revocation check is not merely bypassed, it is bypassed by the exact response the server marked as never-store.
 
 **Mechanism.** Revocation on this app is enforced only at the route: `/api/share/file` checks `if (share.revoked_at) return ... 410` and the expiry check on the next line (file/route.ts:48-51); `/api/share/resolve` does the same (resolve/route.ts:38-41). A 410 is not `res.ok`, so `cachePut` correctly declines to cache it (sw.js:117) — revocation works while the network is reachable.
 
@@ -256,10 +261,11 @@ public/sw.js:213-217 quoted above. app/api/share/file/route.ts:48-51 — `if (sh
 
 ## OFF-6 · Authorization-header-gated GET responses are cached with no Vary, so a cached presigned R2 URL is matched for any later request to the same path regardless of who is signed in
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `public/sw.js:116-120`, `public/sw.js:214-215`, `app/api/storage/download-url/route.ts:10-20`, `app/api/storage/download-url/route.ts:91-111`, `app/api/storage/download-url/route.ts:151-153`, `app/api/storage/resolve/route.ts:22-25`, `lib/storage.ts:126-131`, `components/viewers/SecureDocViewer.tsx:105-110`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Not refuted — the missing Vary and the shared cache key are real, and the sign-out at RoleContext.tsx:270-280 does not clear Cache Storage. But the exploit requires the app origin to be unreachable while R2 is reachable, within 60 minutes of the first user's fetch; that narrow window puts this at LOW, not MEDIUM.
 
 **Mechanism.** `/api/storage/download-url` and `/api/storage/resolve` authenticate from an `Authorization: Bearer` header, not a cookie (download-url/route.ts:11-20; callers at lib/storage.ts:128-130 and SecureDocViewer.tsx:106-109 pass `{ headers: { authorization: `Bearer ${token}` } }`). They then run real authorization work against that identity: active-membership on the key's `orgs/<orgId>/` prefix (route.ts:35-46), an ACL discoverability check for private/hidden documents (:55-90), and an explicit `deny.download` ACL check (:91-111) — the route's own comment calls URL issuance "the enforcement point for bytes". The success body is `{ url: <presigned R2 URL> }` (:151-153).
 
@@ -289,10 +295,11 @@ app/api/storage/download-url/route.ts:11-13 — `const authHeader = req.headers.
 
 ## OFF-7 · Every response served from cache silently skips the distribution and audit-trail write that the route performs — download_audits, bump_share_access and TRANSMITTAL_PORTAL_DOWNLOAD all under-record
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:214-215`, `app/api/share/file/route.ts:129-141`, `app/api/share/resolve/route.ts:83`, `app/api/transmittal/route.ts:76-83`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. True as far as it goes — nothing in sw.js reports a cache hit back to the server — but the branch is network-first, so a replay is only possible on a device that already performed an ONLINE fetch of the identical URL, which did write the audit row; the trail can under-count, never show zero. The transmittal leg is weaker still: /api/transmittal?file= returns only `{url}` from a 300-second presigned R2 link (:71-74), so a cached copy hands back a dead URL and no download actually occurs offline. Impact is a bounded undercount, not a missing record.
 
 **Mechanism.** In a PSM/document-control system the distribution record is the deliverable, not a side effect. Three of the cached routes write it inside the request:
 
@@ -330,6 +337,7 @@ app/api/share/file/route.ts:129-140 — `await sb.from("download_audits").insert
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:259-281`, `public/sw.js:52-65`, `app/page.tsx:97`, `lib/eSignatures.ts:82-86`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: RUNTIME_CACHE is device-wide, survives sign-out, and caches.match(request) keys on URL, so offline any later account is served the previous account's same-origin API bytes. The OAuth half is also real — app/page.tsx:92 `redirectTo: ${window.location.origin}/` makes the code-bearing `/?code=…` a navigate request cached at sw.js:161-162 — though a single-use, already-redeemed code is the least of it; the cross-account replay is what carries the MEDIUM.
 
 **Mechanism.** The SIGNED_OUT handler is thorough about localStorage and blind to Cache Storage:
 
@@ -375,10 +383,11 @@ components/providers/RoleContext.tsx:270-281 quoted above — the loop's scope i
 
 ## OFF-9 · RUNTIME_CACHE is unbounded — no size cap, no TTL, no eviction — and it stores multi-megabyte PDFs, so origin quota eviction can take the Supabase session with it
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `public/sw.js:116-120`, `public/sw.js:160-162`, `public/sw.js:209-210`, `app/api/share/file/route.ts:145-151`, `lib/supabase.ts:64-104`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanical claim is correct and repo-wide search confirms no eviction anywhere. The stated consequence is the speculative part: it needs the origin to reach hundreds of MB and the browser to run a whole-origin eviction, and the outcome is a forced re-login (lib/supabase.ts:76-77 puts the session in localStorage), not data loss or a wrong document. LOW.
 
 **Mechanism.** Two branches write to RUNTIME_CACHE on every success — the navigate branch (sw.js:160-162) for every page the user visits, and the generic branch (sw.js:209-210) for every same-origin GET. `cachePut` applies no size test, no count limit, and no expiry, and nothing anywhere trims the cache: the only deletion in the file is the VERSION filter in activate (sw.js:56-62), which never fires because VERSION is a hand-edited literal that does not change on deploy.
 
@@ -411,10 +420,11 @@ public/sw.js:116-120 — `cachePut` has no size or count logic. public/sw.js:56-
 
 ## OFF-10 · The navigate branch breaks the worker's own hard rules: a bare `catch` with no abort check invents a 503 "You're offline" for a cancelled navigation, and the branch never rethrows despite the docblock claiming every branch does
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:19-30`, `public/sw.js:105-112`, `public/sw.js:157-177`, `public/sw.js:192-197`, `public/sw.js:213-218`, `app/d/[number]/route.ts:38-46`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The inconsistency is real — two of three branches abort-check and the navigate branch does not. But the docblock half of the claim is a misreading: sw.js:22 says 'Every branch below ends in a real Response OR a rethrow', not that every branch rethrows, and hard rule 2 at :29-30 explicitly allows 'return a 503 that says what it is'. A navigation the browser itself cancelled is one it has already abandoned, so the 'fully-online user dropped onto the offline page' outcome is speculative; this is a code-hygiene defect, LOW.
 
 **Mechanism.** The file states two rules. Hard rule 1 (sw.js:19-22): "Every branch below ends in a real Response or a rethrow." Hard rule 2 (sw.js:26-30): "never invent a server error … A cancelled prefetch dressed up as '504 (Offline)' reads like the platform fell over." `wasAborted` exists (sw.js:109-112) precisely to distinguish "the browser gave up on this" from "the network is down", and the static branch and the generic branch both honour it:
 
@@ -466,10 +476,11 @@ public/sw.js:164 — `} catch {` with no binding, contrasted against sw.js:192 `
 
 ## OFF-11 · VERSION is a hand-edited literal with no tie to the build, so a deploy neither invalidates the runtime cache nor triggers the update toast
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:33-39`, `public/sw.js:52-65`, `package.json:6-12`, `components/pwa/ServiceWorkerManager.tsx:36-46`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both halves of the title are literally true, but the stated consequence — 'no device shows an update prompt' — is false: components/system/UpdatePill.tsx:21-26 polls `/api/version` every 5 minutes and on tab focus and renders 'This tab is running an old version — tap to load the update' whenever the build id diverges, and it is mounted for every signed-in page at app/(protected)/layout.tsx:61. Combined with the runtime cache being network-first (stale bytes only ever served offline), this is LOW.
 
 **Mechanism.** `const VERSION = "mfgos-v5";` (sw.js:37) is a string literal in a static file under `public/`. The activate handler drops every cache whose key does not start with VERSION (sw.js:56-62), and the file's own comment calls this "the escape hatch when caching behavior changes". Nothing in the build produces or rewrites that string: `package.json`'s only pre-step is `node scripts/copy-pdfjs-worker.mjs` (package.json:6, 8), which copies a pdf worker and touches nothing else, and `grep -rn "sw.js|VERSION|mfgos-v"` across ts/tsx/mjs/js/json outside node_modules finds the constant only at sw.js:37-39 and 59, plus the registration string at ServiceWorkerManager.tsx:33.
 
@@ -500,10 +511,11 @@ public/sw.js:33-37 — the comment "Bumping VERSION drops every old cache on act
 
 ## OFF-12 · cache.addAll is atomic and its failure is swallowed — one bad shell asset silently leaves the device with no offline shell and no offline page at all
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:41`, `public/sw.js:43-50`, `public/sw.js:167-171`, `app/manifest.ts:9-33`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is right; the consequence in the title is wrong. sw.js:167-171 ends the offline navigation chain in `offlineHtmlResponse()`, a self-contained inline 503 page that needs no cache at all, so 'no offline page at all' is refuted by the very lines the finding cites; and the cache-first branch at :184-190 re-populates SHELL_CACHE with every JS/CSS/image asset on first online use, so the shell is not permanently lost either. What is actually lost is the styled /offline route and the pre-warm.
 
 **Mechanism.** const SHELL_ASSETS = ["/", "/offline", "/icon.svg", "/manifest.webmanifest"];
 
@@ -542,10 +554,11 @@ public/sw.js:43-50 quoted above — a single `.catch(() => undefined)` wrapping 
 
 ## OFF-13 · cachePut ignores Cache-Control entirely — every route that declares `no-store` is written to disk anyway, including the full stamped controlled PDF
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:116-120`, `app/api/share/file/route.ts:145-151`, `app/api/data-export/structured/route.ts:17`, `app/api/admin/shed/route.ts:204`, `app/api/admin/ticket-shed/route.ts:256`, `app/api/version/route.ts:20`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Survives on the facts, but two of the six cited locations are unreachable: app/api/admin/shed/route.ts:204 and app/api/admin/ticket-shed/route.ts:256 are inside POST handlers (:93 and :101), and sw.js:124 `if (request.method !== "GET") return;` means the worker never sees them. The headline harm is also mostly pre-existing — /api/share/file is served `Content-Disposition: attachment` (:148) and the page writes it to disk via an `<a download>`, so the contractor has the PDF on the tablet either way; the genuine residual is an invisible copy that outlives share revocation. LOW.
 
 **Mechanism.** `cachePut` is the single write path for both caches and its whole gate is:
 
@@ -588,10 +601,11 @@ public/sw.js:116-120 quoted above — the function body is four lines and reads 
 
 ## OFF-14 · lib/__tests__/sw.test.ts calls itself a regression guard for the worker but asserts only "never resolves to undefined" — nothing tests what is cached, and one assertion locks in the wrong behaviour
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/__tests__/sw.test.ts:1-8`, `lib/__tests__/sw.test.ts:20-24`, `lib/__tests__/sw.test.ts:55-65`, `lib/__tests__/sw.test.ts:89-115`, `lib/__tests__/sw.test.ts:130-136`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The substantive gap is real — the cache-write assertions the title asks for do not exist. But 'asserts only never resolves to undefined' overstates it: :74 and :86 assert the network status and the exact cached Response identity, and :113-114 `expect(responded).toBe(false); expect(caches.match).not.toHaveBeenCalled();` is a genuine assertion about cache behaviour for RSC payloads. Test-coverage gap with no runtime consequence: LOW.
 
 **Mechanism.** The file's header claims a broad guard — "Regression guard for the service worker (public/sw.js): every fetch branch must resolve to a real Response" — and it genuinely loads the real worker source (`readFileSync(resolve(process.cwd(), "public/sw.js"))`, line 37) into a mocked scope, which is a good harness. But the six cases cover only navigation Response-ness, RSC non-interception, and the cross-origin/non-GET skip.
 

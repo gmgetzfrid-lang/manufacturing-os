@@ -36,6 +36,7 @@ What is in the export set, what is silently absent, and what a restore does to l
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:50-54`, `lib/dataExport.ts:300`, `app/api/share/resolve/route.ts:30-37`, `app/api/transmittal/route.ts:24-31`, `app/api/intake/upload/route.ts:32-40`, `supabase/migrations/20260623_document_shares.sql:14`, `supabase/migrations/20260902_project_intake.sql:22`, `supabase/migrations/20260910_transmittal_portal.sql:21`, `lib/exportTables.ts:171-181`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg: the columns exist in plaintext, `select("*")` carries them into both the JSON envelope and the ZIP's tables/*.json, and possession of the string is the entire credential on three unauthenticated routes, one of them write-capable. The only counter-argument is fidelity (a restore without tokens breaks live share links) — that's a design tension, not a refutation of the exposure.
 
 **Mechanism.** `document_shares`, `project_intake_links` and `transmittals` are all in ORG_SCOPED_TABLES and dumped with `select("*")`, so their token columns land verbatim in tables/*.json and in the JSON envelope. Each token is a complete credential resolved server-side with the service role and no session: app/api/share/resolve/route.ts:5-8 "gated ONLY by possession of the unguessable token"; app/api/transmittal/route.ts:2 "Token possession is the whole credential". project_intake_links.token is worse than read-only — app/api/intake/upload/route.ts accepts an unauthenticated multipart POST keyed on it and inserts documents/cost_documents into the project.
 
@@ -65,6 +66,7 @@ lib/exportTables.ts:50-54 lists `"project_intake_links"`, `"document_shares"`, `
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/dataExport.ts:316-363`, `lib/storageOrphans.ts:42-88`, `lib/storageOrphans.ts:152-177`, `app/api/admin/orphans/route.ts:47`, `app/api/intake/upload/route.ts:70-87`, `supabase/migrations/20260819_orphan_tables_backfill.sql:179-196`, `lib/exportTables.ts:93`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified by repo-wide search: no reference source anywhere registers cost_documents.file_url, so the binaries are simultaneously absent from every backup manifest and eligible for permanent, unrecoverable deletion 7 days after upload.
 
 **Mechanism.** `cost_documents.file_url` holds a real R2 key (`orgs/<org>/project-costs/<project>/quote-<uuid>-<name>`, written by app/api/intake/upload/route.ts:71-84 straight after a PutObjectCommand). Two independent key collectors exist and neither lists the table: dataExport.collectFilePaths enumerates document_versions.file_url, tickets.attachments[].url, markup_requests.shared_markup_url, asset_photos.file_url, plot_plans.image_path, libraries/collections.cover_image_url and the branding logo — no cost_documents; storageOrphans.collectReferencedKeys enumerates 11 sources — also no cost_documents. `deleteOrphans` deletes any object older than MIN_AGE_DAYS=7 that is not in that reference set and not under `data/`/`exports/`.
 
@@ -94,6 +96,7 @@ lib/storageOrphans.ts:11-13 promises the opposite — "the reference collector q
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/restore/apply/route.ts:79-111`, `app/api/admin/restore/apply-table/route.ts:52-58`, `lib/dataRestore.ts:200-218`, `app/api/admin/restore/apply/route.ts:75`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified by direct comparison of the two routes; the org-forcing line exists in apply-table and has no counterpart in apply. Admin of org A can write forged rows into org B, and into any table name the envelope invents.
 
 **Mechanism.** apply-table (the chunked path the UI uses) remaps then overwrites: `const m = remapRow(r, idRemap); if ("org_id" in m) m.org_id = orgId;` — with the comment "FORCE the org boundary: whatever the backup (or a hostile client) claims, restored rows belong to the authorized workspace". The single-shot apply route omits that step entirely: it only calls `remapRow`, and remapRow rewrites org_id ONLY when the value is a key of idRemap.orgId, which contains exactly one entry — `{ [manifest.orgId]: targetOrgId }`. A row carrying any other org_id falls through `deepRemapValues` unchanged and is written by the service-role client, which bypasses RLS. apply also has no IMPORTABLE allowlist: `plan.counts.tables` is built from whatever keys the uploaded envelope has, minus SKIP_TABLES, so any table name the poster invents is attempted.
 
@@ -123,6 +126,7 @@ app/api/admin/restore/apply/route.ts:82 `let mapped = rows.map((r) => remapRow(r
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:57-58`, `lib/exportTables.ts:91`, `lib/exportTables.ts:109-110`, `lib/exportTables.ts:152`, `lib/dataExport.ts:95-107`, `lib/dataExport.ts:209-218`, `lib/dataExport.ts:248`, `supabase/schema.sql:19-30`, `supabase/migrations/20260527_projects_and_collaboration.sql:55-65`, `supabase/migrations/20260602_documents_library_super.sql:63-71`, `supabase/migrations/20260819_orphan_tables_backfill.sql:16-24`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly, including the count of four. project_members (project rosters) and curated_collection_items (curated collection contents) are unrecoverable customer data that no export has ever contained.
 
 **Mechanism.** runOrgExport dumps every ORG_SCOPED_TABLES entry with `dumpTable(sb, tbl, "org_id", params.orgId)` → `sb.from(table).select("*").eq("org_id", value)`. Four listed tables have no org_id column anywhere in supabase/ (verified by a CREATE-TABLE-body + ALTER-ADD-COLUMN scan across schema.sql + all migrations, then re-verified by grepping every `org_id` mention for those table names — the only hits are comments that say so: 20260819_orphan_tables_backfill.sql:15 "access_requests (public sign-up requests; no org_id)" and 20260615_fix_missing_rls_policies.sql:31 "project_members has no org_id column directly"). They are: `orgs` (PK is `id`), `project_members` (project_id/user_id only), `curated_collection_items` (PK collection_id,document_id), `access_requests`. PostgREST answers `.eq("org_id",…)` on those with 42703 "column … does not exist"; supabase-js returns `{error}`, dumpTable throws, and the catch at lib/dataExport.ts:100-106 records `{rowCount:0, error}` and sets `tables[tbl] = []`.
 
@@ -154,6 +158,7 @@ lib/dataExport.ts:97 `const rows = await dumpTable(sb, tbl, "org_id", params.org
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/restore/apply-table/route.ts:74-87`, `app/api/admin/restore/apply/route.ts:98-125`, `app/(protected)/admin/restore/page.tsx:190-216`, `app/(protected)/admin/restore/page.tsx:445-453`, `lib/dataRestore.ts:336-348`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right as stated — restore is insert-only by construction, so corrupted rows that still hold their original ids are never touched and the run reports success. Note the failure can also read WORSE than described: `inserted += up.count ?? chunk.length` (line 81) falls back to the full chunk size if PostgREST returns no count, reporting thousands of 'imported' records that were all discarded.
 
 **Mechanism.** Every table is written with `upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true })` — ON CONFLICT DO NOTHING against ids taken verbatim from the backup. Ids are never regenerated and never remapped (only org_id and uids are). So any row whose id already exists is skipped, whatever its current contents. The UI sums `body.inserted` but shows a green "Records restored" panel regardless, and — unlike apply/route.ts:115-125, which explicitly STOPS after a table fails because "continuing after a parent failure inserts children referencing rows that never landed" — the chunked client path does `tableFailed = true; break;` on the chunk loop and then continues to the next table in FK order.
 
@@ -183,6 +188,7 @@ app/api/admin/restore/apply-table/route.ts:77 `const up = await sb.from(table).u
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportRunner.ts:257-265`, `lib/exportRunner.ts:374-405`, `app/(protected)/admin/data-export/page.tsx:664-666`, `app/(protected)/admin/data-export/page.tsx:605`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: nothing constrains the purge to keys this app wrote — not the filename pattern, not a prefix requirement, not a marker object. With Prefix blank, retention deletes unrelated objects in the customer's bucket.
 
 **Mechanism.** After a successful push, s3PurgeOlderThan lists the destination bucket and deletes everything older than retention_days. `Prefix: params.prefix ? params.prefix.replace(...) + "/" : undefined` — an unset prefix means `undefined`, i.e. list the WHOLE bucket. Nothing filters on the export filename pattern (`manufacturing-os-export-…zip`) or on object metadata, so any object living in that bucket is a deletion candidate. The prefix field is optional in the UI ("Prefix — Optional folder inside the bucket").
 
@@ -212,6 +218,7 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/clientBackup.ts:117-145`, `app/(protected)/admin/data-export/page.tsx:136-143`, `app/(protected)/admin/restore/page.tsx:111-125`, `lib/exportRunner.ts:132-162`, `app/(protected)/admin/storage/page.tsx:738-762`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Two admin pages emit two archive layouts and only the storage page's is loadable by /admin/restore. Confirmed by reading both writers and the reader.
 
 **Mechanism.** Two producers, one consumer. The browser backup (lib/clientBackup.ts, wired to the "Download Full ZIP" button on /admin/data-export) writes `data.json` (the whole envelope), `files-manifest.json`, `backup-report.json` and `files/<key>` — it never writes `manifest.json` or `tables/*.json`. The server ZIP (lib/exportRunner.ts, reachable only from /admin/storage's separate ZIP button) writes `manifest.json` + `tables/<table>.json` + `files/<key>`. /admin/restore accepts ONLY the second: it searches entries for `/(^|\/)manifest\.json$/i` and aborts otherwise. "files-manifest.json" does not match that regex (no `/` before `manifest.json`).
 
@@ -243,6 +250,7 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/structured/route.ts:55-57`, `app/api/data-export/run/route.ts:17`, `lib/dataExport.ts:18-20`, `lib/dataExport.ts:143-179`, `supabase/migrations/20260708_acl_rls_enforcement.sql:56-62`, `supabase/migrations/20260708_acl_rls_enforcement.sql:85-91`, `supabase/migrations/20260630_scratchpad_private.sql:59-66`, `lib/downloads.ts:1-9`, `app/data-portability/page.tsx:71-72`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified end to end: role gate admits Manager, the export runs as service role, and neither the ACL restrictive policy nor the private-notes policy nor the stamping/download_audits path applies.
 
 **Mechanism.** Both export routes gate on a hardcoded `["Admin", "Manager", "DocCtrl"]` list and then run runOrgExport with the service-role key, which the file header itself says "bypass[es] RLS". Two RLS decisions are thereby erased for a Manager: the RESTRICTIVE `documents_acl_select` policy, whose node_visible() short-circuits to true only for `v_role IN ('Admin','DocCtrl')` — a Manager without an explicit grant cannot read private/hidden documents in the app; and `notes_standalone_own`, which makes note rows with no document/project/asset visible ONLY to created_by. Separately, collectFilePaths presigns a 24h GET for every document_versions.file_url with no watermarking and no download_audits row, while the normal path (lib/downloads.ts) stamps every copy "UNCONTROLLED" unless the requester holds the checkout and logs every download.
 
@@ -273,6 +281,7 @@ app/api/data-export/structured/route.ts:55 `if (!["Admin", "Manager", "DocCtrl"]
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/dataExport.ts:316-363`, `lib/dataExport.ts:126-133`, `lib/exportRunner.ts:466-476`, `lib/storageOrphans.ts:43-47`, `lib/storageOrphans.ts:80-87`, `lib/revisions.ts:499-524`, `lib/knowledge.ts:357-365`, `app/data-portability/page.tsx:64`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The sibling collector in storageOrphans.ts is the settling evidence: the same repo enumerates these keys for deletion-safety but not for backup, so the ZIP's 'every binary file' claim is false for CAD sources, knowledge PDFs and output templates.
 
 **Mechanism.** collectFilePaths covers 8 key sources. storageOrphans.collectReferencedKeys — the same repo's authoritative list of "every storage key the database references" — covers 11. The delta that carries real content: `document_versions.source_file_key` (the uploaded native source, e.g. the DWG behind the issued PDF — written at lib/revisions.ts:506 `sourceFileKey = srcUpload.url`), `knowledge_documents.file_key` (every knowledge-library source PDF — lib/knowledge.ts:358), `output_templates.template_file_key` + `example_files[].key` (the org's authored document-production templates). All three tables' ROWS are exported, so the backup contains rows pointing at binaries it does not contain.
 
@@ -298,10 +307,11 @@ lib/dataExport.ts:330-360 is the complete list of `add(...)` calls — document_
 
 ## BKP-10 · A cancelled backup still downloads a final part whose report says "Every file verified by SHA-256" — with no cancellation flag and no file total
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/clientBackup.ts:126-145`, `lib/clientBackup.ts:149-150`, `lib/clientBackup.ts:183-188`, `app/(protected)/admin/data-export/page.tsx:259-263`, `components/archive/BackupViewer.tsx:88-110`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The misleading report note and the missing cancellation flag are real and correctly cited. But the claim's core sting — 'nothing in the ZIP records that 8,800 files are missing' — is false: part 1's data.json holds the full file list and count. Discoverable-but-unflagged omission, so LOW rather than MEDIUM.
 
 **Mechanism.** The file loop breaks on cancel (`if (opts.isCancelled?.()) break;`), then control falls through to `await finalizePart(true)` unconditionally, which writes files-manifest.json and backup-report.json and saves the part. backup-report.json carries `filesPacked` and `errors` but no `filesTotal`, no `cancelled` flag, and — because a cancelled run has an empty `errors` array — takes the else branch of the note ternary: "Every file verified by SHA-256 in files-manifest.json." Files never attempted appear in neither `fileManifest` nor `errors`; they simply do not exist anywhere in the archive.
 
@@ -334,6 +344,7 @@ lib/clientBackup.ts:135-137 `note: progress.errors.length > 0 ? "Files listed un
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:134-144`, `app/api/data-export/destinations/route.ts:55-66`, `lib/exportTables.ts:157`, `lib/dataRestore.ts:313`, `app/api/data-export/run-scheduled/route.ts:60-66`, `lib/exportTables.ts:173-175`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves check out. The credential leak is ciphertext only (AES-256-GCM, key server-side), which is why MEDIUM is the right level; the substantive risk is the reinstated destination auto-pushing the new org's full dataset to the backup owner's bucket/webhook on the next sweep.
 
 **Mechanism.** Three layers disagree about how secret export_destinations is. (a) RLS grants SELECT on the whole row — encrypted credential columns included — to every active org member, while the API deliberately strips them ("Sensitive fields are NEVER returned to the client after creation"); a Viewer can read them straight from supabase-js. (b) The full-org export dumps the table with `select("*")`, so the ciphertext leaves the database in a file explicitly designed to be portable — contradicting the reason ai_connections is excluded ("secrets never leave the database"). (c) export_destinations is in RESTORE_TABLE_ORDER, so restoring that backup into a different workspace re-creates the rows — bucket, encrypted keys, `enabled`, and a `next_run_at` already in the past — with org_id forced to the NEW org.
 
@@ -363,6 +374,7 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:142-144 `CREATE POLICY 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/dataRestore.ts:336-348`, `lib/exportTables.ts:16-27`, `supabase/migrations/20260928_site_codebook.sql:37-38`, `supabase/migrations/20260928_site_codebook.sql:89-101`, `supabase/migrations/20260806_intelligence_layer.sql:101-106`, `supabase/migrations/20260806_intelligence_layer.sql:120-121`, `app/(protected)/admin/restore/page.tsx:450`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly, including the count of four; codebook_config is one-per-org so the collision is guaranteed on any restore into a configured workspace.
 
 **Mechanism.** `conflictTargetFor` returns CONFLICT_TARGETS[table] ?? "id". Scanning every CREATE TABLE body plus ALTER…ADD COLUMN across supabase/, four exported tables have no `id` column and no CONFLICT_TARGETS entry: `codebook_config` (PK org_id), `document_equipment_suggestions` (PK org_id,document_id), `recently_viewed_docs` (PK user_id,document_id), `library_numbering` (PK library_id). Their upsert requests ON CONFLICT (id) on a table with no such column, which Postgres rejects; the code falls back to a plain `insert` of the same chunk. That succeeds on a virgin target and fails with a primary-key violation on any re-run or into a workspace that already has those rows.
 
@@ -392,6 +404,7 @@ lib/dataRestore.ts:346-348 `export function conflictTargetFor(table: string): st
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/run-scheduled/route.ts:106-115`, `lib/dataExport.ts:182-200`, `supabase/schema.sql:771-783`, `app/api/data-export/run/route.ts:38-68`, `app/api/data-export/run/route.ts:141-144`, `app/api/data-export/destinations/route.ts:81-95`, `app/(protected)/admin/data-export/page.tsx:346-352`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg confirmed, including the subtle one: even the generic DATA_EXPORT audit insert cannot succeed for a cron run because "cron" is not a UUID.
 
 **Mechanism.** Three gaps compose. (1) The cron path calls buildAndDeliverExport with `exporterUserId: "cron"`; runOrgExport then inserts `user_id: "cron"` into audit_logs, whose user_id column is UUID — Postgres rejects it with 22P02. supabase-js resolves with `{error}` rather than throwing, the insert's return value is never destructured, and the surrounding try/catch never fires, so the failure is invisible. (2) alertAdminsOfExport — the bell notification added specifically for "compromised-admin exfiltration" — lives only in the manual /run route, not in run-scheduled. (3) Destination creation is open to Manager and DocCtrl, and the Growth-plan gate is `if (body.bucket)`, so a webhook destination is creatable on any plan.
 
@@ -421,6 +434,7 @@ app/api/data-export/run-scheduled/route.ts:111 `exporterUserId: "cron",`. lib/da
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/schemaExpectations.ts:104`, `lib/schemaExpectations.ts:10-13`, `app/api/admin/schema-health/route.ts:45-51`, `app/api/admin/schema-health/route.ts:67-81`, `supabase/migrations/20260819_orphan_tables_backfill.sql:3`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed precisely, phantom and count: my own naive CREATE-TABLE scan reproduced the 'statements' artifact from that comment line, which is exactly how the file says it was generated ('Generated from supabase/migrations (CREATE TABLE scan)', lines 10-13). The panel is permanently red on a table that does not exist and silent on 20261017_process_flows.sql.
 
 **Mechanism.** EXPECTED_TABLES lists `{ table: "statements", migration: "20260819_orphan_tables_backfill.sql" }`. No CREATE TABLE for `statements` exists anywhere in supabase/ — the name came from that migration's header sentence "Reproducibility backfill: CREATE TABLE statements for 11 tables that exist", i.e. the generator's regex matched English prose. schema-health probes each expectation with a head select; a missing table returns 42P01, so `healthy` is false and `migrationsToRun` always names 20260819_orphan_tables_backfill.sql, which does not create it. In the other direction, diffing EXPECTED_TABLES (93 entries) against the 111 CREATE TABLEs shows 24 real tables never probed, including the three newest feature tables — process_flows (20261017), answer_skills (20261016), link_rules (20261015) — plus document_versions, tickets, audit_logs, org_members, collections, and the whole quality-program set. Unlike lib/exportTables.ts, nothing tests this file.
 

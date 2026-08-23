@@ -34,6 +34,7 @@ Unauthenticated. What each returns to someone holding only a scanned code.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:89-90`, `app/api/verify-package/route.ts:56`, `lib/aiBoundary.ts:25`, `lib/staleCopies.ts:76`, `lib/docControlRegister.ts:101`, `lib/downloads.ts:52-68`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and reachable: `Void` is a first-class document status (types/schema.ts:613) offered in the status dropdown at components/documents/MetadataEditor.tsx:9/394. app/verify/[docId]/page.tsx:106 only special-cases Superseded/Archived too, so a Void document renders the full-screen emerald 'CURRENT — This print matches the current revision.' CRITICAL stands.
 
 **Mechanism.** `const docRetired = d.status === "Superseded" || d.status === "Archived";` (verify/route.ts:89) and `const retired = d?.status === "Superseded" || d?.status === "Archived";` (verify-package/route.ts:56). The documents.status vocabulary is `["Draft","Issued","Superseded","Void","Archived","Locked"]` (components/documents/MetadataEditor.tsx:9). Every other consumer of that vocabulary in the repo treats Void as not-current: `NOT_CURRENT_STATUSES = new Set(["Superseded", "Void", "Archived"])` (aiBoundary.ts:25), `if (d.status === "Archived" || d.status === "Superseded" || d.status === "Void") continue;` (staleCopies.ts:76), `.or("status.is.null,status.not.in.(Draft,Superseded,Void,Archived)")` (docControlRegister.ts:101), and `case "Void": return { label: "Void", tone: "danger" };` (downloads.ts:62-63). The two public endpoints are the only places the list is short. A grep for 'Void' across app/api/verify*, app/api/verify-hold, app/api/verify-package, app/api/verify-ticket and all four page.tsx returns zero matches. This is the 'facility vocabulary hardcoded in application code' pattern the earlier audits flagged, now on the one surface where a wrong answer reaches a worker with a wrench.
 
@@ -61,6 +62,7 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:39-63`, `lib/workPackages.ts:192-228`, `app/(protected)/packages/page.tsx:108-128`, `lib/physicalBridge.ts:275`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a repo-wide grep for `printed_at`/`last_printed` finds nothing, so no data anywhere records what the paper says. One correction to the wording: it is not fully 'silent' — the confirm dialog (packages/page.tsx:112-114) and the success toast (:121) both say 'then re-print the pack so the paper matches'. The tripwire is still disarmed with no technical trace, so HIGH stands.
 
 **Mechanism.** The QR on a printed cover sheet encodes ONLY the package UUID — `qrPng(doc, `${origin()}/verify-package/${input.packageId}`)` (physicalBridge.ts:275). There is no print token, no print timestamp, no manifest hash. /api/verify-package therefore computes freshness from two LIVE values: `fresh: !retired && !!r.pinned_version_id && r.pinned_version_id === (d?.current_version_id ?? null)` (route.ts:61), where `r.pinned_version_id` comes from work_package_documents at read time. refreshWorkPackage() rewrites exactly that column for every member — `.update({ pinned_version_id: (d?.current_version_id as string | null) ?? null, pinned_rev_label: ... })` (workPackages.ts:212-219) — so after a refresh, pinned_version_id === current_version_id for every sheet by construction, staleCount becomes 0, and allFresh becomes true. handlePrintPack calls refresh-then-print together (packages/page.tsx:157-176), but handleRefresh (packages/page.tsx:108-128) is a separate 'Refresh pins' button (rendered at :293-299) that re-pins with nothing but an advisory string — 'then re-print the pack so the paper matches' (:113) and 'Re-print the pack.' (:122). Nothing enforces the reprint and nothing invalidates the QR already in the field.
 
@@ -89,10 +91,11 @@ app/api/verify-package/route.ts:61 — `fresh: !retired && !!r.pinned_version_id
 
 ## VFY-3 · /verify/<docId> with no ?v= returns isCurrent:true unconditionally — and lib/downloads.ts stamps exactly that URL onto prints of documents with no current version
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:29-31,90`, `lib/downloads.ts:96-101`, `lib/docPack.ts:104-105`, `app/api/share/file/route.ts:114-115`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real and reachable (documents.current_version_id is nullable, schema.sql:144, while DocumentRecord.fileUrl is not, types/schema.ts:763, so a version-less document can still be printed). But 'unconditionally' is wrong — the docRetired guard at :89 still returns isCurrent:false for Superseded/Archived — and two of the four cited stamp sites actually GUARD against it: lib/docPack.ts:104-105 and app/api/share/file/route.ts:114-116 both emit `verifyUrl: undefined` when versionId is null rather than a bare /verify/<docId>. Only lib/downloads.ts produces the version-less URL, which narrows this to MEDIUM.
 
 **Mechanism.** The guard at route.ts:30 is `if (!UUID_RE.test(docId) || (versionId && !UUID_RE.test(versionId)))` — `v` is optional. isCurrent at :90 is `!docRetired && (!versionId || versionId === d.current_version_id)`: with no versionId the second clause short-circuits TRUE, so the endpoint asserts the paper is current while holding no information whatsoever about which revision the paper is. printedRev comes back null and the page renders 'This print — Rev ?' in emerald beside the giant green CURRENT. buildVerifyUrl emits precisely this URL: `const version = ctx.versionId ?? ctx.doc.currentVersionId; ... return version ? `${base}?v=${version}` : base;` (downloads.ts:99-101) — currentVersionId is optional on DocumentRecord (types/schema.ts:638), and the verify route itself guards `if (d.current_version_id)` at :70, so the author knew it can be null. Two sibling call sites got this right by omitting the QR entirely when there is no version: docPack.ts:104 `versionId && publicOrigin() ? ... : undefined` and share/file/route.ts:114 `versionId && publicOrigin() ? ... : undefined`. downloads.ts does not.
 
@@ -118,10 +121,11 @@ app/api/verify/route.ts:90 — `const isCurrent = !docRetired && (!versionId || 
 
 ## VFY-4 · "NOT YET IN EFFECT" drops hours early: /api/verify reimplements the effective-date comparison in server UTC instead of calling the repo's canonical local-date helper
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:91-94`, `lib/effectiveDate.ts:21-28`, `lib/docControlRegister.ts:187`, `supabase/migrations/20260819_effective_date.sql:17`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The divergence is real but the finding misdiagnoses the fix. effectiveStatusFor is RUNTIME-local, and this is a server route on a UTC host, so calling the canonical helper would compute the identical answer — the two only disagree because the register/badge call sites run in the browser (lib/docControlRegister.ts:187 uses the browser supabase client). A repo-wide grep for timezone/org-locale settings finds none, so there is no plant timezone to compare against; the actual defect is a one-day-boundary disagreement bounded by the UTC offset between the field page and the in-app badge. LOW.
 
 **Mechanism.** `notYetEffective = isCurrent && !!effectiveDate && effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10)` (route.ts:93-94). effective_date is a DATE column (20260819_effective_date.sql:17), so the left side is a calendar date in the plant's frame of reference. The right side is `toISOString()` — the SERVER's UTC calendar date. The repo already has the canonical answer, unit-tested, comparing at LOCAL midnight: `const today = new Date(); today.setHours(0, 0, 0, 0); const eff = new Date(`${effectiveDate.slice(0, 10)}T00:00:00`); if (eff.getTime() > today.getTime()) return "pending";` (effectiveDate.ts:23-27). The in-app register calls it (docControlRegister.ts:187); the public field endpoint does not. On a UTC host serving a US plant, the endpoint's 'today' rolls over 5-6 hours before the plant's does, and the comparison is `>` — strictly greater — so the amber guard releases early, never late.
 
@@ -153,6 +157,7 @@ app/api/verify/route.ts:91-94 — `// A published rev with a FUTURE effective da
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:34-108`, `app/api/verify-package/route.ts:31-77`, `app/verify-hold/[holdId]/page.tsx:93-94`, `supabase/migrations/20260713_document_publish_guard.sql:70-79`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by reading both routes end to end. A hold blocks publication at the database level but is invisible to the two public endpoints the field actually scans, so a held drawing and its pack both render green while the printed hold card says stop.
 
 **Mechanism.** Neither endpoint references document_holds. A grep for 'document_holds|hold' across app/api/verify/route.ts and app/api/verify-package/route.ts returns exactly one hit, and it is the word 'holding' inside a prose comment. Yet the hold concept is defined in this system as covering the work, not just the publish transition: the hold verify page's own copy is 'Do not advance this document or the work it covers' (verify-hold page.tsx:94), and the database refuses to advance a held document at all (20260713_document_publish_guard.sql:70-79). Three public surfaces therefore answer 'can I use this?' about the same document and only one of them knows about the hold — and it is the one keyed on a hold UUID that a field user only has if the tag is still attached and legible.
 
@@ -180,6 +185,7 @@ grep -rn 'document_holds|hold' app/api/verify/route.ts app/api/verify-package/ro
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-hold/route.ts:46-56`, `components/documents/HoldStrip.tsx:190-203`, `supabase/migrations/20260612_phase5_holds.sql:26-33`, `app/verify-hold/[holdId]/page.tsx:110-113`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right on both halves: the route withholds `notes` and `opened_by_name` but publishes `reason` verbatim to an unauthenticated endpoint, and `reason` is exactly the field the UI lets a controller type free text into. app/verify-hold/[holdId]/page.tsx:110-113 prints it under 'Reason' on the public page.
 
 **Mechanism.** The route withholds notes, opened_by_name, released_by_name and released_reason, and says so: 'a photographed hold card must not disclose staff names or free-text operator notes ("waiting on legal re: incident …") to whoever scans it. Status, category, dates, and the doc label suffice' (route.ts:48-53). It then returns `reason: (h.reason as string) ?? null` (:55). But `reason` is not a category. The migration is explicit: 'reason is TEXT with NO check constraint. The four directive-named reasons ... live in the UI's predefined picker; orgs can also enter free-form reasons via "Other"' (20260612_phase5_holds.sql:26-33), and HoldStrip renders an unconstrained `<input ... placeholder="Custom hold reason">` whose value is passed straight to onOpen (HoldStrip.tsx:190-203, :81-88). The verify page then renders it in bold red as the card's most prominent fact (page.tsx:110-113). Alongside it the route publishes docLabel, which falls back to the document TITLE when document_number is null (`String(d.document_number || d.title || d.name || "")`, :43).
 
@@ -211,6 +217,7 @@ app/api/verify-hold/route.ts:55 — `reason: (h.reason as string) ?? null,`  |  
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/d/[number]/route.ts:19-36`, `app/d/[number]/route.ts:24-25`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed against the file's own header claim at :4-5 ('punctuation- and case-forgiving, same normalization as search'). Additional unclaimed exposure: the supabaseAdmin query at :27-32 is not scoped to any org, so the substring fallback can redirect to a document belonging to a different tenant.
 
 **Mechanism.** Line 20 computes `norm` (lowercased, punctuation stripped) but the database query at :30 uses `raw` — `.ilike("document_number", `%${raw.replace(/[%_]/g, "")}%`)` — with punctuation intact. `norm` is only used at :35 as a tie-break among rows the punctuation-sensitive query already returned. So the comment at :24-25, 'Candidates by loose substring, then the exact normalized match wins (same punctuation-forgiving identity search uses)', describes behaviour that is not implemented: a user who types the number with different separators gets zero candidates and falls through. Separately, :36's fallback `?? (rows ?? [])[0]` redirects to the newest-updated row of a mere substring match when no exact normalized match is present in the window, and `.limit(25)` at :32 means a genuine exact match can be excluded from the window entirely by 25 more-recently-updated partial matches. There is no disambiguation page: the route always 307s to a single document.
 
@@ -239,10 +246,11 @@ app/d/[number]/route.ts:20 — `const norm = raw.toLowerCase().replace(/[^a-z0-9
 
 ## VFY-8 · A CLOSED work package still scans green "PACK IS CURRENT" — the verdict ignores packageStatus and closed_at entirely
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:65-76`, `app/verify-package/[packageId]/page.tsx:57-59,89-101`, `app/(protected)/packages/page.tsx:130-147`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The verdict-ignores-closure part is true, but 'ignores packageStatus and closed_at entirely' is not: page.tsx:97 appends `{result.closed ? " (This package has been closed.)" : ""}` to the sentence directly under the headline, so closure IS disclosed on the same screen. The green banner is also literally accurate — every sheet still is the current revision. That mitigation drops this to LOW.
 
 **Mechanism.** `allFresh: sheets.length > 0 && staleCount === 0` (route.ts:73) is a pure revision comparison. packageStatus and closed are computed (:70-71) and returned, but the page's background colour and headline read only allFresh (`result?.allFresh ? "bg-emerald-600" : "bg-red-600"` at page.tsx:58; headline at :89-91). The closed state is demoted to a parenthetical appended to the sub-line: `{result.closed ? " (This package has been closed.)" : ""}` (page.tsx:100). Closing a package is described in the app as stopping the tripwire: 'A closed package stops watching its drawings and disappears from this list' (packages/page.tsx:133) and 'no longer watching its drawings' (:141). The public verdict does not stop.
 
@@ -272,6 +280,7 @@ app/api/verify-package/route.ts:73 — `allFresh: sheets.length > 0 && staleCoun
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:89-90,103-106`, `app/verify/[docId]/page.tsx:99-110`, `lib/downloads.ts:52-68`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the only retirement test is Superseded/Archived, so a document whose status is Draft (or 'In Review', or 'Void' — all offered in components/documents/MetadataEditor.tsx:9 and BulkEditModal.tsx:32) with current_version_id set returns isCurrent:true, and app/verify/[docId]/page.tsx:99 renders 'CURRENT' on emerald with 'This print matches the current revision.' The narrated scenario is slightly off — a submit-for-review draft lands in pending_version_id, not current_version_id (lib/revisions.ts:1550, app/api/intake/upload/route.ts:330), so that particular version scans RED — but the template-filing path above produces exactly the claimed Draft-scans-green state, and Void scanning green is the same hole.
 
 **Mechanism.** isCurrent is a pure deny-list: `!docRetired && (!versionId || versionId === d.current_version_id)` (route.ts:90). documents.status DEFAULT is 'Draft' (supabase/schema.sql, documents table). Any status outside {Superseded, Archived} — Draft, In Review, Void, Locked, or NULL — passes as green. The same repo already has the correct answer in a shared helper: viewerStatusBadge returns `{ label: "Draft — not issued", tone: "caution" }` for Draft and reserves 'Controlled' for Issued/Locked (downloads.ts:55-60). The public page then converts isCurrent:true into the strongest possible affirmative statement.
 
@@ -297,10 +306,11 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 
 ## VFY-10 · A released HOLD card scans green "this tag can come down" while other holds on the same document are still active — the endpoint has document_id in hand and never asks
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-hold/route.ts:28-32,54`, `app/verify-hold/[holdId]/page.tsx:92-95`, `supabase/migrations/20260612_phase5_holds.sql:20-24`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — the endpoint has document_id in hand and never asks about sibling holds, and multiple concurrent holds are an explicit design goal. But the card is printed per hold (lib/physicalBridge.ts:150-171 stamps one `reason` and one holdId per card) and its own footer at :168 says 'A released hold shows GREEN when scanned — then this tag comes down', so 'this tag can come down' is literally true for that tag; the other hold's card is still hanging and still scans red. Missing-context enhancement rather than a wrong verdict — LOW.
 
 **Mechanism.** `active: !h.released_at` (route.ts:54) is derived from the single hold row addressed by the URL. The route already loads `document_id` (route.ts:29) and already makes a second query against documents (route.ts:37-41) — it simply never queries document_holds for siblings. The holds migration states the opposite as the normal case: 'document_holds is a per-document log, NOT a single-column flag. Multiple holds can be open on the same document simultaneously (typical: "Awaiting Engineering" AND "Missing Vendor Data")' (20260612_phase5_holds.sql:20-24), and the partial unique index is on (document_id, reason) WHERE released_at IS NULL — explicitly permitting many concurrent holds per document. Each hold gets its own printed card (printHoldCard takes a single holdId, physicalBridge.ts:164), so a document with two holds has two red tags, and releasing one turns that tag's QR green.
 
@@ -326,10 +336,11 @@ app/api/verify-hold/route.ts:54 — `active: !h.released_at,`  |  app/api/verify
 
 ## VFY-11 · An empty work package scans full-screen red "PACK IS STALE — 0 of 0 sheets changed since this pack was printed"
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:73`, `app/verify-package/[packageId]/page.tsx:89-101,116-118`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The '0 of 0' red screen is real and reads as nonsense. Severity is overstated: the failure direction is fail-closed (stop work), and the same page prints an accurate corrective line inside the card — page.tsx:118-120 `{result.sheets.length === 0 && (<div ...>This package has no sheets.</div>)}` — so the crew is not told a stale sheet exists that they must go find. Copy/verdict-taxonomy defect, LOW.
 
 **Mechanism.** `allFresh: sheets.length > 0 && staleCount === 0` (route.ts:73) is false for an empty package because of the length guard, not because anything is stale. The page has no zero-sheet branch on the verdict path: it renders the red background, the X icon, the headline 'PACK IS STALE', and the templated sub-line `${result.staleCount} of ${result.sheetCount} sheet${result.sheetCount === 1 ? "" : "s"} changed since this pack was printed — get the new sheets before starting work.` (page.tsx:95-98) with both numbers zero. It also renders the 'Do not work from the outdated sheets' block, gated only on `!result.allFresh` (:120-125). The empty state that does exist, 'This package has no sheets.' (:116-118), is a small grey line inside the card underneath all of that.
 
@@ -357,6 +368,7 @@ app/api/verify-package/route.ts:73 — `allFresh: sheets.length > 0 && staleCoun
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:22-31`, `app/api/verify-hold/route.ts:17-25`, `app/api/verify-package/route.ts:21-29`, `app/api/verify-ticket/route.ts:38-49`, `app/api/auth/signup/route.ts:6-33`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. The enumeration premise also checks out: app/d/[number]/route.ts is unauthenticated, queries with `supabaseAdmin` (service role, RLS bypassed) on a cross-tenant `ilike` over document_number (:26-32) and redirects with `dest.searchParams.set("doc", match.id)` (:45) — a free document-number-to-UUID oracle feeding /api/verify.
 
 **Mechanism.** Three differently-shaped searches agree. (a) Reading all four routes end to end: each validates a UUID, opens a service-role client, queries, and returns — no throttle, no counter, no insert. (b) `grep -rn 'import' app/d app/api/verify*` returns only next/server, @supabase/supabase-js and lib/supabaseAdmin — these routes cannot reach a rate limiter or an audit logger because they import neither. (c) `grep -rn 'audit|logEvent|recordIntent|insert(' app/api/verify* app/d` returns ZERO MATCHES. The repo does have the pattern: signup counts attempts per x-forwarded-for IP against signup_attempts with a documented fail-open (`if (error) return false; // table absent / transient — fail open`, signup/route.ts:27), for the stated reason 'cap attempts per source IP per hour so nobody can loop it to enumerate accounts' (:6-8).
 
@@ -383,10 +395,11 @@ grep -rn 'audit|logEvent|recordIntent|insert(' app/api/verify app/api/verify-hol
 
 ## VFY-13 · The public verify pages are indexable and carry no robots directive, and the four verdict endpoints send no cache directive of their own
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `app/layout.tsx:20-40`, `app/verify/[docId]/page.tsx`, `app/verify-package/[packageId]/page.tsx`, `app/api/verify/route.ts:96-108`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both assertions are literally true. Impact is smaller than MEDIUM: all four verify pages are client components that fetch their data from /api/verify* after hydration, so the HTML a crawler is served contains no document number, title or rev — only the URL, which by hypothesis the leaker already had; and package.json pins `"next": "^16.1.0"`, where a route handler reading `req.nextUrl.searchParams` is dynamic and is served uncached with a no-store default, so the missing hand-written Cache-Control carries little practical risk.
 
 **Mechanism.** There is no app/robots.ts, no public/robots.txt (public/ contains only icon-192.png, icon-512.png, icon.svg, sw.js), and the root metadata block (layout.tsx:20-40) sets title, description, keywords, openGraph and appleWebApp but no `robots` field — so nothing marks /verify/*, /verify-package/*, /verify-hold/* or /verify-ticket/* noindex. These pages render document numbers, document titles, work-package names, the full sheet list of a package, hold reasons and plant unit numbers. Separately, none of the four route handlers sets Cache-Control on its NextResponse.json; they rely entirely on the framework's default for dynamic handlers.
 
@@ -412,10 +425,11 @@ grep -rn 'audit|logEvent|recordIntent|insert(' app/api/verify app/api/verify-hol
 
 ## VFY-14 · The verify routes over-select the exact fields they promise not to disclose, one careless spread away from publishing them
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/verify-hold/route.ts:29,35`, `app/api/verify/route.ts:36,56`, `app/api/verify-ticket/route.ts:51`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Nothing is disclosed today — every route hand-builds its JSON, and the `h as Record<string, unknown>` cast at verify-hold:34 is the only place a spread would be easy. The claim is true for verify-hold but over-generalized to 'the verify routes', and it describes a hypothetical future refactor rather than a present defect, so LOW (defensive-coding hardening) rather than MEDIUM.
 
 **Mechanism.** /api/verify-hold selects `notes, opened_by_name, released_by_name, released_reason` (:29) — the four columns its own comment at :48-53 says must never reach a scanner — returns none of them, and then widens the row's type to `const h = hold as Record<string, unknown>` (:35), which is precisely the shape that makes `...h` compile silently. /api/verify selects `superseded_at` on the document (:36) and `superseded_at` on the printed version (:56) and uses neither; the version-level one is the signal that would catch a printed version that was superseded out from under a rolled-back current_version_id. /api/verify-ticket selects `revision_count` (:51) and never reads it, which is why a ticket sitting in REVISION_REQ after an issued Rev 1 — revision_count already incremented, deliverable_rev still '1' (lib/ticketTransitions.ts:253-256) — verifies as green LATEST ISSUE.
 

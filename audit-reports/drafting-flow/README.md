@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**139 findings** — 10 CRITICAL, 48 HIGH, 81 MEDIUM — plus **14 gap specs**, all
+**139 findings** — 9 CRITICAL, 46 HIGH, 61 MEDIUM, 23 LOW — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -72,8 +72,10 @@ the original run reported.
 
 ### Root-cause clusters — read before claiming a file
 
-Four of the ten CRITICALs are the same defect seen from different angles. An
-agent claiming one file needs to know it shares a fix with three others.
+Four findings are the same defect seen from different angles — three of the nine
+CRITICALs plus `PERS-1`, which the independent pass lowered to `HIGH` on the
+grounds that the blanket policy is intra-tenant. They still share one fix. An
+agent claiming one file needs to know it shares that fix with three others.
 
 | Cluster | Findings | One fix |
 |---|---|---|

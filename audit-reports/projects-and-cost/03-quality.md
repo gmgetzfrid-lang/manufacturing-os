@@ -34,6 +34,7 @@ Whether a green item means something a person would sign.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklistEngine.ts:135-158`, `lib/checklistEngine.ts:143`, `lib/checklistEngine.ts:154-156`, `lib/checklistEngine.ts:59-63`, `lib/checklists.ts:315-320`, `lib/checklists.ts:51`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg holds. Line 143 (`if (item.status === "satisfied" && item.evidence.some((e) => e.source === "manual")) continue;`) confirms auto-satisfied items ARE re-swept — so the sweep sees the missing proof and still declines to retract. I also found the voiding case is worse than stated: the register query at lib/checklists.ts:258 (`.select("title, name, document_number").eq("collection_id", collectionId)`) filters on nothing at all, so a Voided or superseded document keeps supplying live evidence indefinitely.
 
 **Mechanism.** `applyAutoEvidence` can only ever move an item *toward* green. The downgrade branch is guarded on `open`:
 
@@ -76,6 +77,7 @@ lib/checklistEngine.ts:154 `} else if (item.status === "open") {` — the sole p
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklists.ts:288-293`, `lib/checklists.ts:290`, `lib/checklistEngine.ts:80-83`, `lib/checklists.ts:214-231`, `lib/checklistEngine.ts:74-79`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The laundering chain is real and reproducible as described — title strings become item-level greens, which become a checklist status, which becomes a proof token consumed by other checklists in the project, and no code anywhere distinguishes auto from manual at either hop. One nuance on the wording: a person is technically in the chain — someone with canManage must click "Mark complete" (QualityTab.tsx:381-384 → setChecklistStatus) — but that click attests to nothing item-level, so the substance of the finding is unaffected.
 
 **Mechanism.** Two of the eight evidence rules do not probe documents at all — they probe the platform's own quality state:
 
@@ -119,6 +121,7 @@ lib/checklists.ts:290 `miChecklistComplete: checklists.some((c) => c.kind === "m
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:599-617`, `supabase/migrations/20261013_project_controls_program.sql:141-142`, `supabase/migrations/20261013_project_controls_program.sql:156`, `supabase/migrations/20261013_project_controls_program.sql:174-175`, `supabase/migrations/20261013_project_controls_program.sql:193-194`, `app/(protected)/projects/[id]/page.tsx:407`, `supabase/migrations/20261013_project_controls_program.sql:253-288`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on all four legs, including the two claims of absence — no BEFORE DELETE trigger exists on any of project_checklists / checklist_items / turnover_items / punch_items / change_orders, and the audit row (lib/projects.ts:612-616) carries `details: { name: p.name }` with no counts. Substantially the same defect as PM-6 viewed from the quality-record side; both are accurate as written.
 
 **Mechanism.** `deleteProject` carefully enumerates what must survive or be cleaned up — checkouts and markup requests are unlinked (`project_id: null`), milestones, activity and members are deleted explicitly with a comment explaining why — and then deletes the project row. The quality program is not named anywhere in the function. It does not need to be: every quality table declares `REFERENCES projects(id) ON DELETE CASCADE` (`project_checklists` :142, `turnover_items` :175, `punch_items` :194) and `checklist_items` cascades from `project_checklists` (:156). So one DELETE silently destroys every PSSR/MI/QA-QC checklist, every checked item with its evidence and human decisions, the whole turnover package with its reviewer sign-offs, and the punch list.
 
@@ -159,6 +162,7 @@ lib/projects.ts:604-610 — `checkout_sessions`, `markup_requests`, `milestones`
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261013_project_controls_program.sql:262-288`, `supabase/migrations/20261013_project_controls_program.sql:57-65`, `app/(protected)/projects/[id]/page.tsx:68`, `app/(protected)/projects/[id]/page.tsx:133-134`, `types/schema.ts:26-46`, `components/projects/QualityTab.tsx:466-481`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, including the separation-of-duties claim of absence: nothing in lib/checklists.ts, lib/turnover.ts or the migration compares the actor against the item's creator, `created_by`, `reviewed_by`, or a required second party, and there is no signature/attestation table (grep for signature/signed_by/attest across the quality layer returns only a prose hint string in lib/turnover.ts:67). One person holding owner or Admin/DocCtrl can create the checklist, run the sweep, mark items satisfied, mark the checklist complete, and accept turnover with no second actor at any step.
 
 **Mechanism.** Every write policy on the four quality tables resolves to the same two authorities:
 
@@ -203,6 +207,7 @@ supabase/migrations/20261013:279-288 — identical `USING`/`WITH CHECK` pairs fo
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklists.ts:158-171`, `lib/checklists.ts:167`, `lib/checklists.ts:338-350`, `components/projects/QualityTab.tsx:455-464`, `components/projects/QualityTab.tsx:293-319`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The one mitigation I found and weighed: the confirm dialog at QualityTab.tsx:307-309 discloses the count of proposed N/As and says "Items you've decided by hand are never touched" — but it never says already-satisfied, evidence-bearing items are among them, and "decided by hand" means manual_note specifically, so a reviewer who clicked "✓ Satisfied"... does get a note prompt (QualityTab.tsx:428-433 always passes promptNote), while the sweep's own greens have no note and are unprotected. Minor overstatement in the wording: the flipped row is rendered at `opacity-50` with an N/A status dot, so the stale chips are greyed rather than fully green.
 
 **Mechanism.** `applyAssessment` guards on one thing only — a human's `manual_note`:
 
@@ -241,10 +246,11 @@ lib/checklists.ts:167 `if (p.applicability === "na" && item.status !== "na") pat
 
 ## QUAL-6 · A checklist item the machine turned green records no actor at all, and the sweep's audit row is a count — nothing in the system says which items were auto-satisfied or by which run
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklists.ts:311-324`, `lib/checklists.ts:315`, `lib/checklists.ts:321-323`, `supabase/migrations/20261013_project_controls_program.sql:165-167`, `lib/checklists.ts:192-196`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The core holds: the sweep stamps updated_at with no actor, and the audit row is a bare count. But the narrated scenario is impossible — updated_by_name is written only by updateChecklistItem, whose only caller always sets manual_note, and applyAutoEvidence skips any item with manual_note; so the stale-'mreyes' misattribution cannot occur (the column stays NULL). 'Nothing says which items were auto-satisfied' is also false: every auto-green carries an evidence entry with source:"auto", rendered as an emerald chip titled 'Found by the evidence sweep' (QualityTab.tsx:458-459).
 
 **Mechanism.** `runAutoEvidence`'s per-item patch is:
 
@@ -290,10 +296,11 @@ lib/checklists.ts:315 `const patch: Record<string, unknown> = { status: r.status
 
 ## QUAL-7 · Closing a punch item records an actor nobody can read, and a punch item carries no location, description or verification — the closeout snag list is a list of strings
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/turnover.ts:263-280`, `lib/turnover.ts:106-119`, `lib/turnover.ts:41-52`, `components/projects/QualityTab.tsx:685-701`, `supabase/migrations/20261013_project_controls_program.sql:191-204`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The data-model half is exactly right — a punch item is title + due date + status, and closed_by is a write-only orphan. The 'actor nobody can read' half is overstated: audit_logs records PUNCH_STATUS with the actor's email, item title and timestamp, and that trail is rendered in the project evidence pack (evidencePack.ts:193-194, 227-228), so who closed an item is recoverable.
 
 **Mechanism.** `setPunchStatus` writes `closed_at` and `closed_by`:
 
@@ -332,10 +339,11 @@ lib/turnover.ts:269 `row.closed_by = input.actor.uid;`. lib/turnover.ts:106-119 
 
 ## QUAL-8 · The checklist completion gate is computed from a read whose error is discarded, so a policy denial or a missing migration lets an entirely unverified checklist be marked complete
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/checklists.ts:102-106`, `lib/checklists.ts:214-231`, `lib/checklists.ts:218-224`, `app/(protected)/projects/[id]/page.tsx:192-200`, `components/projects/QualityTab.tsx:335-341`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The fail-open mechanism is real, but neither cited trigger is reachable. Losing Admin/DocCtrl removes the WRITE, not the SELECT — the status update would fail, not the gate. And if 20261013 were unapplied, project_checklists would not exist either, so there would be no checklist to complete. What actually survives is a transient/network error on the item read silently passing the gate.
 
 **Mechanism.** The only gate on completing a checklist reads its items through `listChecklistItems`, which discards the error:
 
@@ -382,10 +390,11 @@ lib/checklists.ts:103 — `const { data } = await supabase...` with no `error` d
 
 ## QUAL-9 · The coach tells the project owner that closeout is gated on turnover acceptance; it is not, and the gates are explicitly advisory
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectHealth.ts:228-233`, `lib/projectHealth.ts:231`, `app/(protected)/projects/[id]/page.tsx:625-651`, `app/(protected)/projects/[id]/page.tsx:645-650`, `components/projects/QualityTab.tsx:14-17`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The copy claim is accurate — the coach asserts a gate that does not exist and Confirm is never blocked. But the confirmation dialog states the true position in plain language at the exact moment of decision, so nobody reaches 'Complete' still believing the system will stop them; this is misleading marketing copy, not an operative deception.
 
 **Mechanism.** The coach item that the project page surfaces states a hard gate as fact:
 
@@ -422,10 +431,11 @@ lib/projectHealth.ts:231 `payoff: "Closeout is gated on acceptance; contractors 
 
 ## QUAL-10 · The one-click project Compliance Evidence Pack — the artifact positioned as the answer to a regulator — contains no checklist, no checklist item, no turnover item and no punch item
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/evidencePack.ts:146-162`, `lib/evidencePack.ts:218-228`, `lib/evidencePack.ts:230`, `app/(protected)/projects/[id]/page.tsx:340-348`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The structural claim holds — the pack has no quality sections. But 'contains no turnover item and no punch item' is literally false: the audit-trail section carries TURNOVER_REVIEWED / CHECKLIST_* / PUNCH_* rows with item name, status, actor and date, and a sibling one-click Report covers the quality rollups.
 
 **Mechanism.** `gatherProjectEvidence` issues exactly five queries: `projects`, `project_members`, `milestones`, `audit_logs` (filtered `resource_type='project'`), and `transmittals`. `renderProjectEvidenceHtml` renders four sections: Team & responsibilities, Schedule, Transmittals, Audit trail. There is no query and no section for `project_checklists`, `checklist_items`, `turnover_items` or `punch_items`.
 
@@ -460,6 +470,7 @@ lib/evidencePack.ts:147-154 — the five-query `Promise.all`. lib/evidencePack.t
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/QualityTab.tsx:568-582`, `components/projects/QualityTab.tsx:573-575`, `lib/turnover.ts:190-212`, `lib/checklistEngine.ts:176`, `lib/turnover.ts:223-234`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: no reopen/revoke path, no 'acceptance withdrawn' field, no audit action for one, and no nonconformance record anywhere despite the rubric scoring contractors on having an NCR process. Severity MEDIUM is right.
 
 **Mechanism.** The action buttons are rendered per current status and there is no branch for `accepted` or `waived`:
 
@@ -502,6 +513,7 @@ components/projects/QualityTab.tsx:570-582 — the four conditional buttons; no 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261013_project_controls_program.sql:272-278`, `supabase/migrations/20261013_project_controls_program.sql:250-260`, `lib/checklists.ts:130-134`, `supabase/migrations/20261013_project_controls_program.sql:153-155`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct as written, and worse than stated: lib/exportTables.ts:104 lists checklist_items among ORG_SCOPED_TABLES 'dumped by org_id', so injected rows would be pulled into workspace B's backup. In-app exposure is narrower than the summary implies — listChecklistItems (checklists.ts:103-104) and projectSnapshot.ts:80-82 both query by checklist_id, never by org_id, so org B's UI would not surface them.
 
 **Mechanism.** `checklist_items` carries `org_id` but no `project_id`; the write policy authorizes on the *parent checklist*, and the `org_id` being written is never compared to it:
 
@@ -543,6 +555,7 @@ supabase/migrations/20261013:273-277 — the policy text quoted above; the `org_
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/turnover.ts:190-212`, `lib/turnover.ts:199`, `components/projects/QualityTab.tsx:518-534`, `components/projects/QualityTab.tsx:531`, `lib/checklists.ts:266-282`, `supabase/migrations/20261013_project_controls_program.sql:181`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search — no UI or server path anywhere attaches a document to a turnover item, so the FK at 20261013…:181 is dead and the evidence gather's turnover-document branch is structurally empty. The other read of turnover_items (QuotesPanel.tsx:577) selects only `name`.
 
 **Mechanism.** `reviewTurnoverItem` accepts an optional `documentId` and writes it:
 

@@ -35,6 +35,7 @@ Candidate generation, false positives, and who may accept.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:375-385`, `lib/linkProposals.ts:181-194`, `lib/postPublish.ts:129-134`, `app/(protected)/admin/proposed-links/page.tsx:280-283`, `lib/linkProposalLogic.ts:402-412`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and nothing anywhere reverses it: grep over the repo shows proposed_links.status is only ever written to 'stale' (linkProposals.ts:186, linkProposerServer.ts:463) or decided by a human, never back to 'pending'. The upsert at linkProposerServer.ts:423-425 would refresh the row, but filterDrafts removes the draft before it can reach the queue, so the publish that was supposed to re-open the pair is exactly what seals it.
 
 **Mechanism.** At publish time, `staleProposalsForDocument` flips every pending proposal touching the document whose `source_rev` differs from the new rev to `status:'stale'` (linkProposals.ts:185-190), fired from postPublish.ts:132. Its docstring says the evidence "was read off text that is no longer current" — i.e. re-derive it from the new revision.
 But the proposer's dismissal memory does not distinguish stale from dismissed:
@@ -73,6 +74,7 @@ lib/linkProposerServer.ts:381 — `if (r.status === "pending") continue;` is the
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:189-198`, `lib/linkProposerServer.ts:152-170`, `lib/linkProposerServer.ts:236-268`, `lib/linkProposerServer.ts:366-383`, `lib/linkProposerServer.ts:296-318`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both named failures verified exactly as described, including the misleading `scanned` figure and the `inputs.mirroredDocs` (:197) that quietly records the 800. One over-generalization in the title: not EVERY input is unordered — the co-citation read at :333-339 does `.order("created_at", { ascending: false }).limit(400)`, so its truncation is at least deterministic.
 
 **Mechanism.** Nine reads take a `.limit(...)` with no `.order()` and no check for saturation, so which slice you get is arbitrary Postgres order and changes between runs:
   • knowledge_documents `.limit(BATCH * 2)` = 800 (:194) — `mirrorRows`/`sourceByKdoc` is the ONLY bridge from knowledge docs to controlled documents, so it bounds off-page continuity (:201-231), every custom skill (:296-318, which iterates `mirrorRows`), and co-citation (:346-348, which resolves citations through `sourceByKdoc`). An org with 801+ indexed documents loses the tail of all three, permanently and invisibly.
@@ -109,6 +111,7 @@ lib/linkProposerServer.ts:194 `.limit(BATCH * 2)` with BATCH=400 at :28, feeding
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `lib/linkProposerServer.ts:391-408`, `supabase/migrations/20260807_link_proposals.sql:111-113`, `lib/linkProposerServer.ts:86-101`, `lib/linkRules.ts:64-70`, `lib/answerSkillsServer.ts:66-70`, `lib/linkProposerServer.ts:423-427`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep of supabase/migrations for document_related_resources unique constraints returns exactly one hit — the partial index — and the base table (20260806_intelligence_layer.sql:68-84) declares no UNIQUE, so there is no non-partial arbiter for PostgREST to infer and the DO NOTHING raises 42P10. proposeOpcContinuity:82-88 does emit tier 'provable'/confidence 1 and splitByAutoApply:420 routes it to autoApply, so the path is reachable; the only correction is that the note IS rendered to the admin (proposed-links/page.tsx:189), just alongside autoApplied:0 — 'swallowed' is slightly strong, the failure itself is real. Approval by a human uses a plain .insert with 23505 handling (linkProposals.ts:111-127) and is unaffected.
 
 **Mechanism.** Auto-apply writes with `.upsert(rows, { onConflict: "document_id,target_document_id", ignoreDuplicates: true })` (linkProposerServer.ts:405). The only unique index on that column pair is PARTIAL:
 
@@ -145,6 +148,7 @@ lib/linkProposerServer.ts:403-407 — `.upsert(rows, { onConflict: "document_id,
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260807_link_proposals.sql:78-81`, `lib/linkProposals.ts:71-96`, `lib/linkProposals.ts:153-173`, `lib/linkProposals.ts:197-206`, `lib/acl.ts:1-8`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The asymmetry is confirmed by 20260708_acl_rls_enforcement.sql:85-87, which puts a RESTRICTIVE `documents_acl_select ... USING (node_visible(visibility, acl_index, org_id))` on documents — so document rows ARE ACL-scoped while proposed_links is not, and the leaked evidence JSONB carries exactly the sensitive payload (drawing numbers in `Off-page connector … continues onto <ref>`, `tags` arrays from proposeSharedEquipment:173-181). listPendingPairs (:197-206) reads the same table with no filter at all.
 
 **Mechanism.** The SELECT policy is org-membership only:
 
@@ -180,10 +184,11 @@ supabase/migrations/20260807_link_proposals.sql:79-81 (quoted above) — no join
 
 ## LNK-5 · "Private" Connection Skills are not private: the proposer ignores visibility entirely, and the skill's name is copied into org-readable evidence — while the reasoning-skill twin does filter correctly
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:138-140`, `lib/linkProposalLogic.ts:307-321`, `supabase/migrations/20261015_connection_skills.sql:11-14,46-50`, `lib/answerSkillsServer.ts:29-32`, `components/intelligence/SkillStudio.tsx:258-269`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The impact framing is wrong: the migration's own header (20261015_connection_skills.sql:12-14) DEFINES private as "the author's experiment; it still runs, but its findings NEVER auto-apply and only reach the normal review queue" — which is exactly what the code does (custom skills top out at 'strong', linkProposalLogic.ts:311), and SkillStudio.tsx:268 tells the connection-skill author "Either way its findings only ever QUEUE for review". So this is the declared contract, not a violated one; the residual defect is only that the shared Studio control labels it "Just me" with a Lock icon and that the skill's name rides into org-visible evidence.
 
 **Mechanism.** `customRules` selects on `!r.builtin_key && r.kind === "reference" && r.enabled && patterns.length > 0` (linkProposerServer.ts:138-140). `visibility` is never read. The rule then runs org-wide against every mirrored document and writes proposals whose evidence carries the skill's own name:
 
@@ -219,6 +224,7 @@ lib/linkProposerServer.ts:139 — `!r.builtin_key && r.kind === "reference" && r
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261015_connection_skills.sql:54-65`, `lib/linkProposalLogic.ts:254-272`, `lib/linkProposalLogic.ts:280-330`, `lib/linkProposerServer.ts:138-140`, `lib/linkProposerServer.ts:294-326`, `lib/linkRules.ts:93-109`, `app/api/links/propose/route.ts:19,32-39`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end: createLinkRule's validation (linkRules.ts:93-94) is a client-side library call, so a direct PATCH of link_rules.config bypasses it entirely, and there is no pattern-count cap anywhere. The only gate on execution is app/api/links/propose/route.ts:37 (Admin/DocCtrl), so the Viewer plants and an Admin detonates; maxDuration=60 (route.ts:19) bounds the platform kill, not the hang.
 
 **Mechanism.** Three gaps compose:
 (a) AUTHORSHIP IS UNGATED. `link_rules_insert` requires only active membership: `EXISTS (SELECT 1 FROM org_members m WHERE … m.status = 'active') AND created_by = auth.uid()` (migration :55-59). The comment justifies it — "it can only ever QUEUE proposals" — but queueing is not the risk; execution is.
@@ -253,6 +259,7 @@ lib/linkProposalLogic.ts:262-266 — `if (p.length > 200) { … } try { const re
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkRules.ts:57-82`, `supabase/migrations/20261015_connection_skills.sql:62-70`, `lib/linkProposerServer.ts:86-111`, `components/intelligence/ConnectionSkillsPanel.tsx:50-58`, `app/(protected)/intelligence/skills/page.tsx:302-347`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The functional impact checks out: disabling opc_continuity really does stop discovery, because linkProposerServer.ts:201 gates the whole entity fetch on `builtinEnabled("opc_continuity")`. One detail is worse than the finding says, not better — `mayManage = canManageOrg || mine` (skills/page.tsx:305-306) means the seeding Viewer is shown the On/Off toggle in the UI too, so no API client is even needed to disable a core detector.
 
 **Mechanism.** `seedBuiltinRules(orgId, userId)` runs from the browser on page load for ANY member who opens the skills page or the review page (skills/page.tsx:68-79, ConnectionSkillsPanel.tsx:50-58 — neither is role-gated), and stamps `created_by: input.userId` on every seeded built-in (linkRules.ts:79). The update and delete policies are:
 
@@ -286,10 +293,11 @@ lib/linkRules.ts:79 — `created_by: userId,` inside the built-in seed insert; l
 
 ## LNK-8 · Dismissing one skill's proposal permanently silences every other skill for that pair — the block-set is keyed on the pair while the uniqueness contract is keyed on (pair, proposer)
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:380-383`, `lib/linkProposalLogic.ts:404-412`, `supabase/migrations/20260807_link_proposals.sql:66-69`, `lib/linkProposalLogic.ts:388-400`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both facts are right, but the severity assumes an accident where the code documents an intent: 20260807_link_proposals.sql:66-67 says "Dismissals stay as rows so the engine never nags twice about the same pair", and the proposer repeats it at :378-379 ("a rejected pair must never come back to nag"). It is also mostly moot in practice — mergeDrafts (linkProposalLogic.ts:388-399) already collapses every pair to a single strongest draft before filtering, so two skills can never have live proposals for one pair anyway; the third index column is vestigial rather than a violated contract.
 
 **Mechanism.** The table's unique index is `(document_id, target_document_id, proposer)` (migration :68-69) — deliberately three columns, so different skills can each hold an opinion about the same pair. But `mergeDrafts` collapses to one draft per PAIR before anything is written (`key = ${d.documentId}|${d.targetDocumentId}`, :392), and `decided` is likewise keyed on the pair alone (`decided.add(\`${r.document_id}|${r.target_document_id}\`)`, :382). So the three-column index can never actually hold two rows for a pair from the engine, and a single dismissal blocks all future skills.
 
@@ -315,10 +323,11 @@ supabase/migrations/20260807_link_proposals.sql:68-69 — `CREATE UNIQUE INDEX �
 
 ## LNK-9 · GraphShapeWizard writes an undeclared provenance value that the Related panel renders as "approved" — a link nobody reviewed is badged as having come through the proposal queue
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/graph/GraphShapeWizard.tsx:130-142`, `components/documents/RelatedPanel.tsx:173-183`, `lib/relatedResources.ts:19-24`, `supabase/migrations/20260807_link_proposals.sql:95-96`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mislabel is exactly as claimed — 'user' falls through the `!== "human"` test and lands in the else branch, so it badges "approved" with the tooltip "Approved from a proposal" and no approver name. Downgrading because the impact is confined to a display chip: the row itself is honest (proposer:"answer", created_by/created_by_name set, evidence.rule "Shaped from an answer"), and a human did accept it in the wizard, so nothing fabricated an unreviewed link — it is a one-token provenance-label bug.
 
 **Mechanism.** The wizard inserts directly into document_related_resources with `origin: "user"` and `proposer: "answer"` (GraphShapeWizard.tsx:136-137). The declared domain is three values — `origin?: "human" | "system" | "proposed"` (relatedResources.ts:22) — and the column has a DEFAULT but no CHECK constraint (migration :96), so "user" is accepted. The renderer buckets by equality with a two-way fallthrough:
 
@@ -353,6 +362,7 @@ components/graph/GraphShapeWizard.tsx:136-138 — `origin: "user", proposer: "an
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposalLogic.ts:114,143,159-184`, `lib/linkProposerServer.ts:386-387`, `lib/linkProposalLogic.ts:388-400`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every element checks out, including the arithmetic (35 documents → 595 pairs). filterDrafts (linkProposalLogic.ts:404-412) removes only already-linked/already-decided pairs and does no ranking, and the only ordering in the system is display-side (linkProposals.ts:75-76), applied after the unranked 400 have already been chosen.
 
 **Mechanism.** `MAX_TAG_FANOUT = 40` (:114) is the only brake: a tag on ≤40 documents produces every pairwise combination — C(40,2) = 780 — and `shared >= 3 ? "strong" : "inferred"` (:166) means a single shared tag still queues at confidence 0.47. There is no floor (`shared >= 2` is never required) and no cap on how many inferred rows one run may add. `capped = fresh.slice(0, BATCH)` (linkProposerServer.ts:386) takes the head of a Map-insertion-ordered list — never sorted by tier or confidence — so what survives the cut is decided by iteration order, not by strength.
 
@@ -377,10 +387,11 @@ lib/linkProposalLogic.ts:166-167 — `const tier: ProposalTier = shared >= 3 ? "
 
 ## LNK-11 · The 'semantic' proposer is advertised in the label table but never emitted, and the server-side revision-invalidation function has no callers
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposals.ts:47-53`, `lib/linkProposalLogic.ts:20`, `lib/linkProposerServer.ts:457-472`, `lib/postPublish.ts:129-134`, `lib/linkProposals.ts:181-194`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both absence claims verified by repo-wide search, so the finding is factually airtight — but it describes dead code and a stale label, which is LOW, not MEDIUM. Worth noting the finding actually understates one consequence it stumbled on: because postPublish routes through the client function, the UPDATE runs under the publisher's RLS and proposed_links_write (20260807:84-90) restricts writes to Admin/DocCtrl/Manager/Supervisor, so a publish by any other role silently stales nothing and returns 0 (linkProposals.ts:192).
 
 **Mechanism.** Two pieces of scaffolding that read as working features. (a) `PROPOSER_LABELS` maps `semantic: "Similar content"` (linkProposals.ts:51) and the type union includes it (:11, linkProposalLogic.ts:20), but no code path ever sets `proposer: "semantic"` — the four emitters are 'opc' (:86), 'alias'|'tag' (:171), `rule:${id}` (:310) and 'co_citation' (:371). The migration is honest about this ("'semantic' (embedding similarity, reserved)", 20260807:32-33); the label table is not. The org HAS an embeddings layer (lib/ai/embeddings.ts, the semantic-layer migration), so this is a real, buildable gap presented as an existing capability. (b) `invalidateProposalsForRevision` — the org-scoped, service-role, correctly-`.eq("org_id")`-filtered version of the stale sweep — is exported and never imported; the only live caller is the browser-side `staleProposalsForDocument` (postPublish.ts:132), which omits the org filter and runs under proposed_links_write RLS (Admin/DocCtrl/Manager/Supervisor). A publisher outside those four roles silently updates zero rows — the function returns 0 on error with no signal (linkProposals.ts:192).
 
@@ -410,6 +421,7 @@ lib/linkProposals.ts:51 — `semantic: "Similar content",` in PROPOSER_LABELS. S
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposerServer.ts:375-386`, `lib/linkProposerServer.ts:410-428`, `lib/linkProposerServer.ts:438-447`, `app/(protected)/admin/proposed-links/page.tsx:105-131`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: nothing in the loop can shrink `fresh`, because the queued rows stay 'pending' and the auto-applied ones would only shrink it via `linked`, which LNK-3's 42P10 prevents in the first place. Drafts 401+ are unreachable until a human decides the first 400.
 
 **Mechanism.** `fresh = filterDrafts(drafts, { linked, decided })`; `capped = fresh.slice(0, BATCH)` with BATCH=400; `more: fresh.length > capped.length` (:386, :444). The rows just written are status 'pending', and pending is explicitly skipped when building `decided` (:381, comment: "refreshed below, not blocked"). So on pass 2 the engine reads the same documents, recomputes the same drafts through the same deterministic Map-insertion order, and `fresh` is byte-identical to pass 1. `capped` is again the same first 400. The queue upsert uses `ignoreDuplicates: false`, so it UPDATEs those 400 rows in place and `proposed = rows.length` (:427) reports 400 again regardless of what actually changed. `more` is still true. The UI loops until `pass < 12` (proposed-links/page.tsx:107) and accumulates `proposed: (last?.proposed ?? 0) + (json.proposed ?? 0)` (:121).
 
@@ -440,6 +452,7 @@ lib/linkProposerServer.ts:381 `if (r.status === "pending") continue;` + :386 `co
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/linkProposalLogic.ts:39-43`, `lib/linkProposals.ts:108-127`, `lib/relatedResources.ts:33-36`, `lib/relatedResources.ts:100-109`, `components/documents/RelatedPanel.tsx:173-183`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The asymmetry is real and is decided by UUID ordering, so roughly half of approved links render with the provenance chip and half do not. RelatedPanel.tsx:173-183 renders the "approved" badge and evidence tooltip only from the listRelatedResources rows, confirming the backlink side loses exactly the evidence the feature exists to show.
 
 **Mechanism.** `orderPair` normalizes endpoints smallest-id-first so A→B and B→A cannot both exist (linkProposalLogic.ts:41-43) — correct for dedup. `approveProposal` then inserts `document_id: p.document_id, target_document_id: p.target_document_id` verbatim (linkProposals.ts:113-114), so `document_id` is whichever UUID sorts lower. But the reading side is directional: `listRelatedResources` filters `.eq("document_id", documentId)` (relatedResources.ts:36); the reverse direction is only reachable through `listBacklinks`, a separate query with a different render and a 25-row cap (:103-105). A manually-added link, by contrast, is created from the document the user is standing on, so its direction carries intent.
 

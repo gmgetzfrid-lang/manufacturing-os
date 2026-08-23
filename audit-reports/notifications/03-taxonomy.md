@@ -35,10 +35,11 @@ Every distinct way this app tells a person something, what each is for, and wher
 
 ## TAX-1 · Clicking a section badge opens the Notification Center UNFILTERED, so the panel that promises "click a 10, see the 10" shows a different number than the badge
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/Sidebar.tsx:532-545`, `components/notifications/NotificationCenter.tsx:76-85`, `components/notifications/NotificationCenter.tsx:112-117`, `components/cockpit/AttentionFeed.tsx:22`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Factually exact — I found no section-aware open() path anywhere (all five openCenter call sites pass only 'all' or 'action'), and even the 'red' branch maps a per-section actionRequired badge onto an app-wide action count. Severity is one notch high, though: nothing is lost or blocked — every item is present, navigable and additionally narrowable by AttentionFeed's KIND_GROUPS second axis (lines 64-69); the harm is a misleading count, not an unreachable item.
 
 **Mechanism.** `SidebarLeaf` renders the per-section count from `sectionCounts[section]`, but its click handler calls `openCenter('action' | 'all')` - an `AttnFilter` with no section axis at all. `AttnFilter` is only `"all" | "action" | "unread"`. The Center then renders `items` (the whole org-wide feed) and its header states `${counts.all} items - every badge in the app counts these`, which is false for every section badge.
 
@@ -68,11 +69,12 @@ components/cockpit/AttentionFeed.tsx:22 -- `export type AttnFilter = "all" | "ac
 
 ## TAX-2 · Every PSM/OSHA compliance notification kind falls through `sectionForKind` to section 'other', which no sidebar row renders - the badge trail dies before it starts
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:100-102`, `components/navigation/Sidebar.tsx:229-235`, `app/api/cron/maintenance/route.ts:361-374`
 - **Also surfaced independently as** [`DELIV-3`](./02-delivery-integrity.md#deliv-3) — two lenses found this separately. Fix once.
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real and the review_due walkthrough is correct. Two corrections: the title's "Every" is false — `doc_superseded` is in COMPLIANCE_KINDS and DOES map to 'documents' (line 82) — and the trail does not fully die, since these items still appear in the bell/Notification Center/`/inbox` (NotificationCenter.tsx:77 counts all items) and group under AttentionFeed's "Documents & revisions" matcher (line 66 matches `review`/`ack`/`effective`/`retention`). That is a routing/discoverability gap, not a dropped obligation.
 
 **Mechanism.** `sectionForKind` enumerates 23 kinds and returns `'other'` for everything else. Of the 48 declared kinds, 25 hit that default - including every kind the maintenance cron itself lists as compliance-critical: `review_due`, `review_requested`, `review_overdue`, `review_complete`, `review_invalidated`, `review_alternate_activated`, `ack_requested`, `ack_overdue`, `ack_unsatisfiable`, `retention_eligible`, `access_recert_due`, `effective_now`, `owner_behind`, `deletion_requested`, plus `library_doc_added`, `library_doc_revised`, `revision_published_over_checkout`, `legal_hold_placed`, `legal_hold_released`, `owner_assigned`, `security_export`, `project_comment`, `orchestrator_message`. The Sidebar reads only `sectionCounts.documents`, `.projects` and `.requests` - `.other` and `.scratchpad` are computed and thrown away. All of these kinds have live producers (lib/reviewControl.ts, lib/acknowledgments.ts, lib/retention.ts, lib/effectiveDate.ts, lib/accessRecert.ts, lib/postPublish.ts, lib/ownership.ts). `'scratchpad'` is itself dead: app/(protected)/scratchpad/page.tsx is a bare `redirect("/inbox")` stub.
 
@@ -103,10 +105,11 @@ app/api/cron/maintenance/route.ts:361-368 -- `const COMPLIANCE_KINDS = [\n  "rev
 
 ## TAX-3 · Force-releasing a checkout emits five signals under two different names, and the tone of every one of them disagrees with the feed's own severity
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checkoutEpisodes.ts:651-681`, `components/providers/NotificationListener.tsx:61-70`, `components/providers/NotificationListener.tsx:90`, `hooks/useTicketNotifications.ts:279`, `lib/notify/dispatch.ts:82-131`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Every element checks out — the system message toast, the notification-row toast, the durable bell row, the email (lib/notify/dispatch.ts:83 `const channels = input.channels ?? ["inapp", "email"]` with no override at the call site), and the info tone on an item the feed itself flags action-required. HIGH is a notch too far because no signal is lost: the victim gets a durable action-required feed row plus email; the defect is duplicate, mis-toned, mis-named noise.
 
 **Mechanism.** `forceRelease` writes a `checkout_messages` system row whose text literally begins "SYSTEM ALERT:", then calls `emit()` which writes a `checkout_released` notification AND queues an email. The system row toasts to the whole org as title **"System Alert"** with `type: "info"` (blue Info icon). The notification row toasts a second time as **"Your checkout was force-released"**, also `type: "info"` - because `isError` only covers `checkout_conflict` and `hold_opened`. Yet the same `checkout_released` kind IS in the feed's `actionKinds`, so the bell renders it orange with "ACTION NEEDED". One event: two names, two blue toasts, an orange bell row, a sidebar badge and an email.
 
@@ -141,6 +144,7 @@ hooks/useTicketNotifications.ts:279 -- `const actionKinds = new Set(['checkout_c
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:38-73`, `components/providers/NotificationListener.tsx:80-100`, `lib/activityThread.ts:97-99`, `lib/activityThread.ts:153-164`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. I specifically hunted for the guard that would refute the broadcast — a document-level RLS predicate or a client-side access check before showToast — and there is none in either place. Recipients of the durable notification get two cards with different wordings (amber warning + blue info), and every other active org member gets the raw message text regardless of library or document permission, which is the confidentiality angle that keeps this at HIGH.
 
 **Mechanism.** `postActivity` inserts into `checkout_messages`, then fire-and-forgets `notifyCheckoutActivity` which inserts a `checkout_message` row into `notifications`. `NotificationListener` subscribes to BOTH tables at once: channel 1 is filtered `org_id=eq.${activeOrgId}` (the whole workspace, no ACL check on the document), channel 2 is filtered `user_id=eq.${uid}`. A participant therefore matches both and gets two toast cards for the same post - one titled `New Message from ${data.user_name}` with the raw text, one titled `${userName} posted to ${label}` with a 140-char snippet. Everyone else in the org gets the first toast even if they cannot open the document.
 
@@ -171,10 +175,11 @@ components/providers/NotificationListener.tsx:46 -- `filter: `org_id=eq.${active
 
 ## TAX-5 · Six independent hand-maintained taxonomies classify the same `notifications.kind` string; none derive from a shared registry, and they contradict each other
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:10-58`, `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:279`, `components/notifications/NotificationBell.tsx:19-44`, `components/cockpit/AttentionFeed.tsx:36-53`, `components/cockpit/AttentionFeed.tsx:64-75`, `components/providers/NotificationListener.tsx:90`, `app/api/cron/maintenance/route.ts:361-374`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Factually airtight — eight, not six, hand-maintained kind classifiers exist and none derives from a registry; 'review_requested' likewise hits KIND_GROUPS 'documents' (k.includes("review")) while sectionForKind falls through to 'other'. Downgraded to MEDIUM because the demonstrated user-visible consequence is which filter chip a row files under (cosmetic/maintainability); no data is lost and no obligation is hidden by this finding on its own.
 
 **Mechanism.** `NotificationKind` (lib/inAppNotifications.ts:10-58) declares 48 kinds. Six separate places then re-classify that same string, each with its own hand-written list and its own matching strategy (exact switch vs Record lookup vs substring `includes`): (1) `sectionForKind` -> which sidebar row badges; (2) `actionKinds` -> whether the feed says "Action needed"; (3) `KIND_ICON` -> the bell's icon; (4) `attentionVisual` -> the feed's icon+tone; (5) `isError` -> the toast's colour; (6) `COMPLIANCE_KINDS` -> whether it earns an escalation email. No table, constant, or type ties them together, so adding a kind silently gets six different default treatments. This IS the answer to "are alerts and notifications the same thing": the code has one storage concept (`notifications`) and six competing meanings layered on top of it.
 
@@ -207,10 +212,11 @@ components/cockpit/AttentionFeed.tsx:44 -- `if (k.includes("rev") || k.includes(
 
 ## TAX-6 · The bell badge and the Notification Center are hard-capped at 50 unread notification rows, so a busy controller's true backlog is unreachable and unknowable
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:176`, `lib/inAppNotifications.ts:157-174`, `lib/inAppNotifications.ts:176-185`, `hooks/useTicketNotifications.ts:311-312`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The 50-row ceiling and the 'mark read → older rows page in → badge does not move' behavior are both real and confirmed. Downgraded to MEDIUM because the compliance backlog is NOT unknowable: lib/inbox.ts:249/309 computes an uncapped exact unread count, and /inbox renders dedicated, independently-sourced obligation lists — `data.reviewCyclesDueOnMe` (inbox/page.tsx:400), `data.distributionAcksPendingOnMe` (:416), `data.accessRecertsDue` (:430), plus listMyPendingAcks/listMyPendingReviews — so the actual PSM work items remain reachable outside the truncated bell feed.
 
 **Mechanism.** `listMyNotifications({ onlyUnread: true, limit: 50, orgId })` applies `.limit(50)` server-side. `count` is then `items.length`, i.e. tickets + at most 50 notification rows. There is no pagination and no "N more" indicator - `AttentionFeed`'s "Show 30 more" only paginates within the 50 already fetched. `countUnread()` exists in lib/inAppNotifications.ts:176-185 and would give the true number, but the hook never calls it.
 
@@ -244,6 +250,7 @@ hooks/useTicketNotifications.ts:311-312 -- `/** The single count every surface b
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:252-256`, `hooks/useTicketNotifications.ts:305`, `hooks/useTicketNotifications.ts:313-315`, `components/cockpit/AttentionFeed.tsx:85-89`, `components/notifications/NotificationCenter.tsx:76-80`, `app/(protected)/inbox/page.tsx:72-77`, `components/dashboard/widgets.tsx:673-677`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg. `unreadCount` is dead — repo-wide grep for `unreadCount` returns only its own definition and return in the hook, no consumer; the same is true of `countUnread` and of lib/inbox.ts's `unreadNotificationCount` (declared :110, computed :249, returned :309, referenced only by a test fixture), so there is in fact a fourth orphaned 'unread' quantity the finding did not name.
 
 **Mechanism.** Three distinct "unread" concepts share the word. (1) `notifications.read_at IS NULL` - the DB truth, driving `listMyNotifications({onlyUnread:true})`. (2) `tickets.unread_by` - a per-ticket array feeding the hook's `unreadCount` (only tickets that are unread AND not action-required). (3) `counts.unread` - computed independently in three separate files as `items.filter(i => !i.actionRequired).length`, i.e. "everything that isn't an action item", which includes notification rows regardless of read state. The `AttnFilter` key is literally `"unread"` but its user-facing label is `"Activity"`. The hook's own `unreadCount` and `totalNotifications` exports are consumed by nothing - verified with two search shapes (`rg -i unreadcount` and `grep -rn unreadCount --include=*.ts --include=*.tsx`), both returning only the three definition lines inside the hook itself.
 
@@ -278,6 +285,7 @@ components/notifications/NotificationCenter.tsx:76-80 -- `const counts = { all: 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/KnowledgeIndexIndicator.tsx:50-55`, `components/providers/KnowledgeIndexIndicator.tsx:91`, `components/documents/EditOverlapBanner.tsx:41-42`, `components/documents/EditOverlapBanner.tsx:133-137`, `components/ui/FirstRunHint.tsx:26-50`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Substance holds: both dismissals are ephemeral React state and the indexing card genuinely un-hides itself whenever the poll finds queued work. One imprecision worth recording — the comment at :50-55 ('new work must NOT re-expand a card the user deliberately tucked away') governs `minimized`, not `hidden`, and `minimized` is in fact never reset by the drain, so the code does not literally contradict that comment; it fails to extend the same stickiness to the Dismiss affordance.
 
 **Mechanism.** `KnowledgeIndexIndicator` documents `minimized` as "Sticky across drain passes - new work must NOT re-expand a card the user deliberately tucked away", but the sibling `hidden` state is reset to `false` inside the drain loop the moment a new document is picked up, and neither flag is persisted. `EditOverlapBanner`'s `dismissed` and `nudged` are plain component `Set`s - cleared by any remount or navigation. Contrast `FirstRunHint`, the only surface in the app that persists a dismissal (localStorage, `first_run_hint:` prefix, hydration-safe via `useSyncExternalStore`).
 
@@ -311,6 +319,7 @@ components/documents/EditOverlapBanner.tsx:41-42 -- `const [dismissed, setDismis
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260723_notifications_unify.sql:86`, `lib/notify/dispatch.ts:89-103`, `lib/inAppNotifications.ts:79-98`, `components/providers/ToastProvider.tsx:40-49`, `components/ui/CornerDock.tsx:25`, `app/(protected)/settings/notifications/page.tsx:7-9`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg verified: no in-app preference gate, no throttle, no toast cap, and the dock cannot scroll or clip a tall stack. NotificationListener.tsx:80-100 fires one showToast per realtime INSERT with no coalescing, so an N-row cron burst does produce N stacked cards.
 
 **Mechanism.** `emit()` gates the email channel through `queueEmail`, which reads `notification_preferences`. The in-app branch calls `notifyMany` unconditionally - `notify()` does a bare INSERT with no preference lookup. `inapp_enabled` (added by the unify migration "the unified dispatcher honors") is read nowhere (verified with `grep -rn inapp_enabled --include=*.ts --include=*.tsx` -> zero app hits; `rg` over all globs -> only the migration and schema.sql). `NotificationListener` then toasts EVERY inserted row for the user with no kind filter and no rate limit, and `ToastProvider.showToast` appends without a cap into a `CornerDock` that has no `max-height` and no `overflow`.
 
@@ -347,6 +356,7 @@ components/ui/CornerDock.tsx:25 -- `className="fixed bottom-4 right-4 z-[300] fl
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:134`, `components/documents/EditOverlapBanner.tsx:79-97`, `components/documents/DistributionRecall.tsx:48-56`, `lib/staleCopies.ts:182-208`, `lib/orchestrator/tools.ts:505-515`, `app/(protected)/requests/[id]/page.tsx`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. All four nudge paths require a document_id (the orchestrator tool at tools.ts:495 loads `d.document_number` / `d.library_id` before emitting), so none is reachable from a ticket stuck at PENDING_FINAL_APPROVAL.
 
 **Mechanism.** `useTicketNotifications` is imported by exactly six files - Sidebar (:124), NotificationBell (:54), NotificationCenter (:55), dashboard widgets (:669 and :1223), and the inbox page (:38). Verified with two search shapes (`rg -n useTicketNotifications --glob '*.ts' --glob '*.tsx'` and `grep -rn useTicketNotifications --include=*.tsx`). No documents page, library page, folder tree, FileExplorer, request list or project page reads it, so no surface below the nav rail has the data to render a badge - the chain is not broken, it was never built. (As a side effect three to five copies of the hook mount simultaneously, each opening its own realtime channel and re-running the full up-to-500-row ticket fetch on every org-wide ticket or notification change.) Separately, three distinct implementations of "poke a specific colleague" exist under three names - `sendHeadsUp` (EditOverlapBanner, copy "Send heads-up"/"Heads-up sent", kind `overlap_advisory`), `nudgeStaleHolders` (copy "Recall sent to N people", kind `doc_superseded`), and the orchestrator's `notify_personnel` tool (title "About <docnum>", kind `orchestrator_message`). `rg -i 'nudge|remind|poke|heads.?up'` over app/(protected)/requests/[id]/page.tsx returns nothing.
 
@@ -383,6 +393,7 @@ lib/orchestrator/tools.ts:509-511 -- `kind: "orchestrator_message",\n      title
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageAlerts.ts:56-65`, `lib/storageUsage.ts:250-258`, `lib/inAppNotifications.ts:10-58`, `supabase/migrations/20260621_in_app_notifications.sql:17`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified end to end — these kinds miss KIND_ICON (NotificationBell.tsx:166 falls back to `Bell`), fall through sectionForKind's default to 'other' (which no sidebar row badges), and match no KIND_GROUPS predicate, so groupOf() returns 'other' and no chip is rendered for them (AttentionFeed.tsx:144-158 only maps KIND_GROUPS).
 
 **Mechanism.** `notifications.kind` is untyped `TEXT` in SQL with no CHECK constraint. Two producers bypass `notify()`/`notifyMany()` entirely and insert raw rows with kinds absent from the TypeScript union: `storage_alert` (lib/storageAlerts.ts) and template-built `storage_platform_r2` / `storage_platform_db` (lib/storageUsage.ts, `kind: \`storage_${alert.key}\``). Because they are not in the union, they miss `KIND_ICON`, miss every `sectionForKind` case, miss `KIND_GROUPS` (no substring predicate matches "storage_"), miss `actionKinds`, and miss `COMPLIANCE_KINDS`. TypeScript cannot catch it because the insert is an untyped object literal against an untyped column.
 
@@ -414,6 +425,7 @@ supabase/migrations/20260621_in_app_notifications.sql:17 -- `  kind TEXT NOT NUL
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:226-240`, `public/sw.js:241-259`, `supabase/migrations/20260804_push_subscriptions.sql:1-36`, `supabase/migrations/20260723_notifications_unify.sql:85-87`, `lib/notify/dispatch.ts:20`, `components/pwa/ServiceWorkerManager.tsx:30-51`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigation found: nothing calls registration.pushManager.subscribe, no VAPID key exists anywhere, no sender writes to the Web Push endpoint, and settings/notifications/page.tsx's Prefs (:24-31) omits push_enabled entirely. lib/schemaExpectations.ts:99 additionally makes the health check demand a table for a feature that has no client or server half.
 
 **Mechanism.** `public/sw.js` registers a `push` listener that calls `self.registration.showNotification(...)` and a `notificationclick` listener that focuses/opens the target URL - the entire receive side is done. `push_subscriptions` (endpoint, p256dh, auth, last_reminded_at) exists with per-user RLS and a comment saying "The reminder cron (service role) reads every row". But no code calls `pushManager.subscribe`, no code inserts into `push_subscriptions`, no VAPID key appears anywhere, and no code sends web-push. Verified with three search shapes (`rg -niE 'web-?push|pushManager|requestPermission|showNotification'` over ts/tsx; `grep -rn push_subscriptions --include=*.ts --include=*.tsx`; `grep -rniE 'vapid'` over ts/tsx/sql/json/mjs): the only ts/tsx hits for `push_subscriptions` are lib/schemaExpectations.ts:99, lib/exportTables.ts:167 and lib/dataRestore.ts:92 - schema bookkeeping, never a read or write. `NotifChannel` in the dispatcher is only `"inapp" | "email"`.
 
@@ -450,6 +462,7 @@ lib/notify/dispatch.ts:20 -- `export type NotifChannel = "inapp" | "email";`
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checkoutEpisodes.ts:670-672`, `app/api/cron/maintenance/route.ts:344-353`, `lib/staleCopies.ts:195-207`, `app/api/intake/upload/route.ts:349-351`, `app/api/cron/maintenance/route.ts:370-373`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and understated if anything: doc_superseded has eight distinct producers carrying at least four unrelated meanings, and checkout_released has three (checkoutEpisodes force-release, the cron stale-checkout escalation, and lib/projects.ts:1107). Nothing downstream can tell them apart — kind is the only discriminator any icon, tone, section or future mute/push filter has.
 
 **Mechanism.** `kind` is the only routing/classification key the six taxonomies have, so overloading it makes every downstream decision wrong for at least one of the meanings. `checkout_released` is written both by `forceRelease` (title "Your checkout was force-released", audience = the victim) and by `escalateStaleCheckouts` (title "Checkout held N days - review needed", audience = Admin/DocCtrl about someone else). Both are flagged `actionRequired` by `actionKinds` and drawn with the same `Lock` icon. `doc_superseded` is written by the real supersede path, by `nudgeStaleHolders` as a manual recall (`metadata: { recall: true }`), and by the intake auto-publish path - and the cron's own comment admits "Manual distribution-ack requests/re-nudges ride on doc_superseded".
 
@@ -485,6 +498,7 @@ app/api/cron/maintenance/route.ts:370-372 -- `// Manual distribution-ack request
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/ui/CornerDock.tsx:3-13`, `components/providers/BackupIndicator.tsx:27`, `components/pwa/ServiceWorkerManager.tsx:74-88`, `components/projects/UndoToastHost.tsx:21`, `components/system/UpdatePill.tsx:41-48`, `app/(protected)/layout.tsx`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed including simultaneous mounting: app/(protected)/layout.tsx:61-65 mounts UpdatePill, CornerDock, BackupIndicator and KnowledgeIndexIndicator; app/layout.tsx:93 mounts ServiceWorkerManager; UndoToastHost is mounted by components/projects/ExecutionView.tsx:926 — so the Projects → Execution scenario has all of them live at once, and the two different 'new version' wordings come from two independent detectors (a waiting service worker vs. a polled /api/version build id).
 
 **Mechanism.** `CornerDock` declares itself "ONE bottom-right corner for every floating surface" at z-[300]; toasts, UploadIndicator and KnowledgeIndexIndicator portal into it. But `BackupIndicator` never imports `CornerPortal` - it pins `fixed bottom-5 left-5 z-[300] w-[340px]`. `ServiceWorkerManager` (mounted globally in app/layout.tsx) pins `fixed bottom-4 left-4 z-[200]` - the same corner, 1px offset, lower z, so the 340px backup card paints over it. `UndoToastHost` (mounted in components/projects/ExecutionView.tsx:926) pins `fixed bottom-4 left-1/2 -translate-x-1/2 z-[280]` - bottom-centre. Separately, `UpdatePill` (top-centre, z-[100], polls /api/version) and `ServiceWorkerManager` (bottom-left, watches the SW waiting worker) are two independent detectors of the same fact with two different wordings, mounted in two different layouts so both can be live at once.
 

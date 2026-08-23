@@ -32,10 +32,11 @@ Which parts of the app notify, which are silent, and which vocabulary is dead. T
 
 ## PROD-1 · 26 of 48 NotificationKinds badge nothing: sectionForKind drops the entire compliance vocabulary into an unrendered 'other' bucket
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:124-132`, `components/navigation/Sidebar.tsx:229-235`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The claim is accurate and precisely counted. Downgraded from HIGH to MEDIUM because the summary's 'the user's legal obligation to read' framing overstates the blast radius: the notification is NOT swallowed — hooks/useTicketNotifications.ts:311 exposes `count: items.length` over the full merged feed, so the bell badge, NotificationCenter, and app/(protected)/inbox/page.tsx:36 (which consumes the same `items`) all surface ack_requested. Only the per-section sidebar badge is missing, and document-level AckSection/AckPill surfaces exist independently. Consistent with OS-12, which grades the identical defect MEDIUM.
 
 **Mechanism.** sectionForKind() switches on only 22 of the 48 union members plus 'ticket'; everything else hits `default: return 'other'`. emptySectionCounts() allocates five buckets, but Sidebar.tsx consumes exactly three — sectionCounts.documents, sectionCounts.projects, sectionCounts.requests. 'scratchpad' and 'other' are tallied and thrown away. The 26 unmapped kinds are: revision_published_over_checkout, library_doc_added, library_doc_revised, project_comment, task_reminder, review_due, owner_assigned, owner_behind, deletion_requested, ack_requested, ack_complete, ack_overdue, ack_unsatisfiable, review_requested, review_signed, review_invalidated, review_complete, review_overdue, review_alternate_activated, effective_now, retention_eligible, legal_hold_placed, legal_hold_released, access_recert_due, orchestrator_message, security_export — plus the off-union storage_* kinds. This is the mechanical root of the owner's complaint #1: the badge cannot continue down the chain because for the PSM-critical kinds it never appeared on a section at all.
 
@@ -83,6 +84,7 @@ components/navigation/Sidebar.tsx:229 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/request-access/route.ts:44-57`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep for `access_requests` returns only this route plus lib/schemaExpectations.ts:31, lib/dataRestore.ts:315, lib/exportTables.ts:91 and the migration — no producer and no reader. The finding's own summary is actually too charitable: it says an admin can find it by 'navigating to the members/access screen', but no such screen exists, so the row is unreachable from the UI entirely.
 
 **Mechanism.** POST /api/auth/request-access inserts an access_requests row and returns { ok: true }. There is no notify(), no emit(), no email_notifications insert, and no notifications insert anywhere in the file. No org Admin or DocCtrl is told a person is waiting at the door. Two shapes searched: grep -rln 'access_request|accessRequest' across app/lib/components/supabase returned only this route, lib/schemaExpectations.ts, lib/exportTables.ts, lib/dataRestore.ts and one migration — i.e. no other file writes or reacts to the table; and the subsystem sweep for producers (notifyMany|inAppNotifications|notify/dispatch|from("notifications")|queueEmail) over every file mentioning access_requests returned an empty producer set.
 
@@ -123,6 +125,7 @@ app/api/auth/request-access/route.ts:44-57 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/branches.ts:148`, `lib/branches.ts:204-215`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed asymmetry, and it is worse than stated: resolveBranch passes `actorUserId: input.actorUserId`, which dispatch.ts:77 (`ids.delete(input.actorUserId)`) strips — so when the brancher resolves their own branch the recipient set is empty and emit() returns at dispatch.ts:84 before writing anything. The stale branch_open row is also not auto-reconciled: the cleanup at useTicketNotifications.ts:188-209 only touches rows carrying `metadata.status` + `metadata.action`, and announceBranchOpened's metadata is `{ branchId }` only.
 
 **Mechanism.** announceBranch emits branch_open to `audience: { involved, roles: ["DocCtrl"] }` — every DocCtrl in the org gets an action-required alert (branch_open is in actionKinds at useTicketNotifications.ts:279). resolveBranch emits branch_resolved to `audience: { involved: [branch.createdBy] }` — the DocCtrl role pool is not in the audience. The opening and closing halves of the same workflow have asymmetric audiences.
 
@@ -166,6 +169,7 @@ lib/branches.ts:204-215 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notify/dispatch.ts:36-41`, `lib/distributionAcks.ts:145`, `lib/staleCopies.ts:205`, `lib/revisionImpact.ts:148`, `lib/workPackages.ts:286`, `lib/checkoutEpisodes.ts:676`, `lib/projects.ts:706`, `lib/notify/recipients.ts:65-72`, `lib/ticketTransitions.ts:130-132`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The 13-of-17 count is exact, and `audience.projectId` is genuinely never supplied, which makes resolveProjectMembers (lib/notify/recipients.ts:65-72) reachable only through a branch nothing takes — its sole references are the import and the call at dispatch.ts:74. Cited lib/ticketTransitions.ts:130-132 is not an emit() site but does hardcode recipients (`newUnreadBy = [ticket.requesterId, ticket.assignedDrafterId]`), consistent with the claim.
 
 **Mechanism.** The dispatcher offers four audience sources: involved, followers, roles, projectId. Enumerating every `audience: {` block in the codebase yields 17 call sites. Only four pass `followers: true` (holds.ts:252, postPublish.ts:46, postPublish.ts:60, documents/[libraryId]/page.tsx:2313). Only two pass `roles` (holds.ts:252, branches.ts:148). ZERO pass `projectId` — resolveProjectMembers() at recipients.ts:65 is reachable only through a branch no caller takes. The remaining 13 sites pass a hand-built `involved` array, so a user who pressed the WatchButton on that document receives nothing. `channels` is likewise never passed by any caller (grep for `channels: [` returns nothing), so every emit always sends both in-app and email. The same hardcoding appears on the ticket side: computeTransition's default audience is `[ticket.requesterId, ticket.assignedDrafterId]` — assignedEngineerId is absent, even though app/api/tickets/comment/route.ts:92 correctly does `if (ticket.assignedEngineerId) involved.add(ticket.assignedEngineerId)`. The two ticket audiences disagree.
 
@@ -217,6 +221,7 @@ lib/ticketTransitions.ts:130-132 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CsvImportModal.tsx:166`, `app/(protected)/documents/[libraryId]/page.tsx:2300-2314`, `app/(protected)/documents/[libraryId]/page.tsx:2508`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: notifyLibrarySubscribers is a closure declared inside handleStagedUpload (page.tsx:2299-2315), so it is not even in scope for the CSV path, and the onImported handler does no notification of any kind. Library watchers get nothing from a CSV import.
 
 **Mechanism.** There are exactly two client paths that insert into the documents table (grep for `from("documents")` combined with insert returns two hits). The staged-upload path defines notifyLibrarySubscribers() at page.tsx:2300 and calls it once at page.tsx:2508 with kind 'library_doc_added' and audience { followers: true }. CsvImportModal.tsx:166 inserts documents with no notification at all — grep of the file for 'notify|emit|dispatch|notifications' returns nothing. So library_doc_added, already the least-covered kind (a single emitter), is skipped entirely by the bulk-import route.
 
@@ -256,6 +261,7 @@ components/documents/CsvImportModal.tsx:166 (the path that does not) —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/changeOrders.ts`, `lib/costs.ts`, `lib/checklists.ts`, `lib/turnover.ts`, `lib/companies.ts`, `lib/equipmentBridgeServer.ts`, `lib/documentShares.ts`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim of absence verified repo-wide, including the punch-item code (which lives in lib/turnover.ts and lib/companies.ts, both zero) and the checklist API route. No caller-side compensating notification was found.
 
 **Mechanism.** Two-shape verification. Shape 1: grep -c 'notify|queueEmail|emit(|notifications' over each file — all return 0. Shape 2: a subsystem sweep that collected every file mentioning change_orders/changeOrders, checklists, turnover, punch_items, equipment_registry, cost_items, lib/companies and document_shares, then grepped that whole file set for any producer pattern (notifyMany|inAppNotifications|notify/dispatch|from("notifications")|queueEmail) — every one returned an empty producer set. These are the modules shipped by tasks #189-#195 (the CV project-controls program); none of them were wired to the notification spine.
 
@@ -291,6 +297,7 @@ Producer sweep result (each subsystem's full file set grepped for any notificati
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:176-185`, `lib/notify/dispatch.ts:65-79`, `lib/notify/dispatch.ts:42-43`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Two of three sub-claims are exactly right and the >50-unread undercount consequence is confirmed. One correction: `resolveRecipients` is not literally callerless — it has one internal caller at lib/notify/dispatch.ts:83 (`const recipients = await resolveRecipients(input)`); what is unused is its documented external 'preview whom-would-this-notify' purpose (dispatch.ts:65-66).
 
 **Mechanism.** countUnread(orgId) is exported and has zero call sites — verified with two shapes: bare `countUnread` across app/lib/components/hooks/scripts/types (1 hit, the definition) and case-insensitive `countunread` across the whole tree excluding node_modules/.next/.git (1 hit, the same definition). Every surface instead calls useTicketNotifications, which does its own listMyNotifications({ onlyUnread: true, limit: 50 }) and reports `count: items.length`. resolveRecipients is exported with the comment "so callers can preview/whom-would-this-notify without sending" — its only caller is emit() eight lines below it. The `channels?: NotifChannel[]` option documented as "Pass a subset to force-limit a noisy event" is passed by no call site (grep for `channels: [` returns nothing), so `input.channels ?? ["inapp","email"]` always takes the default and every notification is dual-channel.
 
@@ -329,6 +336,7 @@ hooks/useTicketNotifications.ts:176 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:33-36`, `lib/inAppNotifications.ts:16`, `hooks/useTicketNotifications.ts:80-87`, `components/notifications/NotificationBell.tsx:26`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All five kinds confirmed emitter-free. The checkout_handoff half is also confirmed downstream: CheckInPanel.tsx:423-428 routes handoff_release through postHandoff() rather than emitting checkout_handoff, so the Lock icon at NotificationBell.tsx:26 is unreachable.
 
 **Mechanism.** task_reminder has ZERO references outside its own union declaration — searched bare identifier across app/lib/components/hooks/scripts/types (0 hits) and case-insensitively across the whole tree excluding node_modules/.next/.git (0 hits). task_nudge, morning_digest, and task_overdue_digest appear only in the consumer maps (sectionForKind cases and KIND_ICON), never in a producer — these are residue from task #76 'CLEAN-2: Remove scratchpad surface', which deleted the producer but left the vocabulary and the now-unrenderable 'scratchpad' section. checkout_handoff is separately dead because lib/activityThread.ts:158 hardcodes kind: "checkout_message" for ALL six activity kinds — the handoff distinction survives only inside the title string built at lines 145-152.
 
@@ -374,6 +382,7 @@ lib/inAppNotifications.ts:33-36 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/holds.ts:238-253`, `lib/inAppNotifications.ts:24`, `lib/ownership.ts:79`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified there is no back door putting an owner in the follower set — no ownership code path inserts into `subscriptions`, so resolveFollowers (recipients.ts:23-45) cannot pick the owner up. Ironically setOwner's own body text promises 'You'll receive its notifications and review reminders.'
 
 **Mechanism.** The union documents hold_opened as "a hold was opened on a doc the user owns / is on the project for". The emit at holds.ts:252 uses `audience: { followers: true, roles: ["Admin", "DocCtrl"] }` — neither the effective owner nor project members. grep of lib/holds.ts for 'owner' and 'project' returns zero hits. The resolver exists and is used by five other subsystems: effectiveOwnerForDocument() at lib/ownership.ts:79 is imported by retention.ts:15, reviewControl.ts:19, effectiveDate.ts:12, acknowledgments.ts:19, CheckInPanel.tsx:39 and InspectorPanel.tsx:37. Holds is the one compliance surface that skips it.
 
@@ -409,6 +418,7 @@ lib/ownership.ts:79 (the unused-here resolver) —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageAlerts.ts:60-66`, `lib/storageUsage.ts:255-258`, `supabase/migrations/20260621_in_app_notifications.sql:17`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — both bypass notify()/emit() with raw inserts, and the untyped `kind` column means they insert successfully rather than failing loudly. Downstream they fall through sectionForKind's `default: return 'other'` (useTicketNotifications.ts:100-101) and miss KIND_ICON (NotificationBell.tsx:19-44), so the generic-icon/no-badge rendering described is accurate.
 
 **Mechanism.** Both files insert into the notifications table directly with the service-role client rather than going through notify(), so TypeScript never checks the kind. storageAlerts writes the literal 'storage_alert'; storageUsage writes a computed `storage_${alert.key}` whose value set cannot be enumerated statically. Neither is a member of NotificationKind. The DB does not catch it: the migration declares `kind TEXT NOT NULL` with no CHECK constraint (verified by grepping every CHECK (kind IN ...) in supabase/ — the notifications table has none, unlike site_codebook, checkout_messages, document_intents etc. which all do). The rows therefore land and render — NotificationBell.tsx:166 falls back with `KIND_ICON[item.kind] ?? Bell` — but sectionForKind returns 'other', so they badge nothing (see finding 1), and any future exhaustive switch over NotificationKind will silently miss them.
 
@@ -445,6 +455,7 @@ supabase/migrations/20260621_in_app_notifications.sql:17 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/milestones.ts:155`, `lib/milestones.ts:233`, `lib/milestones.ts:293`, `lib/milestones.ts:346`, `lib/milestones.ts:456`, `lib/milestones.ts:565`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Absence verified for the whole module, not just the cited lines. lib/inbox.ts:154-158 does pull open/overdue milestones into the /inbox cockpit, so a slip is discoverable there as well as on the Schedule tab — but that is a pull surface, not a notification, so the claim stands.
 
 **Mechanism.** lib/milestones.ts contains createMilestone, updateMilestone, applyMilestoneMoves, setMilestoneStatus, setMilestoneProgress, addMilestoneNote, deleteMilestone and importGhostMilestones. grep -c 'notify|queueEmail|emit(|notifications' over the file returns 0. A second-shape check — the producer sweep over every file matching 'milestones' — returned only lib/inbox.ts, components/dashboard/widgets.tsx and lib/projects.ts, all of which are notification READERS or notify about project membership/status, not milestones (lib/projects.ts's only milestone reference is a cascade delete at line 606-607). Assigning a milestone, slipping a date, rebaselining a schedule, or deleting a milestone reaches nobody.
 
@@ -481,6 +492,7 @@ lib/nudges.ts:53-62 (the only 'milestone alerting' that exists — a pure deriva
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:558-590`, `lib/transmittals.ts:593-620`, `app/api/transmittal/route.ts:148-158`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The asymmetry is exactly as described. issueTransmittal (:557-590) calls sendTransmittalEmail, but that is the outbound message to the external recipient, not an internal bell/email row — so 'issue writes no internal notification' holds too.
 
 **Mechanism.** issueTransmittal() calls sendTransmittalEmail() (which uses queueExternalEmail at transmittals.ts:281 — the EXTERNAL recipient) and logAuditAction(). No bell row for anyone internal: no library watcher, no document owner, no project team learns a controlled document left the building. acknowledgeTransmittal() — the in-app manual path — writes only an audit log. The portal path in app/api/transmittal/route.ts:148-158 DOES insert an ack_complete notification plus an email_notifications row for the issuer. The same business event produces a notification through one door and nothing through the other. lib/transmittals.ts's only notification import is queueExternalEmail (line 19); it does not import inAppNotifications or notify/dispatch.
 
@@ -524,6 +536,7 @@ app/api/transmittal/route.ts:148-157 (the path that DOES notify) —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/postPublish.ts:39`, `lib/postPublish.ts:177`, `lib/distributionAcks.ts:138`, `lib/distributionAcks.ts:322`, `lib/staleCopies.ts:198`, `lib/revisionImpact.ts:138`, `lib/workPackages.ts:279`, `app/api/intake/upload/route.ts:351`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the rendering consequence: `const actionKinds = new Set(['checkout_conflict','checkout_released','overlap_advisory','branch_open'])` (useTicketNotifications.ts:279) excludes doc_superseded, so a PSM ack obligation renders with the same GitBranch icon (NotificationBell.tsx:35) and no 'Action needed' flag as an informational rev-up notice.
 
 **Mechanism.** Eight call sites emit kind 'doc_superseded' for eight different things: a rev-up announcement (postPublish:39), a second rev-up fan-out (postPublish:177), a NEW distribution-acknowledgment REQUEST (distributionAcks:138 — the recipient must act), an ack REMINDER (distributionAcks:322), a stale-copy RECALL (staleCopies:198), an upstream-impact advisory (revisionImpact:138), a work-package-went-stale alert (workPackages:279), and an intake auto-publish (intake/upload:351). Every one renders with the same GitBranch icon (NotificationBell.tsx:35), the same 'documents' section, and the same non-action-required tone — actionKinds at useTicketNotifications.ts:279 is `new Set(['checkout_conflict','checkout_released','overlap_advisory','branch_open'])`, which excludes doc_superseded. The distinction survives only in the free-text title. This is the mechanical answer to the owner's complaint #4: the vocabulary is unclear because one token means eight things.
 
@@ -567,6 +580,7 @@ hooks/useTicketNotifications.ts:279 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/markupRequests.ts:46-95`, `components/notifications/NotificationBell.tsx:34`, `hooks/useTicketNotifications.ts:85`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim verified including the project-feed conditional. One mitigation the finding omits: lib/inbox.ts:149-152 loads `markup_requests` where `requested_from_user_id = userId AND status = 'open'` into the /inbox cockpit, and the page can answer them (respondToMarkup), so the request is not entirely invisible — but only to someone who opens /inbox unprompted.
 
 **Mechanism.** createMarkupRequest() inserts the markup_requests row, conditionally calls writeActivity() (only `if (input.projectId)`), and calls logAuditAction(). It never calls notify(), notifyMany(), emit(), or inserts into the notifications table. The kind 'markup_request' exists in the union with the comment "someone asked the user for markups", has an icon in KIND_ICON, and has a case in sectionForKind — the whole consumer side is built for a producer that does not exist. Searched three shapes: bare `markup_request` across app/lib/components/hooks (17 hits, all table names, resourceType strings, export/restore table lists, or the two UI maps); quoted `"markup_request"`/`'markup_request'` (only NotificationBell.tsx:34 and the union); and grep of lib/markupRequests.ts for notify|emit|dispatch|notifications (zero).
 

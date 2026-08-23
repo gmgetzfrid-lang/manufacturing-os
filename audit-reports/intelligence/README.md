@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**258 findings** — 13 CRITICAL, 70 HIGH, 175 MEDIUM — plus **12 gap specs**.
+**258 findings** — 9 CRITICAL, 58 HIGH, 145 MEDIUM, 46 LOW — plus **12 gap specs**.
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 

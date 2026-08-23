@@ -1547,6 +1547,13 @@ already-solved problem, not a change to this rule.
 and a report-level banner is not either. A finding that did not survive its
 challenge carries `Status: REFUTED` and `refuted: true`.
 
+**`challenges` records the chain, not just the best link.** `verified_by` is the
+strongest grade a finding earned; `challenges` is every pass it went through,
+oldest first. Two challenges is a different claim from one, and the difference is
+measurable: findings whose chain starts `adversarial` were refuted at 0.7%, those
+whose chain starts `hardening-pass` at 2.7%. Collapsing to the strongest grade
+would have hidden exactly the fact that made the second pass worth running.
+
 **Why.** The corpus is consumed by agents that read the index rather than the
 reports — that is what the index is for, and `audit-reports/README.md` says so.
 A warning that lives only in a report header is invisible to the one consumer the

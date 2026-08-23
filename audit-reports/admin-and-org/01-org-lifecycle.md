@@ -34,6 +34,7 @@ Signup, invitation, removal, last-admin protection, and what offboarding orphans
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/restore/apply/route.ts:30-31`, `app/api/admin/restore/apply/route.ts:75-104`, `lib/dataRestore.ts:135-138`, `lib/dataRestore.ts:210-216`, `lib/dataRestore.ts:352-361`, `lib/dataRestore.ts:86-93`, `app/api/admin/restore/apply-table/route.ts:8-12`, `app/api/admin/restore/apply-table/route.ts:24, 38-40, 54-59`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contrast with the sibling route is exact: apply-table/route.ts:24,38-40 gates on `IMPORTABLE` (ORG_SCOPED_TABLES + USER_SCOPED_FOR_ORG_TABLES) and :56 forces `if ("org_id" in m) m.org_id = orgId;` — apply/route.ts has neither line. Any Admin of any self-signup trial org can insert rows into arbitrary tables under an arbitrary org_id with RLS bypassed.
 
 **Mechanism.** `apply` authorizes only `authorizeOrgRole(req, orgId, ["Admin"])` — Admin of the TARGET org, which anyone gets for free by self-signing-up a trial workspace. It then trusts the uploaded envelope for two things it must not trust.
 
@@ -72,6 +73,7 @@ apply/route.ts:104 — `const up = await sb.from(name).upsert(chunk, { onConflic
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/users/page.tsx:167-187`, `supabase/migrations/20260817_org_members_escalation_and_config.sql:44-53`, `supabase/schema.sql:1013`, `supabase/schema.sql:1048-1053`, `supabase/migrations/20260831_capability_policy_and_rails.sql:73-76`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified as a claim of absence by repo-wide search. Corroborating intent: 20260831_capability_policy_and_rails.sql:73-76 installs a BEFORE DELETE trigger on org_members, i.e. deletion is expected to work, but nothing grants it. There is no service-role removal route either (app/api/admin/ has create-user but no remove/delete-user).
 
 **Mechanism.** `schema.sql:1050` originally created `CREATE POLICY "org_members_write" ON org_members FOR ALL USING (…Admin/Manager…)` — a FOR ALL policy, which covered DELETE. Migration 20260817 then does `DROP POLICY IF EXISTS org_members_write ON org_members;` and recreates it as `CREATE POLICY org_members_write ON org_members FOR INSERT WITH CHECK (…)` (lines 44-53), plus `org_members_update` FOR UPDATE (lines 31-42). A full inventory of every `CREATE POLICY … ON org_members` across supabase/schema.sql, supabase/migrations/*.sql and supabase/REMEDIATION_APPLY_ALL.sql yields exactly three: org_members_read (SELECT), org_members_update (UPDATE), org_members_write (INSERT). RLS is enabled (`ALTER TABLE org_members ENABLE ROW LEVEL SECURITY;`, schema.sql:1013), so DELETE is default-deny for every non-service-role caller.
 
@@ -106,6 +108,7 @@ Separately, the UI offers no other revocation: the page renders `m.status` (line
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/signup/page.tsx:83-100`, `app/signup/page.tsx:236-241`, `app/api/auth/request-access/route.ts:1-64`, `supabase/migrations/20260819_orphan_tables_backfill.sql:15-30`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four sub-claims hold. Note an extra defect the finding did not name: the migration's table has no org_id column while the route inserts `org_id` (route.ts:47), so on a from-migrations rebuild the insert 500s — and the client still shows "Request Sent" because res.ok is never checked.
 
 **Mechanism.** Four independent defects in one flow.
 
@@ -146,6 +149,7 @@ Separately, the UI offers no other revocation: the page renders `m.status` (line
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/settings/page.tsx:25, 39, 103-120`, `supabase/schema.sql:1042-1045`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a DocCtrl's UPDATE matches zero rows, PostgREST returns no error, and the code treats no-error as success. MEDIUM is appropriate — silent data loss on the numbering scheme, no security boundary crossed.
 
 **Mechanism.** The page gates on `const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]); const canRead = !!activeRole && ADMIN_ROLES.has(activeRole);` (lines 25, 39) — a DocCtrl gets the full page including the editable Request Numbering card and its Save button. `saveNumbering` writes to `orgs` with the user (anon-key) client:
 ```
@@ -183,6 +187,7 @@ settings/page.tsx:108-114 — `const { error } = await supabase.from("orgs").upd
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/upload-url/route.ts:26-56`, `lib/orgBranding.ts:24-31`, `app/(protected)/admin/branding/page.tsx:63-69`, `components/branding/LogoUploadModal.tsx:36-38`, `supabase/migrations/20260713_branding_admin_writes.sql:20-34`, `components/navigation/Sidebar.tsx:372-375`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the Admin-only RLS protects the pointer, not the bytes it points at. Any active member (Viewer/Contractor included) can presign a PUT for the exact logo key and replace what every member sees.
 
 **Mechanism.** Branding WRITES are correctly Admin-gated at the database: three RESTRICTIVE policies on `org_configurations` for `key = 'branding'` requiring `is_org_admin(org_id)` (20260713). But branding SELECT is deliberately left open ("SELECT is intentionally left open so every member can read the branding to apply the logo/palette"), so `getOrgBranding` returns `logoPath` to every member (orgBranding.ts:24-31, called by OrgBrandingProvider for everyone).
 
@@ -214,10 +219,11 @@ upload-url/route.ts:36-45 — the entire authorization: `.from("org_members").se
 
 ## ORG-6 · Every org-authority SECURITY DEFINER helper — the functions all RLS policies call — is missing SET search_path, while the guards written later all set it
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1031-1034`, `supabase/migrations/20260707_teams.sql:52-55`, `supabase/migrations/20260713_branding_admin_writes.sql:11-18`, `supabase/migrations/20260814_documents_delete_controllers.sql:31-35`, `supabase/migrations/20260817_org_members_escalation_and_config.sql:21-28`, `supabase/migrations/20260708_acl_rls_enforcement.sql:42-45`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The absence is real and the inconsistency with newer code is real, but the exploit path is not reachable in this codebase: a repo-wide grep finds no GRANT of CREATE on any schema and no CREATE SCHEMA, PostgREST fixes the connection search_path, and Supabase's anon/authenticated roles cannot create a schema that precedes public. This is search_path hardening debt (defense-in-depth), not a live privilege-escalation path — LOW.
 
 **Mechanism.** The six functions that every org-scoped RLS policy in the schema resolves through are declared SECURITY DEFINER with no search_path pin: `my_org_ids()` (`RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$`), `my_team_ids()` (`… SECURITY DEFINER STABLE AS $$`), `is_org_admin(p_org uuid)`, `is_org_controller(p_org uuid)`, `is_org_admin_or_manager(p_org uuid)` (all `LANGUAGE sql STABLE SECURITY DEFINER AS $$`), and `node_visible(...)` (`LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$`). Each body references bare `org_members` / `team_members` with no schema qualification.
 
@@ -246,10 +252,11 @@ schema.sql:1031-1034 — `CREATE OR REPLACE FUNCTION my_org_ids() RETURNS SETOF 
 
 ## ORG-7 · Member removal orphans everything hung off the member — no team_members prune, no ACL prune, no ownership reassignment, and the recertification snapshot degrades to raw UUIDs for exactly the departed people
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/users/page.tsx:164-187`, `supabase/migrations/20260707_teams.sql:19-28`, `lib/accessRecert.ts:59-78`, `lib/ownership.ts:44-57`, `lib/acl.ts:26-34`, `supabase/schema.sql:33-48`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Right about the missing prune/reassign/snapshot logic, but the finding's own scenario is unreachable today — the DELETE silently no-ops, so nothing is actually orphaned. It is latent debt that only bites once ORG-2 is fixed, so LOW rather than MEDIUM.
 
 **Mechanism.** `handleRemoveMember` is a bare `delete().eq('id', member.id)` on `org_members` and nothing else. Two search shapes (`grep -rn "removeMember|offboard|deactivate|suspend"` across lib/app/components — only `lib/projects.ts:530` for PROJECT members; and a repo-wide `team_members` reference audit) confirm there is no org-level offboarding routine anywhere.
 
@@ -288,6 +295,7 @@ users/page.tsx:178 — the entire removal: `const { error } = await supabase.fro
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/request-access/route.ts:4-24`, `app/api/auth/signup/route.ts:10, 19-29, 53-60`, `supabase/migrations/20261010_signup_rate_limit.sql:9-13`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search for a middleware/edge limiter (none exists). The asymmetry is exactly as described: the endpoint that was hardened is the one that already leaks less.
 
 **Mechanism.** The signup route carries a durable per-IP limiter and the migration explains why: "signup has no CAPTCHA and returns distinguishable 409s for taken email / org names, so an unbounded loop could enumerate accounts and burn trial orgs." `/api/auth/request-access` is the sibling public endpoint on the same page, and has none — no IP check, no attempt log, no CAPTCHA. It answers `404` with `No organization named "X" was found`, `409` with `You already have a pending request to join "<real org name>"`, and `200` with `{ ok: true, orgName: orgRealName }` — three distinguishable outcomes, and the 200/409 paths both echo back the org's TRUE casing from the database (`orgRealName`), turning a fuzzy `ilike` guess into an exact confirmation.
 
@@ -322,6 +330,7 @@ request-access/route.ts:19-24 — `if (!org) { return NextResponse.json({ error:
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/subscription/SubscriptionGate.tsx:3-8, 46-48`, `lib/serverAuth.ts:78-100`, `supabase/migrations/20260713_document_publish_guard.sql:90-107`, `supabase/schema.sql:1042-1045`, `app/api/stripe/webhook/route.ts:138-146`, `supabase/migrations/20260601_billing.sql:31`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All five sub-claims verified, including both claims of absence. MEDIUM is fair: enforcement being off is a deliberate, commented choice, so the self-grant has no effect today, but the customer-id column being tenant-writable makes another tenant's webhook resolution attacker-influenced.
 
 **Mechanism.** Three enforcement points exist; none runs.
 (a) `SubscriptionGate` — header says "the enforcement that was missing… Previously `hasAccess()` existed but had ZERO callers: an expired trial showed a red banner and nothing else, so lapsed orgs kept full access" — then `const ENFORCE = false;` and `if (!ENFORCE || loading || hasAccess(info)) return <>{children}</>;`. Every render short-circuits on the first disjunct.
@@ -361,6 +370,7 @@ SubscriptionGate.tsx:46-48 — `const ENFORCE = false;` / `if (!ENFORCE || loadi
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/permissions/ViewAsSimulator.tsx:55-64`, `supabase/migrations/20260707_teams.sql:19-26`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search for the column. The simulator silently reports 'no team grants' for every user, which is worst-case in the one screen built to certify access.
 
 **Mechanism.** `team_members` has columns `team_id, uid, org_id, added_at, added_by` (20260707_teams.sql:19-26) — every other reader in the repo uses `uid` (lib/teams.ts:122, lib/knowledgeAccess.ts:35, app/api/storage/download-url/route.ts:74,100, 20260812_per_library_publish_authority.sql:62). The simulator alone uses `user_id`:
 ```
@@ -399,6 +409,7 @@ ViewAsSimulator.tsx:59 — `const { data } = await supabase.from("team_members")
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `components/providers/ThemeProvider.tsx:79-108, 116-127, 183, 198-206`, `components/providers/OrgBrandingProvider.tsx:35-44`, `lib/orgBranding.ts:24-38`, `lib/dataRestore.ts:311`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and slightly worse than stated: a non-string palette value makes hexToRgb's `hex.replace("#","")` (:59) throw inside an unguarded useEffect, which takes down the whole provider tree for every member, not just the color tokens. Write access to the branding row is Admin-only (20260713 RESTRICTIVE policies), so the realistic vectors are a hostile/careless Admin or the ORG-1 restore path — MEDIUM stands.
 
 **Mechanism.** `isHex` exists at ThemeProvider.tsx:77 and is used on both other paths: `initialPalette()` gates the localStorage palette (`if (o && isHex(o.primary) && isHex(o.secondary))`, line 122) and the pre-paint `<head>` script re-validates with an inline regex (`if(o&&/^#[0-9a-fA-F]{6}$/.test(o.primary)){prim=o.primary;}`, line 203). The org path does not: `applyOrgPalette = useCallback((p: Palette | null) => { setOrgPalette(p); }, [])` (line 183) feeds `effective` straight into `applyTheme`, which does `root.style.setProperty("--color-accent", p.primary)`, `mix(p.primary, "#000000", 0.15)`, `contrastFg(p.primary)` and string-interpolates into `linear-gradient(135deg, ${p.primary}, ${p.secondary})` (line 94).
 
@@ -429,10 +440,11 @@ ThemeProvider.tsx:183 — `const applyOrgPalette = useCallback((p: Palette | nul
 
 ## ORG-12 · prune_signup_attempts() has no caller — the housekeeping the migration describes does not exist, and no cron slot is available to add one
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261010_signup_rate_limit.sql:34-40`, `app/api/auth/signup/route.ts:31-34`, `app/api/cron/maintenance/route.ts:286-291`, `vercel.json`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The no-caller claim is true. The severity is not: the row is tiny, signup_attempts is service-role-only with no policies, the hot query is index-covered (signup_attempts_ip_time_idx), and nothing breaks — this is unbounded growth of a housekeeping table. The secondary claim 'no cron slot is available' is also overstated: /api/cron/maintenance already exists as a daily slot and the RPC could be added inside it without a new vercel.json entry.
 
 **Mechanism.** The migration states the intent: "Housekeeping: this table only needs a rolling window. A periodic prune keeps it from growing unbounded; the maintenance cron can call this, and it's safe to run anytime." A repo-wide search for the function name across ts/tsx/sql/mjs returns only its own CREATE statement; a second search for `signup_attempts` returns the migration, the two signup-route call sites, `lib/schemaExpectations.ts:102` and `lib/exportTables.ts:179` — no `rpc("prune_signup_attempts")` anywhere.
 
@@ -464,10 +476,11 @@ The obvious fix is constrained: a third vercel.json cron entry fails deployment 
 
 ## ORG-13 · team_members rows are not constrained to the team's own org, and my_team_ids()/node_visible() read team membership with no org scope
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260707_teams.sql:19-26, 45-55`, `supabase/migrations/20260708_acl_rls_enforcement.sql:75-76`, `lib/teams.ts:107-112`, `app/(protected)/admin/teams/page.tsx:85-96, 189-203`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct on every point, and the finding is honest that it is SUSPECTED. Exploitation is blocked in both directions: team_members INSERT is gated by team_members_admin_write (20260707:50-54, USING doubles as the INSERT check) to orgs where you are already Admin/Manager, and node_visible only runs inside policies that already require membership of the row's org — so a foreign team_id buys nothing without membership you already have. Latent schema-integrity debt: LOW.
 
 **Mechanism.** `team_members` carries its own `org_id` column alongside `team_id`, with no constraint tying them together — no composite FK to `teams(id, org_id)`, no trigger, no CHECK. Its write policy authorizes on the row's own `org_id` only: `CREATE POLICY "team_members_admin_write" ON team_members FOR ALL USING (org_id IN (SELECT org_id FROM org_members WHERE uid = auth.uid() AND status = 'active' AND role IN ('Admin','Manager')))`. So an Admin/Manager of org A can insert `(team_id = <a team in org B>, uid = <themselves>, org_id = <org A>)` — the org_id they are entitled to — and RLS passes; the `team_id` FK to `teams(id)` is satisfied because the team really exists.
 

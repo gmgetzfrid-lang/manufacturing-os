@@ -43,6 +43,7 @@ What exists for real OS-level presence, and what a nudge would attach to.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260621_in_app_notifications.sql:52-60`, `lib/inAppNotifications.ts:78-97`, `app/(protected)/checkouts/page.tsx:256-269`, `components/documents/EditOverlapBanner.tsx:84`, `components/documents/CheckoutFlowModal.tsx:403`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim holds in full: any active member can insert unbounded rows for any co-member with attacker-chosen kind/title/body. HIGH is defensible rather than inflated because `link` is also attacker-chosen and is rendered as a live `<Link href={item.link}>` in NotificationBell.tsx:170, making this an internal phishing primitive, not just spam.
 
 **Mechanism.** The notifications INSERT policy checks only that auth.uid() is an active member of the target org — not that the caller has any relationship to the recipient, and not how many rows they have written. notify()/notifyMany() are called directly from CLIENT components using the anon-key supabase client, so the write happens under this policy with no server route in between. The policy comment explicitly defers validation to 'the app layer', and the app layer performs none: notify() inserts whatever kind/title/body it is handed. This is precisely the path a person-to-person nudge (C) would reuse, so the abuse surface is inherited on day one.
 
@@ -86,10 +87,11 @@ hooks/useTicketNotifications.ts:277 —
 
 ## OS-2 · Web Push is a decapitated stack: the service-worker receiver, the DB table, and the preference column all survive, but every subscriber and sender was deleted
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:225-260`, `supabase/migrations/20260804_push_subscriptions.sql:7-35`, `supabase/schema.sql:659`, `commit 0bb13ed (Remove fake AI stack, scratchpad system, MPP machinery, and dead code (#97))`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The factual core is verified. Two corrections: (a) 'every subscriber and sender was deleted' is unverifiable — the repo is a single squashed commit (`git log -- public/sw.js` returns one commit, abdee9b), so the evidence supports 'never present in this tree', not 'deleted'; (b) this is the same defect as DELIV-14, which the same audit set rates MEDIUM — a wholly-absent feature with a misleading skeleton is a discoverability/wasted-work cost, not a HIGH-severity failure, so MEDIUM is the consistent grade.
 
 **Mechanism.** Commit 1200498 shipped Web Push end-to-end: app/api/push/subscribe/route.ts, app/api/push/unsubscribe/route.ts, app/api/reminders/run/route.ts, components/pwa/PushReminders.tsx, lib/push.ts, lib/reminders.ts, the push_subscriptions migration, and the sw.js push+notificationclick handlers. Commit 0bb13ed then deleted every TypeScript file in that set (and lib/notify/push.ts) as part of the scratchpad removal, plus the web-push dependency and the reminders cron entry in vercel.json. What was NOT deleted: the service worker's push handler, the migration, and notification_preferences.push_enabled. The result is a receiver with no transmitter — the browser would render an OS notification correctly if one ever arrived, but nothing in the codebase can create a PushSubscription and nothing can send to one.
 
@@ -130,6 +132,7 @@ But `grep -rniE "applicationserverkey|urlbase64|getsubscription|vapid|pushManage
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/pwa/ServiceWorkerManager.tsx:30-52`, `app/layout.tsx:93`, `app/(protected)/layout.tsx:60-73`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified, including the load-bearing part — the mount point really is the unauthenticated root layout, so the naive build would prompt anonymous visitors. Only editorial quibble: 'deliberately' is unsupported by any comment in the file; the API is simply absent, not documented as excluded.
 
 **Mechanism.** ServiceWorkerManager registers /sw.js on window load and tracks the waiting worker for the update pill. It never reads Notification.permission and never calls requestPermission(). It is mounted in the ROOT layout (app/layout.tsx:93), outside the auth gate — so it runs on public pages including the login page at app/page.tsx. That placement is correct for SW registration and exactly wrong for a permission prompt: prompting from there would fire on first load for an anonymous visitor, which browsers penalize (Chrome's abusive-permission-request heuristics can permanently block the origin's prompt, and Firefox requires a user gesture outright).
 
@@ -170,6 +173,7 @@ Repo-wide, `grep -rni "requestPermission|Notification.permission|showNotificatio
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:78-96`, `components/providers/ToastProvider.tsx:39-49`, `components/ui/CornerDock.tsx:22-27`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating guard anywhere: N inserts within 6s produce N simultaneously-mounted toast cards. The 6-second figure in the claim is exact (duration: 6000 at NotificationListener.tsx:96).
 
 **Mechanism.** NotificationListener subscribes to postgres_changes INSERT on notifications filtered to the recipient's uid and calls showToast() for each row with duration 6000. ToastProvider appends unconditionally to a toasts array with no cap. The array renders into CornerPortal, which stacks into the fixed bottom-right dock — the dock is `flex flex-col items-end gap-2` with no max-height and no overflow handling. Ten notifications inserted in a minute produce ten simultaneously-visible stacked toasts, since 6s duration exceeds the arrival interval.
 
@@ -211,10 +215,11 @@ components/ui/CornerDock.tsx:24 (no max-height / overflow) —
 
 ## OS-5 · The bell has no animation of any kind — the owner's 'bell spinning while the badge pulses and counts up' has nothing to build on there
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/notifications/NotificationBell.tsx:108-118`, `components/notifications/NotificationBell.tsx:160`, `components/navigation/Sidebar.tsx:508-511`, `components/notifications/NotificationCenter.tsx:132`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every factual assertion checks out, including the actionRequired-not-unread coupling of the one existing pulse. Downgrading to LOW because the finding is, by its own admission, an inventory of an absent enhancement rather than a defect — nothing is broken, mis-delivered or misleading today.
 
 **Mechanism.** Reading NotificationBell.tsx end to end: the header <Bell className="w-4 h-4" /> and the sidebar <Bell className="w-5 h-5 ..." /> carry no animation class, and both badge spans are static (bg-orange-500, with a ring-2 ring-white on the header variant). The only animate-* in the file is a Loader2 spinner in the empty/loading state and the dropdown's one-shot animate-in fade-in zoom-in-95. A repo-scoped search for animate-pulse/spin/bounce/ping across components/notifications, components/navigation, components/providers and CornerDock finds animate-pulse in exactly two places: the sidebar's RED badge tone, and a skeleton placeholder in NotificationCenter. There is no count-up: `{unread > 99 ? "99+" : unread}` renders the number directly with no transition, and the count comes from useTicketNotifications, which refetches wholesale on realtime events.
 
@@ -255,6 +260,7 @@ components/navigation/Sidebar.tsx:508 (the ONLY meaningful pulse, and it means a
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/checkouts/page.tsx:483-492`, `app/(protected)/checkouts/page.tsx:508-518`, `app/(protected)/checkouts/page.tsx:242-269`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The title claim is true — `nudged` is component-local and a refresh erases it, and repeat inserts are unbounded (see OS-1). But the summary's specific mechanism is FALSE: `overlaps` is independent state set from findCheckoutOverlaps (page.tsx:113 `setOverlaps(ov)`), not derived from `filtered` (page.tsx:128-139), and the key is a stable index, so changing the user filter does NOT remount OverlapCard or reset `nudged`. The real cheap reset paths are a page refresh, collapsing/reopening the 'Coordination signals' panel (`{isOpen && ...}` unmounts the cards), and the index-keying itself, which mis-carries a `nudged=true` onto a different overlap if refresh() reorders the list.
 
 **Mechanism.** OverlapCard holds `const [nudged, setNudged] = React.useState(false)` and doNudge() early-returns `if (nudging || nudged) return;`. That is the entire anti-repeat mechanism. It lives in a component that unmounts on filter change, on view toggle between grouped/flat, and on every navigation or refresh. The write itself is a direct client-side notifyMany() to the notifications table under the permissive INSERT policy, so there is no server-side record that a nudge was sent — nothing to check a cooldown against.
 
@@ -296,6 +302,7 @@ app/(protected)/checkouts/page.tsx:256 (the write, client-side, no server route)
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:35`, `hooks/useTicketNotifications.ts:80-83`, `hooks/useTicketNotifications.ts:130-137`, `components/navigation/Sidebar.tsx:229-235`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg confirmed, including the generic-Bell fallback: the kind is declared, routed to a section with no sidebar item, emitted by nobody, and iconless.
 
 **Mechanism.** task_nudge is the one NotificationKind whose name matches the owner's request for a person-to-person poke, so a build will reach for it. But it was a scratchpad feature: sectionForKind() routes it (with task_overdue_digest and morning_digest) to the 'scratchpad' section, the scratchpad surface was removed in commit 0bb13ed, and the Sidebar's sections array only spreads badgeOf() for sectionCounts.documents, sectionCounts.projects and sectionCounts.requests. sectionCounts.scratchpad is computed on every render and rendered nowhere. Two differently-shaped searches confirm nothing emits it: `grep -rn "task_nudge" --include=*.ts --include=*.tsx --include=*.sql .` returns exactly two lines (the type declaration and the switch case), and a case-insensitive `grep -rni "nudge"` across app/components/lib/hooks/types/supabase/docs returns only knowledge-index nudges, the checkouts coordination nudge, computeNudges (derived advice), and distribution re-nudges — no producer of this kind.
 
@@ -334,10 +341,11 @@ app/(protected)/scratchpad/page.tsx:3 —
 
 ## OS-8 · There is no per-user last-seen/last-read timestamp anywhere, so a login nudge has nothing to decide 'new since your last visit' against
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:9-16`, `supabase/schema.sql:680`, `lib/eSignatures.ts:67`, `components/providers/RoleContext.tsx:306-320`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The substantive point holds: a 'new since your last visit' comparison has no server-side watermark, and because read_at only clears on an explicit row click or Mark-all-read, an unread-count-driven banner would indeed re-fire forever. Correction: 'nowhere anywhere' overstates it — lib/eSignatures.ts:67 `const last = user.last_sign_in_at ? ...` shows Supabase's auth.users.last_sign_in_at IS readable; it is unusable for this purpose only because it is stamped with the CURRENT sign-in, not the previous one. Downgraded to LOW: this is a missing capability for an unbuilt feature, not a defect in shipped behavior.
 
 **Mechanism.** The users table has id/email/display_name/default_org_id/created_at/updated_at and nothing else. The only per-notification time state is notifications.read_at (null = unread), which answers 'did you open this row', not 'when were you last here'. Two differently-shaped searches (`grep -rn "last_login|lastLogin|last_active|last_sign_in|lastSeenAt"` across ts/tsx/sql, and a SQL-only search for last_seen/last_read/seen_at) turn up only checkout-session last_seen_at and project_documents.last_seen_at — both about documents, not users. lib/eSignatures.ts does read Supabase auth's user.last_sign_in_at, proving the field is reachable, but that value is the CURRENT session's sign-in time, so it cannot answer 'what arrived while I was away'.
 
@@ -378,6 +386,7 @@ lib/eSignatures.ts:67 (proves last_sign_in_at is reachable, and what it actually
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notify/dispatch.ts:20`, `lib/notify/dispatch.ts:2-8`, `lib/notify/dispatch.ts:78-124`, `commit 0bb13ed deleted lib/notify/push.ts`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified: emit() is the declared single fan-out point and carries only bell + email. The 'all three' comment surviving against a two-member NotifChannel union is direct corroboration that a third (push) channel once occupied that seam; the deletion itself cannot be shown from history because the repo is one squashed commit.
 
 **Mechanism.** dispatch.ts documents itself as 'THE single entry point every producer should call' and fans out to in-app + email. A prior commit had lib/notify/push.ts exporting sendPushSafe(payload) — a deliberate fail-safe no-op whose stated contract was 'so the dispatcher can list push as a channel today with zero risk'. That file was deleted in 0bb13ed. So today NotifChannel is a two-member union and emit()'s body has exactly two `if (channels.includes(...))` blocks. Any Web Push build must re-open this seam rather than bolting a third emitter alongside emit(), or the eight existing emit() call sites (distributionAcks, staleCopies, orchestrator/tools, holds, postPublish x2, projects, branches x2) will silently not reach push.
 
@@ -424,6 +433,7 @@ Deleted seam (git show 0bb13ed^:lib/notify/push.ts) —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:659`, `supabase/migrations/20260723_notifications_unify.sql:87`, `app/(protected)/settings/notifications/page.tsx:24-40`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly: column exists, defaults TRUE, has zero readers in application code, and the settings UI has no field for it. The silent-org-wide-opt-in consequence follows directly from DEFAULT TRUE plus the absent control.
 
 **Mechanism.** The unify migration adds push_enabled (and inapp_enabled) with DEFAULT TRUE, and its own header comment contemplates dropping them. The settings page's Prefs interface enumerates six email toggles plus digest_frequency and omits push_enabled entirely; its DEFAULTS object likewise. Two differently-shaped searches (`grep -rn "push_enabled|pushEnabled"` across all ts/tsx/sql, and inspection of the settings page's full Prefs shape) confirm no TypeScript file reads the column.
 
@@ -463,10 +473,11 @@ app/(protected)/settings/notifications/page.tsx:24 —
 
 ## OS-11 · schemaExpectations asserts push_subscriptions must exist — a health check demanding the table of a fully-deleted feature
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/schemaExpectations.ts:99`, `lib/exportTables.ts:167`, `lib/dataRestore.ts:92`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — the health check does demand the table of a feature with no subscriber and no sender, and export/restore carry matching dead entries. Downgraded to LOW: the consequence is a misleading admin readout and one no-op migration, with no data loss, no security exposure and no user-facing breakage.
 
 **Mechanism.** Three separate registries still treat push_subscriptions as a live table: the schema verification list, the org export's user-scoped table list, and the restore documentation map. Meanwhile no application code reads or writes the table. A workspace that never applied migration 20260804 will report a schema gap for a feature that does not exist, and every org export carries an always-empty table.
 
@@ -504,6 +515,7 @@ lib/dataRestore.ts:92 —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-95`, `hooks/useTicketNotifications.ts:246-250`, `hooks/useTicketNotifications.ts:284-303`, `components/navigation/Sidebar.tsx:229-235`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and if anything understated — 29 of 48 kinds badge no sidebar item, not 'roughly thirty' by coincidence but because scratchpad is unrendered too. The named compliance kinds (legal_hold_placed, retention_eligible, access_recert_due) all land in 'other' as claimed.
 
 **Mechanism.** sectionForKind()'s switch enumerates about twenty kinds across requests/scratchpad/documents/projects and falls through to 'other' for everything else. NotificationKind declares roughly fifty members. The unmapped remainder — library_doc_added, library_doc_revised, project_comment, review_requested, review_signed, review_invalidated, review_complete, review_overdue, review_due, review_alternate_activated, ack_requested, ack_complete, ack_overdue, ack_unsatisfiable, owner_assigned, owner_behind, deletion_requested, effective_now, retention_eligible, legal_hold_placed, legal_hold_released, access_recert_due, orchestrator_message, security_export, revision_published_over_checkout, task_reminder — all land in 'other'. tally('other', false) increments a counter that no component reads. This is the structural root of 'the trail goes cold': for these kinds there is no sidebar badge to begin with, so the chain never starts.
 

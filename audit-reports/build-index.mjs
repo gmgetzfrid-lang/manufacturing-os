@@ -206,19 +206,30 @@ function parseArea(area) {
         // the body can open the wrong lines. Surface the flag so it knows to
         // read. See audit-reports/META-AUDIT.md, MA-1.
         has_verifier_correction: /^> \*\*Verifier correction\.\*\*/m.test(block),
-        // How this finding's severity and claim were challenged, strongest
-        // grade first. `adversarial-independent` = a separate agent, holding
-        // only the claim and its citations, was told to REFUTE it and failed.
-        // `adversarial` = a second agent contested it during the original run.
-        // `hardening-pass` = re-read against source by the authoring session —
-        // equal in rigour, weaker in independence. `author` = checked only by
-        // whoever wrote it. An agent weighting by confidence should read this,
-        // not just severity (META-AUDIT.md MA-2).
-        verified_by: /^- \*\*Independently verified:\*\*/m.test(block)
-          ? "adversarial-independent"
-          : /^- \*\*Re-verified:\*\*/m.test(block)
-            ? "hardening-pass"
-            : reportMode,
+        // How this finding's severity and claim were challenged. `verified_by`
+        // is the STRONGEST grade it earned; `challenges` is every pass it went
+        // through, oldest first, because two challenges is a different claim
+        // from one and collapsing them loses that.
+        //
+        //   `adversarial-independent` — a separate agent, holding only the claim
+        //     and its citations (prior verification notes stripped), was told to
+        //     REFUTE it and failed.
+        //   `adversarial` — a second agent contested it during the original run.
+        //   `hardening-pass` — re-read against source by the authoring session.
+        //     Weaker in independence, and measurably so: see META-AUDIT.md.
+        //   `author` — checked only by whoever wrote it.
+        //
+        // An agent weighting by confidence should read this, not just severity.
+        ...(() => {
+          const chain = [];
+          if (/^- \*\*Re-verified:\*\*/m.test(block)) chain.push("hardening-pass");
+          else if (reportMode !== "author") chain.push(reportMode);
+          if (/^- \*\*Independently verified:\*\*/m.test(block)) {
+            chain.push("adversarial-independent");
+          }
+          if (chain.length === 0) chain.push(reportMode);
+          return { verified_by: chain[chain.length - 1], challenges: chain };
+        })(),
         // A refuted finding stays in the corpus with its reason (DEC-41) so the
         // record shows what was rejected. Nothing should queue it as work — this
         // flag is the cheap check, without parsing `status` strings.

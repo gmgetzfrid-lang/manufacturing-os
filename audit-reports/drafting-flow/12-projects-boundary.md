@@ -20,6 +20,7 @@ Direct answer to the bidirectional-portal question, from the schema up.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storage.ts:452`, `lib/storage.ts:462`, `app/(protected)/requests/[id]/page.tsx:1078`, `app/(protected)/requests/[id]/page.tsx:1360`, `types/schema.ts:1038`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The absence claim holds under repo-wide search: no drafting-flow path writes documents or document_versions, so the approved Final PDF gets no document number, revision chain, supersession or hold coverage — while requests/[id]/page.tsx:647 stamps that very download 'CONTROLLED COPY'. Slight overstatement in the summary: the portal does keep an autonomous deliverable rev chain (20260827_ticket_deliverable_rev.sql), a /verify-ticket QR (:636-651) and download_audits rows (:675-683), so 'no distribution record' is too strong; the controlled-document gap itself is real.
 
 **Mechanism.** Ticket files are uploaded by `uploadTicketAttachment`, which writes to `orgs/{orgId}/tickets/{ticketId}/{ts}_{filename}` where `ticketId` is the human request number, not a UUID — a namespace disjoint from the library namespace `orgs/{orgId}/libraries/{libraryId}/...` produced by `makeLibraryStoragePath`. The file is then recorded as an element of the `tickets.attachments` JSONB array with type Final/Draft/Source/Reference. Nothing in the request flow ever inserts into `documents` or `document_versions`.
 
@@ -51,9 +52,10 @@ Searches proving absence: `grep -rn "from('documents')|from(\"documents\")|docum
 ## PROJ-2 · The Projects <-> drafting-request boundary does not exist in the schema: tickets carry no project reference of any kind
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:397`, `supabase/schema.sql:444`, `supabase/migrations/20260721_tickets_metadata.sql:16`, `supabase/migrations/20260827_ticket_deliverable_rev.sql:25`
+- **Independently verified:** ⛔ **REFUTED** by a second independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). The claim that 'the boundary does not exist in the schema' and that there is 'no field, no join row, and no query that can associate the two' is false — projects.linked_ticket_id (and project_milestones.linked_ticket_id) is a first-class association, written by the ticket→project conversion flow and rendered as a live link from the project to the request. Only the narrower reverse-direction gap is true (the request detail page never renders its linked project, and nothing queries projects by linked_ticket_id), which does not support the stated finding or its HIGH severity.
 
 **Mechanism.** The `tickets` CREATE TABLE enumerates every column and none is a project reference; the five `ALTER TABLE tickets` statements across all migrations add closed_at, deliverable_rev, draft_iteration, search_tsv, phase-A engineer fields, phase-B notification fields and metadata — never a project_id. Enumerating every `project_id UUID` column declaration in supabase/ yields checkout_sessions, milestones, notes, transmittals, project_intake_links, cost_accounts, change_orders, project_checklists, turnover_items, punch_items, markup_requests, project_documents, project_members, project_activity — `tickets` is absent. There is also no ticket-side join table: `project_documents` joins projects to documents only.
 
@@ -85,6 +87,7 @@ supabase/schema.sql:397-445 — `CREATE TABLE IF NOT EXISTS tickets ( id UUID PR
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260609_phase1_normalization.sql:192`, `supabase/migrations/20260609_phase1_normalization.sql:194`, `components/projects/ProjectDocumentsCard.tsx:138`, `app/(protected)/projects/[id]/page.tsx:134`, `supabase/migrations/20260906_projects_hardening.sql:122`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no later migration, RESTRICTIVE policy, or trigger constrains project_documents (the only trigger on it is checkouts_resync_project_documents, an INSERT/UPDATE resync), so any active org member — including a Viewer and a non-member of a private project — can SELECT, INSERT and DELETE its rows. Partial mitigation worth recording: rows with source='checkout' are re-created the next time a checkout row for that project/document is inserted or updated, so only manual attachments are permanently lost.
 
 **Mechanism.** `project_documents_member_all` is `FOR ALL TO authenticated` gated only on active org membership — it does not consult project visibility, project membership, ownership, or controller status. The 20260906 hardening migration explicitly re-scoped project_members, project_activity, markup_requests, the cost tables and project_intake_links, and left project_documents untouched; project_activity DELETE was narrowed to controller-or-owner in that same migration while project_documents DELETE stayed open to any member. The only guard on attach/detach is the client prop `canManage={!!canManage}` where `canManage = isOwner || isAdmin`, which a direct PostgREST call ignores. The client also writes the doc_added/doc_removed `project_activity` row itself, so a direct call leaves no trace at all — and no `audit_logs` row is written on either path.
 
@@ -118,6 +121,7 @@ Searches for a later override: `grep -rn "ON project_documents" supabase/` (inde
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CheckInPanel.tsx:56`, `components/documents/CheckInPanel.tsx:261`, `components/documents/CheckInPanel.tsx:263`, `types/schema.ts:929`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — the panel holds the project id and drops it, and tickets have no project_id column at all (the only project link any ticket carries is transitionIn.ts:323 metadata.intake_collision.projectId). One indirect route the finding does not mention: the ticket does carry metadata.source_document.id, and lib/impact.ts:117 `.eq("metadata->source_document->>id", documentId)` surfaces it on the document's Impact panel, which is reachable from the project's Documents card — but nothing on the project page itself shows it.
 
 **Mechanism.** CheckInPanel receives `mySession: CheckoutSession` as a prop. `CheckoutSession` carries `projectId?: string` (populated from `checkout_sessions.project_id`, which CheckoutFlowModal writes at line 322 and bulkCheckoutToProject writes for every bulk checkout). At the moment the panel builds the new ticket's metadata it reaches into that same object for `mySession.purpose`, but records only `episodeId`, `checkoutNumber`, `purpose` and `outcome` — `mySession.projectId` is never read. The one available, already-in-memory project id at the exact moment a request is born from project work is dropped.
 
@@ -147,10 +151,11 @@ components/documents/CheckoutFlowModal.tsx:322 — `project_id: projectId,`
 
 ## PROJ-5 · Intake-uploaded documents never get a project_documents row, so the project has two disjoint definitions of "its documents"
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:225`, `app/api/intake/upload/route.ts:239`, `lib/transitionIn.ts:221`, `lib/timeline.ts:423`, `lib/projectExport.ts:42`, `components/projects/ProjectDocumentsCard.tsx:52`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The title's "never" is false: adoptDocument() does create the project_documents row when an intake sheet is transitioned into the controlled register. Also, submissions are not invisible on the project page — components/projects/IntakePanel.tsx renders a "Submissions awaiting review" queue for them. The real, narrower defect (an un-adopted intake document is absent from project_documents, hence from ProjectDocumentsCard, getProjectTimeline's linked-doc pull at timeline.ts:423-426, and loadProjectBundle at projectExport.ts:41) stands, but it is a register/export completeness gap, not a lost document — LOW.
 
 **Mechanism.** `/api/intake/upload` resolves the project's `intake_library_id` / `intake_collection_id`, creates the collection if needed, and inserts `documents` rows into it — but never inserts into `project_documents`. The join row is only created later by `adoptDocument`, when a controller runs transition-in. Meanwhile every project-side document surface keys off `project_documents`: ProjectDocumentsCard selects from it, getProjectTimeline resolves `linkedDocIds` from it, projectExport's bundle unions checkout_sessions and project_documents, and searchDocuments({projectId}) resolves the id set from it and returns [] when empty.
 
@@ -179,10 +184,11 @@ lib/projectExport.ts:42 — `supabase.from("project_documents").select("*").eq("
 
 ## PROJ-6 · Project completion has no open-drafting-request gate and structurally cannot have one — the closeout snapshot never queries tickets
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/projects/[id]/page.tsx:627`, `app/(protected)/projects/[id]/page.tsx:646`, `lib/projectSnapshot.ts:22`, `lib/projects.ts:259`, `lib/projects.ts:300`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually confirmed — no ticket gate exists and the snapshot never queries tickets (nor could it usefully, since no ticket carries a project id). Severity is too high, though: every existing gate is advisory, not blocking (page.tsx:646 explicitly says the owner can complete anyway), so the missing gate would only add one more warning line — it removes no enforcement that exists today.
 
 **Mechanism.** `transitionProjectStatus` sets status='completed' after only `assertCanManageProject`; it queries no other table for readiness. The UI's "Closeout gates" list is built from `ProjectStateSnapshot` and enumerates exactly four checks: punchOpen, turnoverRequired/Accepted, checklistOpenItems+checklistNeedsEvidence, openChangeOrders. `gatherProjectSnapshot` issues ten parallel reads — projects, cost_documents, project_parties, change_orders, milestones, project_checklists, turnover_items, punch_items, project_intake_links, project_members — and `tickets` is not among them. The gates are also explicitly advisory: the Confirm button is disabled only on `transitionBusy`.
 
@@ -213,10 +219,11 @@ Searches: `grep -n 'from("' lib/projectSnapshot.ts lib/projectReport.ts lib/proj
 
 ## PROJ-7 · The org-wide graph — the surface built to show every persisted relationship — has no ticket node type, so drafting work is absent from the system's own map
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:23`, `lib/orgGraph.ts:25`, `lib/orgGraph.ts:121`, `lib/orgGraph.ts:12`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The absence is confirmed. But the header's "every persisted relationship" is immediately followed (lines 5-15) by an explicit enumeration of the eight relationship tables it draws, and there is in fact no persisted ticket↔document or ticket↔project relationship row anywhere to draw — every ticket link lives in a metadata JSON blob (metadata.source_document, metadata.intake_collision). A missing node type in a visualization with no underlying edge rows is a LOW-severity coverage gap, not a MEDIUM correctness defect.
 
 **Mechanism.** `GraphNodeType` is a closed union of document | asset | unit | library | project | plant | plot, and `GraphEdgeType` of tag | unit | library | project | related | supersession | proposed | mention | flow | plot. The module's own header enumerates every edge it draws and each is a row in a table; `project ↔ document project_documents (checkout + manual)` is there, tickets are not. A grep for "ticket" in the whole file returns nothing.
 
@@ -246,10 +253,11 @@ Search: `grep -n "ticket" lib/orgGraph.ts` → no output.
 
 ## PROJ-8 · The project document register accepts Superseded and Archived documents with no guard and no warning
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/ProjectDocumentsCard.tsx:95`, `components/projects/ProjectDocumentsCard.tsx:123`, `components/projects/ProjectDocumentsCard.tsx:211`, `lib/impact.ts:96`, `lib/transitionIn.ts:167`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The guard genuinely is missing at pick time (compare lib/impact.ts:96 and lib/transitionIn.ts:167, which both `.filter((d) => d.status !== "Superseded" && d.status !== "Archived")`). But "no warning" is only true of the picker: the attached row carries a SUPERSEDED badge and the export carries a Status column, so a reviewer is not handed an unlabelled superseded drawing. LOW.
 
 **Mechanism.** The attach picker's search selects only `id, document_number, title, name` — `status` is not even fetched, so no filter is possible and none is applied. The upsert writes the join row unconditionally with `source: "manual"`. The rendered row displays whatever `status` the document carries as a neutral grey pill alongside the rev, with no visual distinction for Superseded or Archived. Sibling code in the same codebase does filter: `getDocumentImpact` drops `Superseded`/`Archived` from its sibling list, and `scanTransitionImpact` drops them from overlap candidates.
 
@@ -282,6 +290,7 @@ lib/impact.ts:95-96 — `.filter((d) => d.status !== "Superseded" && d.status !=
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:904`, `app/(protected)/requests/[id]/page.tsx:1691`, `app/(protected)/requests/[id]/page.tsx:1735`, `app/(protected)/requests/new/page.tsx:289`, `app/(protected)/requests/new/page.tsx:536`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. A repo-wide grep for custom_categories finds exactly two hits: the writer (requests/new:289) and a comment in admin/requests/page.tsx:361 describing where the values are stored — no reader anywhere, so admin-defined required fields are collected on every request and never displayed. metadata.source_document is at least read server-side (lib/impact.ts:117, workflow-action route:231), but not on the request page itself.
 
 **Mechanism.** The detail page loads `metadata` into ticket state and reads exactly one key from it, `archive_summary`. `metadata.source_document` — written by requests/new, by CheckInPanel and by flagCollisionToDrafting, and queried by lib/impact.ts — is never displayed. `metadata.custom_categories`, the admin-configurable per-request fields defined in Admin -> Requests and collected in the new-request form, are never rendered back either. The page contains no `href=` at all and its only navigation is `router.push('/requests')`. The section headed "Project Specifications" shows Unit, Requester, Assigned Lead, Engineer Reviewer, Initiated, Target Completion and Watching — the word "Project" is decoration.
 
@@ -311,10 +320,11 @@ Searches: `grep -rn "href=" 'app/(protected)/requests/[id]/page.tsx'` → no hit
 
 ## PROJ-10 · checkout_sessions.linked_ticket_id is a live FK to tickets that no code path ever writes, leaving the one transitive project->request route empty
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:840`, `lib/projects.ts:354`, `components/documents/CheckoutFlowModal.tsx:318`, `lib/projects.ts:965`, `lib/checkoutEpisodes.ts:715`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both halves check out: nothing writes checkout_sessions.linked_ticket_id, and milestones.linked_ticket_id has a writer (milestones.ts:171) whose only caller, components/projects/ScheduleTab.tsx, never passes linkedTicketId (grep finds no such property anywhere under components/). Severity lowered: this is an unwired column with no incorrect behavior — no data is lost or corrupted, a query simply returns nothing.
 
 **Mechanism.** `checkout_sessions` carries both `project_id` and `linked_ticket_id UUID REFERENCES tickets(id)`. `rowToCheckoutSession` maps the latter into the CheckoutSession type. But all three insert sites build their `sessionRow` object explicitly and none includes `linked_ticket_id`: CheckoutFlowModal's single checkout, bulkCheckoutToProject's per-doc row, and checkoutEpisodes' quick-hold row. A search for the identifier across lib/, app/ and components/ returns only the projects.ts and milestones.ts mappings — no assignment. The same is true of `milestones.linked_ticket_id`: the ScheduleTab create form collects `linkedRevisionLabel` free text and never `linkedTicketId`.
 
@@ -343,10 +353,11 @@ Searches: `grep -rn "linked_ticket_id" lib/ app/ components/` (7 hits, all mappi
 
 ## PROJ-11 · document_versions.related_ticket_id is never written but IS honoured as a review-gate bypass — wiring the ticket<->document link naively will silently disable required review
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:55`, `lib/reviewControl.ts:60`, `supabase/schema.sql:334`, `lib/revisions.ts:958`, `components/documents/RevUpModal.tsx:210`, `lib/documentLifecycle/setRevUp.ts:83`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The dead column and the bypass branch both exist, so the design smell is real. But the stated mechanism is overstated: because both call sites omit relatedTicketId, stamping the column on a version would change nothing — a second, separate change (threading the version's relatedTicketId into effectiveModeForRevUp) would be required before any review gate could be skipped. Latent hazard, not a live or one-commit-away bypass — LOW.
 
 **Mechanism.** `effectiveModeForRevUp` returns "none" — i.e. no review required before publish — whenever `relatedTicketId` is truthy, on the stated rationale that a rev that came from a drafting ticket "already had review". The column exists on document_versions and is mapped into the Revision type in two places, but no code anywhere writes it: searching for the snake_case identifier across .ts/.tsx yields only the two read mappings, and searching for any assignment form (`related_ticket_id` followed by `:` or `=`) across .ts/.tsx/.sql yields nothing. Both production callers construct the argument without the property, so today the branch is dead and the gate always applies.
 
@@ -378,10 +389,11 @@ lib/__tests__/reviewControl.test.ts:42 asserts the bypass: `expect(effectiveMode
 
 ## PROJ-12 · flagCollisionToDrafting writes a project id onto the ticket that nothing reads, and reports the result as a disposable toast with no link
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transitionIn.ts:321`, `lib/transitionIn.ts:356`, `components/projects/IntakePanel.tsx:283`, `app/api/intake/upload/route.ts:154`, `app/(protected)/admin/audit/page.tsx:137`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both specifics are accurate (projectId is written and read by nothing; the toast carries a ticket number but no link). Severity lowered because the association is not actually lost — it is persisted on the ticket row (metadata.intake_collision.projectId) and duplicated into audit_logs details (transitionIn.ts:362), so a future surface can recover it; the ticket itself is also routed and linked for its recipients via emit(link: `/requests/${row.id}`, :344). That is strictly less harmful than PROJ-4, where the id is discarded outright.
 
 **Mechanism.** This is the only place in the codebase that ever writes a project id onto a ticket, as `metadata.intake_collision.projectId`. Searching for readers of `intake_collision` finds three sites, and all three use only `intakeLinkId` — the `projectId` sibling is never read (a case-insensitive search for the camelCase `intakeCollision` finds nothing at all). The audit row is filed under `resource_type: "document"` with `resource_id: candidate.docId` and the project id buried in `details`, and the admin audit page filters only on `resource_type` — audit_logs has no index or filter on `details`. The user-facing result is a `setMsg` string containing the ticket number as plain text with no href.
 
@@ -410,10 +422,11 @@ app/api/intake/upload/route.ts:154-155 — `const meta = (ticket.metadata ?? {})
 
 ## PROJ-13 · projects.linked_ticket_id is a dead column — its only writer's only caller has zero call sites, so the project page's "Linked ticket" chip can never render
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:112`, `lib/projects.ts:781`, `lib/projects.ts:807`, `app/(protected)/projects/[id]/page.tsx:308`, `supabase/schema.sql:906`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Confirmed — zero call sites, so the column is always NULL. Severity lowered: this is a never-invoked feature plus a conditional that never fires (no wrong data, no wrong behavior), the same class as PROJ-10.
 
 **Mechanism.** `createProject` is the only writer of `linked_ticket_id`. Of its four call sites (ProjectWizard.tsx:128, CheckoutFlowModal.tsx:288, lib/projects.ts:803 inside convertTicketToProject, lib/projects.ts:893 inside bulkCheckoutToProject), only convertTicketToProject passes `linkedTicketId`. `convertTicketToProject` has no callers anywhere. `updateProjectMeta` cannot set it either — its patch type is limited to name/description/mocReference/targetCompletionDate/visibility. Therefore `projects.linked_ticket_id` is NULL for every row ever created by the application, and the conditional render at projects/[id]/page.tsx:308 is unreachable.
 

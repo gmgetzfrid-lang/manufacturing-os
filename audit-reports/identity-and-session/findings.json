@@ -45,6 +45,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "You open the app on a cold connection. resolveOrgAndRole is waiting on the first RLS-gated query of the session. At 6 seconds the watchdog clears the spinner. uid is set, membershipState is \"resolving\", so the layout falls past both guards and paints the full shell — with the Sidebar built from roles: [] and activeRole: \"Viewer\". Admin nav is gone, admin buttons are gone. Somewhere between a momen",
       "area": "identity-and-session",
@@ -66,6 +70,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "Your Microsoft sign-in resolves to uidB, distinct from the uidA your password created. An admin (possibly you) uses Team Management to add your email; the row lands on one of them — see IDENT-2 for why which one is not deterministic — as Admin. The other uid either has no row (you get the no-workspace hard stop) or has an older row at a lower role (you get that role). Same email, same person, same",
       "area": "identity-and-session",
@@ -86,6 +94,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "You add yourself — or an admin re-adds you — as Admin. The lookup silently mis-reads, the fallback picks your password identity, and the Admin row lands there. You next sign in with Microsoft, which is your other identity, and the app resolves its membership: a stale Viewer row, or none. The Team Management screen shows you as Admin, because it is reading the row that was written. Both screens are",
       "area": "identity-and-session",
@@ -106,6 +118,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "You hold Admin in your own workspace and Viewer in a customer's or a demo workspace. Your device's stored workspace key is stale or belongs to your other identity (IDENT-4), so step 2 finds nothing and the self-heal runs. It returns the Viewer membership. You are now signed into that workspace as a Viewer, it has been written to users.defaultorgid, and the workspace switcher is the only way back —",
       "area": "identity-and-session",
@@ -127,6 +143,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "This is the configuration you described — one person holding both the drafting-manager hat and the QA/QC hat, which the additive model exists to support. An admin uses \"Add member\" to correct a display name or reactivate a suspended account, picks the role they think of that person by, and the second hat is deleted. The next drafting request routes past them because routerequests no longer resolve",
       "area": "identity-and-session",
@@ -149,6 +169,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "First load of the morning. Supabase cold-starts. The profile lookup takes 4 seconds; the membership lookup takes another 4. The watchdog fired at 6, the boot timeout at 8 — the app has been rendering as a Viewer for 2 seconds and counting by the time the answer arrives. On a day when the first attempt errors and retries, the window is 6+ seconds long. Nothing logs it except a console.warn nobody i",
       "area": "identity-and-session",
@@ -170,6 +194,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "Two users on the same flaky connection. One's query errors three times and they are told, correctly, that their access is unchanged and to retry. The other's query is merely slow; they get a Viewer app, no message, and a reasonable belief that an admin changed their role. The second user is you.",
       "area": "identity-and-session",
@@ -192,6 +220,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "signup:80 checks for Greg@corp.com, finds nothing because the stored row is greg@corp.com, and proceeds to createUser — minting the second identity that IDENT-1 then cannot constrain and IDENT-2 then attaches roles to arbitrarily. The case-sensitivity is the manufacturing step for the duplicates the other two findings are about.",
       "area": "identity-and-session",
@@ -215,6 +247,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "You sign out of your Microsoft identity and sign in with your password identity on the same browser. The stale activeOrgId is still there and is consulted before your profile default. If your password identity holds a different membership set, the resolution starts from the wrong candidate and lands wherever ORGSEL-1 sends it.",
       "area": "identity-and-session",
@@ -234,6 +270,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": true,
       "summary": "Someone signs in with Microsoft first — profile row upserted client-side by app/page.tsx:63-67, which may or may not have completed — then later starts a trial from the signup form with a differently-cased email. The guard misses, a second auth user is created, and the person now has the two identities that IDENT-1 describes, with the second one owning a brand-new org.",
       "area": "identity-and-session",
@@ -254,6 +294,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "A transient error on this query sends an Admin to NotAMemberScreen, which tells them no workspace has admitted this account and offers \"Sign out & switch account\" — advice that, if followed, clears the very state that would have recovered them.",
       "area": "identity-and-session",
@@ -275,6 +319,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "You report that the app \"logged me into the wrong place as a viewer\". There is nothing to look at: no audit row, no error, and users.defaultorgid now reads as though you chose it. The only trace is a console.warn on a different code path.",
       "area": "identity-and-session",
@@ -298,6 +346,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "You open the app; the device prefers Microsoft; a silent sign-in redirects out and back; the login page's query cold-starts; you are routed to /dashboard; RoleProvider mounts and re-issues the query on a connection that has served exactly one request. Six seconds later the watchdog clears the spinner and you are looking at a Viewer dashboard. Your reasonable conclusion — \"this happens when I use t",
       "area": "identity-and-session",
@@ -319,6 +371,10 @@
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
+      "challenges": [
+        "hardening-pass",
+        "adversarial-independent"
+      ],
       "refuted": false,
       "summary": "Any new surface written against useRole() inherits the defect without its author doing anything wrong. It reads activeRole, sees \"Viewer\", hides its admin affordance, and is bug-compatible with the rest of the app.",
       "area": "identity-and-session",

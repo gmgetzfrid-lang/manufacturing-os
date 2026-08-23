@@ -22,7 +22,7 @@ The four unauthenticated verify endpoints, share links and the short link, the p
 
 ## Findings
 
-**54 findings** — 5 CRITICAL, 14 HIGH, 35 MEDIUM.
+**54 findings** — 4 CRITICAL, 13 HIGH, 20 MEDIUM, 17 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|

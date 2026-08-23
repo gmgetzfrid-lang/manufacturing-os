@@ -22,7 +22,7 @@ The project model and its server behaviour, scheduling and the critical path, th
 
 ## Findings
 
-**69 findings** — 3 CRITICAL, 26 HIGH, 40 MEDIUM.
+**69 findings** — 2 CRITICAL, 22 HIGH, 34 MEDIUM, 11 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|

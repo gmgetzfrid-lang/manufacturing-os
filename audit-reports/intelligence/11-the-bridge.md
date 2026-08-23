@@ -36,6 +36,7 @@
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/equipment-bridge/route.ts:26`, `app/api/equipment-bridge/route.ts:32-42`, `lib/knowledgeAccess.ts:31-46`, `app/(protected)/documents/[libraryId]/page.tsx:3769-3777`, `lib/permissions.ts:18-20`, `supabase/migrations/20260722_member_roles_collection.sql:13`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The security claim holds and is not merely a UI/server mismatch: the route writes through supabaseAdmin, so it bypasses the DB-level ACL guards that catch the equivalent client write (supabase/migrations/20260901_db_hard_enforcement.sql:152-162 `documents_deny_write_guard ... AS RESTRICTIVE FOR UPDATE ... auth.uid() IS NULL OR ...` — service role is exempt) and 20260708_acl_rls_enforcement.sql:85-87 `documents_acl_select`. One clause of the title is overstated: `roles[]` is NOT honored by 'every other route' — app/api/codebook/import/route.ts:192, app/api/graph/mentions/route.ts:43, lib/serverAuth.ts:51, lib/projects.ts:589, lib/reviewCycles.ts:234 and lib/accessRecert.ts:160 all select only `role`. That clause is inert anyway (ignoring roles[] under-grants, it does not leak).
 
 **Mechanism.** authWriter selects only the headline role — `.from("org_members").select("role").eq("org_id", orgId).eq("uid", user.id).eq("status", "active")` — and tests `WRITER_ROLES.has(String(member.role))` where WRITER_ROLES = {Admin, DocCtrl, Manager, Supervisor} (route.ts:26, 37-40). Two divergences follow. (a) No ACL: the route never evaluates the target library's or documents' ACL chain, unlike every other knowledge-side route which goes through `loadPrincipal` + `readableControlledDocIds` (lib/knowledgeAccess.ts:31-46, used by app/api/knowledge/drawing/route.ts:29). It then writes `documents.metadata` and inserts `assets` rows with the service-role client, bypassing RLS entirely. (b) Additive roles: `org_members.roles TEXT[]` exists (20260722_member_roles_collection.sql:13) and is merged with the headline role by lib/knowledgeAccess.ts:38, app/api/ai/usage/route.ts:35, app/api/ai/connection/route.ts:48 and app/api/admin/schema-health/route.ts:39 — this route does not. lib/codebook.ts:382-387 and app/api/area/knowledge-status/route.ts:269 both carry written warnings about exactly this bug class.
 
@@ -66,6 +67,7 @@ app/api/equipment-bridge/route.ts:37-40 — `const { data: member } = await supa
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:261-276`, `supabase/migrations/20260609_phase1_normalization.sql:85-120`, `app/(protected)/assets/[tag]/page.tsx:51-57`, `components/assets/AreaKnowledgePanel.tsx:124-127`, `components/assets/AreaKnowledgePanel.tsx:346-349`, `lib/operationalGraph.ts:317-330`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep for `asset_tags` writers finds only lib/documentLifecycle/common.ts:179 and merge.ts:150 (split/merge) — nothing in the bridge path writes asset_tags, so neither the trigger nor the assets-INSERT backfill (migration :122-135) ever fires for bridge-applied tags. Confirmed.
 
 **Mechanism.** applyForDocument's populate step writes a plain string array into `documents.metadata[targetKey]`: `.update({ metadata: { ...metadata, [targetKey]: next } })` (equipmentBridgeServer.ts:272-273). The normalized document↔asset join table `document_assets` is maintained by a Postgres trigger that fires only on a different column: `CREATE TRIGGER documents_resync_assets_trg AFTER INSERT OR UPDATE OF asset_tags, org_id ON documents` reading `NEW.asset_tags` (20260609_phase1_normalization.sql:117-120, 95-101). Two differently-shaped searches (`grep -rn "asset_tags" --include=*.ts --include=*.tsx` and a case-insensitive sweep across ts/tsx/sql) show `documents.asset_tags` is written by exactly two places, both split/merge lifecycle: lib/documentLifecycle/common.ts:179 and lib/documentLifecycle/merge.ts:150. The Bridge writes neither asset_tags nor document_assets. Downstream, the asset hub finds its drawings with `.contains("asset_tags", [{ tag }])` (assets/[tag]/page.tsx:55) and the Operating Areas checklist counts `document_assets` rows (AreaKnowledgePanel.tsx:124-127).
 
@@ -92,10 +94,11 @@ equipmentBridgeServer.ts:272-274 — `.update({ metadata: { ...metadata, [target
 
 ## BR-3 · source_document_id gate silently voids the Bridge for every upload-origin knowledge document, with no UI signal
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:55-59`, `lib/knowledge.ts:363-367`, `lib/knowledgeSourceSync.ts:235`, `app/api/equipment-bridge/route.ts:107-126`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is exactly as described and there is no compensating path. Severity lowered because the scenario's premise is wrong: the Area wizard does NOT train uploading — AreaKnowledgePanel.tsx:169/476 and UnitOpsPanels.tsx:342 all call `addKnowledgeSources(...)` (DC folder/document links), which go through knowledgeSourceSync and DO get source_document_id. The voided path is only a direct drag-drop into a knowledge library (app/(protected)/knowledge/[id]/page.tsx:1525 `addKnowledgeDocument`), and that screen never promises the registry (no 'registry'/'asset' string in the whole file). The column half of the bridge is also genuinely impossible there — only the registry-discovery half is lost.
 
 **Mechanism.** `computeForKnowledgeDoc` returns null at line 59 — `if (!kdoc?.source_document_id) return null; // upload-origin docs have no column to feed`. `addKnowledgeDocument` (lib/knowledge.ts:363-367) inserts a knowledge_documents row with org_id/library_id/name/file_key/file_size/created_by and no source_document_id, so every PDF uploaded straight into a knowledge library is permanently outside the Bridge. Only knowledgeSourceSync.ts:235 sets `source_document_id: dcDocId`. The backlog sweep cannot rescue them either: /api/equipment-bridge action="sweep" enumerates doc-control `documents` for a library and then their twins via `.in("source_document_id", ids...)` (route.ts:112-120), so an upload-origin knowledge doc is never enumerated. The knowledge ingest path still extracts its equipment entities (knowledgeIngest.ts:247-253) and the census route still counts them — the data exists, it just never crosses.
 
@@ -125,6 +128,7 @@ lib/equipmentBridgeServer.ts:59 — `if (!kdoc?.source_document_id) return null;
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/assets/AssetCsvImportModal.tsx:22-27`, `components/assets/AssetCsvImportModal.tsx:124-133`, `lib/assets.ts:172-204`, `lib/assetCategorize.ts:48-56`, `components/assets/UnitOpsPanels.tsx:46-56`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a CSV-imported asset has code NULL, so `!a.unit_code && a.code` is false for every row and plan.unitAssignments is empty — applyCategorization's `filedToUnits` (assetCategorize.ts:117-123) counts 0 while `categorized` counts the type assignments. No other automatic code-setter exists: the only tagToCode callers are admin/assets/page.tsx:1018 (UnassignedAssignPanel, human-driven), :1313 (the edit drawer, human-driven) and equipmentBridgeServer.ts:117.
 
 **Mechanism.** AssetCsvImportModal's CANONICAL_FIELDS are exactly tag/description/location/type (lines 22-27) and commit() calls `createAsset({ orgId, tag, description, location, typeId, createdBy: actorUserId })` (lines 130-133). `createAsset` accepts `unitCode` and `code` (lib/assets.ts:179-180) and the modal passes neither, so every imported row gets unit_code NULL and code NULL. The codebook's unit filing then cannot fire: planCategorization gates on `if (!a.unit_code && a.code) { const decoded = codeToTag(a.code, book); ... }` (assetCategorize.ts:51-56) — it derives the unit from the site CODE, and derives nothing from the tag. Type assignment via typeForTag works (line 58) because that reads the tag prefix. So the codebook categorizes the master list correctly and files none of it.
 
@@ -155,6 +159,7 @@ AssetCsvImportModal.tsx:130-133 — `await createAsset({ orgId, tag, description
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:15-18`, `lib/equipmentBridgeServer.ts:126-134`, `lib/equipmentBridgeServer.ts:180-183`, `lib/equipmentBridgeServer.ts:261-276`, `lib/knowledgeIngest.ts:448-456`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The trigger is real and automatic: lib/knowledgeIngest.ts:452-454 `void import("@/lib/equipmentBridgeServer").then((m) => m.computeForKnowledgeDoc(supabaseAdmin, doc.id))` fires on every completed (re-)index, and computeForKnowledgeDoc:128-131 then calls `applyForDocument(admin, { orgId, documentId, userId: null })` with no `tags`, so `wanted` is the full suggestion set. upsertSuggestions:145-152 preserves `applied` but that only affects the status label, not what apply re-writes.
 
 **Mechanism.** applyForDocument reads `alreadyApplied` at line 180 but never filters by it: `const wanted = suggested.filter((s) => (!input.tags || input.tags.includes(s.tag)));` (lines 181-182) — alreadyApplied is used only to compute the union written back at line 279. The column populate then re-adds any suggested tag not currently present in the column: `const additions = wanted.map((s) => s.tag).filter((t) => !existingNorms.has(assetNorm(t)))` (line 269). Combined with computeForKnowledgeDoc's auto-apply branch (`if (bridge?.autoApply && bridge.targetColumnKey) { await applyForDocument(...) }`, lines 128-133), which is fired on every ingest completion by knowledgeIngest.ts:453-455 including re-index and rebuild, a human's deletion of a wrong tag is undone on the next index.
 
@@ -185,6 +190,7 @@ lib/equipmentBridgeServer.ts:181-182 — `const wanted = suggested.filter((s) =>
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/assets/AssetCsvImportModal.tsx:109-143`, `lib/assets.ts:196-203`, `supabase/migrations/20260603_asset_registry.sql:46`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed down to the '+N more' detail in the summary. Notably the codebase already has `translatePostgresError` (used at admin/assets/page.tsx:1391 and :1406) and this modal does not use it, so the raw constraint name reaches the user.
 
 **Mechanism.** commit() calls `createAsset` per row inside a try/catch that pushes `{ row, reason: (e as Error).message }` on failure (AssetCsvImportModal.tsx:130-137). createAsset does a plain `.insert(...)` (lib/assets.ts:196-201) against a table with `UNIQUE (org_id, tag_normalized)` (20260603_asset_registry.sql:46), so an existing tag raises 23505 and the modal surfaces the raw driver message. There is no upsert, no 'update existing' option, no pre-flight duplicate count, and the mapping step (goPreview, lines 101-107) validates only that the required `tag` field is mapped.
 
@@ -210,10 +216,11 @@ components/assets/AssetCsvImportModal.tsx:130-137 — `await createAsset({ orgId
 
 ## BR-7 · Code backfill is gated on unit_code being NULL, so an asset that has a unit but no site code never gets one
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:240-258`, `lib/assetCategorize.ts:48-56`, `app/(protected)/admin/assets/page.tsx:1016-1019`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The gate is exactly as described, but two of the finding's supporting claims are false. (1) The cited 'admin drawer that set only the unit' does NOT exist: app/(protected)/admin/assets/page.tsx:1311-1315 `useEffect(() => { if (asset?.code) return; const derived = unitCode ? tagToCode(tag, unitCode, book) : null; setSiteCode(derived ?? ""); }, ...)` auto-derives the code whenever a unit is set. (2) 'keeps code NULL forever' is refuted by that same drawer, which is a working per-asset remedy. lib/assetCategorize.ts:117-121 only sets unit_code, but its precondition (`!a.unit_code && a.code`) guarantees code is already present. The realistic residual path is narrow — a bridge-discovered asset whose tagToCode returned null because the codebook lacked the prefix at discovery time.
 
 **Mechanism.** The backfill block builds `blank` from a query that already filters to unit-less rows — `.select("id, code").in("id", ids).is("unit_code", null)` (line 245) — then skips any asset not in that map (`if (!blank.has(id)) continue;`, line 250). The `code` patch is therefore reachable only for rows whose unit_code is also NULL: `if (!blank.get(id) && s.code) patch.code = s.code;` (line 252). An asset that a human filed to a unit but that has no site code is permanently excluded, even though the Bridge computed its code at line 117.
 
@@ -243,6 +250,7 @@ lib/equipmentBridgeServer.ts:245-253 — `const { data: blankRows } = await admi
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:200-233`, `lib/assets.ts:43-47`, `app/(protected)/admin/assets/page.tsx:1397-1411`, `app/(protected)/admin/assets/page.tsx:115`, `components/documents/EquipmentSweepModal.tsx:262-264`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by exhaustive search — the provenance is written and never surfaced or filtered on, and app/(protected)/admin/assets/page.tsx:115 loads with `listAssets({ orgId: activeOrgId, archived: false })` with no origin facet.
 
 **Mechanism.** Discovery inserts `origin: "drawing"` and `discovered_from: { documentId, pages: s.pages }` (equipmentBridgeServer.ts:213-214), with `createAssets` defaulting ON (`if (bridge?.createAssets !== false)`, line 200). Three differently-shaped searches — bare `discovered_from` across ts/tsx, camelCase `discoveredFrom`, and `\.origin\b` across app/ and components/ — return only the declaration in lib/assets.ts:43-47 and the writes in equipmentBridgeServer.ts. No list, filter, badge, or drawer in the registry reads either column; `listAssets` (lib/assets.ts:117-135) has no origin parameter and the admin registry page calls it as `listAssets({ orgId, archived: false })` (admin/assets/page.tsx:115). The only removal affordance is the single-asset drawer delete at admin/assets/page.tsx:1397-1411. The auto-apply path also stamps `created_by: "00000000-0000-0000-0000-000000000000"` (line 215), so even the creator column is useless for triage.
 
@@ -273,6 +281,7 @@ lib/equipmentBridgeServer.ts:213-215 — `origin: "drawing", discovered_from: { 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/EquipmentSweepModal.tsx:106-123`, `components/documents/EquipmentSweepModal.tsx:234-254`, `lib/equipmentBridgeServer.ts:170-172`, `lib/equipmentBridgeServer.ts:181-183`, `supabase/migrations/20260928_site_codebook.sql:103`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no code anywhere writes status 'dismissed' to document_equipment_suggestions (grep for 'dismissed' hits only processFlows, linkProposals and unrelated UI state), and the chip renderer at :236-253 is a plain <span> with no click handler — there is no per-tag selection affordance at all.
 
 **Mechanism.** applyForDocument accepts `tags?: string[]` documented as 'Restrict to a subset of suggested tags (review UI); omit = all' (equipmentBridgeServer.ts:170-172) and the API forwards `body.tags` (route.ts:131). The sweep modal never sends it: `body: JSON.stringify({ action: "apply", orgId, documentIds })` (EquipmentSweepModal.tsx:113). The chips it renders (lines 236-253) are non-interactive spans — no checkbox, no per-tag reject. Likewise `status TEXT ... CHECK (status IN ('pending','applied','dismissed'))` (20260928_site_codebook.sql:103) but a search for `"dismissed"` across ts/tsx returns hits only in lib/processFlows.ts and lib/linkProposals.ts — nothing ever writes it on document_equipment_suggestions. Compare processFlows.ts:78, which has a real accept/dismiss (`status: accept ? "confirmed" : "dismissed"`).
 
@@ -296,10 +305,11 @@ components/documents/EquipmentSweepModal.tsx:113 — `body: JSON.stringify({ act
 
 ## BR-10 · Sheet numbers are never captured on the equipment side — BridgeSuggestion.pages is a PDF page index, and the parsed drawing sheet segment is never joined to a tag
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:28-34`, `lib/equipmentBridgeServer.ts:64-78`, `lib/equipmentBridgeServer.ts:214`, `supabase/migrations/20260921_drawing_entities.sql:25-30`, `lib/codebook.ts:251-257`, `lib/knowledgeIngest.ts:281-293`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The technical claim is true, but 'has no data to answer from' is false. knowledge_page_entities rows carry (document_id, page), and lib/drawingText.ts:559-582 `equipmentRegisterCsv` already emits a `["Tag", "Category", "Occurrences", "Sheets", "First page"]` register keyed by documentName — reachable in the product via lib/knowledge.ts:983 `action=export` and :769 `action=census`, and the ask route's show-me guarantee (app/api/knowledge/ask/route.ts:1665-1680) mints per-sheet citations from the same table. On a one-sheet-per-document library the document IS the sheet, so the owner's question is answered; the 'self' rows also make the sheet number recoverable per page by a join nobody has written yet. Real gap, but a missing enrichment rather than missing data.
 
 **Mechanism.** `BridgeSuggestion.pages: number[] // sheets/pages the tag appears on` (line 30) is populated straight from `knowledge_page_entities.page`, which is the page index within the knowledge PDF (`page INTEGER NOT NULL`, 20260921_drawing_entities.sql:25; written as `page: p` at knowledgeIngest.ts:250). The plant's actual sheet number lives in two other places that are never joined to it: `parseDrawingNumber` extracts a `sheet` segment into `ParsedDrawingNumber.sheet` (lib/codebook.ts:251-257), and ingestion writes the title-block declaration as a kind='self' entity `${tb.drawingNumber}-SH${tb.sheetNumber}` (knowledgeIngest.ts:291-292). computeForKnowledgeDoc calls parseDrawingNumber only for `parsed?.unitCode` (line 98) and discards `parsed.sheet`; it filters entities to `.eq("kind", "equipment")` (line 68) so it never sees the 'self' rows.
 
@@ -330,6 +340,7 @@ lib/equipmentBridgeServer.ts:30 — `pages: number[];          // sheets/pages t
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/equipment-bridge/route.ts:23-24`, `app/api/equipment-bridge/route.ts:107-126`, `lib/equipmentBridgeServer.ts:50-135`, `components/documents/EquipmentSweepModal.tsx:92-104`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: nothing persists a resume point, and `computed` is only returned on the success path, so a killed invocation reports nothing about how far it got. Re-sweep re-enters at document zero.
 
 **Mechanism.** `export const maxDuration = 60;` (route.ts:24). action="sweep" selects up to 2000 documents (`.limit(2000)`, line 114) then awaits `computeForKnowledgeDoc` once per twin, strictly sequentially (lines 121-123). Each call does at minimum: one knowledge_documents read, one knowledge_page_entities read (limit 4000), a codebook load, a documents read, a libraries read, ceil(n/100) asset lookups, and an upsert — six-plus round trips, more when auto-apply fires and runs the whole apply path inline. There is no offset/cursor parameter, no deadline check, and no partial-progress return: the response shape is `{ ok: true, computed }` only. The client just awaits it (EquipmentSweepModal.tsx:96-101).
 
@@ -360,6 +371,7 @@ app/api/equipment-bridge/route.ts:121-123 — `for (const t of (twins ?? []) as 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/drawingText.ts:19-25`, `lib/knowledgeIngest.ts:231-262`, `lib/equipmentBridgeServer.ts:64-83`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Vision does not rescue these pages: lib/drawingText.ts:609-635 `pageNeedsVision` returns false for any page over TEXTLESS_PAGE_MAX_CHARS (60) that is not 'thin' — `const thin = text.length <= THIN_PAGE_MAX_CHARS (1200); if (tagsFound >= (thin ? MIN_TAGS_THIN_PAGE : 1)) return false; if (!thin) return false;` — so a >2000-char sheet never gets the visionRead branch at knowledgeIngest.ts:214 either. The empty result is indistinguishable in the sweep modal from a genuinely tagless sheet ('0 tags'). Confirmed.
 
 **Mechanism.** `SPARSE_PAGE_MAX_CHARS = 2000` and `isDrawingLikePage(pageText)` returns true only when `pageText.length <= SPARSE_PAGE_MAX_CHARS` (drawingText.ts:19-25). Ingestion runs positional equipment extraction only inside `else if (isDrawingLikePage(pageText))` (knowledgeIngest.ts:231); the vision branch above it applies only when the page had no usable text layer at all. A P&ID exported with a full TrueType text layer that includes a notes block, a legend, a valve schedule or a bill of materials will exceed 2,000 characters and produce zero kind='equipment' rows. computeForKnowledgeDoc then finds `byTag.size === 0`, writes an empty suggestion row (line 81), and the sweep modal shows the sheet with '0 tags'.
 
@@ -385,10 +397,11 @@ lib/drawingText.ts:23-25 — `export function isDrawingLikePage(pageText: string
 
 ## BR-13 · The Bridge's tag gate is looser than the extractor's — splitTag admits any LETTERS-DIGITS token, and the extractor's stop list is not re-applied at the registry boundary
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:71-78`, `lib/codebook.ts:124-128`, `lib/drawingText.ts:62-86`, `lib/equipmentBridgeServer.ts:200-233`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The consequence (CL-150 / SS-316 / CW-6 minting origin='drawing' assets with null type) is real, but the stated cause is largely inert: every row in knowledge_page_entities with kind='equipment' is written only by lib/knowledgeIngest.ts:217 and :246, both via `extractEquipmentTags`, so nothing reaches the bridge that failed the stop list — re-applying it at the registry boundary would filter out exactly zero tags, and splitTag being looser cannot admit anything the extractor rejected. What remains is a duplicate of the extractor's permissive prefix policy plus BR-8's inability to see or bulk-clean discovered assets, so LOW as a standalone finding.
 
 **Mechanism.** The only quality gate between an extracted entity and a created registry asset is `if (!splitTag(norm)) continue; // only things shaped like real tags cross the bridge` (equipmentBridgeServer.ts:74), where splitTag matches `/^([A-Z]{1,4})-(\d{1,6})([A-Z]{0,2})$/` (codebook.ts:125) — pure shape, no vocabulary. The extraction side does carry a curated stop list, `EQUIPMENT_STOP_PREFIXES = {NO, DWG, REV, PID, DRW, SHT, SH, PG, ISO, API, ANSI, NPS}` plus the drawing-number-middle guard (drawingText.ts:65-67, 81), but the Bridge does not consult it or the codebook's known prefixes. Anything shaped like a tag that survives extraction — a flange class, a pipe spec, a line size, a vision-model transcription artifact — becomes a permanent asset row, because createAssets defaults ON (line 200) and there is no reject path (finding 14).
 
@@ -418,6 +431,7 @@ lib/equipmentBridgeServer.ts:74 — `if (!splitTag(norm)) continue; // only thin
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:137-155`, `supabase/migrations/20260928_site_codebook.sql:95-107`, `supabase/migrations/20260919_knowledge_mirror_unique.sql:11-13`, `app/api/equipment-bridge/route.ts:117-124`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end: two twins of one document exist legitimately, the sweep iterates them in unordered query order, and each overwrites the single (org_id, document_id) suggestion row. upsertSuggestions preserves only `applied` (line 145), so the 3-tag twin computing last both replaces the 40-tag proposal and flips status to 'applied' when newTags is empty (line 152).
 
 **Mechanism.** `document_equipment_suggestions` is keyed `PRIMARY KEY (org_id, document_id)` (20260928_site_codebook.sql:107) and upsertSuggestions replaces `suggested` wholesale with `onConflict: "org_id,document_id"` (equipmentBridgeServer.ts:147-154). But the mirror uniqueness index is per LIBRARY — `CREATE UNIQUE INDEX ... ON knowledge_documents (library_id, source_document_id)` (20260919:11-13) — so one controlled P&ID mirrored into two knowledge libraries (e.g. an org-wide shelf and a crude-unit area shelf, exactly the pattern AreaKnowledgePanel encourages) has two twins with the same source_document_id. The sweep loops over every twin (`for (const t of (twins ?? []))`, route.ts:121-123) and each computeForKnowledgeDoc call overwrites the same row.
 

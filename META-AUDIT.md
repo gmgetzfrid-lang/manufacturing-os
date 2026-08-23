@@ -35,17 +35,23 @@ was checked came back clean.
 | README severity counts vs. each area's `findings.json` | **10 of 10 areas consistent** |
 | Reports duplicating another report's content | **0** (the one that did is fixed) |
 | Duplicate finding IDs within an area | **0** |
-| Findings challenged by a party that did not write them | **1,098 of 1,098 — the whole corpus** |
-| Refuted | **10** |
-| Severity lowered | **79** |
+| Findings challenged twice, at least once independently | **1,098 of 1,098 — the whole corpus** |
+| Refuted | **15** |
+| Severity lowered | **265** |
 | Severity raised | **0** |
 
 > **These last three lines used to read 0, 0 and 0.** The hardening pass that
-> produced those zeros was run by the session that wrote the findings. A later
-> independent pass over the same 364 findings — separate agents, refute-first
-> prompt, prior verification notes stripped so nothing anchored them — returned
-> 10 refutations and 79 downgrades. The zeros were an artifact of who was
-> counting. See `audit-reports/HARDENING-PLAN.md`, Phase F.
+> produced those zeros was run by the session that wrote the findings. Two later
+> independent passes — separate agents, refute-first prompt, prior verification
+> notes stripped so nothing anchored them — covered all 1,098 and returned 15
+> refutations and 265 downgrades. The zeros were an artifact of who was counting.
+>
+> **The two passes also separate two effects that looked like one.** Findings a
+> separate agent had already contested were refuted at **0.7%**; findings only
+> their author had cleared, at **2.7%**. Independence is worth roughly a factor
+> of four. But the downgrade skew is **one-directional in both populations** —
+> 265 down, 0 up — so it is a property of how these findings were written, not of
+> who verified them. See `audit-reports/HARDENING-PLAN.md`, Phases F and G.
 
 **Every `CRITICAL` in the corpus has now been re-verified against source.** The
 original random sample of ten is kept below because it is what the meta-audit
@@ -477,12 +483,20 @@ first in the independent pass, precisely because they were the weakest.
 `IDENT-3` from `HIGH` to `MEDIUM`. The remaining eleven survived. The area is now
 graded like the rest of the corpus rather than caveated below it.
 
-**What the closure did not reach.** The 734 `adversarial` findings were
-challenged once, by a separate agent, at the time they were written — which is
-why they were not re-run. But the 79:0 downgrade ratio in the 364 is a large
-enough skew that it may reflect how these findings are authored rather than how
-the hardening pass verified them. **Nothing in this engagement measures whether
-the 734 carry the same skew.** That is the honest bottom of this corpus now.
+**~~What the closure did not reach.~~** *Closed.* The 734 `adversarial` findings
+went through the same independent pass. **5 refuted (0.7%) against 10 (2.7%) for
+the self-verified 364** — independence is worth roughly a factor of four, which
+is the first number this engagement has on that question. But **186 more
+downgrades and zero upgrades**, on a population that had already survived an
+independent challenge, settles the other half: the skew is a property of how
+these findings were authored, not of who verified them.
+
+**What is left.** Severity is one verifier's judgment, and unlike a survival
+verdict it is not checkable against code. A duplicate agent run on one batch
+agreed on all six survival verdicts and split on one severity — a sample of one
+batch, not a measured rate, but reason enough to treat the 265 downgrades as
+better-calibrated than the originals rather than as exact. That is the honest
+bottom of this corpus now.
 
 **Nothing was reproduced against a running system.** Same limit the underlying
 audits carry: no live database, no browser, no AI provider. Every conclusion here
@@ -504,20 +518,30 @@ by re-reading the journal. The surviving journal is preserved at
 caveats in their head, because the caveats became fields:
 
 - Every in-repo citation resolves, and the build fails if one stops.
-- Every finding — all 1,098 — has been challenged by a party that did not write
-  it. `CRITICAL` is 95 of 95.
+- Every finding — all 1,098 — has been challenged **twice**, at least once by a
+  party that did not write it. `CRITICAL` is 85 of 85. `findings.json` carries
+  the whole chain per finding in `challenges`, not just the strongest grade.
 - Every finding declares how hard it was challenged, in `verified_by`.
-- The 10 findings that did not survive are still here, marked `Status: REFUTED`
+- The 15 findings that did not survive are still here, marked `Status: REFUTED`
   with the reason, and flagged `refuted: true` in `findings.json` so a queue
   drops them without a human remembering to.
 - No prefix collisions, no dangling references, no duplicated reports.
+- Every area README's severity counts match its reports, and the build fails if
+  they drift — which they did, 19 times, the moment severities moved.
 
-**The thing to understand:** `verified_by` is not decoration, and the independent
-pass is the reason. It refuted 10 findings and lowered 79 severities that a
-same-session re-read had passed clean. Challenged beats unchallenged; independent
-beats both. Neither is a guarantee, and `DEC-29` — reproduce before fixing —
-still applies to every entry. **Verification proves the claim is true, not that
-the fix is safe.**
+**The thing to understand:** `verified_by` is not decoration, and the two
+independent passes are the reason. They refuted 15 findings and lowered 265
+severities that earlier passes had cleared — including 5 refutations and 186
+downgrades on findings that had *already* survived an adversarial challenge.
+Challenged beats unchallenged; independent beats both; twice beats once, by a
+factor of four on the refutation rate. None of it is a guarantee, and `DEC-29` —
+reproduce before fixing — still applies to every entry. **Verification proves the
+claim is true, not that the fix is safe.**
+
+**And read severity as a ceiling.** 265 findings moved down across the two
+passes; none moved up. That one-directional skew held even on the 734 that had
+already been independently challenged, so it is a property of how these findings
+were written rather than of who checked them.
 
 The sweep also produced six corrections, none of which changed a severity: one
 finding understated its own scope by a factor of nearly two (`DB-6`: 23

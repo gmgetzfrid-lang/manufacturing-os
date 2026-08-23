@@ -21,6 +21,7 @@ Whether the flow's own rules can be enforced at all: reachable transitions, conc
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workflow.ts:198-234`, `lib/workflow.ts:222-228`, `lib/ticketTransitions.ts:221-235`, `lib/__tests__/workflow.test.ts:163-175`, `app/api/tickets/workflow-action/route.ts:96-103`
 - **Same root cause as** `AUTHZ-1` — Also owned as `TIER-7` in [`01-review-tiering.md`](./01-review-tiering.md), which frames the fix. `GAP-111` requires it inside the delivery gate. Fix once; close the rest citing this one.
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed and frozen by test: lib/__tests__/workflow.test.ts:163-171 asserts `expect(actionsOf(t, "Viewer", "u-1")).toContain("approve_minor_correction")` for a Viewer-role requester whose own ticket shows 'Send for Engineer Final Approval'. The same actor the gate blocks reaches PENDING_IFC with an issued integer rev and no engineer sign-off stamp. CRITICAL sustained.
 
 **Mechanism.** At PENDING_REVIEW, getActions splits on `needsEngineerApproval && !isEng`. A viewer-tier requester is deliberately denied `approve_draft_ifc` and given only `request_final_engineer_approval` ("Engineering policy: drawings must be signed off by a qualified engineer before IFC"). But `approve_minor_correction` is pushed UNCONDITIONALLY after that if/else, for every requester tier. In computeTransition the two actions are byte-for-byte equivalent in outcome: `approve_draft_ifc` sets `updates.status = "PENDING_IFC"; updates.deliverable_rev = issuedRevLabel(...)`, and `approve_minor_correction` sets exactly the same two fields. The only differences are the history string and that the drafter is put in unread_by. The server route is not a second gate — it re-derives the same `getActions` list, so it offers the same escape hatch.
 
@@ -76,6 +77,7 @@ expect(actionsOf(t, "Viewer", "u-1")).toContain("approve_minor_correction");
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1080-1081`, `supabase/schema.sql:405`, `app/api/tickets/workflow-action/route.ts:15-26`, `app/(protected)/requests/page.tsx:620`, `app/(protected)/requests/[id]/page.tsx:1328`
 - **Same root cause as** `PERS-1`, `AUTHZ-2`, `EVID-1` — One `CREATE POLICY ... FOR ALL USING (...)` with no `WITH CHECK` (`supabase/schema.sql:1079-1081`). Four lenses found it independently. **One migration closes all four.** Fix once; close the rest citing this one.
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence search: no second policy, no REVOKE/column grant, no status-transition trigger. The app itself proves the write path is open to the anon key — app/(protected)/requests/[id]/page.tsx:1327 `await supabase.from("tickets").update({ watchers: next }).eq("id", ticketId);` runs client-side under exactly this policy. The server enforcement in /api/tickets/workflow-action (route.ts:15-26, 96-103) is therefore bypassable, and with it the CAS, the audit_logs insert and the fan-out.
 
 **Mechanism.** `tickets` has exactly one policy, `FOR ALL USING (org_id IN (SELECT my_org_ids()))`, with no WITH CHECK and no column-level GRANT restrictions. Postgres reuses the USING expression as the WITH CHECK for UPDATE, so the only constraint on an update is that the row stays inside one of the caller's orgs. Every authenticated member of the workspace — Viewer, Contractor, Auditor included — holds UPDATE on every column of every ticket in their org through the anon-key REST endpoint. The workflow-action route's careful chain (auth → active membership → `WorkflowEngine.getActions` with the org's capability policy → compare-and-set → audit row → fan-out) is entirely optional: it is one door into a room with no walls. The app's own client code demonstrates the direct-write path works (`supabase.from('tickets').update({ priority: 1, last_modified: now })` at requests/page.tsx:620, `.update({ watchers: next })` at requests/[id]/page.tsx:1328).
 
@@ -114,6 +116,7 @@ Contrast the route's own stated contract, app/api/tickets/workflow-action/route.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workflow.ts:263-298`, `lib/workflow.ts:65-66`, `lib/ticketTransitions.ts:247-253`, `app/api/tickets/workflow-action/route.ts:113-132`, `lib/capabilityPolicy.ts:55-60`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the misattribution is visible in the UI: app/(protected)/requests/[id]/page.tsx:1744-1748 renders `ticket.assignedEngineerName` with an 'approved' badge keyed off `ticket.engineerApprovedAt`, so a Supervisor's click displays as the assigned engineer having signed off. HIGH sustained.
 
 **Mechanism.** At PENDING_FINAL_APPROVAL, `canActHere = ticket.assignedEngineerId ? isAssignedEngineerIdentity || isManagement : allows('ticket.final_approve') || isManagement`, where `isManagement = allows('ticket.manage')` and `ticket.manage` defaults to `["Admin", "Manager", "Supervisor"]`. So any Manager or Supervisor can fire `engineer_approve_final`, whose button reads "Approve as Engineer (Issue for Construction)" and whose transition writes `updates.engineer_approved_at = now`. There is no check anywhere that the ACTOR holds an Engineer role. The asymmetry is stark: the route does check that a *picked* reviewer holds an Engineer role (lines 124-131, "The selected reviewer does not hold an Engineer role"), but never applies the same test to the person actually signing off.
 
@@ -164,6 +167,7 @@ if (!held.some((r) => r.includes("Engineer"))) {
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/ticket-shed/route.ts:131-146`, `app/api/admin/ticket-shed/commit/route.ts:125-172`, `lib/ticketTransitions.ts:288-290`, `app/api/tickets/workflow-action/route.ts:69-74`, `app/(protected)/admin/storage/page.tsx:520-585`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence search: nothing in the reopen path clears archive_id — the only writers of `archive_id: null` are /api/admin/archive-cancel and /api/admin/ticket-shed/restore. lib/ticketTransitions.ts:288-290 `case "reopen_ticket": updates.status = "PENDING_REVIEW";` leaves the claim intact, so a ticket reopened between produce and commit is live, in review, and still gets shredded.
 
 **Mechanism.** `produce` claims eligible CLOSED tickets by stamping `archive_id` while leaving `archived_at` NULL — the ticket stays fully live. `commit` is a SEPARATE admin action taken later (the UI tells the admin to save the zip offline first, then click "Reclaim space"). commit then re-selects rows by `.eq("archive_id", archiveId)` ONLY — no status filter, no re-check that the ticket is still terminal — and for each unstamped row writes `{ comments: [], history: [], archived_at: now }` and deletes its `ticket_comments` rows and its R2 attachment objects. Meanwhile `reopen_ticket` in computeTransition sets only `updates.status = "PENDING_REVIEW"` (and clears `closed_at`); it does not clear `archive_id`, and the workflow route's archive guard at line 69 tests `archived_at` only, so reopening a claimed ticket is permitted. Nothing anywhere clears `archive_id` on reopen — the only writers of `archive_id: null` are archive-cancel, the produce un-claim loop, and restore.
 
@@ -213,10 +217,11 @@ if ((row as { archived_at?: string | null }).archived_at) {
 
 ## SM-5 · Reopen re-issues the SAME deliverable revision number, so two different documents both verify as "current" Rev N via the public QR endpoint
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:288-290`, `lib/ticketTransitions.ts:106-108`, `lib/ticketTransitions.ts:221-225`, `lib/workflow.ts:331-341`, `app/api/verify-ticket/route.ts:62-89`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real, but the narrated path is not the one that produces the collision: from the reopened PENDING_REVIEW state the only way back to the drafter is 'Request Revision', which increments revision_count (lib/ticketTransitions.ts:277) and yields Rev 2. The collision needs the approve-without-revision route — reopen, approve straight to PENDING_IFC (rev re-written as the same N), then the drafter issues a different final package via submit_final. Real but narrower than described; MEDIUM.
 
 **Mechanism.** `reopen_ticket` sets status to PENDING_REVIEW and touches nothing else — not `revision_count`, not `draft_iteration`, not `deliverable_rev`. A ticket that was approved and issued as Rev 1 (revision_count 0) and then closed comes back to PENDING_REVIEW with revision_count still 0. `approve_draft_ifc` (or the minor-correction path) then computes `issuedRevLabel(ticket.revisionCount)` = `String(0 + 1)` = "1" — the exact label already issued. `submit_final` appends a second, different Final file. The org now has two distinct construction packages both stamped Rev 1 on the same ticket, and `/api/verify-ticket` derives its verdict solely from `deliverable_rev`, so both prints scan as verdict "current".
 
@@ -257,10 +262,11 @@ app/api/verify-ticket/route.ts:82-83 (verdict from deliverable_rev alone) —
 
 ## SM-6 · "Reject / Return to Requester" and "Return with Questions" both dump the ticket into REVISION_REQ, where a ticket with no assigned drafter has zero legal actions and appears on nobody's attention list
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:273-279`, `lib/workflow.ts:102-108`, `lib/workflow.ts:126-131`, `lib/workflow.ts:166-194`, `lib/ticketAttention.ts:62-110`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The dead-end is real for the requester and REVISION_REQ is genuinely absent from every role-based attention rule, but two parts of the claim are wrong: 'zero legal actions' ignores that any member holding the Drafter role satisfies allows('ticket.draft_work') and gets Save Progress / Submit Draft there (plus Admin force-close, workflow.ts:345-349), and 'appears on nobody's attention list' ignores that the reject transition puts the requester in unread_by (ticketTransitions.ts:140), which produces a bell row, an email, and an unread item in the attention feed (useTicketNotifications.ts:254-255). LOW.
 
 **Mechanism.** `reject` (offered at NEW/PENDING_ENG_INITIAL as "Reject / Return to Requester" and at PENDING_ENG_TEAM as "Return with Questions") maps in computeTransition to `updates.status = "REVISION_REQ"`. But PENDING_ENG_TEAM is reached from PENDING_ASSIGNMENT via `request_eng_review`, which sets only `assigned_engineer_id` — `assigned_drafter_id` is still NULL. At REVISION_REQ, getActions offers actions only `if (canActAsDrafter)`, i.e. `isDrafterIdentity || allows('ticket.draft_work')` (default `["Drafter"]`). With no drafter assigned, the requester sees nothing, the engineer sees nothing, the DraftingSupervisor sees nothing (there is no `assign` action at REVISION_REQ), and management gets only the global Force Close. Separately, `isActionRequired` surfaces REVISION_REQ ONLY when `ticket.assignedDrafterId === uid` — management's list at ticketAttention.ts:84-94 omits REVISION_REQ and DRAFTING entirely — so the ticket also stops appearing in every bell, badge and inbox.
 
@@ -316,10 +322,11 @@ if (ticket.assignedDrafterId === uid) {
 
 ## SM-7 · A transition performs four sequential writes with no transaction and no error check on the audit insert — the audit row can be lost while the status change stands
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:155-223`, `app/api/tickets/workflow-action/route.ts:197-211`, `app/api/tickets/workflow-action/route.ts:214-223`, `app/api/tickets/workflow-action/route.ts:279-294`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanical claim is exactly right — four unsynchronised writes, and the audit insert's error is discarded. Severity is too high: the ticket's own `history` JSONB records who acted, with what label, in what role, and when, atomically with the status change, so what a lost audit row costs is the from→to mirror in audit_logs, not the compliance record itself.
 
 **Mechanism.** The route does: (1) the CAS UPDATE on `tickets`; (2) the `ticket_comments` mirror insert, explicitly swallowed by `.then(() => {}, () => {})`; (3) the `audit_logs` insert, awaited but with its `{ error }` result discarded — supabase-js does not throw on a failed insert, so a rejected write (RLS, missing column, constraint) is indistinguishable from success here; (4) the notification/email fan-out, wrapped in try/catch. There is no `rpc(`, no `BEGIN`, no transaction anywhere in the file. Write 1 is the only durable one. This is the same class of bug the file's own comment at requests/new/page.tsx:322-324 warns about ("supabase-js does NOT throw on a failed insert — it returns { error }. Check it explicitly.").
 
@@ -360,10 +367,11 @@ if (newComment) {
 
 ## SM-8 · CANCELED is documented to users as a workflow state, is treated as terminal by the archiver, and is reachable by no code path — while a ticket that somehow reaches it has no legal action for anyone but an admin
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/requests/WorkflowDiagramModal.tsx:36`, `types/schema.ts:1032`, `lib/ticketShed.ts:11`, `lib/ticketTransitions.ts:311`, `lib/workflow.ts:80-342`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both halves confirmed: nothing writes CANCELED, and workflow.ts has no case for it (only the global `ticket.force_close` override at :345 would offer anything). Severity overstated — because the state is genuinely unreachable, no ticket is ever actually stranded in it; the live defect is a workflow-diagram modal advertising an exit the product does not implement, which is a docs/feature gap, not a MEDIUM data or integrity risk.
 
 **Mechanism.** `CANCELED` appears in the TicketStatus union, in `TERMINAL_TICKET_STATUSES`, in computeTransition's `TERMINAL` array (so it would stamp `closed_at`), in the archive eligibility filter, and — visibly to end users — in the workflow diagram modal as "Withdrawn or returned to the requester. A terminal exit off the main flow." No transition in computeTransition's switch produces it. Three differently-shaped searches confirm the absence: `grep -rn "status.*CANCELED\|CANCELED.*status"` filtered to writes returns only comments and a test; `grep -rin canceled` filtered to `update|insert|= 'CANCELED'` returns only Stripe subscription statuses and read-side `!==` comparisons; and `grep -rn "cancel_ticket\|'cancel'\|\"cancel\""` returns nothing. Conversely, `WorkflowEngine.getActions` has no `case 'CANCELED'`, so a ticket in that state offers only the global Force Close, and only to `ticket.force_close` holders (default Admin/Manager/Supervisor).
 
@@ -404,6 +412,7 @@ lib/workflow.ts:80-342 — the switch handles NEW, PENDING_ENG_INITIAL, PENDING_
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:978`, `app/(protected)/requests/[id]/page.tsx:1010-1014`, `app/(protected)/requests/[id]/page.tsx:1328`, `app/(protected)/requests/[id]/page.tsx:920`, `app/api/intake/upload/route.ts:182-190`, `app/api/tickets/comment/route.ts:205-216`, `app/api/tickets/workflow-action/route.ts:155-191`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Accurate; if anything undercounted (five writers, not four — the intake route is a fifth). The whole-array clobber is real for comments, attachments+history and watchers, and the guard the finding says they bypass demonstrably exists on the two hardened paths.
 
 **Mechanism.** The workflow route CASes on `(id, status, last_modified)` and the comment PATCH/DELETE handlers CAS on `last_modified` — but five other writers do an unguarded read-modify-write of the same whole arrays. `handleUpdateCategory` writes `{ comments: updatedComments }` with no CAS and without even bumping `last_modified` (so it is invisible to every other CAS). `handleFileUpload` writes `{ attachments, history, last_modified }` with no CAS. `toggleWatch` writes `{ watchers }` with no CAS. The intake portal's redline branch writes `{ attachments, history, last_modified }` with no CAS. All read their base state from a React snapshot or an earlier SELECT.
 
@@ -456,10 +465,11 @@ casQuery = auth.readLastModified ? casQuery.eq("last_modified", auth.readLastMod
 
 ## SM-10 · The ticket page rewrites `approve_initial` into `assign` before sending, which the server refuses — every ticket at NEW or PENDING_ENG_INITIAL is a hard dead end for its only forward action
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:1065-1075`, `lib/workflow.ts:82-109`, `lib/workflow.ts:137-155`, `app/api/tickets/workflow-action/route.ts:96-103`, `supabase/schema.sql:405`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The rewrite→403 is real, but two facts cut the severity hard. (1) The states are unreachable: every ticket-insert site hardcodes the status — requests/new/page.tsx:255 `const initialStatus: TicketStatus = 'PENDING_ASSIGNMENT'`, CheckInPanel.tsx and lib/transitionIn.ts:304 both insert `status: "PENDING_ASSIGNMENT"` — and workflow.ts:47-52 getInitialStatus always returns PENDING_ASSIGNMENT; nothing in the codebase ever writes NEW or PENDING_ENG_INITIAL. (2) Even at NEW it is not a dead end: `request_eng_review` (requiresEngineerPick) and `reject` (requiresComment) take earlier branches at :1051-1064, are not rewritten, and are accepted — request_eng_review routes NEW→PENDING_ENG_TEAM→approve_team→PENDING_ASSIGNMENT, a working forward path.
 
 **Mechanism.** `initiateWorkflowAction` intercepts `approve_initial` and substitutes `{...action, action: 'assign', label: 'Approve & Assign'}` before calling the route. But `assign` is offered by getActions ONLY at PENDING_ASSIGNMENT; the NEW / PENDING_ENG_INITIAL branch offers `approve_initial`, `request_eng_review`, `reject` and nothing else. The route validates `body.actionType` against `getActions(ticket, ...)` for the ticket's CURRENT status, so a ticket at NEW receives 403 `Action "assign" is not available to you at status NEW`. At PENDING_ASSIGNMENT the swap is a no-op (assign is legal there), which is why the bug is invisible in normal use — every current creation path hard-codes PENDING_ASSIGNMENT.
 
@@ -513,6 +523,7 @@ if (!action) {
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:51-82`, `app/api/tickets/workflow-action/route.ts:230-274`, `lib/intents.ts:58`, `lib/intents.ts:68`
 - **Same root cause as** `PERS-5` — `ticket.metadata` is always `undefined` server-side. This is why `GAP-110`'s declaration cannot live in `metadata`, and why the intent bridge is dead. Fix once; close the rest citing this one.
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed dead code, and the contrast with the page's own mapper — which maps metadata correctly — settles that this is an omission, not a design choice. route.ts:245/265 are the only writers/deleters of ticket-sourced `document_intents` in the repo, so no other path compensates.
 
 **Mechanism.** The route's intent bridge opens with `const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)?.source_document` and does nothing unless `srcDoc?.id` is truthy. `ticket` is `rowToTicket(row)`, whose returned object literal has 28 keys and `metadata` is not among them — the literal is cast `as Ticket` and `metadata?` is optional, so TypeScript accepts it. At runtime `ticket.metadata` is `undefined` for every ticket, `?.source_document` is undefined, and the whole `if (srcDoc?.id)` body — both the DRAFTING/REVISION_REQ upsert and the CLOSED/FINAL_DRAFT cleanup — never executes. Two independent searches confirm this is the only writer of a ticket-sourced intent: `grep -rn document_intents` returns four write/read sites (this route, lib/intents.ts, the maintenance prune, and table registries), and `grep -rn TICKET_INTENT_TTL_MS` shows the constant is imported only here and in lib/intents.ts/its test.
 
@@ -556,10 +567,11 @@ try {
 
 ## SM-12 · `assign` accepts any active org member as the drafter — no Drafter-role check — while the engineer pick on the same request is role-checked
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:113-132`, `lib/ticketTransitions.ts:193-200`, `lib/workflow.ts:69-75`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The asymmetry is real and correctly described. But the finding's stated scenario — "an assigner picking from a list mis-clicks and assigns to an Accounting or Contractor seat" — is refuted by page.tsx:240-250, where AssignmentModal populates its list with `.from('org_members').select('uid, email, role').eq('org_id', activeOrgId).eq('role', 'Drafter').eq('status','active')`; only Drafters are offered, so the mis-click cannot produce a non-drafter. Exploitation requires a hand-crafted POST by someone who already holds `ticket.assign` authority, which makes this a defense-in-depth gap rather than a MEDIUM.
 
 **Mechanism.** The route loops over `[body.engineer?.id, body.assignment?.id]` and validates both are active org members, then applies a role test only inside `if (ref === body.engineer?.id)`. `body.assignment.id` is written straight to `assigned_drafter_id`. Because `canActAsDrafter = isDrafterIdentity || allows('ticket.draft_work')` grants identity-based rights unconditionally, that person immediately gains `save_progress`, `submit_draft`, `close_rfi` and `submit_final` ("ISSUE FINAL IFC PACKAGE") on the ticket, regardless of role.
 
@@ -607,6 +619,7 @@ case "assign":
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:104-109`, `lib/workflow.ts:309-314`, `lib/ticketTransitions.ts:280-283`, `app/(protected)/requests/[id]/page.tsx:1028-1034`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the asymmetry inside workflow.ts strengthens it: `submit_draft` at :176-182 is only offered when `ticket.attachments?.some(a => a.type === 'Draft')`, so the server enforces its file requirement structurally, while `submit_final` at :309-314 carries `requiresFile: true` with no such state guard and no server check — the one compliance-critical issue step is the unguarded one.
 
 **Mechanism.** `WorkflowAction` carries three UI guards: `requiresComment`, `requiresEngineerPick`, `requiresFile`. The route re-checks the first two and never the third — `grep -rin 'requiresfile'` across the repo returns exactly four hits: the interface declaration, the two `requiresFile: true` uses in lib/workflow.ts, and one client check. `submit_final` at PENDING_IFC is declared `requiresFile: true`, and computeTransition only appends a final attachment `if (input.finalAttachment)`, so a request with `finalAttachment: null` moves the ticket to FINAL_DRAFT with nothing issued. The client-side guard is itself weak: it tests `ticket.attachments.length > 0`, satisfied by any Reference or Source file uploaded when the request was created — it never checks for a `type === 'Final'` attachment.
 

@@ -33,6 +33,7 @@ The server behaviour beneath the already-audited tabs.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:259-318`, `app/api/intake/upload/route.ts:35-42`, `app/api/intake/upload/route.ts:225-228`, `app/api/intake/upload/route.ts:299-334`, `app/(protected)/projects/[id]/page.tsx:625-653`, `supabase/migrations/20261013_project_controls_program.sql:262-288`, `supabase/migrations/20260902_project_intake.sql:51-60`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. Verified as a claim of absence: grep across lib/, app/ and components/ finds no closed-project write guard of any kind, and the intake door never loads projects.status. A cancelled project's trusted link still auto-supersedes a controlled drawing to Issued.
 
 **Mechanism.** Nothing anywhere reads projects.status before a write. Two differently-shaped searches (`grep -rn 'projectStatus|status === "archived"|status === "completed"|status === "cancelled"' components/projects lib/costs.ts lib/turnover.ts lib/checklists.ts lib/changeOrders.ts lib/milestones.ts` and `grep -rniE "status = 'archived'|status IN ('completed'" supabase/migrations/*.sql`) return zero write-gating hits: the only matches are milestone status strings and a display badge. No RLS policy, no trigger, no lib guard references project status. So after 'Complete'/'Cancel'/'Archive' a project still accepts new cost_entries, change_orders, checklist_items, turnover acceptance, punch closures, milestones, members, ownership transfer and comments.
 
@@ -74,6 +75,7 @@ lib/projects.ts:259-318 (transitionProjectStatus) writes status/completed_at/can
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260902_project_intake.sql:18-34`, `lib/projects.ts:597-617`, `app/api/intake/resolve/route.ts:34-46`, `app/api/intake/resolve/route.ts:105-120`, `app/api/intake/upload/route.ts:64-92`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. Both halves confirmed by repo-wide search: no FK, no cascade, no cleanup in deleteProject. The link keeps resolving and keeps listing the assigned documents' numbers/titles/revs; uploads do fail ("Project not found.", route.ts:227), but the org has also lost the only UI that could revoke the link, since the Intake tab lived on the deleted project page.
 
 **Mechanism.** project_intake_links declares `project_id UUID NOT NULL` with no REFERENCES clause — verified by reading the CREATE TABLE and by `grep -rn 'project_intake_links' supabase/migrations/*.sql | grep -i 'constraint|references|foreign'`, whose only hit is the reverse direction (cost_documents.intake_link_id → project_intake_links). So the cascade that clears everything else leaves intake links behind, and deleteProject never touches the table.
 
@@ -108,6 +110,7 @@ lib/projects.ts:259-318 (transitionProjectStatus) writes status/completed_at/can
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectSnapshot.ts:49`, `lib/projectSnapshot.ts:114-121`, `lib/projectReport.ts:54`, `lib/projectReport.ts:146-152`, `components/projects/ScheduleTab.tsx:94,122-125`, `supabase/migrations/20260614_phase7_milestones.sql:57-61`, `components/projects/ScheduleImportModal.tsx:156`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives. The two consumers demonstrably disagree in-code, so this is an inconsistency rather than a deliberate policy: a fully imported P6 schedule shows on the Schedule tab with its overdue count while health scores it as absent, the coach permanently nags "Add a schedule", and the printed report asserts "No schedule loaded."
 
 **Mechanism.** Both the snapshot and the report filter milestones identically:
 
@@ -148,6 +151,7 @@ lib/projectSnapshot.ts:49 and lib/projectReport.ts:54 are byte-identical filters
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:371-415`, `lib/projects.ts:389-399`, `lib/projects.ts:300-317`, `supabase/migrations/20260831_capability_policy_and_rails.sql:80-101`, `app/(protected)/projects/[id]/page.tsx:619-623`, `lib/projects.ts:1039-1045`, `app/api/cron/maintenance/route.ts:88-92`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives at HIGH. I specifically checked the refutation that RLS would silently drop the drafter's rows before the trigger fires — it does not, the policy is org-scoped FOR ALL, so the trigger sees them and raises. And no sweep repairs it later: autoReleaseExpiredAdHoc filters `.is("project_id", null)` (lib/projects.ts:1044), so project-linked checkouts are the one class the maintenance cron never touches.
 
 **Mechanism.** transitionProjectStatus() calls releaseAllCheckoutsForProject() for completed/cancelled/archived. That helper issues ONE bulk statement:
 
@@ -194,10 +198,11 @@ lib/projects.ts:389-399 is a bare `await supabase.from("checkout_sessions").upda
 
 ## PM-5 · assertCanManageProject reads only org_members.role and ignores the additive roles[] array, so users the UI and RLS both treat as controllers get 'Only the project owner or an admin can do this'
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:580-595`, `supabase/migrations/20260814_documents_delete_controllers.sql:31-40`, `components/providers/RoleContext.tsx:198-213,364-370`, `app/(protected)/projects/[id]/page.tsx:65-68,131-134`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The divergence is real and confirmed, but the illustrative scenario is not reachable. org_members.role is kept mirrored to the *highest-ranked* held role — admin/users/page.tsx:129,137 `const headline = primaryRole(cleaned); ... .update({ roles: cleaned, role: headline })` — and ROLE_RANK puts DocCtrl at 70 above every Engineer level (61-64, lib/roleCapabilities.ts:74-86), so a headline-'Engineer' member holding DocCtrl additively cannot be produced. The bug bites only when a role that outranks DocCtrl is the headline — Manager (90), Supervisor (80), DraftingSupervisor (75) — plus additive DocCtrl. It is also fail-closed (a legitimate controller is blocked, no privilege is gained), so MEDIUM rather than HIGH.
 
 **Mechanism.** Three layers disagree about who is a controller.
 
@@ -246,6 +251,7 @@ lib/projects.ts:589 `.select("role")` — the roles column is never fetched; :59
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:597-617`, `app/(protected)/projects/[id]/page.tsx:400-414`, `supabase/migrations/20261013_project_controls_program.sql:117,142,156,175,194`, `supabase/migrations/20260819_orphan_tables_backfill.sql:141,162,182,205`, `supabase/migrations/20260609_phase1_normalization.sql:69`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg. I looked for a BEFORE DELETE guard, an archive-instead-of-delete path, or a retention/legal-hold trigger on projects — none exists (20260826_legal_hold_delete_guard.sql attaches triggers only to `documents` and `document_versions`). The audit row at lib/projects.ts:612-616 carries `details: { name: p.name }` and no count of what was destroyed.
 
 **Mechanism.** deleteProject explicitly unlinks only what it knows about — `checkout_sessions.project_id = null`, `markup_requests.project_id = null`, `milestones` deleted, `project_activity` deleted, `project_members` deleted — then `DELETE FROM projects`. Everything else is left to the FK cascade, and the enumeration of `REFERENCES projects(id)` shows what that means:
 
@@ -288,6 +294,7 @@ lib/projects.ts:604-610 is the complete pre-delete cleanup — five statements, 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260906_projects_hardening.sql:117-121`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:89-92`, `lib/projects.ts:169-186`, `lib/projects.ts:430-454`, `lib/projects.ts:680-709`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified the claim of absence repo-wide: no trigger on project_activity exists anywhere in supabase/migrations, and no later migration re-creates the insert policy. Because project_id is unchecked while org_id is the only thing validated, a member of org A can also plant a row against a project in org B (the SELECT policy then keys visibility off project_visible_to_me(project_id), so org B reads it).
 
 **Mechanism.** The write policy is:
 
@@ -327,10 +334,11 @@ There is no UPDATE policy on project_activity at all (full inventory via `grep -
 
 ## PM-8 · project_documents grants every active org member full ALL access — any Viewer can attach or detach documents from any project, including private ones
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260609_phase1_normalization.sql:192-197`, `supabase/migrations/20260609_phase1_normalization.sql:66-75`, `components/projects/ProjectDocumentsCard.tsx:119-144`, `app/(protected)/projects/[id]/page.tsx:461-471`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The authorization gap is real and exactly as described — any active org member, Viewer included, can INSERT or DELETE project_documents rows for any project including private ones, with no activity trail (the `doc_added`/`doc_removed` writes at ProjectDocumentsCard.tsx:111-117 only happen on the UI path). Lowering to MEDIUM because the blast radius is the link row and its provenance (source, first_seen_at), not any document: `documents` rows survive untouched, and nothing in the evidence pipeline reads project_documents (gatherProjectEvidenceState in lib/checklists.ts:238-294 sources titles from intake_collection_id, sow_document_id and turnover_items.document_id, never from project_documents).
 
 **Mechanism.** The previous audit's claim is verified: project_documents has exactly ONE policy, and it is a FOR ALL with the same org-membership predicate on both sides:
 
@@ -370,6 +378,7 @@ supabase/migrations/20260609_phase1_normalization.sql:194-197 is quoted above ve
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:169-186`, `supabase/migrations/20260906_projects_hardening.sql:60-65`, `app/(protected)/projects/page.tsx:61-88`, `lib/projects.ts:199-230`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the claim of absence: grep over supabase/ finds `last_activity_at` only at 20260527_projects_and_collaboration.sql:42 (column) and :52 (index) — no trigger and no RPC maintains it, so the client UPDATE is the only writer. For a non-owner non-controller the UPDATE matches zero rows under RLS (not an error), and the return value is discarded, so every collaborator-driven comment/attach/join leaves the timestamp stale.
 
 **Mechanism.** writeActivity's second statement is the sort-key touch:
 
@@ -418,6 +427,7 @@ lib/projects.ts:181-185 quoted above, with the comment 'Touch last_activity_at s
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectExport.ts:12-22`, `lib/projectExport.ts:70-91`, `lib/projectExport.ts:94-105`, `app/(protected)/projects/[id]/page.tsx:323-331`, `app/(protected)/projects/page.tsx:103-114`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct — and note the quoting rule actively helps the payload: `=cmd|'/C calc'!A1` contains no comma/quote/newline, so it is emitted bare. The only sanitizer in the file is at :110, `String(bundle.project.name).replace(/[^a-z0-9-_ ]/gi, "_")`, which is applied to the download FILENAME only, not to the cell contents.
 
 **Mechanism.** The only field treatment is quote-escaping:
 
@@ -459,6 +469,7 @@ lib/projectExport.ts:13-18 quoted verbatim — the regex `/[",\n\r]/` tests only
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `types/schema.ts:944`, `app/(protected)/projects/[id]/page.tsx:924-927`, `app/(protected)/projects/[id]/page.tsx:131-134,952`, `lib/projects.ts:482-523,660-674`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:74-86`, `supabase/migrations/20260527_projects_and_collaboration.sql:61-62`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claim of absence holds under a full-repo search — no RLS policy, API route, or lib function branches on collaborator vs observer. An observer can post into the regulated activity feed (project_activity_insert requires only org membership) exactly as a collaborator can.
 
 **Mechanism.** `ProjectMemberRole = "owner" | "collaborator" | "observer"` is stored (CHECK-constrained), offered in the Add-member form, editable via updateMember, and carried through rowToMember — and then never consulted. Two differently-shaped searches confirm it: `grep -rn 'ProjectMemberRole' --include=*.ts --include=*.tsx .` returns only the type declaration, the schema field, the Add-member <Select>, and the lib signatures; `grep -rn 'role === "observer"|role === "collaborator"' …` returns exactly one hit, a badge colour ternary at page.tsx:952. Every authority decision is made without it: the page computes `canComment = isOwner || isMember || isAdmin` and `canManage = isOwner || isAdmin`, and RLS keys on projects.owner_user_id (is_project_owner) and org_members, never on project_members.role.
 
@@ -491,6 +502,7 @@ types/schema.ts:944: `export type ProjectMemberRole = "owner" | "collaborator" |
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectReport.ts:43-44`, `lib/projectReport.ts:54-59`, `lib/projectReport.ts:139-140`, `lib/projectReport.ts:192-195`, `lib/costs.ts:303-333`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contrast is on file: components/projects/CostsTab.tsx:98 calls `computeCostRollup(accounts, entries, pctIndex)` with a real id-keyed map, and lib/projectSnapshot.ts:55 does the same — so the Costs tab and snapshot can show a CPI the printed report structurally cannot. Note the milestone query at projectReport.ts:47 doesn't even select `id`, so the index could not be keyed correctly as written.
 
 **Mechanism.** gatherReportData builds a percent index and then throws it away:
 
@@ -535,6 +547,7 @@ lib/projectReport.ts:55-59 quoted verbatim above. lib/projectReport.ts:43: `supa
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/ProjectWizard.tsx:154-196`, `components/projects/ProjectWizard.tsx:141-150`, `components/projects/ProjectWizard.tsx:198-206`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly as claimed. Worth adding that the extended-fields update at :150-152 does the same for purpose/goals/success_criteria/setup_state (console.warn only) — so a wizard run can succeed visually while everything after the bare projects row is gone. cost_accounts writes are reachable for the creator (20261013:307-312 adds `cost_accounts_owner_write ... USING (user_owns_project(project_id))`), so this is a failure-path defect rather than a guaranteed one.
 
 **Mechanism.** After createProject succeeds, four follow-up writes carry the user's actual input, and every one of them swallows failure:
 
@@ -573,10 +586,11 @@ ProjectWizard.tsx:157-163 (`if (accErr) console.warn(...)`), :167-172 (`.then(()
 
 ## PM-14 · is_org_controller — the SECURITY DEFINER predicate behind every projects, cost and controls RLS policy — has no SET search_path
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260814_documents_delete_controllers.sql:31-40`, `supabase/migrations/20260906_projects_hardening.sql:62,68,76,95,124,171`, `supabase/migrations/20261013_project_controls_program.sql:238,246,264,269,274,281,286`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The factual claim is exactly right, and the deviation from the house convention is stark — the sibling helpers pin it (20261013:58 `... SECURITY DEFINER SET search_path = public`, whose own comment says "search_path pinned per the house SECURITY DEFINER pattern"; likewise 20260913:22,28,33,41). Lowering to LOW: exploitation requires a principal who can already CREATE a schema that precedes public on the role's search_path, which on a managed Supabase instance is an admin-level capability, so this is a defense-in-depth/linter-grade hardening gap (Supabase flags it as a WARN) rather than a reachable privilege escalation for any application role.
 
 **Mechanism.** The function is defined once in the whole repo (verified by `grep -rn 'FUNCTION is_org_controller' supabase/`, which returns exactly one hit, and by a second grep for any later CREATE OR REPLACE with search_path, which returns none):
 

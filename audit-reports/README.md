@@ -188,38 +188,51 @@ who, if anyone, tried to prove them wrong.
 
 | Value | What happened | How to treat it |
 |---|---|---|
-| `adversarial-independent` | A **separate agent**, given only the claim and its citations and told to refute it, opened the code and failed to. Carries an `Independently verified` line saying what was checked. | Strongest grade in the corpus. Still reproduce before fixing (`DEC-29`). |
-| `adversarial` | A second agent read the cited code specifically to refute the claim during the original run. Refuted findings were dropped; survivors may carry a `Verifier correction` that overrides the finder's severity or citations. | Equally independent, but the refutations were dropped rather than recorded. Reproduce before fixing. |
-| `hardening-pass` | Re-read against source with intent to refute, but by the authoring session rather than a separate party. **No finding carries this grade any more** — all 364 were subsequently put through the independent pass. | Equal in rigour, weaker in independence. |
+| `adversarial-independent` | A **separate agent**, given only the claim and its citations and told to refute it, opened the code and failed to. Carries an `Independently verified` line saying what was checked. **Every finding in the corpus holds this grade.** | Strongest grade here. Still reproduce before fixing (`DEC-29`). |
+| `adversarial` | A second agent read the cited code specifically to refute the claim during the original run. Refuted findings were dropped rather than recorded; survivors may carry a `Verifier correction`. **734 findings hold this as their first challenge** — see `challenges`. | Independent and contemporaneous. Findings with this in their chain were refuted at a quarter the rate of the rest. |
+| `hardening-pass` | Re-read against source with intent to refute, but by the authoring session rather than a separate party. **364 findings hold this as their first challenge.** | Weaker, and measurably: the independent pass overturned 10 of these and lowered 79 severities the same reader had cleared. |
 | `author` | Checked only by whoever wrote it, with no independent challenge. **No finding carries this grade any more** — the value survives so that a newly written finding is labelled honestly until someone challenges it. | Reproduce before acting, and read the severity as the author's own estimate. |
 | `unverified` | From a completeness critic that ran *after* the verification stage. **No finding carries this any more** either. | Treat as `SUSPECTED` regardless of the stated `Verification`. |
 
-**Every finding in the corpus has been challenged by a party that did not write
-it** — 1,098 of 1,098, split 734 `adversarial` and 364
-`adversarial-independent`. Nothing is `author`, `unverified`, or
-`hardening-pass`.
+**Every finding in the corpus has been challenged twice, and at least once by a
+party that did not write it** — 1,098 of 1,098, all `adversarial-independent`.
+`findings.json` carries the full chain per finding in `challenges`:
 
-**What the independent pass changed.** The 364 findings that had only been
-re-read by their authoring session were re-issued to separate agents — claim and
-citations only, no prior verification notes, instructions to refute. Of those:
-
-| | |
+| Chain | Findings |
 |---|---|
-| Survived as written | **265** |
-| Survived with a correction | **89** |
-| **Refuted** | **10** |
-| Severity lowered | **79** |
-| Severity raised | **0** |
+| `adversarial` → `adversarial-independent` | 734 |
+| `hardening-pass` → `adversarial-independent` | 364 |
 
-Read the second half of that table before you trust a severity. Seventy-nine
-downgrades and no upgrades is not noise — it says the authoring pass ran
-consistently hot, and it is the reason `verified_by` exists as a field.
+**What the independent passes changed.** Every finding was re-issued to a
+separate agent — claim and citations only, prior verification notes stripped,
+instructions to refute rather than confirm.
+
+| | The 364 (self-verified) | The 734 (adversarial) |
+|---|---|---|
+| Survived as written | 265 | 535 |
+| Survived with a correction | 89 | 194 |
+| **Refuted** | **10** (2.7%) | **5** (0.7%) |
+| Severity lowered | 79 | 186 |
+| Severity raised | 0 | 0 |
+
+**Two things to take from that table.**
+
+The refutation rate is four times lower on findings a separate agent had already
+challenged. That is the `adversarial` grade earning its name, and it is why
+`challenges` records the chain instead of just the best grade.
+
+The severity skew does not improve. **265 downgrades, zero upgrades, across both
+passes** — including over 734 findings that had already survived one adversarial
+challenge. That is not a property of who verified; it is a property of how these
+findings were written. Corpus severity moved from 116/400/582/0 (C/H/M/L) to
+**85/326/554/133**. Treat any severity here as an upper bound.
 
 **Refuted findings are still in the corpus.** They carry `Status: REFUTED` and
 the reason that killed them, because a corpus that deletes its mistakes cannot
 show that it caught any (`DEC-41`). `findings.json` carries `refuted: true` on
-each. **Do not queue them as work.** They are: `IDENT-5`, `FRIC-6`, `UI-5`,
-`IEDGE-9`, `NEDGE-1`, `BID-5`, `UX-2`, `DRAFT-4`, `EGRESS-4`, `ROLE-6`.
+each. **Do not queue them as work.** All 15: `IDENT-5`, `FRIC-6`, `UI-5`,
+`IEDGE-9`, `NEDGE-1`, `BID-5`, `UX-2`, `DRAFT-4`, `EGRESS-4`, `ROLE-6`,
+`HAND-10`, `PROJ-2`, `WIRE-5`, `STACK-12`, `TRAIL-10`.
 
 **When you sort a queue, sort by severity *and* `verified_by`, and drop
 `refuted`.**

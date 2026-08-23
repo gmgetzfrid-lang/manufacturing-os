@@ -22,7 +22,7 @@ Org lifecycle and membership, export/backup/restore, the audit log and admin rai
 
 ## Findings
 
-**55 findings** — 5 CRITICAL, 17 HIGH, 33 MEDIUM.
+**55 findings** — 5 CRITICAL, 17 HIGH, 27 MEDIUM, 6 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|

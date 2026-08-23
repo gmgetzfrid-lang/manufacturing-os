@@ -32,6 +32,7 @@ What a new org sees, and whether the numbers on the status board are real.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/knowledge/LibraryAiModal.tsx:37`, `components/knowledge/LibraryAiModal.tsx:86-90`, `components/knowledge/LibraryAiModal.tsx:229-243`, `app/(protected)/knowledge/[id]/page.tsx:1956-1960`, `lib/knowledge.ts:39-44`, `lib/knowledge.ts:279-289`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep for `drawingIntel` returns five hits and none of them writes the flag — the modal's own state, its checkbox, the type declaration in knowledge.ts:44, and the strict `=== true` gate. There is no API route, migration default, or seed that sets it, so DrawingIntelPanel is unreachable in every workspace and the ticked box is silently discarded behind a success toast.
 
 **Mechanism.** The library page mounts the panel behind a single flag: `{activeOrgId && library.aiFeatures?.drawingIntel === true && (<DrawingIntelPanel .../>)}` (page.tsx:1956). The only UI that could set that flag is LibraryAiModal's checkbox "This is a drawing set — enable Drawing Intelligence" (line 229-243), which writes to local state `setDrawingIntel(e.target.checked)`. But `save()` sends `await saveLibraryAiFeatures(library.id, { clarifyFacets, visionPages, visionAllPages, decoder: decoder.trim() || undefined, legendDocIds: ... })` (line 86-90) — `drawingIntel` is absent from the payload. Because every field of `KnowledgeAiFeatures` is optional (lib/knowledge.ts:24-48), TypeScript never flags the omission. And `saveLibraryAiFeatures` is a whole-column replace: `.update({ ai_features: features })` (lib/knowledge.ts:281) — so it does not merge, it overwrites, meaning even a value planted by SQL would be erased by the next save of any other setting on this modal.
 
@@ -63,6 +64,7 @@ LibraryAiModal.tsx:86-90 — `await saveLibraryAiFeatures(library.id, { clarifyF
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/answerSkills.ts:46-71`, `lib/linkRules.ts:57-82`, `supabase/migrations/20261016_reasoning_skills.sql:51-58`, `supabase/migrations/20261015_connection_skills.sql:62-70`, `app/(protected)/intelligence/skills/page.tsx:68-79`, `app/(protected)/intelligence/skills/page.tsx:162-173`, `components/intelligence/ConnectionSkillsPanel.tsx:50-58`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end, including the exploitability the finding rests on: `mayManage = canManageOrg || mine` is duplicated at ConnectionSkillsPanel.tsx:111-112, so a Viewer who happened to be first through the door can flip the org's built-in reasoning and connection skills off (delete is blocked for built-ins in the UI by the `!opts.builtin` guard, but the RLS DELETE policy would still permit it directly).
 
 **Mechanism.** `seedBuiltinAnswerSkills(orgId, userId)` inserts every built-in with `created_by: userId` (answerSkills.ts:68) — the uid of whoever happens to load the page first. `seedBuiltinRules` does the identical thing (linkRules.ts:79). The skills page seeds unconditionally on mount for any authenticated member: `useEffect(... await Promise.all([seedBuiltinRules(activeOrgId, uid), seedBuiltinAnswerSkills(activeOrgId, uid)]) ...)` with no role check (skills/page.tsx:68-79). The RLS UPDATE policy is `USING (is_org_controller(org_id) OR created_by = auth.uid())` (20261016:51-54, and identically 20261015:62-65), so that seeder now holds write authority over all org built-ins forever. The UI agrees: `mayManage = canManageOrg || mine` and the On/Off control is gated only on `mayManage` (skills/page.tsx:246, 263, 162-173) — unlike the delete/visibility buttons, which are additionally gated on `!opts.builtin` (line 145).
 
@@ -94,6 +96,7 @@ answerSkills.ts:60-70 — `await supabase.from("answer_skills").insert(want.map(
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:302-308`, `app/(protected)/intelligence/page.tsx:190-235`, `components/navigation/ViewTabs.tsx:106-114`, `components/navigation/Sidebar.tsx:143`, `components/navigation/Sidebar.tsx:252-253`, `app/(protected)/setup/page.tsx:109-188`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the one surface that answers "what do I do first" is unlinked from the AI front door, admin-only in the nav, and inside a drawer that starts collapsed.
 
 **Mechanism.** /setup is the real onboarding surface: seven ordered stages (codebook → registry → documents → bridge → knowledge → connections → process), each with live counts and a "Continue here" marker computed from `stages.findIndex((s) => !s.checks.every((c) => c.ok))` (setup/page.tsx:190). The Intelligence hub never mentions it. `INTELLIGENCE_VIEWS` has no /setup tab (ViewTabs.tsx:106-114); the four JumpCards go to /assistant, /knowledge, /graph and /intelligence/setup (page.tsx:304-307); no status card links to it. /setup appears only in the Sidebar's `admin` array (Sidebar.tsx:253), which is built only when `isAdmin = activeRole === 'Admin' || activeRole === 'DocCtrl'` (line 209) and lives in a section that is closed by default: `useState<Set<string>>(new Set(['admin']))` (line 143).
 
@@ -121,10 +124,11 @@ intelligence/page.tsx:302-307 — `<JumpCard href="/assistant" .../> <JumpCard h
 
 ## HUB-4 · Copy says six tabs; there are seven — and the sidebar hint omits the Skills library entirely
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/ViewTabs.tsx:104-114`, `app/(protected)/intelligence/page.tsx:3-5`, `components/navigation/Sidebar.tsx:237`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The facts are all correct, but two of the three cited locations are source comments that no user ever sees; the only user-visible defect is the Sidebar hint omitting the Skill Library. That is a copy nit, not a MEDIUM — and the Skill Library is separately discoverable via the tab row itself (ViewTabs.tsx:111) and the command palette (lib/featureAtlas.ts:99-102, aliased to "skills", "skill studio", "reasoning skills", …).
 
 **Mechanism.** `INTELLIGENCE_VIEWS` holds seven entries (Overview, Ask, Knowledge, Graph, Review, Skills, Setup). The header comment directly above it still reads "One tool, six lenses". The Overview page's own doc comment enumerates the six and names Skills in none of them. The sidebar's hover hint — the one line describing what Intelligence contains — is "AI in one place — ask, knowledge, graph, link review, setup", which drops both Overview and Skills. Skills was added later (the Skill Library page) and the three descriptions of the tool were never updated.
 
@@ -147,10 +151,11 @@ ViewTabs.tsx:104-114 — comment `// One tool, six lenses: everything AI lives h
 
 ## HUB-5 · Every fix CTA on the status board lands on a list page rather than the control that fixes it
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:209-233`, `app/(protected)/knowledge/page.tsx:108-142`, `components/knowledge/SemanticIndexPanel.tsx:192-213`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES on substance for the two Knowledge-related CTAs, but the title's quantifier is false: the two key cards (page.tsx:190-204) point at `/intelligence/setup`, which renders `<KeyEditor …/>` and `<EmbeddingKeyEditor …/>` inline at setup/page.tsx:56-59 — the exact control that fixes them — and the Database CTA lands on the page hosting Database health. Two of five misroute, so LOW rather than MEDIUM.
 
 **Mechanism.** The board's premise is stated in its own header comment: "Every ✗ links directly to its fix." Two of the four do not. "Knowledge — Nothing indexed" → `href="/knowledge" cta="Upload documents"`, but /knowledge is the shelf list; there is no upload there, and for a non-controller there is not even a New library button (knowledge/page.tsx:82-87, 114-117). "Meaning index — Index not built yet" → `href="/knowledge" cta="Build index"`, but the Build index button lives inside SemanticIndexPanel on /knowledge/[id] and is gated on `isController` (SemanticIndexPanel.tsx:192).
 
@@ -179,6 +184,7 @@ intelligence/page.tsx:3-10 — `// Every ✗ links directly to its fix.` intelli
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/setup/page.tsx:67-71`, `app/(protected)/knowledge/[id]/page.tsx:1643-1647`, `lib/featureAtlas.ts:75-105`, `components/navigation/Sidebar.tsx:252-269`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the chicken-and-egg the summary points at: the knowledge-library link only appears once instructions already exist, so an org with zero playbooks has exactly one discoverable path (the controller-only block on the Setup tab) and the command palette cannot find it at all.
 
 **Mechanism.** /admin/ai-instructions is linked from exactly four places: the Teach-the-workspace block on /intelligence/setup (line 68), the Site Codebook page (:799), the Equipment sweep modal (:150), and a conditional link in the library Ask header that renders only `{instructionCount > 0 && ...}` — i.e. only once instructions already exist. It is absent from the Sidebar's admin array (which lists 16 other admin destinations including Site codebook) and absent from `FEATURE_ATLAS`, which otherwise catalogues all seven Intelligence destinations plus every admin page, and which the command palette searches under a "Place" badge specifically so "nobody should have to remember where a feature lives" (GlobalCommandPalette.tsx:251-253).
 
@@ -205,6 +211,7 @@ Four differently-shaped searches: `grep -rn "ai-instructions" --include=*.ts --i
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:137-143`, `app/(protected)/intelligence/page.tsx:107-135`, `app/(protected)/intelligence/page.tsx:245-249`, `app/(protected)/intelligence/page.tsx:277-282`, `app/(protected)/intelligence/page.tsx:320-330`, `supabase/migrations/20261014_coverage_timeout_headroom.sql:3`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. supabase-js resolves (never rejects) on an RPC HTTP 500, so a semantic_coverage failure lands in the FIRST handler with r.data null → row null → no patch → coverageKnown stays false → the Meaning-index card shimmers permanently for any non-admin (schemaGaps is only ever set under `if (isAdmin)` at :145). Both coverage failure modes (the `() => undefined` reject arm and the null-row arm) are silent; the counts path at :132-134 at least sets `error`, and both key arms set keysKnown — so 2 of 4 silent is accurate. Migration 20261014_coverage_timeout_headroom.sql:1-9 confirms this RPC really does time out in the field.
 
 **Mechanism.** Each card shimmers until its own `*Known` flag flips. The coverage call flips `coverageKnown` only inside the success branch AND only when a row comes back: `(r) => { const row = (r.data?.[0] ...) ?? null; if (row) patch({ chunksTotal: ..., chunksEmbedded: ..., coverageKnown: true }); }` — the rejection handler is `() => undefined` (page.tsx:137-143). No patch, no flag, no error surfaced. The counts block is a single `Promise.all` of four queries (libraries, documents, pending proposals, recent asks); `countsKnown: true` is set only after all four resolve, and the catch sets `error` but never `countsKnown` (page.tsx:107-135). StatusCard with `pending` renders only pulsing grey bars and returns before the CTA (page.tsx:320-330).
 
@@ -234,6 +241,7 @@ intelligence/page.tsx:137-143 — `void supabase.rpc("semantic_coverage", { p_or
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/intelligence/ConnectionSkillsPanel.tsx:34-199`, `app/(protected)/intelligence/skills/page.tsx:292-352`, `components/intelligence/ConnectionSkillsPanel.tsx:180-183`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. The Review-tab panel deletes a custom skill on a single click with no confirm and no undo, while the Skills page gates the identical deleteLinkRule call behind appConfirm. The duplication is real too: both files independently import listLinkRules/seedBuiltinRules/setLinkRuleEnabled/setLinkRuleVisibility/deleteLinkRule and both call seedBuiltinRules(activeOrgId, uid) in their own effect (panel :54, page :73), and the surfaces already diverge (panel shows 4 patterns and no author; page shows 3 patterns, author line, and the Reasoning shelf).
 
 **Mechanism.** ConnectionSkillsPanel (on the Review tab) and the Connection Skills shelf (on the Skills tab) both call `listLinkRules`/`seedBuiltinRules`/`setLinkRuleEnabled`/`setLinkRuleVisibility`/`deleteLinkRule`, both render name + kind badge + builtin/visibility badge + pattern chips + On/Off + visibility flip + delete, and both mount SkillStudio. They differ in ways that matter: the Skills page wraps delete in an `appConfirm` ("Delete this skill? … stops running and its definition is gone", skills/page.tsx:98-107) while ConnectionSkillsPanel deletes with no confirmation at all (`const remove = async (r: LinkRule) => { ... await deleteLinkRule(r.id); ... }`, line 74-79). The panel then links across to the page it duplicates: "Skill library ↗".
 
@@ -259,10 +267,11 @@ ConnectionSkillsPanel.tsx:74-79 — `const remove = async (r: LinkRule) => { set
 
 ## HUB-9 · The Meaning-index card never renders for an Admin, and reads green at 1% coverage or with nothing indexed at all
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/page.tsx:217-234`, `app/(protected)/intelligence/page.tsx:145-167`, `app/(protected)/intelligence/page.tsx:261-270`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — the ternary at :217 means an Admin whose schema-health call succeeds gets the Database card in the coverage card's slot, and ok= is true at 1/400 embedded — but 'never renders for an Admin' is literally false: schemaGaps starts null, so the Meaning-index card DOES render until /api/admin/schema-health answers, and renders permanently if that fetch is non-ok (:160 `if (!res.ok) return;`). More importantly the scenario's own admin holds the embedding key, so the row at :261-270 does render for them and states '16 of 400 passages embedded' — the coverage number is not actually withheld. Downgrade to LOW: a green check on a partially-built index whose exact percentage is printed beside it.
 
 **Mechanism.** The fourth slot is an either/or: `{s.schemaGaps !== null ? (<StatusCard title="Database" .../>) : (<StatusCard title="Meaning index" .../>)}` (page.tsx:217-234). `schemaGaps` starts null and is only ever set inside `if (isAdmin) { ... }` (line 145). So the Database card displaces the Meaning-index card for exactly the role that would act on it. When the Meaning-index card does render, its ok-test is `ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true}` — green at one embedded passage out of a hundred thousand, and green ("Builds after your first uploads") when nothing exists at all, sitting next to a Knowledge card that is simultaneously amber for the same emptiness.
 
@@ -288,10 +297,11 @@ intelligence/page.tsx:228 — `ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : tr
 
 ## HUB-10 · The Overview's instant-paint snapshot is keyed by org, not by user — the previous person's per-user AI status is painted for the next one on a shared workstation
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `app/(protected)/intelligence/page.tsx:70-84`, `app/(protected)/intelligence/page.tsx:147-165`, `app/api/ai/connection/route.ts:99-105`, `components/providers/RoleContext.tsx:260-280`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The key fact holds: the localStorage snapshot is keyed by org only, yet chatKey/embeddingKey are strictly per-user, so on a shared device the next signer-in gets the previous user's masked key state painted as known (no shimmer), and the `() => patch({ keysKnown: true })` failure arm at :103 leaves those stale values standing as authoritative. But RoleContext.tsx:271-278 does purge every `intel-status-*` / `schema-gaps-*` key on SIGNED_OUT, and in the normal path the stale paint is overwritten within one round-trip by the real getAiConnections result. Exposure is a 4-character key suffix plus a boolean, transient, and inside the same org — LOW.
 
 **Mechanism.** `const snapKey = `intel-status-${activeOrgId}`;` and `const gapsKey = `schema-gaps-${activeOrgId}`;` — org-scoped, with no uid component. The snapshot holds per-user facts: `chatKey`/`embeddingKey` (the API returns only this member's row — `effective: personal`, route.ts:99-105) and admin-only `schemaGaps`. On read the snapshot is trusted absolutely: `setStatus((prev) => prev ?? { ...snap, keysKnown: true, countsKnown: true, coverageKnown: true })` — the shimmer that exists precisely to prevent a false "No key saved" is suppressed for another account's data. The keys are cleared only on an explicit `SIGNED_OUT` event handled in a live tab (RoleContext.tsx:260-278).
 
@@ -316,10 +326,11 @@ intelligence/page.tsx:70 — `const snapKey = `intel-status-${activeOrgId}`;` an
 
 ## HUB-11 · The hub's most-used page drops the hub — /knowledge/[id] is the only Intelligence surface with no ViewTabs strip
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/knowledge/[id]/page.tsx:1600-1616`, `app/(protected)/knowledge/page.tsx:72`, `app/(protected)/assistant/page.tsx:131`, `app/(protected)/graph/page.tsx:444`, `app/(protected)/admin/proposed-links/page.tsx:155`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — /knowledge/[id] is the one Intelligence surface with no tab strip. But it is not navigationally stranded: a labelled back-link to /knowledge sits in the header, so the cost is one extra click, not a dead end, and every other detail page in the app (documents/[libraryId], assets/[tag]) follows the same eyebrow-not-tabs convention. Consistency nit → LOW.
 
 **Mechanism.** Every other tab target renders `<ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />`. The library detail page — where asking, uploading, sources, the semantic index and (nominally) drawing intelligence all live — renders `<PageShell><PageHeaderBar .../>` with no strip. Its only way back is an eyebrow button to /knowledge. The graph page also drifts: `<ViewTabs tabs={INTELLIGENCE_VIEWS} />` with no `title`, so the "INTELLIGENCE" label vanishes on that one page.
 
@@ -346,6 +357,7 @@ intelligence/page.tsx:70 — `const snapKey = `intel-status-${activeOrgId}`;` an
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/knowledge/LibraryAiModal.tsx:213-216`, `components/knowledge/SemanticIndexPanel.tsx:158-168`, `components/knowledge/DrawingIntelPanel.tsx:432-436`, `components/knowledge/EquipmentTablePanel.tsx:45-49`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both clauses. A grep for the exact strings shows 'These are CAD exports or scans' exists nowhere but SemanticIndexPanel's own advice text — the real label is 'Text doesn't extract from these files'. And both SemanticIndexPanel (:163 'run Rebuild index under Drawing intelligence') and EquipmentTablePanel (:47 'use the CSV export in Drawing intelligence') send the reader to a panel that is not mounted unless aiFeatures.drawingIntel === true, and which returns null when nothing was extracted — precisely the failure state that produces the advice.
 
 **Mechanism.** The vision-indexing control is literally labelled "Text doesn't extract from these files — index every page as an image" (LibraryAiModal.tsx:214-216). SemanticIndexPanel's zero-passages empty state instructs: `Turn on <b>"These are CAD exports or scans"</b> in Library AI setup, run <b>Rebuild index</b> under Drawing intelligence, then come back here.` DrawingIntelPanel's own footer calls it a third thing: "Turn on <b>Index every page with AI vision</b> in Library AI setup and rebuild". Neither of the quoted names exists in the modal. Both of the routes that say "under Drawing intelligence" point at a panel gated on a flag that can never be set (see the first finding).
 

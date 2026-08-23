@@ -31,10 +31,11 @@ The central complaint: a badge says something needs attention, and the trail doe
 
 ## TRAIL-1 · The trail has exactly one link: the sidebar row. No page below /documents, /projects or any library consumes notification state at all
 
-- **Severity:** CRITICAL
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/Sidebar.tsx:124`, `app/(protected)/documents/page.tsx:389-467`, `app/(protected)/documents/[libraryId]/page.tsx:3958-4185`, `components/documents/FolderTree.tsx:150-223`, `components/documents/FolderGrid.tsx`, `components/documents/DocGridView.tsx`, `components/documents/InspectorPanel.tsx:411-430`, `app/(protected)/projects/page.tsx:199-261`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → MEDIUM** by this pass. The finding's central assertion — 'the trail has exactly one link' and the user 'opens the right one by guessing' — is wrong: badge → Notification Center → row → the exact document is a working chain, and the deep-link handler even resolves the doc's folder. What genuinely survives is narrower: no ambient per-library/per-folder/per-row marker exists while browsing, so attention state is invisible unless you enter through a notification row. That is a MEDIUM wayfinding gap, not a CRITICAL dead end.
 
 **Mechanism.** `useTicketNotifications` is the ONLY producer of attention state, and it is imported by exactly five files: Sidebar.tsx, NotificationCenter.tsx, NotificationBell.tsx, dashboard/widgets.tsx and app/(protected)/inbox/page.tsx. Zero document, library, folder, or project surfaces import it, and none query the notifications table directly. So the badge on the 'Documents' row is the terminal node of the chain — the moment you click it and land on /documents you are looking at UI that has no knowledge that a notification exists. The library grid renders only cover / name / description / 'Public Read'|'Controlled' / 'No Access'. The folder tree renders only chevron / folder icon / name / path / visibility pill. The document table row renders only checkbox / columns / status pill / CheckoutStatusCell / stage button / pencil. The inspector's ALERTS zone is document *state* (open branches, active holds), never 'this is the item that badged you'.
 
@@ -84,6 +85,7 @@ ProjectCard, projects/page.tsx:216-228 — status pill + Private/Public pill onl
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:124-132`, `components/navigation/Sidebar.tsx:225-250`, `lib/inAppNotifications.ts:10-58`
 - **Also surfaced independently as** [`PROD-1`](./01-producer-census.md#prod-1) — two lenses found this separately. Fix once.
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified to the number. Worse than stated: there is no Scratchpad nav item anywhere in the sidebar, so sectionCounts.scratchpad is tallied (useTicketNotifications.ts:247-250) and discarded entirely, exactly like 'other'. Severity HIGH stands — ack_requested is the audit-relevant nudge and the nav rail is the primary wayfinding surface, even though the bell total and /inbox's dedicated pending-ack list still surface the item.
 
 **Mechanism.** `sectionForKind` enumerates 22 kinds across requests/scratchpad/documents/projects and returns 'other' for everything else. `NotificationKind` declares 48 kinds. `emptySectionCounts()` allocates buckets for 'scratchpad' and 'other', and the counts are computed — but `sectionCounts` is consumed at only three places in the entire codebase (Sidebar.tsx:229, :231, :235, for documents / projects / requests). There is no Scratchpad nav item (the route app/(protected)/scratchpad/page.tsx exists but workAll contains no entry for it), so 'scratchpad' and 'other' totals are computed and discarded. Kinds that land in 'other' and are actively emitted include: ack_requested (lib/acknowledgments.ts:375, :501, :580), review_requested (lib/reviewControl.ts:226, :569; app/api/intake/upload/route.ts:106; components/documents/CheckInPanel.tsx:402), review_due (lib/reviewCycles.ts:300), effective_now (lib/effectiveDate.ts:84), deletion_requested (lib/ownership.ts:113), owner_assigned (lib/ownership.ts:143), library_doc_added (documents/[libraryId]/page.tsx:2306), library_doc_revised (lib/postPublish.ts:53), project_comment (lib/projects.ts:450).
 
@@ -132,6 +134,7 @@ Grep for `sectionCounts` across the repo returns hits only in Sidebar.tsx (3 bad
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/Sidebar.tsx:537-544`, `components/notifications/NotificationCenter.tsx:76-85`, `components/notifications/NotificationCenter.tsx:112-117`, `components/cockpit/AttentionFeed.tsx:22`
 - **Also surfaced independently as** [`TAX-1`](./03-taxonomy.md#tax-1) — two lenses found this separately. Fix once.
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating path: nothing anywhere passes an AttentionSection to the center, and its header line is affirmatively false for section badges, which count only their own section. The AttentionFeed group chips are no substitute — they use the independent groupOf() taxonomy (AttentionFeed.tsx:63-74) that per TAX-5 disagrees with sectionForKind, so a user cannot reconstruct the three Documents items by filtering.
 
 **Mechanism.** The sidebar badge's onClick calls `openCenter('action' | 'all')`. `AttnFilter` has only three values — "all" | "action" | "unread" — none of which is a section. CenterPanel re-mounts `useTicketNotifications()` and filters `items` by that filter only; `AttentionItem.section` exists on every item (set at hooks/useTicketNotifications.ts:262 and :289) but the Center never reads it. So the panel that opens from the Documents badge lists request items, project items and 'other' items too, and its subtitle prints `counts.all` — the org-wide total — as the number the badge supposedly counted.
 
@@ -179,10 +182,11 @@ Contrast with the file's own docstring, NotificationCenter.tsx:3-9: "Notificatio
 
 ## TRAIL-4 · Nothing marks a document or project notification read when you visit the thing — only /requests/[id] does, so the Documents badge never decays
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:919-930`, `app/(protected)/documents/[libraryId]/page.tsx:1284-1319`, `lib/inAppNotifications.ts:187-189`, `components/notifications/NotificationBell.tsx:91`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The narrow claim is true — only /requests/[id] clears notifications by visiting the resource — but 'the Documents badge never decays' and 'User opens each of the four documents via the bell ... the badge still says 4 because reading was never recorded' are false: clicking through from the bell, the Notification Center, the Needs-You widget or /inbox marks that row read before navigating. The real residue is the asymmetry — arriving at a document by any route other than the notification row leaves it unread — which is a MEDIUM inconsistency, not a badge that can only be cleared by 'mark all read'.
 
 **Mechanism.** `markRead` is called from exactly four places: NotificationBell row click, NotificationCenter row click, dashboard widgets row click, and inbox row click. The only page that clears notifications by visiting the resource is the ticket detail page, which explicitly updates `notifications` where `resource_id = ticketId`. The library page's `?doc=` deep-link effect selects the document and opens the inspector — and does not touch the notifications table. So a user who follows a bell link, reads the document, and closes it still carries the badge.
 
@@ -225,10 +229,11 @@ Grep for `markRead|read_at` across components/, app/, hooks/, lib/ (excluding in
 
 ## TRAIL-5 · tally(section, false) hardcodes actionRequired to zero for every notification-sourced item — the Documents and Projects badges are structurally incapable of turning red
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:301`, `hooks/useTicketNotifications.ts:288`, `hooks/useTicketNotifications.ts:272`, `components/navigation/Sidebar.tsx:128-131`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Claim is exactly right: sectionCounts.documents.actionRequired and .projects.actionRequired are literally unreachable, so those rows can only ever badge blue ('unread FYI' per the Sidebar's own contract at line 22). Downgraded to MEDIUM because no information is lost — the count still renders and the badge button (Sidebar.tsx:537-544) opens the Notification Center, whose own counts.action (NotificationCenter.tsx:78) does classify these items correctly; only the tone and the pre-filter are wrong.
 
 **Mechanism.** Two call sites feed the section tallies. The ticket loop calls `tally('requests', actionReq)` with the real flag. The notification loop computes the real flag one line earlier — `actionRequired: actionKinds.has(n.kind)` — then throws it away: `tally(section, false)`. Only tickets ever tally into `requests`, and only notifications ever tally into `documents`/`projects`. Therefore `sectionCounts.documents.actionRequired` and `sectionCounts.projects.actionRequired` are always exactly 0, and `badgeOf` — whose only branch is `s.actionRequired > 0 ? 'red' : 'blue'` — always returns 'blue' for those two rows.
 
@@ -273,10 +278,11 @@ Sidebar.tsx:22 (the contract this violates): `//     Badges: red = action requir
 
 ## TRAIL-6 · A notification row cannot be rolled up to a container: it carries no library_id or collection_id, and resource_id is TEXT while documents.id is uuid
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260621_in_app_notifications.sql:13-27`, `lib/inAppNotifications.ts:140-155`, `lib/holds.ts:232-251`, `hooks/useTicketNotifications.ts:176`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — the row genuinely cannot be rolled up to a library or folder without a second query, and holds.ts:232-241 only fetches library_id to build the link string, never persisting it. Downgraded to LOW: this describes a feature that was never built (container badges) rather than a defect in shipped behavior, and notifications_org_resource_idx (org_id, resource_type, resource_id) makes the extra lookup cheap and indexed.
 
 **Mechanism.** The notifications table stores `resource_type TEXT` + `resource_id TEXT` and a free-form `metadata JSONB`. There is no library_id, collection_id, or project_id column, and no FK. So to answer 'how many unread items are in library X' the client must fetch its unread rows, extract the document ids, and issue a second query `select id, library_id, collection_id from documents where id in (…)` — a join the client currently never performs. Two further frictions: `resource_id` is TEXT so a SQL-side join to `documents.id` (uuid) needs a cast; and `resource_type` is not constrained, so `'document'` vs `'checkout'` vs `'library'` is a convention, not a guarantee. Notably the producer side already HAS the library id at emit time and only uses it to build a link string.
 
@@ -324,6 +330,7 @@ link: doc?.library_id ? `/documents/${doc.library_id}?doc=${input.documentId}` :
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:176`, `lib/inAppNotifications.ts:157-174`, `hooks/useTicketNotifications.ts:31`, `hooks/useTicketNotifications.ts:156`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves: newest-first ordering plus a hard limit means the OLDEST unread rows are the ones dropped, and count/sectionCounts/NotificationCenter counts are all computed from the truncated arrays (countUnread() in inAppNotifications.ts:176 does an exact head-count but no surface in the attention path calls it). No 'showing N of M' affordance exists in NotificationBell.tsx or NotificationCenter.tsx.
 
 **Mechanism.** `listMyNotifications({ onlyUnread: true, limit: 50, orgId })` orders by created_at DESC and caps at 50, so a user with 80 unread rows has their sidebar counts computed from the newest 50 — and the 30 oldest are the ones dropped. Independently, the ticket fetch caps at OPEN_TICKET_CAP = 500 ordered by last_modified DESC, so in a busy org the least-recently-touched (i.e. most overdue) action-required tickets fall out of the Drafting Requests count. Neither truncation is surfaced anywhere in the UI.
 
@@ -369,6 +376,7 @@ Note `countUnread()` at lib/inAppNotifications.ts:176-185 returns an exact head-
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:143-230`, `components/navigation/Sidebar.tsx:124`, `components/notifications/NotificationBell.tsx:54`, `components/notifications/NotificationCenter.tsx:55`, `components/dashboard/widgets.tsx:669`, `app/(protected)/inbox/page.tsx:38`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and worse than 'five': app/(protected)/layout.tsx mounts Sidebar (line 56) and NotificationCenterProvider (line 145) — whose CenterPanel calls the hook unconditionally even while closed — plus the TopBar bell, so three instances are live on EVERY protected route and five on the dashboard. The write-back at line 207 (markManyRead) does land on the `notifications` table the subscription at line 225 watches, so the self-retrigger described is real.
 
 **Mechanism.** `useTicketNotifications` holds all state locally and subscribes its own channel keyed by `useId()` specifically so instances don't collide. On the dashboard, four instances are mounted at once (Sidebar, Bell, Center provider, widgets). Each runs the full fetchAll: up to 500 tickets + 50 notifications + the reconciliation query. Each subscribes to `postgres_changes` on `tickets` filtered `org_id=eq.<org>` — meaning ANY ticket write anywhere in the org fires four independent full refetches, each of which may issue a `markManyRead` write, which itself fires the notifications subscription, which triggers another four refetches.
 
@@ -410,10 +418,11 @@ The comment treats multiple instances as the intended design rather than the pro
 
 ## TRAIL-9 · Stale-alert reconciliation covers ONLY ticket workflow rows — hold_opened and hold_released both persist unread, so the Documents badge counts a condition that no longer exists
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:186-210`, `lib/holds.ts:238-241`, `hooks/useTicketNotifications.ts:86-95`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Accurate: hold rows can never be reconciled, and the hook's own header comment (lines 24-25, 'stale workflow alerts ... are reconciled away — so the badge can never disagree with the portal') overstates what the code does. Downgraded to LOW because an unread-until-read inbox row is normal semantics, the count is real unread mail rather than fabricated, and hold_released is itself the resolution notice — the badge is noisy, not false.
 
 **Mechanism.** The reconciler selects only rows that have `resourceId && metadata && typeof metadata.status === 'string' && metadata.action != null`, then compares against the `tickets` table. Document notifications carry no `metadata.status`, so none of them are ever reconciled. lib/holds.ts emits `hold_opened` on open and `hold_released` on release — both map to the 'documents' section (hooks/useTicketNotifications.ts:93-94). A hold that is placed and then released leaves TWO unread rows behind, and the release row is pure FYI with nothing to act on.
 
@@ -459,9 +468,10 @@ hooks/useTicketNotifications.ts:93-95:
 ## TRAIL-10 · The Documents badge counts across six different routes but always lands you on one of them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/ViewTabs.tsx:80-87`, `components/navigation/Sidebar.tsx:62-68`, `components/navigation/Sidebar.tsx:229`, `hooks/useTicketNotifications.ts:86-95`
+- **Independently verified:** ⛔ **REFUTED** by a second independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). False as stated — the badge does not land you on /documents at all; preventDefault/stopPropagation cancel the Link and open the Notification Center, which lists the individual item with its own deep link (e.g. /documents/<libraryId>?doc=<id> from holds.ts:249 or a checkout link). Only the row itself navigates to /documents, which is the intended behavior of a nav rail, and the six views are then visible as ViewTabs (DOCUMENT_VIEWS, ViewTabs.tsx:80-87).
 
 **Mechanism.** TOOL_ALIASES derives the Documents tool's route family from DOCUMENT_VIEWS: /documents, /register, /checkouts, /packages, /admin/holds, /transmittals. The section's counted kinds span that family — checkout_conflict/handoff/message/released belong on /checkouts, hold_opened/hold_released on /admin/holds, doc_superseded often on /packages (lib/postPublish.ts:180 links to `/packages?pkg=…`). But `href: '/documents'` sends every click to the library grid, which is the one view that cannot show any of those states.
 
@@ -497,10 +507,11 @@ Sidebar.tsx:229: `{ label: 'Documents', hint: 'Libraries · board · locks · pa
 
 ## TRAIL-11 · The one place the chain DOES continue — the requests queue — proves the pattern and shows it was never applied to documents or projects
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/page.tsx:1027-1039`, `app/(protected)/requests/page.tsx:1128-1144`, `app/(protected)/projects/page.tsx:199-261`, `app/(protected)/documents/page.tsx:389-467`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Verified: the per-row attention dot exists only in the requests portal. Downgraded to LOW — this is the same missing-capability observation as TRAIL-5/TRAIL-6 restated as a UX-consistency complaint, and it describes an unbuilt feature rather than incorrect behavior.
 
 **Mechanism.** The drafting-requests queue recomputes attention per row from the raw ticket (`isActionRequired(ticket)` + `ticket.unreadBy?.includes(uid)`) and renders a red pulsing dot for action and a blue dot for unread — the same visual language as the sidebar badge, and it survives because it never depends on notification rows. That is the complete working example of what the owner is asking for. It exists in exactly one section. The library grid, folder tree, document table and project cards all render nothing equivalent, and the projects list doesn't even import the attention primitives.
 
@@ -535,10 +546,11 @@ Case-insensitive grep for `badge|notif|attention|unread` in app/(protected)/docu
 
 ## TRAIL-12 · When a document notification has no link, the fallback deep-links into a search that can never match — searchDocuments never queries by id
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:293-297`, `lib/search.ts:171-235`, `lib/branches.ts:144`, `lib/distributionAcks.ts:141`, `lib/staleCopies.ts:201`, `components/documents/EditOverlapBanner.tsx:92`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — a document notification with no link deep-links to a uuid query that structurally cannot match. But the headline example is wrong: lib/revisions.ts:124 types `libraryId: string` (required) and line 699 passes it straight to announceBranchOpened, so branch_open ALWAYS has a link. The fallback is only reachable via the nullable-libraryId emitters (staleCopies.ts:186/201, distributionAcks.ts:104/141, EditOverlapBanner.tsx:22/92), hence LOW.
 
 **Mechanism.** Several producers build their link as `input.libraryId ? \`/documents/${libraryId}?doc=${docId}\` : undefined`. When libraryId is absent the row lands with `link = null`, and the hook's fallback for resourceType 'document' is `/search?q=<encodeURIComponent(resourceId)>` — i.e. it puts a raw uuid into the search box. `searchDocuments` filters by org, runs a tsvector match on search_tsv, falls back to ILIKE on document_number/title/name, then augments with equipment-tag lookups. None of those paths ever compares against `documents.id`, so the uuid matches nothing.
 
@@ -582,6 +594,7 @@ lib/branches.ts:144: ``link: input.libraryId ? `/documents/${input.libraryId}?do
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:256`, `hooks/useTicketNotifications.ts:288`, `components/notifications/NotificationCenter.tsx:78`, `components/dashboard/widgets.tsx:1223`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — one hook call yields two different action counts, and a checkout_conflict/checkout_released/overlap_advisory/branch_open row is counted by the center's 'Action' tab but not by actionRequiredCount, which the Command Deck stat that opens that tab renders.
 
 **Mechanism.** The hook's exported `actionRequiredCount` (`ar`) is incremented only inside the ticket loop. The notification loop sets `actionRequired: actionKinds.has(n.kind)` on the item but never touches `ar`. Consumers that read `actionRequiredCount` (dashboard widgets) therefore exclude conflict-class notifications, while consumers that recompute from `items` (NotificationCenter.tsx:78, inbox/page.tsx:76, widgets.tsx:676) include them.
 

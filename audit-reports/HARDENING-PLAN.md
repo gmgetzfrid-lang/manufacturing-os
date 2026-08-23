@@ -206,20 +206,100 @@ superseded `CREATE OR REPLACE` definitions inflate the denominator, and
 `publish_revision` exists at two arities — Postgres keys on signature, so both
 are live and neither pins `search_path`.
 
-### What is still open
+### What Phase F left open
 
-Recorded rather than hidden, because a deleted caveat is worse than a stated one.
+- **`IDENT-1`'s production half is unanswerable from this repository.**
+- **Verification corrections are still prose.**
+- **The 734 `adversarial` findings have been challenged once, not twice.**
+  Phase G closes this and answers the question it poses.
+
+---
+
+## Phase G — the other 734
+
+Phase F ended by naming its own blind spot: the 79:0 downgrade skew might be a
+property of the *hardening pass*, or a property of *how these findings are
+written*. One of those is fixed; the other is corpus-wide. Nothing measured it.
+
+So the same treatment was applied to the 734 `adversarial` findings — the ones
+that had already been challenged by a separate agent when they were written, and
+that Phase F deliberately did not re-run.
+
+Method identical to Phase F: extracted with claim, severity and citations only,
+no prior verification notes, batched into 53 groups of ≤14, one separate agent
+each, refute-first prompt, read-only constraint.
+
+- [x] Extract 734 findings stripped of prior verification notes
+- [x] 53 independent agents, refute-first prompt
+- [x] Reconcile results against the batch manifest by ID, not by file count
+- [x] Verdicts written back per finding as `- **Independently verified:**`
+- [x] Severity corrections applied to the `Severity` field
+- [x] Refuted findings marked `Status: REFUTED` in place with the reason
+- [x] `build-index.mjs` records the full `challenges` chain, not just the best grade
+- [x] README severity counts corrected — the build gate caught all 19 stale ones
+
+### Result
+
+| | Phase F (the 364) | Phase G (the 734) |
+|---|---|---|
+| Survived as written | 265 | 535 |
+| Survived with a correction | 89 | 194 |
+| **Refuted** | **10** — 2.7% | **5** — 0.7% |
+| Severity lowered | 79 | 186 |
+| Severity raised | 0 | 0 |
+
+### The question Phase F could not answer
+
+**Both halves of it turned out to be true, and they are separable.**
+
+**Independence is worth something, and now there is a number on it.** Findings a
+separate agent had already contested were refuted at **0.7%**; findings only the
+authoring session had cleared were refuted at **2.7%** — four times the rate. The
+`adversarial` grade was not a formality. That is why `challenges` now records the
+whole chain instead of collapsing to the strongest link.
+
+**The severity skew is not about verification at all.** 186 downgrades and zero
+upgrades, over findings that had *already* survived an independent challenge —
+the same one-directional skew, at a similar rate, on a population where the
+Phase F explanation cannot apply. **265 downgrades and zero upgrades across
+1,098 findings** is a property of how the findings were authored, not of who
+checked them. Corpus severity moved from 116/400/582/0 (C/H/M/L) to
+**85/326/554/133**.
+
+The practical consequence for anyone working this corpus: **a severity here is an
+upper bound.** Two independent passes have only ever moved them down.
+
+### What the refutations have in common
+
+All 15, across both phases, share one shape: **the cited line was read and the
+lines around it were not.** `TRAIL-10` claims a badge is a dead end; the comment
+directly above it reads *"The count is a DOORWAY, not a scoreboard"* and the
+handler opens the item. `STACK-12` says an error leaves no trace; its own quoted
+block writes a persistent inline note. `WIRE-5` says no query can answer a
+question two shipped queries answer.
+
+A larger group survived with the same defect in milder form — a real mechanism
+wrapped in an absolute the adjacent code contradicts. `TRAIL-1` was `CRITICAL` on
+"the trail has exactly one link" against a working three-hop path. `GM-4`'s title
+names the one table its mechanism does not apply to. `AREA-7` says a thing is
+impossible on the same admin page that does it.
+
+**The lesson is narrow and actionable: absence claims need a caller check, not a
+line read.** Every refutation would have been caught by opening the callers of
+the cited function before writing "nothing does X."
+
+### What is still open
 
 - **`IDENT-1`'s production half is unanswerable from this repository** — whether
   duplicate auth identities exist is a Supabase project setting. Three SQL
   queries in the finding settle it in about thirty seconds.
 - **Verification corrections are still prose.** `locations` is correct in the
-  index now, but making that structural needs a change to how verification runs.
-- **The 734 `adversarial` findings have been challenged once, not twice.** Their
-  challenge was independent and contemporaneous, which is why they were not
-  re-run here. If the 79:0 downgrade ratio in the 364 is a property of the
-  authors rather than of the hardening pass, the same skew may sit in the 734.
-  Nothing in this engagement measures that.
+  index, but making that structural needs a change to how verification runs.
+- **Severity is one verifier's judgment.** A duplicate agent run on one batch of
+  six agreed on all six survival verdicts and disagreed on one severity. That is
+  a sample of one batch, not a measured rate — but it is the honest reason to
+  treat the 265 downgrades as better-calibrated than the originals rather than
+  as exact. Survival verdicts are checkable against code; severities are not.
 
 ---
 

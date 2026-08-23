@@ -35,6 +35,7 @@
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260708_acl_rls_enforcement.sql:52-55`, `supabase/migrations/20260708_acl_rls_enforcement.sql:85-91`, `components/permissions/PermissionDrawer.tsx:258-285`, `app/(protected)/documents/[libraryId]/page.tsx:2449-2452`, `app/(protected)/documents/[libraryId]/page.tsx:1742-1751`, `app/api/storage/download-url/route.ts:70-71`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the claims of absence — I searched every migration and supabase/REMEDIATION_APPLY_ALL.sql for a trigger, function, or policy that walks the container chain for documents and found none (the only documents trigger, 20261011_collections_guard_and_trash.sql:58-59, is a move guard). Because a document's own visibility stays 'normal' even when created inside a restricted folder, node_visible returns true at line 54 before it can read the acl_index — so restricting a folder or library is enforced by React only, and a raw PostgREST select with the member's own JWT returns the rows.
 
 **Mechanism.** Restricting a FOLDER is done by PermissionDrawer, which writes `acl`, `acl_index` and `visibility` to exactly ONE row: `supabase.from(table).update(payload).eq("id", nodeId)` (PermissionDrawer.tsx:284). Nothing recomputes the child documents' `acl_index`, and the children keep `visibility='normal'`. The only SELECT-restricting policy on `documents` is `documents_acl_select ... USING (node_visible(visibility, acl_index, org_id))`, and node_visible's FIRST branch is `IF p_visibility IS NULL OR p_visibility = 'normal' THEN RETURN true;`. So the restricted folder's contents pass RLS unconditionally. `document_versions_acl_select` delegates to `doc_is_visible(record_id)` → the same node_visible → also true, exposing `file_url`. Then /api/storage/download-url only applies its ACL gate `if (doc && (visibility === "private" || visibility === "hidden"))` — normal skips it — and signs the object. The ONLY thing hiding the folder's contents is the client-side filter in the library page (`canWithAclChain({... defaultAllow: true})`).
 
@@ -66,6 +67,7 @@
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/delete/route.ts:6-44`, `lib/storage.ts:442-450`, `supabase/migrations/20260826_legal_hold_delete_guard.sql:17-58`, `lib/storageKey.ts:41-53`, `app/api/storage/download-url/route.ts:26-29`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every element checks out. The legal-hold triggers are the sharpest confirmation: the header at :10-13 claims they "close every path at once", but they can only refuse the DB delete, so bytes destroyed through this route leave the held document row and register entry intact and the spoliation invisible. The one point worth qualifying is the storage-key gap — lib/storageKey.ts:4-11 argues traversal is not itself exploitable against R2's opaque keys, so that part is a consistency defect rather than a second vulnerability.
 
 **Mechanism.** The delete route resolves the user, parses `orgs/<uuid>/` out of the caller-supplied path, confirms active membership, and issues `DeleteObjectCommand` — nothing else. It never calls `assertSafeStorageKey`, which every sibling storage route does (download-url:29, upload-url:26, multipart:37). It never looks up which document owns the key, so it cannot honour `legal_hold`, `retention_until`, `disposition_state`, or the document's ACL. The DB triggers `trg_documents_legal_hold_delete` / `trg_document_versions_legal_hold_delete` protect the ROWS but are irrelevant to the bytes in R2. Any member can read `document_versions.file_url` for any normal-visibility document (see finding 1), so target keys are trivially discoverable.
 
@@ -95,6 +97,7 @@ app/api/storage/delete/route.ts:26-40 — the entire authorization is `const org
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/d/[number]/route.ts:26-46`, `app/api/verify/route.ts:22-39`, `app/api/verify/route.ts:96-108`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claim is right and each route's own comment states the assumption the other one breaks. /d/[number]:6-7 says "The target page enforces auth + RLS as always — this route only translates a number into a location; it reveals nothing", but the redirect body is never fetched — the Location header IS the disclosure. /api/verify:5-7 rests on "Both IDs are unguessable UUIDs that only appear ON a printed copy the org itself issued", which /d/ falsifies by handing out real document UUIDs from any tenant to an unauthenticated caller supplying a 2-character substring.
 
 **Mechanism.** The short-link route runs `supabaseAdmin` (service role, RLS bypassed) with `.ilike("document_number", "%"+raw+"%")` and NO `.eq("org_id", ...)` and no auth check at all. It then 302-redirects to `/documents/{match.library_id}?doc={match.id}` — the Location header discloses two real UUIDs. Worse, the fallback `?? (rows ?? [])[0]` means a mere substring match redirects, so enumeration needs no exact number. /api/verify is likewise unauthenticated service-role and accepts `doc` alone (`v` is optional: `if (!UUID_RE.test(docId) || (versionId && !UUID_RE.test(versionId)))`), returning docNumber, title, currentRev and docStatus with no visibility or ACL check.
 
@@ -124,6 +127,7 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260623_document_shares.sql:37-54`, `lib/documentShares.ts:33-57`, `app/api/share/file/route.ts:42-58`, `app/api/share/file/route.ts:105-125`, `app/api/storage/download-url/route.ts:92-111`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every limb: RLS gates share creation on org membership only, and the file route is service-role with no ACL/legal-hold/download-deny/ack check. I looked for a compensating guard in /api/share/resolve and in ShareLinkModal and found none — the modal is pure UI, and the insert goes through PostgREST so any UI gating is bypassable. If anything the finding understates it: the WITH CHECK never verifies that document_id belongs to org_id, and share/file resolves the document by id with no org filter, so a member can also mint a link for a document in a DIFFERENT tenant.
 
 **Mechanism.** `document_shares_org_member` is a `FOR ALL` policy whose USING and WITH CHECK both test only active org membership — `document_id` is entirely unconstrained, so the INSERT check never asks whether the inserter can see that document. `createShareLink` inserts with the browser client, so any member can create a token for any document UUID in their org. /api/share/file then resolves the token with the SERVICE ROLE and reads `documents` + `document_versions` directly, checking only `revoked_at` and `expires_at`. It applies none of the protections the internal download path applies: no `canDiscover`, no acl_index deny-download check (download-url/route.ts:97-110 has one), no `assertAckGate` (lib/downloads.ts:177-215), no legal-hold or retention lookup, and no `download_policy` check. `expiresInDays: 0` in createShareLink produces `expiresAt = null` — a never-expiring public link.
 
@@ -151,6 +155,7 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/acl.ts:72-74`, `components/providers/RoleContext.tsx:11-12`, `app/(protected)/documents/[libraryId]/page.tsx:1650-1657`, `app/api/storage/download-url/route.ts:99-107`, `supabase/migrations/20260708_acl_rls_enforcement.sql:58-59`, `supabase/migrations/20260722_member_roles_collection.sql:12-13`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide search for evaluateAcl/evaluateAclChain/canDiscover callers turned up no other site that expands org_members.roles into the ACL principal, so the asymmetry is real: secondary-role allow grants are inert, and a secondary-role deny binds only on download-URL issuance. 20260722_member_roles_collection.sql:5-8 even states the design intent ("every existing single-role check and every RLS policy reads `role`"), which is the cause, not a refutation.
 
 **Mechanism.** `subjectMatches` for a role subject is `return !!ctx.role && ctx.role === (id as Role);` — a single scalar. The principal is built as `role: activeRole`, which RoleContext documents as `role: Role; // headline — highest-ranked of \`roles\``. node_visible likewise does `SELECT role INTO v_role FROM org_members`. But org_members carries an additive `roles TEXT[]`, and exactly one code path honours it: the download-deny branch, `const heldRoles = ((mem2?.roles as string[] | null) ?? [(mem2?.role as string) ?? "Viewer"]); ... heldRoles.some((r) => (dl.roles?.download ?? []).includes(r))`.
 
@@ -180,6 +185,7 @@ lib/acl.ts:73 — `return !!ctx.role && ctx.role === (id as Role);`. app/(protec
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/acl.ts:166-205`, `lib/acl.ts:139-154`, `lib/permissions.ts:40-41`, `lib/permissions.ts:117-131`, `components/permissions/PermissionDrawer.tsx:263-270`, `app/(protected)/documents/[libraryId]/page.tsx:1728-1751`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified both halves and the trigger path: page.tsx:1728-1735 (folders, via canDiscover→isDiscoverable) and 1745-1751 (documents, `canWithAclChain({... defaultAllow: true})`) both flip from allow to deny the moment library.acl exists with zero rules, while Admin/DocCtrl short-circuit at permissions.ts:18-20 and see no change. The app/DB divergence is exactly as described.
 
 **Mechanism.** `evaluateAclChain` returns null ONLY when `!chain.some(Boolean)`. PermissionDrawer.save always writes a truthy object — `const nextAcl: AccessControl = { inherit, visibility, rules: rules.map(...) }` — so after any Save the chain has a decision, even with `rules: []`. `canWithAclChain` then returns `decision.can(action)` instead of `defaultAllow`, and `can()` requires a matching allow. With zero rules, `allowed` is empty, so `can('read')` is false for every non-Admin/DocCtrl principal. The library page filters folders with `canDiscover` and documents with `canWithAclChain({action:'read'})`, so both lists go empty. Meanwhile the DB still returns every row (visibility is 'normal'), so this is pure UI blanking with no error, no toast, no 'restricted' placeholder. The same over-strictness bites the AI layer: lib/knowledgeAccess.ts:73-76 `if (decision) { ... return decision.can("read"); }`.
 
@@ -209,6 +215,7 @@ lib/acl.ts:170 — `if (!chain.some(Boolean)) return null;` ; lib/permissions.ts
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/run/route.ts:18`, `app/api/data-export/run/route.ts:74-76`, `app/api/data-export/structured/route.ts:55-58`, `lib/exportTables.ts:44`, `lib/dataExport.ts:95-96`, `lib/dataExport.ts:326-334`, `lib/permissions.ts:18-20`, `supabase/migrations/20260708_acl_rls_enforcement.sql:57-62`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. "Manager" is a real assignable role (types/schema.ts:8). The only compensating control I found is detective, not preventive, and it does not even notify the Manager tier: run/route.ts:47 `.in("role", ["Admin", "DocCtrl"])` in alertAdminsOfExport, plus a 12-runs/hour rate limit at :78-85. Neither blocks the export.
 
 **Mechanism.** Both export routes gate on `["Admin", "Manager", "DocCtrl"]`, but the ACL model's controller tier is only Admin and DocCtrl — `isControllerRole(role) { return role === "Admin" || role === "DocCtrl"; }` and node_visible's `IF v_role IN ('Admin', 'DocCtrl') THEN RETURN true;`. The export itself runs with the service role over `ORG_SCOPED_TABLES` (which includes `"documents"`) and, with `includeFiles`, walks `document_versions.file_url` to package the actual bytes. So a Manager gets, in one ZIP, the full content of documents the ACL denies them, including genuinely private ones RLS hides from their own session.
 
@@ -234,10 +241,11 @@ app/api/data-export/run/route.ts:18 — `const ADMIN_ROLES = ["Admin", "Manager"
 
 ## DACL-8 · Public verify endpoints disclose document number, title and revision status for any document UUID, with no visibility check
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:34-39`, `app/api/verify/route.ts:96-108`, `app/api/verify-hold/route.ts:29-40`, `app/api/verify-package/route.ts:39-48`
+- **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — there is no visibility check on any of the three routes. But MEDIUM overstates it: these are deliberately unauthenticated QR endpoints (documented at verify/route.ts:3-13 and verify-package/route.ts:3-9), the response is metadata only (no file, no URL, no people — verify-hold:50-54 explicitly withholds notes and staff names), and every route hard-gates on a UUID_RE match plus a record_id/document cross-check (verify/route.ts:60-63). The marginal disclosure to someone who already holds the UUID is document number, title and rev status. LOW.
 
 **Mechanism.** All three run the service role, are unauthenticated by design, and treat 'you hold a UUID' as authorization. None checks `documents.visibility`, acl_index, or org. /api/verify additionally accepts `doc` with no `v` (`if (!UUID_RE.test(docId) || (versionId && !UUID_RE.test(versionId)))`), so a document id alone is sufficient. verify-package expands one package UUID into `document_id`s and then `documents.select("id, document_number, title, name, rev, current_version_id, status")` for all of them.
 
@@ -267,6 +275,7 @@ app/api/verify/route.ts:5-10 asserts the threat model — `UNAUTHENTICATED by de
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:1668-1696`, `app/(protected)/documents/[libraryId]/page.tsx:1745-1751`, `lib/acl.ts:176-193`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves reproduce by reading the code. The inherit-flag bug is a genuine off-by-one in scope: `inherit:false` on a node should clear its ANCESTORS' rules (which it does correctly on that node's own iteration) but the false value is then carried into the next node and clears that node's inherited set again, dropping the restricting node's own rules. Fails open in both cases.
 
 **Mechanism.** `buildFolderChain` resolves ancestors through `folderMap.get(id)` — a map built only from the `collections` rows the browser actually received. `collections_acl_select` hides a private folder the user has no grant on, so that ancestor is missing from folderMap and its ACL is simply omitted from the chain. If the resulting chain is all-empty, `evaluateAclChain` returns null and `canWithAclChain({... defaultAllow: true})` returns TRUE. The same function also pushes `library.acl` twice for a document (`buildDocChain` pushes it, then calls `buildFolderChain`, which pushes it again), which matters because `evaluateAclChain` RESETS the merged rule set whenever a node has `inherit === false`.
 
@@ -296,6 +305,7 @@ app/(protected)/documents/[libraryId]/page.tsx:1673-1678 — `if (folder?.pathId
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/documents/page.tsx:43-51`, `app/(protected)/documents/page.tsx:155-167`, `app/(protected)/documents/[libraryId]/page.tsx:1434-1450`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: read_access / visible_to appear in no RLS policy in supabase/migrations (grep over *.sql returns only unrelated `project_visible_to_me` hits), and (protected)/layout.tsx enforces only auth + org membership. So the columns are a home-page display filter with no server-side or route-level backing.
 
 **Mechanism.** The library HOME page hides libraries with a legacy role-array model: `computeCanRead` checks `readAccess === "ALL"` else `readList.includes(role) || visibleTo.includes(role)`, and `const visible = isController ? libs : libs.filter((l) => l._canRead)`. The library DETAIL page loads the library by id and validates only that `data.org_id === activeOrgId` — it never calls computeCanRead, never consults `read_access`/`visible_to`, and there is no RLS policy on `libraries` at all (`grep -rn "ON libraries" supabase/migrations/*.sql` returns only two CREATE INDEX lines; `grep -rn "node_visible" supabase/migrations/*.sql` shows it attached to documents, collections, document_sets and document_versions only). Documents inside are then filtered only by `library.acl`, which is a DIFFERENT, unrelated model from read_access.
 
@@ -325,6 +335,7 @@ app/(protected)/documents/page.tsx:165 — `const visible = isController ? libs 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260609_phase1_normalization.sql:185-197`, `lib/impact.ts:66-72`, `lib/orgGraph.ts:119-122`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed the claim of absence with a repo-wide grep of supabase/migrations for document_assets/project_documents policies — the only other hit is CATCHUP_2026-05-28.sql:468-479, which creates the same membership-only policies. Both tables carry document_id, so any active member can enumerate the UUIDs and tag↔document mappings of documents whose `documents` rows RLS hides.
 
 **Mechanism.** Both tables are gated by a single permissive FOR ALL policy testing active org membership only. They carry `document_id` (plus `tag_text` on document_assets). No RESTRICTIVE overlay analogous to `documents_acl_select`/`document_versions_acl_select` was ever added — the 20260813 migration that closed that gap covered document_versions, document_sets and projects, but not these join tables. So even for a genuinely private document (where the `documents` row IS hidden), the join rows disclose that a document exists, which equipment tags are on it, and its UUID.
 
@@ -353,6 +364,7 @@ app/(protected)/documents/page.tsx:165 — `const visible = isController ? libs 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260708_acl_rls_enforcement.sql:69-80`, `supabase/migrations/20260708_acl_rls_enforcement.sql:21-39`, `lib/acl.ts:100-119`
+- **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both defects are visible in the same function and the migration comment at :78 concedes the second one ("finer read-vs-discover distinctions stay in the app layer"), which is precisely why a PostgREST-direct read escapes them. The role/team deny omission is not documented anywhere and looks unintentional.
 
 **Mechanism.** The SQL only inspects two paths in the deny bucket: `(p_acl_index->'deny'->'users'->'read') ? v_uid OR (p_acl_index->'deny'->'users'->'discover') ? v_uid`. Deny rules whose subject is a ROLE or a TEAM are never consulted. It then returns `acl_subject_in_bucket(p_acl_index->'allow', v_uid, v_role, v_teams)`, and that helper bool_ORs across EVERY action list in the allow bucket, so a grant of `upload` alone — or `discover` alone — satisfies a read. The app engine does the opposite: `evaluateRules` collects denies from any subject type and then `for (const a of denied) { if (allowed.has(a)) allowed.delete(a); }`, and `can(action)` requires that exact action. The two layers therefore disagree about the same rule set.
 
