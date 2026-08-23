@@ -234,6 +234,13 @@ Run `npx vitest run lib/recon lib/walkthrough`.
 | Scene export file round-trip, incl. non-ASCII labels | byte-identical payload |
 | Export rejects a foreign file and a future version | rejected, not misread |
 | Point-spacing estimator against known 5/10/20 cm grids | within 2× at every scale |
+| Octahedral normal round-trip over the whole sphere | worst case < 2° |
+| Plane-fit normals against exactly rendered planes | < 1.5°, including a 75° grazing floor |
+| Flying pixels at a depth cliff | removed; > 90% of a clean plane kept |
+| Fusion drops voxels whose views disagree on colour | dropped, and not resurrected by the fallback |
+| Oriented splat footprint orientation | elongates across the normal, mirrored version fails |
+| fitToMachine on a phone with unreportable memory | scaled down, not handed desktop limits |
+| vercel.json ignore command, run against real branch names | master builds, others skip |
 
 Verified in a real browser (Chromium + WebGPU):
 
@@ -324,16 +331,17 @@ time for each run.
    on blank walls, and expect a pass that fills the frame with one untextured
    object to contribute almost nothing. Industrial areas are usually far busier
    than a living room, which should work in your favour.
-3. **Point spacing is around 10 cm at the default preset.** Fusion voxels are
-   sized as a fraction of the scene, so a longer capture gets coarser samples.
-   Close up you see the individual splats. The `high` preset sweeps at a larger
-   resolution and uses more reference views for finer detail, at a
-   correspondingly larger time cost.
-4. **Stereo mismatches survive as brightly coloured stray points.** Fusion
-   requires two reference views to agree geometrically, and depths are trimmed
-   to where a one-pixel matching slip stays within a few voxels, but neither
-   test is photometric — a wrong match that happens to be geometrically
-   consistent keeps its wrong colour.
+3. **Point spacing is around 3 cm at the default preset**, down from 10.5 cm.
+   Fusion voxels are still sized as a fraction of the scene, so a longer capture
+   gets coarser samples. Close up you can still make out individual splats — it
+   is a point cloud, not a mesh. The `high` preset sweeps at a larger resolution
+   and uses more reference views, at a correspondingly larger time cost.
+4. **Some stereo mismatches still survive.** Fusion now requires contributing
+   views to agree on colour as well as position, which removes the saturated
+   confetti a purely geometric test let through, and a plane fit per depth map
+   removes samples floating between foreground and background. What remains is
+   a mismatch that is both geometrically and photometrically consistent — rarer,
+   and much harder to distinguish from a real surface.
 5. **Scale is assumed, not measured.** Metric scale comes from assuming the
    phone was held ~1.55 m above the floor. Walking feels right; distances are
    approximate. The viewer labels this (`scaleSource: camera-height`).
@@ -342,7 +350,12 @@ time for each run.
    need a sparse or iterative solver to go much beyond that.
 7. **Collision is a floor constraint and a bounding box**, deliberately. No
    physics, no stairs, no climbing — out of scope per the brief.
-8. **Chrome/Edge desktop only**, because of WebGPU and WebCodecs.
+8. **Reconstruction needs WebGPU and WebCodecs**, which in practice means
+   Chrome or Edge, or a recent iOS. The viewer is plain WebGL and works far more
+   widely, so a scene built on a desktop can be walked on a phone that could not
+   have built it. Where reconstruction is unavailable the app says what is true
+   of that device rather than telling someone holding a phone to install
+   desktop Chrome.
 9. **HEVC may not decode at all** (§3) — a platform limit, not a bug.
 10. **Rolling shutter and electronic stabilisation are not modelled.** Both warp
    phone video in ways a pinhole camera model cannot express, and both degrade
@@ -360,3 +373,33 @@ The two failures that matter:
   split reconstruction as a continuous room.
 - **"No image pair had enough parallax."** The camera rotated instead of
   translating. Walk through the space; do not pan from one spot.
+
+---
+
+## 8. Using it on a phone
+
+The viewer works on touch devices. Reconstruction may not — see limitation 8.
+
+| Gesture | Action |
+| --- | --- |
+| Drag, left half of the canvas | Walk. The thumbstick jumps to where your thumb lands, and rests in the bottom-left corner so it can be found before it is used. |
+| Push the stick past its ring | Run |
+| Drag, right half | Look |
+| Pinch (orbit mode) | Zoom |
+
+Pointer lock and WASD are desktop-only concepts, so on a coarse pointer the
+viewer swaps to touch handling and the on-screen legend changes with it. Both
+gestures are tracked by `pointerId`, so walking and looking work at the same
+time — which is also why pinch cannot mean "run" in first person: two fingers
+already mean something there.
+
+**Reconstructing on the phone itself is the hard part, not viewing.** A phone
+that can run it gets a reduced workload — fewer frames, a smaller depth sweep,
+fewer reference views and a lower point cap — because a phone GPU thermally
+throttles long before a long sweep finishes, and the result has to be drawn on
+the same device. The viewer applies its own budget on top, thinning by stride
+rather than truncating, so a scene built on a workstation still opens.
+
+If a phone drops the WebGL context — which iOS does routinely on backgrounding
+— the viewer says the graphics are paused and resumes when the context returns,
+rather than showing a permanently black canvas.
