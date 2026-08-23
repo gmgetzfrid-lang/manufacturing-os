@@ -87,12 +87,18 @@ export interface ReconConfig {
     /** Require this many views to agree before a point survives fusion. */
     minConsistentViews: number;
     /**
-     * How far a depth is allowed to be trusted, expressed as the depth error a
-     * one-pixel matching slip would cause, measured in fusion voxels. Stereo
+     * How far a depth is allowed to be trusted, as the depth error a one-pixel
+     * matching slip may cause, expressed as a fraction of scene extent. Stereo
      * error grows with the square of depth, so without a limit the far field
      * turns into a cone of noise fanning out from each camera.
+     *
+     * Deliberately NOT measured in fusion voxels. Tying it to the voxel couples
+     * two unrelated decisions: the trusted range then shrinks as the square
+     * root of the voxel, so raising point density silently truncates the far
+     * field. At 0.01 this reproduces the range the old voxel-based trim gave at
+     * its original voxel size, but density and range now move independently.
      */
-    depthUncertaintyVoxels: number;
+    depthUncertaintyFraction: number;
     /** Fusion voxel size as a fraction of scene extent. */
     voxelFraction: number;
     maxPoints: number;
@@ -154,9 +160,9 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
     longEdge: 960,
     depthSamples: 128,
     patchRadius: 3,
-    maxCost: 0.42,
+    maxCost: 0.26,
     minConsistentViews: 2,
-    depthUncertaintyVoxels: 2,
+    depthUncertaintyFraction: 0.01,
     voxelFraction: 0.0015,
     maxPoints: 2_400_000,
   },

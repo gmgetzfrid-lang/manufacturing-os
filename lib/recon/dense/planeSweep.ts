@@ -71,6 +71,7 @@ struct Params {
   invDepthMax  : f32,
   patchRadius  : i32,
   maxCost      : f32,
+  minSources   : u32,
 };
 
 // Per source view: 3x4 [R | t] relative to the reference camera, row-major,
@@ -132,6 +133,13 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   costOut[outIdx]  = 1e9;
 
   if (params.sourceCount == 0u) { return; }
+
+  // Within patchRadius of the border the reference patch is padded by clamping,
+  // so part of it is a replicated row or column — a partly constant patch that
+  // correlates with almost anything and produces a rim of confident nonsense
+  // around every depth map. There is no valid reference patch here.
+  if (px < params.patchRadius || py < params.patchRadius ||
+      px >= w - params.patchRadius || py >= h - params.patchRadius) { return; }
 
   // Viewing ray through this pixel in reference-camera coordinates.
   let ray = vec3<f32>(
@@ -229,7 +237,11 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
       used = used + 1u;
     }
 
-    if (used == 0u) { continue; }
+    // Costs are only comparable across depth planes when the same sources
+    // contributed. A source drops out when the hypothesised point falls behind
+    // it or projects outside it, so averaging over a varying count quietly
+    // favours the planes where the hardest sources happened to disappear.
+    if (used < params.minSources) { continue; }
     let cost = costSum / f32(used);
     if (awaitHigh) {
       costHigh = cost;
@@ -382,7 +394,8 @@ export async function sweepView(
   const scaleX = w / options.referenceWidth;
   const scaleY = h / options.referenceHeight;
 
-  const params = new ArrayBuffer(48);
+  // 13 x 4 bytes, rounded up to the 16-byte uniform alignment WebGPU requires.
+  const params = new ArrayBuffer(64);
   const pu = new Uint32Array(params);
   const pf = new Float32Array(params);
   const pi = new Int32Array(params);
@@ -398,6 +411,9 @@ export async function sweepView(
   pf[9] = 1 / depthRange.min;
   pi[10] = options.patchRadius;
   pf[11] = options.maxCost;
+  // Demand most of the sources agree at every depth, so costs stay comparable
+  // between planes. With one or two neighbours, demand all of them.
+  pu[12] = used.length <= 2 ? used.length : Math.max(2, used.length - 1);
 
   const xformData = new Float32Array(MAX_SOURCES * 12);
   used.forEach((s, i) => xformData.set(relativeTransform(reference.pose, s.pose), i * 12));

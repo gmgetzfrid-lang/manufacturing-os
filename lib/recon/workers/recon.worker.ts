@@ -528,7 +528,7 @@ async function run(
           ? Math.min(cfg.dense.longEdge / Math.max(denseOptions.referenceWidth, denseOptions.referenceHeight), 1)
           : 1);
         const trusted = Math.sqrt(
-          voxel * cfg.dense.depthUncertaintyVoxels * focalAtSweep * baseline,
+          extent * cfg.dense.depthUncertaintyFraction * focalAtSweep * baseline,
         );
         range.max = Math.min(range.max, Math.max(range.min * 1.5, trusted));
       }
