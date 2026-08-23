@@ -140,6 +140,10 @@ export interface ReconReport {
   reprojectionRmsePx: number;
   focalPx: number;
   crossClipPairs: number;
+  /** Where pairs were won and lost during matching, human-readable. */
+  diagnostics: string;
+  /** Median image displacement between consecutive kept frames, px. */
+  medianHopPx: number;
   elapsedMs: number;
   stageMs: Partial<Record<StageId, number>>;
   warnings: ReconWarning[];

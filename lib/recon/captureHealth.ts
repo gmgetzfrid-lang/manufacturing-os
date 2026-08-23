@@ -30,3 +30,25 @@ export function describeMotion(verdict: MotionVerdict): string {
       return "a reasonable amount";
   }
 }
+
+/**
+ * How many decoded frames to skip per kept frame, given how far the image
+ * moved on the last hop.
+ *
+ * The sampler cannot see the future, so this is reactive: one oversized hop
+ * collapses the window to 1 (keep every decoded frame) and calm hops let it
+ * relax back one step at a time. Handheld capture is bursty — hold still, then
+ * swing — and the cost of reacting a frame late is one weak pair, while the
+ * cost of not reacting is the whole capture failing to chain.
+ */
+export function nextWindowSize(
+  current: number,
+  base: number,
+  movedPx: number,
+  budgetPx: number,
+): number {
+  if (!Number.isFinite(movedPx) || !(budgetPx > 0)) return current;
+  if (movedPx > budgetPx) return 1;
+  if (movedPx < budgetPx * 0.35) return Math.min(base, current + 1);
+  return current;
+}

@@ -45,6 +45,16 @@ describe("advice attached to a failure", () => {
     expect(hint).toMatch(/one space|continuous/i);
   });
 
+  // The user pasted a failure whose diagnostics said "200 frames decoded" and
+  // got iPhone codec advice for a video that had plainly decoded fine.
+  it("does not give codec advice just because the diagnostics say 'decoded'", () => {
+    const hint = hintFor(
+      "The capture did not reconstruct. Only 6 of 58 frames could be positioned. " +
+      "What the run measured — 200 frames decoded, 58 kept at 720px wide.",
+    );
+    expect(hint).not.toMatch(/iPhone|Most Compatible|H\.264/);
+  });
+
   it("still recognises the older failures", () => {
     expect(hintFor("WebGPU adapter unavailable")).toMatch(/Chrome|Edge/);
     expect(hintFor("Could not decode: hevc unsupported")).toMatch(/Most Compatible/);

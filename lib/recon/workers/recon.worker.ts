@@ -22,7 +22,7 @@ import { loadOpenCv, type OpenCv } from "../opencv";
 import { buildScene, type PointCloud } from "../scene";
 import { extractFeatures, medianDisplacement, sharpness } from "../sfm/features";
 import { reconstruct, type FrameMeta } from "../sfm/reconstruct";
-import { describeMotion, judgeMotion } from "../captureHealth";
+import { describeMotion, judgeMotion, nextWindowSize } from "../captureHealth";
 import { FrameStore, clearStaleFrames } from "../store";
 import {
   CLIP_ROLE_LABELS, type ClipStats, type FrameFeatures, type ReconReport,
@@ -137,7 +137,13 @@ async function run(
   let t0 = performance.now();
   const kept: KeptFrame[] = [];
   const clipStats: ClipStats[] = [];
-  const windowSize = Math.max(1, Math.round(cfg.frames.sampleFps / Math.max(0.1, cfg.frames.targetFps)));
+  const baseWindow = Math.max(1, Math.round(cfg.frames.sampleFps / Math.max(0.1, cfg.frames.targetFps)));
+  // Starts at the time-based rate and reacts to measured motion: one oversized
+  // hop collapses it to keeping every decoded frame. A real capture failed at
+  // 184px hops while its decode stream, at 6fps, was moving a perfectly
+  // matchable 53px per frame — the frames existed and a fixed clock discarded
+  // them.
+  let currentWindow = baseWindow;
   let globalIndex = 0;
 
   for (let clipIndex = 0; clipIndex < clipInputs.length; clipIndex++) {
@@ -178,6 +184,7 @@ async function run(
     }> = [];
     let previous: FrameFeatures | null = null;
     let orderInClip = 0;
+    currentWindow = baseWindow;
     const sharpnessValues: number[] = [];
     const clipKept: KeptFrame[] = [];
 
@@ -209,8 +216,11 @@ async function run(
         // How far the image actually travels between kept frames is the single
         // most diagnostic number about a capture. Too small and there is no
         // parallax to triangulate from; too large and consecutive frames stop
-        // sharing enough to match at all. Recorded either way.
+        // sharing enough to match at all. Recorded either way, and fed back
+        // into the sampling rate.
         if (Number.isFinite(moved)) motionSamples.push(moved);
+        const hopBudget = cfg.frames.maxHopFraction * Math.max(best.width, best.height);
+        currentWindow = nextWindowSize(currentWindow, baseWindow, moved, hopBudget);
         if (Number.isFinite(moved) && moved < cfg.frames.minMotionPx) {
           stats.droppedStatic++;
           return;
@@ -247,7 +257,7 @@ async function run(
         sampleFps: cfg.frames.sampleFps,
         workingLongEdge: cfg.frames.workingLongEdge,
         colorLongEdge: cfg.frames.colorLongEdge,
-        maxFrames: cfg.frames.maxFramesPerClip * windowSize,
+        maxFrames: cfg.frames.maxFramesPerClip * baseWindow,
         signal: abort.signal,
         onFrame: (frame) => {
           stats.decodedFrames++;
@@ -258,7 +268,7 @@ async function run(
             timestampS: frame.timestampS,
             sharp: sharpness(frame.gray, frame.width, frame.height),
           });
-          if (window.length >= windowSize) {
+          if (window.length >= currentWindow) {
             // decodeVideo's onFrame is synchronous, so queue the async flush.
             pending = pending.then(flushWindow);
           }
@@ -412,7 +422,10 @@ async function run(
     const medianMotion = motionSamples.length
       ? motionSamples[Math.floor(motionSamples.length / 2)] : 0;
     const decoded = clipStats.reduce((a, c) => a + c.decodedFrames, 0);
-    const longEdge = kept[0]?.meta.width ?? 0;
+    // The long edge, not the width: a portrait phone video is 720 wide and
+    // 1280 tall, and judging its motion against 720 flagged healthy hops as
+    // "too fast".
+    const longEdge = kept[0] ? Math.max(kept[0].meta.width, kept[0].meta.height) : 0;
     // Everything needed to tell the three causes apart, in the message the user
     // can actually see and copy. Asking someone to report a number the UI never
     // shows them is not a diagnostic.
@@ -693,6 +706,9 @@ async function run(
     points = { xyz, rgb, normals, count: n };
   }
 
+  motionSamples.sort((a, b) => a - b);
+  const reportMedianHop = motionSamples.length
+    ? motionSamples[Math.floor(motionSamples.length / 2)] : 0;
   const report: ReconReport = {
     unified,
     clipsRegistered: clipsWithFrames.length,
@@ -706,6 +722,8 @@ async function run(
     reprojectionRmsePx: +sfm.rmsePx.toFixed(3),
     focalPx: Math.round(sfm.focal),
     crossClipPairs: sfm.crossClipPairs,
+    diagnostics: sfm.diagnostics,
+    medianHopPx: Math.round(reportMedianHop),
     elapsedMs: Math.round(performance.now() - started),
     stageMs,
     warnings,
@@ -782,7 +800,11 @@ function hintFor(message: string): string {
   if (m.includes("webgpu") || m.includes("adapter")) {
     return "Use a recent desktop Chrome or Edge. On Linux, WebGPU may need enabling in chrome://flags.";
   }
-  if (m.includes("decode") || m.includes("codec") || m.includes("hevc")) {
+  // "decode" alone is not enough: the diagnostic text of a completely
+  // different failure says "200 frames decoded", and matching on the bare word
+  // told a user with perfectly decodable video to go change iPhone settings.
+  if (m.includes("could not decode") || m.includes("cannot decode") ||
+      m.includes("codec") || m.includes("hevc")) {
     return "If these are iPhone clips, set Camera → Formats → Most Compatible and re-record, " +
       "or convert them to H.264 MP4 first.";
   }

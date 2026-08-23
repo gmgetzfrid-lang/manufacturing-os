@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { judgeMotion, describeMotion } from "../captureHealth";
+import { judgeMotion, describeMotion, nextWindowSize } from "../captureHealth";
 
 describe("judging how a capture was filmed", () => {
   const W = 1280;
@@ -43,5 +43,38 @@ describe("judging how a capture was filmed", () => {
     for (const v of ["too-still", "healthy", "too-fast"] as const) {
       expect(describeMotion(v).length).toBeGreaterThan(10);
     }
+  });
+});
+
+describe("adapting the sampling rate to measured motion", () => {
+  const BUDGET = 0.08 * 1280; // 102px on a portrait phone frame
+
+  it("collapses to keeping every decoded frame after one oversized hop", () => {
+    // The real failure: 184px hops. One of those must be enough — waiting for
+    // a trend means several unmatched pairs in a row.
+    expect(nextWindowSize(2, 2, 184, BUDGET)).toBe(1);
+  });
+
+  it("stays dense while the camera keeps moving fast", () => {
+    expect(nextWindowSize(1, 2, 150, BUDGET)).toBe(1);
+  });
+
+  it("relaxes back one step at a time once motion settles", () => {
+    expect(nextWindowSize(1, 3, 20, BUDGET)).toBe(2);
+    expect(nextWindowSize(2, 3, 20, BUDGET)).toBe(3);
+  });
+
+  it("never exceeds the time-based rate", () => {
+    expect(nextWindowSize(3, 3, 5, BUDGET)).toBe(3);
+  });
+
+  it("holds steady in the healthy band", () => {
+    // Neither oversized nor tiny: no reason to change anything.
+    expect(nextWindowSize(2, 3, 60, BUDGET)).toBe(2);
+  });
+
+  it("does nothing without a measurement", () => {
+    expect(nextWindowSize(2, 3, NaN, BUDGET)).toBe(2);
+    expect(nextWindowSize(2, 3, 50, 0)).toBe(2);
   });
 });

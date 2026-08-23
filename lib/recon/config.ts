@@ -33,6 +33,15 @@ export interface ReconConfig {
     blurFloorRatio: number;
     /** Drop a frame whose median feature displacement is below this (px). */
     minMotionPx: number;
+    /**
+     * Largest image displacement, as a fraction of the frame's long edge, that
+     * consecutive kept frames should be apart. Above this ORB matching falls
+     * off a cliff — measured on real footage: 26% hops produced a median of 21
+     * matches from 2,382 features per frame. The sampler reacts by keeping
+     * every decoded frame until motion settles, using frames it was already
+     * decoding and previously discarded on a fixed clock.
+     */
+    maxHopFraction: number;
   };
 
   /** Feature detection and matching. */
@@ -131,13 +140,18 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
     maxTotalFrames: 320,
   },
   frames: {
-    sampleFps: 6,
+    // The ceiling the adaptive sampler can climb to when the camera moves
+    // fast. 6 was too low: a real capture swung at ~184px per kept frame, and
+    // even keeping every decoded frame at 6fps left ~110px hops. Decode is
+    // cheap (seconds per clip); matching only ever sees the kept frames.
+    sampleFps: 10,
     targetFps: 3.2,
     maxFramesPerClip: 100,
     workingLongEdge: 1280,
     colorLongEdge: 1280,
     blurFloorRatio: 0.35,
     minMotionPx: 5,
+    maxHopFraction: 0.08,
   },
   features: {
     maxPerFrame: 2400,
