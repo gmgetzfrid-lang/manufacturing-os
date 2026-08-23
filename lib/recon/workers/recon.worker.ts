@@ -512,25 +512,56 @@ async function run(
       if (sources.length === 0) continue;
 
       // Trim the far plane to where this view's stereo is still trustworthy.
-      // A one-pixel matching slip at depth z moves the point by about
-      // z²/(f·B); past the point where that exceeds a few fusion voxels the
-      // depths are noise, and keeping them just fans a cone out of the camera.
+      // A one-pixel matching slip at depth z moves the point by z²/C, where C
+      // is how many pixels of parallax a unit of inverse depth buys. Past the
+      // point where that error exceeds the tolerance, the depths are noise and
+      // keeping them fans a cone out of the camera.
+      //
+      // C is NOT focal x baseline. That holds only when the baseline is
+      // perpendicular to the optical axis. Walking forward down a corridor —
+      // the motion this whole feature is for — the baseline is almost parallel
+      // to it, parallax becomes radial, and it vanishes toward the image
+      // centre. Treating that case as if it were sideways overstates C several
+      // times over and keeps exactly the noise the trim exists to remove, in
+      // the middle of the frame where you are looking.
       const refCentre = cameraCentre(ref.pose);
-      const baselines = sources
-        .map((src) => {
-          const c = cameraCentre(src.pose);
-          return Math.hypot(c[0] - refCentre[0], c[1] - refCentre[1], c[2] - refCentre[2]);
-        })
-        .sort((a, b) => a - b);
-      const baseline = baselines[Math.floor(baselines.length / 2)];
-      if (baseline > 1e-6) {
-        const focalAtSweep = sfm.focal * (denseOptions.referenceWidth > 0
-          ? Math.min(cfg.dense.longEdge / Math.max(denseOptions.referenceWidth, denseOptions.referenceHeight), 1)
-          : 1);
-        const trusted = Math.sqrt(
-          extent * cfg.dense.depthUncertaintyFraction * focalAtSweep * baseline,
-        );
-        range.max = Math.min(range.max, Math.max(range.min * 1.5, trusted));
+      const R = ref.pose.R;
+      const perFrame = sources.map((src) => {
+        const c = cameraCentre(src.pose);
+        const b: [number, number, number] = [
+          c[0] - refCentre[0], c[1] - refCentre[1], c[2] - refCentre[2],
+        ];
+        // Baseline in the reference camera's own frame: z is along the axis.
+        const bz = R[6] * b[0] + R[7] * b[1] + R[8] * b[2];
+        const bx = R[0] * b[0] + R[1] * b[1] + R[2] * b[2];
+        const by = R[3] * b[0] + R[4] * b[1] + R[5] * b[2];
+        return { perpendicular: Math.hypot(bx, by), parallel: Math.abs(bz) };
+      });
+      if (perFrame.length > 0) {
+        const median = (xs: number[]) =>
+          xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+        const perpendicular = median(perFrame.map((v) => v.perpendicular));
+        const parallel = median(perFrame.map((v) => v.parallel));
+
+        const sweepScale = denseOptions.referenceWidth > 0
+          ? Math.min(
+              cfg.dense.longEdge
+                / Math.max(denseOptions.referenceWidth, denseOptions.referenceHeight),
+              1,
+            )
+          : 1;
+        const focalAtSweep = sfm.focal * sweepScale;
+        // Radial parallax scales with distance from the epipole, so it is worth
+        // nothing at the centre and most at the corners. Take a representative
+        // radius rather than the best case.
+        const typicalRadius = 0.35 * cfg.dense.longEdge;
+        const coefficient = focalAtSweep * perpendicular + typicalRadius * parallel;
+        if (coefficient > 1e-6) {
+          const trusted = Math.sqrt(
+            extent * cfg.dense.depthUncertaintyFraction * coefficient,
+          );
+          range.max = Math.min(range.max, Math.max(range.min * 1.5, trusted));
+        }
       }
 
       try {

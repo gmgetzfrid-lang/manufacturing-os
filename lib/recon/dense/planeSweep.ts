@@ -72,6 +72,7 @@ struct Params {
   patchRadius  : i32,
   maxCost      : f32,
   minSources   : u32,
+  refineSamples: u32,
 };
 
 // Per source view: 3x4 [R | t] relative to the reference camera, row-major,
@@ -118,6 +119,77 @@ fn bilinearSrc(plane : u32, stride : u32, x : f32, y : f32, w : i32, h : i32) ->
   let c = sampleSrc(plane, stride, x0,     y0 + 1, w, h);
   let d = sampleSrc(plane, stride, x0 + 1, y0 + 1, w, h);
   return mix(mix(a, b, fx), mix(c, d, fx), fy);
+}
+
+// Cost of one depth hypothesis, plus how many sources could evaluate it.
+// Factored out so the coarse and the refining sweep share exactly the same
+// measure — if they disagreed, refinement would chase a different minimum.
+struct CostSample {
+  cost : f32,
+  used : u32,
+};
+
+fn evalDepth(
+  ray : vec3<f32>, depth : f32, px : i32, py : i32, w : i32, h : i32,
+  r : i32, patchCount : f32, refMean : f32, refStd : f32, planeStride : u32,
+) -> CostSample {
+  var out : CostSample;
+  out.cost = 1e9;
+  out.used = 0u;
+
+  let X = ray * depth;
+  var costSum : f32 = 0.0;
+  var used    : u32 = 0u;
+
+  for (var sIdx = 0u; sIdx < params.sourceCount; sIdx = sIdx + 1u) {
+    let m = xforms[sIdx].m;
+    let Xs = vec3<f32>(
+      m[0].x * X.x + m[0].y * X.y + m[0].z * X.z + m[0].w,
+      m[1].x * X.x + m[1].y * X.y + m[1].z * X.z + m[1].w,
+      m[2].x * X.x + m[2].y * X.y + m[2].z * X.z + m[2].w,
+    );
+    if (Xs.z <= 1e-4) { continue; }
+
+    let su = params.fx * Xs.x / Xs.z + params.cx;
+    let sv = params.fy * Xs.y / Xs.z + params.cy;
+    if (su < f32(r) || sv < f32(r) ||
+        su >= f32(w - r - 1) || sv >= f32(h - r - 1)) { continue; }
+
+    var srcMean : f32 = 0.0;
+    for (var dy = -r; dy <= r; dy = dy + 1) {
+      for (var dx = -r; dx <= r; dx = dx + 1) {
+        srcMean = srcMean + bilinearSrc(sIdx, planeStride, su + f32(dx), sv + f32(dy), w, h);
+      }
+    }
+    srcMean = srcMean / patchCount;
+
+    var num : f32 = 0.0;
+    var srcVar : f32 = 0.0;
+    for (var dy = -r; dy <= r; dy = dy + 1) {
+      for (var dx = -r; dx <= r; dx = dx + 1) {
+        let sv2 = bilinearSrc(sIdx, planeStride, su + f32(dx), sv + f32(dy), w, h) - srcMean;
+        let rv  = sampleRef(px + dx, py + dy, w, h) - refMean;
+        num = num + rv * sv2;
+        srcVar = srcVar + sv2 * sv2;
+      }
+    }
+    if (srcVar < 1e-6) { continue; }
+
+    // ZNCC in [-1, 1]; convert to a cost in [0, 1].
+    let ncc = num / (refStd * sqrt(srcVar));
+    costSum = costSum + (1.0 - clamp(ncc, -1.0, 1.0)) * 0.5;
+    used = used + 1u;
+  }
+
+  // Costs are only comparable between hypotheses when the same sources
+  // contributed. A source drops out when the point falls behind it or projects
+  // outside it, so averaging over a varying count quietly favours hypotheses
+  // where the hardest sources happened to disappear.
+  if (used >= params.minSources) {
+    out.cost = costSum / f32(used);
+    out.used = used;
+  }
+  return out;
 }
 
 @compute @workgroup_size(${WORKGROUP_X}, ${WORKGROUP_Y})
@@ -172,123 +244,98 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let refStd = sqrt(refVar);
 
   let planeStride = u32(w * h + 3) / 4u;
+  let last = i32(params.depthSamples) - 1;
 
-  var bestCost  : f32 = 1e9;
-  var bestDepth : f32 = 0.0;
-  // Sub-pixel refinement needs the costs either side of the winner. The sweep
-  // is sequential, so the low neighbour is remembered when the winner is found
-  // and the high one is picked up on the iteration straight after.
-  var bestIdx   : i32 = -1;
-  var costLow   : f32 = 0.0;
-  var costHigh  : f32 = 0.0;
-  var prevCost  : f32 = 0.0;
-  var prevIdx   : i32 = -2;
-  var hasPrev   : bool = false;
-  var awaitHigh : bool = false;
-
+  // ── Pass 1: coarse, over the whole trusted range ───────────────────────
+  //
+  // Sample uniformly in INVERSE depth, which spaces candidates evenly in
+  // disparity for a sideways baseline. Even so, a step here lands 1-12 px apart
+  // in the source image while a 7x7 correlation basin is only 2-4 px wide, so
+  // this pass alone steps clean over the true minimum on most of the image and
+  // returns whichever shoulder was lowest. It is a bracket, not an answer.
+  var bestCost : f32 = 1e9;
+  var bestIdx  : i32 = -1;
   for (var d = 0u; d < params.depthSamples; d = d + 1u) {
-    // Sample uniformly in INVERSE depth: that spaces candidates evenly in
-    // disparity, which is where the information actually is.
-    let t = f32(d) / f32(max(1u, params.depthSamples - 1u));
+    let t = f32(d) / f32(max(1, last));
     let invDepth = mix(params.invDepthMin, params.invDepthMax, t);
     if (invDepth <= 0.0) { continue; }
-    let depth = 1.0 / invDepth;
-    let X = ray * depth;
-
-    var costSum : f32 = 0.0;
-    var used    : u32 = 0u;
-
-    for (var s = 0u; s < params.sourceCount; s = s + 1u) {
-      let m = xforms[s].m;
-      let Xs = vec3<f32>(
-        m[0].x * X.x + m[0].y * X.y + m[0].z * X.z + m[0].w,
-        m[1].x * X.x + m[1].y * X.y + m[1].z * X.z + m[1].w,
-        m[2].x * X.x + m[2].y * X.y + m[2].z * X.z + m[2].w,
-      );
-      if (Xs.z <= 1e-4) { continue; }
-
-      let su = params.fx * Xs.x / Xs.z + params.cx;
-      let sv = params.fy * Xs.y / Xs.z + params.cy;
-      // Reject if the patch would fall outside the source image.
-      if (su < f32(r) || sv < f32(r) ||
-          su >= f32(w - r - 1) || sv >= f32(h - r - 1)) { continue; }
-
-      var srcMean : f32 = 0.0;
-      for (var dy = -r; dy <= r; dy = dy + 1) {
-        for (var dx = -r; dx <= r; dx = dx + 1) {
-          srcMean = srcMean + bilinearSrc(s, planeStride, su + f32(dx), sv + f32(dy), w, h);
-        }
-      }
-      srcMean = srcMean / patchCount;
-
-      var num : f32 = 0.0;
-      var srcVar : f32 = 0.0;
-      for (var dy = -r; dy <= r; dy = dy + 1) {
-        for (var dx = -r; dx <= r; dx = dx + 1) {
-          let sv2 = bilinearSrc(s, planeStride, su + f32(dx), sv + f32(dy), w, h) - srcMean;
-          let rv  = sampleRef(px + dx, py + dy, w, h) - refMean;
-          num = num + rv * sv2;
-          srcVar = srcVar + sv2 * sv2;
-        }
-      }
-      if (srcVar < 1e-6) { continue; }
-
-      // ZNCC in [-1, 1]; convert to a cost in [0, 1].
-      let ncc = num / (refStd * sqrt(srcVar));
-      costSum = costSum + (1.0 - clamp(ncc, -1.0, 1.0)) * 0.5;
-      used = used + 1u;
+    let sample = evalDepth(ray, 1.0 / invDepth, px, py, w, h,
+                           r, patchCount, refMean, refStd, planeStride);
+    if (sample.used > 0u && sample.cost < bestCost) {
+      bestCost = sample.cost;
+      bestIdx = i32(d);
     }
+  }
+  if (bestIdx < 0) { return; }
 
-    // Costs are only comparable across depth planes when the same sources
-    // contributed. A source drops out when the hypothesised point falls behind
-    // it or projects outside it, so averaging over a varying count quietly
-    // favours the planes where the hardest sources happened to disappear.
-    if (used < params.minSources) { continue; }
-    let cost = costSum / f32(used);
+  // ── Pass 2: refine inside the bracket ──────────────────────────────────
+  //
+  // Re-sample the interval either side of the coarse winner. This is where the
+  // correlation minimum is actually resolved: the step shrinks by the refine
+  // count, taking the disparity step under a pixel, which is what makes the
+  // depth accurate enough for views to agree in the same fusion voxel.
+  let tBest = f32(bestIdx) / f32(max(1, last));
+  let tStep = 1.0 / f32(max(1, last));
+  let tLo = max(0.0, tBest - tStep);
+  let tHi = min(1.0, tBest + tStep);
 
-    // The neighbours the parabola needs must be the ADJACENT evaluated planes.
-    // Planes are skipped whenever a source falls behind the camera or the patch
-    // leaves the frame, so "the previous iteration" is not necessarily the
-    // previous plane, and before the first evaluated plane there is no previous
-    // cost at all — feeding the initial 0.0 in would look like a perfect
-    // correlation and drag the fit half a plane toward the far end.
+  let refineLast = i32(params.refineSamples) - 1;
+  var fineCost : f32 = 1e9;
+  var fineIdx  : i32 = -1;
+  var fineDepth : f32 = 0.0;
+  var costLow  : f32 = 0.0;
+  var costHigh : f32 = 0.0;
+  var prevCost : f32 = 0.0;
+  var prevIdx  : i32 = -2;
+  var hasPrev  : bool = false;
+  var awaitHigh : bool = false;
+
+  for (var k = 0u; k < params.refineSamples; k = k + 1u) {
+    let tk = mix(tLo, tHi, f32(k) / f32(max(1, refineLast)));
+    let invDepth = mix(params.invDepthMin, params.invDepthMax, tk);
+    if (invDepth <= 0.0) { continue; }
+    let depth = 1.0 / invDepth;
+    let sample = evalDepth(ray, depth, px, py, w, h,
+                           r, patchCount, refMean, refStd, planeStride);
+    if (sample.used == 0u) { continue; }
+
+    // The parabola below needs the ADJACENT evaluated samples, and samples are
+    // skipped whenever a source drops out — so both neighbours are tracked by
+    // index rather than by "the previous iteration".
     if (awaitHigh) {
-      costHigh = select(bestCost, cost, i32(d) == bestIdx + 1);
+      costHigh = select(fineCost, sample.cost, i32(k) == fineIdx + 1);
       awaitHigh = false;
     }
-    if (cost < bestCost) {
-      bestCost = cost;
-      bestDepth = depth;
-      bestIdx = i32(d);
-      costLow = select(cost, prevCost, hasPrev && prevIdx == i32(d) - 1);
-      costHigh = cost;
+    if (sample.cost < fineCost) {
+      fineCost = sample.cost;
+      fineIdx = i32(k);
+      fineDepth = depth;
+      costLow = select(sample.cost, prevCost, hasPrev && prevIdx == i32(k) - 1);
+      costHigh = sample.cost;
       awaitHigh = true;
     }
-    prevCost = cost;
-    prevIdx = i32(d);
+    prevCost = sample.cost;
+    prevIdx = i32(k);
     hasPrev = true;
   }
 
-  if (bestCost <= params.maxCost) {
-    var outDepth = bestDepth;
-    // Winner-take-all snaps depth to one of depthSamples planes, which quantises
-    // every surface into visible shells. Fitting a parabola through the winning
-    // cost and its two neighbours recovers the minimum between the planes, in
-    // the same inverse-depth space the planes are spaced in.
-    let last = i32(params.depthSamples) - 1;
-    let bracketed = costLow > bestCost && costHigh > bestCost;
-    if (bestIdx > 0 && bestIdx < last && bracketed) {
-      let denom = costLow - 2.0 * bestCost + costHigh;
-      if (abs(denom) > 1e-9) {
-        let shift = clamp(0.5 * (costLow - costHigh) / denom, -0.5, 0.5);
-        let t = (f32(bestIdx) + shift) / f32(max(1, last));
-        let invDepth = mix(params.invDepthMin, params.invDepthMax, t);
-        if (invDepth > 0.0) { outDepth = 1.0 / invDepth; }
-      }
+  if (fineIdx < 0 || fineCost > params.maxCost) { return; }
+
+  // ── Sub-pixel: fit a parabola through the winner and its neighbours ────
+  var outDepth = fineDepth;
+  let bracketed = costLow > fineCost && costHigh > fineCost;
+  if (fineIdx > 0 && fineIdx < refineLast && bracketed) {
+    let denom = costLow - 2.0 * fineCost + costHigh;
+    if (abs(denom) > 1e-9) {
+      let shift = clamp(0.5 * (costLow - costHigh) / denom, -0.5, 0.5);
+      let tk = mix(tLo, tHi, (f32(fineIdx) + shift) / f32(max(1, refineLast)));
+      let invDepth = mix(params.invDepthMin, params.invDepthMax, tk);
+      if (invDepth > 0.0) { outDepth = 1.0 / invDepth; }
     }
-    depthOut[outIdx] = outDepth;
-    costOut[outIdx]  = bestCost;
   }
+
+  depthOut[outIdx] = outDepth;
+  costOut[outIdx]  = fineCost;
 }
 `;
 
@@ -426,6 +473,10 @@ export async function sweepView(
   // Demand most of the sources agree at every depth, so costs stay comparable
   // between planes. With one or two neighbours, demand all of them.
   pu[12] = used.length <= 2 ? used.length : Math.max(2, used.length - 1);
+  // Refinement samples inside the coarse bracket. 24 takes the effective
+  // disparity step to roughly a twelfth of the coarse one, which is what puts
+  // it under the width of a correlation basin.
+  pu[13] = 24;
 
   const xformData = new Float32Array(MAX_SOURCES * 12);
   used.forEach((s, i) => xformData.set(relativeTransform(reference.pose, s.pose), i * 12));
