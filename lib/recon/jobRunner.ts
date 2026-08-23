@@ -144,7 +144,13 @@ export class ReconstructionJob {
       this.terminate();
     };
 
-    worker.postMessage({ type: "start", clips, quality });
+    // matchMedia does not exist inside a worker, so the coarse-pointer check
+    // has to travel with the job.
+    const mobile =
+      typeof matchMedia === "function" &&
+      matchMedia("(pointer: coarse)").matches &&
+      matchMedia("(hover: none)").matches;
+    worker.postMessage({ type: "start", clips, quality, mobile });
   }
 
   cancel() {

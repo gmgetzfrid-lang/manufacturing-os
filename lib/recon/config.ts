@@ -204,34 +204,58 @@ export function applyPreset(base: ReconConfig, preset: QualityPreset): ReconConf
  */
 export function fitToMachine(
   cfg: ReconConfig,
-  machine: { maxStorageBufferBytes: number; deviceMemoryGb: number | null; cores: number },
+  machine: {
+    maxStorageBufferBytes: number;
+    deviceMemoryGb: number | null;
+    cores: number;
+    /** Touch-first device. Phones cannot report memory, so this stands in. */
+    mobile?: boolean;
+  },
 ): ReconConfig {
   const out: ReconConfig = structuredClone(cfg);
 
-  // Densification streams one reference view at a time, but the cost volume is
-  // width x height x depthSamples floats. Keep it inside the adapter's binding
-  // limit with room to spare.
-  const budget = machine.maxStorageBufferBytes * 0.25;
-  for (;;) {
-    const w = out.dense.longEdge;
-    const h = Math.round(w * 0.5625);
-    const bytes = w * h * out.dense.depthSamples * 4;
-    if (bytes <= budget || out.dense.depthSamples <= 32) break;
-    out.dense.depthSamples = Math.max(32, Math.round(out.dense.depthSamples / 2));
-  }
+  // navigator.deviceMemory does not exist on iOS Safari or Firefox, so a phone
+  // reports null and used to sail past every memory guard below with
+  // workstation limits. Treat unknown-memory-on-a-touch-device as the smallest
+  // tier rather than the largest.
+  const memoryGb = machine.deviceMemoryGb ?? (machine.mobile ? 3 : null);
 
-  if (machine.deviceMemoryGb !== null && machine.deviceMemoryGb <= 4) {
+  // The plane sweep never materialises a cost volume — the winner is kept in
+  // registers as the shader walks the planes — so depthSamples costs TIME, not
+  // memory, and must not be traded away for a memory budget it does not spend.
+  //
+  // What is actually allocated per sweep, from planeSweep.ts: the packed
+  // reference plane (pixels bytes), MAX_SOURCES packed source planes
+  // (4 x pixels bytes), and the depth and cost outputs (4 x pixels bytes each).
+  // The largest single binding is therefore 4 x pixels, and it is resolution
+  // that has to fit the adapter's limit.
+  const budget = machine.maxStorageBufferBytes * 0.25;
+  const BYTES_PER_PIXEL = 4;
+  const ASPECT = 0.5625;
+  const maxLongEdge = Math.floor(Math.sqrt(budget / (BYTES_PER_PIXEL * ASPECT)));
+  out.dense.longEdge = Math.max(320, Math.min(out.dense.longEdge, maxLongEdge));
+
+  if (memoryGb !== null && memoryGb <= 4) {
     out.frames.maxFramesPerClip = Math.min(out.frames.maxFramesPerClip, 80);
     out.limits.maxTotalFrames = Math.min(out.limits.maxTotalFrames, 180);
     out.dense.maxPoints = Math.min(out.dense.maxPoints, 1_200_000);
     out.dense.maxReferenceViews = Math.min(out.dense.maxReferenceViews, 90);
-  } else if (machine.deviceMemoryGb !== null && machine.deviceMemoryGb <= 8) {
+  } else if (memoryGb !== null && memoryGb <= 8) {
     out.limits.maxTotalFrames = Math.min(out.limits.maxTotalFrames, 260);
     out.dense.maxPoints = Math.min(out.dense.maxPoints, 1_800_000);
   }
 
   if (machine.cores <= 4) {
     out.features.maxPerFrame = Math.min(out.features.maxPerFrame, 1800);
+  }
+
+  // A phone GPU sweeping depth at desktop resolution thermally throttles long
+  // before it finishes, and the result has to be drawn on the same device.
+  if (machine.mobile) {
+    out.dense.longEdge = Math.min(out.dense.longEdge, 640);
+    out.dense.maxReferenceViews = Math.min(out.dense.maxReferenceViews, 60);
+    out.dense.maxPoints = Math.min(out.dense.maxPoints, 900_000);
+    out.frames.workingLongEdge = Math.min(out.frames.workingLongEdge, 1280);
   }
   return out;
 }

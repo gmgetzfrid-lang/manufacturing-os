@@ -10,7 +10,9 @@
 // System, and retains just the compact feature record in RAM. Densification
 // later streams those frames back one at a time.
 
-import { DEFAULT_RECON_CONFIG, applyPreset, type QualityPreset, type ReconConfig } from "../config";
+import {
+  DEFAULT_RECON_CONFIG, applyPreset, fitToMachine, type QualityPreset, type ReconConfig,
+} from "../config";
 import {
   PointFuser, depthRangeFor, depthToPoints, pickNeighbours, sweepView,
   type DenseView,
@@ -73,6 +75,7 @@ async function run(
   clipInputs: Array<{ id: string; name: string; file: File }>,
   quality: QualityPreset,
   overrides: Partial<ReconConfig> | null,
+  mobile: boolean,
 ) {
   const started = performance.now();
   const stageMs: Partial<Record<StageId, number>> = {};
@@ -81,7 +84,6 @@ async function run(
   await clearStaleFrames(jobId);
 
   let cfg = applyPreset(DEFAULT_RECON_CONFIG, quality);
-  if (overrides) cfg = { ...cfg, ...overrides } as ReconConfig;
 
   // ── GPU + OpenCV ────────────────────────────────────────────────────────
   let gpuLabel = "unknown";
@@ -90,6 +92,19 @@ async function run(
     const gpu = await getGpuContext();
     gpuLabel = gpu.label;
     gpuFallback = gpu.isFallback;
+
+    // This is the only place the adapter's real limits are known, so it is the
+    // only place the workload can honestly be sized. Before this the function
+    // existed but was never called, and every device — phone included — ran
+    // workstation settings.
+    cfg = fitToMachine(cfg, {
+      maxStorageBufferBytes: gpu.maxStorageBytes,
+      deviceMemoryGb:
+        (navigator as unknown as { deviceMemory?: number }).deviceMemory ?? null,
+      cores: navigator.hardwareConcurrency || 4,
+      mobile,
+    });
+    if (overrides) cfg = { ...cfg, ...overrides } as ReconConfig;
     if (gpu.isFallback) {
       warn(
         "software-gpu",
@@ -646,6 +661,7 @@ ctx.onmessage = (event: MessageEvent) => {
     clips?: Array<{ id: string; name: string; file: File }>;
     quality?: QualityPreset;
     overrides?: Partial<ReconConfig> | null;
+    mobile?: boolean;
   };
 
   if (data.type === "cancel") {
@@ -655,7 +671,8 @@ ctx.onmessage = (event: MessageEvent) => {
   }
 
   if (data.type === "start" && data.clips) {
-    run(data.clips, data.quality ?? "balanced", data.overrides ?? null).catch((err: unknown) => {
+    run(data.clips, data.quality ?? "balanced", data.overrides ?? null, data.mobile === true)
+      .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       post({
         type: "failed",
