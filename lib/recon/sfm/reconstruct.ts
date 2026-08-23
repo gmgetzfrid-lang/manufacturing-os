@@ -31,6 +31,7 @@ import { matchMutual, matchMutualCpu, type DescriptorSet, type MatchPair } from 
 import type { FrameFeatures, SfmResult } from "../types";
 import { bundleAdjust, type BundleObservation } from "../math/bundle";
 import { pnpRansac } from "../math/pnp";
+import { motionConsistent } from "./motionFilter";
 import {
   maxTriangulationAngleDeg, ransacEssential, ransacHomography, reprojectionError,
   triangulateMultiView, type Correspondence, type Pose,
@@ -378,10 +379,36 @@ export async function reconstruct(
 
     const corr = toCorrespondences(fa, fb, matches, focal, cx, cy);
     const threshold = cfg.sfm.ransacThresholdPx / focal;
+
+    // Order the matches so RANSAC looks for the model where the inliers are
+    // dense. The key is the ratio-test margin, not the raw descriptor distance:
+    // the mutual and ratio tests have already removed whatever distance alone
+    // could separate, so the outliers that survive are repeated structure —
+    // bolt rows, panels, railings, floor grating — whose distances are SMALL.
+    // How well the best match beat its runner-up still discriminates there.
+    const ranking = matches
+      .map((m, k) => ({ k, score: m.second > 0 ? m.distance / m.second : m.distance / 256 }))
+      .sort((x, y) => x.score - y.score)
+      .map((r) => r.k);
+
+    // Find the model on the matches that move like their neighbours, then score
+    // EVERY match against it. The prefilter is a good hypothesis generator and
+    // a bad inlier set: it discards plenty of true matches too, so using its
+    // output directly would fail the support threshold on exactly the pairs it
+    // just rescued.
+    const consistent = motionConsistent(
+      matches.map((m) => ({
+        ax: fa.keypoints[m.queryIndex * 2], ay: fa.keypoints[m.queryIndex * 2 + 1],
+        bx: fb.keypoints[m.trainIndex * 2], by: fb.keypoints[m.trainIndex * 2 + 1],
+      })),
+      Math.max(1, width), Math.max(1, height),
+    );
     const geo = ransacEssential(corr, threshold, {
       confidence: cfg.sfm.ransacConfidence,
-      maxIterations: 700,
+      maxIterations: cfg.sfm.ransacMaxIterations,
       seed: 0x51ed + index,
+      ranking,
+      hypothesisSubset: consistent ?? undefined,
     });
 
     // A pair the essential matrix cannot explain is not necessarily a bad pair.

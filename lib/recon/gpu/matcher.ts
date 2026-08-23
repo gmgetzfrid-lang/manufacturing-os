@@ -216,6 +216,13 @@ export interface MatchPair {
   queryIndex: number;
   trainIndex: number;
   distance: number;
+  /**
+   * Distance to the runner-up, which the ratio test already computes and used
+   * to throw away. How far the winner beat the field discriminates where raw
+   * distance cannot: repeated structure produces confident-looking matches with
+   * small distances, and it is the narrow margin that gives them away.
+   */
+  second: number;
 }
 
 /**
@@ -250,7 +257,7 @@ export async function matchMutual(
     // A second-best of "infinity" means there was only one candidate; accept it.
     if (second !== 0xffffffff && best > ratio * second) continue;
     if (ba.index[j] !== i) continue;
-    out.push({ queryIndex: i, trainIndex: j, distance: best });
+    out.push({ queryIndex: i, trainIndex: j, distance: best, second });
   }
   return out;
 }
@@ -301,7 +308,9 @@ export function matchMutualCpu(
     if (ab.d1[i] > maxDistance) continue;
     if (ab.d2[i] !== 0x7fffffff && ab.d1[i] > ratio * ab.d2[i]) continue;
     if (ba.idx[j] !== i) continue;
-    out.push({ queryIndex: i, trainIndex: j, distance: ab.d1[i] });
+    out.push({
+      queryIndex: i, trainIndex: j, distance: ab.d1[i], second: ab.d2[i],
+    });
   }
   return out;
 }

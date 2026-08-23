@@ -235,13 +235,40 @@ function triangulationAngleDeg(pose: Pose, X: [number, number, number]): number 
 export function ransacEssential(
   corr: Correspondence[],
   threshold: number,
-  options: { confidence?: number; maxIterations?: number; seed?: number } = {},
+  options: {
+    confidence?: number;
+    maxIterations?: number;
+    seed?: number;
+    /**
+     * Correspondence indices ordered best-quality first, from the matcher.
+     *
+     * Uniform sampling assumes every correspondence is equally likely to be an
+     * inlier. It is not: a match with a much smaller descriptor distance than
+     * its runner-up is far more often correct. Drawing from a growing prefix of
+     * the ranked list (PROSAC) means the early draws come from the part of the
+     * data where the inlier ratio is high, which is worth orders of magnitude
+     * more than extra iterations — at a 30% overall ratio a uniform eight-point
+     * sample is clean once in 15,000 draws.
+     */
+    ranking?: number[];
+    /**
+     * Indices to draw minimal samples from, when something cheap has already
+     * identified a subset that is mostly inliers. Scoring still runs over ALL
+     * correspondences, so the subset shapes where the search looks without
+     * deciding the answer.
+     */
+    hypothesisSubset?: number[];
+  } = {},
 ): EssentialResult | null {
   const n = corr.length;
   if (n < 8) return null;
 
   const confidence = options.confidence ?? 0.9999;
-  const maxIterations = options.maxIterations ?? 2000;
+  // The cap only bites when the inlier ratio is genuinely low, because the
+  // adaptive rule below stops early as soon as the data allows. 700 was
+  // catastrophic on real footage: at a 40% inlier ratio an eight-point sample
+  // finds the model 37% of the time in 700 draws, and 4.5% at 30%.
+  const maxIterations = options.maxIterations ?? 4000;
   const thresholdSq = threshold * threshold;
 
   // Deterministic PRNG: two runs on the same data must give the same model,
@@ -257,10 +284,35 @@ export function ransacEssential(
   let bestE: Float64Array | null = null;
   let iterations = maxIterations;
 
+  // A caller-supplied subset takes precedence: it is a far stronger signal
+  // about where the inliers are than descriptor ordering alone.
+  const hypothesisPool = options.hypothesisSubset && options.hypothesisSubset.length >= 8
+    ? options.hypothesisSubset : null;
+  const ranking = hypothesisPool
+    ? hypothesisPool
+    : (options.ranking && options.ranking.length === n ? options.ranking : null);
+  // Grow the sampling pool from the best 8 matches out to everything, over
+  // roughly the first fifth of the budget, then sample uniformly.
+  const growthIterations = Math.max(1, Math.floor(iterations * 0.2));
+
+  /** How many local optimisations this call may spend. */
+  let loBudget = 40;
+
   const sample = new Set<number>();
   for (let iter = 0; iter < iterations; iter++) {
     sample.clear();
-    while (sample.size < 8) sample.add(Math.floor(rand() * n));
+    let pool = n;
+    if (hypothesisPool) {
+      // Already a high-quality pool; draw from all of it.
+      pool = hypothesisPool.length;
+    } else if (ranking) {
+      const t = Math.min(1, iter / growthIterations);
+      pool = Math.max(8, Math.min(n, Math.round(8 + t * (n - 8))));
+    }
+    while (sample.size < 8) {
+      const draw = Math.floor(rand() * pool);
+      sample.add(ranking ? ranking[draw] : draw);
+    }
     const subset = Array.from(sample).map((i) => corr[i]);
 
     const E = essentialFromCorrespondences(subset);
@@ -279,8 +331,49 @@ export function ransacEssential(
       bestInliers = inliers;
       bestE = E;
 
+      // Local optimisation (LO-RANSAC). An eight-point minimal sample needs all
+      // eight to be inliers, and P(that) is r^8 — at a 30% inlier ratio, one
+      // draw in 15,000. Waiting for a clean draw is hopeless on real footage.
+      //
+      // A sample that is merely MOSTLY right, though, produces a model close
+      // enough to collect a larger inlier set, and refitting on that set lands
+      // on the true model. Two rounds of this convert a near-miss into a hit and
+      // are what makes low inlier ratios recoverable at all.
+      // Local optimisation is a full refit plus a full rescore, so it is the
+      // expensive part of the loop. Spending it on a model that explains almost
+      // nothing cannot recover anything, and doing it on every improvement in a
+      // long run costs more than it returns — capping both kept the quality and
+      // roughly halved the time.
+      const worthOptimising = count >= n * 0.05 && loBudget > 0;
+      let loE = E;
+      let loInliers = inliers;
+      let loCount = count;
+      for (let round = 0; worthOptimising && round < 2; round++) {
+        const support = corr.filter((_, i) => loInliers[i]);
+        if (support.length < 8) break;
+        const candidate = essentialFromCorrespondences(support);
+        if (!candidate) break;
+        const nextInliers = new Array<boolean>(n);
+        let nextCount = 0;
+        for (let i = 0; i < n; i++) {
+          const ok = sampsonError(candidate, corr[i]) < thresholdSq;
+          nextInliers[i] = ok;
+          if (ok) nextCount++;
+        }
+        if (nextCount <= loCount) break;
+        loE = candidate;
+        loInliers = nextInliers;
+        loCount = nextCount;
+      }
+      if (worthOptimising) loBudget--;
+      if (loCount > bestCount) {
+        bestCount = loCount;
+        bestInliers = loInliers;
+        bestE = loE;
+      }
+
       // Adaptive stopping: once the inlier ratio is high, stop early.
-      const ratio = count / n;
+      const ratio = bestCount / n;
       if (ratio > 0.05) {
         const denom = Math.log(1 - Math.pow(ratio, 8));
         if (denom < 0) {

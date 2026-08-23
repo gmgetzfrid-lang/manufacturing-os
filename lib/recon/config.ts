@@ -57,6 +57,13 @@ export interface ReconConfig {
     /** RANSAC threshold in pixels for essential matrix / PnP. */
     ransacThresholdPx: number;
     ransacConfidence: number;
+    /**
+     * Iteration ceiling for pair verification. Only reached when the inlier
+     * ratio is low, since RANSAC stops as soon as the observed ratio says it
+     * can. Cheap insurance: an eight-point minimal sample needs all eight
+     * points to be inliers, so the draws needed scale as r^-8.
+     */
+    ransacMaxIterations: number;
     /** Minimum angle (degrees) between rays for a point to be triangulated. */
     minTriangulationAngleDeg: number;
     maxReprojectionErrorPx: number;
@@ -145,6 +152,7 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
   sfm: {
     ransacThresholdPx: 2.0,
     ransacConfidence: 0.9999,
+    ransacMaxIterations: 4000,
     minTriangulationAngleDeg: 1.2,
     maxReprojectionErrorPx: 5.0,
     localBaEvery: 6,
