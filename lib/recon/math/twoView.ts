@@ -197,7 +197,21 @@ export interface EssentialResult {
   /** Median angle (degrees) between the two rays over inliers — the honest
    *  measure of whether this pair can be triangulated at all. */
   medianTriangulationAngleDeg: number;
+  /**
+   * How many inliers triangulate at a healthy angle.
+   *
+   * Walking forward, most correspondences are points straight ahead whose rays
+   * barely diverge however far you walk, so every summary statistic of the
+   * angle — median, mean, even a high quantile — is dragged down by geometry
+   * that says nothing about whether the pair can seed a reconstruction. What
+   * bootstrapping actually needs is ENOUGH well-conditioned points, not a
+   * well-conditioned typical point, and that is a count, not an average.
+   */
+  wellConditionedCount: number;
 }
+
+/** Ray angle above which a correspondence triangulates stably. */
+export const WELL_CONDITIONED_DEG = 2.0;
 
 function triangulationAngleDeg(pose: Pose, X: [number, number, number]): number {
   // Ray from camera 1 (at the origin, looking down +z) and from camera 2's centre.
@@ -301,7 +315,10 @@ export function ransacEssential(
     if (X) angles.push(triangulationAngleDeg(selected.pose, X));
   }
   angles.sort((a, b) => a - b);
-  const medianAngle = angles.length ? angles[Math.floor(angles.length / 2)] : 0;
+  const quantile = (q: number) =>
+    angles.length ? angles[Math.min(angles.length - 1, Math.floor(angles.length * q))] : 0;
+  const medianAngle = quantile(0.5);
+  const wellConditioned = angles.filter((a) => a >= WELL_CONDITIONED_DEG).length;
 
   // Map the compacted point list back onto the full correspondence indexing.
   const points: Array<[number, number, number] | null> = new Array(n).fill(null);
@@ -315,6 +332,7 @@ export function ransacEssential(
     inlierCount: finalCount,
     points,
     medianTriangulationAngleDeg: medianAngle,
+    wellConditionedCount: wellConditioned,
   };
 }
 

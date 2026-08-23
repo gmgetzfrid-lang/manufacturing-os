@@ -68,7 +68,10 @@ interface VerifiedPairInternal {
   /** Inlier correspondences as (keypointA, keypointB). */
   matches: Array<[number, number]>;
   pose: Pose;
+  /** Median ray angle over inliers. */
   angleDeg: number;
+  /** Inliers triangulating at a healthy angle — what decides if a pair can seed. */
+  wellConditioned: number;
 }
 
 class UnionFind {
@@ -344,6 +347,7 @@ export async function reconstruct(
       a: pair.a, b: pair.b, source: pair.source, crossClip,
       matches: inlierMatches, pose: geo.pose,
       angleDeg: geo.medianTriangulationAngleDeg,
+      wellConditioned: geo.wellConditionedCount,
     });
 
     if (i % 12 === 0) {
@@ -429,20 +433,58 @@ export async function reconstruct(
   });
 
   // ── 3. Seed the reconstruction ──────────────────────────────────────────
+  //
   // Score favours many inliers AND real parallax. A pair with 900 matches at
   // 0.3 degrees is worthless; one with 200 matches at 6 degrees is excellent.
-  const seedCandidates = verified
-    .filter((p) => p.angleDeg >= 2.0 && p.matches.length >= cfg.features.minPairInliers * 1.5)
-    .map((p) => ({ pair: p, score: p.matches.length * Math.min(p.angleDeg, 12) }))
-    .sort((x, y) => y.score - x.score);
+  //
+  // The parallax measure here is the UPPER quantile, not the median. Walking
+  // forward through a space — which is how anyone films a room — most matches
+  // are on whatever is straight ahead, and those rays barely diverge however
+  // far you walk. Gating on the median therefore rejects almost every pair from
+  // exactly the motion this feature exists to support, while the off-axis
+  // points that would have seeded it perfectly well sit in the upper tail.
+  //
+  // The bar also has to be able to come down. A single tier means a capture
+  // either clears it or gets told to re-record, and being handed one candidate
+  // is indistinguishable from being handed none: there is nothing to retry with.
+  const SEED_TIERS = [
+    { wellConditioned: 60, inlierScale: 1.5 },
+    { wellConditioned: 30, inlierScale: 1.2 },
+    { wellConditioned: 15, inlierScale: 1.0 },
+    { wellConditioned: 8, inlierScale: 1.0 },
+  ];
+  const scoreOf = (p: VerifiedPairInternal) =>
+    p.wellConditioned * Math.log2(2 + p.matches.length);
+
+  let seedCandidates: Array<{ pair: VerifiedPairInternal; score: number }> = [];
+  let seedTier = SEED_TIERS[0];
+  for (const tier of SEED_TIERS) {
+    seedTier = tier;
+    seedCandidates = verified
+      .filter((p) =>
+        p.wellConditioned >= tier.wellConditioned &&
+        p.matches.length >= cfg.features.minPairInliers * tier.inlierScale)
+      .map((p) => ({ pair: p, score: scoreOf(p) }))
+      .sort((x, y) => y.score - x.score);
+    // Enough to actually retry with, not merely enough to try once.
+    if (seedCandidates.length >= 4) break;
+  }
 
   if (seedCandidates.length === 0) {
+    const bestConditioned = verified.reduce((m, p) => Math.max(m, p.wellConditioned), 0);
+    const bestInliers = verified.reduce((m, p) => Math.max(m, p.matches.length), 0);
     throw new Error(
-      "No image pair had enough parallax to start a reconstruction. This happens when " +
-      "the camera only rotated instead of moving — walk through the space rather than " +
-      "panning from one spot.",
+      `No image pair had enough parallax to start a reconstruction. ` +
+      `${verified.length} pairs passed geometric verification; the best had ` +
+      `${bestInliers} matches, of which ${bestConditioned} triangulated at a usable ` +
+      `angle, against the ${SEED_TIERS[SEED_TIERS.length - 1].wellConditioned} needed. ` +
+      `This is what filming from one spot looks like — walk through the space instead ` +
+      `of panning across it.`,
     );
   }
+
+  const sharesBothFrames = (p: VerifiedPairInternal, used: Set<number>) =>
+    used.has(p.a) && used.has(p.b);
 
   let poses = new Map<number, Pose>();
   const initialFocal = focal;
@@ -680,10 +722,16 @@ export async function reconstruct(
   // two-view model nothing grows from — a repeated texture matched across the
   // wrong pair, or a baseline that happens to lie along the viewing direction.
   // One seed is therefore not an answer about the capture, only about that
-  // pair, so try a few before concluding the footage cannot be reconstructed.
-  // Candidates sharing a frame with one already tried tend to fail the same
-  // way, so they are skipped in favour of a genuinely different starting point.
-  const SEED_ATTEMPTS = 5;
+  // pair, so try several before concluding the footage cannot be reconstructed.
+  //
+  // Diversity is worth preferring but not worth enforcing. Requiring each
+  // attempt to use two entirely unseen frames sounds like it spreads the
+  // attempts out; on a capture that walks a route once, consecutive pairs
+  // necessarily share frames, so it threw away nearly every candidate and left
+  // the retry loop with one attempt — the same position as having no retry at
+  // all. A candidate sharing ONE frame with an earlier attempt is still a
+  // different starting pair, so it is only deprioritised.
+  const SEED_ATTEMPTS = 8;
   const GOOD_ENOUGH = Math.max(3, Math.round(totalFrames * 0.6));
   const triedFrames = new Set<number>();
   let bestPoses = new Map<number, Pose>();
@@ -693,7 +741,9 @@ export async function reconstruct(
 
   for (const candidate of seedCandidates) {
     if (attempts >= SEED_ATTEMPTS) break;
-    if (triedFrames.has(candidate.pair.a) || triedFrames.has(candidate.pair.b)) continue;
+    // Skip only a pair whose BOTH frames have already seeded an attempt — that
+    // really is the same starting point. Sharing one frame is not.
+    if (sharesBothFrames(candidate.pair, triedFrames)) continue;
     triedFrames.add(candidate.pair.a);
     triedFrames.add(candidate.pair.b);
     attempts++;
@@ -713,9 +763,16 @@ export async function reconstruct(
   gaugeFrame = bestGauge;
 
   if (poses.size < 3) {
+    const bestConditioned = verified.reduce((m, p) => Math.max(m, p.wellConditioned), 0);
     throw new Error(
-      `None of the ${attempts} starting pairs tried could be grown into a reconstruction. ` +
-      "The capture does not have enough consistent overlap.",
+      `None of the ${attempts} starting ${attempts === 1 ? "pair" : "pairs"} tried could be ` +
+      `grown into a reconstruction. ${verified.length} of ${proposed.length} image pairs ` +
+      `passed geometric verification across ${frames.length} frames, ` +
+      `${seedCandidates.length} were usable as a starting point (best pair had ` +
+      `${bestConditioned} well-triangulated points, threshold ` +
+      `${seedTier.wellConditioned}), and ${tracks.length.toLocaleString()} feature tracks ` +
+      `survived. Registration reached ${poses.size} ` +
+      `${poses.size === 1 ? "frame" : "frames"} before it stalled.`,
     );
   }
 
