@@ -497,6 +497,9 @@ export async function reconstruct(
   const failed = new Set<number>();
   let sinceBa = 0;
   const totalFrames = frames.length;
+  /** Lowest 2D-3D support we will still attempt a registration from. */
+  const RELAXED_MIN_SUPPORT = 10;
+  let minSupport = cfg.sfm.minPnpInliers;
 
   const runBundle = (window: number | null) => {
     const registeredList = [...poses.keys()].sort((a, b) => a - b);
@@ -585,7 +588,24 @@ export async function reconstruct(
       }
       if (!best || count > best.count) best = { frame: frame.index, count };
     }
-    if (!best || best.count < cfg.sfm.minPnpInliers) break;
+
+    // Running out of confident candidates is not the end. A clip typically
+    // joins the model through one or two hard-won cross-clip links, and the
+    // frames hanging off those links start out with very little support — so
+    // stopping at the first shortfall strands the rest of that clip outside the
+    // reconstruction. Relax the bar instead, and only give up when even the
+    // relaxed one finds nothing. Registration stays honest either way: PnP
+    // still has to find a consistent pose, and bundle adjustment still has to
+    // accept it.
+    if (!best || best.count < minSupport) {
+      if (minSupport > RELAXED_MIN_SUPPORT) {
+        minSupport = Math.max(RELAXED_MIN_SUPPORT, Math.floor(minSupport / 2));
+        // Frames rejected under the stricter bar deserve another look.
+        failed.clear();
+        continue;
+      }
+      break;
+    }
 
     const frameIndex = best.frame;
     const corr = [];
@@ -613,7 +633,7 @@ export async function reconstruct(
 
     const solved = pnpRansac(corr, cfg.sfm.ransacThresholdPx / focal, {
       seed: 0x7f4a + frameIndex,
-      minInliers: cfg.sfm.minPnpInliers,
+      minInliers: Math.min(minSupport, cfg.sfm.minPnpInliers),
       initial: bestGap <= 3 ? initial : undefined,
       focal,
     });

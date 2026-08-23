@@ -228,6 +228,30 @@ Verified in a real browser (Chromium + WebGPU):
 - Plane-sweep MVS against a textured plane at known depth: **100% pixel
   coverage, 1.6% mean depth error**.
 
+### A real end-to-end run
+
+Two clips through the actual worker, in a browser, start to finish — decode,
+features, SfM, WebGPU densification, scene assembly:
+
+| Stage | Time |
+| --- | --- |
+| Decode (2 clips, 156 frames sampled, 32 kept) | 6.6 s |
+| Structure from Motion (32 frames) | 13.8 s |
+| Densification (17 depth maps) | 696 s |
+| Scene assembly | 0.07 s |
+| **Total** | **718 s** |
+
+Output: a 27.7k-point scene with gravity recovered from the camera track,
+metric scale from the assumed camera height, and the spawn point correctly
+placed at the first frame of the hallway clip.
+
+**Read those timings in context.** This machine has no GPU — WebGPU is running
+on SwiftShader, a software rasteriser — so densification, which is almost
+entirely GPU work, dominates the total and would be very much faster on real
+hardware. The CPU-bound stages (decode, SfM) are representative. Nothing here
+is an estimate for your machine; the app measures and reports the real elapsed
+time for each run.
+
 ---
 
 ## 7. Known limitations
