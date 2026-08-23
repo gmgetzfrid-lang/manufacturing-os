@@ -50,10 +50,24 @@ void main() {
 }
 `;
 
+// three.js only injects its output colour-space conversion into its own
+// materials. These are hand-written shaders, so the encode has to be explicit —
+// without it the whole cloud renders about 2.5x too dark.
+const SRGB_ENCODE = /* glsl */ `
+vec3 linearToSrgb(vec3 c) {
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+  return mix(hi, lo, step(c, vec3(0.0031308)));
+}
+`;
+
 const POINT_FRAGMENT = /* glsl */ `
 varying vec3 vColor;
 varying float vDepth;
 uniform float uOpacity;
+uniform float uEncode;
+
+${SRGB_ENCODE}
 
 void main() {
   // Round splats with a soft edge — square points read as noise.
@@ -61,7 +75,10 @@ void main() {
   float r2 = dot(offset, offset);
   if (r2 > 0.25) discard;
   float alpha = smoothstep(0.25, 0.06, r2);
-  gl_FragColor = vec4(vColor, alpha * uOpacity);
+  // Straight to the canvas: encode here. Into the EDL buffer: stay linear so
+  // the shading multiply below happens in the right space.
+  vec3 rgb = uEncode > 0.5 ? linearToSrgb(vColor) : vColor;
+  gl_FragColor = vec4(rgb, alpha * uOpacity);
 }
 `;
 
@@ -78,6 +95,8 @@ uniform float uNear;
 uniform float uFar;
 varying vec2 vUv;
 
+${SRGB_ENCODE}
+
 float linearDepth(vec2 uv) {
   float z = texture2D(uDepth, uv).x;
   if (z >= 1.0) return -1.0;
@@ -89,7 +108,7 @@ void main() {
   vec4 color = texture2D(uColor, vUv);
   float centre = linearDepth(vUv);
   if (centre < 0.0) {
-    gl_FragColor = color;
+    gl_FragColor = vec4(linearToSrgb(color.rgb), color.a);
     return;
   }
 
@@ -110,12 +129,15 @@ void main() {
     count += 1.0;
   }
   if (count < 1.0) {
-    gl_FragColor = color;
+    gl_FragColor = vec4(linearToSrgb(color.rgb), color.a);
     return;
   }
 
-  float shade = exp(-uStrength * 60.0 * (sum / count));
-  gl_FragColor = vec4(color.rgb * shade, color.a);
+  // sum/count is a mean log2 depth ratio against the neighbours. A 10% step is
+  // ordinary within a room and must stay legible; only a real silhouette edge
+  // should go dark, and never to pure black.
+  float shade = max(0.25, exp(-uStrength * 2.2 * (sum / count)));
+  gl_FragColor = vec4(linearToSrgb(color.rgb * shade), color.a);
 }
 `;
 
@@ -126,6 +148,51 @@ void main() {
   gl_Position = vec4(position, 1.0);
 }
 `;
+
+/**
+ * Estimate the spacing between neighbouring samples without a spatial index.
+ *
+ * Points sit on surfaces, so cell occupancy — not volume — is the useful
+ * signal: with C occupied cells of side h the sampled area is about C·h², and
+ * N points spread over it sit about h·sqrt(C/N) apart. The grid starts fine and
+ * coarsens until cells actually hold several points, since a grid finer than
+ * the true spacing just reports its own cell size back.
+ */
+function measureSpacing(
+  positions: Float32Array,
+  count: number,
+  bounds: SceneData["navigation"]["bounds"],
+): number {
+  if (count < 32) return 0.05;
+  const diagonal = Math.hypot(
+    bounds.max[0] - bounds.min[0],
+    bounds.max[1] - bounds.min[1],
+    bounds.max[2] - bounds.min[2],
+  );
+  if (!(diagonal > 0)) return 0.05;
+
+  // A large cloud is sampled; the ratio it measures is the same either way.
+  const stride = Math.max(1, Math.floor(count / 120_000));
+  const sampled = Math.floor((count + stride - 1) / stride);
+
+  const cells = new Set<number>();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const h = (diagonal / 256) * 2 ** attempt;
+    cells.clear();
+    for (let i = 0; i < count; i += stride) {
+      const gx = Math.floor((positions[i * 3] - bounds.min[0]) / h);
+      const gy = Math.floor((positions[i * 3 + 1] - bounds.min[1]) / h);
+      const gz = Math.floor((positions[i * 3 + 2] - bounds.min[2]) / h);
+      // 21 bits per axis keeps the key inside a double's exact integer range.
+      cells.add((gx & 0x1fffff) * 4398046511104 + (gy & 0x1fffff) * 2097152 + (gz & 0x1fffff));
+    }
+    const occupancy = cells.size / sampled;
+    if (occupancy < 0.7 || attempt === 5) {
+      return Math.max(1e-4, h * Math.sqrt(occupancy));
+    }
+  }
+  return 0.05;
+}
 
 interface KeyState {
   forward: boolean;
@@ -172,6 +239,8 @@ export class WalkthroughViewer {
 
   // Tunables the UI can drive.
   private pointSizeMultiplier = 1.0;
+  /** Median-ish distance between neighbouring samples, in metres. */
+  private pointSpacing = 0.05;
   private edlStrength = 0.55;
   private walkSpeed: number;
   private showPaths = false;
@@ -255,11 +324,15 @@ export class WalkthroughViewer {
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geometry.computeBoundingSphere();
 
+    this.pointSpacing = measureSpacing(positions, count, data.navigation.bounds);
+
     const material = new THREE.ShaderMaterial({
       uniforms: {
         uPointScale: { value: 1 },
         uSizeMultiplier: { value: this.pointSizeMultiplier },
         uOpacity: { value: 1 },
+        // The EDL pass does the encode when it is in play; see SRGB_ENCODE.
+        uEncode: { value: 0 },
       },
       vertexShader: POINT_VERTEX,
       fragmentShader: POINT_FRAGMENT,
@@ -573,7 +646,9 @@ export class WalkthroughViewer {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.animate);
 
-    const dt = Math.min(0.1, this.clock.getDelta());
+    // Guard against a long tab stall teleporting the camera, but keep the cap
+    // loose enough that a slow machine still walks at the right speed.
+    const dt = Math.min(0.25, this.clock.getDelta());
     this.step(dt);
 
     // Point size is expressed in world units, so it depends on viewport height
@@ -582,8 +657,16 @@ export class WalkthroughViewer {
     const size = new THREE.Vector2();
     this.renderer.getSize(size);
     const pr = this.renderer.getPixelRatio();
-    mat.uniforms.uPointScale.value =
-      (size.y * pr) / (2 * Math.tan((this.camera.fov * Math.PI) / 360)) * 0.012;
+    // gl_PointSize is a pixel diameter, so this is the focal length in pixels
+    // times the splat's world diameter. Sizing that diameter slightly above the
+    // measured sample spacing is what makes a wall read as a surface instead of
+    // a spray of dots — a fixed constant only ever suits one scene.
+    const focalPx = (size.y * pr) / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
+    mat.uniforms.uPointScale.value = focalPx * this.pointSpacing * 1.3;
+
+    // Without the EDL pass the points go straight to the canvas, so they have
+    // to do their own sRGB encode.
+    mat.uniforms.uEncode.value = this.target && this.edlMaterial ? 0 : 1;
 
     if (this.target && this.edlMaterial) {
       this.edlMaterial.uniforms.uNear.value = this.camera.near;

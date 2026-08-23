@@ -86,6 +86,13 @@ export interface ReconConfig {
     maxCost: number;
     /** Require this many views to agree before a point survives fusion. */
     minConsistentViews: number;
+    /**
+     * How far a depth is allowed to be trusted, expressed as the depth error a
+     * one-pixel matching slip would cause, measured in fusion voxels. Stereo
+     * error grows with the square of depth, so without a limit the far field
+     * turns into a cone of noise fanning out from each camera.
+     */
+    depthUncertaintyVoxels: number;
     /** Fusion voxel size as a fraction of scene extent. */
     voxelFraction: number;
     maxPoints: number;
@@ -149,6 +156,7 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
     patchRadius: 3,
     maxCost: 0.42,
     minConsistentViews: 2,
+    depthUncertaintyVoxels: 2,
     voxelFraction: 0.005,
     maxPoints: 2_400_000,
   },

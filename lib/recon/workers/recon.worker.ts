@@ -482,6 +482,28 @@ async function run(
       }
       if (sources.length === 0) continue;
 
+      // Trim the far plane to where this view's stereo is still trustworthy.
+      // A one-pixel matching slip at depth z moves the point by about
+      // z²/(f·B); past the point where that exceeds a few fusion voxels the
+      // depths are noise, and keeping them just fans a cone out of the camera.
+      const refCentre = cameraCentre(ref.pose);
+      const baselines = sources
+        .map((src) => {
+          const c = cameraCentre(src.pose);
+          return Math.hypot(c[0] - refCentre[0], c[1] - refCentre[1], c[2] - refCentre[2]);
+        })
+        .sort((a, b) => a - b);
+      const baseline = baselines[Math.floor(baselines.length / 2)];
+      if (baseline > 1e-6) {
+        const focalAtSweep = sfm.focal * (denseOptions.referenceWidth > 0
+          ? Math.min(cfg.dense.longEdge / Math.max(denseOptions.referenceWidth, denseOptions.referenceHeight), 1)
+          : 1);
+        const trusted = Math.sqrt(
+          voxel * cfg.dense.depthUncertaintyVoxels * focalAtSweep * baseline,
+        );
+        range.max = Math.min(range.max, Math.max(range.min * 1.5, trusted));
+      }
+
       try {
         const sweep = await sweepView(ref, sources, range, denseOptions);
         const pts = depthToPoints(ref, sweep, denseOptions, 1);
@@ -563,7 +585,7 @@ async function run(
     densePoints: densePoints.count,
     reprojectionRmsePx: +sfm.rmsePx.toFixed(3),
     focalPx: Math.round(sfm.focal),
-    crossClipPairs: 0,
+    crossClipPairs: sfm.crossClipPairs,
     elapsedMs: Math.round(performance.now() - started),
     stageMs,
     warnings,

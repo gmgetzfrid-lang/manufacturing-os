@@ -707,21 +707,7 @@ export async function reconstruct(
     rmsePx: finalBa?.finalRmsePx ?? 0,
     failedFrames: frames.map((f) => f.index).filter((i) => !registered.has(i)),
     components,
+    crossClipPairs,
   };
 }
 
-/** Cross-clip verified pairs, for reporting whether the capture actually fused. */
-export function countCrossClipLinks(
-  result: SfmResult, frames: FrameMeta[],
-): number {
-  const clipOf = new Map<number, string>();
-  for (const f of frames) clipOf.set(f.index, f.clipId);
-  let count = 0;
-  const registered = new Set(result.registeredFrames);
-  for (const comp of result.components) {
-    const clips = new Set<string>();
-    for (const f of comp) if (registered.has(f)) clips.add(clipOf.get(f) ?? "");
-    if (clips.size > 1) count += clips.size;
-  }
-  return count;
-}

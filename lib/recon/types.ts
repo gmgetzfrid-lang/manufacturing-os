@@ -115,6 +115,8 @@ export interface SfmResult {
   failedFrames: number[];
   /** Connected components over the pose graph; >1 means the clips did NOT fuse. */
   components: number[][];
+  /** Geometrically verified pairs whose two frames came from different clips. */
+  crossClipPairs: number;
 }
 
 export interface ReconWarning {
