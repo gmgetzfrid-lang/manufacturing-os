@@ -741,6 +741,25 @@ function hintFor(message: string): string {
     return "Walk through the space rather than panning from one spot — reconstruction needs the " +
       "camera to move sideways, not just turn.";
   }
+  // The failure text now names which gate rejected the pairs, so the advice can
+  // follow the evidence instead of defaulting to "re-record with more overlap"
+  // — which is wrong, and unhelpful, when matching was never the problem.
+  if (m.includes("matches are the bottleneck") || m.includes("too few matches")) {
+    return "The frames are not sharing enough recognisable detail. That is usually motion blur " +
+      "or low light: move slower, keep the camera level rather than swinging it, and film " +
+      "somewhere brighter. Surfaces with visible texture — panels, labels, pipework, grating — " +
+      "match far better than bare walls or floor.";
+  }
+  if (m.includes("no consistent camera motion") || m.includes("repeated texture")) {
+    return "Plenty of detail matched, but it did not agree on one camera motion — usually " +
+      "repeating patterns like grating, tiles or identical panels matching the wrong copy of " +
+      "themselves. Include some distinctive, non-repeating objects in shot.";
+  }
+  if (m.includes("stalled") || m.includes("could be grown")) {
+    return "The pieces that matched could not be joined into one space. Walk the route as one " +
+      "continuous take rather than several disconnected ones, and if you use more than one clip, " +
+      "let each revisit ground the others already covered.";
+  }
   if (m.includes("overlap") || m.includes("track") || m.includes("verified")) {
     return "Re-record with more overlap: each clip should revisit areas the others already covered, " +
       "and you should walk slowly enough that consecutive frames look similar.";
