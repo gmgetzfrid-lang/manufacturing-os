@@ -392,3 +392,172 @@ export function maxTriangulationAngleDeg(
   }
   return best;
 }
+
+// ── Homography, and why a reconstruction pipeline needs one ────────────────
+//
+// The essential matrix is DEGENERATE when the correspondences all lie on a
+// plane, or when the camera only rotated. Both are ordinary in real footage:
+// an industrial area is flat walls, floor and panels, and a walk through one
+// spends much of its time facing a single large surface. On such a pair the
+// 8-point solution is underdetermined, RANSAC settles on whichever spurious
+// model fits a handful of points, and a perfectly good pair is thrown away as
+// unverifiable — taking its correspondences out of the track graph with it.
+//
+// Estimating a homography alongside E tells us which case we are in. A pair
+// that a homography explains as well as the essential matrix is planar or
+// rotational: its matches are real and worth keeping for tracks, but its POSE
+// cannot be trusted, so it must not seed a reconstruction.
+
+/** Homography from >= 4 correspondences by normalised DLT. */
+export function homographyFromCorrespondences(corr: Correspondence[]): Float64Array | null {
+  if (corr.length < 4) return null;
+
+  const { T: T1, out: p1 } = normalise(corr.map((c) => [c.x1, c.y1]));
+  const { T: T2, out: p2 } = normalise(corr.map((c) => [c.x2, c.y2]));
+
+  const rows = corr.length * 2;
+  const A = new Float64Array(rows * 9);
+  for (let i = 0; i < corr.length; i++) {
+    const [x, y] = p1[i];
+    const [u, v] = p2[i];
+    const r0 = i * 18;
+    A[r0 + 0] = -x; A[r0 + 1] = -y; A[r0 + 2] = -1;
+    A[r0 + 6] = u * x; A[r0 + 7] = u * y; A[r0 + 8] = u;
+    const r1 = r0 + 9;
+    A[r1 + 3] = -x; A[r1 + 4] = -y; A[r1 + 5] = -1;
+    A[r1 + 6] = v * x; A[r1 + 7] = v * y; A[r1 + 8] = v;
+  }
+
+  const h = nullSpace(A, rows, 9);
+  if (!h) return null;
+
+  // Undo the conditioning: H = T2⁻¹ · Ĥ · T1
+  const Hn = new Float64Array(h);
+  const T2inv = invert3x3(T2);
+  if (!T2inv) return null;
+  const H = mat3Mul(T2inv, mat3Mul(Hn, T1));
+
+  // Scale so the comparison below is not at the mercy of an arbitrary factor.
+  let norm = 0;
+  for (let i = 0; i < 9; i++) norm += H[i] * H[i];
+  norm = Math.sqrt(norm);
+  if (!(norm > 1e-12)) return null;
+  for (let i = 0; i < 9; i++) H[i] /= norm;
+  return H;
+}
+
+
+function invert3x3(m: Float64Array): Float64Array | null {
+  const d =
+    m[0] * (m[4] * m[8] - m[5] * m[7]) -
+    m[1] * (m[3] * m[8] - m[5] * m[6]) +
+    m[2] * (m[3] * m[7] - m[4] * m[6]);
+  if (Math.abs(d) < 1e-14) return null;
+  const inv = new Float64Array(9);
+  inv[0] = (m[4] * m[8] - m[5] * m[7]) / d;
+  inv[1] = (m[2] * m[7] - m[1] * m[8]) / d;
+  inv[2] = (m[1] * m[5] - m[2] * m[4]) / d;
+  inv[3] = (m[5] * m[6] - m[3] * m[8]) / d;
+  inv[4] = (m[0] * m[8] - m[2] * m[6]) / d;
+  inv[5] = (m[2] * m[3] - m[0] * m[5]) / d;
+  inv[6] = (m[3] * m[7] - m[4] * m[6]) / d;
+  inv[7] = (m[1] * m[6] - m[0] * m[7]) / d;
+  inv[8] = (m[0] * m[4] - m[1] * m[3]) / d;
+  return inv;
+}
+
+/** Symmetric transfer error: a point must map correctly in both directions. */
+function homographyError(H: Float64Array, Hinv: Float64Array, c: Correspondence): number {
+  const map = (m: Float64Array, x: number, y: number) => {
+    const w = m[6] * x + m[7] * y + m[8];
+    if (Math.abs(w) < 1e-12) return null;
+    return [(m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w];
+  };
+  const f = map(H, c.x1, c.y1);
+  const b = map(Hinv, c.x2, c.y2);
+  if (!f || !b) return Infinity;
+  return Math.hypot(f[0] - c.x2, f[1] - c.y2) + Math.hypot(b[0] - c.x1, b[1] - c.y1);
+}
+
+export interface HomographyResult {
+  H: Float64Array;
+  inliers: boolean[];
+  inlierCount: number;
+}
+
+export function ransacHomography(
+  corr: Correspondence[],
+  threshold: number,
+  options: { confidence?: number; maxIterations?: number; seed?: number } = {},
+): HomographyResult | null {
+  const n = corr.length;
+  if (n < 4) return null;
+
+  const confidence = options.confidence ?? 0.999;
+  let maxIterations = options.maxIterations ?? 800;
+  // Symmetric transfer sums two distances, so the budget is two one-way errors.
+  const limit = threshold * 2;
+
+  let state = (options.seed ?? 1) >>> 0 || 1;
+  const rand = () => {
+    state ^= state << 13; state >>>= 0;
+    state ^= state >> 17;
+    state ^= state << 5; state >>>= 0;
+    return state / 4294967296;
+  };
+
+  let bestInliers: boolean[] | null = null;
+  let bestCount = 0;
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    const pick = new Set<number>();
+    let guard = 0;
+    while (pick.size < 4 && guard++ < 64) pick.add(Math.floor(rand() * n));
+    if (pick.size < 4) continue;
+
+    const H = homographyFromCorrespondences([...pick].map((i) => corr[i]));
+    if (!H) continue;
+    const Hinv = invert3x3(H);
+    if (!Hinv) continue;
+
+    const inliers = new Array<boolean>(n);
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      const ok = homographyError(H, Hinv, corr[i]) < limit;
+      inliers[i] = ok;
+      if (ok) count++;
+    }
+    if (count > bestCount) {
+      bestCount = count;
+      bestInliers = inliers;
+      const ratio = count / n;
+      if (ratio > 0.05) {
+        const denom = Math.log(1 - Math.pow(ratio, 4));
+        if (denom < 0) {
+          maxIterations = Math.min(
+            maxIterations, Math.ceil(Math.log(1 - confidence) / denom) + 8,
+          );
+        }
+      }
+    }
+  }
+
+  if (!bestInliers || bestCount < 4) return null;
+
+  // Refit on everything that agreed, which is worth a few tenths of a pixel.
+  const refit = homographyFromCorrespondences(corr.filter((_, i) => bestInliers![i]));
+  if (refit) {
+    const refitInv = invert3x3(refit);
+    if (refitInv) {
+      const inliers = new Array<boolean>(n);
+      let count = 0;
+      for (let i = 0; i < n; i++) {
+        const ok = homographyError(refit, refitInv, corr[i]) < limit;
+        inliers[i] = ok;
+        if (ok) count++;
+      }
+      if (count >= bestCount) return { H: refit, inliers, inlierCount: count };
+    }
+  }
+  return { H: bestInliers ? new Float64Array(9) : new Float64Array(9), inliers: bestInliers, inlierCount: bestCount };
+}

@@ -32,7 +32,7 @@ import type { FrameFeatures, SfmResult } from "../types";
 import { bundleAdjust, type BundleObservation } from "../math/bundle";
 import { pnpRansac } from "../math/pnp";
 import {
-  maxTriangulationAngleDeg, ransacEssential, reprojectionError,
+  maxTriangulationAngleDeg, ransacEssential, ransacHomography, reprojectionError,
   triangulateMultiView, type Correspondence, type Pose,
 } from "../math/twoView";
 import { globalSimilarity } from "./features";
@@ -72,6 +72,12 @@ interface VerifiedPairInternal {
   angleDeg: number;
   /** Inliers triangulating at a healthy angle — what decides if a pair can seed. */
   wellConditioned: number;
+  /**
+   * A homography explains this pair as well as the essential matrix does, so
+   * the scene it saw was a plane or the camera only turned. The matches are
+   * real and belong in the track graph; the POSE does not, and must never seed.
+   */
+  degenerate: boolean;
 }
 
 class UnionFind {
@@ -354,6 +360,7 @@ export async function reconstruct(
     minInliers: number,
     count: boolean,
     ratio = cfg.features.matchRatio,
+    allowHomography = false,
   ): Promise<VerifiedPairInternal | null> => {
     const fa = featureByIndex.get(pair.a);
     const fb = featureByIndex.get(pair.b);
@@ -370,30 +377,75 @@ export async function reconstruct(
     }
 
     const corr = toCorrespondences(fa, fb, matches, focal, cx, cy);
-    const geo = ransacEssential(corr, cfg.sfm.ransacThresholdPx / focal, {
+    const threshold = cfg.sfm.ransacThresholdPx / focal;
+    const geo = ransacEssential(corr, threshold, {
       confidence: cfg.sfm.ransacConfidence,
       maxIterations: 700,
       seed: 0x51ed + index,
     });
-    if (!geo) {
+
+    // A pair the essential matrix cannot explain is not necessarily a bad pair.
+    // The 8-point solution is DEGENERATE when the correspondences lie on a
+    // plane or the camera only rotated, and both are ordinary in real footage:
+    // a walk through an industrial area spends much of its time facing one flat
+    // surface. Such a pair used to be discarded outright, taking its
+    // correspondences out of the track graph with it.
+    //
+    // This is a LAST RESORT, enabled only by the lenient retry pass. A
+    // homography has four degrees of freedom and will fit something to almost
+    // anything, so it must never compete with a working essential matrix: on a
+    // capture that reconstructs cleanly, letting it took registered frames from
+    // 86 to 31 and sparse points from 4,735 to 674, because the correspondences
+    // it substituted were wrong. It earns its place only where the alternative
+    // is no reconstruction at all.
+    const eCount = geo ? geo.inlierCount : 0;
+    const essentialUsable = geo !== null && eCount >= minInliers;
+
+    let inlierFlags: boolean[] | undefined = geo?.inliers;
+    let kept = eCount;
+    let degenerate = false;
+
+    if (!essentialUsable && allowHomography) {
+      const homography = ransacHomography(corr, threshold, {
+        confidence: 0.999, maxIterations: 500, seed: 0x7b0d + index,
+      });
+      const hCount = homography ? homography.inlierCount : 0;
+      // Demand it behave like a real plane: explaining most of what matched,
+      // and clearly beating the essential matrix rather than merely tying it.
+      if (homography && hCount >= minInliers &&
+          hCount >= matches.length * 0.5 && hCount > eCount * 1.2) {
+        inlierFlags = homography.inliers;
+        kept = hCount;
+        degenerate = true;
+      }
+    }
+
+    if (!inlierFlags) {
       if (count) reject.noModel++;
       return null;
     }
-    if (geo.inlierCount < minInliers) {
+    if (kept < minInliers) {
       if (count) reject.fewInliers++;
       return null;
     }
 
     const inlierMatches: Array<[number, number]> = [];
     for (let k = 0; k < matches.length; k++) {
-      if (geo.inliers[k]) inlierMatches.push([matches[k].queryIndex, matches[k].trainIndex]);
+      if (inlierFlags[k]) inlierMatches.push([matches[k].queryIndex, matches[k].trainIndex]);
     }
     return {
       a: pair.a, b: pair.b, source: pair.source as VerifiedPairInternal["source"],
       crossClip: clipOf.get(pair.a) !== clipOf.get(pair.b),
-      matches: inlierMatches, pose: geo.pose,
-      angleDeg: geo.medianTriangulationAngleDeg,
-      wellConditioned: geo.wellConditionedCount,
+      matches: inlierMatches,
+      // A degenerate pair has no trustworthy pose. It carries the essential
+      // matrix's best guess so the type stays simple, and the seed filter below
+      // refuses to start from it.
+      pose: geo ? geo.pose : {
+        R: new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), t: [0, 0, 0],
+      },
+      angleDeg: geo ? geo.medianTriangulationAngleDeg : 0,
+      wellConditioned: degenerate ? 0 : (geo ? geo.wellConditionedCount : 0),
+      degenerate,
     };
   };
 
@@ -443,7 +495,14 @@ export async function reconstruct(
       // few more matches everywhere at the cost of admitting ambiguous ones into
       // captures that were verifying perfectly well — measurably worse scale
       // consistency on a capture that never needed the help.
-      const ok = await verifyPair(pair, i, gentleMatches, gentleInliers, false, 0.86);
+      // The homography rescue lives here and only here. Measured on a capture
+      // that reconstructs cleanly, allowing it in the strict pass took
+      // registered frames from 86 to 55 and sparse points from 4,735 to 1,546:
+      // where the essential matrix legitimately rejects a pair, a homography
+      // will still fit something, and what it fits is wrong. Confined to this
+      // retry it cannot touch a capture that is already working, because the
+      // retry only runs when the strict pass has already failed badly.
+      const ok = await verifyPair(pair, i, gentleMatches, gentleInliers, false, 0.86, true);
       if (ok) {
         verified.push(ok);
         if (ok.crossClip) crossClipPairs++;
@@ -464,10 +523,12 @@ export async function reconstruct(
   const medianFeatures = featureCounts.length
     ? featureCounts[Math.floor(featureCounts.length / 2)] : 0;
   /** Everything a failure needs to say to be diagnosable rather than a guess. */
+  const degenerateCount = verified.filter((v) => v.degenerate).length;
   const diagnostics =
     `${frames.length} frames, median ${medianFeatures} features each; ` +
     `${proposed.length} pairs proposed, ${verified.length} verified` +
-    `${relaxed ? " (after a lenient retry)" : ""}; ` +
+    `${relaxed ? " (after a lenient retry)" : ""}` +
+    `${degenerateCount ? `, of which ${degenerateCount} were planar or rotation-only` : ""}; ` +
     `median ${medianMatches} raw matches per pair; rejected ` +
     `${reject.fewMatches} for too few matches, ${reject.fewInliers} for too few ` +
     `inliers after RANSAC, ${reject.noModel} with no consistent model, ` +
@@ -581,6 +642,7 @@ export async function reconstruct(
     seedTier = tier;
     seedCandidates = verified
       .filter((p) =>
+        !p.degenerate &&
         p.wellConditioned >= tier.wellConditioned &&
         p.matches.length >= cfg.features.minPairInliers * tier.inlierScale)
       .map((p) => ({ pair: p, score: scoreOf(p) }))
