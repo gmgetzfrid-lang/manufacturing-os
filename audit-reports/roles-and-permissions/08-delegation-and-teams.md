@@ -57,6 +57,7 @@ chain.**
   - `supabase/migrations/20260816_documents_access_change_guard.sql:72-76` — **the database *does* honour a `managePermissions` grant**
   - A repo-wide search for `managePermissions` returns **zero** client-side authorization reads
 - **Related:** `OWN-19`, `DOCACL-*`, `GAP-3`
+- **Re-verified:** hardening pass — **SURVIVES**. Both `PermissionDrawer` call sites pass `canEdit={isController}` (`documents/[libraryId]/page.tsx:4654, 4671`) — ownership is not in the expression, so an owner cannot delegate any part of their own authority.
 
 **Mechanism.** There are exactly three drawer instantiations and all three pass
 the controller boolean. An owner is therefore never `canEdit`, so the ACL editor
@@ -114,6 +115,7 @@ without mentioning that delegating is not among them.
   - `supabase/migrations/20260630_document_ownership.sql:4-5` — the migration's own comment promises the owner *"is granted CRUD access to their scope"*
   - `user_is_effective_owner` appears in the publish guard (×2), the review-completion guard, and the two publisher-row-management policies — and in **no SELECT policy**
 - **Related:** `OWN-12`, `DEL-9`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `node_visible` reads visibility, `acl_index`, the singular `role` and team ids (`20260708_acl_rls_enforcement.sql:42-80`). **No ownership term appears anywhere in it**, so ownership confers publish and roster authority without conferring read.
 
 **Mechanism.** Phase 2 shipped ownership **write** authority
 (`20260816_owner_publish_access.sql`) and never shipped ownership **read**
@@ -168,6 +170,7 @@ backfill. Ownership visibility is solved separately by `DEL-7`. Spec: `GAP-15`.
   - `lib/teams.ts:94-97` — `deleteTeam` is a bare DELETE; `libraries.owner_team_id` has no FK
   - `app/(protected)/admin/teams/page.tsx:204` — the *only* line of UI that reveals the collapse
 - **Related:** `OWN-12`, `OWN-16`, `DEL-4`
+- **Re-verified:** hardening pass — **SURVIVES**. `SELECT supervisor_user_id INTO v_owner FROM teams` (`20260824_team_departments.sql:36`) and the mirror at `ownership.ts:50-55` — a single uid, with no succession, no requirement that the supervisor be a member, and no audit of the change.
 
 **Mechanism.** "A team owns the library" is a two-hop pointer that dereferences
 to exactly **one person**. Every failure mode of that person is a failure mode of
@@ -235,6 +238,7 @@ with no signal. The four fixes below are the whole of the work.
   - `supabase/migrations/20260816_owner_publish_access.sql:60-62` — effective owner → publish authority
   - `components/permissions/RoleModelTree.tsx:47` — the role tree states Manager has *"No publish authority unless granted per-library or made an owner"*
 - **Related:** `OWN-1`, `DEL-3`
+- **Re-verified:** hardening pass — **SURVIVES**. `teams_admin_write` and `team_members_admin_write` both admit `role IN ('Admin','Manager')` (`20260707_teams.sql:37-48`), and the UI gate agrees (`admin/teams/page.tsx:25`). Setting a team supervisor makes that person the effective owner of every team-owned library, which is publish authority a Manager otherwise does not hold.
 
 **Mechanism.** Two authority domains designed separately now compose. Teams were
 *"named groups for ACL subjects"* (`lib/teams.ts:1-4`); migration `20260824`
@@ -279,6 +283,7 @@ member for libraries and documents (`OWN-1`), and Admin/Manager for teams.
   - `supabase/migrations/20260830_publisher_row_management.sql:36-50` — owners may update roster rows
   - a search of `lib/reviewControl.ts` finds **no author/self-review exclusion**
 - **Related:** `OWN-1`, `OWN-11`, `WF-4`, `WF-14`
+- **Re-verified:** hardening pass — **SURVIVES**. `canManage={canPublishEff}` is passed to both `ReviewersSection` and `AckSection` (`InspectorPanel.tsx:718-726`), so one flag governs who sets the roster and who publishes. The DB guard (`20260822_review_completion_guard.sql:44-55`) counts signatures but never compares signer to publisher.
 
 **Mechanism.** The review gate enforces *that* the roster is complete. It never
 enforces that the roster contains anyone other than the publisher.
@@ -321,6 +326,7 @@ decision rather than an invisible gap.
   - `app/(protected)/documents/[libraryId]/page.tsx:3372-3380` — the "Access recertification" menu item is inside `{isController && ( … )}`
   - `components/permissions/PermissionsExplorer.tsx` — the matrix row claims `"If library owner"`
 - **Related:** `DEL-1`, `OWN-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `accessRecert.ts` targets `[ownerId, ...controllers]` (`:135-136`) while the ACL edit surface is controller-gated. The owner is asked to perform a review they have no control to complete.
 
 **Mechanism.** The notification targets and the UI gate were written against
 different mental models and never reconciled. Three places in the codebase say
@@ -358,6 +364,7 @@ behaviour.
   - `app/(protected)/documents/[libraryId]/page.tsx:3327-3334` — the only way to *set* a library owner is a menu item labelled **"Review cycle"**, tooltipped *"Set a periodic-review cycle for every document in this library"*
   - `app/(protected)/admin/libraries/LibraryWizard.tsx` — **no owner field anywhere**, so libraries are born unowned
 - **Related:** `OWN-12`, `DEL-8`
+- **Re-verified:** hardening pass — **SURVIVES**. `loadDocControlRegister` selects from `documents` only (`docControlRegister.ts:94-103`). No register exists at library or folder level, and `RegisterFilter` (`:201`) offers `unowned` for documents alone.
 
 **Mechanism.** Ownership was built as an attribute of the review-cycle feature
 and never promoted to a first-class concept with its own surface.
@@ -401,6 +408,7 @@ fix with no dependencies.
   - `components/permissions/RoleModelTree.tsx:232` — `owner: {l.ownerName || (team ? … : "none")}`
   - `lib/docControlRegister.ts:216` — `filterRegister` searches on `r.ownerName`
 - **Related:** `DEL-7`, `OWN-21`
+- **Re-verified:** hardening pass — **SURVIVES**. `owner_name TEXT` is a plain denormalized column (`20260630_document_ownership.sql:10`) written beside `owner_user_id` (`ownership.ts:130`) and never re-synced when the person's display name changes.
 
 **Mechanism.** Nothing re-syncs `owner_name` when `org_members.display_name`
 changes, when the person is removed, or when the owner is inherited from a team
@@ -444,6 +452,7 @@ correctly does and `RoleModelTree` incorrectly does not.
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:89-91` — `collections_acl_select` hides `private`/`hidden` folders without a grant
   - `supabase/migrations/20260824_team_departments.sql:19` — the SQL resolver is `SECURITY DEFINER` and sees everything
 - **Related:** `DEL-2`, `OWN-16`
+- **Re-verified:** hardening pass — **SURVIVES**. `ownership.ts:40` and `docControlRegister.ts:110-111` read `collections`/`libraries` through the **anon client under the caller's RLS**, while the database resolves ownership through `user_is_effective_owner`, a `SECURITY DEFINER` function that sees every row. The two answer differently for the same document.
 
 **Mechanism.** When a folder is invisible to the reader, the folder lookup misses
 and the chain **skips a rung** — resolving to the *library* owner instead of the

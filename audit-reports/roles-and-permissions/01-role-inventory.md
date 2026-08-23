@@ -56,6 +56,7 @@ code path branches on it.
   - `components/permissions/RoleTreeSelector.tsx:17-22` — the same
   - `components/permissions/PermissionDrawer.tsx:66-71` — the ACL subject picker
 - **Related:** `DOCACL-1`, `ROLE-3`
+- **Re-verified:** hardening pass — **SURVIVES**. `Accounting`, `Safety`, `HR`, `Maintenance`, `Operations` and `Contractor` all map to exactly `["create_requests"]` (`roleCapabilities.ts:60-65`), and `Sidebar.tsx:247-248` reduces the workbench for `Contractor` alongside `Viewer`.
 
 **Mechanism.** These six grant exactly what `Requester` grants and appear in no
 capability-policy default. An exhaustive search for authority branches on them
@@ -110,6 +111,7 @@ actually function.
   - `lib/workflow.ts:18-20` — `isEngineerRole` = `role.includes("Engineer")`
   - `supabase/migrations/20260901_db_hard_enforcement.sql:61` — the DB does the same: `r LIKE '%Engineer%'`
 - **Related:** `DRAFT-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `Engineer-1` through `Engineer-4` map to identical capability arrays — `["approve_engineering", "view_requests", "create_requests"]` (`roleCapabilities.ts:54-57`). Only `ROLE_RANK` distinguishes them, and rank affects nothing but the headline.
 
 **Mechanism.** Every layer — capabilities, the policy token matcher, the
 workflow helper, and the database — treats all four tiers as interchangeable.
@@ -152,6 +154,7 @@ Option A plus `DRAFT-1` is very likely what you actually want.
   - `lib/capabilityPolicy.ts:76` — `ticket.requester_review` defaults to `["Requester"]`
   - `lib/workflow.ts:71` — `canActAsRequester = isRequesterIdentity || allows('ticket.requester_review')`
 - **Related:** `ROLE-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `Requester` and the six department labels resolve to the same single capability (`roleCapabilities.ts:59-65`).
 
 **Mechanism.** `Requester` has one thing the department labels don't: it is the
 default role list for `ticket.requester_review`. But that capability is almost
@@ -184,6 +187,7 @@ pure "may file requests" marker, which is what everyone assumes it is.
 - **Locations:**
   - `lib/roleCapabilities.ts:117-119` — `addableRoles` filters to roles granting a capability the member lacks
   - `lib/roleCapabilities.ts:110-113` — `capabilitiesAdded`
+- **Re-verified:** hardening pass — **SURVIVES**. `addableRoles` offers only roles granting a capability not already held (`roleCapabilities.ts:112-115`); because most roles are capability-identical, the picker hides most of the roster — which is the model reporting its own redundancy.
 
 **Mechanism.** The picker only offers a role if it would add a capability. This
 is a good guardrail — it prevents meaningless additions.
@@ -221,6 +225,7 @@ member doesn't already have — use a team to record department."*
   - `app/(protected)/admin/audit/page.tsx:27` — `ADMIN_ROLES = new Set(["Admin","Manager","Supervisor","DocCtrl","Auditor"])`
   - `app/(protected)/admin/users/page.tsx:82` — `Viewer` is the default for new members
 - **Related:** `ADD-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `Viewer: []` and `Auditor: ["audit", "view_requests"]` (`roleCapabilities.ts:66-67`) are the only entries that subtract, and they do it by two different means — one by holding nothing, one by holding a narrow set that the headline ranking then buries at rank 20.
 
 **Mechanism.** Every other role is purely additive. These two are the only ones
 whose presence is meant to *restrict* — and they do it through a hardcoded
@@ -260,6 +265,7 @@ layer rather than living in a hardcoded set.
 - **Locations:**
   - `components/permissions/PermissionsExplorer.tsx:14` — `const ROLES = ["Admin","DocCtrl","Manager","Supervisor","DraftingSup","Engineer 1-4","Drafter","Requester","Staff*","Contractor","Auditor","Viewer"]`
   - `types/schema.ts:5-25` — `ALL_ROLES`, the real union
+- **Re-verified:** hardening pass — **SURVIVES**. `PermissionsExplorer.tsx:14` lists `"DraftingSup"`, `"Engineer 1-4"` and `"Staff*"` — display strings that match no member of the real `Role` union.
 
 **Mechanism.** A hand-maintained display array that diverges from the source of
 truth in three ways: `"DraftingSup"` is not a role (`DraftingSupervisor` is),

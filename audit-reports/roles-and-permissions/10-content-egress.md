@@ -229,6 +229,7 @@ inventing a second answer.
   - `supabase/migrations/20260911_knowledge_ai.sql:146-149` — `knowledge_questions_select`, same shape
   - the seam it defeats: `lib/knowledgeAccess.ts:1-16` — *"retrieval excludes chunks of documents the ASKER can't read"*
 - **Related:** `EGRESS-3`
+- **Re-verified:** hardening pass — **SURVIVES**, and the migration's own justification is where it breaks. `knowledge_chunks_select` is `USING (active org member)` (`20260911_knowledge_ai.sql:136-140`), reasoned as *"direct member SELECT is allowed (it's the same content as the PDF)"* (`:134-135`) — which holds only if the member can read the PDF, and the ACL-aware ask pipeline exists precisely because they may not.
 
 **Mechanism.** The stated rationale holds for a standalone knowledge document.
 **It does not hold for a source-linked one** — a knowledge document that mirrors
@@ -262,6 +263,7 @@ unchanged.
   - `app/api/auth/request-access/route.ts:46-53` — unauthenticated and unrate-limited
   - no reader: a search for `access_requests` across `app/`, `lib/`, `components/` returns only this route plus the export/restore/schema plumbing
 - **Related:** `SURF-9`
+- **Re-verified:** hardening pass — **SURVIVES**, and it is cross-tenant. `access_requests_admin_select` is `USING (EXISTS (SELECT 1 FROM org_members WHERE uid = auth.uid() AND status = 'active' AND role = 'Admin'))` — **the subquery has no correlation to `access_requests.org_id`**, so any Admin of any workspace reads every workspace's requests. Paired with `FOR INSERT WITH CHECK (true)` (`:27`), the table is open to write and org-blind on read.
 
 **Mechanism.**
 
@@ -313,6 +315,7 @@ unbounded direct anonymous inserts. `/api/auth/signup` is rate-limited via
   - `supabase/migrations/20260815:23` — a RESTRICTIVE **DELETE** overlay
   - **no RESTRICTIVE UPDATE or INSERT policy exists**
 - **Related:** `OWN-5`, `OWN-17`
+- **Re-verified:** hardening pass — **SURVIVES**. `document_versions_org_access … FOR ALL` (`schema.sql:1072`) with no RESTRICTIVE companion for INSERT or UPDATE.
 
 **Mechanism.** The confidentiality overlay (SELECT) and the destruction overlay
 (DELETE) were both added. The integrity overlay was not. Any active member can

@@ -187,7 +187,7 @@ with no recovery path and no explanation.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
-- **Re-verified:** hardening pass — **SURVIVES**. `myActionItems` is computed at `requests/page.tsx:329` but the initial `filters` state opens on `status: 'ALL'` across the org (`:180-187`). Duplicate of `FRIC-9` within this area; fix once.
+- **Re-verified:** hardening pass — **SURVIVES**. `myActionItems` is computed at `app/(protected)/requests/page.tsx:329` but the initial `filters` state opens on `status: 'ALL'` across the org (same file, `:180-187`). Duplicate of `FRIC-9` within this area; fix once.
 
 > **Recorded in full as `FRIC-9`.**
 

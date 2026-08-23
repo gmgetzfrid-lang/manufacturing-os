@@ -111,6 +111,7 @@ evaluated correctly (see `ROLE-1`).
   - `lib/ticketRouting.ts:1-18` — the routing module's stated model
   - `lib/ticketRouting.ts:43-56` — `getRoutingConfig`, `adminsAlsoReceiveWhenSupervisorSet`
 - **Related:** `DRAFT-1`, `DRAFT-4`
+- **Re-verified:** hardening pass — **SURVIVES**. `getInitialStatus: (_type: RequestType, _requesterRole: Role)` — **both parameters are underscore-prefixed as unused** — and the body returns the constant `'PENDING_ASSIGNMENT'` (`workflow.ts:47-52`).
 
 **Mechanism.** Both parameters are underscore-prefixed and unused. Every request
 — every type, from every role — lands in `PENDING_ASSIGNMENT`, and routing
@@ -151,6 +152,7 @@ exist.
   - `lib/workflow.ts:78` — `const needsEngineerApproval = requiresEngineerApproval(ticket.requesterRole)`
   - `lib/workflow.ts:22-24` — `isManagementRole`, exact string equality
 - **Related:** `ADD-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `requiresEngineerApproval(requesterRole)` takes one argument and returns on role alone (`workflow.ts:37-42`), called as `requiresEngineerApproval(ticket.requesterRole)` (`:78`). Same mechanism as `WF-12` and `drafting-flow/TIER-1`.
 
 **Mechanism.**
 
@@ -208,6 +210,7 @@ a snapshot is defensible, an accidental snapshot is not.
   - `lib/capabilityPolicy.ts:60-62` — `ticket.initial_review` defaults to `[...MGMT, "Engineer"]`
   - `lib/capabilityPolicy.ts:66-68` — `ticket.assign` defaults to `[...MGMT, "DraftingSupervisor"]`
 - **Related:** `DRAFT-2`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `ticket.initial_review` is described as *"approve / flag / reject"* (`capabilityPolicy.ts:61-62`), and no rejection-reason field exists on `tickets` — the reason survives only as free text in `history`.
 
 **Mechanism.** The initial-review stage offers approve / flag-for-engineering /
 reject. Rejection takes a free-text comment (`requiresComment`), which is
@@ -258,6 +261,7 @@ want to be mandatory.
 - **Locations:**
   - `lib/capabilityPolicy.ts:69-70` — `ticket.self_assign` defaults to `["Drafter"]`
   - `lib/capabilityPolicy.ts:66-68` — `ticket.assign` defaults to `[...MGMT, "DraftingSupervisor"]`
+- **Re-verified:** hardening pass — **SURVIVES**. `ticket.self_assign` defaults to `["Drafter"]` while `ticket.assign` defaults to management plus `DraftingSupervisor` (`capabilityPolicy.ts:66-69`), so a drafter can take work the assignment queue never routed.
 
 **Mechanism.** Two capabilities reach the same outcome. `ticket.assign` runs the
 queue; `ticket.self_assign` lets a drafter pick up unassigned work directly.

@@ -52,6 +52,7 @@ See `CHAIN-1`.
   - `lib/roleCapabilities.ts:74-94` — `ROLE_RANK`: `Requester: 40` outranks `Auditor` and `Contractor`
   - `lib/roleCapabilities.ts:120-123` — `primaryRole()` returns the highest-ranked role
 - **Related:** `ROLE-1`, `ADD-1`, `DB-7`
+- **Re-verified:** hardening pass — **SURVIVES**. `canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}` (`documents/[libraryId]/page.tsx:4010`) and the same shape in `Sidebar.tsx:247-248`. Because the test is on the *headline*, adding any higher-ranked role removes the restriction rather than adding a permission.
 
 **Mechanism.** `primaryRole` is a *max-rank* projection. For a **grant** check
 that is harmless-to-restrictive. For a **restriction** check it is an escalation:
@@ -96,6 +97,7 @@ other five department roles is unaffected.
   - `components/providers/RoleContext.tsx:200-206` — mirrored into `activeRole`
   - consumed as truth by the headline-only census in [`11-database-authority.md`](./11-database-authority.md) (`DB-7`)
 - **Related:** `DB-3`, `DB-7`, `ADD-1`, `OWN-3`
+- **Re-verified:** hardening pass — **SURVIVES**, with the count made exact: `activeRole` appears **209** times across `app/` and `components/`. Not all are authority checks, but the magnitude the finding claims holds, and every one of them resolves through a four-line browser sort.
 
 **Mechanism.** `org_members.role` is a **denormalized cache of a computation that
 happens in the browser**. Nothing in the database enforces that
@@ -156,6 +158,7 @@ headline.
   - email / routing: `lib/ticketRouting.ts:79,91,99` — hardcoded role list, **headline-only**
   - `lib/ticketAttention.ts:21` carries a comment claiming it is in sync with routing
 - **Related:** `WF-7`, `WF-19`, `WF-24`
+- **Re-verified:** hardening pass — **SURVIVES**. Three models, all present: the `MANAGEMENT_ROLES` const (`ticketAttention.ts:22-27`), `policyAllows` with `extraRoles: null` (`workflow.ts:65`), and `byRole` on the headline column (`ticketRouting.ts:79`).
 
 **Mechanism.** Three subsystems answer the same question with three different
 role resolutions and three different role lists. The comment asserting they are
@@ -192,6 +195,7 @@ better.
   - `components/permissions/RoleModelTree.tsx:117` — *"a few older checks still read only the headline role"*
   - `components/permissions/PermissionsExplorer.tsx` — the capability matrix, including a row claiming access recertification works *"If library owner"* (contradicted by `DEL-6`)
 - **Related:** `OWN-7`, `OWN-10`, `DEL-6`, `ROLE-*`
+- **Re-verified:** hardening pass — **SURVIVES**. `RoleModelTree.tsx:79` still carries *"NOTE: not currently assignable in /admin/users (known…"* — the app's own documentation of its role model is stale in the file that exists to explain it.
 
 **Mechanism.** The product contains a self-documenting authority model. It is
 **the right idea** and unusual to find — but several of its claims no longer
@@ -233,6 +237,7 @@ matches the enforced behaviour or is explicitly listed under "Known gaps."
   - `lib/capabilityPolicy.ts:112-117` — `CapabilityPolicy`; role tokens are bare strings, no version
   - `documents.acl` / `acl_index`, `collections.acl` / `acl_index`, `libraries.acl` / `acl_index`, `org_configurations.data` — all JSONB blobs holding role **names**
 - **Related:** `ROLE-1`, `ROLE-*`, `CHAIN-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `AccessRule`/`PermissionSubject` (`types/schema.ts:96-107`) carry no version or schema marker, and `buildAclIndexFromRules` bakes bare role names into the allow/deny buckets (`acl.ts:256-267`). A removed role leaves grants that match nothing and deny nothing.
 
 **Mechanism.** Role identity is the role's *name*, stored as a string inside
 customer JSON in at least seven places. There is no id, no version stamp, and no
@@ -270,6 +275,7 @@ it.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
+- **Re-verified:** Re-read in the hardening pass. **This is a change-impact map, not a defect** — there is nothing to refute. Its value is as a blast-radius reference before touching the role model.
 
 **Mechanism.** This entry exists so that a resolving agent can check a proposed
 change against its real reach before starting. It is reference material, not a

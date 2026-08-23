@@ -138,6 +138,7 @@ almost anywhere else in this audit; see
   - the idiom, three times: `supabase/migrations/20260901_db_hard_enforcement.sql:38`, `:135`, and `supabase/migrations/20260907_milestone_batch_move.sql:33`
   - `app/api/auth/signup/route.ts` — **does not set `roles`** (a search for `roles` in the file returns nothing)
 - **Related:** `DB-1`, `DB-2`, `ADD-1`, `OWN-3`
+- **Re-verified:** hardening pass — **SURVIVES**, and the reason is one word in the DDL. `roles TEXT[] NOT NULL DEFAULT '{}'` (`schema.sql:41`) means the column is **never NULL**, so `COALESCE(roles, ARRAY[role])` — used at `20260901_db_hard_enforcement.sql:38` and `:135` and `20260907_milestone_batch_move.sql:33` — never falls through. A member whose `roles` was never populated evaluates against `{}`.
 
 **Mechanism.** `COALESCE(x, fallback)` returns the fallback only when `x` is
 `NULL`. The column is `NOT NULL DEFAULT '{}'`, so **`roles` is never `NULL` — it
@@ -181,6 +182,7 @@ additive-roles work in this audit.** See
   - `supabase/migrations/20260901_db_hard_enforcement.sql:124-125` — the claim: *"acl_index is chain-resolved when written … so a single-node check faithfully enforces inherited denies"*
   - **no trigger, no job and no rebuild exists** (verified by search)
 - **Related:** `DB-2`, `DB-5`, `OWN-7`, `OWN-20`
+- **Re-verified:** hardening pass — **SURVIVES**. `PermissionDrawer.tsx:284` writes `.eq("id", nodeId)` — the edited node only. No descendant is touched, and no trigger propagates. Duplicate of `OWN-20` within this area; fix once.
 
 **Mechanism.** The claim in `20260901` is true **only until the parent changes.**
 `acl_index` is chain-resolved at write time but written per node, and nothing
@@ -225,6 +227,7 @@ and a test covers "grant at library, revoke at library, check a nested document.
   - `app/(protected)/admin/libraries/LibraryWizard.tsx:252-262` — builds rules and returns `acl` only
   - `supabase/migrations/20260812_per_library_publish_authority.sql:56-58` — **the database reads `acl_index` only**
 - **Related:** `DB-4`, `OWN-1`, `OWN-8`
+- **Re-verified:** hardening pass — **SURVIVES**. Three writers with three payload shapes: `PermissionDrawer.tsx:273-284`, `admin/libraries/page.tsx:101-108`, and the folder-creation path at `documents/[libraryId]/page.tsx:600-605`.
 
 **Mechanism.** Two writers, one enforced column. The drawer keeps `acl` and
 `acl_index` in sync; the library wizard writes only `acl`.
@@ -260,6 +263,7 @@ user's next rev-up.
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:** every one of these is `SECURITY DEFINER` with no `SET search_path`:
+- **Re-verified:** **SURVIVES — and the count is too low.** A census of every `CREATE [OR REPLACE] FUNCTION … SECURITY DEFINER` across `supabase/` finds **44** such functions, of which **23** set no `search_path` — not thirteen. The list includes the core authority primitives: `my_org_ids`, `is_org_admin`, `is_org_admin_or_manager`, `is_org_controller`, `can_manage_node`, `doc_is_visible`, and the publish, move and legal-hold guards. Severity held; the finding understated its own scope.
 
 | Function | Migration |
 |---|---|
@@ -310,6 +314,7 @@ hazard, and the next agent should not have to re-derive it.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
+- **Re-verified:** Re-read in the hardening pass. **This is an authority-function census, not a defect** — nothing to refute. Use it as the map before changing any policy.
 
 **Mechanism.** The database's authority helpers split cleanly into two families,
 and the split is the root cause of a family of findings across this audit.

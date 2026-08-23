@@ -118,6 +118,7 @@ Priority order:
   - `components/permissions/ViewAsSimulator.tsx:128` — `policyAllows(policy, d.id, who.role, who.roles, who.uid)` — passes the **collection**
   - `lib/workflow.ts:65` — `policyAllows(policy, cap, userRole, null, userId)` — passes **null**
 - **Related:** `ADD-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `ViewAsSimulator.tsx:128` passes `who.roles`; `workflow.ts:65` passes `null`. The simulator answers a question production never asks.
 
 **Mechanism.** The simulator is the tool an administrator uses to answer "what
 can this person actually do?" It is the one surface that passes `extraRoles`
@@ -159,6 +160,7 @@ that must not stand.
   - `lib/roleCapabilities.ts:122-125` — `primaryRole`, `sort` by rank, take the first
   - `lib/roleCapabilities.ts:8-13` — the stated intent: *"the most powerful role the member holds"*
 - **Related:** `ADD-1`, `ROLE-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `primaryRole` sorts by `ROLE_RANK` alone (`roleCapabilities.ts:122`), so a Manager who also drafts has headline `Manager` (90) and misses every `Drafter`-keyed check.
 
 **Mechanism.** `primaryRole` returns the highest-ranked role. Where a single
 role must be produced, "most powerful" is a defensible choice — it is safe for
@@ -206,6 +208,7 @@ questions correctly.
   - Roles-aware: `20260814_documents_delete_controllers.sql:38`, `20260817_org_members_escalation_and_config.sql:26,38,50`, `20260818_followups_rls.sql:16,28`, `20260901_db_hard_enforcement.sql:61,64,138`, `20260907_milestone_batch_move.sql:42`
   - Mirror-only: **41 migration files** reading `org_members.role`, including `20260708_acl_rls_enforcement.sql:58` — the ACL (`DOCACL-1`)
 - **Related:** `DOCACL-1`, `ADD-1`
+- **Re-verified:** hardening pass — **SURVIVES**, with the census made exact: **11** SQL references read `roles[]` (`roles &&` / `ANY(roles)`) against **50** that read the `role` mirror. The split is real and lopsided.
 
 **Mechanism.** Migrations written after the collection landed tend to check both
 (`role IN (...) OR roles && ARRAY[...]`). Migrations written before it check
@@ -252,6 +255,7 @@ means the next role-model change is one edit rather than forty-eight.
   - `lib/roleCapabilities.ts:122-125` — `primaryRole`, computed in TypeScript
   - `supabase/migrations/20260722_member_roles_collection.sql:13` — `ADD COLUMN IF NOT EXISTS roles TEXT[] NOT NULL DEFAULT '{}'` — no trigger, no constraint
   - `components/providers/RoleContext.tsx:198-201` — `normalizeRoles` then `primaryRole`, on read
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `primaryRole` is TypeScript (`roleCapabilities.ts:120-123`) and `20260722_member_roles_collection.sql:13` only adds the column with a default. No trigger, constraint or function keeps `role` consistent with `roles`.
 
 **Mechanism.** The invariant "`role` equals the highest-ranked member of
 `roles`" is maintained by application code on write. There is no trigger, no
