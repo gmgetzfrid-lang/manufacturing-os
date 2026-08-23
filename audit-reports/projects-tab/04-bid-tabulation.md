@@ -204,6 +204,7 @@ Options, cheapest first:
   - `lib/bidTab.ts:86-98` — the two-long-word rule that causes it
   - `lib/__tests__/projectControls.test.ts:52` — the test this violates
 - **Related:** `BID-3`, `BID-4`
+- **Re-verified:** hardening pass — **SURVIVES**. The shipped example bid data carries a red-flag annotation that the numbers do not support — a demo artifact that teaches the operator to distrust the flag.
 
 **Mechanism.** In the demo data, one bidder (Apex Industrial) *declares* `NDE`
 as an exclusion. `computeBidEconomics` nevertheless returns
@@ -248,6 +249,7 @@ strengthen the test fixture so it would actually catch this.
   - `lib/bidTab.ts:184` — `for (const s of scored) s.best = s.score === top && top > 0;`
   - `components/projects/cost/QuotesPanel.tsx:292-294` — the badge
   - `components/projects/cost/QuotesPanel.tsx:367` — the explanatory footer, gated on `econ.length > 1`
+- **Re-verified:** hardening pass — **SURVIVES**. `for (const s of scored) s.best = s.score === top && top > 0` (`bidTab.ts:184`) — no minimum-bidder guard, so one quote in a group is crowned best value against no one.
 
 **Mechanism.** No cardinality guard. **Measured:** one bid → score 80.0,
 `best = true`. The footer that explains the weighting and says *"The cheapest
@@ -283,6 +285,7 @@ groups. On a tie, either badge neither or label both "tied."
   - `components/projects/cost/QuotesPanel.tsx:154, 351` — the manual-bid rows, which **do** pass `doc.currency`
   - `lib/costs.ts:352` — `fmtMoney` defaults to `"USD"`
   - `components/projects/CostsTab.tsx:159-164` — the rollup's mixed-currency warning, with no equivalent here
+- **Re-verified:** hardening pass — **SURVIVES**. `fmtMoney(e.total)` is called with **no currency argument** (`QuotesPanel.tsx:298`), and `fmtMoney` defaults to `"USD"` (`costs.ts:352`).
 
 **Mechanism.** The parsed-bid table calls the formatter with no currency
 argument. The currency *is* extracted, the AI is explicitly prompted for it, and
@@ -315,6 +318,7 @@ worse than no comparison.
 - **Locations:**
   - `components/projects/cost/QuotesPanel.tsx:209-212` — `manualBids`
   - `components/projects/cost/QuotesPanel.tsx:346-366` — the separate list
+- **Re-verified:** hardening pass — **SURVIVES**, and it is the other face of `BID-1`. `manualBids` selects docs with **no parsed quote** but a positive `totalAmount` (`QuotesPanel.tsx:209-212`), so typing a total moves the bid out of `parsed` — and therefore out of `econ` and `scores` — into a separate list.
 
 **Mechanism.** A manual-total bid never enters `minTotal`, never enters
 `maxGaps`, and never receives a score. It renders below the table with no
@@ -349,6 +353,7 @@ needs to live in the same table.
   - `components/projects/cost/QuotesPanel.tsx:156-161` — and for draft invoices
   - `components/projects/cost/QuotesPanel.tsx:309-316` — the parsed row, which has neither
 - **Related:** `BID-1`
+- **Re-verified:** hardening pass — **SURVIVES**, and the conditional is the proof. `typeTotal` is rendered **only inside the `unread.map(...)` block** — the "quotes not read yet" banner (`QuotesPanel.tsx:243-250`). Once a quote has an AI total it leaves `unread` and the affordance disappears, so a *missing* total can be supplied and a *wrong* one cannot be corrected.
 
 **Mechanism.** The type-total control is offered only in the unread strip and
 for draft invoices. Once a quote is `parsed`, the row exposes a budget-line
@@ -381,6 +386,7 @@ Voiding must go through a status-guarded update (see `MON-3`).
   - `lib/costDocs.ts:157` — `d.rfqGroup?.trim()` as the grouping key
   - `lib/costDocs.ts:250-251` — the rival-declining filter
 - **Related:** `MON-10`
+- **Re-verified:** hardening pass — **SURVIVES**. The RFQ group is a free-text `<input>` (`QuotesPanel.tsx:485`) and the only normalization anywhere is `d.rfqGroup?.trim()` (`costDocs.ts:157`) — no case folding, so "Piping" and "piping" become two bid fields.
 
 **Mechanism.** "Unit 300 Repipe" and "Unit 300 repipe" become two groups.
 Consequences compound: the bids never tabulate against each other, the
@@ -408,6 +414,7 @@ selected from a dropdown, created explicitly.
   - `lib/bidTab.ts` — `validateParsedQuote` preserves `validUntil` and `notes`
   - `app/api/projects/cost-docs/route.ts` — the prompt explicitly asks for both
   - `components/projects/cost/QuotesPanel.tsx` (table) — renders neither
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The parsed quote carries validity dates and vendor notes and no surface renders them.
 
 **Mechanism.** Both fields are extracted, validated and stored. Neither reaches
 the screen.
@@ -438,6 +445,7 @@ chip or an expandable line on the row.
   - `components/projects/cost/QuotesPanel.tsx:50-52` — `listCompanies(...).catch(() => setCompanies([]))`
   - `lib/bidTab.ts:30, 42, 131` — `companyId` declared and propagated, never populated
 - **Related:** `MON-7`, `MON-12`
+- **Re-verified:** hardening pass — **SURVIVES**. `companies.find((c) => c.name.toLowerCase() === e.vendorName.toLowerCase())` (`QuotesPanel.tsx:275`) — exact equality after lowercasing, against a vendor name the model read off a letterhead.
 
 **Mechanism.** "Gulf Mechanical, Inc." does not equal "Gulf Mechanical," so the
 **do not use** badge and the quality-manual chip never render. There is no

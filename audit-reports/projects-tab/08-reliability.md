@@ -40,6 +40,7 @@ report.
   - `components/providers/RoleContext.tsx:315-325` — 15s timeout logs "role resolve timed out — proceeding" and continues **with the id still null**
   - `app/(protected)/companies/` — **no `error.tsx`, no `loading.tsx`** (14 other routes have one)
   - `app/(protected)/projects/page.tsx:64` — the same pattern, but documented
+- **Re-verified:** hardening pass — **SURVIVES**. `refresh` returns early when `activeOrgId` is null (`companies/page.tsx:46-48`) and `setLoading(false)` sits inside the try that follows, so an org that never resolves leaves the page on its spinner. Directly downstream of `identity-and-session/SESS-1`, which is one way `activeOrgId` stays null.
 
 **Mechanism.** The refresh returns early when the org id is null and never
 clears `loading`. The role resolver's timeout does not supply a fallback id.
@@ -72,6 +73,7 @@ to `app/(protected)/companies/`, modelled on the projects route's.
   - `components/projects/CostsTab.tsx:65` — the `.catch(() => [])` labelled "pre-migration tolerance", which is dead code
   - `lib/costDocs.ts:106-128` — `uploadCostDoc` uploads to R2 *before* inserting
 - **Related:** `UX-10`, `REL-10`
+- **Re-verified:** hardening pass — **SURVIVES**. `const { data } = await supabase…` with the error discarded, returning `[]` — `costs.ts:159-161`, `costDocs.ts:86-91`, and **8** such sites across the four projects libraries. A failed read is pixel-identical to an empty project.
 
 **Mechanism.** Because the list functions swallow errors one layer down, the
 tab's own error handling is unreachable and the "tolerance" catch is dead.
@@ -107,6 +109,7 @@ the bytes, or clean up the orphan on insert failure.
   - `lib/changeOrders.ts:69, 111, 158`
   - `lib/companies.ts:85, 92, 124, 137, 183, 212`
   - Good precedents: `lib/companies.ts:134-136` (23505 → human copy), `components/projects/cost/QuotesPanel.tsx:545` (migration hint)
+- **Re-verified:** hardening pass — **SURVIVES**, with the count made exact: **56** references to `error.message` / `error?.message` across the projects libraries — more than the ~22 claimed, though not every one reaches a user-facing surface. `checklists.ts:127` is representative.
 
 **Mechanism.** Every write path returns `error.message` verbatim.
 
@@ -140,6 +143,7 @@ sites through it, falling back to a generic message plus a logged detail.
   - `lib/checklists.ts:80` — `Array.isArray(r.evidence)` checks array-ness, not element shape
   - `lib/companies.ts:75` — `qualityManualGaps` cast with no check at all
 - **Related:** `MON-8`
+- **Re-verified:** hardening pass — **SURVIVES**. `(r.status as CostDocStatus) ?? "draft"` (`costDocs.ts:69`) — `as` performs no validation and `??` catches only null, so any unexpected string enters the domain model intact. This is the input that makes `MON-8` throw.
 
 **Mechanism.** Rows are mapped field-by-field from `Record<string, unknown>`
 with no runtime validation. `?? "default"` catches null and nothing else.
@@ -177,6 +181,7 @@ but the three above remove the user-visible damage for far less work.
 - **Locations:**
   - `app/(protected)/projects/[id]/page.tsx` — no per-tab boundary
   - `app/(protected)/error.tsx` — the only boundary, at segment level (well written; keeps the sidebar)
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The project page defines no error boundary, so a throw in any tab unmounts the whole route rather than the panel that failed.
 
 **Mechanism.** An unhandled render exception anywhere in `CostsTab`,
 `QualityTab` or `ScheduleTab` takes the header, the tab bar, the coach and the
@@ -207,6 +212,7 @@ About fifteen lines.
   - `app/api/projects/cost-docs/route.ts:68-72` (controller **or** project owner), `app/api/projects/checklist/route.ts:67` (any active member), `app/api/companies/quality-manual/route.ts:46` (Admin/DocCtrl only) — three different authority models, none pinned
   - `lib/__tests__/apiRouteAuth.test.ts` — **the harness already exists**
   - `vitest.config.ts` — `include: ["lib/__tests__/**/*.test.ts"]`, `environment: "node"`
+- **Re-verified:** hardening pass — **SURVIVES**, by census. `lib/__tests__/projectControls.test.ts` covers pure computation; no test exercises a data-layer function, a route's authorization, or an RLS policy in this area.
 
 **Mechanism.** The 17 new tests are good and cover the pure engines thoroughly,
 including seven well-chosen regression pins. They do not touch anything that
@@ -251,6 +257,7 @@ zero tests above lib/, so a broken auth check on a route shipped green."*
 - **Locations:**
   - `lib/schemaExpectations.ts:29+` — `EXPECTED_TABLES` / `EXPECTED_COLUMNS`
   - Its own header: *"When a new migration creates a table, add it here — the health panel is only as honest as this list."*
+- **Re-verified:** hardening pass — **SURVIVES**. `EXPECTED_TABLES` is a hand-maintained literal (`schemaExpectations.ts:29`), so a table this feature's migration adds is absent from the expectation set and its absence reads as green.
 
 **Mechanism.** Migration `20261013` creates `change_orders`, `companies`,
 `company_events`, `project_checklists`, `checklist_items`, `turnover_items`,
@@ -284,6 +291,7 @@ test — the export-coverage test already diffs table lists against
 - **Locations:**
   - `app/api/intake/upload/route.ts:104, 121` — no dedupe key
   - `lib/companies.ts:304` — `submissionCount`, which the inflated counter feeds
+- **Re-verified:** hardening pass — **SURVIVES**. The intake path inserts notifications (`intake/upload/route.ts:104`) and increments `submission_count` (`companies.ts:304`) with no idempotency key, so a client retry after a partial failure doubles both.
 
 **Mechanism.** No idempotency key. A retried POST creates a second
 `cost_documents` row and a second notification, and double-increments
@@ -315,6 +323,7 @@ a window.
   - `lib/checklists.ts:284, 292` — `equipmentTags` gathered by a 1000-row query on every sweep, read by no rule
   - `app/(protected)/companies/[id]/page.tsx:405` — `HistoryPanels` takes `scorecard` then `void scorecard;`
   - `lib/projectHealth.ts:57, 145` — `trend` is the literal type `"steady"` and is never rendered
+- **Re-verified:** hardening pass — **SURVIVES**. `status: "open" | "complete" | "void"` is accepted by the data layer (`checklists.ts:216`) and `CHANGE_ORDER_VOIDED` is a declared outcome (`changeOrders.ts:192`) — states the API honours and no interface can reach.
 
 **Mechanism.** Each is a capability that exists in the data layer and cannot be
 reached.
@@ -353,6 +362,7 @@ also pure cost, per report `09`).
   - `components/ui/ChartKit.tsx:285-288` — the amber chip, the only durable signal
   - `components/projects/cost/CostCharts.tsx:86` — `ForecastSentence`, unmarked
 - **Related:** `REL-2`
+- **Re-verified:** hardening pass — **SURVIVES**. `hasRealData = rollup.budget > 0 || entries.some((e) => e.status !== "void")` (`CostCharts.tsx:45`) is an OR, so a project with a budget and no entries — or entries and no budget — can satisfy one branch while other panels still render example series.
 
 **Mechanism.** Two live routes back into example mode: voiding every entry on
 budget-less accounts, and — more likely — **creating a chart of accounts before
@@ -398,6 +408,7 @@ indistinguishable from a real forecast.
   - `components/projects/cost/CostCharts.tsx:84, 95` — example hardcodes `"USD"`
   - `components/projects/cost/CostCharts.tsx:107` — `return null` when there is a budget but no schedule and no entries
   - `components/projects/cost/CostCharts.tsx:115-119` — the missing-planned-line hint, gated on the wrong condition
+- **Re-verified:** hardening pass — **SURVIVES**. The example block renders four labelled panels (`CostCharts.tsx:89-94`), while the live path can produce at most two — the crew curve needs awarded labor hours and the burn-by-line needs entries.
 
 **Mechanism.** "Burn by budget line" — arguably the most decision-useful cost
 view — appears only inside the example branch. The crew curve additionally

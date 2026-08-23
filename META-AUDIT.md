@@ -35,8 +35,9 @@ was checked came back clean.
 | README severity counts vs. each area's `findings.json` | **10 of 10 areas consistent** |
 | Reports duplicating another report's content | **0** (the one that did is fixed) |
 | Duplicate finding IDs within an area | **0** |
-| `CRITICAL`s re-verified against source | **116 of 116 — every one in the corpus** |
-| `CRITICAL`s refuted by that verification | **0** |
+| Findings re-verified against source | **1,098 of 1,098 — the whole corpus** |
+| Refuted by that verification | **0** |
+| Severity changed by it | **0** |
 
 **Every `CRITICAL` in the corpus has now been re-verified against source.** The
 original random sample of ten is kept below because it is what the meta-audit
@@ -443,12 +444,16 @@ should be inferred. This is the single largest hole: it is exactly the check tha
 would catch a fabricated quotation, and it was not achievable mechanically
 against reports written for humans.
 
-**`HIGH` and `MEDIUM` were not swept.** All 116 `CRITICAL`s are now verified,
-which is the tier that drives sequencing. The remaining 299 `author`- and
-`unverified`-graded findings are all `HIGH` or `MEDIUM`, and none of them has been
-independently challenged. **This is recorded, not hidden**: `verified_by` carries
-it on every entry, so an agent sorting a queue can weight by it without reading
-this file. It is the largest remaining gap and the obvious next pass.
+**`hardening-pass` is not the same as `adversarial`, and the gap is one reader.**
+Every finding in the corpus has now been challenged, but 364 of them were
+challenged by this session re-reading the cited code rather than by a separate
+agent built to refute. That is equal in rigour and weaker in independence, and
+`verified_by` distinguishes the two so a consumer can weight by it.
+
+**The weakest floor is `identity-and-session`.** Those 14 findings were written
+*and* verified in the same session. Every one of them says so in its own
+`Re-verified` line and tells the reader to treat it as `author`-grade until
+someone else reads it. That is the honest bottom of this corpus.
 
 **Nothing was reproduced against a running system.** Same limit the underlying
 audits carry: no live database, no browser, no AI provider. Every conclusion here
@@ -474,11 +479,18 @@ caveats in their head, because the caveats became fields:
 - Every finding declares how hard it was challenged, in `verified_by`.
 - No prefix collisions, no dangling references, no duplicated reports.
 
-**The thing to understand:** `verified_by` is not decoration. A `HIGH` marked
-`adversarial` has survived a challenge that an `author`-marked `HIGH` has not, and
-299 findings are still `author` or `unverified`. Sort by severity *and* grade.
-`DEC-29` — reproduce before fixing — still applies to everything, including the
-verified `CRITICAL`s; verification proves the claim, not that the fix is safe.
+**The thing to understand:** `verified_by` is not decoration. `adversarial` means
+a separate agent tried to refute the claim; `hardening-pass` means one reader
+did. Both beat unchallenged, neither is a guarantee, and `DEC-29` — reproduce
+before fixing — still applies to every entry. **Verification proves the claim is
+true, not that the fix is safe.**
+
+The sweep also produced six corrections, none of which changed a severity: one
+finding understated its own scope by a factor of nearly two (`DB-6`: 23
+`SECURITY DEFINER` functions without `search_path`, not thirteen), one overstated
+its headline (`SURF-3`), two restated query counts as formulas, one narrowed its
+scope, and one had a title that invited misreading. The full list is in
+[`audit-reports/HARDENING-PLAN.md`](audit-reports/HARDENING-PLAN.md).
 
 ---
 

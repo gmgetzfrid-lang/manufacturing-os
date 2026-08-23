@@ -20,6 +20,7 @@ Degenerate chart inputs, and the document you hand to a vendor.
 - **Locations:**
   - `components/ui/ChartKit.tsx:35-41` — `max = Math.max(1, ...)`, no floor
   - `py(v) = PAD_T + (1 - v/max) * 184` — the projection
+- **Re-verified:** hardening pass — **SURVIVES**. `const max = Math.max(1, …)` bounds only the top (`ChartKit.tsx:35-38`), and `py(v) = PAD_T + (1 - v / max) * (VB_H - PAD_T - PAD_B)` (`:41`) maps any negative `v` below the plot area. There is no `min` term anywhere in the scale.
 
 **Mechanism.** The maximum is clamped; the minimum is not. So `v < 0` produces
 `y > 196` (the plot floor), and `y > 220` leaves the 220-unit viewBox entirely.
@@ -60,6 +61,7 @@ case, and let it go negative when the data does — then project across
   - `components/ui/ChartKit.tsx:79` — Committed, `vizCat(1)` → `--viz-cat-2`
   - `app/globals.css:31-34` — `--color-accent` is a user-overridable brand token
   - `components/dashboard/viz.tsx:11` — the house rule this breaks
+- **Re-verified:** hardening pass — **SURVIVES**. `stroke={vizCat(1)}` at `:72` and `stroke="var(--color-accent)"` at `:79`, both solid strokes at 2 and 2.5px — no dash pattern, no marker, no direct label. Hue is the only channel carrying the distinction.
 
 **Mechanism.** Measured contrast **between the two marks**:
 
@@ -97,6 +99,7 @@ the brand accent for one of two adjacent series in the same chart.
 - **Locations:**
   - `lib/costSeries.ts:152-157` — `perWeek = input.laborHours / weeks`
   - `components/projects/cost/CostCharts.tsx:126-127` — the render
+- **Re-verified:** hardening pass — **SURVIVES**, arithmetically. `perWeek = input.laborHours / weeks` then `headcount = Math.round((perWeek / 40) * 10) / 10` inside the loop (`costSeries.ts:152-157`) — the value does not depend on `w`, so every bar is identical by construction.
 
 **Mechanism.** Weekly headcount is total hours divided by week count — a
 constant. Since `MiniBars` normalizes to the maximum, every bar renders at full
@@ -141,6 +144,7 @@ feature the label promises.
   - `components/ui/ChartKit.tsx:203` — applied as `style={{ color }}` to an 8px uppercase label
   - `app/globals.css:49` — `--state-held: #d97706` already exists for this meaning
   - Blast radius beyond Costs: `components/projects/ProjectCoach.tsx:77`, `app/(protected)/companies/[id]/page.tsx:97`, `app/(protected)/companies/page.tsx:172`
+- **Re-verified:** hardening pass — **SURVIVES**, and the code comment is the claim being refuted. `return "#d97706"; // amber-600 — reads in both themes` (`ChartKit.tsx:170`) is applied as `style={{ color }}` to an 8px uppercase label (`:203`). Amber-600 on a light ground is roughly 3.1:1, under the 4.5:1 small-text threshold.
 
 **Mechanism.** The stylesheet ships two separately validated ambers —
 `--viz-cat-2: #b45309` (light) and `#d97706` (dark) — with a comment explaining
@@ -178,6 +182,7 @@ in the dial arc instead — which is where colour belongs.
   - `components/ui/ChartKit.tsx:53-55` — `todayIdx = points.findIndex(p => p.date >= todayIso)`
   - `components/ui/ChartKit.tsx:82-85` — the marker, drawn in a faint text token
   - `components/ui/ChartKit.tsx:64-67` — the gridlines, which carry no value labels
+- **Re-verified:** hardening pass — **SURVIVES**. `todayIdx = points.findIndex((p) => p.date >= todayIso)` (`:53-55`) snaps to the first bucket at or after today, so the marker's error is the bucket width; and the line is drawn with no label and no legend entry (`:82-85`).
 
 **Mechanism.** The marker snaps to the nearest of forty samples, and samples are
 `span/39`. **Measured** on a three-year job: 40 points at **28-day** spacing, so
@@ -210,6 +215,7 @@ regardless of whether a schedule span exists.
 - **Blast radius:** correctness / vendor-facing
 - **Locations:**
   - `lib/rfqDocx.ts:31-32` — `esc()`, which handles only `& < > "`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `esc` handles `&`, `<`, `>` and `"` only (`rfqDocx.ts:31-32`). Control characters below U+0020 are illegal in OOXML text nodes and pass straight through.
 
 **Mechanism.** XML 1.0 forbids the C0 control range (`0x00-0x08`, `0x0B`,
 `0x0C`, `0x0E-0x1F`). `esc()` does not strip them.
@@ -253,6 +259,7 @@ Do it in the one function so every field is covered.
   - `lib/rfqDocx.ts:42` — text emitted directly into `<w:t>`
   - `lib/rfqDocx.ts:123-126` — the filename sanitizer
   - `lib/rfqDocx.ts:51` — the due-date rendering
+- **Re-verified:** hardening pass — **SURVIVES**. `<w:t xml:space="preserve">${esc(text)}</w:t>` (`rfqDocx.ts:42`) — `esc` does not translate `\n` into `<w:br/>`, and OOXML ignores raw newlines inside a run, so a multi-line scope collapses to one line.
 
 **Mechanism.** OOXML expresses a line break as `<w:br/>`; a literal newline
 inside `<w:t>` is just whitespace. Output looks like:

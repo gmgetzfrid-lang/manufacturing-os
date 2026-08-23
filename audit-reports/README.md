@@ -189,19 +189,24 @@ who, if anyone, tried to prove them wrong.
 |---|---|---|
 | `adversarial` | A second agent read the cited code specifically to refute the claim during the original run. Refuted findings were dropped; survivors may carry a `Verifier correction` that overrides the finder's severity or citations. | Strongest grade in the corpus. Still reproduce before fixing (`DEC-29`). |
 | `hardening-pass` | Re-read against source in the corpus hardening pass, with intent to refute. Carries a `Re-verified` line saying exactly what was checked. | Equivalent in rigour to `adversarial`, but by one reader rather than a separate agent. |
-| `author` | Checked only by whoever wrote it. No independent challenge, and **no record survives of what that author rejected.** | Reproduce before acting, and weight severity as the author's own estimate. |
-| `unverified` | From a completeness critic that ran *after* the verification stage. | Treat as `SUSPECTED` regardless of the stated `Verification`. |
+| `author` | Checked only by whoever wrote it, with no independent challenge. **No finding carries this grade any more** — the value survives so that a newly written finding is labelled honestly until someone challenges it. | Reproduce before acting, and read the severity as the author's own estimate. |
+| `unverified` | From a completeness critic that ran *after* the verification stage. **No finding carries this any more** either. | Treat as `SUSPECTED` regardless of the stated `Verification`. |
 
-**Every `CRITICAL` in the corpus is `adversarial` or `hardening-pass`** — 116 of
-116. `author` and `unverified` appear only at `HIGH` and `MEDIUM`.
+**Every finding in the corpus has been challenged** — 1,098 of 1,098, split 734
+`adversarial` and 364 `hardening-pass`. Nothing is `author` or `unverified`.
 
-Two `hardening-pass` entries name their own weakness in the `Re-verified` line:
-`identity-and-session/SESS-1` and `IDENT-1` were written and verified in the same
-session, so they are re-reads rather than independent challenges. That is stated
-on the findings themselves rather than left for you to discover.
+The two grades are not identical and the difference is worth knowing.
+`adversarial` means a **separate agent** tried to refute the claim during the
+original run, and the refutation is preserved. `hardening-pass` means the cited
+code was re-read with intent to refute and the result recorded per finding —
+equal in rigour, but by one reader rather than an independent second party.
 
-**When you sort a queue, sort by severity *and* `verified_by`.** A `HIGH` marked
-`adversarial` has survived something an `author`-marked `CRITICAL` has not.
+**The floor of that is stated on the findings themselves.** Every entry in
+`identity-and-session` carries an explicit independence caveat: that area was
+written and verified in the same session, which makes it a re-read rather than a
+challenge. Treat it as `author`-grade until someone else reads it.
+
+**When you sort a queue, sort by severity *and* `verified_by`.**
 
 ### Before you change one line
 

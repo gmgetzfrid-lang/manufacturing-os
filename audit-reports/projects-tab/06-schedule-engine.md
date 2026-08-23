@@ -330,6 +330,7 @@ view."
   - `lib/scheduleParsers.ts:372-379` — `TASKPRED`, `pred_type` not read
   - `lib/scheduleParsers.ts:508-523` — `<Relationship>`, `Type` not read
 - **Related:** `SCH-4`, `SCH-9`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The P6 relationship loop reads only `SuccessorActivityObjectId` and `PredecessorActivityObjectId` (`scheduleParsers.ts:372-379`) — **neither `Type` nor `Lag` is read at all**, so FF/SS/SF collapse to FS and every lag becomes zero.
 
 **Mechanism.** `TASKPRED` carries `pred_type` (`PR_FS` / `PR_SS` / `PR_FF` /
 `PR_SF`) and the XML `<Relationship>` carries `Type`. Neither is read. Lag is
@@ -364,6 +365,7 @@ neither.
   - `lib/scheduleReflow.ts:272` — `wouldCreateCycle`, whose only caller this is
   - `components/projects/TaskDetailPanel.tsx:727` — "(removed task)"
 - **Related:** `SCH-4`, `SCH-6`
+- **Re-verified:** hardening pass — **SURVIVES**. `wouldCreateCycle(reflowNodes, …)` (`TaskDetailPanel.tsx:691`) checks the **visible** node set, so hiding imported rows shrinks the graph the guard reasons over and a cycle through a hidden row passes.
 
 **Mechanism.** The dependency picker's candidate list derives from the
 ghost-filtered set. So `reflowNodes` omits hidden rows, a cycle routed through a
@@ -390,6 +392,7 @@ filter", not "removed".
 - **Locations:**
   - `components/projects/RebaseScheduleModal.tsx:51-57` — prefill from `d.getHours()` (local)
   - `components/projects/RebaseScheduleModal.tsx:76` — `new Date(\`${target}T${targetTime}:00\`).toISOString()` (local parse)
+- **Re-verified:** hardening pass — **SURVIVES**. `d.getHours()` / `d.getMinutes()` (`RebaseScheduleModal.tsx:53-54`) read local-clock components from a value parsed out of a UTC ISO anchor.
 
 **Mechanism.** The time is pre-filled from the anchor's *local* hours and the
 submit parses the combined string in local time.
@@ -426,6 +429,7 @@ keep it in UTC throughout and render it as UTC in the preview.
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleReflow.ts:531, 542` — `snap = (ms) => Math.round(ms / DAY_MS) * DAY_MS`
+- **Re-verified:** hardening pass — **SURVIVES**. `const snap = (ms) => Math.round(ms / DAY_MS) * DAY_MS` (`scheduleReflow.ts:531`) rounds to UTC midnight, so a child whose stored instant sits after local midnight moves a day.
 
 **Mechanism.** The snap rounds to the nearest day boundary, so any planned time
 at or after noon UTC rounds *forward* onto the next calendar day.
@@ -458,6 +462,7 @@ consistently; the current half-way state is what produces the drift.
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
 - **Locations:** `lib/milestones.ts:1410` — `const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1));`
+- **Re-verified:** hardening pass — **SURVIVES**. `const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1))` (`milestones.ts:1410`) — `getDate`/`setDate` are local-calendar operations applied to a value parsed from a UTC instant, so a span crossing a DST boundary lands a day out.
 
 **Mechanism.** `setDate`/`getDate` operate in local time on a value stored as
 UTC.
@@ -494,6 +499,7 @@ subtract `(days - 1) * DAY_MS` from the epoch value directly.
   - `components/projects/ScheduleTab.tsx:607` — delete, available on imported rows
   - The HelpTooltip claiming "Imported rows are read-only milestones"
 - **Related:** `SCH-2`
+- **Re-verified:** hardening pass — **SURVIVES**. Nothing in `ScheduleTab.tsx` gates its edit controls on the row's `source`, so rows the UI calls "read-only imported" accept edits — which `SCH-2` then overwrites on the next import.
 
 **Mechanism.** Imported rows can be dragged, resized, status-changed, %-set,
 edited, re-parented, rebased and **deleted**. The only "read-only" treatment is
@@ -525,6 +531,7 @@ editable, plan does not.
   - `components/projects/ScheduleImportModal.tsx:108-124` — whole-file decode and parse, synchronous, no byte limit
   - `lib/milestones.ts:938-1064` — one SELECT + one INSERT/UPDATE per row, sequentially
   - `lib/milestones.ts:1072-1107` — passes 2 and 3 fire every update at once
+- **Re-verified:** hardening pass — **SURVIVES**, all three parts. `handleFile` calls `file.arrayBuffer()` with no size check (`ScheduleImportModal.tsx:113-116`), and `importMilestones` loops row-by-row (`milestones.ts:938-949`) with per-row work inside.
 
 **Mechanism.** The file is decoded and `DOMParser`-parsed synchronously on the
 main thread with no size limit. Every row gets a select plus a write,
@@ -552,6 +559,7 @@ rather than firing them all at once.
 - **Verification:** CONFIRMED
 - **Blast radius:** decision-quality
 - **Locations:** `lib/criticalPath.ts` — `computeCriticalPathLite` never reads `dependsOn`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence — the critical-path computation does not consult the stored dependency edges.
 
 **Mechanism.** The computation walks backward by date contiguity within a 1-day
 slack / 14-day window. It is labelled a heuristic in the source. Now that
@@ -576,6 +584,7 @@ is the right answer now that the edges exist.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:** `lib/milestones.ts:1072-1107` — passes 2 and 3
+- **Re-verified:** hardening pass — **SURVIVES**. The re-import builds a `parent_id` update list (`milestones.ts:1072-1083`) and has no path that clears an existing parent, so structure accumulates and never retracts.
 
 **Mechanism.** Pass 2 writes `parent_id` only when both sides resolve; pass 3
 writes `depends_on` only when `predIds.length > 0`. Un-parenting a task or
@@ -601,6 +610,7 @@ Leave rows absent from the file untouched.
 - **Locations:**
   - `lib/milestones.ts:565-584` — `deleteMilestone`
   - `supabase/migrations/20260703_milestones_hierarchy.sql` — `parent_id UUID REFERENCES milestones(id) ON DELETE SET NULL`
+- **Re-verified:** hardening pass — **SURVIVES**. `deleteMilestone` reads the one row and deletes it (`milestones.ts:565-570`); no descendant is re-parented and no cascade exists, so the subtree survives pointing at a missing parent.
 
 **Mechanism.** Deleting a summary re-parents all its children to top level. The
 confirm says only "Delete this milestone? This action is audited" — no child
@@ -630,6 +640,7 @@ delete.
 - **Locations:**
   - `components/projects/useUndoableActions.ts:58-71` — `runUndo`, which only surfaces a throw
   - `components/projects/ScheduleTab.tsx:326-376` — the handlers, which catch internally and `return false`
+- **Re-verified:** hardening pass — **SURVIVES**. `runUndo` dismisses the toast **before** awaiting `t.undo()` (`useUndoableActions.ts:58-63`), so a throw inside the undo has no surface left to report on.
 
 **Mechanism.** Every undo closure calls `onMoveMany(before)` or
 `onSetStatus(id, prevStatus)`, and both handlers catch internally and return

@@ -151,6 +151,7 @@ both grounds.
   - `app/(protected)/companies/[id]/page.tsx:500` — close at `:504`, no `aria-label`
   - `components/ui/Modal.tsx` — the canonical shell all five should compose: portal, `role="dialog"`, `aria-modal`, Escape, backdrop click, labelled close
   - Same-folder siblings that already do it right: `MovePreviewSheet.tsx:87`, `ExecutionGuide.tsx:69`, `ScheduleCalendarTileView.tsx:430`, `EditProjectModal.tsx:52`
+- **Re-verified:** hardening pass — **SURVIVES**. Each modal root is a bare `<div className="fixed inset-0 z-[200] …">` (`ProjectWizard.tsx:213`, `projects/[id]/page.tsx:562`) — no `role="dialog"`, no `aria-modal`, no focus trap, no Escape handler, no backdrop click.
 
 **Mechanism.** All five hand-roll a `fixed inset-0` shell and inherit none of
 the base modal's behaviour. None locks body scroll, so the page behind keeps
@@ -188,6 +189,7 @@ matching `Modal.tsx`. Do not "fix" those.*
 - **Locations:**
   - `components/projects/ProjectWizard.tsx:456-463` — the local `Field`
   - `components/ui/Field.tsx:50-57` — the shared one, which wraps its children in the `<label>`
+- **Re-verified:** hardening pass — **SURVIVES**, and the correct implementation is in the same codebase. The wizard's local `Field` renders `<label>{label}</label>` as a **sibling** of the control with no `htmlFor` (`ProjectWizard.tsx:456-463`), while the shared `components/ui/Field.tsx:50-54` **wraps** the control inside the `<label>`. Same name, opposite semantics.
 
 **Mechanism.**
 
@@ -226,6 +228,7 @@ tree either, for the same reason.
   - `components/projects/ProjectWizard.tsx:124-125` — `finish()` jumps back to step 0 and sets an error **without moving focus**
   - `components/projects/IntakePanel.tsx:292` — one banner carrying both success and failure with identical styling (see `UX-7`)
   - Silent confirmations: `QuotesPanel.tsx:630` ("Copied!"), `IntakePanel.tsx:352`
+- **Re-verified:** hardening pass — **SURVIVES**. `{actionError && <div className="mt-2 text-xs text-red-600">{actionError}</div>}` (`projects/[id]/page.tsx:665`) and the equivalent at `companies/page.tsx:319` — no `role="alert"`, no `aria-live`.
 
 **Failure scenario.** A screen-reader user gets no feedback at all when an
 action fails. In the wizard's case they are additionally left focused on a
@@ -252,6 +255,7 @@ banner when an error lands, and to the offending field where there is one.
   - `app/globals.css:218` — the dark bridge remapping `bg-slate-900` to `#020617`
   - Toggle groups with no `aria-pressed` / `aria-current` / radiogroup semantics: `projects/page.tsx:125-141`, `companies/page.tsx:94-100`, `ProjectWizard.tsx:251, 272-273`, `CostsTab.tsx:440`, `ScheduleTab.tsx:240-252`, `submit/[token]/page.tsx:223-224`
   - `app/(protected)/projects/[id]/page.tsx:418-448, 709-720` — seven tabs with no `role="tablist"` / `tab` / `tabpanel`, no `aria-selected`
+- **Re-verified:** hardening pass — **SURVIVES**. The selected pill is `bg-slate-900 text-white` (`projects/page.tsx:130`, `companies/page.tsx:97`) with no `dark:` variant — against a near-slate-900 dark canvas it disappears — and carries no `aria-pressed` or `aria-current`.
 
 **Mechanism.** In dark mode the selected pill's background measures **1.05 : 1**
 against the unselected pills' surface and **1.07 : 1** against the canvas. Its
@@ -282,6 +286,7 @@ and proper tab semantics to the tab strip.
   - Roughly twenty other sub-24px controls, worst first: `ProjectWizard.tsx:229` (stepper segments, **~6px**, six of them focusable, and the current step is enabled-but-inert with no `aria-current`), `IntakePanel.tsx:373` (**~12px**), `QuotesPanel.tsx:160, 249` (**~13px**, bare text buttons), `QualityTab.tsx:699` (**~16×20px**, destructive punch void), `QuotesPanel.tsx:397, 420, 441` / `ChangeOrdersPanel.tsx:180, 184` / `QualityTab.tsx:470, 474, 478, 697` / `CostsTab.tsx:393` (**~19px**), `ProjectWizard.tsx:362, 382, 406` and `ScheduleTab.tsx:610` (**~22px**, destructive), `QuotesPanel.tsx:415` / `ChangeOrdersPanel.tsx:173` (**~24px** selects)
   - `app/globals.css:298-303` — the existing `@media (pointer: coarse)` rule that enlarges checkboxes and radios, and nothing else
 - **Related:** `SAF-4` (Waive needs no reason)
+- **Re-verified:** hardening pass — **SURVIVES**, and the app's own coarse-pointer rule proves the gap. The Accept/Reject controls are `px-1.5 py-0.5 text-[10px]` buttons (`QualityTab.tsx:571`), while `globals.css:298-303` raises minimum sizes for `input[type=checkbox]` and `input[type=radio]` only — buttons are not covered.
 
 **Mechanism.** WCAG 2.2 SC 2.5.8 asks for 24×24 px; a gloved hand needs 44.
 These four decisions land on a contractor's permanent record, and **Reject and
@@ -313,6 +318,7 @@ give the current step `aria-current="step"`.
   - `app/(protected)/companies/page.tsx:196-202` — `w-24` label + `w-24` bar + `w-7` number + 3× `gap-2`, all `shrink-0`
   - `app/(protected)/companies/[id]/page.tsx:127-133` — `w-28` + `w-32` + `w-8` + gaps, and the detail span here has **no `truncate`**
   - Neither card sets `overflow-hidden`
+- **Re-verified:** hardening pass — **SURVIVES**. The row is `w-24 shrink-0` label + `w-24 shrink-0` track + `w-7 shrink-0` value (`companies/page.tsx:196-202`), and `w-28`/`w-32`/`w-8` on the detail page (`companies/[id]/page.tsx:127-133`) — over 220px of non-shrinking content inside a phone-width card.
 
 **Mechanism.** List card: **244 px irreducible** against 219 available at 375px
 (the `truncate` detail collapses to zero, but the fixed elements still overflow
@@ -345,6 +351,7 @@ flex, and stack the label above the bar on narrow screens. Add `min-w-0` and
   - `app/(protected)/projects/[id]/page.tsx:283-415` — up to **10 direct flex children** with `justify-between` + `flex-wrap`, so wrapped lines get ragged gaps and destructive **Delete** ends up beside benign **Report**
   - `app/(protected)/projects/[id]/page.tsx:268, 455` and `app/(protected)/companies/[id]/page.tsx:88` — hardcoded `px-6` instead of `PageShell`'s `px-4 sm:px-6 lg:px-8`
   - `components/projects/CostsTab.tsx:127, 301` — stat values `truncate` with **no `title`**, so a clipped `$1,234,567` is unrecoverable by any means
+- **Re-verified:** hardening pass — **SURVIVES**. Both repeater rows put a `flex-1` name input beside a `<select>`, a `w-32` input and a delete button in one flex row (`ProjectWizard.tsx:352-363` and `:396-407`); on a 360px viewport the flexible field is what absorbs the shortfall.
 
 **Mechanism.** Inside the wizard modal at 375px there are 295 usable pixels. The
 budget row's amount field (128), kind select (~90), remove button (~22) and gaps
@@ -377,6 +384,7 @@ to the truncating stat values.
   - `components/dashboard/viz.tsx:104` — `MiniBars` hardcodes `role="img" aria-label="Daily activity"` and exposes no override
   - The weekly headcounts live only in `title` attributes on plain `<div>`s
 - **Related:** `CHART-3` (the curve is flat anyway)
+- **Re-verified:** hardening pass — **SURVIVES**. `MiniBars` hardcodes `role="img" aria-label="Daily activity"` (`components/dashboard/viz.tsx:104`) and is reused for crew size (`CostCharts.tsx:90`). The label is wrong and no per-bar value is exposed.
 
 **Mechanism.** A screen reader hears a chart called *Daily activity* with zero
 values.
@@ -417,6 +425,7 @@ disappears with it — resolve that one first.
   - `app/(protected)/companies/[id]/page.tsx:522` — that "do not use" flags the company, inside a `<select>`, unreachable by keyboard
   - `components/ui/HelpTooltip.tsx` — the right pattern (click-to-toggle, Escape, click-away), used twice
   - `components/projects/CostsTab.tsx:277` — the comment reading "Plain-language glossary — visible, not a hover Easter egg", above a glossary that defaults collapsed at the page bottom
+- **Re-verified:** hardening pass — **SURVIVES**, with the count made exact: **100** `title=` attributes across `components/projects/`, `app/(protected)/projects/` and `app/(protected)/companies/` — more than the ~65 claimed. Includes decision-critical text such as the checklist status dot (`QualityTab.tsx:496`) and the AI-assessment explanation (`:375`).
 
 **Mechanism.** `title` on a non-focusable element is invisible on touch, to the
 keyboard, and to screen readers.
@@ -439,6 +448,7 @@ this is mostly substitution.
 - **Status:** OPEN
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** accessibility
+- **Re-verified:** hardening pass — **SURVIVES**. `text-red-600` on a cancelled banner (`projects/[id]/page.tsx:307`) and `bg-red-50 border-red-200 text-red-700` on the error card (`projects/page.tsx:161`), neither with a `dark:` variant.
 
 **Mechanism and locations, worst first:**
 

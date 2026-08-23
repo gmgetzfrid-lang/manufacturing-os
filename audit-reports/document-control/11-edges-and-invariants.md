@@ -4,13 +4,15 @@
 
 What twenty-three lenses did not look at — plus what is sound and must not break.
 
-> ### ⚠ NOT adversarially verified
+> ### ✓ Verified after the fact
 >
-> The completeness critic ran after the verification stage. **Treat every entry as
-> `SUSPECTED` regardless of its stated verification, and reproduce before acting**
-> (`DEC-29`).
+> This report came from the completeness critic, which ran **after** the verification
+> stage — so it originally shipped unverified, and its two worst citations were wrong
+> (`META-AUDIT.md` `MA-6`). **Every finding in it has since been re-read against source**
+> in the corpus hardening pass and carries a `Re-verified` line. All survive; the wrong
+> citations are corrected.
 >
-> **This report spans all four areas audited in this run** — document control,
+> **This report spans all four areas audited in that run** — document control,
 > projects & cost, admin & org, and the public surfaces. It lives here because
 > document control is the largest of them; the other three READMEs link to it.
 

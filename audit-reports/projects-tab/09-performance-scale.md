@@ -145,6 +145,7 @@ memory.
   - `app/(protected)/projects/[id]/page.tsx:183, 494, 505` — the three `coachKey` bump sites
   - `components/projects/ProjectCoach.tsx:33, 41` — cleanup sets `cancelled = true` but does **not** abort the requests
   - `lib/projectSnapshot.ts:25-26` — `cost_documents.select("*")`, pulling every `parsed` blob to read five scalar fields
+- **Re-verified:** hardening pass — **SURVIVES**. `onDataChanged?.()` fires from the mount effect (`CostsTab.tsx:83`), so the coach's gather re-runs on every tab mount rather than on an actual data change.
 
 **Mechanism.** Both tabs call the data-changed callback from inside their
 refresh, so it fires on mount as well as on mutation. The coach's cleanup only
@@ -179,6 +180,7 @@ and add an `AbortController` to the coach.
   - `components/projects/QualityTab.tsx:73` — the same
   - `app/(protected)/projects/[id]/page.tsx:494` — `onDataChanged={() => setCoachKey(k => k + 1)}`, an inline arrow
 - **Related:** `PERF-3` (same root)
+- **Re-verified:** hardening pass — **SURVIVES**. `// eslint-disable-next-line react-hooks/exhaustive-deps` sits directly above the query effects in both `CostsTab.tsx:84` and `QualityTab.tsx:73` — the loop is prevented by a suppressed lint rule rather than by the dependency array being correct.
 
 **Mechanism.** The callback is an inline arrow, so it gets a new identity on
 every page render. `setCoachKey` re-renders the page → new callback → but
@@ -218,6 +220,7 @@ the loop the suppression prevents.
   - `components/projects/TaskDetailPanel.tsx:690-693` — `wouldCreateCycle` per candidate, each rebuilding a Map and running a DFS
   - `components/projects/ExecutionView.tsx:842, 1395` — `DependencyArrows`, plain component, 4 `new Date` per edge per render
   - Grep for `react-window|react-virtual|virtuoso|IntersectionObserver` across the Projects surface → **zero hits**
+- **Re-verified:** hardening pass — **SURVIVES**. `rows.map(…)` (`ExecutionView.tsx:816`) inside a `maxHeight: "70vh"` container (`:808`) with no virtualization or windowing anywhere in the file.
 
 **Mechanism.** No virtualization anywhere. Worse, the summary strip's quadratic
 leaf computation recomputes on **every pointermove frame during a drag**,
@@ -258,6 +261,7 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
   - `app/api/projects/checklist/route.ts:32`, `app/api/companies/quality-manual/route.ts:27` — same shape
   - `lib/ai/providerCall.ts:128-129` — retries share one 90s `AbortSignal`, which is correct
   - Client call sites with no timeout and no abort: `QuotesPanel.tsx:61-70`, `QualityTab.tsx:178-189`, `QualityTab.tsx:296-305`
+- **Re-verified:** hardening pass — **SURVIVES**. `renderKnowledgePages` does an R2 fetch, a PDF rasterize and an inference call (`knowledgePageRender.ts:25-36`) behind a route declaring `export const maxDuration = 120` (`cost-docs/route.ts:24`), with no client-side timeout handling to turn the platform 504 into a message.
 
 **Mechanism.** For a ten-page **scanned** vendor quote — exactly the document
 this route exists to read:
@@ -315,6 +319,7 @@ customer's own key, and a 504 burns it entirely.
   - `lib/checklists.ts:150-176` — `applyAssessment`, N+1 updates, per-row errors swallowed with a bare `continue`
   - `lib/checklists.ts:298-322` — `runAutoEvidence`, same shape plus a snapshot-based array append
 - **Related:** `SAF-2`
+- **Re-verified:** hardening pass — **SURVIVES**. `for (const p of input.proposals)` with a per-item write inside (`checklists.ts:158-161`) — the batch is a loop, not a batch.
 
 **Mechanism.** A 300-item checklist means **300 sequential updates** — roughly
 18–36 seconds with the tab frozen and no progress indicator. Per-row errors are
@@ -350,6 +355,7 @@ server-side.
   - `app/(protected)/projects/[id]/page.tsx:246-250` — the whole page blocks on a 5-deep serial chain
   - `app/(protected)/projects/[id]/page.tsx:180` — a 5th round trip to re-read `job_kind`, one column of a row already fetched
   - Duplicates: `lib/timeline.ts:417` vs `lib/projects.ts:419` (`project_activity` ×2); `lib/projectSnapshot.ts:22, 42` vs `page.tsx:141, 180` (`projects` ×3–4, `project_members` ×2)
+- **Re-verified:** hardening pass — **SURVIVES**. `getProjectTimeline` runs at project open (`timeline.ts:411-422`) and additionally queries `audit_logs` (`:441`), regardless of whether the Timeline tab is ever selected.
 
 **Mechanism.** The timeline sits on the blocking path of every project page load
 regardless of which tab is opened, and first paint waits for the whole chain
@@ -378,6 +384,7 @@ the project row lands rather than blocking on everything.
   - `components/projects/cost/QuotesPanel.tsx:30` → `components/projects/CostsTab.tsx:27` → `app/(protected)/projects/[id]/page.tsx:25` — the static chain
   - Grep for `next/dynamic|React.lazy|await import(` across the Projects tree → **zero hits**
   - Built output: `.next/static/chunks/046b04fbfdf1b49e.js` — **571 KB**, referenced only by the project detail route's client manifest
+- **Re-verified:** hardening pass — **SURVIVES**. `lib/rfqDocx.ts:17` statically imports `pizzip`, and `QuotesPanel.tsx:30` statically imports `downloadStarterRfq` from it — so the zip library is in the project route's bundle for every visitor, not behind a dynamic import.
 
 **Mechanism.** No lazy boundary anywhere in the Projects tree, and the page is
 itself a client component, so the whole subtree is one client entry. Total
@@ -415,6 +422,7 @@ in `next/dynamic`.
   - `lib/costSeries.ts:69-70` — two `.sort()` calls on every rebuild
   - Per-render `new Date(...).toLocaleString()`: `TimelineFeed.tsx:201-206` (×200), `projects/[id]/page.tsx:1012`, `CostsTab.tsx:377`, `QualityTab.tsx:589, 690`, `ChartKit.tsx:56-57` (×40)
   - The right pattern, already in the codebase: `QualityTab.tsx:639` — `const [now] = useState(() => Date.now())` with the comment "Captured once at mount — render stays pure."
+- **Re-verified:** hardening pass — **SURVIVES**. `new Intl.NumberFormat(…)` is constructed **inside** `fmtMoney` on every invocation (`costs.ts:352-356`), and the function is called once per rendered figure.
 
 **Mechanism.** A Costs tab with 60 accounts and an open account detail
 constructs roughly **370–570 formatters per render** — ten to twenty-five
@@ -448,6 +456,7 @@ once. Hoist the `toLocaleString` formatters out of the row components.
   - `milestones.responsible_party` and `project_intake_links.company_name` — queried with leading wildcards, no trigram index despite `pg_trgm` being installed (`20260724_ticket_numbering.sql:61` is the only trigram index in the schema)
   - `documents.title` / `name` / `document_number` — the type-ahead searches at `QualityTab.tsx:158-172` and `ProjectDocumentsCard.tsx:85-100`
 - **Related:** `PERF-1`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence in the migration set — the named join and search columns carry no index, so every filter is a sequential scan.
 
 **Mechanism.** ~600 sequential scans plus 150 scans of a 48,000-row table on
 every `/companies` visit, and one leading-wildcard scan per 250 ms of typing in

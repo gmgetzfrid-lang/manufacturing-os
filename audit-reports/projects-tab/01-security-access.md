@@ -208,6 +208,7 @@ hold is silently ignored.
   - `components/projects/cost/QuotesPanel.tsx:539-544` — insert with no `expires_at`
   - `components/projects/IntakePanel.tsx:150` — `expires_at: expires ? … : null`
 - **Related:** report [`11-upload-door-controls.md`](./11-upload-door-controls.md)
+- **Re-verified:** hardening pass — **SURVIVES**, and the contrast is exact. The quote-link insert sets no `expires_at` column at all (`QuotesPanel.tsx:539-544`), while the document intake link at least offers one and defaults it to `null` (`IntakePanel.tsx:150`).
 
 **Mechanism.** The quote-link insert has no `expires_at` at all — no field in
 the form, no default, and no revoke button where the link is minted. The
@@ -241,6 +242,7 @@ forwarded email, a departed employee, a shared inbox.
   - `app/api/intake/upload/route.ts:46, 73` — size check after full buffering
   - `app/api/intake/upload/route.ts:270` — client MIME stored verbatim
 - **Related:** `SEC-1`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The route's only content check is `if (file.size > MAX_BYTES)` (`intake/upload/route.ts:46`) — no MIME test, no extension allowlist, no magic-byte sniff. This is the input side of `SEC-1`.
 
 **Mechanism.** The only check is size: `MAX_BYTES` = 100 MB, applied *after*
 the whole body has been buffered, which is then buffered a second time via
@@ -273,6 +275,7 @@ before reading the body, and read the body once.
   - `app/api/storage/download-url/route.ts:146-151` — the call site
   - `app/api/transmittal/route.ts:73` — the correct pattern, for reference
 - **Related:** `SEC-1`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `GetObjectCommand({ Bucket, Key })` is signed with no `ResponseContentDisposition` (`download-url/route.ts:146-151`), so the object is served with its stored content type and renders inline. This is the delivery side of `SEC-1`.
 
 **Mechanism.** The route does its authorization properly —
 `assertSafeStorageKey` plus an org-prefix membership check. What it omits is
@@ -305,6 +308,7 @@ inline case must be opted into explicitly by callers that genuinely need it
   - `app/api/intake/upload/route.ts:104-113` — notification fan-out
   - `app/api/intake/upload/route.ts:349-385` — in-app + queued email + drain kick
   - `signup_attempts` table — the existing anti-abuse primitive, not wired here
+- **Re-verified:** hardening pass — **SURVIVES**. No rate limit guards the intake route, and each successful upload inserts one notification row per target (`intake/upload/route.ts:104-113` and `:349-358`).
 
 **Mechanism.** Nothing throttles submissions per token, per IP, or per hour.
 Every upload writes an in-app notification to controllers plus the project
@@ -334,6 +338,7 @@ window produce one digest rather than N emails.
 - **Locations:**
   - `supabase/migrations/20260906_projects_hardening.sql:61-68` — `projects_delete_owner`
   - `supabase/migrations/20261013_project_controls_program.sql` — `user_owns_project()`, which does it correctly
+- **Re-verified:** hardening pass — **SURVIVES**. `projects_delete_owner` is predicated on `owner_user_id::text = auth.uid()::text` (`20260906_projects_hardening.sql:61-66`) with **no `org_members.status` term**, so an offboarded owner still matches and the delete cascades the financial and quality record.
 
 **Mechanism.** `projects_delete_owner` tests
 `owner_user_id::text = auth.uid()::text` with no active-membership check —
@@ -366,6 +371,7 @@ cost entries should be deletable at all, versus archive-only.
 - **Locations:**
   - `app/api/projects/checklist/route.ts:67` — admits any active org member
   - `lib/docFileServer.ts` — `resolveDocumentFile` uses `supabaseAdmin`
+- **Re-verified:** hardening pass — **SURVIVES**. The route gates on `member.status === "active"` (`checklist/route.ts:67`) and then reads documents with the service role, so ACL-restricted content reaches a member the ACL excludes.
 
 **Mechanism.** The route admits any active org member, then resolves the
 document through `supabaseAdmin`, which bypasses `documents_acl_select`
@@ -399,6 +405,7 @@ resolve documents the same way.
   - `app/api/intake/resolve/route.ts:119` — `.in("id", docIds)` with **no** `org_id` filter
   - `app/api/intake/resolve/route.ts:144` — the redline query, which *does* filter by org
   - `supabase/migrations/20260903_intake_assignments.sql:20` — bare `UUID[]`, no FK, no CHECK
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `.update({ assigned_doc_ids: ids }).eq("id", l.id)` (`IntakePanel.tsx:218-219`) validates the ids against nothing — not the project, not the document ACL, not the org.
 
 **Mechanism.** The column has no foreign key, no check constraint and no
 trigger. The authorization question asked on write is "may you manage this
@@ -440,6 +447,7 @@ says an out-of-project restricted document was exposed.
 - **Blast radius:** document-control integrity
 - **Locations:** `app/api/intake/upload/route.ts:302`
 - **Related:** `SEC-3` (same root cause)
+- **Re-verified:** hardening pass — **SURVIVES**. `autoNow = !!docId && !!link.allow_auto_supersede && linkAuthored` (`intake/upload/route.ts:302`) — the first upload sets `linkAuthored`, and the second therefore takes the auto path into the controlled library. Same mechanism as `SEC-3`, seen from the new-document side.
 
 **Mechanism.** `autoNow` requires an existing `docId`, so the first upload of a
 new document always routes to review. Once that document row exists, the second
@@ -476,6 +484,7 @@ authorship) also covers this.
   - `lib/reviewControl.ts:395-411`
   - `supabase/migrations/20260822_review_completion_guard.sql:46-58` — the guard that only bites when roster rows exist
 - **Related:** `SEC-4`
+- **Re-verified:** hardening pass — **SURVIVES**, and it is explicit in the call. `finalizeReviewedRevision({ …, requireRosterComplete: false })` (`IntakePanel.tsx:237-239`) — the library's configured review gate is switched off by the argument.
 
 **Mechanism.** Approve passes `requireRosterComplete: false`. The upload route
 never reads `review_control` and never creates `document_review_signoffs` rows,
@@ -507,6 +516,7 @@ completion. Approval then requires the configured signatures.
   - `lib/docClass.ts` — imported by nothing under `app/api/`
   - `supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql` — adds `moc_reference` columns, no trigger, no CHECK
   - `components/documents/RevUpModal.tsx:219` — where the gate *does* exist
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. Neither intake path consults `docClass` or any MOC requirement before promoting a revision.
 
 **Mechanism.** The MOC gate lives only in two client components. There is no
 database constraint on `moc_reference`, and `lib/docClass.ts` is never imported
@@ -541,6 +551,7 @@ screen so a reviewer can supply it.
   - `supabase/migrations/20260906_projects_hardening.sql:60-65` — `projects_update_owner`
   - `app/(protected)/projects/[id]/page.tsx:977-982` — the button
   - `app/(protected)/projects/[id]/page.tsx:913` — where the raw error surfaces
+- **Re-verified:** hardening pass — **SURVIVES**, and the mechanism is the `WITH CHECK`. `projects_update_owner` is `USING (is_org_controller(org_id) OR owner_user_id::text = auth.uid()::text)` **and the same expression as `WITH CHECK`** (`20260906_projects_hardening.sql:60-65`). `WITH CHECK` evaluates against the **new** row, where `owner_user_id` is the incoming owner — so a non-controller owner transferring away fails their own policy. `transferOwnership` only checks `assertCanManageProject` first (`projects.ts:625`) and then surfaces the raw refusal.
 
 **Mechanism.** The policy's `WITH CHECK` is evaluated against the **new** row:
 
@@ -579,6 +590,7 @@ validate the recipient's active membership (see `SEC-17` note below).
 - **Locations:**
   - `components/projects/IntakePanel.tsx:145, 350-353` — token read and copy
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:99-102` — `project_intake_links_select`
+- **Re-verified:** hardening pass — **SURVIVES**. The token is generated client-side (`IntakePanel.tsx:145`) and stored on a `project_intake_links` row the project owner can read, so the owner holds the contractor's credential.
 
 **Mechanism.** Link SELECT is correctly scoped to controllers plus the project
 owner (it was org-wide in `20260902` — that was a real fix). But a
@@ -614,6 +626,7 @@ writes, so a token used from inside the app is distinguishable.
   - `supabase/migrations/20260609_phase1_normalization.sql:194-197` — `FOR ALL` to any active member
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:79-86` — `project_members_write`, for contrast, correctly gated
 - **Related:** `SAF-17` (detach amputates the timeline)
+- **Re-verified:** hardening pass — **SURVIVES**. `project_documents_member_all FOR ALL` with active-member membership in both `USING` and `WITH CHECK` (`20260609_phase1_normalization.sql:194-197`) — the same `FOR ALL`-with-membership shape catalogued in `document-control/DRLS-1`.
 
 **Mechanism.** The policy is `FOR ALL` to any active org member. The
 `ProjectDocumentsCard` gates attach and detach on `canManage`; the database does

@@ -321,6 +321,7 @@ summarizers then start working with no further change.
   - `lib/milestones.ts:1462-1502` — `setBaseline`
   - `lib/milestones.ts:1490-1499` — the audit entry, which logs only a count
   - `components/projects/ScheduleTab.tsx:284` — the button and its confirm text
+- **Re-verified:** hardening pass — **SURVIVES**. `setBaseline` reads the current planned dates and overwrites the baseline columns with no snapshot of the prior baseline (`milestones.ts:1462-1489`), and the audit write is `.catch(() => {})` best-effort (`:1490-1499`).
 
 **Mechanism.** `setBaseline` overwrites `baseline_start_at` /
 `baseline_finish_at` in place. A search across `supabase/`, `lib/`,
@@ -362,6 +363,7 @@ and not having a delay claim.
 - **Locations:**
   - `lib/milestones.ts:389-395` — the `else` branch clears `actual_at`, leaves `percent_complete`
   - `lib/scheduleProgress.ts:35-39` — `leafPercent` returns the stored percent for those statuses
+- **Re-verified:** hardening pass — **SURVIVES**. The blocked/on-hold/missed branch deliberately leaves `percent_complete` untouched (`milestones.ts:389-395`) and `leafPercent` returns `clampPercent(m.percentComplete)` for any non-completed, non-planned status (`scheduleProgress.ts:35-39`) — so `missed` at 100% earns full credit.
 
 **Mechanism.** Setting a task to `blocked`, `on_hold` or `missed` clears the
 actual date but deliberately leaves `percent_complete` untouched, and the
@@ -398,6 +400,7 @@ for imported rows too.
   - `app/api/intake/resolve/route.ts:100-105` — returns no reason
   - `components/projects/QualityTab.tsx:524` — the turnover claim
 - **Related:** `MON-11` (no notifications anywhere), `UX-5`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `reject` writes `review_state: "rejected"` and clears the pending pointer (`IntakePanel.tsx:254-259`) — it captures **no reason field** and sends **no notification**. The portal shows only a red "rejected" badge (`app/submit/[token]/page.tsx:294-295`).
 
 **Mechanism.** Intake rejection prompts a yes/no confirm and captures no reason
 at all; `audit_logs.INTAKE_REJECTED.details` has no reason field. The portal
@@ -439,6 +442,7 @@ again.
   - `app/api/intake/upload/route.ts:325` — `pending_version_id: null`
   - `components/projects/IntakePanel.tsx:113` — the queue filter that then hides it
 - **Related:** `SEC-3`, `SEC-12`
+- **Re-verified:** hardening pass — **SURVIVES**. The auto path is exempted from the pending-review block at `:257` and then sets `pending_version_id: null` at `:325`, leaving the pending version and any sign-offs against it unreachable.
 
 **Mechanism.**
 
@@ -479,6 +483,7 @@ reviewers, and preserve any signatures. Add a maintenance query that surfaces
 - **Locations:**
   - `lib/transitionIn.ts:69-91` — `listTransitionCandidates`, filters only `.neq("status","Superseded")`
   - `components/projects/IntakePanel.tsx:257-259` — reject clears the pointer, never touches the document row
+- **Re-verified:** hardening pass — **SURVIVES**. `listTransitionCandidates` filters `.neq("status", "Superseded")` only (`transitionIn.ts:73-80`); rejection is recorded in `document_versions.review_state`, which this query never reads.
 
 **Mechanism.** Rejecting a new-document submission clears
 `pending_version_id` but leaves the document at `status: "Draft"`. The
@@ -511,6 +516,7 @@ rather than by inference.
   - `components/projects/TransitionInPanel.tsx:241-245` — `adoptOne`, which never consults `impact.clean`
   - `lib/transitionIn.ts:216` — `adoptDocument`, no re-validation
   - `lib/transitionIn.ts:10-12` — the module header claiming this is impossible
+- **Re-verified:** hardening pass — **SURVIVES**. `adoptOne` is disabled only on `busy` or a missing destination library (`TransitionInPanel.tsx:241-242`) — the collision the panel itself detects does not gate the button.
 
 **Mechanism.** Single-item adopt does not consult the impact scan. The Adopt
 button renders identically for a flagged candidate and a clean one — only the
@@ -548,6 +554,7 @@ the exact "two sources of truth" the module header declares impossible.
   - `lib/transitionIn.ts:217` — `adoptDocument` runs on the browser client and always changes `collection_id`
   - `supabase/migrations/20261011_collections_guard_and_trash.sql:44-53` — `enforce_document_move_guard`
   - `app/(protected)/projects/[id]/page.tsx:508-523` — the panel renders for owner **or** controller
+- **Re-verified:** hardening pass — **SURVIVES**. `supabase.from("documents").update(patch).eq("id", input.docId)` (`transitionIn.ts:217`) runs under the caller's own RLS, while the panel is surfaced to project managers who need no document-write authority.
 
 **Mechanism.** The move guard raises when `collection_id` changes and the actor
 is not Admin or Document Control (service role and null-JWT are exempt).
@@ -581,6 +588,7 @@ arbitrary moves, not to stop a sanctioned adoption. (b) preserves the feature.
   - `lib/projectReport.ts:159` — the report's checklist rollup
   - `lib/turnover.ts:225` — waived counted as accepted
 - **Related:** `SAF-4`
+- **Re-verified:** hardening pass — **SURVIVES**. The gate lines are computed for display only (`projects/[id]/page.tsx:627-632`); nothing records which of them were failing at the moment the override was taken.
 
 **Mechanism.** The override itself is well designed — gates shown plainly, a
 note captured, an audit row written. It is the only control in the area that
@@ -612,6 +620,7 @@ in the report's closeout section rather than recomputing from current state.
 - **Locations:**
   - `components/projects/IntakePanel.tsx:237-241` — `approve(p)` passes only `documentId`
   - `lib/reviewControl.ts:402-406` — re-reads `pending_version_id` fresh
+- **Re-verified:** hardening pass — **SURVIVES**. The panel holds `p.pendingVersionId` and does not pass it — `finalizeReviewedRevision` re-reads `pending_version_id` from the row at call time (`reviewControl.ts:402-406`). Whatever is pending when Approve lands is what publishes.
 
 **Mechanism.** Approve passes only the document id; finalize re-reads the
 pending pointer fresh. The success message then reports the label from the
@@ -646,6 +655,7 @@ submission changed — refresh to see the current one."
   - `lib/timeline.ts:324-332` — `getDocumentTimeline`, with the filter and the comment explaining it
   - `lib/timeline.ts:447-452` — `getProjectTimeline`, with no such filter
   - `lib/timeline.ts:513-514` — `getRevisionChain`, which also gets it right
+- **Re-verified:** hardening pass — **SURVIVES**, and the contrast is forty lines apart in one file. The document timeline filters `.or("review_state.is.null,review_state.eq.approved")` with the comment *"the timeline must not leak them to everyone"* (`timeline.ts:324-332`); the project timeline's query over the same table has **no such filter** (`:447-452`).
 
 **Mechanism.** The document reader filters
 `.or("review_state.is.null,review_state.eq.approved")` with the comment
@@ -675,6 +685,7 @@ review. Two of three readers get this right; only the project reader is wrong.
   - `components/projects/ProjectDocumentsCard.tsx:135-144` — `detach`
   - `lib/timeline.ts:423-433` — document scope resolved entirely from `project_documents`
 - **Related:** `SEC-17` (any member can detach)
+- **Re-verified:** hardening pass — **SURVIVES**. `detach` deletes the `project_documents` row (`ProjectDocumentsCard.tsx:138`), and `getProjectTimeline` derives every document event from exactly that table (`timeline.ts:423-433`).
 
 **Mechanism.** The timeline resolves its entire document scope from
 `project_documents`. Deleting that row removes every audit event, version event

@@ -117,6 +117,7 @@ definitions (`MON-6`) so the whole app agrees.
   - `lib/costDocs.ts:310-319` — `voidCostDoc`
   - `lib/costDocs.ts:323-334` — `setManualTotal`
   - `lib/costDocs.ts:170-192` — `claimDocTransition`, the pattern they should use
+- **Re-verified:** hardening pass — **SURVIVES**, and the discipline it breaks is in the same file. `voidCostDoc` (`costDocs.ts:315`) and `setManualTotal` (`:330`) both issue a bare `.update(…).eq("id", …)` with no status precondition in the predicate, while `awardQuote` in the same module goes through `claimDocTransition` — a real compare-and-swap.
 
 **Mechanism.** `voidCostDoc` checks the *client's stale* status object, then
 updates with `.eq("id", doc.id)` alone. `setManualTotal` has no status guard at
@@ -150,6 +151,7 @@ returned row count, exactly as `claimDocTransition` does. Return the same
   - `components/projects/CostsTab.tsx:133-142` — the headline tile
   - `components/projects/CostsTab.tsx:145-156` — the burn bar, which *does* draw the committed band
   - `lib/projectReport.ts` — `draftLessonsLearned` writes the figure into the record
+- **Re-verified:** hardening pass — **SURVIVES**. `remaining: sum((r) => r.account.budget) - sum((r) => r.spent)` (`costs.ts:330`) omits commitments entirely, and the figure is rendered as the headline "Remaining" stat (`CostsTab.tsx:133-136`).
 
 **Mechanism.** `spent` is actuals plus adjustments. Awarded contract value is
 posted as a commitment and never drawn down against available money. The tile
@@ -188,6 +190,7 @@ definition.
   - `lib/projectReport.ts:53-59` — the discarded index
   - `lib/costs.ts:305-313` — where a missing index makes earned value null
   - `components/projects/CostsTab.tsx:137-141` — the screen, which shows a real CPI
+- **Re-verified:** hardening pass — **SURVIVES**, and the cause is one argument. `lib/projectReport.ts:59` calls `computeCostRollup(accounts, entries, new Map())` — the third parameter is the milestone-percent index, and an empty map makes `evActual` zero, so `cpi: evActual > 0 ? evTotal / evActual : null` (`costs.ts:332`) is **always null on paper** while the screen passes a real index.
 
 **Mechanism.**
 
@@ -236,6 +239,7 @@ missing imported rows.
   - `supabase/migrations/20260614_phase7_milestones.sql:61` — `CHECK (source IN ('manual','p6','msproject','csv'))`
   - `types/schema.ts:429` — `MilestoneSource`
 - **Related:** `SCH-6`, `MON-2`
+- **Re-verified:** hardening pass — **SURVIVES**. `projectSnapshot.ts:49` filters milestones to `source == null || "manual" || "app"`, the identical filter used by `projectReport.ts:54`. Imported rows are excluded from health, coach and report while the Costs tab reads them.
 
 **Mechanism.**
 
@@ -288,6 +292,7 @@ trying to exclude, and delete the impossible `'app'` branch.
   - `components/projects/cost/QuotesPanel.tsx:461` — `party_id` never passed on upload
   - `lib/companies.ts:240-252` — the profile gather, which hangs everything off these keys
 - **Related:** `UX-5`, `SAF-9`
+- **Re-verified:** hardening pass — **SURVIVES**. `saveParty` writes `cost_parties` (`costs.ts:127-134`), a different table from `companies`, which is what the Known Companies scorecard reads — so the normal project workflow never populates the scorecard.
 
 **Mechanism.** The company profile hangs everything off three join keys, and
 none is written outside the wizard:
@@ -339,6 +344,7 @@ the contractor's permanent scorecard."
   - `components/projects/cost/QuotesPanel.tsx:221` — awaits with no try/catch
   - `supabase/migrations/20260819_orphan_tables_backfill.sql:184` — `status` is plain `text NOT NULL`, no CHECK
 - **Related:** `REL-4`
+- **Re-verified:** hardening pass — **SURVIVES**. `COST_DOC_STATUS_LABEL[fresh.status].toLowerCase()` (`costDocs.ts:181`) — an unmapped status makes the lookup `undefined` and the method call throws inside the award path, after `setBusy` and before any `setBusy(null)`.
 
 **Mechanism.** The lookup returns `undefined` for any status not in the map, and
 `.toLowerCase()` throws. `cost_documents.status` carries no check constraint, so
@@ -369,6 +375,7 @@ never runs, and the Award button spins indefinitely.
 - **Locations:**
   - `lib/changeOrders.ts:88-110` — read-max-then-insert, no retry
   - `lib/companies.ts:134-136` — `saveCompany`, which maps 23505 correctly
+- **Re-verified:** hardening pass — **SURVIVES**. `co_number` is derived by reading the last 50 rows and taking the max (`changeOrders.ts:88-93`) with no unique constraint and no counter — two concurrent proposals read the same maximum.
 
 **Mechanism.** Read the maximum number, add one, insert against a unique index,
 with no retry. Both proposals compute `CO-004`; the loser gets the raw
@@ -396,6 +403,7 @@ project.
   - `app/api/intake/upload/route.ts:127` — the portal's promise
   - `app/submit/[token]/page.tsx:195-199` — the status chip
 - **Related:** `BID-10` (free-text group), `MON-11` (no notifications)
+- **Re-verified:** hardening pass — **SURVIVES**. `const rivals = … && !!fresh.rfqGroup && d.rfqGroup === fresh.rfqGroup` (`costDocs.ts:250-251`) — an ungrouped quote has no rivals, so nothing is ever marked not-selected.
 
 **Mechanism.** Awarding marks rival bids declined only within the same non-null
 `rfq_group`. An ungrouped quote is never marked. Combined with the portal's
@@ -423,6 +431,7 @@ group. Send the notification promised at `upload/route.ts:127`.
   - `app/api/intake/upload/route.ts:104-113` — the one notifying event (quote received, in-app only)
   - `lib/changeOrders.ts`, `lib/turnover.ts`, `lib/checklists.ts`, `lib/costDocs.ts`, `lib/companies.ts` — no notification imports at all
   - `app/api/intake/upload/route.ts:349-385` — the document branch, which does the full job
+- **Re-verified:** hardening pass — **SURVIVES**, by census. The only `notifications` insert anywhere in the controls program is the intake one (`intake/upload/route.ts:104-113`).
 
 **Mechanism.** No `notifications` insert, no `email_notifications` insert, no
 `inAppNotifications` import in any of the five new data libraries or the three
@@ -458,6 +467,7 @@ already shows state.
   - `app/(protected)/companies/[id]/page.tsx:522` — the tooltip claiming it "flags the company across the app"
   - `lib/companies.ts:24` — `inactive`, which changes nothing at all
 - **Related:** `BID-12` (the name match that often prevents the chip rendering at all)
+- **Re-verified:** hardening pass — **SURVIVES**. `awardQuote` (`costDocs.ts:211`) takes no company status and applies no check, while the UI renders a `do_not_use` badge two lines from the Award button (`QuotesPanel.tsx:289-291`).
 
 **Mechanism.** The flag renders as a red chip on the bid tab and on the card,
 and blocks nothing. `awardQuote` never reads company status. The sibling status

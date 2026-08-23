@@ -71,6 +71,7 @@ so.
 - **Locations:**
   - `lib/projectHealth.ts` — `computeProjectHealth`
   - `lib/companyScore.ts:153-164` — the correct pattern, in the same codebase
+- **Re-verified:** hardening pass — **SURVIVES**. `composite` is `null` when no dimension has a score (`companyScore.ts:160-161`), and a brand-new project has `evidenceCount` zero across every term of the sum (`:154-158`) — the band the UI derives from that is what produces the Concern label.
 
 **Mechanism.** A project created thirty seconds ago has no cost data, no
 schedule and no quality records, so every health part scores zero and the
@@ -103,6 +104,7 @@ parts renders as "Not enough data yet" rather than 0 · Concern.
   - `lib/projectHealth.ts:225` — the claim
   - `components/projects/QualityTab.tsx:324` — `runAutoEvidence`'s only caller in the repo
   - `components/projects/QualityTab.tsx:378-382` — the button, explained only by a tooltip
+- **Re-verified:** hardening pass — **SURVIVES**. The coach promises *"Each one auto-greens the moment its document lands"* (`projectHealth.ts:225`) while `runAutoEvidence` is invoked only from a button handler (`QualityTab.tsx:324`). Nothing schedules it.
 
 **Mechanism.** The evidence sweep has exactly one caller: a manual button
 labelled "Check evidence we already hold." Nothing calls it on document upload,
@@ -139,6 +141,7 @@ unreviewed draft filename makes that problem worse, not better.
   - `app/api/intake/upload/route.ts:88` — inserts with `status: "draft"`
   - `lib/costDocs.ts:93-94` — the comment stating it plainly: *"The AI hasn't read it yet — that's the parse route, and it's a separate, deliberate click."*
   - `app/api/intake/upload/route.ts:107` — the app's own honest wording
+- **Re-verified:** hardening pass — **SURVIVES**. *"Their documents and quotes land here and process themselves"* (`projectHealth.ts:243`) and the panel's own copy repeating it (`QuotesPanel.tsx:599-601`), against a `ReadButton` a human must click before any total exists.
 
 **Mechanism.** The quote lands as a draft. A human must click **Read**.
 
@@ -168,6 +171,7 @@ prefer fixing the copy.)
   - `lib/companies.ts:248` — scoring via `turnover_items.party_id`
   - Repeated at `lib/turnover.ts:8-9`, `lib/turnover.ts:187-188`, `components/projects/QualityTab.tsx:17`
 - **Related:** `MON-7`
+- **Re-verified:** hardening pass — **SURVIVES**, and the app contradicts itself on one screen. `payoff: "Closeout is gated on acceptance; contractors are scored on it."` (`projectHealth.ts:231`) against the closeout panel's own text — *"You can complete anyway — the open items stay on the record and in the report"* (`projects/[id]/page.tsx:646-649`).
 
 **Mechanism.** **Not gated:** the transition dialog says, correctly, "You can
 complete anyway — the open items stay on the record." The behaviour is right;
@@ -199,6 +203,7 @@ design.
   - `lib/projectSnapshot.ts:120` — `spi: null, // needs the schedule tab's EV math + history; null stays honest`
   - `lib/projectHealth.ts:208, 214` — the sow/purpose items, unactionable
   - `app/(protected)/projects/[id]/page.tsx:105-110` — one of them does not even change tabs
+- **Re-verified:** hardening pass — **SURVIVES**. The coach names a confirmation step (`projectHealth.ts:182-183`) that no surface implements — the tabulation is computed straight from `parsedQuoteFrom` with no confirm state (`QuotesPanel.tsx:195-204`) — and the metric it advertises is `cpi`, which `MON-5` shows is null on the printed report.
 
 **Mechanism.** There is no "confirm" action anywhere in the quotes panel — the
 verbs are **Award**, **Void**, and **type total** — and a parsed quote joins the
@@ -237,6 +242,7 @@ for a step that already happened.
   - `components/projects/QualityTab.tsx:328` — *"Evidence sweep: nothing new to prove or demand…"*
   - `components/projects/QualityTab.tsx:81-86` — the rose-bordered `AlertTriangle` banner both land in
   - `components/projects/IntakePanel.tsx:292` — the inverse: one neutral grey banner carrying both success and failure
+- **Re-verified:** hardening pass — **SURVIVES**. `setErr("Applied N; left M alone…")` (`QualityTab.tsx:314`) and `setErr("Evidence sweep: nothing new to prove or demand…")` (`:328`) — the two most common successful outcomes routed into the error channel.
 
 **Mechanism.** `QualityTab` has only an error tone, so successes are announced
 in red. `IntakePanel` has only a neutral tone, so failures — "Couldn't revoke:
@@ -266,6 +272,7 @@ return.
   - Raised from: `QuotesPanel.tsx:70, 86, 169, 223`, `ChangeOrdersPanel.tsx:49, 61, 76`
   - `components/projects/QualityTab.tsx:81-86` vs `:331, :339` — same shape
   - `components/projects/QualityTab.tsx:383-386` + `lib/checklists.ts:218-223` — "Mark complete" always enabled, refusal lands off-screen
+- **Re-verified:** hardening pass — **SURVIVES**. The error state renders at the top of the page while the controls that raise it sit far below in the tab content, so on a long project page the feedback is off-screen.
 
 **Mechanism.** Between the banner and the change-orders panel sit the stat
 strip, the burn bar, the S-curve, the forecast, the crew curve and the whole
@@ -297,6 +304,7 @@ explain why on the button.
   - `app/(protected)/companies/[id]/page.tsx:75-82` — the guard
   - `app/(protected)/companies/[id]/page.tsx:153, 157` — panels receive the page's `setError` as `setErr`
   - `app/(protected)/projects/[id]/page.tsx:82-85` — the same bug, already fixed and documented there
+- **Re-verified:** hardening pass — **SURVIVES**. `if (error || !company) return (…)` (`companies/[id]/page.tsx:75-80`) replaces the entire page, so a transient action error discards the loaded company view.
 
 **Mechanism.** `if (error || !company) return <red box + "Back to companies">`.
 So a failed quality-manual evaluation — including the entirely ordinary "add
@@ -326,6 +334,7 @@ failed COMMENT blank the entire project view."*
   - `lib/costs.ts:189` — where the raw Postgres string then surfaces
   - `components/projects/cost/QuotesPanel.tsx:545` — the one call site that does it right
 - **Related:** `REL-2`, `REL-3`
+- **Re-verified:** hardening pass — **SURVIVES**. The list functions discard their error and return `[]` (`costs.ts`), so a missing migration and a denied policy both render as the friendly empty state. Same root as `REL-2`.
 
 **Mechanism.** Every list function destructures `{ data }` and discards the
 error. A missing table or a policy denial returns null data, so the interface
@@ -362,6 +371,7 @@ database migration (20261013) applied."*
   - `components/projects/ProjectDocumentsCard.tsx:48-84` — the register card
   - `lib/projects.ts:322-330` — `listProjectCheckouts`, one row per session
   - `app/(protected)/projects/[id]/page.tsx:3-6` — the header comment still describing a three-tab page that now has seven
+- **Re-verified:** hardening pass — **SURVIVES**. The Documents tab badge counts one collection while the panel below renders another (`projects/[id]/page.tsx:420`), so the number and the list disagree.
 
 **Mechanism.** Two independent sources render stacked, and the badge counts
 sessions rather than documents.
@@ -405,6 +415,7 @@ update the stale header comment.
   - `components/projects/ProjectWizard.tsx:120` — `finish()` reachable only from `next()`
   - `components/projects/ProjectWizard.tsx:222` — the "everything after Basics is optional" message, in 11px grey
   - `components/projects/ProjectWizard.tsx:434-444` — "Skip for now", which only appears once a step is empty
+- **Re-verified:** hardening pass — **SURVIVES**. Only step 0 has required fields (`ProjectWizard.tsx:440`); every later step is advanced by the same Next button and can be skipped (`:120`), so the clicks are ceremony rather than input.
 
 **Mechanism.** There is no escape from step 0. A user who has typed a name and a
 description — everything actually required — must click through five screens
@@ -430,6 +441,7 @@ step 0 onward. This is the single most fixable friction point in the area.
   - AI entry points, all rendered enabled: `QualityTab.tsx:230, 373`, `QuotesPanel.tsx:394`, `companies/[id]/page.tsx:279`
   - `components/projects/cost/QuotesPanel.tsx:409-411` — "needs a budget line", with the fix in a `title`
   - `components/projects/QualityTab.tsx:129-131` — the checklist empty state, which points at Document Control with no upload affordance here
+- **Re-verified:** hardening pass — **SURVIVES**. `governedCall` throws its 412 — *"Add your Claude or OpenAI key in AI settings first"* — only once invoked (`governedCall.ts:41-47`), while the button that invokes it is `disabled={!doc || evaluating}` (`companies/[id]/page.tsx:279`), never disabled on the missing precondition.
 
 **Mechanism.** Nothing signals the three AI gates until after the click. The
 user searches for a document, selects it, picks a kind, clicks, watches a
@@ -468,6 +480,7 @@ the vendor, and spending an AI call on the read**.
   - `app/(protected)/projects/[id]/page.tsx:133` — `canComment = isOwner || isMember || isAdmin`
   - `lib/projects.ts:686-707` — notifications fan out to all members
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:40-54` — `project_visible_to_me` checks membership, not role
+- **Re-verified:** hardening pass — **SURVIVES**. `ProjectMemberRole = "owner" | "collaborator" | "observer"` (`types/schema.ts:944`) is declared and never read for authority — cross-area duplicate of `roles-and-permissions/SURF-11`, which shows the policies resolve from `org_members` instead.
 
 **Mechanism.** No read path, write path, notification path or guard checks it.
 
@@ -492,6 +505,7 @@ distinction it does not make.
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / rookie-readability
 - **Locations:** across the Projects surface; representative sites below
+- **Re-verified:** hardening pass — **SURVIVES**. Three different phrasings for the same concept across three surfaces, with no shared vocabulary constant.
 
 **Mechanism — dismissal (7 words).** `na` / "Not applicable" (checklist),
 `waived` (turnover), `void` (punch), `void` (cost entry), `void` (cost

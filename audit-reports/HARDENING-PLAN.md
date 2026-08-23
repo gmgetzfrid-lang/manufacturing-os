@@ -81,7 +81,7 @@ Expect a different outcome from Phase B. 65 of 65 `CRITICAL`s survived because
 `CRITICAL`s are written carefully. In the lower tiers, real refutations and real
 severity changes are the point of doing this.
 
-- [ ] `projects-tab` — 104 (72H, 32M)
+- [x] `projects-tab` — 104 — **104/104 SURVIVE**
 - [x] `roles-and-permissions` — 103 — **103/103 SURVIVE**, 2 corrections (`SURF-3` headline narrowed, `DB-6` count raised 13→23)
 - [x] `drafting-flow` — 46 — **46/46 SURVIVE**
 - [x] `document-control` — 13 — **13/13 SURVIVE**
@@ -89,7 +89,63 @@ severity changes are the point of doing this.
 - [x] `notifications` — 11 — **11/11 SURVIVE**
 - [x] `intelligence` — 10 — **10/10 SURVIVE**
 
+## Outcome
+
+**Phases A through E are complete.**
+
+| | |
+|---|---|
+| Findings re-verified in the hardening pass | **364** |
+| Refuted | **0** |
+| Severity changed | **0** |
+| Corrected without changing severity | **6** |
+| Corpus now `author` or `unverified` | **0 of 1,098** |
+
+**Every finding in the corpus has been challenged** — 734 `adversarial`, 364
+`hardening-pass`. Every in-repo citation resolves, and `build-index.mjs` fails
+the build if that stops being true.
+
+### The six corrections
+
+None changed a severity; each made a finding more accurate than it shipped.
+
+| Finding | Correction |
+|---|---|
+| `roles-and-permissions/DB-6` | **Understated itself.** Says thirteen `SECURITY DEFINER` functions lack `search_path`; the real count is **23 of 44**, including `my_org_ids`, `is_org_admin` and `can_manage_node`. |
+| `roles-and-permissions/SURF-3` | **Headline overstated.** "Zero server-side enforcement" is wrong — `20260826_legal_hold_delete_guard.sql` does guard deletion of held records. The body is accurate and is the substance: placing, releasing and disposing have no server-side authority check. |
+| `projects-tab/PERF-1`, `PERF-2` | Headline query counts restated as the per-item formulas they are (`1 + 8N`, and one round trip per project) rather than fixed numbers resting on an unstated assumption. |
+| `roles-and-permissions/SURF-2` | Scope narrowed: cross-tenant deletion **is** closed. What survives is the finding as titled — within-org, any role, unaudited. |
+| `roles-and-permissions/LIFE-11` | Title is easy to misread; `issue_type` **is** written. What never connects is the as-built *intent* captured at check-in. Note added so the next reader does not repeat the mistake. |
+| `document-control/XEDGE-3`, `XEDGE-14` | Citations corrected. Both substantive claims hold. |
+
+### Counts made exact
+
+Several findings gave round numbers. Where a census was cheap, the record now
+carries the real figure: 11 SQL sites read `roles[]` against 50 reading the
+mirror (`ADD-4`); `activeRole` appears 209 times (`CHAIN-2`); 47 unchecked
+`.update()` calls in `lib/` (`OWN-14`); 100 `title=`-only affordances in the
+projects area (`A11Y-12`); 56 raw `error.message` references (`REL-3`).
+
+### What is deliberately still open
+
+Recorded rather than hidden, because a deleted caveat is worse than a stated one.
+
+- **`hardening-pass` is not `adversarial`.** It is one reader re-reading with
+  intent to refute, not a separate agent. Equal in rigour, weaker in
+  independence.
+- **`identity-and-session` was written and verified by the same session.** All 14
+  findings say so on themselves. Treat as `author`-grade until someone else reads
+  them.
+- **`IDENT-1`'s production half is unanswerable from this repository** — whether
+  duplicate auth identities exist is a Supabase project setting. Three SQL
+  queries in the finding settle it.
+- **Verification corrections are still prose.** `locations` is correct in the
+  index now, but making that structural needs a change to how verification runs.
+
+---
+
 ## Outcome (Phases A–D)
+
 
 **All of Phase A, B, C and D are done.** 65 previously-unchallenged `CRITICAL`s
 re-verified; **65 survive, 0 refuted, no severity changed.** Every `CRITICAL` in
