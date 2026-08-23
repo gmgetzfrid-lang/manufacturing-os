@@ -162,25 +162,46 @@ function proposePairs(
   const byIndex = new Map<number, FrameFeatures>();
   for (const f of features) byIndex.set(f.frameIndex, f);
 
+  const clipCount = byClip.size;
   for (const frame of frames) {
     const self = byIndex.get(frame.index);
     if (!self) continue;
-    const scored: Array<{ index: number; score: number }> = [];
+
+    // Same-clip and cross-clip candidates are ranked SEPARATELY, and the
+    // cross-clip list gets a guaranteed share of the budget. Ranking them
+    // together looks tidier but is a trap: a frame's most similar images are
+    // almost always others from its own clip, so they win every slot and the
+    // clips never get compared to each other at all — which is precisely the
+    // failure this project has to avoid.
+    const sameClip: Array<{ index: number; score: number }> = [];
+    const otherClip: Array<{ index: number; score: number }> = [];
+
     for (const other of frames) {
       if (other.index === frame.index) continue;
-      const sameClip = other.clipId === frame.clipId;
+      const isSame = other.clipId === frame.clipId;
       // Skip near neighbours in the same clip; sequential matching has them.
-      if (sameClip && Math.abs(other.orderInClip - frame.orderInClip) <= cfg.features.sequentialWindow) {
+      if (isSame && Math.abs(other.orderInClip - frame.orderInClip) <= cfg.features.sequentialWindow) {
         continue;
       }
       const of = byIndex.get(other.index);
       if (!of) continue;
       const sim = globalSimilarity(self.globalDescriptor, of.globalDescriptor);
-      scored.push({ index: other.index, score: sameClip ? sim : sim * 1.15 });
+      (isSame ? sameClip : otherClip).push({ index: other.index, score: sim });
     }
-    scored.sort((x, y) => y.score - x.score);
-    for (let i = 0; i < Math.min(cfg.features.loopCandidates, scored.length); i++) {
-      add(frame.index, scored[i].index, "loop");
+
+    sameClip.sort((x, y) => y.score - x.score);
+    otherClip.sort((x, y) => y.score - x.score);
+
+    const budget = cfg.features.loopCandidates;
+    // With only one clip there is nothing to link, so spend it all internally.
+    const crossBudget = clipCount > 1 ? Math.max(2, Math.ceil(budget * 0.6)) : 0;
+    const selfBudget = budget - crossBudget;
+
+    for (let i = 0; i < Math.min(crossBudget, otherClip.length); i++) {
+      add(frame.index, otherClip[i].index, "loop");
+    }
+    for (let i = 0; i < Math.min(selfBudget, sameClip.length); i++) {
+      add(frame.index, sameClip[i].index, "loop");
     }
   }
 

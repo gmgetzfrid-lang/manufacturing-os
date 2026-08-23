@@ -185,15 +185,48 @@ export async function decodeVideo(
     ? MP4Box.MP4BoxBuffer.fromArrayBuffer(raw, 0)
     : Object.assign(raw, { fileStart: 0 });
 
-  const info = await new Promise<{ videoTracks: Mp4Track[] }>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out reading the video container.")), 20000);
-    mp4.onReady = (i) => { clearTimeout(timer); resolve(i); };
+  // Demux in ONE pass. mp4box only delivers samples if extraction is configured
+  // from inside onReady, before flush() — configuring it after the buffer has
+  // already been appended and flushed produces no onSamples callback at all, and
+  // the wait then sits on its timeout with nothing to show for it.
+  const demuxed = await new Promise<{ track: Mp4Track; samples: Mp4Sample[] }>((resolve, reject) => {
+    const collected: Mp4Sample[] = [];
+    let found: Mp4Track | null = null;
+    const timer = setTimeout(
+      () => reject(new Error(`${clip.name}: timed out reading the video container.`)),
+      60000,
+    );
+    const done = () => {
+      clearTimeout(timer);
+      try { mp4.stop(); } catch { /* already stopped */ }
+      resolve({ track: found as Mp4Track, samples: collected });
+    };
+
     mp4.onError = (e) => { clearTimeout(timer); reject(new Error(String(e))); };
+    mp4.onReady = (i) => {
+      found = i.videoTracks?.[0] ?? null;
+      if (!found) {
+        clearTimeout(timer);
+        reject(new Error(`${clip.name}: no video track found.`));
+        return;
+      }
+      mp4.setExtractionOptions(found.id, null, { nbSamples: Math.max(1, found.nb_samples) });
+      mp4.start();
+    };
+    mp4.onSamples = (_id, _user, batch) => {
+      collected.push(...batch);
+      if (found && collected.length >= found.nb_samples) done();
+    };
+
     mp4.appendBuffer(buf as ArrayBuffer);
     mp4.flush();
+    // A fully-appended file delivers everything synchronously above; if the
+    // sample count never quite reaches nb_samples, take what arrived.
+    if (found && collected.length > 0) done();
   });
 
-  const track = info.videoTracks?.[0];
+  const track = demuxed.track;
+  const samples = demuxed.samples;
   if (!track) throw new Error(`${clip.name}: no video track found.`);
 
   const rotationDeg = rotationFromMatrix(track.matrix);
@@ -318,23 +351,6 @@ export async function decodeVideo(
     description: extractDescription(MP4Box, mp4, track.id),
     // Let the browser drop non-essential work; we sample sparsely anyway.
     optimizeForLatency: false,
-  });
-
-  // Pull every sample out of the container in batches.
-  const samples: Mp4Sample[] = await new Promise((resolve) => {
-    const collected: Mp4Sample[] = [];
-    const timer = setTimeout(() => resolve(collected), 60000);
-    mp4.onSamples = (_id, _user, batch) => {
-      collected.push(...batch);
-      if (collected.length >= track.nb_samples) {
-        clearTimeout(timer);
-        mp4.stop();
-        resolve(collected);
-      }
-    };
-    mp4.setExtractionOptions(track.id, null, { nbSamples: Math.max(100, track.nb_samples) });
-    mp4.start();
-    mp4.flush();
   });
 
   if (samples.length === 0) throw new Error(`${clip.name}: no video samples could be read.`);

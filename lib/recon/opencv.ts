@@ -99,7 +99,39 @@ let loadPromise: Promise<OpenCv> | null = null;
 /** Path the copy script writes to. Overridable for tests. */
 export const OPENCV_URL = "/vendor/opencv/opencv.js";
 
-export async function loadOpenCv(url: string = OPENCV_URL): Promise<OpenCv> {
+export type OpenCvLogger = (message: string) => void;
+
+/** Poll the global `cv` until the WASM bindings appear. */
+function waitForRuntime(onLog: OpenCvLogger, timeoutMs = 120000): Promise<void> {
+  const scope = globalThis as unknown as { cv?: Partial<OpenCv> & { onRuntimeInitialized?: () => void } };
+  const ready = () => !!(scope.cv?.Mat && scope.cv?.ORB);
+
+  if (ready()) return Promise.resolve();
+
+  return new Promise<void>((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    let ticks = 0;
+    onLog("opencv: waiting for the WASM runtime");
+    const poll = setInterval(() => {
+      ticks++;
+      if (ready()) {
+        clearInterval(poll);
+        resolve();
+        return;
+      }
+      if (ticks % 100 === 0) onLog(`opencv: still initialising (${(ticks * 50) / 1000}s)`);
+      if (Date.now() > deadline) {
+        clearInterval(poll);
+        reject(new Error("OpenCV.js did not finish initialising in time."));
+      }
+    }, 50);
+  });
+}
+
+export async function loadOpenCv(
+  url: string = OPENCV_URL,
+  onLog: OpenCvLogger = () => {},
+): Promise<OpenCv> {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
@@ -113,11 +145,14 @@ export async function loadOpenCv(url: string = OPENCV_URL): Promise<OpenCv> {
     // presence check is not enough — try it and fall through on failure.
     let loaded = false;
     if (scope.importScripts) {
+      const t0 = Date.now();
       try {
         scope.importScripts(url);
         loaded = true;
-      } catch {
+        onLog(`opencv: importScripts ok in ${Date.now() - t0}ms`);
+      } catch (err) {
         loaded = false;
+        onLog(`opencv: importScripts unavailable (${String(err).slice(0, 80)})`);
       }
     }
 
@@ -137,6 +172,7 @@ export async function loadOpenCv(url: string = OPENCV_URL): Promise<OpenCv> {
         );
       }
       try {
+        onLog(`opencv: evaluating ${Math.round(source.length / 1048576)}MB bundle`);
         // The bundle assigns a local `cv`; hand it back rather than relying on
         // it reaching globalThis, which it will not do under strict mode.
         const factory = new Function(`${source}\n;return typeof cv !== "undefined" ? cv : undefined;`);
@@ -146,40 +182,32 @@ export async function loadOpenCv(url: string = OPENCV_URL): Promise<OpenCv> {
       }
     }
 
-    const raw = scope.cv as (Partial<OpenCv> & { onRuntimeInitialized?: () => void }) | undefined;
-    if (!raw) throw new Error("OpenCV.js loaded but did not define `cv`.");
+    if (!scope.cv) throw new Error("OpenCV.js loaded but did not define `cv`.");
 
-    // Waiting for the WASM runtime is fiddlier than the docs suggest. The
-    // object exposes a `then`, so it looks awaitable — but that is emscripten's
+    // Waiting for the WASM runtime is fiddlier than the docs suggest. The object
+    // exposes a `then`, so it looks awaitable — but that is emscripten's
     // one-shot thenable, not a Promise (its `.then()` returns something with no
-    // `.catch`), and awaiting it never resolves inside a worker. So install the
-    // documented onRuntimeInitialized callback AND poll for the bindings to
-    // appear, and take whichever arrives first.
-    const cv = await new Promise<OpenCv>((resolve, reject) => {
-      if (raw.Mat && raw.ORB) {
-        resolve(raw as OpenCv);
-        return;
-      }
+    // `.catch`), and awaiting it never resolves inside a worker.
+    //
+    // So poll instead, and re-read the global each tick rather than holding a
+    // reference: emscripten may hand back a different object than the one the
+    // module first published. A single interval with its own deadline keeps the
+    // whole wait to one timer.
+    await waitForRuntime(onLog);
+    const cv = scope.cv as OpenCv & { then?: unknown };
 
-      let settled = false;
-      const finish = () => {
-        if (settled || !raw.Mat || !raw.ORB) return;
-        settled = true;
-        clearInterval(poll);
-        clearTimeout(timer);
-        resolve(raw as OpenCv);
-      };
+    // Emscripten leaves a `then` on the Module, which makes the whole object
+    // THENABLE. Any promise that tries to resolve with it therefore calls
+    // `cv.then(resolve, reject)` and waits for a callback that fires only once,
+    // during init — so `return cv` from an async function, or `await cv`, hangs
+    // forever with no error. Removing the property is the standard defusal and
+    // has to happen before this value crosses any promise boundary.
+    if (typeof cv.then === "function") {
+      delete cv.then;
+      onLog("opencv: removed the module's thenable trap");
+    }
 
-      raw.onRuntimeInitialized = finish;
-      const poll = setInterval(finish, 50);
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        clearInterval(poll);
-        reject(new Error("OpenCV.js did not finish initialising within 120s."));
-      }, 120000);
-    });
-
+    onLog("opencv: runtime ready");
     if (!cv.ORB || !cv.solvePnPRansac) {
       throw new Error(
         "This OpenCV.js build is missing ORB or solvePnPRansac — reconstruction cannot run. " +

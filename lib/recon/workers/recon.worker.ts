@@ -100,12 +100,13 @@ async function run(
   progress("decode", 0.01, "Loading vision library");
   let cv: OpenCv;
   try {
-    cv = await loadOpenCv();
+    cv = await loadOpenCv(undefined, (m) => log("info", m));
   } catch (err) {
     throw new Error(
       `Could not load the computer-vision library: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  log("info", `Vision library ready (${Math.round(performance.now() - started)}ms)`);
 
   // ── Stage 1: decode + select + features ─────────────────────────────────
   let t0 = performance.now();
@@ -118,7 +119,9 @@ async function run(
     if (cancelled) throw new Error("Cancelled");
     const clip = clipInputs[clipIndex];
 
+    progress("decode", clipIndex / clipInputs.length, `Reading ${clip.name}`);
     const info = await probeVideo(clip.file);
+    log("info", `${clip.name}: ${info.width}x${info.height} ${info.codec} ${info.durationS.toFixed(1)}s rot=${info.rotationDeg}`);
     if (info.durationS > cfg.limits.maxSecondsPerClip) {
       warn(
         "clip-too-long",
@@ -239,6 +242,7 @@ async function run(
     await pending;
     await flushWindow();
     await pending;
+    log("info", `${clip.name}: decode loop finished, ${clipKept.length} frames kept`);
 
     // Blur floor, applied once the clip's own median is known.
     if (sharpnessValues.length > 6) {

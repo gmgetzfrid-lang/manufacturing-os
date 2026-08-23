@@ -31,17 +31,33 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from processing.steps.common import find_ffmpeg  # noqa: E402
-
 RNG = np.random.default_rng(20260823)
+
+
+def find_ffmpeg() -> str:
+    """A usable ffmpeg path.
+
+    Prefers a system install, and otherwise falls back to the static binary that
+    ships inside the `imageio-ffmpeg` wheel — which is why this script needs no
+    `apt install` / `brew install` step.
+    """
+    system = shutil.which("ffmpeg")
+    if system:
+        return system
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:  # pragma: no cover - only on a broken install
+        raise SystemExit(
+            "No ffmpeg available. Install the requirements:\n"
+            "  pip install numpy opencv-python-headless imageio-ffmpeg"
+        ) from exc
 
 
 # ── Procedural textures ─────────────────────────────────────────────────────
