@@ -444,10 +444,10 @@ export async function reconstruct(
     );
   }
 
-  const seed = seedCandidates[0].pair;
-  const poses = new Map<number, Pose>();
-  poses.set(seed.a, { R: new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), t: [0, 0, 0] });
-  poses.set(seed.b, seed.pose);
+  let poses = new Map<number, Pose>();
+  const initialFocal = focal;
+  /** The frame bundle adjustment pins so the solution cannot drift or rescale. */
+  let gaugeFrame = -1;
 
   const observationOf = (frameIndex: number, kp: number): { x: number; y: number } | null => {
     const f = featureByIndex.get(frameIndex);
@@ -491,15 +491,10 @@ export async function reconstruct(
     return created;
   };
 
-  triangulatePending();
-
   // ── 4. Grow ─────────────────────────────────────────────────────────────
-  const failed = new Set<number>();
-  let sinceBa = 0;
   const totalFrames = frames.length;
   /** Lowest 2D-3D support we will still attempt a registration from. */
   const RELAXED_MIN_SUPPORT = 10;
-  let minSupport = cfg.sfm.minPnpInliers;
 
   const runBundle = (window: number | null) => {
     const registeredList = [...poses.keys()].sort((a, b) => a - b);
@@ -551,7 +546,8 @@ export async function reconstruct(
       if (!activeSet.has(frame)) fixed.add(poseIndex.get(frame)!);
     }
     // Gauge freedom: pin the seed frame so the solution cannot drift or rescale.
-    fixed.add(poseIndex.get(seed.a)!);
+    const gaugeIndex = poseIndex.get(gaugeFrame);
+    if (gaugeIndex !== undefined) fixed.add(gaugeIndex);
 
     const result = bundleAdjust(
       {
@@ -573,6 +569,25 @@ export async function reconstruct(
     if (window === null) focal = result.focal;
     return result;
   };
+
+  /**
+   * Build a model outward from one seed pair, and report how many frames it
+   * placed. Everything it touches — the pose map, each track's triangulated
+   * position, the focal estimate — is reset first, so an attempt that goes
+   * nowhere leaves nothing behind for the next one to trip over.
+   */
+  const growFrom = (seedPair: VerifiedPairInternal): number => {
+  poses = new Map<number, Pose>();
+  poses.set(seedPair.a, { R: new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), t: [0, 0, 0] });
+  poses.set(seedPair.b, seedPair.pose);
+  gaugeFrame = seedPair.a;
+  for (const track of tracks) track.xyz = null;
+  focal = initialFocal;
+  triangulatePending();
+
+  const failed = new Set<number>();
+  let sinceBa = 0;
+  let minSupport = cfg.sfm.minPnpInliers;
 
   for (let step = 0; step < totalFrames * 2; step++) {
     checkAbort();
@@ -658,12 +673,56 @@ export async function reconstruct(
     );
   }
 
+    return poses.size;
+  };
+
+  // A seed that scores well on inliers and parallax can still produce a
+  // two-view model nothing grows from — a repeated texture matched across the
+  // wrong pair, or a baseline that happens to lie along the viewing direction.
+  // One seed is therefore not an answer about the capture, only about that
+  // pair, so try a few before concluding the footage cannot be reconstructed.
+  // Candidates sharing a frame with one already tried tend to fail the same
+  // way, so they are skipped in favour of a genuinely different starting point.
+  const SEED_ATTEMPTS = 5;
+  const GOOD_ENOUGH = Math.max(3, Math.round(totalFrames * 0.6));
+  const triedFrames = new Set<number>();
+  let bestPoses = new Map<number, Pose>();
+  let bestFocal = focal;
+  let bestGauge = -1;
+  let attempts = 0;
+
+  for (const candidate of seedCandidates) {
+    if (attempts >= SEED_ATTEMPTS) break;
+    if (triedFrames.has(candidate.pair.a) || triedFrames.has(candidate.pair.b)) continue;
+    triedFrames.add(candidate.pair.a);
+    triedFrames.add(candidate.pair.b);
+    attempts++;
+
+    const placed = growFrom(candidate.pair);
+    if (placed > bestPoses.size) {
+      bestPoses = poses;
+      bestFocal = focal;
+      bestGauge = gaugeFrame;
+    }
+    if (placed >= GOOD_ENOUGH) break;
+    report(0.55, `Retrying from a different starting pair (${placed} of ${totalFrames} placed)`);
+  }
+
+  poses = bestPoses;
+  focal = bestFocal;
+  gaugeFrame = bestGauge;
+
   if (poses.size < 3) {
     throw new Error(
-      "Only a couple of frames could be positioned. The capture does not have enough " +
-      "consistent overlap to reconstruct.",
+      `None of the ${attempts} starting pairs tried could be grown into a reconstruction. ` +
+      "The capture does not have enough consistent overlap.",
     );
   }
+
+  // The winning attempt's points were overwritten by the attempts that followed
+  // it, so rebuild them against the poses actually being kept.
+  for (const track of tracks) track.xyz = null;
+  triangulatePending();
 
   // ── 5. Global refinement ────────────────────────────────────────────────
   report(0.88, `Refining ${poses.size} cameras`);
