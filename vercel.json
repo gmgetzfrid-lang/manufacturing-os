@@ -1,5 +1,5 @@
 {
-  "ignoreCommand": "[ \"$VERCEL_GIT_COMMIT_REF\" = \"master\" ] && exit 1 || exit 0",
+  "ignoreCommand": "case \"$VERCEL_GIT_COMMIT_REF\" in master|claude/phone-video-3d-poc-24mars) exit 1;; *) exit 0;; esac",
   "crons": [
     {
       "path": "/api/data-export/run-scheduled",
