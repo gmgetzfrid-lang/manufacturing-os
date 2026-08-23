@@ -70,7 +70,26 @@ pass as adversarial-independent.
 
 ---
 
-## Outcome
+## Phase E — the remaining 299
+
+Every `HIGH` and `MEDIUM` still graded `author` or `unverified`. Same method as
+Phase B: open the cited code, try to refute, record `SURVIVES` / `REFUTED` /
+severity correction per finding. **A refuted finding is marked refuted in place
+with the reason — never deleted** (`DEC-41`).
+
+Expect a different outcome from Phase B. 65 of 65 `CRITICAL`s survived because
+`CRITICAL`s are written carefully. In the lower tiers, real refutations and real
+severity changes are the point of doing this.
+
+- [ ] `projects-tab` — 104 (72H, 32M)
+- [ ] `roles-and-permissions` — 103 (53H, 50M)
+- [ ] `drafting-flow` — 46 (28H, 18M)
+- [ ] `document-control` — 13 (5H, 8M)
+- [ ] `identity-and-session` — 12 (6H, 6M)
+- [ ] `notifications` — 11 (7H, 4M)
+- [ ] `intelligence` — 10 (5H, 5M)
+
+## Outcome (Phases A–D)
 
 **All of Phase A, B, C and D are done.** 65 previously-unchallenged `CRITICAL`s
 re-verified; **65 survive, 0 refuted, no severity changed.** Every `CRITICAL` in
