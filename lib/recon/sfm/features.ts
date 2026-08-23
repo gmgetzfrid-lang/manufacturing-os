@@ -181,26 +181,54 @@ export function extractFeatures(
     const mat = track(new cv.Mat(height, width, cv.CV_8UC1));
     mat.data.set(gray);
 
-    const orb = track(
-      new cv.ORB(
-        options.maxFeatures,
-        options.scaleFactor,
-        options.levels,
-        31,   // edgeThreshold
-        0,    // firstLevel
-        2,    // WTA_K — 2 keeps descriptors compatible with Hamming distance
-        cv.ORB_HARRIS_SCORE,
-        31,   // patchSize
-        options.fastThreshold,
-      ),
-    );
+    /**
+     * FAST's corner threshold is a contrast threshold, so it does not mean the
+     * same thing on every frame. A brightly lit workshop clears 18 easily; a
+     * dim plant room, a flatly painted wall, or any frame carrying motion blur
+     * may yield almost nothing at all — and a frame with few features cannot be
+     * matched to anything, which starves every stage downstream while looking
+     * like the capture simply had no overlap.
+     *
+     * So detect, and if the frame came back nearly empty, lower the bar and ask
+     * again. Weak corners are worth more than no corners: matching still has to
+     * agree with them, and RANSAC still has to fit a model through them.
+     */
+    const ladder = [options.fastThreshold, 10, 5];
+    const wanted = Math.max(400, Math.min(options.maxFeatures, 900));
 
-    const keypoints = track(new cv.KeyPointVector());
-    const descriptors = track(new cv.Mat());
+    let keypoints = track(new cv.KeyPointVector());
+    let descriptors = track(new cv.Mat());
     const emptyMask = track(new cv.Mat());
-    orb.detectAndCompute(mat, emptyMask, keypoints, descriptors);
+    let count = 0;
 
-    const count = keypoints.size();
+    for (let attempt = 0; attempt < ladder.length; attempt++) {
+      const threshold = ladder[attempt];
+      if (attempt > 0 && threshold >= ladder[attempt - 1]) continue;
+
+      const orb = track(
+        new cv.ORB(
+          options.maxFeatures,
+          options.scaleFactor,
+          options.levels,
+          31,   // edgeThreshold
+          0,    // firstLevel
+          2,    // WTA_K — 2 keeps descriptors compatible with Hamming distance
+          cv.ORB_HARRIS_SCORE,
+          31,   // patchSize
+          threshold,
+        ),
+      );
+      const kps = track(new cv.KeyPointVector());
+      const desc = track(new cv.Mat());
+      orb.detectAndCompute(mat, emptyMask, kps, desc);
+      const found = kps.size();
+      if (found > count) {
+        keypoints = kps;
+        descriptors = desc;
+        count = found;
+      }
+      if (count >= wanted) break;
+    }
     const kp = new Float32Array(count * 2);
     for (let i = 0; i < count; i++) {
       const k = keypoints.get(i);
