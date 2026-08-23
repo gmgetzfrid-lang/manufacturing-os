@@ -51,6 +51,7 @@ export default function WalkthroughCanvas({
   const [touchNav, setTouchNav] = useState<TouchNavState | null>(null);
   const [coarse, setCoarse] = useState(false);
   const [touchStarted, setTouchStarted] = useState(false);
+  const [contextLost, setContextLost] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -65,6 +66,7 @@ export default function WalkthroughCanvas({
         onModeChange: setMode,
         onPointerLockChange: setLocked,
         onStats: setStats,
+        onContextChange: setContextLost,
         onTouchNav: (state) => {
           setTouchNav(state);
           if (state.stick || state.looking) setTouchStarted(true);
@@ -200,6 +202,19 @@ export default function WalkthroughCanvas({
       {touchNav && touchNav.boost > 1.05 && mode === "first-person" && (
         <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 font-mono text-[11px] text-sky-200 backdrop-blur pointer-events-none">
           Running
+        </div>
+      )}
+
+      {contextLost && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/75 backdrop-blur">
+          <div className="max-w-xs rounded-2xl border border-amber-400/30 bg-black/70 px-5 py-4 text-center">
+            <div className="text-sm font-black text-amber-200">Graphics paused</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-slate-300">
+              The browser released the 3D canvas, which phones do when a tab goes
+              to the background. It comes back on its own — if it does not,
+              reopen this environment.
+            </div>
+          </div>
         </div>
       )}
 

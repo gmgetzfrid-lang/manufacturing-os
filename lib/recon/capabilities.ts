@@ -228,21 +228,37 @@ export function assessReadiness(m: MachineReport, codecs: CodecSupport | null): 
   return { ready: blockers.length === 0, blockers, warnings };
 }
 
+/** Touch-first device, decided from input capability rather than a UA string. */
+export function isHandheld(): boolean {
+  return typeof matchMedia === "function" &&
+    matchMedia("(pointer: coarse)").matches &&
+    matchMedia("(hover: none)").matches;
+}
+
 export function explainBlocker(reason: BlockingReason): { title: string; detail: string } {
+  const handheld = isHandheld();
   switch (reason) {
     case "no-webgpu":
       return {
         title: "WebGPU is required for local 3D reconstruction",
-        detail:
-          "Please use a modern desktop version of Chrome, Edge, or another browser with " +
-          "WebGPU support. On Linux you may need to enable WebGPU in chrome://flags.",
+        detail: handheld
+          // Telling someone on a phone to install desktop Chrome is advice they
+          // cannot act on, so say what is actually true of their device.
+          ? "This phone's browser does not expose WebGPU, and reconstruction runs on the " +
+            "GPU. On iPhone this needs a recent iOS; otherwise transfer the clips to a " +
+            "computer running Chrome or Edge and build the environment there."
+          : "Please use a modern desktop version of Chrome, Edge, or another browser with " +
+            "WebGPU support. On Linux you may need to enable WebGPU in chrome://flags.",
       };
     case "no-webcodecs":
       return {
         title: "This browser cannot decode video locally",
-        detail:
-          "Reconstruction needs the WebCodecs API to turn your clips into frames without " +
-          "uploading them. Chrome and Edge on desktop support it.",
+        detail: handheld
+          ? "Reconstruction needs the WebCodecs API to turn your clips into frames without " +
+            "uploading them, and this phone's browser does not provide it. The clips will " +
+            "work on a computer running Chrome or Edge."
+          : "Reconstruction needs the WebCodecs API to turn your clips into frames without " +
+            "uploading them. Chrome and Edge on desktop support it.",
       };
     case "no-offscreen-canvas":
       return {

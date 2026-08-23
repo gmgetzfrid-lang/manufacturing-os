@@ -8,6 +8,7 @@ import type { QualityPreset } from "./config";
 import type {
   ClipStats, ReconWarning, SceneData, StageId, StageProgress, WorkerResponse,
 } from "./types";
+import { isHandheld } from "./capabilities";
 import { STAGE_LABELS } from "./types";
 
 export interface JobState {
@@ -146,10 +147,7 @@ export class ReconstructionJob {
 
     // matchMedia does not exist inside a worker, so the coarse-pointer check
     // has to travel with the job.
-    const mobile =
-      typeof matchMedia === "function" &&
-      matchMedia("(pointer: coarse)").matches &&
-      matchMedia("(hover: none)").matches;
+    const mobile = isHandheld();
     worker.postMessage({ type: "start", clips, quality, mobile });
   }
 

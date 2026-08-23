@@ -13,6 +13,7 @@
 
 import * as THREE from "three";
 
+import { isHandheld } from "@/lib/recon/capabilities";
 import type { SceneData } from "../recon/types";
 
 export interface ViewerOptions {
@@ -24,6 +25,8 @@ export interface ViewerOptions {
   onStats?: (stats: ViewerStats) => void;
   /** Fires while a finger is steering, so the UI can draw the thumbstick. */
   onTouchNav?: (state: TouchNavState) => void;
+  /** The GPU dropped the canvas, or gave it back. Mobile does this routinely. */
+  onContextChange?: (lost: boolean) => void;
 }
 
 export type ViewMode = "first-person" | "orbit";
@@ -664,7 +667,7 @@ export class WalkthroughViewer {
 
   /** True on touch-first devices, where pointer lock and a keyboard are absent. */
   pointerIsCoarse(): boolean {
-    return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+    return isHandheld();
   }
 
   private orbitDragging = false;
@@ -812,6 +815,22 @@ export class WalkthroughViewer {
     };
   }
 
+  private onContextLost = (e: Event) => {
+    // Claiming the context is recoverable is what makes the browser bother.
+    e.preventDefault();
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.options.onContextChange?.(true);
+  };
+
+  private onContextRestored = () => {
+    this.options.onContextChange?.(false);
+    if (!this.disposed && !this.raf) {
+      this.clock.start();
+      this.animate();
+    }
+  };
+
   private onWheel = (e: WheelEvent) => {
     if (this.mode !== "orbit") return;
     e.preventDefault();
@@ -846,6 +865,12 @@ export class WalkthroughViewer {
     this.renderer.domElement.addEventListener("pointerup", this.onPointerUp);
     this.renderer.domElement.addEventListener("pointercancel", this.onPointerUp);
     this.renderer.domElement.addEventListener("wheel", this.onWheel, { passive: false });
+
+    // iOS Safari drops WebGL contexts when a tab is backgrounded or memory gets
+    // tight, and without preventDefault on the lost event the browser will not
+    // restore one — leaving a permanently black canvas with no error.
+    this.renderer.domElement.addEventListener("webglcontextlost", this.onContextLost, false);
+    this.renderer.domElement.addEventListener("webglcontextrestored", this.onContextRestored, false);
 
     // Without these a drag scrolls the page or triggers pull-to-refresh instead
     // of steering, which is most of what "I couldn't move" feels like.
@@ -989,6 +1014,8 @@ export class WalkthroughViewer {
     this.renderer.domElement.removeEventListener("pointermove", this.onPointerMove);
     this.renderer.domElement.removeEventListener("pointerup", this.onPointerUp);
     this.renderer.domElement.removeEventListener("pointercancel", this.onPointerUp);
+    this.renderer.domElement.removeEventListener("webglcontextlost", this.onContextLost);
+    this.renderer.domElement.removeEventListener("webglcontextrestored", this.onContextRestored);
     this.renderer.domElement.removeEventListener("wheel", this.onWheel);
     this.resizeObserver?.disconnect();
 
