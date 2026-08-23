@@ -31,7 +31,10 @@ export type ViewMode = "first-person" | "orbit";
 export interface ViewerStats {
   fps: number;
   position: [number, number, number];
+  /** Points actually being drawn, after any budget decimation. */
   pointCount: number;
+  /** Points the scene contains, which may be more. */
+  totalPoints: number;
 }
 
 // three.js only injects its output colour-space conversion into its own
@@ -325,6 +328,8 @@ export class WalkthroughViewer {
   private pointSizeMultiplier = 1.0;
   /** Median-ish distance between neighbouring samples, in metres. */
   private pointSpacing = 0.05;
+  /** Points actually uploaded, after any budget decimation. */
+  private drawnPoints = 0;
   private edlStrength = 0.55;
   private walkSpeed: number;
   private showPaths = false;
@@ -379,8 +384,28 @@ export class WalkthroughViewer {
 
   // ── Construction ────────────────────────────────────────────────────────
 
+  /**
+   * How many points this device should try to hold and draw.
+   *
+   * A scene built on a workstation can be opened on a phone, so the budget has
+   * to be the viewer's, not the reconstruction's. Each point costs 12 bytes in
+   * the payload plus 36 in decoded attributes plus the GPU copy, and every one
+   * of them is also a splat to rasterise.
+   */
+  private pointBudget(): number {
+    if (this.pointerIsCoarse()) return 600_000;
+    const memory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    if (typeof memory === "number" && memory <= 4) return 900_000;
+    return 4_000_000;
+  }
+
   private buildPoints(buffer: ArrayBuffer, data: SceneData): THREE.Points {
-    const count = data.pointCount;
+    const total = data.pointCount;
+    const budget = this.pointBudget();
+    // Take every Nth point rather than the first N: a prefix is one end of the
+    // scene, a stride is the whole of it at lower density.
+    const skip = total > budget ? Math.ceil(total / budget) : 1;
+    const count = skip > 1 ? Math.floor(total / skip) : total;
     const bytes = new Uint8Array(buffer);
     const view = new DataView(buffer);
 
@@ -401,7 +426,7 @@ export class WalkthroughViewer {
     const hasNormals = stride >= 12;
 
     for (let i = 0; i < count; i++) {
-      const b = i * stride;
+      const b = i * skip * stride;
       positions[i * 3] = (view.getInt16(b, true) + 32768) * sx + minX;
       positions[i * 3 + 1] = (view.getInt16(b + 2, true) + 32768) * sy + minY;
       positions[i * 3 + 2] = (view.getInt16(b + 4, true) + 32768) * sz + minZ;
@@ -428,6 +453,7 @@ export class WalkthroughViewer {
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geometry.setAttribute("splatNormal", new THREE.BufferAttribute(normals, 3));
     geometry.computeBoundingSphere();
+    this.drawnPoints = count;
 
     this.pointSpacing = measureSpacing(positions, count, data.navigation.bounds);
 
@@ -945,7 +971,8 @@ export class WalkthroughViewer {
       this.options.onStats?.({
         fps: span > 0 ? (this.frameTimes.length - 1) / span : 0,
         position: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
-        pointCount: this.sceneData.pointCount,
+        pointCount: this.drawnPoints,
+        totalPoints: this.sceneData.pointCount,
       });
     }
   };

@@ -285,7 +285,12 @@ export default function WalkthroughCanvas({
         />
         {stats && (
           <div className="pt-0.5 font-mono text-[10px] text-slate-400">
-            {Math.round(stats.fps)} fps · {(scene.pointCount / 1e6).toFixed(2)}M pts
+            {Math.round(stats.fps)} fps · {(stats.pointCount / 1e6).toFixed(2)}M pts
+            {stats.totalPoints > stats.pointCount && (
+              <span title="Thinned to keep this device responsive; the saved scene keeps every point">
+                {" "}of {(stats.totalPoints / 1e6).toFixed(2)}M
+              </span>
+            )}
           </div>
         )}
       </div>
