@@ -30,8 +30,10 @@ database functions underneath all of it.
 
 ## Findings
 
-**124 findings** — 21 CRITICAL, 53 HIGH, 50 MEDIUM — plus **15 gap specs**, of
+**124 findings** — 18 CRITICAL, 44 HIGH, 62 MEDIUM — plus **15 gap specs**, of
 which 12 are buildable.
+
+> **3 findings here carry `Status: REFUTED`** — `DRAFT-4`, `EGRESS-4`, `ROLE-6`. An independent pass disproved them; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue them as work.**
 
 Machine-readable index: [`findings.json`](./findings.json). `findings` and `gaps`
 are separate arrays — both are work, but a gap carries a verdict and a dependency

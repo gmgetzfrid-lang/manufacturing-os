@@ -206,13 +206,23 @@ function parseArea(area) {
         // the body can open the wrong lines. Surface the flag so it knows to
         // read. See audit-reports/META-AUDIT.md, MA-1.
         has_verifier_correction: /^> \*\*Verifier correction\.\*\*/m.test(block),
-        // How this finding's severity and claim were challenged. `adversarial`
-        // = a second agent read the code and tried to refute it during the
-        // original run. `hardening-pass` = re-verified against source in the
-        // corpus hardening pass. `author` = checked only by whoever wrote it.
-        // An agent weighting by confidence should read this, not just severity
-        // (META-AUDIT.md MA-2).
-        verified_by: /^- \*\*Re-verified:\*\*/m.test(block) ? "hardening-pass" : reportMode,
+        // How this finding's severity and claim were challenged, strongest
+        // grade first. `adversarial-independent` = a separate agent, holding
+        // only the claim and its citations, was told to REFUTE it and failed.
+        // `adversarial` = a second agent contested it during the original run.
+        // `hardening-pass` = re-read against source by the authoring session —
+        // equal in rigour, weaker in independence. `author` = checked only by
+        // whoever wrote it. An agent weighting by confidence should read this,
+        // not just severity (META-AUDIT.md MA-2).
+        verified_by: /^- \*\*Independently verified:\*\*/m.test(block)
+          ? "adversarial-independent"
+          : /^- \*\*Re-verified:\*\*/m.test(block)
+            ? "hardening-pass"
+            : reportMode,
+        // A refuted finding stays in the corpus with its reason (DEC-41) so the
+        // record shows what was rejected. Nothing should queue it as work — this
+        // flag is the cheap check, without parsing `status` strings.
+        refuted: field(block, "Status") === "REFUTED",
         summary: summary(block),
         area,
         report: relative(REPO, path),
@@ -231,6 +241,8 @@ function parseArea(area) {
 // Dot-directories are support, not audit areas — `.evidence/` holds the
 // regeneration inputs. Without this filter they get an empty findings.json.
 const ALL = [];
+// Per-area severity tallies, checked against what each area README claims.
+const README_COUNTS = [];
 
 const areas = readdirSync(ROOT)
   .filter((d) => !d.startsWith(".") && statSync(join(ROOT, d)).isDirectory())
@@ -256,7 +268,7 @@ for (const area of areas) {
       ? [...new Set(findings.map((f) => f.report))].sort()
       : [],
     totals: { findings: findings.length, gaps: gaps.length, by_severity: bySeverity, by_status: byStatus },
-    status_vocabulary: ["OPEN", "IN_PROGRESS", "RESOLVED", "WONTFIX", "INVALID"],
+    status_vocabulary: ["OPEN", "IN_PROGRESS", "RESOLVED", "WONTFIX", "INVALID", "REFUTED"],
     findings,
     gaps_note:
       "Gaps are build specs for capabilities that do not exist. They are work, " +
@@ -280,6 +292,7 @@ for (const area of areas) {
 
   ALL.push(...findings.map((f) => ({ ...f, kind: "finding" })));
   ALL.push(...gaps.map((g) => ({ ...g, area, kind: "gap" })));
+  README_COUNTS.push([area, bySeverity]);
 }
 
 // ── Corpus integrity gate ─────────────────────────────────────────────
@@ -337,9 +350,49 @@ for (const f of ALL) {
   }
 }
 
+// 4. An area README may not claim a severity count the reports do not support.
+//    A verification pass that lowers severities silently invalidates every
+//    hand-written tally in the corpus, and a stale headline count is exactly the
+//    kind of thing a reader trusts without checking. Two forms are used in this
+//    corpus — prose ("21 CRITICAL, 53 HIGH, 50 MEDIUM") and a Totals table
+//    ("| CRITICAL | 29 |"). Both are checked.
+for (const [area, actual] of README_COUNTS) {
+  const readmePath = join(ROOT, area, "README.md");
+  let text;
+  try {
+    text = readFileSync(readmePath, "utf8");
+  } catch {
+    continue; // an area without a README is caught by its own absence, not here
+  }
+  const claims = [];
+  // Headline run only — "20 CRITICAL, 59 HIGH, 68 MEDIUM". Deliberately NOT a
+  // bare "N CRITICAL" anywhere in the prose: READMEs legitimately count subsets
+  // ("four of the nine CRITICALs share one fix"), and flagging those would make
+  // the gate cry wolf until someone switches it off.
+  for (const m of text.matchAll(
+    /(\d+) CRITICAL, (\d+) HIGH, (\d+) MEDIUM(?:, (\d+) LOW)?/g,
+  )) {
+    claims.push(["CRITICAL", Number(m[1]), `headline "${m[0]}"`]);
+    claims.push(["HIGH", Number(m[2]), `headline "${m[0]}"`]);
+    claims.push(["MEDIUM", Number(m[3]), `headline "${m[0]}"`]);
+    if (m[4] !== undefined) claims.push(["LOW", Number(m[4]), `headline "${m[0]}"`]);
+  }
+  for (const m of text.matchAll(/^\|\s*`?(CRITICAL|HIGH|MEDIUM|LOW)`?\s*\|\s*(\d+)\s*\|/gm)) {
+    claims.push([m[1], Number(m[2]), `table row "${m[1]}"`]);
+  }
+  for (const [sev, claimed, where] of claims) {
+    const real = actual[sev] ?? 0;
+    if (claimed !== real) {
+      problems.push(
+        `${area}/README.md: claims ${claimed} ${sev} but the reports carry ${real} — ${where}`,
+      );
+    }
+  }
+}
+
 if (problems.length) {
   console.error(`\n✗ corpus integrity: ${problems.length} problem(s)\n`);
   for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
 }
-console.log(`\n✓ corpus integrity: ${ALL.length} entries — every in-repo citation resolves, no prefix collisions, no dangling references.`);
+console.log(`\n✓ corpus integrity: ${ALL.length} entries — every in-repo citation resolves, no prefix collisions, no dangling references, every README severity count matches its reports.`);

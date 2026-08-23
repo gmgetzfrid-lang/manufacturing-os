@@ -43,6 +43,7 @@ They compound: `/d/[number]` and the orchestrator hand out document UUIDs;
   - `lib/orchestrator/tools.ts:84-120` — where the UUID comes from (`EGRESS-4`)
 - **Related:** `EGRESS-2`, `EGRESS-4`, `SURF-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `document_shares_org_member FOR ALL` predicates both `USING` and `WITH CHECK` on nothing but active membership — no role, no document ACL.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed CRITICAL, and worse than described: neither route validates that `share.document_id` belongs to `share.org_id`, so the WITH CHECK (which only pins org_id to a membership the attacker legitimately has) does not stop a member from naming a document UUID from a DIFFERENT tenant. A repo-wide grep for document_shares across all migrations finds no later hardening — only bump_share_access (20260818_followups_rls.sql:95-101) and no trigger.
 
 **Mechanism.** Both `USING` and `WITH CHECK` constrain **only `org_id`**:
 
@@ -106,6 +107,7 @@ org. **Trace that before assuming it is contained.**
   - `app/d/[number]/route.ts:1-7` — the file comment: *"The target page enforces auth + RLS as always — this route only translates a number into a location; **it reveals nothing**."*
 - **Related:** `EGRESS-1`, `EGRESS-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `/d/[number]` runs `supabaseAdmin` (service role) against `documents` with **no org filter and no session at all**, then redirects on a match. Its own header comment — *"it reveals nothing"* — is false: a hit discloses that the number exists and leaks `library_id`. Same false-comment shape as `intelligence/IEDGE-1`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the route's own comment is the refutation of the route. There is no middleware.ts anywhere in the repo and /app/d sits outside the (protected) route group, so nothing gates it. The redirect target itself is the disclosure (existence, numbering scheme, recency ordering, library id, document id) regardless of what the destination page later enforces, and those UUIDs are exactly the input EGRESS-1 needs.
 
 **Mechanism.** The comment is half right and half wrong. The *target page* does
 enforce auth — but the **redirect itself is the disclosure**. The route runs with
@@ -163,6 +165,7 @@ afterwards preserves that.
   - the ACL-aware path it does **not** use: `lib/knowledgeAccess.ts:1-77`
 - **Related:** `EGRESS-1`, `EGRESS-2`, `ADD-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `lib/orchestrator/tools.ts` imports `supabaseAdmin` at `:21` and uses it for every read (`:93, :133, :144, :149, :176`). Service role bypasses RLS, so no tool inherits the caller's slice.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed CRITICAL on every cited path. search_documents has the same shape — it calls `supabaseAdmin.rpc("graph_ask", ...)` (:133-135) and hand-filters only ai_excluded mirrors (:142-156), never the ACL. The one handler that does re-check something (notify_personnel, :493-496) checks recipient membership, not the caller's read rights on the document.
 
 **Mechanism.** The file's own contract says *"NOTHING WIDENS ACCESS. Every
 handler is org-scoped and re-checks the caller."* In practice the only re-check
@@ -220,7 +223,7 @@ inventing a second answer.
 ## EGRESS-4 · `knowledge_chunks` is readable by every member, bypassing the ACL-aware ask pipeline
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Blast radius:** confidentiality
 - **Locations:**
@@ -230,6 +233,7 @@ inventing a second answer.
   - the seam it defeats: `lib/knowledgeAccess.ts:1-16` — *"retrieval excludes chunks of documents the ASKER can't read"*
 - **Related:** `EGRESS-3`
 - **Re-verified:** hardening pass — **SURVIVES**, and the migration's own justification is where it breaks. `knowledge_chunks_select` is `USING (active org member)` (`20260911_knowledge_ai.sql:136-140`), reasoned as *"direct member SELECT is allowed (it's the same content as the PDF)"* (`:134-135`) — which holds only if the member can read the PDF, and the ACL-aware ask pipeline exists precisely because they may not.
+- **Independently verified:** ⛔ **REFUTED** by an independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). The cited policy at 20260911:136-140 is superseded; source-linked (mirrored controlled-document) chunks — exactly the set /api/knowledge/ask filters per-asker at app/api/knowledge/ask/route.ts:168-180 (`.not("source_document_id","is",null)` → readableControlledDocIds) — are already closed to direct PostgREST reads, so the headline scenario cannot happen. Residual (a different, lesser issue): knowledge_questions_select (20260911:146-149) is still any-active-member with no later override, and 20260806:57-61 makes question+answer text org-wide full-text searchable, so an answer grounded in a restricted document is readable by every member — worth a separate MEDIUM finding, not this one.
 
 **Mechanism.** The stated rationale holds for a standalone knowledge document.
 **It does not hold for a source-linked one** — a knowledge document that mirrors
@@ -264,6 +268,7 @@ unchanged.
   - no reader: a search for `access_requests` across `app/`, `lib/`, `components/` returns only this route plus the export/restore/schema plumbing
 - **Related:** `SURF-9`
 - **Re-verified:** hardening pass — **SURVIVES**, and it is cross-tenant. `access_requests_admin_select` is `USING (EXISTS (SELECT 1 FROM org_members WHERE uid = auth.uid() AND status = 'active' AND role = 'Admin'))` — **the subquery has no correlation to `access_requests.org_id`**, so any Admin of any workspace reads every workspace's requests. Paired with `FOR INSERT WITH CHECK (true)` (`:27`), the table is open to write and org-blind on read.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both halves hold: the SELECT policy is un-scoped (cross-tenant read of display_name/email/org_name), and nothing in the app ever reads the table, so a submitted request reaches no admin. Two caveats worth recording: the migration header itself says it is a reconstruction and "the live database remains the source of truth", so production's policy may differ; and the route at lines 34/47 filters and inserts `org_id`, a column this CREATE TABLE does not define — on a fresh rebuild the request-access endpoint would 42703/PGRST204 outright.
 
 **Mechanism.**
 
@@ -316,6 +321,7 @@ unbounded direct anonymous inserts. `/api/auth/signup` is rate-limited via
   - **no RESTRICTIVE UPDATE or INSERT policy exists**
 - **Related:** `OWN-5`, `OWN-17`
 - **Re-verified:** hardening pass — **SURVIVES**. `document_versions_org_access … FOR ALL` (`schema.sql:1072`) with no RESTRICTIVE companion for INSERT or UPDATE.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. A repo-wide grep for RESTRICTIVE FOR UPDATE/INSERT returns 12 hits, none on document_versions — the closest (20260901_db_hard_enforcement.sql:152-174) guards `documents`, not its versions. Any active org member can therefore INSERT or UPDATE any version row in their org via PostgREST, including revision_label, file_url and released_at. MEDIUM is right: it is a defence-in-depth gap behind the app paths, not itself an ACL bypass (the RESTRICTIVE SELECT still hides unreadable documents).
 
 **Mechanism.** The confidentiality overlay (SELECT) and the destruction overlay
 (DELETE) were both added. The integrity overlay was not. Any active member can

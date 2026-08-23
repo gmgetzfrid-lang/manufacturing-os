@@ -164,7 +164,7 @@ No dependencies. Every one is small, and users notice all of them.
 
 | Item | Why it is free |
 |---|---|
-| **`UI-5`** | A blocked submit currently does *nothing*. Name the missing field, move focus. First contact, least experienced user, no recovery path today. |
+| ~~**`UI-5`**~~ | **REFUTED — skip.** Browser constraint validation already fires before `onSubmit`, so a blank required field gets a native bubble *and* focus, which was this item's whole acceptance criterion. Required fields already carry red asterisks. The only residue worth doing: the submit button is disabled on `isSubmitting` alone. |
 | **`UI-2`** | Give the workflow map a visible affordance and put it on the request form. The content already exists and is good. |
 | **`UI-1`** / `GAP-108` | Render `attentionLabel` plus the current holder on the ticket. The function exists and is tested; it renders only in the bell today. |
 | **`UI-7`** | Stop showing raw status enums as the primary label. **Do not rename the enum values** — display layer only. |
@@ -206,7 +206,7 @@ Small, and they unblock everything in Phase 3.
 1. **`GAP-105`** — put a `library_id` on the ticket. Effort `S`, and it is the
    prerequisite for both `GAP-103` and `GAP-104`. Derive from the source document
    where one exists; defer to triage otherwise. **Do not make it required at
-   intake** (`UI-5`, `FRIC-3`).
+   intake** (`FRIC-3`; `UI-5` used to be cited here too, but it is refuted).
 2. **`WF-15`** — validate `request_type` server-side, if not already done in
    Phase 1.
 3. **`DCW-5`** — a requester who cannot read a library may still need to request
@@ -268,7 +268,9 @@ Only after Phase 3. In this order.
 
 `FRIC-2` (split "is this what you asked for?" from "is this correct?"),
 `FRIC-4` (stop making requesters pick engineers — the roster derives them),
-`FRIC-5` (the second drafter interrupt), `FRIC-6` (closure with no fallback),
+`FRIC-5` (the second drafter interrupt),
+~~`FRIC-6` (closure with no fallback)~~ — **refuted; a fallback exists, and the
+missing piece is the same clock `FRIC-1` already claims, so do it there** —
 `FRIC-3` / `FRIC-8` / `DCW-7` (the field contract and `unit`), `UI-4`, and the
 remaining `LEAK-*` and `DCW-*` in severity order.
 
@@ -300,7 +302,7 @@ reproduces is `INVALID`, and that is a real outcome** (`DEC-28`).
 | Apply silence-is-consent to the highest work class | A new tie-in auto-advancing because an engineer was on leave is the PSM failure the system exists to prevent. `GAP-109`. |
 | Add a `QAQC` role | Nineteen roles exist, six gate nothing, and role identity is unversioned customer JSON. Use a capability. `DEC-3`, `DEC-5`. |
 | Add a `PENDING_DOC_CTRL` status | Same serial cost. `GAP-104` puts release review on the roster. |
-| Put work class on the intake form as required | The requester often cannot answer it, and a required field they cannot answer is `UI-5` again. Triage sets it. |
+| Put work class on the intake form as required | The requester often cannot answer it, and a required field they cannot answer just moves the dead end upstream. Triage sets it. |
 | Rename the `TicketStatus` enum values | They ripple into the state machine, the archive and the shed. Fix the display layer. `UI-7`. |
 | Auto-close a stalled ticket | A stalled review is information, not a decision. `GAP-106`. |
 | Build a drawing-type taxonomy | The library is the better routing proxy and already inherits. `DCW-3`. |

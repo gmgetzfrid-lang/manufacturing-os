@@ -159,8 +159,9 @@ more than silence.
    silent data loss if shipped alone. The order is the safety.
 3. **Claim the report file** (`DEC-32`) — one agent owns one file end to end.
    Commit the claim before starting.
-4. Work findings in severity order — `CRITICAL` → `HIGH` → `MEDIUM` — **unless
-   the sequencing file says otherwise, in which case it wins.**
+4. Work findings in severity order — `CRITICAL` → `HIGH` → `MEDIUM` → `LOW` —
+   **unless the sequencing file says otherwise, in which case it wins.** Skip
+   anything with `Status: REFUTED`.
 5. One report file per session. Never two areas at once.
 
 ### Every finding carries
@@ -168,8 +169,8 @@ more than silence.
 | Field | Meaning |
 |---|---|
 | **ID** | Stable handle, e.g. `SEC-3`. Never renumber. Cite it in commits and PRs. |
-| **Severity** | `CRITICAL` / `HIGH` / `MEDIUM` |
-| **Status** | `OPEN` / `IN_PROGRESS` / `RESOLVED` / `WONTFIX` / `INVALID` / `BLOCKED` |
+| **Severity** | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` |
+| **Status** | `OPEN` / `IN_PROGRESS` / `RESOLVED` / `WONTFIX` / `INVALID` / `BLOCKED` / `REFUTED` |
 | **Verification** | `CONFIRMED` (code path traced) or `SUSPECTED` (mechanism real, consequence unobserved). This is the *finder's* assessment — see `verified_by` for who challenged it. |
 | **`verified_by`** | **How hard the claim was challenged, and by whom.** Index-only field; see the table below. |
 | **Locations** | `path:line` anchors. **Line numbers drift** — match on the quoted code, not the number. |
@@ -187,26 +188,41 @@ who, if anyone, tried to prove them wrong.
 
 | Value | What happened | How to treat it |
 |---|---|---|
-| `adversarial` | A second agent read the cited code specifically to refute the claim during the original run. Refuted findings were dropped; survivors may carry a `Verifier correction` that overrides the finder's severity or citations. | Strongest grade in the corpus. Still reproduce before fixing (`DEC-29`). |
-| `hardening-pass` | Re-read against source in the corpus hardening pass, with intent to refute. Carries a `Re-verified` line saying exactly what was checked. | Equivalent in rigour to `adversarial`, but by one reader rather than a separate agent. |
+| `adversarial-independent` | A **separate agent**, given only the claim and its citations and told to refute it, opened the code and failed to. Carries an `Independently verified` line saying what was checked. | Strongest grade in the corpus. Still reproduce before fixing (`DEC-29`). |
+| `adversarial` | A second agent read the cited code specifically to refute the claim during the original run. Refuted findings were dropped; survivors may carry a `Verifier correction` that overrides the finder's severity or citations. | Equally independent, but the refutations were dropped rather than recorded. Reproduce before fixing. |
+| `hardening-pass` | Re-read against source with intent to refute, but by the authoring session rather than a separate party. **No finding carries this grade any more** — all 364 were subsequently put through the independent pass. | Equal in rigour, weaker in independence. |
 | `author` | Checked only by whoever wrote it, with no independent challenge. **No finding carries this grade any more** — the value survives so that a newly written finding is labelled honestly until someone challenges it. | Reproduce before acting, and read the severity as the author's own estimate. |
 | `unverified` | From a completeness critic that ran *after* the verification stage. **No finding carries this any more** either. | Treat as `SUSPECTED` regardless of the stated `Verification`. |
 
-**Every finding in the corpus has been challenged** — 1,098 of 1,098, split 734
-`adversarial` and 364 `hardening-pass`. Nothing is `author` or `unverified`.
+**Every finding in the corpus has been challenged by a party that did not write
+it** — 1,098 of 1,098, split 734 `adversarial` and 364
+`adversarial-independent`. Nothing is `author`, `unverified`, or
+`hardening-pass`.
 
-The two grades are not identical and the difference is worth knowing.
-`adversarial` means a **separate agent** tried to refute the claim during the
-original run, and the refutation is preserved. `hardening-pass` means the cited
-code was re-read with intent to refute and the result recorded per finding —
-equal in rigour, but by one reader rather than an independent second party.
+**What the independent pass changed.** The 364 findings that had only been
+re-read by their authoring session were re-issued to separate agents — claim and
+citations only, no prior verification notes, instructions to refute. Of those:
 
-**The floor of that is stated on the findings themselves.** Every entry in
-`identity-and-session` carries an explicit independence caveat: that area was
-written and verified in the same session, which makes it a re-read rather than a
-challenge. Treat it as `author`-grade until someone else reads it.
+| | |
+|---|---|
+| Survived as written | **265** |
+| Survived with a correction | **89** |
+| **Refuted** | **10** |
+| Severity lowered | **79** |
+| Severity raised | **0** |
 
-**When you sort a queue, sort by severity *and* `verified_by`.**
+Read the second half of that table before you trust a severity. Seventy-nine
+downgrades and no upgrades is not noise — it says the authoring pass ran
+consistently hot, and it is the reason `verified_by` exists as a field.
+
+**Refuted findings are still in the corpus.** They carry `Status: REFUTED` and
+the reason that killed them, because a corpus that deletes its mistakes cannot
+show that it caught any (`DEC-41`). `findings.json` carries `refuted: true` on
+each. **Do not queue them as work.** They are: `IDENT-5`, `FRIC-6`, `UI-5`,
+`IEDGE-9`, `NEDGE-1`, `BID-5`, `UX-2`, `DRAFT-4`, `EGRESS-4`, `ROLE-6`.
+
+**When you sort a queue, sort by severity *and* `verified_by`, and drop
+`refuted`.**
 
 ### Before you change one line
 

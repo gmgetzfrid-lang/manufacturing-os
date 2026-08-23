@@ -1541,9 +1541,11 @@ already-solved problem, not a change to this rule.
 ### DEC-41 · Verification grade is a field, not a caveat
 
 **Decision.** Every finding declares how hard it was challenged, in
-`findings.json` as `verified_by`, with four values: `adversarial`,
-`hardening-pass`, `author`, `unverified`. Prose caveats about verification are
-not an acceptable substitute, and a report-level banner is not either.
+`findings.json` as `verified_by`, with five values in descending strength:
+`adversarial-independent`, `adversarial`, `hardening-pass`, `author`,
+`unverified`. Prose caveats about verification are not an acceptable substitute,
+and a report-level banner is not either. A finding that did not survive its
+challenge carries `Status: REFUTED` and `refuted: true`.
 
 **Why.** The corpus is consumed by agents that read the index rather than the
 reports — that is what the index is for, and `audit-reports/README.md` says so.
@@ -1563,9 +1565,13 @@ published `Verification: CONFIRMED` into the index with nothing to mark them.
 - Refuted findings are marked refuted in place with the reason. They are never
   deleted. The record of what was rejected is the evidence that anything was —
   and its absence is what made `MA-2` unanswerable until the pass was re-run.
-- A verifier who is not independent says so on the finding. Two entries do
-  (`identity-and-session/SESS-1`, `IDENT-1`), because the same session wrote and
-  checked them.
+- A verifier who is not independent says so on the finding.
+- **A grade is not permanent, and a non-independent one is a queue item.**
+  `hardening-pass` existed because a session re-read its own findings; the
+  correct response was to run the independent pass, not to document the gap
+  better. It was run, and it refuted 10 findings and lowered 79 severities that
+  the same-session read had cleared. **Treat any non-independent grade in this
+  index as work not yet done.**
 
 **Reversal.** If verification is ever restructured to emit corrected fields as
 data rather than prose, `verified_by` stays and gains values; it does not go away.

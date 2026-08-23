@@ -76,7 +76,9 @@ production and fixed the screen in front of them. It was never generalised.
 
 ## Findings
 
-**14 findings** — 2 CRITICAL, 6 HIGH, 6 MEDIUM.
+**14 findings** — 1 CRITICAL, 6 HIGH, 7 MEDIUM.
+
+> **One finding here carries `Status: REFUTED`** — `IDENT-5`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
 | # | Report | n | Focus |
 |---|---|---|---|

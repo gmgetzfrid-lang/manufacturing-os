@@ -26,8 +26,9 @@ arbitrarily.
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:152-165`, `components/providers/RoleContext.tsx:189-215`
 - **Re-verified:** hardening pass — **SURVIVES**. `.eq("uid", userId).eq("status", "active").limit(1).maybeSingle()` with **no `.order()`** (`:156-159`), and the result is persisted to `users.default_org_id` at `:215`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: LIMIT 1 with no ORDER BY over a multi-row membership set is an arbitrary pick, and Postgres row order is not stable across updates, so the same account can resolve to a different org on different sign-ins. The pick is then written through to both localStorage and users.default_org_id, making the arbitrary choice sticky.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** When the candidate workspace yields no active membership, the
 resolver falls back to "their first active membership anywhere":
@@ -109,8 +110,9 @@ causes, which is why it will not reproduce reliably against either fix alone.
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-86`, `components/providers/RoleContext.tsx:155-165`
 - **Re-verified:** hardening pass — **SURVIVES**. `const { data: membership } = await supabase…` (`app/page.tsx:72`) — `error` is not destructured, so a failed lookup renders the hard-stop screen that tells an Admin no workspace ever admitted them.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. The finding is real but its stated mechanism is wrong: line 74 selects only `org_id` and line 80 tests only truthiness, so this query makes no org choice at all and the missing ORDER BY is immaterial here — the two decisions cannot "disagree" about which org. The actual defect at these exact lines is the discarded error (the same pattern as IDENT-2): one transient failure yields `membership === null`, which routes a full Admin to the "no workspace" screen. Severity stays MEDIUM; only the causal story needs correcting.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** `routeAuthedUser` runs its own copy of the same query — same
 table, same filters, same `limit(1)`, same absent ordering:
@@ -164,8 +166,9 @@ page did not.
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/create-user/route.ts:127-135`, `app/(protected)/admin/users/page.tsx:133-137`, `lib/roleCapabilities.ts:1-15`
 - **Re-verified:** hardening pass — **SURVIVES**. `.update({ role, roles: [role], … })` (`create-user:130`) is an assignment, against `.update({ roles: cleaned, role: headline })` (`admin/users/page.tsx:137`), which is the correct shape in the same table.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the route is reachable from exactly the described UI: app/(protected)/admin/users/page.tsx:189-214 (`handleCreateMember`) POSTs to /api/admin/create-user with a single `formData.role`, and the route's own comment at 109-110 advertises the re-add as "Idempotent". No confirmation prompt and no warning that an existing multi-role member is about to be collapsed to one role; the Admin-only guards at 118-125 only protect existing Admins, not the additive collection.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** The route documents that "Add member" doubles as a role change on
 the re-add path (`:118-122`), and implements it as:
@@ -237,8 +240,9 @@ the audit log captured of a "re-add".
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:152-165`, `components/providers/RoleContext.tsx:189-195`, `components/providers/RoleContext.tsx:215`
 - **Re-verified:** hardening pass — **SURVIVES**. `_setActiveOrgId(orgId)`, the `localStorage` write and `persistOrgId` (`:190-195, :215`) emit nothing observable — no toast, no audit row, and no comparison against the candidate the resolution started from.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: a self-healed relocation is byte-for-byte indistinguishable from a deliberate workspace switch in both localStorage and users.default_org_id, and leaves no audit row. Slight overstatement in "nothing tells the user": Sidebar.tsx:376-389 does passively render the current workspace name (or its logo) and Sidebar.tsx:445 renders `activeRole`, so an attentive user could notice — but nothing announces the change, which is the substance of the claim.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** The self-heal changes `activeOrgId` (`:190`), rewrites
 `localStorage` (`:193`) and upserts `users.default_org_id` (`:215`) without

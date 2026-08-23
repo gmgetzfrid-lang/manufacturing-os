@@ -26,6 +26,7 @@ notifications.
   - `supabase/schema.sql:1013` — RLS is on
 - **Related:** `OWN-12`, `SURF-2`, `SURF-14`
 - **Re-verified:** hardening pass — **SURVIVES** — and the mechanism is subtler than the title. `20260817…:44` **DROPs the `FOR ALL` `org_members_write`** and replaces it with `FOR INSERT` only; `:32` adds `FOR UPDATE`. **No `FOR DELETE` policy exists on `org_members` anywhere.** The UI deletes — `admin/users/page.tsx:178`, `.from('org_members').delete().eq('id', member.id)` — and RLS filters rather than errors, so the call affects zero rows and returns no error. Removal silently does nothing.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed exactly as claimed. RLS is enabled on org_members with no DELETE policy, so PostgREST returns success with zero rows affected and the client optimistically drops the row from the table — a silent no-op. I searched for an alternate revocation path and found none: there is no admin API route for member removal (app/api/admin/ has no such route) and the users page renders `m.status` read-only (line 323) with no suspend/deactivate control, so the surviving UPDATE policy is not reachable as a workaround either. Note the last-admin BEFORE DELETE trigger (20260831:74-76) is likewise dead code.
 
 **Mechanism.** `schema.sql` shipped a permissive `FOR ALL` policy that covered
 DELETE. Migration `20260817` drops it and recreates it as `FOR INSERT`, adding a
@@ -82,6 +83,7 @@ mutating local state — the silent-success shape is the same one described in
   - contrast `app/api/storage/download-url/route.ts:29` (`assertSafeStorageKey`) and `:47-70` (the ACL check)
 - **Related:** `SURF-3`, `EGRESS-1`
 - **Re-verified:** hardening pass — **SURVIVES**, with one clarification: the route **does** close cross-tenant deletion — `:29-40` requires active membership of the org named in the `orgs/<uuid>/` key prefix. What survives is the finding as titled: **within** the org, any active member of any role, including Viewer, may permanently delete any object, and the route writes no audit row.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed as stated; I read the entire 44-line route and found no role gate, no legal-hold check, and no audit_logs write. Two aggravating details the finding did not note: the route omits the `assertSafeStorageKey(path)` traversal check its sibling app/api/storage/download-url/route.ts:29 performs, and a non-org-prefixed key skips the membership check entirely (`if (orgMatch)`), leaving those objects deletable by any authenticated user. CRITICAL is warranted.
 
 **Mechanism.** The entire authorization is "is the caller an active member of the
 org named in the key prefix":
@@ -131,6 +133,7 @@ round-trip.
   - `supabase/schema.sql:1068` — `documents` UPDATE is permitted to every active member
 - **Related:** `OWN-2`, `SURF-2`
 - **Re-verified:** **SURVIVES — with the headline narrowed.** The body is accurate and is what matters: `lib/retention.ts` contains no role, controller or capability check; the gate is client-only (`RetentionSection.tsx` fed by `InspectorPanel.tsx:283`); the access-change guard covers only `visibility|acl|acl_index`; and `documents` UPDATE is open to every active member. **But "zero server-side enforcement" overstates it.** `20260826_legal_hold_delete_guard.sql` installs `BEFORE DELETE` triggers on both `documents` and `document_versions` that `RAISE EXCEPTION` on a held record. Deletion of held records *is* enforced at the database; placing, releasing and disposing are not. Severity held at HIGH — the authority gap is the substance.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The exploit is real and correctly described: a member can PATCH legal_hold=false via PostgREST, and logEvent lives only on the bypassed app path so nothing records the release. One correction to the title's wording — 'zero server-side enforcement' is too absolute: supabase/migrations/20260826_legal_hold_delete_guard.sql:17-33 does install BEFORE DELETE triggers on documents and document_versions that RAISE on `IF OLD.legal_hold`. The accurate framing (which the finding's own summary uses) is that the guard exists but is trivially disarmed because the flag it reads is unprotected. Severity HIGH stands.
 
 **Mechanism.** `releaseLegalHold` is a plain browser-client write:
 
@@ -175,6 +178,7 @@ and asserts refusal.
   - the UI gate: `components/documents/CheckoutStatusCell.tsx:238`
 - **Related:** `OWN-14`, `DB-1`
 - **Re-verified:** hardening pass — **SURVIVES**. Two sequential unchecked writes: `checkout_sessions` (`checkoutEpisodes.ts:616-624`) then `documents` clearing `checked_out_by`, `current_lock_id` and `active_collaborators` (`:630-638`). A guard on the first is defeated by the second reaching the lock columns directly.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. I checked every reference to checked_out_by in supabase/ — the only ones are read-side publish guards (20260713:61, 20260823:178, 20260828:94); nothing gates writing it, and documents_org_access is FOR ALL for any member. So the lock clears, the checkout_sessions row stays 'active' (split-brain), and the publish guard at 20260828:94 reads the now-NULL v_doc.checked_out_by and passes. One nuance on the narrative: the UI button is gated by `const canAdmin = userRole === 'Admin' || userRole === 'DocCtrl'` (CheckoutStatusCell.tsx:238, used at :337), so a Drafter reaches this only via the console — which is precisely the case the DB trigger was added to stop, and which it fails to stop.
 
 **Mechanism.** `enforce_checkout_release_guard` raises when a non-authorized user
 closes someone else's session — but the caller never inspects the result, and
@@ -227,6 +231,7 @@ itself is currently non-functional for a different reason (`DB-1`).
   - `supabase/migrations/20260605_rls_policies_new_tables.sql:121-124` — the queue INSERT policy
 - **Related:** `WF-19`
 - **Re-verified:** hardening pass — **SURVIVES**, both halves, and it is the sharpest surface in this area. `authorized = !!user` (`send-queued/route.ts:56`) — **any authenticated user of any workspace passes** — and the claim query selects `email_notifications` by status alone with **no org predicate** (`:106-112`). One member can drain every tenant's mail queue.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both halves confirmed. `authorized = !!user` is weaker even than the finding says: it does not require membership in any org, so any signed-up account drains every tenant. The blast radius is amplified by lines 88-92, which resurrect `status = 'suppressed'` rows from the last 7 days back to 'queued' before draining — an attacker-triggerable re-send of a suppressed backlog. The insert half is a spoofing vector: arbitrary recipient and HTML sent from RESEND_FROM_EMAIL by any Viewer. HIGH is appropriate.
 
 **Mechanism.**
 
@@ -270,6 +275,7 @@ two fixes so the post-action drain does not break.
 - **Verification:** CONFIRMED (in code) / SUSPECTED (the live database may carry ad-hoc drift)
 - **Blast radius:** availability / access-control
 - **Re-verified:** hardening pass — **SURVIVES**, and both columns are verifiable in one look. `:44` reads `org_configurations.value` — the table's columns are `id, org_id, key, data, updated_at` (`schema.sql:52-59`) — and `:143` reads `tm.user_id` on a table keyed `team_id, uid, org_id, added_at, added_by` (`20260707_teams.sql:19-26`). Same roots as `DB-1`/`WF-1` and `DB-2`; one migration fixes all four.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both columns are confirmed absent by repo-wide search: the only `ALTER TABLE org_configurations` in the tree is `ENABLE ROW LEVEL SECURITY` (schema.sql:1014), no migration adds `value`, and the only ALTER on team_members is likewise RLS-only. Every other reader of the table uses `data` (lib/orgBranding.ts:26, lib/ticketRouting.ts:50, 20260701_perf_indexes.sql:21). Line 114's `OLD.user_id` is fine (checkout_sessions.user_id exists, schema.sql:835), so exactly two bad columns as claimed; plpgsql bodies are not column-checked at CREATE time, so the migration applies cleanly and fails at runtime — breaking document_holds insert/update, the force-release guard, and every non-controller document UPDATE whose acl_index is non-null.
 
 > **This is the same defect as [`DB-1`](./11-database-authority.md) and
 > [`DB-2`](./11-database-authority.md), recorded there in full.** It appears here
@@ -288,6 +294,7 @@ See `DB-1` (`org_configurations.value`) and `DB-2` (`team_members.user_id`).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / confidentiality
 - **Re-verified:** hardening pass — **SURVIVES**. Cross-area duplicate of `intelligence/IEDGE-2` and `EGRESS-3` — `lib/orchestrator/tools.ts` uses `supabaseAdmin` throughout, and the file's own comment concedes it.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Claim holds. 20260929_mention_engine.sql:155-158 gives drawing_audit_logs RLS with a SELECT-only member policy and no INSERT/UPDATE policy, so the service-role orchestrator really is the sole writer, and the only gate on that write is `proposal()` — a human confirmation available to any role including Viewer. check_permissions' own comment is falsified by the client it uses.
 
 > **Recorded in full as [`EGRESS-4`](./10-content-egress.md).** Cross-referenced
 > here because `log_audit_completion` writes to `drawing_audit_logs` with no role
@@ -310,6 +317,7 @@ See `DB-1` (`org_configurations.value`) and `DB-2` (`team_members.user_id`).
   - the invariants it ignores: `supabase/migrations/20260720_e_signatures.sql:47-61` (no UPDATE, no DELETE, self-insert only) and `supabase/migrations/20260813:84-90` (`audit_logs` append-only)
 - **Related:** `SURF-13`, `WF-11`
 - **Re-verified:** hardening pass — **SURVIVES**. Cross-area duplicate of `document-control/XEDGE-3` — `IMPORTABLE` spans all 104 `ORG_SCOPED_TABLES` including `e_signatures` (`exportTables.ts:53`), and `apply-table` writes no audit row.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Every element checks out. The route writes with `actor.admin` (service role), which bypasses those RLS invariants entirely; app/api/admin/restore/begin/route.ts:63-70 likewise inserts org_members rows with the service-role client and writes no audit row. The only mitigation is that the caller must be Admin (RESTORE_ROLES = ["Admin"], :21) — which is exactly the actor the immutability rails were written to constrain.
 
 **Mechanism.** `IMPORTABLE` is the union of the org-scoped and user-scoped table
 sets, and rows are written with the **service-role client, which bypasses RLS**.
@@ -347,6 +355,7 @@ names.
 - **Locations:** the table below; the census itself is the finding
 - **Related:** `WF-20`, `ADD-*`
 - **Re-verified:** hardening pass — **SURVIVES**. Corroborated by the per-capability census in this pass: `admin.analytics_view` and `admin.archive_view` have **0** references anywhere under `app/api/` (`WF-20`), so those surfaces are gated in the page component only, and each admin page carries its own bespoke expression.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both load-bearing rows of the census are confirmed. The only later audit_logs policy work (20260813:84-90) tightens INSERT, not SELECT, so no repo-wide fix exists. The /admin/settings mismatch is real too (page.tsx:25 `ADMIN_ROLES = new Set(["Admin","DocCtrl"])`). MEDIUM is fair given the finding is scoped as a census with three narrow fixes.
 
 | Surface | Client gate | Enforced at the DB / API? |
 |---|---|---|
@@ -414,6 +423,7 @@ hook means twenty surfaces changing behaviour at once with no reviewer, which
   - and the four API routes that get it right: `app/api/ai/usage/route.ts:29-35`, `app/api/admin/schema-health/route.ts:35-40`, `app/api/collections/delete/route.ts:44-48`, `app/api/ai/connection/route.ts`
 - **Related:** `ADD-1`, `OWN-3`, `CHAIN-*`
 - **Re-verified:** hardening pass — **SURVIVES**. `serverAuth.ts` selects `"role, status"` and tests `allowedRoles.includes(role)` (`:51-58`) — headline only — while the database policies test `role IN (…) OR roles && ARRAY[…]` (e.g. `20260818_followups_rls.sql:16`). The server is stricter than the database, which is the safer direction but means the two disagree about who may act.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: authorizeOrgRole never reads roles[] and matches only the mirrored headline, so [DocCtrl, Manager] yields role='Manager' and is rejected by PURGE_ROLES/SHED_ROLES/ROLES = ["Admin","DocCtrl"] across app/api/admin/{purge,shed,archives,orphans,ticket-shed,archive-settings}. One overstatement in the summary: 'any maintenance route' is too absolute — storage-stats GET uses ADMIN_ROLES = ["Admin","Manager","DocCtrl"] (app/api/admin/storage-stats/route.ts:16) and would admit that member, though its POST at line 164 hardcodes ["Admin","DocCtrl"] and would not.
 
 **Mechanism.** Because `primaryRole` ranks Manager (90) and Supervisor (80) above
 DocCtrl (70), a member with `roles = ['Manager','DocCtrl']` has `role='Manager'`.
@@ -449,6 +459,7 @@ matching `is_org_controller`, and a test pins the `['Manager','DocCtrl']` case.
   - contrast `supabase/migrations/20261013:57-66` — `user_owns_project` **does** join `org_members.status='active'`, and documents why
 - **Related:** `OWN-4`
 - **Re-verified:** hardening pass — **SURVIVES**. The followups policy resolves authority from **`org_members`** — `om.role IN ('Admin','Manager') OR om.roles && ARRAY['Admin','Manager']` (`20260818_followups_rls.sql:16`) — and never reads `project_members.role`, so the project-level role is decorative.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: an 'observer' row satisfies can_manage_project, so the RESTRICTIVE delete guards on milestones and transmittals pass for them. Repo-wide grep for "observer" outside node_modules returns only types/schema.ts:944 and the `<option value="observer">` at app/(protected)/projects/[id]/page.tsx:926 plus the display badge at :952 — no authorization site anywhere reads pm.role, so 'dead' is accurate. Mitigation the finding omits: the page's own controls use `canManage = isOwner || isAdmin` (line 134), so this is an API-level, not click-level, exposure.
 
 **Mechanism.** Every policy treats any roster row identically. Adding a
 contractor as **Observer** grants them private-project visibility, `milestones`
@@ -481,6 +492,7 @@ inactive member's project rows stop authorizing writes.
   - **the same hole, already closed for the sibling system:** `supabase/migrations/20260828_integrity_hardening.sql:264-273` hardened `document_acknowledgments` to `assignee_user_id = auth.uid()`, with the changelog calling it *"same hole, same fix"*
 - **Related:** `SURF-13`
 - **Re-verified:** hardening pass — **SURVIVES**. `distribution_acks_org_update FOR UPDATE USING (active org member)` (`20260825_work_packages_acks.sql:135-139`) with no recipient predicate. Cross-area duplicate of `document-control/DIST-3` — fix once.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and no later migration repairs it: grepping every `policy … on distribution_acks` in supabase/ returns only the three policies from 20260825. The contrast the finding draws is exact — 20260828_integrity_hardening.sql:264-273 restricts doc_ack_update to `assignee_user_id = auth.uid()` OR controllers OR owner, the pinning that distribution_acks never received.
 
 **Mechanism.** One person can mark "I have this revision" for all twelve
 recipients. Two acknowledgment systems, opposite enforcement, both feeding
@@ -507,6 +519,7 @@ matching the `document_acknowledgments` rule.
   - `supabase/migrations/20260822_review_completion_guard.sql:48-53` — the publish-completion guard counts `status='signed'` rows **without checking who signed**
 - **Related:** `DEL-5`, `SURF-14`
 - **Re-verified:** hardening pass — **SURVIVES**. The UPDATE `WITH CHECK` on the sign-off path tests active org membership only (`20260828_integrity_hardening.sql:274-277`) and never pins the row's reviewer to `auth.uid()`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the current policy is worse than the one cited: 20260830_publisher_row_management.sql:33-50 supersedes this policy and widens USING with `OR user_can_publish_on_library(d.library_id, auth.uid()::text, d.org_id)` while leaving the identical membership-only WITH CHECK, so any granted publisher — not only Admin/DocCtrl/owner — can now flip someone else's roster row to signed. The finding's citation is one migration stale but the defect it names is present and broader.
 
 **Mechanism.** A reviewer can flip their own row to `status='signed'` while
 rewriting `reviewer_user_id`, `reviewer_name` and `signature_id` — attributing
@@ -533,6 +546,7 @@ says.
   - `supabase/migrations/20260720_e_signatures.sql:55-61` — the only DB condition is `signer_user_id = auth.uid()` plus active membership
 - **Related:** `SURF-8`, `SURF-13`
 - **Re-verified:** hardening pass — **SURVIVES**. `lib/eSignatures.ts:75` calls `supabase.auth.signInWithPassword` — a **client-side module**, not a route handler — so the re-authentication happens in the browser and its outcome is never bound to the signature write server-side.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: nothing server-side observes whether a password was re-entered, so a direct PostgREST insert with a live session produces a signature byte-identical to a ceremonied one. Supporting evidence the finding did not cite: SignatureCeremony.tsx:62 comments `reauth === null ? true // no session info — server still validates the write`, which is factually false — no server validation of re-auth exists. The immutability claim also checks out: 20260720 grants only SELECT and INSERT policies on e_signatures, so a forged row cannot be corrected.
 
 **Mechanism.** The re-authentication is enforced entirely in React. Anyone
 holding a live session — an unattended workstation, an XSS payload, a script —
@@ -562,6 +576,7 @@ server-side before inserting, and the direct client INSERT path is closed.
   - `components/subscription/SubscriptionGate.tsx:48-57` — a React component with an `ENFORCE` flag and a controller escape hatch
 - **Related:** `SURF-9`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `assertOrgHasAccess` has **0 callers**; subscription enforcement therefore exists only in the client gate.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. If anything the severity is understated rather than overstated: the client-side gate the finding points to is itself disabled — components/subscription/SubscriptionGate.tsx:46-48 reads `const ENFORCE = false;` followed by `if (!ENFORCE || loading || hasAccess(info)) return <>{children}</>;`, so subscription state is not enforced client-side either, only nagged about via TrialBanner.
 
 **Mechanism.** The only subscription gate is client-side. A lapsed workspace
 continues to write freely through PostgREST and every API route. The file's own
@@ -597,6 +612,7 @@ anyone enables it.
   - `app/(protected)/admin/users/page.tsx:231` — the page that calls it requires `['Admin','Manager']`
 - **Related:** `DEL-3`, `DEL-4`, `SURF-1`
 - **Re-verified:** hardening pass — **SURVIVES**. Teams are ACL subjects (`acl_subject_in_bucket` matches `teams`) with no audit trail on membership change, and `/api/admin/create-user` never consults team membership when deciding authority.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Both halves of the title hold: team membership (an ACL subject via my_team_ids()) mutates with no audit row, and the page/route role sets disagree in both directions — a Manager can open Team Management but gets 403 from create-user, a DocCtrl can call create-user but is refused the page. Severity stays MEDIUM, but the summary's scenario is refuted: a contractor cannot 'add themselves to a team', because supabase/migrations/20260707_teams.sql:52-55 gates team_members writes to `role IN ('Admin', 'Manager')`. The correct scenario is that an Admin/Manager grant leaves no record of who made it.
 
 **Mechanism.** Two separate problems on the same surface.
 

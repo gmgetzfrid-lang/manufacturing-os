@@ -43,7 +43,7 @@ code path branches on it.
 
 ## ROLE-1 · Six department roles gate nothing, and cannot do the one job left to them
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity / access-control
@@ -57,6 +57,7 @@ code path branches on it.
   - `components/permissions/PermissionDrawer.tsx:66-71` — the ACL subject picker
 - **Related:** `DOCACL-1`, `ROLE-3`
 - **Re-verified:** hardening pass — **SURVIVES**. `Accounting`, `Safety`, `HR`, `Maintenance`, `Operations` and `Contractor` all map to exactly `["create_requests"]` (`roleCapabilities.ts:60-65`), and `Sidebar.tsx:247-248` reduces the workbench for `Contractor` alongside `Viewer`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The shadowing mechanism is confirmed (and extends further than the report says: lib/acknowledgments.ts:79 targets ack assignees with `.in("role", roles)`, so department-role ack rosters miss the same people). But the title's "six roles gate nothing" is contradicted by the finding's own correction note about Contractor, and the failure mode is a grant that silently does nothing — it fails closed, granting no unintended access. MEDIUM.
 
 **Mechanism.** These six grant exactly what `Requester` grants and appear in no
 capability-policy default. An exhaustive search for authority branches on them
@@ -99,7 +100,7 @@ actually function.
 
 ## ROLE-2 · The four Engineer tiers are one role wearing four names
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity / drafting authority
@@ -112,6 +113,7 @@ actually function.
   - `supabase/migrations/20260901_db_hard_enforcement.sql:61` — the DB does the same: `r LIKE '%Engineer%'`
 - **Related:** `DRAFT-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `Engineer-1` through `Engineer-4` map to identical capability arrays — `["approve_engineering", "view_requests", "create_requests"]` (`roleCapabilities.ts:54-57`). Only `ROLE_RANK` distinguishes them, and rank affects nothing but the headline.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Every cited line checks out — the four tiers are genuinely interchangeable at every layer. But the finding's own body concedes "It is not a bug today", the behavior is documented as deliberate in two separate source comments, and nothing is currently mis-authorized. A documented design-debt item with no present defect does not warrant HIGH; MEDIUM.
 
 **Mechanism.** Every layer — capabilities, the policy token matcher, the
 workflow helper, and the database — treats all four tiers as interchangeable.
@@ -155,6 +157,7 @@ Option A plus `DRAFT-1` is very likely what you actually want.
   - `lib/workflow.ts:71` — `canActAsRequester = isRequesterIdentity || allows('ticket.requester_review')`
 - **Related:** `ROLE-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `Requester` and the six department labels resolve to the same single capability (`roleCapabilities.ts:59-65`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Accurate as written. The only thing distinguishing Requester from the department labels is the ticket.requester_review default, and because that default is role-wide it does grant every Requester in the org review rights over anyone's returned draft while the identity half already covers the legitimate case. MEDIUM is right.
 
 **Mechanism.** `Requester` has one thing the department labels don't: it is the
 default role list for `ticket.requester_review`. But that capability is almost
@@ -188,6 +191,7 @@ pure "may file requests" marker, which is what everyone assumes it is.
   - `lib/roleCapabilities.ts:117-119` — `addableRoles` filters to roles granting a capability the member lacks
   - `lib/roleCapabilities.ts:110-113` — `capabilitiesAdded`
 - **Re-verified:** hardening pass — **SURVIVES**. `addableRoles` offers only roles granting a capability not already held (`roleCapabilities.ts:112-115`); because most roles are capability-identical, the picker hides most of the roster — which is the model reporting its own redundancy.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the arithmetic follows: any role granting create_requests makes all seven of Requester/Accounting/Safety/HR/Maintenance/Operations/Contractor return an empty capabilitiesAdded and drop out, and one Engineer tier hides the other three. The picker has no 'why is this missing' affordance.
 
 **Mechanism.** The picker only offers a role if it would add a capability. This
 is a good guardrail — it prevents meaningless additions.
@@ -226,6 +230,7 @@ member doesn't already have — use a team to record department."*
   - `app/(protected)/admin/users/page.tsx:82` — `Viewer` is the default for new members
 - **Related:** `ADD-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `Viewer: []` and `Auditor: ["audit", "view_requests"]` (`roleCapabilities.ts:66-67`) are the only entries that subtract, and they do it by two different means — one by holding nothing, one by holding a narrow set that the headline ranking then buries at rank 20.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the read-only checks key off the string name of the single highest-ranked role, so Viewer/Auditor held alongside anything higher subtract nothing. Two mitigations the finding omits: addableRoles() never offers Viewer (capabilitiesAdded("Viewer", …) is always []), so the mixed collection is only reachable as a residue of the default 'Viewer' seed (app/(protected)/admin/users/page.tsx:82) being promoted; and Viewer *does* restrict when it is the sole role. Exposure is a UI/model consistency defect, not an escalation.
 
 **Mechanism.** Every other role is purely additive. These two are the only ones
 whose presence is meant to *restrict* — and they do it through a hardcoded
@@ -259,13 +264,14 @@ layer rather than living in a hardcoded set.
 ## ROLE-6 · The permissions explorer shows a role list that does not match the real roster
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / trust
 - **Locations:**
   - `components/permissions/PermissionsExplorer.tsx:14` — `const ROLES = ["Admin","DocCtrl","Manager","Supervisor","DraftingSup","Engineer 1-4","Drafter","Requester","Staff*","Contractor","Auditor","Viewer"]`
   - `types/schema.ts:5-25` — `ALL_ROLES`, the real union
 - **Re-verified:** hardening pass — **SURVIVES**. `PermissionsExplorer.tsx:14` lists `"DraftingSup"`, `"Engineer 1-4"` and `"Staff*"` — display strings that match no member of the real `Role` union.
+- **Independently verified:** ⛔ **REFUTED** by an independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). The two load-bearing claims are false. Staff IS defined — STAFF_NOTE is rendered in the table footer, so nothing about Staff is 'unverifiable'. And the 12 columns account for all 19 roles in ALL_ROLES exactly once: 'Engineer 1-4' collapses Engineer-1..4 and 'Staff*' collapses the five request-only roles (19 − 3 − 4 = 12); 'DraftingSup' is a column-width abbreviation of DraftingSupervisor. The only residual truth is that ROLES is a hardcoded literal that will not auto-pick-up a new ALL_ROLES entry — a maintenance nit in a documentation component, not a role-roster mismatch.
 
 **Mechanism.** A hand-maintained display array that diverges from the source of
 truth in three ways: `"DraftingSup"` is not a role (`DraftingSupervisor` is),

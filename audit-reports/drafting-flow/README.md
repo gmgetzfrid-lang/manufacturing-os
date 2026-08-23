@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**139 findings** — 15 CRITICAL, 52 HIGH, 72 MEDIUM — plus **14 gap specs**, all
+**139 findings** — 10 CRITICAL, 48 HIGH, 81 MEDIUM — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -61,12 +61,18 @@ severities were lowered by that pass and the lowered value is the one shown.
 against the source; the per-finding record is at the top of that file. Two
 findings were corrected (`EDGE-2` retitled to its general case, `EDGE-6`
 scoped away from code that is already correct), one was lowered (`EDGE-1`
-`CRITICAL` → `HIGH`), and its `MEDIUM`s remain unverified and are marked as
-such.
+`CRITICAL` → `HIGH`).
+
+**Everything in this area has since been challenged by an independent agent.**
+No finding is `unverified` any more — see `verified_by` in
+[`findings.json`](./findings.json). That pass refuted two findings (`FRIC-6`,
+`UI-5`, both marked `Status: REFUTED` in place — **do not queue them**) and
+lowered a number of severities, which is why the totals above differ from what
+the original run reported.
 
 ### Root-cause clusters — read before claiming a file
 
-Four of the nine CRITICALs are the same defect seen from different angles. An
+Four of the ten CRITICALs are the same defect seen from different angles. An
 agent claiming one file needs to know it shares a fix with three others.
 
 | Cluster | Findings | One fix |

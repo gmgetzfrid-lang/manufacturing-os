@@ -31,7 +31,8 @@ behind it.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/layout.tsx:35-51`, `components/providers/RoleContext.tsx:65-68`, `components/providers/RoleContext.tsx:83-90`, `components/providers/RoleContext.tsx:238-241`
-- **Re-verified:** hardening pass — **SURVIVES** — **but see the independence caveat.** Re-checked against source: `layout.tsx:35-51` branches on `loading`, then `"none"`, then `"error"`, then renders; there is no `"resolving"` branch. `RoleContext.tsx:65` seeds `activeRole` to `"Viewer"` and `:88`/`:241` clear `loading` on timers without touching `membershipState`. **This area was written by the same session that is verifying it**, so this is a re-read rather than an independent challenge — the weakest verification in the corpus. Treat it as `author`-grade until someone else reads it. `roles-and-permissions/WF-5` was found to depend on it during this pass, which is corroboration from a different direction.
+- **Re-verified:** hardening pass — **SURVIVES** — **but see the independence caveat.** Re-checked against source: `layout.tsx:35-51` branches on `loading`, then `"none"`, then `"error"`, then renders; there is no `"resolving"` branch. `RoleContext.tsx:65` seeds `activeRole` to `"Viewer"` and `:88`/`:241` clear `loading` on timers without touching `membershipState`. `roles-and-permissions/WF-5` was found to depend on it during this pass, which is corroboration from a different direction.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Exactly as claimed, and the boot ordering makes it reachable: RoleContext.tsx:247-249 sets `uid` before `await resolveOrgAndRole(...)`, so when either watchdog fires mid-resolve, uid is non-null, membershipState is still "resolving", and both guards are skipped. CRITICAL is defensible rather than transient because the boot-path resolve at line 249 has no timeout at all (the 15s Promise.race at 317-322 guards only the SIGNED_IN user-switch path), so a hung query leaves the Viewer render up indefinitely.
 
 **Mechanism.** `ProtectedContent` gates on exactly three conditions, in order:
 
@@ -130,8 +131,9 @@ gate is fed a value that was never true.
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:83-90`, `components/providers/RoleContext.tsx:169-178`, `components/providers/RoleContext.tsx:238-241`, `components/providers/RoleContext.tsx:308-322`
 - **Re-verified:** hardening pass — **SURVIVES**. Re-confirmed the four values in one file: watchdog `6000` (`:88`), boot timeout `8000` (`:241`), `SIGNED_IN` resolve budget `15000` (`:320`), retry backoff `600 * (i + 1)` (`:176`). The path that runs the same function on the same cold connection gets half the budget the file argues for.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed arithmetically: 6s and 8s are both below the 10s upper bound the file itself documents and below the 15s timeout it sets, and the backoff sleeps alone (600 + 1200 + 1800 = 3.6s) plus three round trips exceed 6s before the ladder can even report failure. Note the sleep also runs after the final attempt, adding 1.8s of pure waste.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** Three timeouts govern the same operation and they disagree with
 each other by a factor of two and a half.
@@ -196,8 +198,9 @@ plus 1800 ms of deliberate sleep. Against a 6-second watchdog.
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:179-187`, `components/providers/RoleContext.tsx:238-241`, `app/(protected)/layout.tsx:50`
 - **Re-verified:** hardening pass — **SURVIVES**. The error path sets `setActiveRole("Viewer")` and `setMembershipState("error")` together (`:184-185`), which is why the placeholder is harmless there and unguarded during `resolving`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the honest failure is handled well and the dishonest one is not handled at all. The two paths differ only in whether the query errored or merely took longer than 6 seconds, and the user-visible outcomes are inverted — the erroring user is reassured, the slow user is silently demoted with no message.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** When resolution fails outright, the code is careful:
 `membershipState` becomes `"error"` (`:185`), the layout shows
@@ -252,8 +255,9 @@ during `"resolving"`, where nothing intercepts.
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-86`, `app/page.tsx:147-150`, `app/page.tsx:156-159`, `app/page.tsx:177`, `components/providers/RoleContext.tsx:244-254`
 - **Re-verified:** hardening pass — **SURVIVES**. Two membership round trips per sign-in — `app/page.tsx:72-78` then `RoleContext.tsx:145-150` — and on the SSO path both land on a session one request old.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The duplicate lookup is real and the added latency of the silent-redirect round trip is real. One caveat that weakens the "clusters on SSO" framing: the double query is path-independent — an email/password sign-in also runs routeAuthedUser's query and then RoleProvider's, and line 81 is a client-side `router.replace`, so RoleProvider mounts in the same document on an already-warmed connection either way. Kept at MEDIUM as an explanatory finding rather than an independent defect.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** The login page runs its own membership query before routing —
 `org_members` filtered by `uid` and `status`, `limit(1).maybeSingle()`
@@ -319,8 +323,9 @@ components/providers/RoleContext.tsx:145-150   ← query #2, same session, same 
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:65-66`, `components/providers/RoleContext.tsx:19-40`, `components/providers/RoleContext.tsx:363-378`
 - **Re-verified:** hardening pass — **SURVIVES**. `useState<Role>("Viewer")` and `useState<Role[]>([])` (`:65-66`) are both legitimate member values, so the context cannot express "not known yet" through the two fields consumers actually read.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the placeholder "Viewer" is type-identical to a resolved "Viewer", so no consumer of useRole() can distinguish "not yet known" from "genuinely a Viewer" without also reading membershipState — which, per the grep in SESS-1, exactly one file in the repo does.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** `activeRole` is typed `Role` and seeded `"Viewer"`; `roles` is
 typed `Role[]` and seeded `[]`. Both are legitimate values that a real member

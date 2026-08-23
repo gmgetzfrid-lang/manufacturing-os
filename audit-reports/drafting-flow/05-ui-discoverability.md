@@ -13,7 +13,7 @@ to proceed is a finding.
 
 ## UI-1 · A ticket never says who it is waiting on
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
@@ -24,6 +24,7 @@ to proceed is a finding.
   - `app/(protected)/requests/[id]/page.tsx:1488` — what the ticket page shows instead: `{ticket.status.replace(/_/g, ' ')}`
 - **Related:** `UI-2`, `FRIC-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `attentionLabel` maps status → what the *ticket* needs (`ticketAttention.ts:115-126`) and is rendered as the feed subtitle (`useTicketNotifications.ts:265`). No branch names a person.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The literal claim is true — no surface states who the ball is with, and the only temporal field is :1752 'Initiated' (a bare createdAt date, no elapsed time). But 'the only way to find out is to ask someone' is overstated: the holder names sit in the sidebar and the plain-English state explanation is one visible click away on the ?-badged pill. Two of the three 'Done when' gaps are partially served today; the real residue is an explicit waiting-on statement and elapsed time. MEDIUM.
 
 **Mechanism.** The plain-English answer to "what is happening to my request?"
 exists, is well written, covers every status — and is rendered **only in the
@@ -52,7 +53,7 @@ current holder is a small change against an existing, tested function.
 
 ## UI-2 · The workflow map is hidden behind a status pill that does not look clickable
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
@@ -62,6 +63,7 @@ current holder is a small change against an existing, tested function.
   - it is imported by **one file** — the ticket detail page. It is absent from `/requests` and from `/requests/new`.
 - **Related:** `UI-1`, `UI-5`
 - **Re-verified:** hardening pass — **SURVIVES**. The workflow map opens from a `<button>` styled `rounded-full text-xs font-bold border uppercase tracking-wider` rendering `ticket.status.replace(/_/g,' ')` (`requests/[id]/page.tsx:1482-1488`) — visually a status badge, with only a `title` attribute to suggest otherwise.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The finding's central evidence is refuted by a cherry-picked line range. It asserts discoverability is 'provided entirely by title="…"' and 'only a title attribute to suggest otherwise' and 'does not appear on touch devices at all' — but the pill carries a visible help-circle icon, the conventional affordance for exactly this, which works on touch. What survives is the placement claim: the modal is imported by one file and is absent from /requests and /requests/new. Downgrade to MEDIUM.
 
 **Mechanism.** Somebody built the map that answers "what happens to my request?"
 and then attached it to a badge. Status badges are not interactive anywhere else
@@ -92,6 +94,7 @@ good. It needs a visible affordance, and it needs to exist on the request form
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
 - **Re-verified:** hardening pass — **SURVIVES**. Same evidence as `FRIC-7` — `ticketAttention.ts:106-108` against `workflow.ts:301-312`. Duplicate within this area; fix once.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed exactly as stated, including that the badge is computed from role+status rather than from getActions, so it cannot clear. DocCtrl appears in capability defaults only for checkout.force_release, admin.analytics_view and admin.archive_view — never a ticket action.
 
 > **Recorded in full as `FRIC-7`.** Repeated here because it is the clearest
 > single answer to "is there a weird UI where people don't know where to look":
@@ -122,6 +125,7 @@ channel real work arrives through.**
   - `app/(protected)/requests/[id]/page.tsx:1604-1605` — the empty-actions branch
 - **Related:** `UI-1`, `UI-3`, `FRIC-7`
 - **Re-verified:** hardening pass — **SURVIVES**. `availableActions.length === 0 ? (…)` (`requests/[id]/page.tsx:1604-1605`) renders one static panel for every reason a person might have no actions — wrong role, wrong state, not their ticket — and distinguishes none of them.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. One panel for every distinct cause. The claim that the discriminating information is in scope at the render site is also true — `ticket.status`, `ticket.assignedDrafterName`/`assignedEngineerName` and the viewer's role are all already available in the same component (used at :1739-1746).
 
 **Mechanism.** When `getActions` returns nothing, the page renders a grey italic
 chip. It does not say **why** there is nothing — whether the user lacks
@@ -148,7 +152,7 @@ permitted", and names who to talk to in each case.
 ## UI-5 · Submitting an incomplete request does nothing at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
 - **Locations:**
@@ -156,6 +160,7 @@ permitted", and names who to talk to in each case.
   - contrast `app/(protected)/requests/new/page.tsx:272-280` — custom required fields **do** get a blocking `appAlert` naming the field
 - **Related:** `FRIC-3`, `DCW-7`
 - **Re-verified:** hardening pass — **SURVIVES**, and the contrast inside the same function is the evidence. `if (!title || !description || !unit) return;` (`requests/new/page.tsx:201`) is a bare return with no feedback, while the custom-field validation seventy lines later does `await appAlert(...)` on the same class of failure (`:279-280`).
+- **Independently verified:** ⛔ **REFUTED** by an independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). The described failure cannot happen. Browser constraint validation runs before onSubmit fires, so a blank Title, Scope or free-text Unit produces a native validation bubble AND focus on the offending field — which is precisely the finding's own 'Done when #1'. When units ARE configured, `unit` is seeded from the first option at :153, so `!unit` is false. That makes line 201 `if (!title || !description || !unit) return;` an unreachable defensive guard, not a silent-failure path. Two further inaccuracies: the required fields are already marked before submit with red asterisks (:451, :509, :523), and unit sits ABOVE Title (:449 vs :507), not 'between Title and the description'. The only residue is 'Done when #3' — the submit button is disabled solely on `isSubmitting` (:613).
 
 **Mechanism.** The three core required fields fail silently; the org-configured
 custom fields fail loudly. The **more** important validation is the quieter one.
@@ -188,6 +193,7 @@ with no recovery path and no explanation.
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Re-verified:** hardening pass — **SURVIVES**. `myActionItems` is computed at `app/(protected)/requests/page.tsx:329` but the initial `filters` state opens on `status: 'ALL'` across the org (same file, `:180-187`). Duplicate of `FRIC-9` within this area; fix once.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. The headline is true for non-Drafter roles (Drafters already open on `assignedTo: 'me'`), but the supporting claim 'the list does not use it' is false — there is a pulsing banner and a clickable tile that one-click narrow the list, plus per-row badges and action-first ordering. What genuinely survives is that the default view is org-wide and the one-click filter is `assignedTo: 'me'`, a proxy for, not the same set as, `isActionRequired`. Severity stays at the bottom of MEDIUM.
 
 > **Recorded in full as `FRIC-9`.**
 
@@ -212,6 +218,7 @@ result is already on screen, and the list does not use it.
   - `components/requests/WorkflowDiagramModal.tsx:27` — a second set of plain-English blurbs, also written, also unused outside the modal
 - **Related:** `UI-1`, `UI-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `ticket.status.replace(/_/g, ' ')` is the primary on-screen vocabulary (`requests/[id]/page.tsx:1488`), while the human phrasing in `attentionLabel` (`ticketAttention.ts:115-124`) is used only as a feed subtitle.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. Raw enums are the primary vocabulary on the ticket, in the table, in the card view and in the drafter-bucket board; both sets of written plain-English labels are confined to the bell feed and the one modal.
 
 **Mechanism.** `PENDING_ENG_TEAM`, `REVISION_REQ`, `PENDING_IFC` and
 `FINAL_DRAFT` are database identifiers. They are shown to end users as the

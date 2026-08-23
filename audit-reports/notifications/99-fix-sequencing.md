@@ -59,7 +59,7 @@ durable row is noise that someone has to clear.
 | Item | Why now |
 |---|---|
 | **`NEDGE-2`** | Above. One word. |
-| **`PROD-1` / `TRAIL-2` / `DELIV-3` / `TAX-2` / `NEDGE-1`** | Map the 26 unmapped kinds in `sectionForKind`, and add a `const _never: never = kind` in the default arm so a new kind is a **build error** until mapped. This is the single highest-value change in the area: five lenses found it, and it is the mechanical root of the cold trail. |
+| **`PROD-1` / `TRAIL-2` / `DELIV-3` / `TAX-2` / ~~`NEDGE-1`~~** | Map the 26 unmapped kinds in `sectionForKind`, and add a `const _never: never = kind` in the default arm so a new kind is a **build error** until mapped. Still the highest-value change in the area — but **do the work for the four surviving findings, not for `NEDGE-1`, which is refuted.** `NEDGE-1` claimed an unmapped kind never badges anything; it does — `legal_hold_placed` reaches `items`, the header bell count, the bell list and `/inbox`. The real gap is the per-section badge, which is what the other four describe. Read the sizing here as cosmetic-plus-maintainability, not as a missed-notification defect. |
 | **`TAX-1` / `TRAIL-3`** | Make the badge's own comment true. `AttnFilter` has no section member; add one so the "3" on Documents opens Documents' three. Small, and it is the difference between a doorway and a decoration. |
 | **`DELIV-4`** | The admin "No failed deliveries" panel cannot report a failure. A green light wired to nothing is worse than no light. |
 | **`DELIV-5`** / `NEDGE-4` | Notification emails carry root-relative links, dead in every mail client. Every "you were mentioned" email currently has a broken call to action. |

@@ -13,7 +13,7 @@ Degenerate chart inputs, and the document you hand to a vendor.
 
 ## CHART-1 · The S-curve has no lower bound on its scale, so negative values draw outside the canvas
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
@@ -21,6 +21,7 @@ Degenerate chart inputs, and the document you hand to a vendor.
   - `components/ui/ChartKit.tsx:35-41` — `max = Math.max(1, ...)`, no floor
   - `py(v) = PAD_T + (1 - v/max) * 184` — the projection
 - **Re-verified:** hardening pass — **SURVIVES**. `const max = Math.max(1, …)` bounds only the top (`ChartKit.tsx:35-38`), and `py(v) = PAD_T + (1 - v / max) * (VB_H - PAD_T - PAD_B)` (`:41`) maps any negative `v` below the plot area. There is no `min` term anywhere in the scale.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The unbounded scale is real and the geometry does leave the viewBox. Downgraded because an outer <svg> viewport clips overflow by default, so the failure mode is a line that vanishes below the axis rather than ink painted over surrounding UI, no displayed number is wrong (the per-point <title> at ChartKit.tsx:93 and the legend totals at :103-107 still read correctly), and it requires cumulative credits to exceed cumulative actuals at a sample point.
 
 **Mechanism.** The maximum is clamped; the minimum is not. So `v < 0` produces
 `y > 196` (the plot floor), and `y > 220` leaves the 220-unit viewBox entirely.
@@ -52,7 +53,7 @@ case, and let it go negative when the data does — then project across
 
 ## CHART-2 · Spent and Committed are drawn in near-identical colours, differentiated by nothing else
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured contrast)
 - **Blast radius:** accessibility / correctness
@@ -62,6 +63,7 @@ case, and let it go negative when the data does — then project across
   - `app/globals.css:31-34` — `--color-accent` is a user-overridable brand token
   - `components/dashboard/viz.tsx:11` — the house rule this breaks
 - **Re-verified:** hardening pass — **SURVIVES**. `stroke={vizCat(1)}` at `:72` and `stroke="var(--color-accent)"` at `:79`, both solid strokes at 2 and 2.5px — no dash pattern, no marker, no direct label. Hue is the only channel carrying the distinction.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The pairing is genuinely poor: I computed ΔE00 ≈ 11.9 (light, #ea580c vs #b45309) and ≈ 11.4 (dark, #ea580c vs #d97706), both below the ≥12 adjacent-pair threshold the file's own comment at globals.css:56-60 claims to enforce — and --color-accent is a white-label token that can land anywhere. But 'differentiated by nothing else' is false: the Spent line carries a 0.08-opacity filled area (ChartKit.tsx:69-70), a heavier stroke (2.5 vs 2) and a larger endpoint dot (:87 r=3.5 vs :88 r=3), the legend at :100-114 labels both by name with values, and every point's <title> (:93) names both series. Same-hue-family, not near-identical.
 
 **Mechanism.** Measured contrast **between the two marks**:
 
@@ -92,7 +94,7 @@ the brand accent for one of two adjacent series in the same chart.
 
 ## CHART-3 · The planned crew curve is mathematically incapable of varying
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness / decision-quality
@@ -100,6 +102,7 @@ the brand accent for one of two adjacent series in the same chart.
   - `lib/costSeries.ts:152-157` — `perWeek = input.laborHours / weeks`
   - `components/projects/cost/CostCharts.tsx:126-127` — the render
 - **Re-verified:** hardening pass — **SURVIVES**, arithmetically. `perWeek = input.laborHours / weeks` then `headcount = Math.round((perWeek / 40) * 10) / 10` inside the loop (`costSeries.ts:152-157`) — the value does not depend on `w`, so every bar is identical by construction.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The claim is literally correct: the series cannot ramp, peak or demobilize, and the only input is a single scalar (CostsTab.tsx:93 sums the awarded quote's line hours). Not even a partial final week is modelled. Downgraded to MEDIUM because nothing false is asserted — the panel label discloses its provenance ('from the awarded bid's hours', CostCharts.tsx:125) and a flat average is an honest, if useless, rendering of the one number available; this is a missing-feature/altitude problem, not a wrong computation.
 
 **Mechanism.** Weekly headcount is total hours divided by week count — a
 constant. Since `MiniBars` normalizes to the maximum, every bar renders at full
@@ -145,6 +148,7 @@ feature the label promises.
   - `app/globals.css:49` — `--state-held: #d97706` already exists for this meaning
   - Blast radius beyond Costs: `components/projects/ProjectCoach.tsx:77`, `app/(protected)/companies/[id]/page.tsx:97`, `app/(protected)/companies/page.tsx:172`
 - **Re-verified:** hardening pass — **SURVIVES**, and the code comment is the claim being refuted. `return "#d97706"; // amber-600 — reads in both themes` (`ChartKit.tsx:170`) is applied as `style={{ color }}` to an 8px uppercase label (`:203`). Amber-600 on a light ground is roughly 3.1:1, under the 4.5:1 small-text threshold.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — the inline comment 'reads in both themes' is only half true: on the dark surface #111827 the same color gives ~5.4:1, but in light mode every score in the 50-69 band paints its label at 3.19:1. Cited call sites are slightly off by line (the real ScoreDial usages are ProjectCoach.tsx:77, companies/page.tsx:172, companies/[id]/page.tsx:97, and the text applications are ProjectCoach.tsx:62 / companies/[id]/page.tsx:240), but every one of them renders the failing label. MEDIUM is right.
 
 **Mechanism.** The stylesheet ships two separately validated ambers —
 `--viz-cat-2: #b45309` (light) and `#d97706` (dark) — with a comment explaining
@@ -183,6 +187,7 @@ in the dial arc instead — which is where colour belongs.
   - `components/ui/ChartKit.tsx:82-85` — the marker, drawn in a faint text token
   - `components/ui/ChartKit.tsx:64-67` — the gridlines, which carry no value labels
 - **Re-verified:** hardening pass — **SURVIVES**. `todayIdx = points.findIndex((p) => p.date >= todayIso)` (`:53-55`) snaps to the first bucket at or after today, so the marker's error is the bucket width; and the line is drawn with no label and no legend entry (`:82-85`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. All three sub-claims hold. Unlabeled and legend-less is unambiguous; worse, the marker wears the same --color-text-faint dashed styling as the Planned line at :76-77, so it reads as a stray plan artifact. The 'four weeks off' figure needs a ~3-year span (28 days × 39 intervals ≈ 1092 days) — reachable for a long capital project though not for a turnaround. Also note :82's `todayIdx > 0` silently suppresses the marker when today lands on the first sample.
 
 **Mechanism.** The marker snaps to the nearest of forty samples, and samples are
 `span/39`. **Measured** on a three-year job: 40 points at **28-day** spacing, so
@@ -209,13 +214,14 @@ regardless of whether a schedule span exists.
 
 ## RFQ-1 · A control character pasted from Word or Excel produces a corrupt RFQ document
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured with a strict expat parser)
 - **Blast radius:** correctness / vendor-facing
 - **Locations:**
   - `lib/rfqDocx.ts:31-32` — `esc()`, which handles only `& < > "`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `esc` handles `&`, `<`, `>` and `"` only (`rfqDocx.ts:31-32`). Control characters below U+0020 are illegal in OOXML text nodes and pass straight through.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The code defect is real and unguarded, but the claimed trigger is not established, which is what carries the HIGH. Every field reaching RfqInput is org-typed text read back from the DB (QuotesPanel.tsx:580-590 — projects.name/purpose, orgs.name, the link's companyName/rfqGroup, turnover_items.name); nothing on that path ingests machine output. Browsers deliver text/plain from Word/Excel as CR/LF and normalize to \n in a textarea, so U+000B does not in fact ride along on a paste — the report's own measurement injected the byte directly, not through the UI. Impact is a regenerable local download that fails loudly at open time: no stored corruption, no compliance or security consequence. MEDIUM.
 
 **Mechanism.** XML 1.0 forbids the C0 control range (`0x00-0x08`, `0x0B`,
 `0x0C`, `0x0E-0x1F`). `esc()` does not strip them.
@@ -260,6 +266,7 @@ Do it in the one function so every field is covered.
   - `lib/rfqDocx.ts:123-126` — the filename sanitizer
   - `lib/rfqDocx.ts:51` — the due-date rendering
 - **Re-verified:** hardening pass — **SURVIVES**. `<w:t xml:space="preserve">${esc(text)}</w:t>` (`rfqDocx.ts:42`) — `esc` does not translate `\n` into `<w:br/>`, and OOXML ignores raw newlines inside a run, so a multi-line scope collapses to one line.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Main claim confirmed — a multi-paragraph scope collapses into a single run under "1. Scope of work", and the filename sanitizer does strip non-Latin names to empty. One sub-bullet is dead: the due-date defect at :51 is unreachable, because the sole call site passes `dueDate: null` (components/projects/cost/QuotesPanel.tsx:588), so `new Date(i.dueDate + "T00:00:00").toLocaleDateString()` never runs. MEDIUM still right.
 
 **Mechanism.** OOXML expresses a line break as `<w:br/>`; a literal newline
 inside `<w:t>` is just whitespace. Output looks like:

@@ -31,6 +31,7 @@ the application, and where they are broken outright.
   - `supabase/migrations/20260701_perf_indexes.sql:21` — documents the real shape as `select('data')`
 - **Related:** `WF-1`, `WF-23`, `SURF-3`, `SURF-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `org_configurations` is `(id, org_id, key, data JSONB, updated_at)` — `schema.sql:52-59`. There is no `value` column and no migration adds one; `20260901_db_hard_enforcement.sql:44` reads `value` too, so the DB-side holds policy is inert for the same reason.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed CRITICAL, and the verifier found it reaches further than the finding states: 20260901_db_hard_enforcement.sql:44 `SELECT value INTO v_val FROM org_configurations` raises 42703 at runtime inside org_capability_allows, which is the sole gate on document_holds_insert/_update (:92-101) — so every hold insert and release errors outright, not merely the capability layer falling back to defaults.
 
 **Mechanism.** plpgsql bodies are not column-validated at `CREATE FUNCTION`, so
 the migration applies cleanly and fails at **first execution**.
@@ -86,6 +87,7 @@ change or the two layers will disagree about which column is real.**
   - the same typo in the client: `components/permissions/ViewAsSimulator.tsx:59` (`OWN-10`)
 - **Related:** `DB-1`, `OWN-10`, `DB-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `team_members` is keyed `(team_id, uid)` — `20260707_teams.sql:19-26`. The function queries `tm.user_id`, which does not exist, so `acl_index_denies` raises rather than denying.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence: every other reader (lib/teams.ts:116,122, lib/knowledgeAccess.ts:35, app/api/storage/download-url/route.ts:74,100, 20260812:62, 20260708:76, 20260816:62) uses `uid`; only this function and components/permissions/ViewAsSimulator.tsx:59 use `user_id`. acl_index has no DEFAULT (schema.sql:70,101,124,162 `acl_index JSONB`), so the function returns early on NULL — the error is latent until the first real ACL write, exactly as claimed. Note the comparison is also uuid-vs-text, so even adding the column would not fix it.
 
 **Mechanism.** `acl_index_denies` returns early when `p_idx IS NULL`, and returns
 early on a uid- or role-level deny. **Otherwise it reaches the `team_members`
@@ -128,7 +130,7 @@ almost anywhere else in this audit; see
 
 ## DB-3 · `COALESCE(roles, ARRAY[role])` is a no-op — a new org's sole Admin fails every additive check
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / access-control
@@ -139,6 +141,7 @@ almost anywhere else in this audit; see
   - `app/api/auth/signup/route.ts` — **does not set `roles`** (a search for `roles` in the file returns nothing)
 - **Related:** `DB-1`, `DB-2`, `ADD-1`, `OWN-3`
 - **Re-verified:** hardening pass — **SURVIVES**, and the reason is one word in the DDL. `roles TEXT[] NOT NULL DEFAULT '{}'` (`schema.sql:41`) means the column is **never NULL**, so `COALESCE(roles, ARRAY[role])` — used at `20260901_db_hard_enforcement.sql:38` and `:135` and `20260907_milestone_batch_move.sql:33` — never falls through. A member whose `roles` was never populated evaluates against `{}`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanism is exactly right and the seeding UPDATE at 20260722:16-19 only ran once at migration time, so it does not help orgs created later. Severity lowered: the blast radius is one member per org (invited members get `roles:[role]` from create-user/route.ts:130,161; restore placeholders are `status:'inactive'` and so are filtered out by every function's `status='active'` predicate), and org_capability_allows is only wired to three capabilities — holds.open/holds.release default to `'*'` and pass anyway, leaving `checkout.force_release` plus the milestone batch move as the only real denials, both fail-closed and self-healing if the admin is ever re-added via Add Member.
 
 **Mechanism.** `COALESCE(x, fallback)` returns the fallback only when `x` is
 `NULL`. The column is `NOT NULL DEFAULT '{}'`, so **`roles` is never `NULL` — it
@@ -183,6 +186,7 @@ additive-roles work in this audit.** See
   - **no trigger, no job and no rebuild exists** (verified by search)
 - **Related:** `DB-2`, `DB-5`, `OWN-7`, `OWN-20`
 - **Re-verified:** hardening pass — **SURVIVES**. `PermissionDrawer.tsx:284` writes `.eq("id", nodeId)` — the edited node only. No descendant is touched, and no trigger propagates. Duplicate of `OWN-20` within this area; fix once.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence. page.tsx:600-605 builds the index from `buildAclIndexFromChain(myChain)` at folder-creation time only — the index is a snapshot taken when the node is written, so a later library-level revoke never reaches documents or folders already indexed.
 
 **Mechanism.** The claim in `20260901` is true **only until the parent changes.**
 `acl_index` is chain-resolved at write time but written per node, and nothing
@@ -228,6 +232,7 @@ and a test covers "grant at library, revoke at library, check a nested document.
   - `supabase/migrations/20260812_per_library_publish_authority.sql:56-58` — **the database reads `acl_index` only**
 - **Related:** `DB-4`, `OWN-1`, `OWN-8`
 - **Re-verified:** hardening pass — **SURVIVES**. Three writers with three payload shapes: `PermissionDrawer.tsx:273-284`, `admin/libraries/page.tsx:101-108`, and the folder-creation path at `documents/[libraryId]/page.tsx:600-605`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The structural claim holds: the wizard edit path silently discards every user- and team-scoped rule the drawer wrote into `acl`, and never touches `acl_index`, so the two columns diverge permanently. One correction to the summary's narrative: publish authority does NOT fork the way described — both sides deliberately read the index (lib/permissions.ts:61-88 `canPublishViaIndex` and 20260812:56 `SELECT acl_index INTO v_idx`), so the drawer's publish grant survives in the UI too. The real fork is elsewhere: app-side read/discover evaluates the raw `acl` chain (canWithAclChain, permissions.ts:22-40) while RLS evaluates `acl_index` (node_visible), and new descendants get indexed from the truncated `acl`.
 
 **Mechanism.** Two writers, one enforced column. The drawer keeps `acl` and
 `acl_index` in sync; the library wizard writes only `acl`.
@@ -256,26 +261,57 @@ user's next rev-up.
 
 ---
 
-## DB-6 · Thirteen `SECURITY DEFINER` functions do not set `search_path`, while their neighbours do
+## DB-6 · Twenty `SECURITY DEFINER` functions do not set `search_path`, while their neighbours do
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:** every one of these is `SECURITY DEFINER` with no `SET search_path`:
-- **Re-verified:** **SURVIVES — and the count is too low.** A census of every `CREATE [OR REPLACE] FUNCTION … SECURITY DEFINER` across `supabase/` finds **44** such functions, of which **23** set no `search_path` — not thirteen. The list includes the core authority primitives: `my_org_ids`, `is_org_admin`, `is_org_admin_or_manager`, `is_org_controller`, `can_manage_node`, `doc_is_visible`, and the publish, move and legal-hold guards. Severity held; the finding understated its own scope.
+- **Re-verified:** **SURVIVES — and the count was too low.** The original thirteen was an undercount; see the reconciliation below for the settled figure.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. The named contrast (ticket numbering and archive invariants hardened, publish guard and `node_visible` not) is exactly right, and MEDIUM is fair given the exposure depends on CREATE privileges this repository cannot show. The count is settled below.
 
-| Function | Migration |
+> **Count reconciliation.** Four passes produced four different numbers — 13 as
+> filed, then 23-of-44, 23-of-44 and 18-of-37 from three separate verifiers. All
+> four are wrong, and they disagree for two reasons worth stating, because any
+> future re-census will hit the same traps:
+>
+> 1. **Superseded definitions.** `enforce_document_publish_guard` is written four
+>    times across four migrations. Only the last one exists in the live database;
+>    counting all four inflates the denominator. That is where 44 comes from.
+> 2. **Overloads are not supersessions.** `publish_revision` exists at arity 11
+>    (`20260823_publish_contract.sql`) *and* arity 13
+>    (`20260828_integrity_hardening.sql`). Postgres keys functions by signature,
+>    so `CREATE OR REPLACE` with a changed arity adds a second function rather
+>    than replacing the first — **both are live, and neither pins `search_path`.**
+>    Collapsing them by name is where 37 comes from.
+>
+> Counting each distinct `(name, arity)` at its final definition: **57 functions,
+> 39 of them `SECURITY DEFINER`, of which 20 set no `search_path`.** That list is
+> the table below, and it is exhaustive.
+
+| Function | Effective definition |
 |---|---|
-| `node_visible` | `20260708_acl_rls_enforcement.sql` |
-| `enforce_document_publish_guard` | `20260713`, `20260812`, `20260816`, `20260822` (four definitions) |
-| `can_manage_node` | `20260816_documents_access_change_guard.sql` |
-| `documents_guard_access_change` | `20260816_documents_access_change_guard.sql` |
-| `revup_rollback_orphan` | `20260818_followups_rls.sql` |
-| `publish_revision` | `20260823_publish_contract.sql`, `20260828_integrity_hardening.sql` |
-| `enforce_legal_hold_delete_guard` | `20260826_legal_hold_delete_guard.sql` |
-| `enforce_legal_hold_version_delete_guard` | `20260826_legal_hold_delete_guard.sql` |
-| `enforce_document_move_guard` | `20261011_collections_guard_and_trash.sql` |
+| `my_org_ids()` | `supabase/schema.sql` |
+| `my_team_ids()` | `20260707_teams.sql` |
+| `node_visible(3)` | `20260708_acl_rls_enforcement.sql` |
+| `is_org_admin(1)` | `20260713_branding_admin_writes.sql` |
+| `doc_is_visible(1)` | `20260813_acl_close_gaps_and_audit_scope.sql` |
+| `my_project_ids()` | `20260813_acl_close_gaps_and_audit_scope.sql` |
+| `is_org_controller(1)` | `20260814_documents_delete_controllers.sql` |
+| `can_manage_node(2)` | `20260816_documents_access_change_guard.sql` |
+| `documents_guard_access_change()` | `20260816_documents_access_change_guard.sql` |
+| `is_org_admin_or_manager(1)` | `20260817_org_members_escalation_and_config.sql` |
+| `bump_share_access(1)` | `20260818_followups_rls.sql` |
+| `can_manage_project(1)` | `20260818_followups_rls.sql` |
+| `is_org_assign_drafters(1)` | `20260818_followups_rls.sql` |
+| `revup_rollback_orphan(2)` | `20260818_followups_rls.sql` |
+| `enforce_document_publish_guard()` | `20260822_review_completion_guard.sql` |
+| `publish_revision(11)` | `20260823_publish_contract.sql` |
+| `enforce_legal_hold_delete_guard()` | `20260826_legal_hold_delete_guard.sql` |
+| `enforce_legal_hold_version_delete_guard()` | `20260826_legal_hold_delete_guard.sql` |
+| `publish_revision(13)` | `20260828_integrity_hardening.sql` |
+| `enforce_document_move_guard()` | `20261011_collections_guard_and_trash.sql` |
 
   Contrast with functions in the same repository that **do** set it:
   `20260724_ticket_numbering.sql:37`, `20260726_ticket_comments.sql:67`,
@@ -315,6 +351,7 @@ hazard, and the next agent should not have to re-derive it.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** Re-read in the hardening pass. **This is an authority-function census, not a defect** — nothing to refute. Use it as the map before changing any policy.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Every factual assertion in the census checks out, including the asymmetry (`acl_index_denies` unnests all roles for denies while `node_visible` reads only the singular `role` for allows) and the ROLE_RANK demotion trap. The entry carries no independent defect of its own — it self-declares as a census — so its MEDIUM is nominal rather than an impact rating.
 
 **Mechanism.** The database's authority helpers split cleanly into two families,
 and the split is the root cause of a family of findings across this audit.

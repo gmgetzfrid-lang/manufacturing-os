@@ -13,7 +13,7 @@ inconsistent with no way to detect or repair it.
 
 ## MON-1 · A failed award leaves the document permanently awarded with no commitment, and nothing can repair it
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / financial
@@ -24,6 +24,7 @@ inconsistent with no way to detect or repair it.
   - `app/api/projects/cost-docs/route.ts:87-92` — the 409 that then blocks recovery
 - **Related:** `MON-11` (`posted_entry_id` unread — the field that would detect this)
 - **Re-verified:** hardening pass — **SURVIVES**. `claimDocTransition` moves the document to `awarded` before the money is posted; the unreadable-total branch reverts (`costDocs.ts:240`), but the `addEntry` failure branch at `:245` returns `{ok: false}` **without** calling `revertDocTransition`. The document stays awarded with no commitment. `revertDocTransition` itself ends in `.then(() => undefined, () => undefined)`, so even the paths that do revert cannot report a failed revert.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The stuck-document half is fully confirmed, and the window is wider than the finding says — closing the tab after the claim UPDATE returns but before addEntry resolves leaves the row awarded with no revert attempt at all. But 'nothing can repair it' is too strong for the money: CostsTab.tsx:361 renders `<EntryForm …>` per account, which calls `addEntry` with `entryType: "commitment"` (CostsTab.tsx:424-426), so the missing commitment can be posted by hand and the rollup made whole. What stays unrepairable is the document/rival state (rivals are never declined — costDocs.ts:250-257 runs only after a successful post). HIGH rather than CRITICAL.
 
 **Mechanism.** The compare-and-swap discipline is right: claim the transition,
 then move the money, and revert if the money fails. But the revert is
@@ -68,13 +69,14 @@ money.
 
 ## MON-2 · The cost S-curve's planned line starts on the day the first task finishes
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / decision-quality
 - **Locations:** `components/projects/CostsTab.tsx:76-79`
 - **Related:** `MON-6` (span definitions), `SCH-6`
 - **Re-verified:** hardening pass — **SURVIVES**. `const dates = rows.map((m) => m.planned_at)…sort()` then `start: dates[0]` (`CostsTab.tsx:76-79`). `planned_at` is the milestone **finish**, so the planned curve begins on the earliest completion date.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The defect is real and the fix is one column, but the impact is a systematically compressed planned curve (the audit's own example is an 11-day / ~9% skew) plus a skewed run-rate EAC — a distorted decision aid, not a money-moving or data-destroying fault. CRITICAL is too high; HIGH.
 
 **Mechanism.**
 
@@ -118,6 +120,7 @@ definitions (`MON-6`) so the whole app agrees.
   - `lib/costDocs.ts:323-334` — `setManualTotal`
   - `lib/costDocs.ts:170-192` — `claimDocTransition`, the pattern they should use
 - **Re-verified:** hardening pass — **SURVIVES**, and the discipline it breaks is in the same file. `voidCostDoc` (`costDocs.ts:315`) and `setManualTotal` (`:330`) both issue a bare `.update(…).eq("id", …)` with no status precondition in the predicate, while `awardQuote` in the same module goes through `claimDocTransition` — a real compare-and-swap.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both writers are genuinely unguarded, and I found no DB CHECK, trigger, or RLS predicate on cost_documents.status that would stop them (only the RLS membership/owner policies in 20260906/20261013). The downstream consequence is real too: app/api/intake/resolve/route.ts:86-88 maps `void` to "not_selected" for the vendor while the commitment posted by awardQuote stays on the budget.
 
 **Mechanism.** `voidCostDoc` checks the *client's stale* status object, then
 updates with `.eq("id", doc.id)` alone. `setManualTotal` has no status guard at
@@ -152,6 +155,7 @@ returned row count, exactly as `claimDocTransition` does. Return the same
   - `components/projects/CostsTab.tsx:145-156` — the burn bar, which *does* draw the committed band
   - `lib/projectReport.ts` — `draftLessonsLearned` writes the figure into the record
 - **Re-verified:** hardening pass — **SURVIVES**. `remaining: sum((r) => r.account.budget) - sum((r) => r.spent)` (`costs.ts:330`) omits commitments entirely, and the figure is rendered as the headline "Remaining" stat (`CostsTab.tsx:133-136`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. I looked for a mitigating reading and only found partial ones — the Committed tile and the hatched burn bar sit beside it (CostsTab.tsx:129-131, 148-156) — but nothing labels the figure as budget-minus-actuals, and the lessons-learned draft launders it into projects.lessons_learned as a closeout fact. HIGH stands.
 
 **Mechanism.** `spent` is actuals plus adjustments. Awarded contract value is
 posted as a commitment and never drawn down against available money. The tile
@@ -182,7 +186,7 @@ definition.
 
 ## MON-5 · The printed report's cost performance index is unconditionally null, so paper and screen disagree
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness
@@ -191,6 +195,7 @@ definition.
   - `lib/costs.ts:305-313` — where a missing index makes earned value null
   - `components/projects/CostsTab.tsx:137-141` — the screen, which shows a real CPI
 - **Re-verified:** hardening pass — **SURVIVES**, and the cause is one argument. `lib/projectReport.ts:59` calls `computeCostRollup(accounts, entries, new Map())` — the third parameter is the milestone-percent index, and an empty map makes `evActual` zero, so `cpi: evActual > 0 ? evTotal / evActual : null` (`costs.ts:332`) is **always null on paper** while the screen passes a real index.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is exactly as claimed, but the summary's framing is wrong in one way that matters: the report never prints a mismatched CPI — projectReport.ts:139 is `${d.rollup.cpi != null ? row("Cost performance (CPI)", …) : ""}`, so the row is simply absent (and the lessons-learned CPI parenthetical too). The genuine paper-vs-screen contradiction is the Forecast line, which silently falls back to the run-rate basis (costSeries.ts:120-135) and prints a different EAC under the claim "Every figure above is drawn live". An omitted metric plus one divergent forecast sentence is MEDIUM, not HIGH.
 
 **Mechanism.**
 
@@ -240,6 +245,7 @@ missing imported rows.
   - `types/schema.ts:429` — `MilestoneSource`
 - **Related:** `SCH-6`, `MON-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `projectSnapshot.ts:49` filters milestones to `source == null || "manual" || "app"`, the identical filter used by `projectReport.ts:54`. Imported rows are excluded from health, coach and report while the Costs tab reads them.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The core asymmetry is confirmed on all four surfaces. One sub-claim in the summary is wrong: the baseline nag cannot fire forever, because projectHealth.ts:198 requires `s.milestoneCount > 0` (false when every row is imported) and setBaseline (lib/milestones.ts:1469-1489) selects by org+project with no source filter, so any manual row that makes milestoneCount > 0 also gets baseline_finish_at set. HIGH still stands on the visibility gap itself.
 
 **Mechanism.**
 
@@ -280,7 +286,7 @@ trying to exclude, and delete the impossible `'app'` branch.
 
 ## MON-7 · The Known Companies scorecard is structurally empty for the normal workflow
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** feature-dead
@@ -293,6 +299,7 @@ trying to exclude, and delete the impossible `'app'` branch.
   - `lib/companies.ts:240-252` — the profile gather, which hangs everything off these keys
 - **Related:** `UX-5`, `SAF-9`
 - **Re-verified:** hardening pass — **SURVIVES**. `saveParty` writes `cost_parties` (`costs.ts:127-134`), a different table from `companies`, which is what the Known Companies scorecard reads — so the normal project workflow never populates the scorecard.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Both headline sub-claims hold: turnover/punch evidence is always NULL-keyed so it can never reach a scorecard, and `bids` is always empty so the bid-history panel and "N/M bids won" can never render. But "structurally empty" overstates it — the wizard does link parties by exact name, and via that link projects, contract value (awardsTotal), change orders, milestone on-time and safety events all populate; the Quality dimension also scores from qualityManualScore alone (lib/companyScore.ts:92-102), so it is not "permanently Unrated". Two dead evidence channels out of many: MEDIUM.
 
 **Mechanism.** The company profile hangs everything off three join keys, and
 none is written outside the wizard:
@@ -335,7 +342,7 @@ the contractor's permanent scorecard."
 
 ## MON-8 · An unmapped document status throws inside the award path, hanging the button forever
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
@@ -345,6 +352,7 @@ the contractor's permanent scorecard."
   - `supabase/migrations/20260819_orphan_tables_backfill.sql:184` — `status` is plain `text NOT NULL`, no CHECK
 - **Related:** `REL-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `COST_DOC_STATUS_LABEL[fresh.status].toLowerCase()` (`costDocs.ts:181`) — an unmapped status makes the lookup `undefined` and the method call throws inside the award path, after `setBusy` and before any `setBusy(null)`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism and the stuck-button consequence are real, but reachability is the weak link: every in-repo writer (costDocs insert/claim/decline/void, app/api/projects/cost-docs/route.ts:125 `status: "parsed"`, app/api/intake/upload/route.ts:90 `status: "draft"`) writes one of the six. Only an out-of-band write — lib/dataRestore.ts:320 restores cost_documents from an arbitrary export — can produce an unmapped value. A defensive gap behind an unreachable-in-normal-operation precondition is MEDIUM, not HIGH.
 
 **Mechanism.** The lookup returns `undefined` for any status not in the map, and
 `.toLowerCase()` throws. `cost_documents.status` carries no check constraint, so
@@ -368,7 +376,7 @@ never runs, and the Award button spins indefinitely.
 
 ## MON-9 · Two simultaneous change-order proposals collide on the generated number
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
@@ -376,6 +384,7 @@ never runs, and the Award button spins indefinitely.
   - `lib/changeOrders.ts:88-110` — read-max-then-insert, no retry
   - `lib/companies.ts:134-136` — `saveCompany`, which maps 23505 correctly
 - **Re-verified:** hardening pass — **SURVIVES**. `co_number` is derived by reading the last 50 rows and taking the max (`changeOrders.ts:88-93`) with no unique constraint and no counter — two concurrent proposals read the same maximum.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The race exists, but the stated harm (two COs colliding on a number) cannot land — the unique index rejects the loser. The residual defect is only that changeOrders.ts:111 `throw new Error(error.message)` surfaces a raw "duplicate key value violates unique constraint" with no retry, whereas the neighbouring file handles precisely this at lib/companies.ts:134-136 `if (code === "23505") throw new Error(\`"${row.name}" is already in the registry.\`)`. A cosmetic error message on a rare race is LOW.
 
 **Mechanism.** Read the maximum number, add one, insert against a unique index,
 with no retry. Both proposals compute `CO-004`; the loser gets the raw
@@ -404,6 +413,7 @@ project.
   - `app/submit/[token]/page.tsx:195-199` — the status chip
 - **Related:** `BID-10` (free-text group), `MON-11` (no notifications)
 - **Re-verified:** hardening pass — **SURVIVES**. `const rivals = … && !!fresh.rfqGroup && d.rfqGroup === fresh.rfqGroup` (`costDocs.ts:250-251`) — an ungrouped quote has no rivals, so nothing is ever marked not-selected.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the ungrouped case is not exotic: the RFQ group on a quote link is optional ('RFQ group (optional)', QuotesPanel.tsx:605) and app/api/intake/upload/route.ts:57,88 copies whatever the link holds — null included — into cost_documents.rfq_group. There is also no manual escape for such a bid: a parsed quote with an extraction renders only in the econ table, which has no Void control (QuotesPanel.tsx:309-316), so its portal status is stuck at 'under review' indefinitely. MEDIUM is appropriate — it is a courtesy/communication defect, not a money defect.
 
 **Mechanism.** Awarding marks rival bids declined only within the same non-null
 `rfq_group`. An ungrouped quote is never marked. Combined with the portal's
@@ -432,6 +442,7 @@ group. Send the notification promised at `upload/route.ts:127`.
   - `lib/changeOrders.ts`, `lib/turnover.ts`, `lib/checklists.ts`, `lib/costDocs.ts`, `lib/companies.ts` — no notification imports at all
   - `app/api/intake/upload/route.ts:349-385` — the document branch, which does the full job
 - **Re-verified:** hardening pass — **SURVIVES**, by census. The only `notifications` insert anywhere in the controls program is the intake one (`intake/upload/route.ts:104-113`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by repo-wide search. Award, decline, change-order approval, invoice posting, turnover and checklist events all move money or obligations and none of them touch the notifications table or lib/notify/dispatch, even though the plumbing exists and is used heavily elsewhere (lib/reviewControl.ts, lib/holds.ts, lib/retention.ts, lib/distributionAcks.ts). The other notification inserts in the same route (:197, :349) belong to the document-intake path, not the controls program, so 'only one event' stands.
 
 **Mechanism.** No `notifications` insert, no `email_notifications` insert, no
 `inAppNotifications` import in any of the five new data libraries or the three
@@ -468,6 +479,7 @@ already shows state.
   - `lib/companies.ts:24` — `inactive`, which changes nothing at all
 - **Related:** `BID-12` (the name match that often prevents the chip rendering at all)
 - **Re-verified:** hardening pass — **SURVIVES**. `awardQuote` (`costDocs.ts:211`) takes no company status and applies no check, while the UI renders a `do_not_use` badge two lines from the Award button (`QuotesPanel.tsx:289-291`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on every point: the chip is advisory-only, awardQuote has no company-status check and records no override in its audit payload (lib/costDocs.ts:256-259), the name match is exact-string, and a failed listCompanies silently blanks the flag for every bidder. MEDIUM is right — it is an advisory control, not a hard one.
 
 **Mechanism.** The flag renders as a red chip on the bid tab and on the card,
 and blocks nothing. `awardQuote` never reads company status. The sibling status

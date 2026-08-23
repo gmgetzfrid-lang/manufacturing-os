@@ -67,6 +67,7 @@ from a single role that was chosen by rank, not by relevance.
   - `lib/__tests__/capabilityPolicy.test.ts:130-131` — the tests **do** exercise `extraRoles`, so the mechanism is proven to work
 - **Related:** `ROLE-1`, `DRAFT-3`, `DOCACL-1`, `ADD-2`
 - **Re-verified:** hardening pass — **SURVIVES**, verified by enumerating every call site. `policyAllows(policy, cap, role, extraRoles, uid)` receives a real collection in exactly one production path — `lib/holds.ts:100`. `lib/workflow.ts:65` passes `null`, so the entire drafting engine ignores every role but the headline. The remaining callers are two admin pages and `ViewAsSimulator.tsx:128` (a simulator, not authority).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the admin UI actively promises the opposite: app/(protected)/admin/users/page.tsx:474-484 renders each addable role with `+ {adds.join(' · ')}` from `capabilitiesAdded`, so adding Drafter to a Manager displays '+ Claim & produce drafts' while lib/workflow.ts:65 will never see it (ticket.self_assign defaults to ["Drafter"], headline is Manager). I tried to find a server path that reads roles[] and there is none. CRITICAL stands: the admin console states an authority grant that production authority does not honor.
 
 **Mechanism.** The evaluator supports the collection. One production call site
 passes it. The workflow — the largest consumer of the capability policy, and the
@@ -119,6 +120,7 @@ Priority order:
   - `lib/workflow.ts:65` — `policyAllows(policy, cap, userRole, null, userId)` — passes **null**
 - **Related:** `ADD-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `ViewAsSimulator.tsx:128` passes `who.roles`; `workflow.ts:65` passes `null`. The simulator answers a question production never asks.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The divergence is real and the UI's literal claim of parity is the aggravating fact. Concretely: a member with role='Manager', roles=['Manager','Drafter'] shows a green check next to 'Do drafting work'/'Self-assign drafting work' in the simulator, while WorkflowEngine.getActions offers neither. HIGH is right.
 
 **Mechanism.** The simulator is the tool an administrator uses to answer "what
 can this person actually do?" It is the one surface that passes `extraRoles`
@@ -161,6 +163,7 @@ that must not stand.
   - `lib/roleCapabilities.ts:8-13` — the stated intent: *"the most powerful role the member holds"*
 - **Related:** `ADD-1`, `ROLE-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `primaryRole` sorts by `ROLE_RANK` alone (`roleCapabilities.ts:122`), so a Manager who also drafts has headline `Manager` (90) and misses every `Drafter`-keyed check.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. I tested whether this is merely a restatement of ADD-1 (harmless if every check read the collection) and it is not: the singular mirror is irreducibly what the database reads. A member holding {Manager, DocCtrl} gets headline Manager, and the publish-path SQL that gates on `v_role IN ('Admin','DocCtrl')` (20260812_per_library_publish_authority.sql:52,119; 20260713_document_publish_guard.sql:56; 20260816_owner_publish_access.sql:56; 20260822_review_completion_guard.sql:64) denies them at the DB regardless of app-layer fixes. Cited line numbers are ~2 low (ROLE_RANK is 74-94, primaryRole 120-123), content matches exactly. HIGH stands.
 
 **Mechanism.** `primaryRole` returns the highest-ranked role. Where a single
 role must be produced, "most powerful" is a defensible choice — it is safe for
@@ -209,6 +212,7 @@ questions correctly.
   - Mirror-only: **41 migration files** reading `org_members.role`, including `20260708_acl_rls_enforcement.sql:58` — the ACL (`DOCACL-1`)
 - **Related:** `DOCACL-1`, `ADD-1`
 - **Re-verified:** hardening pass — **SURVIVES**, with the census made exact: **11** SQL references read `roles[]` (`roles &&` / `ANY(roles)`) against **50** that read the `role` mirror. The split is real and lopsided.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The count in the title is accurate to the file: seven policy sites read the collection, everything else reads the mirror only. The split is exactly as described — whether a secondary role counts depends on which migration wrote the policy. HIGH stands.
 
 **Mechanism.** Migrations written after the collection landed tend to check both
 (`role IN (...) OR roles && ARRAY[...]`). Migrations written before it check
@@ -256,6 +260,7 @@ means the next role-model change is one edit rather than forty-eight.
   - `supabase/migrations/20260722_member_roles_collection.sql:13` — `ADD COLUMN IF NOT EXISTS roles TEXT[] NOT NULL DEFAULT '{}'` — no trigger, no constraint
   - `components/providers/RoleContext.tsx:198-201` — `normalizeRoles` then `primaryRole`, on read
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `primaryRole` is TypeScript (`roleCapabilities.ts:120-123`) and `20260722_member_roles_collection.sql:13` only adds the column with a default. No trigger, constraint or function keeps `role` consistent with `roles`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and I found a live writer that already violates the invariant: app/api/auth/signup/route.ts:133-142 inserts `{ ..., role: "Admin", status: "active" }` with no `roles`, so the row lands with role='Admin' and roles='{}'. That also breaks org_capability_allows, whose `COALESCE(roles, ARRAY[role])` (20260901:39) does not fall back for an empty-but-non-null array. MEDIUM is defensible, arguably light.
 
 **Mechanism.** The invariant "`role` equals the highest-ranked member of
 `roles`" is maintained by application code on write. There is no trigger, no

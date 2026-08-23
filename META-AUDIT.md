@@ -35,9 +35,17 @@ was checked came back clean.
 | README severity counts vs. each area's `findings.json` | **10 of 10 areas consistent** |
 | Reports duplicating another report's content | **0** (the one that did is fixed) |
 | Duplicate finding IDs within an area | **0** |
-| Findings re-verified against source | **1,098 of 1,098 — the whole corpus** |
-| Refuted by that verification | **0** |
-| Severity changed by it | **0** |
+| Findings challenged by a party that did not write them | **1,098 of 1,098 — the whole corpus** |
+| Refuted | **10** |
+| Severity lowered | **79** |
+| Severity raised | **0** |
+
+> **These last three lines used to read 0, 0 and 0.** The hardening pass that
+> produced those zeros was run by the session that wrote the findings. A later
+> independent pass over the same 364 findings — separate agents, refute-first
+> prompt, prior verification notes stripped so nothing anchored them — returned
+> 10 refutations and 79 downgrades. The zeros were an artifact of who was
+> counting. See `audit-reports/HARDENING-PLAN.md`, Phase F.
 
 **Every `CRITICAL` in the corpus has now been re-verified against source.** The
 original random sample of ten is kept below because it is what the meta-audit
@@ -239,6 +247,13 @@ contested had 28 of them lowered.
 > `IDENT-1` were written and verified by the same session, so their `Re-verified`
 > lines say so and tell the reader to treat them as `author`-grade until someone
 > else reads them. That is the honest floor of this pass.
+>
+> **Superseded by the independent pass.** `hardening-pass` no longer exists as a
+> grade — all 364 went to separate agents. Of the 65 `CRITICAL`s covered above,
+> one was refuted (`notifications/NEDGE-1`) and twenty-one were downgraded,
+> `IDENT-1` among them. The corpus now holds **95 `CRITICAL`s, all
+> `adversarial` or `adversarial-independent`**, and nothing at any severity is
+> `author` or `unverified`.
 
 ---
 
@@ -393,7 +408,7 @@ caught by verifiers and corrected in prose.
 
 > ### Resolution
 >
-> Both re-verified against source and **both survive**. `XEDGE-3`'s substance is fully confirmed — `ORG_SCOPED_TABLES` lists 104 tables including `audit_logs`, `e_signatures` and `document_acknowledgments`, all reachable through `IMPORTABLE`, and `grep -c audit_logs apply-table/route.ts` returns `0` — only one stale location was wrong. `XEDGE-14`'s real anchors are `webhook/route.ts:56,63`. `XEDGE-1`, the one `CRITICAL` in that report, was also verified and now belongs with `DRLS-2`, `ORG-1`, `EGR-1` and `PKG-1` in the unguarded-path cluster. The report's remaining 13 findings stay marked `unverified` in `verified_by`, which is now a machine-readable field rather than a banner a tool cannot see.
+> Both re-verified against source and **both survive**. `XEDGE-3`'s substance is fully confirmed — `ORG_SCOPED_TABLES` lists 104 tables including `audit_logs`, `e_signatures` and `document_acknowledgments`, all reachable through `IMPORTABLE`, and `grep -c audit_logs apply-table/route.ts` returns `0` — only one stale location was wrong. `XEDGE-14`'s real anchors are `webhook/route.ts:56,63`. `XEDGE-1`, the one `CRITICAL` in that report, was also verified and now belongs with `DRLS-2`, `ORG-1`, `EGR-1` and `PKG-1` in the unguarded-path cluster. The report's remaining 13 findings were marked `unverified` in `verified_by` — a machine-readable field rather than a banner a tool cannot see. **They no longer are:** every one went through the hardening pass and then the independent pass, and the whole report is now `adversarial-independent` (`XEDGE-5` lowered `HIGH` → `MEDIUM`, nothing refuted).
 
 ---
 
@@ -444,16 +459,30 @@ should be inferred. This is the single largest hole: it is exactly the check tha
 would catch a fabricated quotation, and it was not achievable mechanically
 against reports written for humans.
 
-**`hardening-pass` is not the same as `adversarial`, and the gap is one reader.**
-Every finding in the corpus has now been challenged, but 364 of them were
-challenged by this session re-reading the cited code rather than by a separate
-agent built to refute. That is equal in rigour and weaker in independence, and
-`verified_by` distinguishes the two so a consumer can weight by it.
+> **Both of the two gaps that used to sit here have been closed, and closing
+> them proved the caveat was understated.** They are kept below with what
+> actually happened, because the size of the error is the useful part.
 
-**The weakest floor is `identity-and-session`.** Those 14 findings were written
-*and* verified in the same session. Every one of them says so in its own
-`Re-verified` line and tells the reader to treat it as `author`-grade until
-someone else reads it. That is the honest bottom of this corpus.
+**~~`hardening-pass` is not the same as `adversarial`, and the gap is one
+reader.~~** *Closed.* All 364 were re-issued to 26 separate agents with their
+prior verification notes stripped and instructions to refute. Result: **10
+refuted, 89 corrected, 79 severities lowered, 0 raised.** The claim above that
+the pass was "equal in rigour and weaker in independence" was wrong on the first
+half — a reader re-reading their own conclusion confirms it. Nothing carries
+`hardening-pass` now; the grade is `adversarial-independent`.
+
+**~~The weakest floor is `identity-and-session`.~~** *Closed.* Those 14 went
+first in the independent pass, precisely because they were the weakest.
+`IDENT-5` was refuted, `IDENT-1` was lowered from `CRITICAL` to `HIGH`, and
+`IDENT-3` from `HIGH` to `MEDIUM`. The remaining eleven survived. The area is now
+graded like the rest of the corpus rather than caveated below it.
+
+**What the closure did not reach.** The 734 `adversarial` findings were
+challenged once, by a separate agent, at the time they were written — which is
+why they were not re-run. But the 79:0 downgrade ratio in the 364 is a large
+enough skew that it may reflect how these findings are authored rather than how
+the hardening pass verified them. **Nothing in this engagement measures whether
+the 734 carry the same skew.** That is the honest bottom of this corpus now.
 
 **Nothing was reproduced against a running system.** Same limit the underlying
 audits carry: no live database, no browser, no AI provider. Every conclusion here
@@ -475,15 +504,20 @@ by re-reading the journal. The surviving journal is preserved at
 caveats in their head, because the caveats became fields:
 
 - Every in-repo citation resolves, and the build fails if one stops.
-- Every `CRITICAL` has been challenged — 116 of 116, 0 refuted.
+- Every finding — all 1,098 — has been challenged by a party that did not write
+  it. `CRITICAL` is 95 of 95.
 - Every finding declares how hard it was challenged, in `verified_by`.
+- The 10 findings that did not survive are still here, marked `Status: REFUTED`
+  with the reason, and flagged `refuted: true` in `findings.json` so a queue
+  drops them without a human remembering to.
 - No prefix collisions, no dangling references, no duplicated reports.
 
-**The thing to understand:** `verified_by` is not decoration. `adversarial` means
-a separate agent tried to refute the claim; `hardening-pass` means one reader
-did. Both beat unchallenged, neither is a guarantee, and `DEC-29` — reproduce
-before fixing — still applies to every entry. **Verification proves the claim is
-true, not that the fix is safe.**
+**The thing to understand:** `verified_by` is not decoration, and the independent
+pass is the reason. It refuted 10 findings and lowered 79 severities that a
+same-session re-read had passed clean. Challenged beats unchallenged; independent
+beats both. Neither is a guarantee, and `DEC-29` — reproduce before fixing —
+still applies to every entry. **Verification proves the claim is true, not that
+the fix is safe.**
 
 The sweep also produced six corrections, none of which changed a severity: one
 finding understated its own scope by a factor of nearly two (`DB-6`: 23

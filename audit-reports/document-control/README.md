@@ -22,7 +22,7 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 ## Findings
 
-**147 findings** — 20 CRITICAL, 59 HIGH, 68 MEDIUM.
+**147 findings** — 20 CRITICAL, 58 HIGH, 69 MEDIUM.
 
 | # | Report | n | Note |
 |---|---|---|---|

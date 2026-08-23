@@ -53,6 +53,7 @@ Everything else in this report follows from that.
   - `lib/roleCapabilities.ts:63-69` — Maintenance, Operations, Safety, HR, Accounting, Contractor all grant exactly `["create_requests"]`
 - **Related:** `TIER-2`, `FRIC-1`, `WF-5`, `WF-12` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**. `requiresEngineerApproval(requesterRole)` takes the requester's role as its **only** argument (`workflow.ts:37-43`) and is called as `requiresEngineerApproval(ticket.requesterRole)` (`:78`). Nothing about the work reaches the decision. Read with `roles-and-permissions/WF-5`: that one input is client-stamped.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and a repo-wide grep shows requiresEngineerApproval has exactly one production call site — nothing else re-imposes an engineering gate. A Manager requester reaching PENDING_REVIEW is offered 'Approve (Issue for Construction)' directly (workflow.ts:213-217), which ticketTransitions.ts:221-225 moves to PENDING_IFC and stamps an issued deliverable_rev, with no second party involved. Nothing about the work reaches the decision. CRITICAL stands.
 
 **Mechanism.** `isManagementRole` returns true for `Admin`, `Manager`,
 `Supervisor`. So the gate produces exactly this:
@@ -100,7 +101,7 @@ are needed.
 
 ## TIER-2 · There is no work classification at all — like-in-kind and new design are indistinguishable
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / compliance
@@ -112,6 +113,7 @@ are needed.
   - `lib/docClass.ts:28` — `DocClass = "drawing" | "procedure"` — **exists, but on the document, not on the ticket**
 - **Related:** `TIER-1`, `TIER-3`, `GAP-101`
 - **Re-verified:** hardening pass — **SURVIVES**. `export type RequestType = string;` (`types/schema.ts:1019`) — no union, no enum, no CHECK — and a repo-wide search for `likeInKind`, `work_class` or `scopeTier` returns nothing. There is no field in which a like-in-kind declaration could be recorded, which is the mechanism `DEC-33`/`DEC-34` depend on.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The operative claim holds: no work class drives routing, gating or reporting anywhere. But the re-verification's absolute — 'There is no field in which a like-in-kind declaration could be recorded' — is refuted by the custom-category mechanism: types/schema.ts:1192-1214 defines `CustomFieldDef { type: "select", required?: boolean }` under `OrgDraftingSettings.customCategories`, and requests/new/page.tsx:273-289 validates required custom fields and writes them to `metadata.custom_categories`. An admin can add a required 'Like-in-kind / New design' select today. It is write-only (the only reader repo-wide is the admin editor) and the three programmatic creators bypass it, so this is an enabler gap rather than an exploitable defect — HIGH, not CRITICAL.
 
 **Mechanism.** The ticket carries `request_type` — a free string an org
 configures as a dropdown (`app/(protected)/admin/requests/page.tsx:179-195`),
@@ -174,6 +176,7 @@ frequently cannot answer it, and asking them is itself friction (`FRIC-3`).
   - `lib/workflow.ts:80-342` — 12 statuses, none QA/QC
   - `types/schema.ts` — no inspection, examination or hold-point concept
 - **Related:** `TIER-4`, `GAP-102`
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by a repo-wide search, and the finding is already honest that the concept exists in the projects module — it is simply not wired to the drafting ticket flow in any form: no status, no capability, no field, no notification. HIGH stands for a safety-domain absence.
 
 **Mechanism.** The stated requirement is that **QA/QC reviews everything, even
 like-in-kind** — because NDE scope, radiography extent and code design factors
@@ -220,6 +223,7 @@ QA/QC reviewer signs concurrently with the design reviewer, not after them.
   - `types/schema.ts:191-210` — `ReviewControl` has no code, discipline or service-class dimension
 - **Related:** `TIER-3`, `WF-13`, `GAP-101`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `policyAllows` keys on capability, role tokens and per-person grants (`capabilityPolicy.ts:141-152`); `expandReviewers` keys on ids, roles and teams (`reviewControl.ts:126-131`). Neither carries a code, standard or discipline dimension, so "B31.3 signatory" is unrepresentable except by inventing a role name.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by repo-wide search: a grep for governingCode|governing_code|codeClass|code_class|serviceClass|service_class|B31|API 653 across lib/ app/ types/ components/ supabase/ returns only test fixtures (lib/__tests__/knowledgeText.test.ts:108-120, drawingText.test.ts:434) and prompt strings in app/api/knowledge/ask/route.ts — zero production data model. The only 'discipline' hits are cost-discipline scoring and a document tag column example. There is no dimension in which a governing code could be declared.
 
 **Mechanism.** The requirement is org-specific by nature: *"there's ASME B31.3
 in my case, not another organization's case — it could be whatever, that NDE and
@@ -262,6 +266,7 @@ this finding says the `resource` shape must carry a service/code class, not only
   - contrast `lib/reviewControl.ts:196-238` — `openReviewRoster` on the **document** side: primaries + alternates, **parallel**, with timeout-driven alternate activation and auto-finalize on the last signature
 - **Related:** `TIER-3`, `FRIC-1`, `GAP-103`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The state machine's review stages are distinct sequential cases — `PENDING_ENG_INITIAL` (`workflow.ts:83`), `PENDING_REVIEW` (`:198`) — and no concurrency or fan-out concept exists in the engine. Each added requirement is another state to wait in.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence: there is no fan-out, quorum, or multi-holder concept anywhere in WorkflowEngine.getActions or computeTransition — status is a scalar column and every transition sets it to one value. The ticket engine cannot express two concurrent reviewers, so each added requirement is necessarily another serial state.
 
 **Mechanism.** The ticket flow is a linear status machine. Each review is a
 status; each status has one waiting party; the ticket advances when that party
@@ -296,7 +301,7 @@ state, not three.
 
 ## TIER-6 · MOC is captured at check-in and re-typed at publish, with no link between them
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / safety
@@ -308,6 +313,7 @@ state, not three.
   - `lib/revisions.ts:522` — `moc_reference: mocReference?.trim() || null`
 - **Related:** `LIFE-5` (roles-and-permissions area — same defect, recorded there in full)
 - **Re-verified:** hardening pass — **SURVIVES**. `mocRequirementFor` derives the requirement at check-in from doc class and outcome (`checkinOutcomes.ts:87-93`), and `CheckInPanel.tsx:224-229` renders a hand-typed `mocNumber` into a text line. Nothing carries either value to publish.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The headline defect is real — MOC is captured at check-in, never carried forward, and no version-to-ticket link exists — but two supporting claims are wrong. (1) The report says the publish gate 'asks for the number again as free text, described in the UI as optional, for a field the gate makes mandatory'; the optional-labelled input is explicitly suppressed when the gate is mandatory, so the free remediation it proposes ('relabel the input') is a no-op. (2) The 'laundering' scenario understates the surviving record: CheckInPanel.tsx:243 sets `priority: undocumented ? 1 : 2`, :266 stamps `undocumented_change: true`, and :291-305 pushes a 'PSM alert: undocumented field change' notification to every org controller. Downgrade to MEDIUM.
 
 **Mechanism.** Two MOC gates exist and they do not speak. The check-in gate
 **requires** an MOC position for a drawing-class discrepancy and deliberately
@@ -346,6 +352,7 @@ its own parallel rule.
   - `lib/ticketTransitions.ts:221-237` — identical terminal effect to `approve_draft_ifc`
 - **Related:** `WF-3` (roles-and-permissions area — recorded there in full), `TIER-1`
 - **Re-verified:** hardening pass — **SURVIVES**, and the two transitions are byte-identical in effect. `approve_draft_ifc` sets `PENDING_IFC` + `deliverable_rev = issuedRevLabel(ticket.revisionCount)` (`ticketTransitions.ts:221-224`); `approve_minor_correction` sets exactly the same two fields (`:230-232`). The only tiering the system has is the one that skips the gate.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and slightly worse than stated: the same action is also offered at PENDING_FINAL_APPROVAL (workflow.ts:277) where it produces PENDING_IFC WITHOUT setting `engineer_approved_at`, which the sibling `engineer_approve_final` does set (ticketTransitions.ts:246-248). So the fast path also drops the engineering-sign-off timestamp. The server route enforces getActions (workflow-action/route.ts:96-103), so the bypass is real, not merely a UI affordance.
 
 **Mechanism.** The one place the system *does* express "this change is small
 enough to need less review" is a button that produces the **identical** terminal
@@ -381,6 +388,7 @@ applied.
   - The only declared bridge: `lib/reviewControl.ts:60` — dead, and a trap (`LIFE-2`)
 - **Related:** `LIFE-12`, `LIFE-2`, `TIER-5`
 - **Re-verified:** hardening pass — **SURVIVES**. The ticket engine's `approve_*` actions (`workflow.ts:198-228`) and the document `reviewControl` sign-off share no vocabulary, no state and no data path; the server enforcement at `workflow-action/route.ts:91-102` knows only the ticket side.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on every limb: the ticket approve_* actions write only status + a history entry (ticketTransitions.ts:114-147, 221-248) with no signature and no content hash, the server gate at workflow-action/route.ts:96-103 knows only WorkflowEngine.getActions, and the one declared bridge is dead code reachable only from a unit test.
 
 **Mechanism.** An engineer who approves a drafting deliverable on the ticket has
 **not** signed anything on the document. When the resulting revision is

@@ -21,6 +21,7 @@ and a wrong health score.
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleParsers.ts:918-925` — `coerceIso`
 - **Re-verified:** hardening pass — **SURVIVES** — the strongest of the schedule findings. The docblock at `scheduleParsers.ts:910` promises *"we treat as M/D/Y **if first part ≤ 12**"*; the code at `:923` is `const month = a; const day = b;` with no such test. `15/08/2026` yields `2026-15-08T00:00:00Z`, which is not a date at all — the value is destroyed rather than merely swapped.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed exactly as claimed: the comment promises a conditional the code does not contain. Day values 1-12 are silently transposed into a valid-looking wrong date; 13-31 produce month=13..31 and surface only as a raw per-row Postgres message in `result.errors` (milestones.ts:1052-1054), with no way to tell the silently-wrong rows apart.
 
 **Mechanism.** The comment above the function reads:
 
@@ -74,6 +75,7 @@ their locale) and apply the answer to the whole file. Never guess per row.
   - `lib/milestones.ts:1005-1019` — `update({...baseFields, ...})` on the matched `external_ref`
   - `components/projects/ScheduleImportModal.tsx` — the tip strip, which is the only warning
 - **Re-verified:** hardening pass — **SURVIVES**. `baseFields` writes `status`, `percent_complete`, `actual_at` and `actual_start_at` unconditionally from the imported file (`milestones.ts:962-967`), so a re-import overwrites progress the crew logged in the app.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and worse than stated: a source file with no %-complete column at all yields importPct = 0 for every row (the `: 0` fallback), so it zeroes progress even when the source never claimed 0. No mitigation exists — ScheduleImportModal has no merge/preserve option (grep for 'progress|overwrite|existing' in the modal returns only comments and the result counters), and nothing pre-deletes or diffs before the update.
 
 **Mechanism.** The upsert's field set is derived purely from the file and
 applied to every row matched by external reference.
@@ -107,6 +109,7 @@ all-or-nothing choice.
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleParsers.ts:710` — `externalRef: id ? \`${refTag}:${id}\` : \`${refTag}-row:${rowIndex}\``
 - **Re-verified:** hardening pass — **SURVIVES**. `externalRef: id ? `${refTag}:${id}` : `${refTag}-row:${rowIndex}`` (`scheduleParsers.ts:710`) — with no id column the identity **is** the row index, so inserting a row re-points every ref after it.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives, with one scoping caveat the title omits: the positional fallback only fires when the CSV carries no id column — findCol looks for 'unique id|uid|id|task id' (msproject-csv, l.584) or 'external_ref|id|ref' (generic-csv, l.600). For the very common headerless-id export it does fire, and then inserting or dropping a single row silently rewrites the name, dates and progress of every subsequent row. Note the second-order bug: a blank/undated row shifts rowIndex too, so even an unchanged file can re-align differently.
 
 **Mechanism.** Rows without an id column get `csv-row:{index}` as their "stable"
 reference — stable only if nobody ever edits the spreadsheet.
@@ -151,6 +154,7 @@ keys on is the outline position, which renumbers on every insert — only
   - `components/projects/MovePreviewSheet.tsx` — fed `pendingMove.ids`, not the computed change set
 - **Related:** `SCH-8` (import creates the cycles), `SCH-14` (the guard is bypassable)
 - **Re-verified:** hardening pass — **SURVIVES**. The `guard = nodes.length * 4 + 32` bounds the iteration count but not the dates: each pass through a cycle pushes the successor out again. `ExecutionView.tsx:449-461` merges the cascade into the primary change set specifically so *"it persists + undoes as one set"*, so the far-future dates are written.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed exactly as described, including the preview mismatch — MovePreviewSheet receives pendingMove.ids (the drag target) while commitMove persists the merged cascade set. resizeEdge (l.528), resizeSummaryEdge (l.~550) and sequencePhase (l.~570) all call withCascade and persist without any sheet at all. The 'years' figure is guard-bounded, not unbounded, but scales with schedule size.
 
 **Mechanism.** The cascade is "cycle-safe" only in the sense that it
 *terminates*. Inside a cycle each pass pushes the successor forward and
@@ -188,7 +192,7 @@ rows in `all`.
 
 ## SCH-5 · Three contradictory overdue rules, one of which marks every task overdue on its own due date
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
@@ -197,6 +201,7 @@ rows in `all`.
   - `components/projects/ScheduleProgress.tsx:41, 49-53` — `planned < local midnight`
   - `components/projects/ExecutionView.tsx:949` — `planned < startOfDayUTC(now)`
 - **Re-verified:** hardening pass — **SURVIVES**. Two of the three verified directly and they disagree: `ScheduleTab.tsx:518` is `!actual && planned < now && effStatus !== "completed"`, `executionReport.ts:136` is `m.status !== "completed" && finishMs(m) < now` — different inputs, different answers for the same row. `planned` is midnight-anchored, so a task due today reads overdue from 00:00.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Every factual element checks out, including the side-by-side contradiction and the fourth/fifth variants in projectSnapshot.ts:115-118 and projectReport.ts:88-91 (both Date.now()) that feed projectHealth's overduePenalty. Downgrading to HIGH: it is a read-path/display and scoring defect — nothing is persisted or destroyed, and the discrepancy is at most one day wide.
 
 **Mechanism.** Planned dates are stored wall-clock-as-UTC
 (`2026-08-21T00:00:00Z` means "due 21 Aug"). Overdue is computed three different
@@ -233,7 +238,7 @@ through it. Delete the other two rules.
 
 ## SCH-6 · Hiding imported rows changes almost every number, and the tooltip says it doesn't
 
-- **Severity:** CRITICAL
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness
@@ -243,6 +248,7 @@ through it. Delete the other two rules.
   - `components/projects/ScheduleTab.tsx:233` — `ScheduleProgress`, the one component fed the full list
 - **Related:** `MON-6`
 - **Re-verified:** hardening pass — **SURVIVES**, and the tooltip is quotable. `ScheduleTab.tsx:259` reads *"Hide the read-only rows imported from your scheduling tool (they still count in the metrics)"* — while `:317` passes the filtered `visible` set into `ExecutionView`, so they do not.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → MEDIUM** by this pass. The underlying inconsistency is real — the toggle silently rebases every Execution-view number — but the finding overstates it: the tooltip's literal claim is TRUE, since both the metrics object and ScheduleProgress take the unfiltered `milestones`. So it is not 'almost every number' and the tooltip is not lying; it is a scope mismatch between two views. Display-only and instantly reversible, hence MEDIUM rather than CRITICAL.
 
 **Mechanism.** The interface states twice that imported rows "still count in the
 metrics" and "still count toward the earned-value rollup." That is true of
@@ -290,6 +296,7 @@ from the unfiltered list so a summary can never present as a leaf.
   - `components/projects/ScheduleTab.tsx:105-120` — the realtime subscription
   - `grep "ALTER PUBLICATION supabase_realtime" supabase/migrations/` → `checkout_messages`, `notifications`, `checkout_episodes` — **not `milestones`**
 - **Re-verified:** hardening pass — **SURVIVES**. `20260907_milestone_batch_move.sql:50-55` updates `WHERE id = … AND org_id = p_org` with no `updated_at` predicate. Contrast `rebaseSchedule` (`milestones.ts:1209-1229`), which does hold an optimistic lock — the pattern exists in the same file and was not applied here.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both halves confirmed by repo-wide search. The channel is `.subscribe()`d in code but the table is not in supabase_realtime and has no REPLICA IDENTITY FULL, so no event is ever delivered — last-writer-wins with no detection and no refresh.
 
 **Mechanism.** Two defects that compound.
 
@@ -331,6 +338,7 @@ view."
   - `lib/scheduleParsers.ts:508-523` — `<Relationship>`, `Type` not read
 - **Related:** `SCH-4`, `SCH-9`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The P6 relationship loop reads only `SuccessorActivityObjectId` and `PredecessorActivityObjectId` (`scheduleParsers.ts:372-379`) — **neither `Type` nor `Lag` is read at all**, so FF/SS/SF collapse to FS and every lag becomes zero.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Primary claim fully confirmed for both P6 paths (and the MSP path at l.269-272 likewise ignores Type/LinkLag). One overstatement: the SS+FF 'ladder' is normally authored in a single direction (A→B SS plus A→B FF), which dedupes to one FS edge, not a cycle — reciprocal-direction pairs are needed for the SCH-4 input, and those are less common than the finding implies. Silent lag loss and FS flattening alone justify HIGH.
 
 **Mechanism.** `TASKPRED` carries `pred_type` (`PR_FS` / `PR_SS` / `PR_FF` /
 `PR_SF`) and the XML `<Relationship>` carries `Type`. Neither is read. Lag is
@@ -366,6 +374,7 @@ neither.
   - `components/projects/TaskDetailPanel.tsx:727` — "(removed task)"
 - **Related:** `SCH-4`, `SCH-6`
 - **Re-verified:** hardening pass — **SURVIVES**. `wouldCreateCycle(reflowNodes, …)` (`TaskDetailPanel.tsx:691`) checks the **visible** node set, so hiding imported rows shrinks the graph the guard reasons over and a cycle through a hidden row passes.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: with imported rows hidden, a chain A→B→C whose middle node B is an imported row is invisible to the guard, so adding A dependsOn C returns false from wouldCreateCycle and persists a genuine cycle (TaskDetailPanel.tsx:699 saves it unconditionally). Partial mitigation: the candidate list is also drawn from the filtered set, so only the intermediate hops can be hidden ones — it narrows the path, it does not close it.
 
 **Mechanism.** The dependency picker's candidate list derives from the
 ghost-filtered set. So `reflowNodes` omits hidden rows, a cycle routed through a
@@ -393,6 +402,7 @@ filter", not "removed".
   - `components/projects/RebaseScheduleModal.tsx:51-57` — prefill from `d.getHours()` (local)
   - `components/projects/RebaseScheduleModal.tsx:76` — `new Date(\`${target}T${targetTime}:00\`).toISOString()` (local parse)
 - **Re-verified:** hardening pass — **SURVIVES**. `d.getHours()` / `d.getMinutes()` (`RebaseScheduleModal.tsx:53-54`) read local-clock components from a value parsed out of a UTC ISO anchor.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the UTC-rendering half of the claim — the part that would have refuted it — checks out: every schedule surface formats with `timeZone: "UTC"` while the rebase modal builds its instant from a local parse, so a US user with a midnight-UTC anchor lands one calendar day late on the board.
 
 **Mechanism.** The time is pre-filled from the anchor's *local* hours and the
 submit parses the combined string in local time.
@@ -430,6 +440,7 @@ keep it in UTC throughout and render it as UTC in the preview.
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleReflow.ts:531, 542` — `snap = (ms) => Math.round(ms / DAY_MS) * DAY_MS`
 - **Re-verified:** hardening pass — **SURVIVES**. `const snap = (ms) => Math.round(ms / DAY_MS) * DAY_MS` (`scheduleReflow.ts:531`) rounds to UTC midnight, so a child whose stored instant sits after local midnight moves a day.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: absolute-epoch rounding to a DAY_MS multiple is UTC midnight, so any leaf stored at ≥12:00 UTC (MS Project's usual 17:00 finishes) rounds forward a calendar day, and the rescale factor compounds it further out from the anchor. Only leaves with a non-midnight time-of-day are affected, but the code writes those moved dates back, so the data-integrity framing is right.
 
 **Mechanism.** The snap rounds to the nearest day boundary, so any planned time
 at or after noon UTC rounds *forward* onto the next calendar day.
@@ -457,12 +468,13 @@ consistently; the current half-way state is what produces the drift.
 
 ## SCH-12 · Setting a duration does local-calendar arithmetic on UTC dates, so a task gains a day across DST
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
 - **Locations:** `lib/milestones.ts:1410` — `const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1));`
 - **Re-verified:** hardening pass — **SURVIVES**. `const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1))` (`milestones.ts:1410`) — `getDate`/`setDate` are local-calendar operations applied to a value parsed from a UTC instant, so a span crossing a DST boundary lands a day out.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real and I reproduced the report's fall-back case by hand: finish 2026-11-02T00:00:00Z in America/Los_Angeles is Nov 1 16:00 PST, `setDate(-1)` lands Oct 30 16:00 PDT = 2026-10-30T23:00:00Z, one UTC day earlier than the correct 2026-10-31T00:00Z. Downgrading to MEDIUM because it is wrong only when the span crosses a DST transition in a DST-observing zone — outside that window the constant offset cancels and the result is exact, as the report itself concedes.
 
 **Mechanism.** `setDate`/`getDate` operate in local time on a value stored as
 UTC.
@@ -490,7 +502,7 @@ subtract `(days - 1) * DAY_MS` from the epoch value directly.
 
 ## SCH-13 · "Read-only imported rows" are fully editable
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (grep for `source` in the three views returns nothing)
 - **Blast radius:** ux / data-integrity
@@ -500,6 +512,7 @@ subtract `(days - 1) * DAY_MS` from the epoch value directly.
   - The HelpTooltip claiming "Imported rows are read-only milestones"
 - **Related:** `SCH-2`
 - **Re-verified:** hardening pass — **SURVIVES**. Nothing in `ScheduleTab.tsx` gates its edit controls on the row's `source`, so rows the UI calls "read-only imported" accept edits — which `SCH-2` then overwrites on the next import.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The claim of absence holds — `source` exists on the milestone (lib/milestones.ts:65, types/schema.ts:516) but no view consults it before allowing edit, status change, or delete, so the tooltip is false. On its own this is a misleading label plus unguarded edits; the actual data loss lives in the separately-filed re-import overwrite (SCH-2), so MEDIUM.
 
 **Mechanism.** Imported rows can be dragged, resized, status-changed, %-set,
 edited, re-parented, rebased and **deleted**. The only "read-only" treatment is
@@ -532,6 +545,7 @@ editable, plan does not.
   - `lib/milestones.ts:938-1064` — one SELECT + one INSERT/UPDATE per row, sequentially
   - `lib/milestones.ts:1072-1107` — passes 2 and 3 fire every update at once
 - **Re-verified:** hardening pass — **SURVIVES**, all three parts. `handleFile` calls `file.arrayBuffer()` with no size check (`ScheduleImportModal.tsx:113-116`), and `importMilestones` loops row-by-row (`milestones.ts:938-949`) with per-row work inside.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on all three counts. The passes at milestones.ts:1072-1107 do at least batch with `Promise.all`, so the unbounded sequential cost is in pass 1 only; there is still no size cap, no row cap, and no transaction, so an interrupted large import leaves a partial schedule behind.
 
 **Mechanism.** The file is decoded and `DOMParser`-parsed synchronously on the
 main thread with no size limit. Every row gets a select plus a write,
@@ -560,6 +574,7 @@ rather than firing them all at once.
 - **Blast radius:** decision-quality
 - **Locations:** `lib/criticalPath.ts` — `computeCriticalPathLite` never reads `dependsOn`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence — the critical-path computation does not consult the stored dependency edges.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence: the highlighted chain is pure date-contiguity while cascadeDependents reschedules off the stored FS edges, so the two disagree. Partial mitigation the finding does not mention: ExecutionReportView.tsx:88 does print 'heuristic — based on schedule shape, not dependency links', but the timeline surface does not (ExecutionView.tsx:729 button reads just 'Critical path', legend tooltip l.1503 'On the critical path — drives the finish date'). MEDIUM is right.
 
 **Mechanism.** The computation walks backward by date contiguity within a 1-day
 slack / 14-day window. It is labelled a heuristic in the source. Now that
@@ -585,6 +600,7 @@ is the right answer now that the edges exist.
 - **Blast radius:** data-integrity
 - **Locations:** `lib/milestones.ts:1072-1107` — passes 2 and 3
 - **Re-verified:** hardening pass — **SURVIVES**. The re-import builds a `parent_id` update list (`milestones.ts:1072-1083`) and has no path that clears an existing parent, so structure accumulates and never retracts.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. There is no delete-then-insert either: ScheduleImportModal.tsx:155-190 calls importMilestonesFromParsed directly with no prior purge, and the existing-row branch (l.1005) is an UPDATE of baseFields only, which contains neither parent_id nor depends_on. Structure accumulates monotonically across re-imports.
 
 **Mechanism.** Pass 2 writes `parent_id` only when both sides resolve; pass 3
 writes `depends_on` only when `predIds.length > 0`. Un-parenting a task or
@@ -611,6 +627,7 @@ Leave rows absent from the file untouched.
   - `lib/milestones.ts:565-584` — `deleteMilestone`
   - `supabase/migrations/20260703_milestones_hierarchy.sql` — `parent_id UUID REFERENCES milestones(id) ON DELETE SET NULL`
 - **Re-verified:** hardening pass — **SURVIVES**. `deleteMilestone` reads the one row and deletes it (`milestones.ts:565-570`); no descendant is re-parented and no cascade exists, so the subtree survives pointing at a missing parent.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on both cited locations. Blast radius is bounded (rows survive as new top-level roots, nothing is destroyed), which is consistent with MEDIUM.
 
 **Mechanism.** Deleting a summary re-parents all its children to top level. The
 confirm says only "Delete this milestone? This action is audited" — no child
@@ -641,6 +658,7 @@ delete.
   - `components/projects/useUndoableActions.ts:58-71` — `runUndo`, which only surfaces a throw
   - `components/projects/ScheduleTab.tsx:326-376` — the handlers, which catch internally and `return false`
 - **Re-verified:** hardening pass — **SURVIVES**. `runUndo` dismisses the toast **before** awaiting `t.undo()` (`useUndoableActions.ts:58-63`), so a throw inside the undo has no surface left to report on.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Claim survives, but the report's stated mechanism is wrong on one point: runUndo does NOT swallow throws — l.66-69 pushes a 'Couldn't undo: …' toast, and dismissing first is irrelevant because a new toast is created. The defect is real for a different reason: onMoveMany/onSetStatus/onSetProgress catch internally and return false, so a failed undo is indistinguishable from a successful one. Mitigation: the failure still paints the red error banner via setError, so it is not fully silent.
 
 **Mechanism.** Every undo closure calls `onMoveMany(before)` or
 `onSetStatus(id, prevStatus)`, and both handlers catch internally and return

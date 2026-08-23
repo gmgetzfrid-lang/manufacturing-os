@@ -19,6 +19,7 @@ that matters — plus the audit trail that is supposed to prove what happened.
 - **Blast radius:** safety
 - **Locations:** `lib/checklists.ts:250-266` — `gatherProjectEvidenceState`
 - **Re-verified:** hardening pass — **SURVIVES**. `documentTitles` is assembled from `documents.title ?? name` across the project's intake collection and turnover items (`checklists.ts:257-266, 275-281`) and handed to `runAutoEvidence`, described in its own docblock as *"the deterministic sweep: gather what the platform can prove."* For an intake-submitted document that title is the contractor's filename.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Correct, and nothing upstream filters on review_state, pending_version_id or document status — an unreviewed Draft from an unauthenticated link is indistinguishable to the sweep from an approved controlled document. The satisfied item then counts toward setChecklistStatus's completion gate (checklists.ts:219). Mitigations exist but do not prevent the false green: an internal user must click the sweep, and the citation renders as a chip titled "Found by the evidence sweep" (QualityTab.tsx:459-461). CRITICAL stands for a PSM compliance record.
 
 **Mechanism.** The evidence gather pulls document titles with no filter on
 status, revision, review state, effective date, or equipment identity:
@@ -68,7 +69,7 @@ green."
 
 ## SAF-2 · The AI can mark thirty of forty PSSR items not-applicable behind one count-only confirmation
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
@@ -77,6 +78,7 @@ green."
   - `lib/checklists.ts:150-176` — `applyAssessment`
 - **Related:** `SAF-4` (the manual-note immunization), `PERF-7` (the sequential writes)
 - **Re-verified:** hardening pass — **SURVIVES**, and the confirm text is the evidence. The proposals carry a `rationale` per item, and the dialog says only *"proposes applicability for N items (M look not-applicable to this job, with reasons attached). Apply it?"* — the reasons are never rendered. One click applies all.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The headline mechanism is real — one count-only confirm bulk-writes every proposed N/A. Two supporting claims in the report are false: applyAssessment does not set manual_note (so the 'immunized from every future pass via checklistEngine.ts:141' chain is wrong — the sweep skips those items only because they are already na), and the checklist does not 'jump to complete' (setChecklistStatus at checklists.ts:216-221 still requires every non-na item satisfied). Real but over-stated: HIGH.
 
 **Mechanism.** The confirmation dialog reports counts only — "(N look
 not-applicable to this job, with reasons attached)" — and then writes all of
@@ -114,6 +116,7 @@ ticked. Keep the existing "a human already decided this" skip.
   - `lib/costs.ts:111-116` — `addEntry` audit
   - Contrast: `lib/changeOrders.ts:151-161`, which gets it right
 - **Re-verified:** hardening pass — **SURVIVES**. `const { error } = await supabase…update(…)` **is** checked, but an RLS denial is not an error — PostgREST filters the row out and returns `{data: null, error: null}`, so the function proceeds to write the audit row and return `{ok: true}`. Confirmed at both cited sites (`checklists.ts:204, 226`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the scenario is reachable: supabase/migrations/20261013_project_controls_program.sql:273-282 gives ordinary active members SELECT only, with UPDATE limited to `is_org_controller(org_id) OR user_owns_project(project_id)` — a non-owner member's UPDATE is filtered to zero rows, which PostgREST reports as `{data:null,error:null}`. One citation is weak: lib/costs.ts:111-116 is the audit helper, and the real write (addEntry, costs.ts:226-239) is an INSERT with `.select("id").single()`, which DOES error under RLS — that site does not demonstrate the bug.
 
 **Mechanism.** PostgREST returns `{ data: null, error: null }` for an UPDATE
 that matched zero rows because a policy filtered it out — success with nothing
@@ -140,7 +143,7 @@ error when it is empty. Only write the audit row after a confirmed match.
 
 ## SAF-4 · Every route to a green closeout gate accepts a blank reason on one keypress
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / audit integrity
@@ -152,6 +155,7 @@ error when it is empty. Only write the audit row after a confirmed match.
   - `lib/turnover.ts:204` — `review_note: input.note?.trim() || null`
   - `lib/turnover.ts:225` — `computeTurnoverProgress` counts waived as accepted
 - **Re-verified:** hardening pass — **SURVIVES**. `DialogProvider.tsx:107` — `onSubmit` settles with `inputRef.current?.value ?? ""` and applies no non-empty test, so Enter on an untouched prompt returns the empty string.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Every cited line checks out: a blank reason is accepted on one keypress at each gate, and a blank waive still turns turnover progress green. Severity is over-stated at CRITICAL though — the actor identity and timestamp are still recorded (turnover.ts:201-203), so this is a missing-required-field control weakness, not a record that contradicts reality (that is SAF-3). HIGH.
 
 **Mechanism.** The load-bearing defect is in the dialog layer:
 
@@ -215,6 +219,7 @@ green in about a dozen keystrokes, and the audit log will record
   - `lib/reviewControl.ts:495-510` — the approve path, which calls it correctly
 - **Related:** `SEC-4` (same root cause: service-role bypass)
 - **Re-verified:** hardening pass — **SURVIVES**, verified by absence: `grep -c postPublish app/api/intake/upload/route.ts` returns **0**. The auto-supersede branch sets `current_version_id` and `status: "Issued"` with a raw `supabaseAdmin` update (`:322-329`) and never enters the post-publish pipeline.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by repo-wide search: runPostPublishSideEffects has exactly three callers (lib/reviewControl.ts:499, lib/revisions.ts:711, :1304) and the intake auto-supersede path is not one of them, so the review-cycle reset, fresh read-and-understood roster and retention recompute (postPublish.ts:139-147) are all skipped on this route. The review-gated path (reviewControl.ts:495-510) does call it, which is exactly the contrast the finding draws.
 
 **Mechanism.** The approve path calls `runPostPublishSideEffects`. The
 auto-supersede path does a bare column update plus a `superseded_at` stamp on
@@ -254,7 +259,7 @@ arguments the approve path passes.
 
 ## SAF-6 · The project timeline cannot see the controls program at all
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** audit integrity / compliance
@@ -263,6 +268,7 @@ arguments the approve path passes.
   - `lib/timeline.ts:441-443` — `.eq("resource_type", "document")`, the only audit query
   - `lib/timeline.ts:287-292` — the `MILESTONE_*` summarizers that can never execute
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `buildTimeline` reads `project_activity` and `project_documents` and nothing else (`timeline.ts:416-427`) — no read of `change_orders`, `project_checklists`, `punch_items` or `turnover_items` anywhere in the file.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The visibility gap is real and confirmed by repo-wide search. Downgrading because the events are not lost — they are written to audit_logs and are visible to an admin at app/(protected)/admin/audit/page.tsx:127-137, which selects all org rows with an optional resource_type filter. This is a missing view on one tab, not a missing record.
 
 **Mechanism.** `getProjectTimeline` queries `audit_logs` only where
 `resource_type = 'document'`. There is no query for
@@ -322,6 +328,7 @@ summarizers then start working with no further change.
   - `lib/milestones.ts:1490-1499` — the audit entry, which logs only a count
   - `components/projects/ScheduleTab.tsx:284` — the button and its confirm text
 - **Re-verified:** hardening pass — **SURVIVES**. `setBaseline` reads the current planned dates and overwrites the baseline columns with no snapshot of the prior baseline (`milestones.ts:1462-1489`), and the audit write is `.catch(() => {})` best-effort (`:1490-1499`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. `grep -rn baseline supabase/migrations` shows only the two scalar columns added in 20260706_milestones_baseline.sql (and re-added in 20260714_schema_catchup.sql) — there is no baseline history/snapshot table anywhere, so the prior approved plan is unrecoverable after one confirm.
 
 **Mechanism.** `setBaseline` overwrites `baseline_start_at` /
 `baseline_finish_at` in place. A search across `supabase/`, `lib/`,
@@ -356,7 +363,7 @@ and not having a delay claim.
 
 ## SAF-8 · A task can be Missed and one-hundred-percent earned at the same time
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
@@ -364,6 +371,7 @@ and not having a delay claim.
   - `lib/milestones.ts:389-395` — the `else` branch clears `actual_at`, leaves `percent_complete`
   - `lib/scheduleProgress.ts:35-39` — `leafPercent` returns the stored percent for those statuses
 - **Re-verified:** hardening pass — **SURVIVES**. The blocked/on-hold/missed branch deliberately leaves `percent_complete` untouched (`milestones.ts:389-395`) and `leafPercent` returns `clampPercent(m.percentComplete)` for any non-completed, non-planned status (`scheduleProgress.ts:35-39`) — so `missed` at 100% earns full credit.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The contradiction is real: percent_complete=100 + status='missed' is representable and contributes full weight to earned value and SPI. But the report's stated harm is wrong — marking a completed task Missed changes leafPercent by nothing, so SPI does not 'improve at the moment somebody records a miss'; it merely fails to degrade. Requires the specific completed-then-missed sequence and misstates the effect, so MEDIUM.
 
 **Mechanism.** Setting a task to `blocked`, `on_hold` or `missed` clears the
 actual date but deliberately leaves `percent_complete` untouched, and the
@@ -401,6 +409,7 @@ for imported rows too.
   - `components/projects/QualityTab.tsx:524` — the turnover claim
 - **Related:** `MON-11` (no notifications anywhere), `UX-5`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `reject` writes `review_state: "rejected"` and clears the pending pointer (`IntakePanel.tsx:254-259`) — it captures **no reason field** and sends **no notification**. The portal shows only a red "rejected" badge (`app/submit/[token]/page.tsx:294-295`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on all four sites. project_intake_links carries a `contact_email` column (20260902_project_intake.sql:24) that no code path uses on reject, and the only mailer in the repo is app/api/notifications/send-queued/route.ts, which the intake reject flow never touches — so 'nothing notifies them either way' holds.
 
 **Mechanism.** Intake rejection prompts a yes/no confirm and captures no reason
 at all; `audit_logs.INTAKE_REJECTED.details` has no reason field. The portal
@@ -443,6 +452,7 @@ again.
   - `components/projects/IntakePanel.tsx:113` — the queue filter that then hides it
 - **Related:** `SEC-3`, `SEC-12`
 - **Re-verified:** hardening pass — **SURVIVES**. The auto path is exempted from the pending-review block at `:257` and then sets `pending_version_id: null` at `:325`, leaving the pending version and any sign-offs against it unreachable.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and there is no DB-side protection: `pending_version_id` appears in the migrations only as the ADD COLUMN at 20260818_review_before_publish.sql:30 — no trigger or constraint guards clearing it. The orphaned version keeps review_state='in_review' forever with its signatures attached to a draft no interface can reach. HIGH stands.
 
 **Mechanism.**
 
@@ -484,6 +494,7 @@ reviewers, and preserve any signatures. Add a maintenance query that surfaces
   - `lib/transitionIn.ts:69-91` — `listTransitionCandidates`, filters only `.neq("status","Superseded")`
   - `components/projects/IntakePanel.tsx:257-259` — reject clears the pointer, never touches the document row
 - **Re-verified:** hardening pass — **SURVIVES**. `listTransitionCandidates` filters `.neq("status", "Superseded")` only (`transitionIn.ts:73-80`); rejection is recorded in `document_versions.review_state`, which this query never reads.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Correct. The second half checks out too: app/api/intake/upload/route.ts:286-293 creates intake documents with no current_version_id, and adoptDocument (transitionIn.ts:211-217) only patches library_id/collection_id/document_number — so adoption lands a controlled-library document whose only version is in_review or rejected and which has no current revision. TransitionInPanel's row render shows label/rev/company/collision/clean and never surfaces the review state, so there is no warning at the click. HIGH stands.
 
 **Mechanism.** Rejecting a new-document submission clears
 `pending_version_id` but leaves the document at `status: "Draft"`. The
@@ -517,6 +528,7 @@ rather than by inference.
   - `lib/transitionIn.ts:216` — `adoptDocument`, no re-validation
   - `lib/transitionIn.ts:10-12` — the module header claiming this is impossible
 - **Re-verified:** hardening pass — **SURVIVES**. `adoptOne` is disabled only on `busy` or a missing destination library (`TransitionInPanel.tsx:241-242`) — the collision the panel itself detects does not gate the button.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and I looked for the DB backstop that would have refuted it: the partial unique index is `documents(library_id, uniqueness_key)` (20260619_document_uniqueness_configurable.sql:44-46), and the intake insert at route.ts:286-292 never sets uniqueness_key — NULL opts the row out of the index entirely. So even adopting into the SAME library as the colliding document raises no error. HIGH stands.
 
 **Mechanism.** Single-item adopt does not consult the impact scan. The Adopt
 button renders identically for a flagged candidate and a clean one — only the
@@ -555,6 +567,7 @@ the exact "two sources of truth" the module header declares impossible.
   - `supabase/migrations/20261011_collections_guard_and_trash.sql:44-53` — `enforce_document_move_guard`
   - `app/(protected)/projects/[id]/page.tsx:508-523` — the panel renders for owner **or** controller
 - **Re-verified:** hardening pass — **SURVIVES**. `supabase.from("documents").update(patch).eq("id", input.docId)` (`transitionIn.ts:217`) runs under the caller's own RLS, while the panel is surfaced to project managers who need no document-write authority.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Correct: the exact population the panel targets (non-controller project owner) is the population the trigger rejects, on every document. One narrative detail is off — the raw trigger message is surfaced only by the single-document path (adoptOne's `setMsg((e as Error).message)`); the bulk path at TransitionInPanel.tsx:127-131 reports `Adopted 0 of 12 — failed: <labels>` with the reason swallowed, which is arguably worse. HIGH stands.
 
 **Mechanism.** The move guard raises when `collection_id` changes and the actor
 is not Admin or Document Control (service role and null-JWT are exempt).
@@ -589,6 +602,7 @@ arbitrary moves, not to stop a sanctioned adoption. (b) preserves the feature.
   - `lib/turnover.ts:225` — waived counted as accepted
 - **Related:** `SAF-4`
 - **Re-verified:** hardening pass — **SURVIVES**. The gate lines are computed for display only (`projects/[id]/page.tsx:627-632`); nothing records which of them were failing at the moment the override was taken.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the closeout snapshot exists in the modal and dies there — neither project_activity (`Project completed`) nor audit_logs carries the gate counts, and the printed report is regenerated live so it reflects today's rows, not closeout day. Waived-counted-as-accepted is verbatim at turnover.ts:225. The 'N/A'd items omitted' phrasing is loose (turnover has no 'na' status; the omission is of `required: false` items and checklist items with applicability 'na'), but that does not change the finding. MEDIUM stands.
 
 **Mechanism.** The override itself is well designed — gates shown plainly, a
 note captured, an audit row written. It is the only control in the area that
@@ -621,6 +635,7 @@ in the report's closeout section rather than recomputing from current state.
   - `components/projects/IntakePanel.tsx:237-241` — `approve(p)` passes only `documentId`
   - `lib/reviewControl.ts:402-406` — re-reads `pending_version_id` fresh
 - **Re-verified:** hardening pass — **SURVIVES**. The panel holds `p.pendingVersionId` and does not pass it — `finalizeReviewedRevision` re-reads `pending_version_id` from the row at call time (`reviewControl.ts:402-406`). Whatever is pending when Approve lands is what publishes.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Correct — approval is keyed on the document, not on the version the reviewer was shown, and the CAS at reviewControl.ts:427-429 is on the freshly-read pendingId so it does not detect the substitution. The reject path two functions below shows the fix already exists in the file: it targets `.eq("id", p.pendingVersionId)`. MEDIUM stands.
 
 **Mechanism.** Approve passes only the document id; finalize re-reads the
 pending pointer fresh. The success message then reports the label from the
@@ -656,6 +671,7 @@ submission changed — refresh to see the current one."
   - `lib/timeline.ts:447-452` — `getProjectTimeline`, with no such filter
   - `lib/timeline.ts:513-514` — `getRevisionChain`, which also gets it right
 - **Re-verified:** hardening pass — **SURVIVES**, and the contrast is forty lines apart in one file. The document timeline filters `.or("review_state.is.null,review_state.eq.approved")` with the comment *"the timeline must not leak them to everyone"* (`timeline.ts:324-332`); the project timeline's query over the same table has **no such filter** (`:447-452`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by direct comparison of the three queries in one file, and there is no database backstop: repo-wide grep for review_state in supabase/migrations returns only the ADD COLUMN and the two CHECK constraints (20260818:34-35, 20260906:42-43) — no RLS policy filters drafts, so PostgREST returns them. Note the leak is slightly wider than stated: 'rejected' versions ride through the same missing filter. MEDIUM stands.
 
 **Mechanism.** The document reader filters
 `.or("review_state.is.null,review_state.eq.approved")` with the comment
@@ -686,6 +702,7 @@ review. Two of three readers get this right; only the project reader is wrong.
   - `lib/timeline.ts:423-433` — document scope resolved entirely from `project_documents`
 - **Related:** `SEC-17` (any member can detach)
 - **Re-verified:** hardening pass — **SURVIVES**. `detach` deletes the `project_documents` row (`ProjectDocumentsCard.tsx:138`), and `getProjectTimeline` derives every document event from exactly that table (`timeline.ts:423-433`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Mechanically correct, including the tooltip detail: ProjectDocumentsCard.tsx:225 shows the re-link warning only for `r.source === "checkout"`, and manually attached docs get a bare "Remove from project". Worth recording that the loss is display-scoped and reversible — no audit_log, document_version or hold row is deleted, the document's own timeline is untouched, and re-attaching restores the project timeline in full, since the join is computed live. MEDIUM (already the floor here) stands.
 
 **Mechanism.** The timeline resolves its entire document scope from
 `project_documents`. Deleting that row removes every audit event, version event

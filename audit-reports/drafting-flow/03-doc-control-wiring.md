@@ -15,7 +15,7 @@ does not know which library it belongs to.**
 
 ## DCW-1 · A ticket has no target library, so no library-scoped rule can ever apply to it
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / architecture
@@ -25,6 +25,7 @@ does not know which library it belongs to.**
   - `app/(protected)/requests/new/page.tsx:290-298` — the only document linkage is `metadata.source_document`, written **only when `sourceDocId` is present**
 - **Related:** `DCW-2`, `DCW-3`, `TIER-2`, `GAP-104`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The `Ticket` type carries **zero** fields naming a library or collection, so there is no value for a library-scoped rule to key on.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The absence of a declared target-library field is real and confirmed on the type, the table and the form. The absolute claim is overstated: for any ticket raised from a document, metadata.source_document.id joins to documents.library_id, and the workflow-action route already performs exactly that join — so a library-scoped rule CAN be written for that subset today. The gap is genuine only for tickets with no source document (a brand-new drawing) and for tickets whose target library differs from the source's; CRITICAL overstates it.
 
 **Mechanism.** Every document-control rule in this system resolves through the
 container chain — document → folder → library, most specific defined level wins.
@@ -72,6 +73,7 @@ not exist on the ticket.
   - `lib/ticketAttention.ts:106-108` — nonetheless tells DocCtrl they must act at `FINAL_DRAFT` and `PENDING_IFC`
 - **Related:** `DCW-1`, `FRIC-7`, `GAP-104`
 - **Re-verified:** hardening pass — **SURVIVES**. `DocCtrl` appears in `lib/workflow.ts` four times, all as a role-list membership test, never as an actor in a drafting state; in `capabilityPolicy.ts` its entries are `admin.*` capabilities (`:91, :93, :95`). Its only role in the flow is as an *exemption* — `isDocCtrlRole` short-circuits `requiresEngineerApproval` (`workflow.ts:41`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the attention line makes it worse rather than better: DocCtrl is told a ticket "needs your action" at FINAL_DRAFT/PENDING_IFC while getActions returns zero buttons for that role at either status (PENDING_IFC requires canActAsDrafter; FINAL_DRAFT requires requester identity, ticket.direct_approve — default ["Engineer"] — or management). No gate, no notification, no capability.
 
 **Mechanism.** The one appearance of `DocCtrl` in the workflow treats it as a
 **senior approver who does not need engineering review** — grouped with
@@ -116,7 +118,7 @@ the model and the flow never implemented it.**
 
 ## DCW-3 · No drawing-type dimension exists to route on
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / friction
@@ -127,6 +129,7 @@ the model and the flow never implemented it.**
   - `lib/filenameParser.ts:36` — infers As-Built from filenames, evidence the concept is load-bearing
 - **Related:** `DCW-1`, `TIER-2`, `LIFE-11`
 - **Re-verified:** hardening pass — **SURVIVES**. `RequestType` is an unconstrained `string` (`types/schema.ts:1019`) and no drawing-type field exists anywhere. Same substrate as `TIER-2`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The claim of absence is refutable: an org can already record drawing type on a ticket today, either by redefining the request_type option list (it is free-form per-org config, not an enum) or by adding a required select field in an admin custom category. What genuinely does not exist is any *consumer* — resolveTicketRecipients switches on status only, so nothing can route on the dimension even once captured. Downgrading to MEDIUM since the missing piece is a routing rule, not a schema field.
 
 **Mechanism.** "Specific types of drawings" needs a type taxonomy. The nearest
 things that exist are `docClass` (two values, document-scoped) and `request_type`
@@ -167,6 +170,7 @@ inherited, without maintaining a separate drawing-type taxonomy.
   - `app/api/tickets/workflow-action/route.ts:263-270` — the only document-side effect of closure **deletes** the drafter's `document_intents` row
 - **Related:** `LIFE-1`, `GAP-6` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**. `submit_final` appends to `currentAttachments` (`ticketTransitions.ts:282`) and `close_ticket` sets `CLOSED` (`:286`). Nothing on the path creates a document version. Same root as `roles-and-permissions/LIFE-1`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed exactly as stated. The issued package is a JSONB attachment on the ticket row; the register learns nothing. `document_versions.related_ticket_id` exists in the schema (supabase/schema.sql:334) and is mapped on read, but no code ever populates it — the intended link is declared and unused.
 
 **Mechanism.** The IFC package lives on the ticket as an attachment and stays
 there. Nothing writes `document_versions`, nothing touches `documents.rev`,
@@ -194,7 +198,7 @@ every issued deliverable, or visibly knows it does not.
 
 ## DCW-5 · A request cannot be filed against a document the requester cannot see
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** SUSPECTED — the mechanism is confirmed; the frequency in practice was not observed
 - **Blast radius:** friction / adoption
@@ -204,6 +208,7 @@ every issued deliverable, or visibly knows it does not.
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:42-82` — `node_visible` has no ownership branch (`DEL-2`) and reads the singular role (`DB-7`)
 - **Related:** `DCW-1`, `DEL-2` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**. `documents_acl_select` is `AS RESTRICTIVE FOR SELECT USING (node_visible(...))` (`20260708_acl_rls_enforcement.sql:86-87`), so a document the requester cannot read cannot appear in the picker that populates `metadata.source_document` (`requests/new/page.tsx:290-298`). The person who spots the error on a printed sheet is the one who cannot file about it.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Factually correct: the only two ways to attach a source document both require the requester to have the document open, and RLS hides private/hidden documents from anyone without an explicit grant. But the consequence is degraded triage and a dark Impact panel, not incorrect data or an unsafe release — and the RLS behavior itself is the correct ACL outcome. MEDIUM, not HIGH.
 
 **Mechanism.** The only way to attach a source document is to arrive from the
 document viewer with `?sourceDocId=…`. A requester who cannot *see* a restricted
@@ -248,6 +253,7 @@ exists; the request form does not use it.
   - `lib/workflow.ts:61-65` — `getActions` receives `ticket`, `userRole`, `userId`, `policy`. **No library, no review control, no document context.**
 - **Related:** `DCW-1`, `TIER-5`, `TIER-8`
 - **Re-verified:** hardening pass — **SURVIVES**. `ReviewControl` is a real, well-formed structure on libraries (`types/schema.ts:191-202`) that `reviewControl.ts:527` reads per library — and the ticket has no library to resolve it against (`DCW-1`). The policy exists and the flow cannot see it.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the mechanism is worse than the summary suggests: the escape hatch built for exactly this case is dead code, so the ticket neither consults the library's ReviewControl (types/schema.ts:191-210 reviewerIds/reviewerRoles/reviewerTeamIds) during the flow nor marks its output as pre-reviewed — the named reviewers are asked at publish time, after close. The cited line numbers (reviewControl.ts:527, 575-579) point into scanReviews rather than the relevant code at :55-62, but the substance holds.
 
 **Mechanism.** A library can already declare "revisions here need these two
 reviewers." The drafting flow that produces those revisions cannot read it —
@@ -282,6 +288,7 @@ after.
   - `components/documents/CheckInPanel.tsx:236-267`, `lib/transitionIn.ts:304-331` — both omit `unit`
 - **Related:** `FRIC-3`, `FRIC-8`, `DCW-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `unit` is a `required` free-text input upper-cased on change (`requests/new/page.tsx:466-469`); the codebook only *optionally* supplies options, and the catch comment says so outright — *"codebook optional — free-text unit input remains"* (`:149`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The 'free text' characterization is only true in the unconfigured fallback — the default and codebook-backed paths render a constrained Select. The finding's actual consequence survives on stronger grounds than it cites: two of the three ticket-creation paths write no unit whatsoever, so unit-filtered queue views and area reporting silently drop check-in and intake-collision tickets entirely. MEDIUM is right.
 
 **Mechanism.** With the Site Codebook configured, `unit` is a clean enum. Without
 it, it is whatever the requester types. The same physical area can arrive as

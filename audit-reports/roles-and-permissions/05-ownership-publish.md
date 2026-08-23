@@ -96,6 +96,7 @@ reach the database guard.
   - `supabase/migrations/20261011_collections_guard_and_trash.sql:30-34` — the pattern `libraries` is missing, present on `collections`
 - **Related:** `OWN-2`, `OWN-14`, `DB-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `libraries_org_access FOR ALL USING (org_id IN my_org_ids())` with no `WITH CHECK` and no role predicate — `USING` is reused as the UPDATE check, so any active member may rewrite `owner_user_id`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Right, and if anything understated: documents_org_access (schema.sql:1066) is equally permissive, so an attacker can set documents.owner_user_id directly and skip the library step entirely. CRITICAL stands.
 
 **Mechanism.** `libraries` carries exactly one policy. A `FOR ALL` policy with
 only a `USING` clause reuses that same expression as the `WITH CHECK` for
@@ -166,6 +167,7 @@ only controllers.
   - `supabase/migrations/20260822_review_completion_guard.sql:70` — the guard that then trusts `owner_user_id`
 - **Related:** `OWN-1`, `OWN-5`
 - **Re-verified:** hardening pass — **SURVIVES**. `documents_guard_access_change()` fires only on `visibility`, `acl`, `acl_index` (`20260816…:84-86`); `grep -c owner_user_id` on that migration returns **0**. Ownership — which decides publish authority — is outside the guard, and `documents_org_access FOR ALL` lets any member change it.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Repo-wide grep confirms only three triggers exist on `documents` (trg_document_publish_guard, documents_guard_access, trg_documents_move_guard) and none of them looks at owner_user_id; `grep -n owner_user_id 20260816_...sql` returns nothing. Worse than stated: the publish guard reads NEW.owner_user_id, so a single UPDATE that sets both owner_user_id and current_version_id self-authorizes in one statement.
 
 **Mechanism.** Migration `20260816` was written specifically to close "a member
 could grant themselves in `acl_index`." It closed the ACL vector and left the
@@ -226,6 +228,7 @@ readers of the column: `lib/ownership.ts:79`, `lib/docControlRegister.ts:155`,
   - `supabase/migrations/20260814_documents_delete_controllers.sql:31-38` — `is_org_controller` **is** additive
 - **Related:** `ADD-1`, `ADD-3`, `DB-3`
 - **Re-verified:** hardening pass — **SURVIVES**. `ROLE_RANK` ranks `Manager: 90` and `Supervisor: 80` above `DocCtrl: 70`, and `primaryRole` returns the highest. Adding either role to a DocCtrl flips the mirrored `role` column that the publish policies read. Same defect class as `identity-and-session/ORGSEL-3`, which reaches it from the write side.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on both sides: the app also degrades — RoleContext.tsx:200-213 sets `activeRole = primaryRole(collection)`, so the DocCtrl+Manager member loses `isControllerRole` in the UI too. The additive-aware helper `is_org_controller` (20260814:31-38, `role IN (...) OR roles && ARRAY['Admin','DocCtrl']`) exists but is NOT called by the publish guard or by user_can_publish_on_library, so it does not rescue the path.
 
 **Mechanism.** A person who is `DocCtrl` **and** `Manager` gets
 `org_members.role = 'Manager'` written by the admin UI, because Manager
@@ -279,6 +282,7 @@ publish guard is not an old check, it is *the* check.
   - `supabase/migrations/20260902_project_intake.sql:52-60` — link write policy: `is_org_controller(org_id) OR projects.owner_user_id = auth.uid()`
 - **Related:** `OWN-5`, `EGRESS-*`
 - **Re-verified:** hardening pass — **SURVIVES**. `autoNow = !!docId && !!link.allow_auto_supersede && linkAuthored` (`:302`), then a direct `supabaseAdmin` update sets `current_version_id` and `status: "Issued"` and supersedes the prior version (`:322-329`) — never calling `publish_revision`. The publish-guard trigger exempts service-role writes, so no hold, lock or review gate is consulted.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. `grep -n hold app/api/intake/upload/route.ts` returns nothing — the route never consults document_holds, never calls publish_revision, and the service-role write makes auth.uid() NULL so the guard short-circuits before the review-completion, authority and hold checks. Scope is narrower than the title implies (only link-authored docs on a link whose allow_auto_supersede is set — :244-250 enforces that), but within that scope every gate is skipped, so CRITICAL stands.
 
 **Mechanism.** Because the write uses the service-role key, `auth.uid()` is
 `NULL` and the publish guard short-circuits on its very first statement. That
@@ -341,6 +345,7 @@ silently confers publish authority into a document library.
   - `lib/revisions.ts:534-546` — the client passes `p_actor`, `p_actor_role`, `p_override_lock: lockedByOther`
 - **Related:** `OWN-4`, `OWN-17`, `DB-4`
 - **Re-verified:** hardening pass — **SURVIVES**, both halves. (a) `p_actor`, `p_actor_name`, `p_actor_role` are function parameters, so the caller names the actor; membership and controller status are re-derived from the database (`:77-89`), which closes privilege escalation but **not impersonation** — you may publish as a colleague and the recorded name/role are unvalidated. (b) The base-version check is `IF p_op_class = 'content' AND NOT p_as_branch` (`:116`), so `p_as_branch := true` skips it and costs only a non-empty reason string (`:131`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both halves hold. `auth.uid()` appears nowhere in the function body (first occurrence in that file is line 219, in an unrelated RLS policy), there is no GRANT/REVOKE on the function so EXECUTE stays PUBLIC, and document_versions has no INSERT trigger (only a tsv trigger and a legal-hold DELETE guard). One correction to the narrative, not the finding: the NON-branch path cannot be used to escalate — the promote UPDATE still fires trg_document_publish_guard under the real caller's auth.uid() and rolls the transaction back — so the escalation is specifically the branch path, plus forgeable attribution and a client-controlled p_override_lock on every path.
 
 **Mechanism.** The function is `SECURITY DEFINER` and validates `p_actor` — a
 parameter — instead of `auth.uid()`. **`auth.uid()` does not appear in the
@@ -408,6 +413,7 @@ controller force. Retire the v1 fallback in the same change.
   - `app/(protected)/documents/[libraryId]/page.tsx:1642-1657` — the *page's* principal **does** carry `teamIds`
 - **Related:** `OWN-9`, `DEL-*`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The `Principal` constructed on the mutator paths is `{ uid, role, orgId }` (`revisions.ts:224-228` and `:1058`) — **no `teamIds`** — so `evaluateAclChain` can never match a team-subject grant, while the SQL evaluator matches teams via `acl_subject_in_bucket`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed asymmetry: the page's principal carries teamIds (feeding canPublishOnLibrary at :1663) while both mutator principals omit them, and lib/documentGuards.ts:222-226 (resolveCanControlLibrary) passes that team-less principal into canPublishViaIndex. The DB honors team grants, so the button-shows / mutator-refuses split is real.
 
 **Mechanism.** The page computes `canPublish` with team memberships and shows the
 "Publish New Revision" button. The user clicks. `revUpDocument` →
@@ -447,6 +453,7 @@ complete a rev-up end to end, and a test pins it.
   - `components/permissions/RoleModelTree.tsx:101` — the in-app documentation asserts *"expiry dates honored"*
 - **Related:** `DOCACL-*`, `OWN-20`
 - **Re-verified:** hardening pass — **SURVIVES**, and the helper it should call sits nine lines away. `buildAclIndexFromRules` iterates `rule.actions` and buckets them (`acl.ts:256-267`) with **no call to `isRuleActive`** — which exists at `:81-85` and is used by the TypeScript evaluator. Expiry is dropped on the way into the column RLS reads.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Right, and the index-preferred short-circuit in resolveCanControlLibrary means the raw evaluator (the only place expiry lives) is never reached whenever an acl_index exists. No nightly rebuild exists — no migration or script rewrites acl_index — so the stale grant persists indefinitely.
 
 **Mechanism.** You grant a contractor `publish` on the drawings library with
 `expiresAt = 2026-09-01`. On 2026-09-02 the raw evaluator drops the grant, so the
@@ -489,6 +496,7 @@ expiry and asserts refusal.
   - `supabase/migrations/20260812_per_library_publish_authority.sql:64-71` — SQL: explicit `publish` deny wins, checked **first**
 - **Related:** `DOCACL-2`, `OWN-20`
 - **Re-verified:** hardening pass — **SURVIVES**. Two different orders in one file: `:108-110` subtracts denied actions from allowed, while `can()` at `:133-137` short-circuits on `allowed.has("admin")` **before** testing `denied.has(action)`. An explicit `publish` deny against an `admin` allow resolves differently depending on which path evaluates it.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both directions verified. {allow admin, deny publish}: evaluateAcl.can('publish') returns true (admin short-circuit precedes the deny test) while canPublishViaIndex and user_can_publish_on_library both return false. {allow admin, deny admin}: evaluateAcl returns false while the index and SQL evaluators return true — neither checks deny.*.admin at all. The 20260812 header's claim that it "mirrors lib/permissions.ts#canPublishOnLibrary exactly" is false.
 
 **Mechanism.** For a rule set of `{allow: admin} + {deny: publish}` on a library:
 
@@ -530,7 +538,7 @@ pins both cases across the TypeScript and SQL paths.
 
 ## OWN-9 · `DraftingSupervisor` — the role the per-library publish feature was built for — cannot be selected as an ACL subject
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / ux
@@ -542,6 +550,7 @@ pins both cases across the TypeScript and SQL paths.
   - `components/permissions/RoleTreeSelector.tsx:7-28` — `ROLE_HIERARCHY`, the bulk selector: **also absent** from all five groups
 - **Related:** `ROLE-*`, `DRAFT-*`
 - **Re-verified:** hardening pass — **SURVIVES**. The feature migration names the case in its own header — *"an Admin grant a non-controller (e.g. a Drafting Supervisor) the 'publish' action on a SPECIFIC library"* (`20260812_per_library_publish_authority.sql:7-8`) — and `lib/permissions.ts:50-51` repeats it, while the subject picker's role list does not offer that role (`ROLE-6`).
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The factual claim is exactly right — neither picker can emit a {type:'role', id:'DraftingSupervisor'} rule. Severity is too high at HIGH: there is no security exposure (it fails closed), and the same authority is reachable today by granting publish to that person as a `user` subject, which both pickers support. MEDIUM.
 
 **Mechanism.** Both role pickers in the Permission drawer omit the role. Neither
 can produce a `{subject: {type:'role', id:'DraftingSupervisor'}}` rule. The
@@ -577,6 +586,7 @@ and the bulk selector, and a rule naming it authorizes a publish end to end.
   - `components/permissions/ViewAsSimulator.tsx:5-6` — the component's own docstring: *"their EFFECTIVE access is computed with the same evaluators the app enforces with — not a re-implementation that could drift"*
 - **Related:** `OWN-6`, `DB-2`, `ADD-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `.from("team_members").select("team_id").eq("user_id", pick)` (`ViewAsSimulator.tsx:59`) against a table keyed `(team_id, uid)` (`20260707_teams.sql:19-26`). Identical defect to `DB-2`, in the surface people use to check their own answer.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by repo-wide search — this is the single site in the codebase using `user_id` on team_members, so the simulator always evaluates every member as belonging to zero teams and silently drops team-derived visibility and publish grants.
 
 **Mechanism.** The query errors, the catch sets `teamIds = []`, and the simulator
 then reports that a team-granted publisher **cannot** publish anywhere. It is the
@@ -619,6 +629,7 @@ silent is the failure mode here, not the typo.
   - `components/permissions/RoleModelTree.tsx:106` — the app documents this honestly
 - **Related:** `GAP-4`, `OWN-13`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `ReviewControl` (`types/schema.ts:191-202`) models reviewers and alternates and has no approver or owner concept; `expandReviewers` returns primaries and alternates only (`reviewControl.ts:126-131`). Auto-finalize therefore publishes under whoever signs last.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Every element checks out; RoleModelTree:106 documents the authority-inheritance as intended, but the ternary at :315 is a genuine bug — the one notification that says an approved revision is stranded is withheld from Admin/DocCtrl exactly when a (possibly absent) owner is set.
 
 **Mechanism.** Against the stated model — *"setting ownership means they are the
 approval of revision and superseding"* — ownership today grants **execution**
@@ -657,7 +668,7 @@ should not suppress the controller fallback.
 
 ## OWN-12 · No succession: a deactivated or removed owner keeps authority and swallows every notification
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / safety
@@ -671,6 +682,7 @@ should not suppress the controller fallback.
   - `lib/retention.ts:192`, `lib/acknowledgments.ts:398,593` — the *safer* "owner AND controllers" form; the codebase is split
 - **Related:** `SURF-1`, `GAP-5`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence in both evaluators. `user_is_effective_owner` returns the stored uid with no status test (`20260824_team_departments.sql:24-29`) and `resolveEffectiveOwner` does the same in TypeScript (`ownership.ts:24-30`). Neither consults `org_members.status`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The dead-letter routing for effective-date, review-complete/ack and check-in hand-off notices is confirmed and unmitigated, but the title's claim that the departed owner 'keeps authority' is false — every RLS predicate requires status='active' — and the periodic-review path does escalate to Admin/DocCtrl after the grace window, so HIGH overstates it.
 
 **Mechanism.** Ownership is a dangling uuid. Once the person is gone:
 
@@ -709,7 +721,7 @@ deleted user with a stale name string still reads as owned.
 
 ## OWN-13 · Ownership writes swallow RLS refusals, then write a "success" audit row and notify the new owner
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / safety
@@ -723,6 +735,7 @@ deleted user with a stale name string still reads as owned.
   - `supabase/migrations/20260830_publisher_row_management.sql:20-23` — the precedent, stated in the codebase's own words: *"'Silently' is the dangerous part: RLS returns 0 matched rows, not an error"*
 - **Related:** `OWN-1` (**blocking prerequisite**), `OWN-14`
 - **Re-verified:** hardening pass — **SURVIVES**. `await supabase.from(table).update({ owner_user_id, owner_name }).eq("id", input.id)` (`ownership.ts:130`) — **the result is never destructured** — and `logAuditAction` writes `OWNER_ASSIGNED` immediately after (`:132-139`).
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The unchecked-write-then-claim-success mechanism is confirmed line for line, but today no app path triggers an actual refusal — the folder path is controller-gated in the UI and controllers pass the restrictive policy, and libraries/documents are wide open (OWN-1). It is latent until OWN-1 is fixed or someone drives the API raw, so HIGH is too high.
 
 **Mechanism.** A PostgREST `UPDATE` filtered out by RLS returns **200 with zero
 rows**, not an error. `setOwner` never inspects the result. So the modal closes
@@ -752,7 +765,7 @@ across six call sites.
 
 ## OWN-14 · Silent-write-failure is a codebase-wide pattern, not a single bug
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
@@ -764,6 +777,7 @@ across six call sites.
   - the counter-example that proves it can be done: `lib/reviewControl.ts:429-439` — `.eq("pending_version_id", pendingId).select("id")` with the loser handled explicitly
 - **Related:** `OWN-13`, `SURF-1`, `SURF-2`
 - **Re-verified:** hardening pass — **SURVIVES**, with the count made exact: **47** unchecked `await supabase.from(…).update(…)` calls in `lib/` alone. `ownership.ts:66` and `reviewControl.ts:144` are two of them.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The pattern is real and the fix-sequencing argument is sound, but one cited example actually checks its error, and none of the unchecked writes currently hit a refusing policy — the affected tables (libraries, documents) are permissive today and the guarded paths are already controller-gated. It is a prerequisite for the other fixes, not a live HIGH.
 
 **Mechanism.** Supabase `.update()` without `.select()` cannot distinguish "I
 updated the row" from "RLS matched nothing." Across the authority-relevant
@@ -800,6 +814,7 @@ log.
   - `components/documents/HistoryDrawer.tsx:45` — the only gate: `const isReverseAuthorized = activeRole === "Admin" || activeRole === "DocCtrl";` — client-side, headline role only
 - **Related:** `OWN-3`, `OWN-17`
 - **Re-verified:** hardening pass — **SURVIVES**. `v_advancing` fires only on a `current_version_id` change or a transition **into** `Superseded` (`20260822_review_completion_guard.sql:36-38`), while `reverse.ts:118-126` sets `status: "Issued"` and clears `superseded_at` — moving backwards, which the guard does not model.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by exhaustive trigger/policy search: nothing at the database restricts a status transition out of Superseded or Archived, and unarchiveDocument's caller (ArchiveConfirmModal.tsx:44) never passes restoreStatus, so an archived Superseded document silently returns as 'Issued'.
 
 **Mechanism.** The guard is deliberately one-directional: it stops you retiring a
 document without authority, but not *resurrecting* one.
@@ -841,6 +856,7 @@ a test covers a non-controller attempting it.
   - `lib/acknowledgments.ts:559,588-592` — sixth; **no `owner_team_id`**
 - **Related:** `OWN-12`
 - **Re-verified:** hardening pass — **SURVIVES**. Two of the six are `resolveEffectiveOwner` (`ownership.ts:24-30`, document→folder→library, **no team branch**) and `user_is_effective_owner` (`20260824_team_departments.sql:18-42`, which **does** consult `teams.supervisor_user_id`). They disagree by construction on every team-owned library.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed exactly as described, including the scenario: the register (docControlRegister) names the team supervisor while the periodic-review nudge (reviewCycles), the review-timeout escalation (reviewControl) and the ack-overdue escalation (acknowledgments) all route to controllers instead.
 
 **Mechanism.** `resolveEffectiveOwner` is a pure function whose team fallback
 lives in its *async caller*, not in itself. Three call sites use the pure
@@ -878,6 +894,7 @@ consolidation as separate, human-approved work.
   - `lib/revisions.ts:1594-1683` — `backfillVersion`: **no authority check of any kind**, no lock check, no hold check
 - **Related:** `OWN-5`, `DB-4`
 - **Re-verified:** hardening pass — **SURVIVES**. The correction path builds its `Principal` client-side (`revisions.ts:1058-1063`) and the table's only policy is `document_versions_org_access FOR ALL` (`schema.sql:1072`) — so the gate is the client's, and the database permits the write to any active member. See `EGRESS-6`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — both operations write document_versions under a policy that admits any active org member, and backfillVersion does not even have the client-side check that correctRevisionLabel has.
 
 **Mechanism.** The controlled revision *label* — the string that appears on the
 drawing, in transmittals, and in every "which rev do you have" conversation — can
@@ -912,6 +929,7 @@ a revision label cannot be rewritten by a member who could not have published it
   - `supabase/migrations/20260816_owner_publish_access.sql:40` — `acl_subject_has_action` **does** handle `orgs`
 - **Related:** `OWN-6`, `OWN-8`
 - **Re-verified:** hardening pass — **SURVIVES**, and the SQL side is verifiable in one function. `acl_subject_in_bucket` matches `users`, `roles` and `teams` (`20260708_acl_rls_enforcement.sql:27-36`) and has **no `org` branch**, while `lib/acl.ts:74-75` implements `case "org"` and `PermissionDrawer.tsx:52` offers it as a subject type.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — org-subject grants are collected into the index bucket and then never read by the index evaluator or the DB function, so the grant silently works or doesn't depending on whether acl_index happens to be populated. Note this fails closed (the grant is ignored), which supports MEDIUM rather than higher.
 
 **Mechanism.** "Grant publish to everyone in the org" works in the raw evaluator
 that drives the page's button, and fails in both index-based evaluators. Same
@@ -937,6 +955,7 @@ offered in the drawer for the `publish` action.
   - `supabase/migrations/20260822_review_completion_guard.sql:38,69-70` — the database authorizes a granted publisher to supersede
 - **Related:** `OWN-9`
 - **Re-verified:** hardening pass — **SURVIVES**. `canPublishEff` gates `onRevUp` (`InspectorPanel.tsx:516`) while supersede, archive, split and merge sit behind `canManage = isController || isOwner` (`:283`) — and `documents_org_access FOR ALL` permits all of it at the database.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — the UI ties structural lifecycle acts to controller-or-owner while the publish guard (and lib/revisions' own authorizePublish) admits granted publishers, and archive is ungated entirely. Fails closed in the UI, so MEDIUM is right.
 
 **Mechanism.** The authority model says publish authority covers rev-up, revert
 and supersede. The Inspector splits them: rev-up follows publish authority,
@@ -962,6 +981,7 @@ explained in the UI.
   - `supabase/migrations/20260901_db_hard_enforcement.sql:124-125` — *"acl_index is chain-resolved when written … so a single-node check faithfully enforces inherited denies"* — true only until the parent changes
 - **Related:** `OWN-7`, `DOCACL-*`
 - **Re-verified:** hardening pass — **SURVIVES**. Same evidence as `DB-4` — `PermissionDrawer.tsx:284` updates only `.eq("id", nodeId)`. Duplicate within this area; fix once.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence: every acl_index writer in the repo (PermissionDrawer.tsx:284, documents/[libraryId]/page.tsx:604 and :2073, lib/libraryCollections.ts:108) writes exactly one node at creation/edit time, and no migration contains an acl_index backfill/rebuild. Nothing re-derives descendants when a parent's ACL changes.
 
 **Mechanism.** This does not affect publish authority today, because the database
 reads `libraries.acl_index` directly and that node's own index is always fresh.
@@ -982,6 +1002,7 @@ trusting the stored index.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** hardening pass — **SURVIVES**. `canBlindDrillAccess` (`permissions.ts:134-145`) has **0 callers** anywhere in `app/`, `lib/` or `components/`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. The finding as a whole holds — seven of its eight line items check out — but one row is factually wrong and should be struck. Severity stays MEDIUM (the only genuinely security-relevant item, the open revision_branches UPDATE policy, is already called out separately).
 
 > **Dispositions are settled in `DEC-11`** — per item, below. Two are real
 > defects rather than cleanup: `revision_branches` resolution is open to any

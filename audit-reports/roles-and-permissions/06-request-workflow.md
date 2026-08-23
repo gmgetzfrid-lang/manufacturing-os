@@ -19,7 +19,7 @@ capability policy that is supposed to make it configurable.
 
 ## WF-1 · The capability policy reads and writes a column that does not exist
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / availability
@@ -30,6 +30,7 @@ capability policy that is supposed to make it configurable.
   - `supabase/migrations/20260701_perf_indexes.sql:21` — documents the real shape as `select('data')`
 - **Related:** `WF-10`, `WF-11`, `WF-23`, `DB-1`
 - **Re-verified:** hardening pass — **SURVIVES**. Same root as `DB-1` — fix both in one migration. `capabilityPolicy.ts:174` does `.select("value")` and discards the error, so the read fails silently and every policy falls back to `DEFAULTS`; the upsert at `:231` sends `value:` and *does* check its error, so writes fail loudly while reads fail quietly.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The factual claim is entirely correct — no migration adds `value`, and every other consumer of the table selects `data` (orgBranding.ts:26, ticketRouting.ts:50). I am lowering the severity, not the finding: the failure is fail-CLOSED, not fail-open. The read discards the error and falls back to `DEFAULTS` (:148 `policy?.caps?.[cap] ?? DEFAULTS[cap]`), which the file's own contract says "exactly reproduce the historical hardcoded behavior", so nobody gains authority they lacked; the write fails loudly via the `throw` at :234, so an admin cannot be silently misled into believing a narrowing was applied; and the DB side (org_capability_allows raising 42703) denies rather than permits — lib/holds.ts:104-107 fails open at the app layer, but the document_holds RLS WITH CHECK then rejects the insert anyway. The availability half of the blast radius (holds/checkout-close/document-UPDATE raising SQL errors) is already carried at HIGH by SURF-6/DB-1/DB-2 on the same root, so CRITICAL here double-counts it.
 
 **Mechanism.**
 
@@ -84,6 +85,7 @@ which are currently masked. Read those three before shipping this.
   - live browser writers: `app/(protected)/requests/[id]/page.tsx:1010-1014,978,1328`; `app/(protected)/requests/page.tsx:620,638`; `app/(protected)/requests/new/page.tsx:328`
 - **Related:** `WF-5`, `WF-9`, `WF-15`, `WF-20`
 - **Re-verified:** hardening pass — **SURVIVES**. `tickets_org_access FOR ALL USING (org_id IN my_org_ids())` — no `WITH CHECK`, so `USING` governs INSERT and UPDATE too. Same shape as `notifications`, `email_notifications` and `project_documents`; read `document-control/DRLS-1` before patching any of them.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by repo-wide search: `grep -rn 'ON tickets' supabase/migrations/` returns only indexes and the search_tsv trigger — no migration ever adds a narrower UPDATE policy, and there is no BEFORE UPDATE guard trigger on tickets. FOR ALL with no WITH CHECK means Postgres reuses USING for INSERT too, so any active member can INSERT or PATCH any column (status, requester_role, deliverable_rev) directly via PostgREST, entirely bypassing /api/tickets/workflow-action. The app itself relies on this (5 direct client `.from('tickets').update(...)` sites). CRITICAL stands.
 
 **Mechanism.** `FOR ALL` with `USING` and no `WITH CHECK` means Postgres reuses
 `USING` as the check for INSERT and UPDATE. The only qualification is active
@@ -134,6 +136,7 @@ clock, and the document-intent bridge.
   - `lib/__tests__/workflow.test.ts:163-174` — **the test asserts the vulnerability**
 - **Related:** `WF-4`, `WF-14`
 - **Re-verified:** hardening pass — **SURVIVES**. `approve_minor_correction` is pushed unconditionally inside `if (canActAsRequester)` (`workflow.ts:219-226`), as a sibling of the `needsEngineerApproval && !isEng` fork that is supposed to force the engineer route. The code comments it as intentional — *"Available to every requester tier by design"* — which makes it a policy decision to revisit rather than a coding slip, but the stated effect is exact.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the bypass is deliberate and frozen by a passing test. Because it goes straight to PENDING_IFC with an issued (letter-stripped) rev, it produces a fully IFC-issued drawing with no engineer in the loop — while app/about/page.tsx:522 advertises "Non-engineer requesters cannot self-approve engineering work; the system enforces routing to a qualified engineer." The server route enforces the same getActions output (route.ts:96-103), so this is not a client-only gap. CRITICAL stands.
 
 **Mechanism.** The engineer fork and its bypass are pushed into the same button
 row:
@@ -198,6 +201,7 @@ bypass as correct behaviour.
   - `app/api/tickets/workflow-action/route.ts:113-132` — `assign` validates the assignee only as "an active member"
 - **Related:** `WF-3`, `WF-8`, `WF-14`, `GAP-2`
 - **Re-verified:** hardening pass — **SURVIVES**, with a scope note: this is a **synthesis** over the engine rather than a claim about the three cited line ranges, so it is not point-checkable the way its siblings are. It is well supported by them — `getInitialStatus` returns `PENDING_ASSIGNMENT` with engineering optional, `WF-3` supplies a requester-side bypass, and `WF-5` lets the one gating input be client-set.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by walking a concrete loop: a single Drafter creates the ticket (→PENDING_ASSIGNMENT), self_assigns (ticket.self_assign defaults to ["Drafter"], → DRAFTING as their own assignedDrafterId), submit_draft (isDrafterIdentity), then as isRequesterIdentity uses approve_minor_correction (WF-3) → PENDING_IFC, then submit_final → FINAL_DRAFT, then close_ticket. An Admin loop is shorter still (requiresEngineerApproval('Admin') is false at workflow.ts:40, so approve_draft_ifc is offered directly). Repo-wide grep for separation-of-duty guards (`requesterId !==`, `self-approv`, four-eyes) finds only doc/marketing prose and tests — no code enforces a second human anywhere. CRITICAL stands.
 
 **Mechanism.** `getInitialStatus` sends *every* request straight to
 `PENDING_ASSIGNMENT` — there is no initial-review gate at all. Identity rights
@@ -255,6 +259,7 @@ appears exactly when it becomes possible to honour. Build spec: `GAP-2`.
 - **Related:** `WF-2`, `WF-12`
 - **Also surfaced independently as** [`AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3) — two areas found this separately. Fix once.
 - **Re-verified:** hardening pass — **SURVIVES**. `requester_role: activeRole` (`requests/new/page.tsx:309`), `input.actorRole` (`transitionIn.ts:315`), read back unchecked at `ticketTransitions.ts:65`; combined with `WF-2` it is also directly PATCHable. **New interaction found during this pass:** `activeRole` is the `RoleContext` value, which `identity-and-session/SESS-1` shows can be the placeholder `"Viewer"` while membership is still resolving — so a request filed during that window is stamped `Viewer` permanently, which is precisely the input that decides whether engineering review is required.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. There is no server route for ticket creation at all — all three insert sites are client-side against a `FOR ALL USING (org membership)` policy (schema.sql:1080), whose omitted WITH CHECK makes USING govern INSERT too, so the attacker fully controls the column. "Contractor" and "Engineer-4" are both real Role values (types/schema.ts:11,22). requesterRole is indeed the SOLE input to requiresEngineerApproval, and the server re-derivation at route.ts:96 reads the same poisoned row. CRITICAL stands.
 
 **Mechanism.** The role that decides whether engineering sign-off is required is
 asserted by the browser at insert time and never re-derived:
@@ -305,6 +310,7 @@ insert-time trigger.
   - the only check is client-side at `app/(protected)/requests/[id]/page.tsx:1028-1031`
 - **Related:** `WF-2`, `WF-22`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `requiresFile: true` is declared at `workflow.ts:181`, and the route validates only `requiresComment` and `requiresEngineerPick` (`workflow-action/route.ts:104-109`). Same evidence as `drafting-flow/LEAK-8`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence, verified repo-wide. Two mitigations worth recording for triage: the sole client check is a weak `attachments.length > 0` (not a Final-typed attachment), and `submit_draft` is separately gated by `ticket.attachments?.some(a => a.type === 'Draft')` at workflow.ts:176 — so only `submit_final` is exploitable, and only by an already-authorized drafter sending a crafted request. HIGH is defensible given the output is a closed ticket presenting as an issued IFC package with no Final file.
 
 **Mechanism.** Two of three input preconditions are re-checked server-side. The
 third — "you must attach the issued package" — is enforced only in the browser
@@ -344,6 +350,7 @@ attachment exists, and a test covers the direct-POST case.
   - attention feed (**additive**): `lib/ticketAttention.ts:30-37`
 - **Related:** `ADD-1`, `ADD-2`, `WF-8`, `CHAIN-*`
 - **Re-verified:** hardening pass — **SURVIVES**. Three resolutions, each verifiable in one line: `workflow.ts:65` (`extraRoles: null`), `workflow-action/route.ts:88` (`member.role`), `ViewAsSimulator.tsx:128` (`who.roles`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — if anything understated: four distinct resolutions (workflow=headline-only, holds=headline+additive+uid, SQL=headline+additive+uid, attention=collection) plus the simulator. The cited scenario reproduces exactly: `ticket.self_assign` defaults to ["Drafter"] (capabilityPolicy.ts:68-69), so a DocCtrl with additive Drafter gets a green check from ViewAsSimulator's `who.roles` while route.ts:88 resolves "DocCtrl" and returns 403 — under a banner reading "computed with the SAME evaluators the app enforces with" (ViewAsSimulator.tsx:139). HIGH stands.
 
 **Mechanism.** `policyAllows` has an `extraRoles` parameter that the workflow
 deliberately starves with `null`. Because `primaryRole` is *max-rank*, the
@@ -385,6 +392,7 @@ the attention badge for the same person.
   - defaults at `lib/capabilityPolicy.ts:68-73`; evaluator at `:141-155`
 - **Related:** `WF-3`, `WF-4`, `WF-13`, `WF-15`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `allows('ticket.requester_review')`, `allows('ticket.draft_work')` (`workflow.ts:74-75`) and `allows('ticket.self_assign')` (`:156`) all evaluate org-wide; `policyAllows` has no ticket, library or project parameter.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed structurally: `policyAllows` cannot be ticket-scoped because it never receives a ticket, so every role-derived grant is org-wide by construction. The comment at workflow.ts:73 is misleading — identity is additive on top of a blanket role grant, not a narrowing of it. Composes with WF-3: any of 25 Requesters can `approve_minor_correction` a colleague's ticket to IFC. `ticket.reopen` (workflow.ts:332) is likewise org-wide via `canActAsRequester`. HIGH stands.
 
 **Mechanism.** `policyAllows` takes **no ticket argument**.
 `ticket.requester_review` defaults to `["Requester"]` and `ticket.draft_work` to
@@ -426,6 +434,7 @@ touches only `lib/workflow.ts:74-75`.** It is also the prerequisite for `WF-7`.
   - `app/(protected)/requests/[id]/page.tsx:1546` — the only gate: a hardcoded role list
 - **Related:** `WF-2`, `WF-7`, `WF-8`
 - **Re-verified:** hardening pass — **SURVIVES**. `handleFileUpload` and `handleUpdateCategory` write `tickets` directly (`requests/[id]/page.tsx:991-1014, 966-977`), bypassing the capability check at `workflow-action/route.ts:91-102`. Reachable because `tickets` RLS is `FOR ALL USING (org membership)` — see `WF-2`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — three direct writer sites, all whole-array read-modify-write on JSONB columns with `.eq('id', …)` and no `.eq('status', …)` / `.eq('last_modified', …)` compare-and-set, so each can silently clobber a concurrent workflow transition (the route's own CAS at route.ts:155-162 exists precisely to prevent this). None passes through /api/tickets/workflow-action, so the only server-side authority is the wide `tickets_org_access` RLS policy (WF-2), and the role list at :1546 is a render condition a client controls. HIGH stands.
 
 **Mechanism.** The gate is a literal role list, and the write is a direct table
 update with no capability check, no server route, and **no compare-and-set** —
@@ -473,7 +482,7 @@ intermittent unexplained 409s during approval.
 
 ## WF-10 · The 60-second policy cache is never invalidated on the server — a revoked person keeps acting
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (currently masked by `WF-1`)
 - **Blast radius:** security
@@ -484,6 +493,7 @@ intermittent unexplained 409s during approval.
   - `components/permissions/CapabilityPolicyEditor.tsx:85`, `components/permissions/ViewAsSimulator.tsx:77`
 - **Related:** `WF-1`, `WF-11`, `WF-16`
 - **Re-verified:** hardening pass — **SURVIVES**. `CACHE_TTL_MS = 60_000` over a module-level `Map` (`capabilityPolicy.ts:159-160`); `cache.delete(input.orgId)` (`:235`) clears only the instance that made the change. Every other serverless instance keeps the stale policy until its own TTL expires.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real and confirmed by a repo-wide grep: no server route ever calls save/revoke, so the API process's module-level Map genuinely receives no invalidation signal. The severity is inflated, and the title overstates it — the cache is not 'never invalidated', it expires on its own TTL, so the actual exposure is a bounded ≤60s window per warm instance, requiring the revoked user to act inside it. The 'cache-poisoning variant' is correctly flagged SUSPECTED: I confirmed lib/holds.ts (the one caller that omits the client argument) is imported only by client components, so no server path can poison the cache today.
 
 **Mechanism.** `saveCapabilityPolicy` / `addUserGrant` / `revokeUserGrant` are
 called exclusively from `"use client"` components. `cache.delete` therefore
@@ -532,6 +542,7 @@ the next action."*
   - `app/(protected)/admin/permissions/page.tsx:35,58` — the UI gate
 - **Related:** `WF-1`, `WF-10`, `WF-16`, `ADD-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `validateCapabilityPolicy` is a pure TypeScript function (`capabilityPolicy.ts:201-212`) and `addUserGrant` reads-modifies-writes with no server-side re-validation (`:254-265`). Note the interaction with `WF-1`/`DB-1`: while the policy column name is wrong the whole layer is inert, so this becomes live the moment that is fixed — sequence accordingly.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. All three variants verified. A repo-wide grep shows saveCapabilityPolicy/validateCapabilityPolicy/addUserGrant are imported only by components/permissions/*.tsx — there is no server-side re-validation anywhere, so a direct PostgREST PATCH satisfies the RESTRICTIVE policy while skipping both the rail and the audit_logs insert at :238. The UI-only self-grant path is real too: addUserGrant → saveCapabilityPolicy accepts a `ticket.manage` grant with no expiry, and policyAllows (:151-153) treats grants identically to roles. The inverse-drift variant holds because page.tsx:35,58 test only the headline `activeRole` while is_org_controller is additive-aware.
 
 **Mechanism.** The database restricts *which key* may be written:
 
@@ -590,6 +601,7 @@ and, once `WF-1` is fixed, `checkout.force_release` at the database.
   - `types/schema.ts:1120` — documented only as `requesterRole?: Role`
 - **Related:** `WF-5`
 - **Re-verified:** hardening pass — **SURVIVES**. `requiresEngineerApproval(ticket.requesterRole)` (`workflow.ts:78`) reads the value stamped at INSERT (`WF-5`), so a demotion never reaches a ticket already in flight.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by exhaustive grep: `requester_role` is only ever WRITTEN at ticket creation (requests/new/page.tsx:309, CheckInPanel.tsx:250, transitionIn.ts:315) and never updated, backfilled, or re-derived when a member's role changes; there is no trigger or migration touching it. The escalation is reachable because the server route re-derives with the same snapshot (workflow-action/route.ts:96), so at PENDING_REVIEW the demoted requester still satisfies `isRequesterIdentity` with needsEngineerApproval=false and is offered `approve_draft_ifc` (workflow.ts:211-216).
 
 **Mechanism.** The value is frozen at INSERT time, never refreshed, and never
 compared to `org_members.role`. The *current* role is consulted too, but only in
@@ -619,7 +631,7 @@ change is to make the asymmetry fail *closed* rather than open.
 
 ## WF-13 · What the capability policy structurally cannot express
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity / scaling
@@ -629,6 +641,7 @@ change is to make the asymmetry fail *closed* rather than open.
   - `lib/capabilityPolicy.ts:141-155` — `policyAllows(policy, cap, role, extraRoles, uid)` — **no resource argument**
 - **Related:** `WF-8`, `DRAFT-1`, `GAP-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by type definition. `CapabilityPolicy` is `{ caps?: Partial<Record<CapabilityId, string[]>>; grants?: UserGrant[] }` (`capabilityPolicy.ts:112-117`) — no ticket, library, project or document dimension exists in the shape, so per-scope authority is unrepresentable rather than merely unimplemented.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Every factual assertion in the table checks out — the shape has no ticket/library/project dimension, `roleTokenMatches` (:128-132) is a string compare where `"Engineer"` matches every tier, UserGrant (:102-110) has no scope field, and the engineer gate is hardcoded independent of policy. But this is an expressiveness census with no independently reachable defect: the finding's own text calls it 'architecture, not a bug fix', its blast radius is 'model-complexity / scaling', and every exploitable consequence it lists is already recorded under WF-3, WF-4, WF-8 and WF-15. HIGH on a gap-analysis entry double-counts those; MEDIUM matches its actual standalone impact.
 
 **Mechanism.** The policy is a flat `capability → role-token[]` map plus
 per-person grants, with no resource dimension. Consequently none of these are
@@ -688,6 +701,7 @@ makes the hardcoded engineer gate a real capability. Full spec: `GAP-1`.
   - `lib/workflow.ts:265-267` — `isAssignedEngineerIdentity`
 - **Related:** `WF-3`, `WF-4`, `WF-7`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The route confirms the nominated engineer is an active member of the org (`workflow-action/route.ts:113-121`) and applies **no test that they differ from the requester or the drafter**.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the DraftingSupervisor scenario is reachable exactly as described: `requiresEngineerApproval("DraftingSupervisor")` returns true (isEngineerRole is a substring test that misses it, isManagementRole is an exact match on Admin/Manager/Supervisor only), while `isEng` is computed from the headline role alone (workflow.ts:66, and `allows` passes `null` for extraRoles at :65), so the same person is simultaneously 'not an engineer' for the fork and 'an engineer' for the server's picker validation, which reads `refMember.roles`. They then satisfy isAssignedEngineerIdentity at PENDING_FINAL_APPROVAL and approve their own request.
 
 **Mechanism.** The route checks that the nominee holds *an* Engineer role. It
 does **not** check that they are not `ticket.requesterId`, not
@@ -730,6 +744,7 @@ closed. **Fix them together or the `WF-3` remediation is a no-op.**
   - the three programmatic creators bypass it entirely with hardcoded `"Revision"` / `"ASBUILT"`
 - **Related:** `DRAFT-1`, `WF-8`, `WF-13`
 - **Re-verified:** hardening pass — **SURVIVES**. `RequestType` is an unconstrained `string` (`types/schema.ts:1019`) and gates the one-click `close_rfi` terminal transition (`workflow.ts:185-192`). Same substrate as `drafting-flow/TIER-2` and `LEAK-3`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Holds up. schema.sql:404 declares `request_type TEXT NOT NULL` with no CHECK constraint and no migration adds one, the org's configured request types in /admin/requests are pure UI config, and tickets are created by direct client insert under `tickets_org_access FOR ALL USING (org_id IN (SELECT my_org_ids()))` (schema.sql:1080) — so any member can set request_type to the literal 'RFI'. `canActAsDrafter` is `isDrafterIdentity || allows('ticket.draft_work')` whose default token list is `["Drafter"]`, so any Drafter in the org gets the one-click DRAFTING→CLOSED path.
 
 **Mechanism.** Every other use of `requestType` is cosmetic or advisory: SLA
 default days, a badge, an "urgent" heuristic, a filter dropdown. The single
@@ -768,6 +783,7 @@ the configured type rather than a hardcoded string comparison.
   - audit write at `app/api/tickets/workflow-action/route.ts:214-223`
 - **Related:** `WF-10`, `WF-11`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. **0** audit rows record a grant being *used*, and **0** code paths prune an expired grant — `grantActive` filters at read time only, so expired grants accumulate in the stored policy forever.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. All three sub-claims confirmed. Nothing anywhere sweeps expired grants — grep shows `grantActive` is used only for evaluation (:152) and for strikethrough rendering in ViewAsSimulator.tsx:198 — so a dead grant persists in the blob indefinitely, and the audit trail records only that a role acted, never that a delegation was the reason. MEDIUM is right.
 
 **Mechanism.** Point by point:
 
@@ -807,6 +823,7 @@ say a delegation was used.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** hardening pass — **SURVIVES**. Confirmed alongside the other census findings in this area: dead capabilities (`admin.analytics_view`, `admin.archive_view` — `WF-20`), dead code (`canBlindDrillAccess` — `OWN-21`), dead columns (`outcome_ref` — `LIFE-10`, `inapp_enabled`/`push_enabled` — `drafting-flow/EDGE-14`) and dead SLA machinery (`drafting-flow/EDGE-7`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on every row I could check. A repo-wide grep for CANCELED finds no assignment producing it — ticketTransitions.ts never emits it, yet WorkflowDiagramModal.tsx:36 documents it to users as 'a terminal exit off the main flow', and types/schema.ts:1033 declares it. The 'three decorative capabilities' count is right: ticket.initial_review (:61-62) guards only NEW/PENDING_ENG_INITIAL, and eng_review (:63-65) and final_approve (:76-78) are guarded by an assignedEngineerId that the only reaching actions always populate.
 
 > **Dispositions are settled in `DEC-14` and `DEC-11`.** `CANCELED` gets
 > implemented — it is documented to users as a real state and no action produces
@@ -859,6 +876,7 @@ decorative** — precisely the failure mode that
   - `lib/workflow.ts:137-163` — `assign` is offered **only** at `PENDING_ASSIGNMENT`
 - **Related:** `WF-2`, `WF-22`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. No `reassign` action exists anywhere in `lib/` — the workflow engine never emits one — so a post of that action type falls through to the "not available to you" rejection at `workflow-action/route.ts:98-101`, while the UI renders a full Reassign modal (`requests/[id]/page.tsx:231, 265-271`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and I checked the one escape hatch that would refute it: no transition in lib/ticketTransitions.ts ever returns a ticket to PENDING_ASSIGNMENT while assigned_drafter_id is set. `assign`/`self_assign` (:192-206) move straight to DRAFTING; the only two writers of PENDING_ASSIGNMENT are approve_initial (:175) and approve_team (:189), both reachable only from statuses that precede any drafter assignment. So the button's own render condition (`ticket.assignedDrafterId`) guarantees the status can never be the one where `assign` is offered.
 
 **Mechanism.** The render condition requires `assignedDrafterId` to be set —
 which only happens *after* the ticket has left `PENDING_ASSIGNMENT`, the one
@@ -890,6 +908,7 @@ assignment, the new assignee is notified, and the change is audited.
   - `app/api/tickets/workflow-action/route.ts:283-291` — the drain call
 - **Related:** `ADD-*`, `LIFE-7`
 - **Re-verified:** hardening pass — **SURVIVES**. Routing is resolved once at creation (`LEAK-1`), so a ticket returning to `PENDING_ASSIGNMENT` notifies nobody.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the PENDING_ASSIGNMENT role pool (DraftingSupervisor → Admin fallback) is computed only at ticket CREATION; every later re-entry (approve_initial, approve_team) notifies only requester/drafter. Partial mitigation the finding omits: lib/ticketAttention.ts:84-93 still flags PENDING_ASSIGNMENT as action-required for DraftingSupervisor, so the sidebar badge (not the bell or email) does surface it — 'stall silently' is slightly overstated, but the notification dead end is real. MEDIUM stands.
 
 **Mechanism.** `fanOut` notifies exactly
 `[ticket.requesterId, ticket.assignedDrafterId]`. The module that exists
@@ -938,6 +957,7 @@ with three jobs, so widening recipients also changes the unread UI.
   - defaults at `lib/capabilityPolicy.ts:92-95`
 - **Related:** `WF-2`, `SURF-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `admin.analytics_view` appears **0** times anywhere under `app/api/` — the capability is checked in the page component and nowhere on the server.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. All three sub-claims confirmed: (a) UI-only — a React `useEffect` gate over data still readable through the wide `tickets_org_access` RLS policy (WF-2); (b) fail-open — the `.catch` sets allowed=true; (c) per-person grants ignored — neither call site passes `uid` or `extraRoles`, so a delegated grant (and an additive role) is silently denied. MEDIUM stands.
 
 **Mechanism.** Three problems in four lines:
 
@@ -985,6 +1005,7 @@ policy or the data moves behind a service-role route.
   - `app/api/verify-ticket/route.ts:59-85`
 - **Related:** `WF-8`
 - **Re-verified:** hardening pass — **SURVIVES**. `deliverable_rev = issuedRevLabel(ticket.revisionCount)` at three sites (`ticketTransitions.ts:223, 232, 250`), and `/api/verify-ticket` computes its verdict with no status term at all (`drafting-flow/EDGE-2`). Same defect from two directions.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. Reopen leaves revision_count untouched, so the next approval re-emits the SAME issued label (e.g. Rev 2 twice) for different content, and /verify-ticket compares label strings only — the superseded paper print scans as `current`. lib/workflow.ts:331-341 confirms reopen is offered to `allows('ticket.reopen') || canActAsRequester`. MEDIUM stands.
 
 **Mechanism.** `reopen_ticket` sets `status = "PENDING_REVIEW"` and nothing else.
 `issuedRevLabel` is a pure function of `revision_count`, which reopen does not
@@ -1039,6 +1060,7 @@ revision label, and a ticket back under review does not verify as current.
   - `app/api/tickets/workflow-action/route.ts:214-223` — the audit write
 - **Related:** `WF-6`, `WF-18`
 - **Re-verified:** hardening pass — **SURVIVES**. The assign path writes the audit row on the same unchecked-update pattern counted in `OWN-14` — a refused write leaves the audit claiming the assignment happened.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: `assign` with no assignment writes a history row, a TICKET_ASSIGN audit row with `details:{from:'PENDING_ASSIGNMENT',to:'PENDING_ASSIGNMENT'}`, and returns success — the status-CAS at route.ts:159 passes precisely because nothing changed. One factual correction to the finding's last sentence: `self_assign` does NOT have the same shape via the API — ticketTransitions.ts:201-202 guards on `actorUid && input.actor.email`, and route.ts:146 always supplies `caller.id` and a non-empty `callerEmail` (route.ts:89 falls back to "Unknown"), so that branch can never no-op through this route. MEDIUM stands.
 
 **Mechanism.** With `assignment` omitted, `newStatus` falls back to
 `ticket.status`, the compare-and-set succeeds (because `last_modified` did
@@ -1067,6 +1089,7 @@ missing, rather than producing an empty transition and a success audit row.
   - `lib/capabilityPolicy.ts:57-96`, `:119-125` — the TypeScript `DEFAULTS`
 - **Related:** `WF-1`, `WF-2`, `DB-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence, which is the strongest form of it: **no `ticket.*` capability default exists in SQL at all**. `DEFAULTS` lives only in `lib/capabilityPolicy.ts`, so the database and the application cannot agree — the database has no opinion to compare.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Factually confirmed — the SQL function knows the shipped defaults for exactly three capabilities and returns '[]' (deny-all) for all fourteen `ticket.*` / `admin.*` ids, while the TypeScript evaluator returns the real defaults. Worth noting for triage: the disagreement fails CLOSED, is unreachable today (org_capability_allows is referenced only by the document_holds policies and enforce_checkout_release_guard in this same migration), and the finding itself concedes it is latent — I'd argue for LOW rather than MEDIUM, but LOW is outside the allowed correction range so I leave the severity as filed.
 
 **Mechanism.** The database's fallback knows only three capabilities:
 
@@ -1112,6 +1135,7 @@ in `CapabilityId`, verified by a test rather than by inspection.
   - `lib/capabilityPolicy.ts:55` — `const MGMT = ["Admin","Manager","Supervisor"]` — **excludes** it
 - **Related:** `WF-7`, `WF-14`
 - **Re-verified:** hardening pass — **SURVIVES**. Same evidence as `drafting-flow/FRIC-7` and `UI-3` — `ticketAttention.ts:106-108` against `workflow.ts:301-312`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by tracing every branch: for a DraftingSupervisor at PENDING_REVIEW, `canActAsRequester` is false, `allows('ticket.direct_approve')` defaults to ["Engineer"], and `isManagement` is false → getActions returns []. Same at PENDING_IFC (ticket.draft_work defaults to ["Drafter"]) and PENDING_FINAL_APPROVAL. The attention feed is derived from role+status and never consults getActions, so the badge is genuinely unclearable. MEDIUM stands.
 
 **Mechanism.** Three definitions of "management." `isActionRequired` returns true
 for a DraftingSupervisor at `PENDING_REVIEW` and `PENDING_FINAL_APPROVAL`, but

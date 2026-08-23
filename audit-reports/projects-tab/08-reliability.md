@@ -30,7 +30,7 @@ report.
 
 ## REL-1 · The companies registry spins forever if the org never resolves, with no error boundary to catch it
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
@@ -41,6 +41,7 @@ report.
   - `app/(protected)/companies/` — **no `error.tsx`, no `loading.tsx`** (14 other routes have one)
   - `app/(protected)/projects/page.tsx:64` — the same pattern, but documented
 - **Re-verified:** hardening pass — **SURVIVES**. `refresh` returns early when `activeOrgId` is null (`companies/page.tsx:46-48`) and `setLoading(false)` sits inside the try that follows, so an org that never resolves leaves the page on its spinner. Directly downstream of `identity-and-session/SESS-1`, which is one way `activeOrgId` stays null.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Both halves check out — the terminal spinner and the full-app flash on cold navigation to /companies (the app/(protected)/projects/page.tsx:64 guard `if (!activeOrgId || !uid) return;` is the same pattern, but that route does have its own loading.tsx). One correction to the wording: an error boundary does exist and covers this route (app/(protected)/error.tsx), it just cannot catch a hang. Downgraded to MEDIUM because the hang requires the org to never resolve (RoleContext's watchdog at :83-90 and its 15s resolveOrgAndRole race make that an edge case), leaving the loading-shell flash as the routinely-hit half.
 
 **Mechanism.** The refresh returns early when the org id is null and never
 clears `loading`. The role resolver's timeout does not supply a fallback id.
@@ -74,6 +75,7 @@ to `app/(protected)/companies/`, modelled on the projects route's.
   - `lib/costDocs.ts:106-128` — `uploadCostDoc` uploads to R2 *before* inserting
 - **Related:** `UX-10`, `REL-10`
 - **Re-verified:** hardening pass — **SURVIVES**. `const { data } = await supabase…` with the error discarded, returning `[]` — `costs.ts:159-161`, `costDocs.ts:86-91`, and **8** such sites across the four projects libraries. A failed read is pixel-identical to an empty project.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Right as written, and the line that settles it is the missing `error` in each destructure. An RLS denial or a pre-migration schema returns `{ data: null, error: {...} }`, which becomes `[]`, which makes rollup.budget 0 and entries empty — pixel-identical to a fresh project, and (via CostCharts.tsx:45) it also flips the charts into watermarked EXAMPLE mode. HIGH is correct: the user is shown confidently wrong financial state with no error anywhere.
 
 **Mechanism.** Because the list functions swallow errors one layer down, the
 tab's own error handling is unreachable and the "tolerance" catch is dead.
@@ -98,7 +100,7 @@ the bytes, or clean up the orphan on insert failure.
 
 ## REL-3 · Raw Postgres error strings reach plant users at roughly twenty-two sites
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
@@ -110,6 +112,7 @@ the bytes, or clean up the orphan on insert failure.
   - `lib/companies.ts:85, 92, 124, 137, 183, 212`
   - Good precedents: `lib/companies.ts:134-136` (23505 → human copy), `components/projects/cost/QuotesPanel.tsx:545` (migration hint)
 - **Re-verified:** hardening pass — **SURVIVES**, with the count made exact: **56** references to `error.message` / `error?.message` across the projects libraries — more than the ~22 claimed, though not every one reaches a user-facing surface. `checklists.ts:127` is representative.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The claim and its count hold — the cited lines total 22 and every one of them forwards a Postgres message straight to a plant user, with the single 23505 case at companies.ts:134-136 proving the codebase knows how to do better. Downgraded to MEDIUM: the impact is confusing UX plus minor schema disclosure (table and policy names), not lost or wrong data, and no privileged information beyond object names escapes.
 
 **Mechanism.** Every write path returns `error.message` verbatim.
 
@@ -131,7 +134,7 @@ sites through it, falling back to a generic message plus a logged detail.
 
 ## REL-4 · Every database row enters the application as an unchecked cast
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / availability
@@ -144,6 +147,7 @@ sites through it, falling back to a generic message plus a logged detail.
   - `lib/companies.ts:75` — `qualityManualGaps` cast with no check at all
 - **Related:** `MON-8`
 - **Re-verified:** hardening pass — **SURVIVES**. `(r.status as CostDocStatus) ?? "draft"` (`costDocs.ts:69`) — `as` performs no validation and `??` catches only null, so any unexpected string enters the domain model intact. This is the input that makes `MON-8` throw.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The absence claim holds up on a repo-wide search: nothing validates a DB row anywhere — the `validate*` helpers that do exist (validateParsedQuote, validateSegmentedItems, validateRubricFindings) guard AI output, not database reads. There is even a concrete crash path: lib/costDocs.ts:181 does `COST_DOC_STATUS_LABEL[fresh.status].toLowerCase()`, which throws on any status outside the union. MEDIUM rather than HIGH, though: reaching it requires a row written outside these code paths, since the app's own writers only emit union values.
 
 **Mechanism.** Rows are mapped field-by-field from `Record<string, unknown>`
 with no runtime validation. `?? "default"` catches null and nothing else.
@@ -174,7 +178,7 @@ but the three above remove the user-visible damage for far less work.
 
 ## REL-5 · One tab crashing unmounts the entire project page
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
@@ -182,6 +186,7 @@ but the three above remove the user-visible damage for far less work.
   - `app/(protected)/projects/[id]/page.tsx` — no per-tab boundary
   - `app/(protected)/error.tsx` — the only boundary, at segment level (well written; keeps the sidebar)
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The project page defines no error boundary, so a throw in any tab unmounts the whole route rather than the panel that failed.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The structural claim is right: no per-tab boundary, so one tab's crash takes the entire project page, and 'Try again' rebuilds the same crashing tab because the tab lives in the URL. The summary overstates the consequence: app/(protected)/error.tsx renders inside app/(protected)/layout.tsx — its own header comment says 'lands here — INSIDE the layout — so the sidebar and navigation stay alive' — so Sidebar and TopBar survive and Schedule is reachable by navigating back with ?tab=schedule. MEDIUM: this is missing defense-in-depth, and it only bites once some other bug throws.
 
 **Mechanism.** An unhandled render exception anywhere in `CostsTab`,
 `QualityTab` or `ScheduleTab` takes the header, the tab bar, the coach and the
@@ -213,6 +218,7 @@ About fifteen lines.
   - `lib/__tests__/apiRouteAuth.test.ts` — **the harness already exists**
   - `vitest.config.ts` — `include: ["lib/__tests__/**/*.test.ts"]`, `environment: "node"`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `lib/__tests__/projectControls.test.ts` covers pure computation; no test exercises a data-layer function, a route's authorization, or an RLS policy in this area.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Every part of the absence claim survives a repo-wide search: no data-layer module is imported by any test, the three new AI routes are absent from the only route-auth suite, and no policy or migration is exercised anywhere. HIGH is fair — the untested surface is exactly where REL-2 (dropped errors) and REL-3 (raw messages) live, which is why those defects could ship green.
 
 **Mechanism.** The 17 new tests are good and cover the pure engines thoroughly,
 including seven well-chosen regression pins. They do not touch anything that
@@ -258,6 +264,7 @@ zero tests above lib/, so a broken auth check on a route shipped green."*
   - `lib/schemaExpectations.ts:29+` — `EXPECTED_TABLES` / `EXPECTED_COLUMNS`
   - Its own header: *"When a new migration creates a table, add it here — the health panel is only as honest as this list."*
 - **Re-verified:** hardening pass — **SURVIVES**. `EXPECTED_TABLES` is a hand-maintained literal (`schemaExpectations.ts:29`), so a table this feature's migration adds is absent from the expectation set and its absence reads as green.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence and by a repo-wide search: nothing else feeds the health probe, so a database missing 20261013 reports healthy:true. The silent-empty half is also real — lib/checklists.ts:96 `const { data } = await supabase.from("project_checklists")...` discards the error and returns [], and lib/companies.ts:246-252 wraps every 20261013 table in `safe(...)`.
 
 **Mechanism.** Migration `20261013` creates `change_orders`, `companies`,
 `company_events`, `project_checklists`, `checklist_items`, `turnover_items`,
@@ -292,6 +299,7 @@ test — the export-coverage test already diffs table lists against
   - `app/api/intake/upload/route.ts:104, 121` — no dedupe key
   - `lib/companies.ts:304` — `submissionCount`, which the inflated counter feeds
 - **Re-verified:** hardening pass — **SURVIVES**. The intake path inserts notifications (`intake/upload/route.ts:104`) and increments `submission_count` (`companies.ts:304`) with no idempotency key, so a client retry after a partial failure doubles both.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. No idempotency and no DB-level dedupe on the quote path or the new-document path, so a retried POST duplicates row + notification + counter. One partial mitigation the finding does not mention: a retried REVISION submission is caught by the pending-review guard at :257 (`if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored)) return bad(... 409)`), so only quotes and brand-new documents actually double-create. MEDIUM stands.
 
 **Mechanism.** No idempotency key. A retried POST creates a second
 `cost_documents` row and a second notification, and double-increments
@@ -324,6 +332,7 @@ a window.
   - `app/(protected)/companies/[id]/page.tsx:405` — `HistoryPanels` takes `scorecard` then `void scorecard;`
   - `lib/projectHealth.ts:57, 145` — `trend` is the literal type `"steady"` and is never rendered
 - **Re-verified:** hardening pass — **SURVIVES**. `status: "open" | "complete" | "void"` is accepted by the data layer (`checklists.ts:216`) and `CHANGE_ORDER_VOIDED` is a declared outcome (`changeOrders.ts:192`) — states the API honours and no interface can reach.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The two load-bearing claims are correct, each confirmed by repo-wide grep: no interface can void a checklist (the only project_checklists delete is the createChecklist rollback at checklists.ts:137) and no interface can unwind an approved CO. One bullet is loose: company `status: 'inactive'` IS reachable — app/(protected)/companies/[id]/page.tsx:524 `<option value="inactive">` and it renders as a badge at companies/page.tsx:189 — so it is a state with no behavioral effect, not an unreachable one. Doesn't change the severity.
 
 **Mechanism.** Each is a capability that exists in the data layer and cannot be
 reached.
@@ -363,6 +372,7 @@ also pure cost, per report `09`).
   - `components/projects/cost/CostCharts.tsx:86` — `ForecastSentence`, unmarked
 - **Related:** `REL-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `hasRealData = rollup.budget > 0 || entries.some((e) => e.status !== "void")` (`CostCharts.tsx:45`) is an OR, so a project with a budget and no entries — or entries and no budget — can satisfy one branch while other panels still render example series.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. A 7%-opacity rotated word is below the threshold of a screenshot or a print, and every real signal ('Example data' chip, dashed border) is at the frame's top edge, so cropping to the forecast box or the S-curve yields something visually identical to live numbers. The 'project that has real data' path is real but indirect: it needs rollup.budget to compute to 0 with every entry voided — or, more plausibly, the silent-failure path in REL-2, which turns accounts/entries into empty arrays.
 
 **Mechanism.** Two live routes back into example mode: voiding every entry on
 budget-less accounts, and — more likely — **creating a chart of accounts before
@@ -409,6 +419,7 @@ indistinguishable from a real forecast.
   - `components/projects/cost/CostCharts.tsx:107` — `return null` when there is a budget but no schedule and no entries
   - `components/projects/cost/CostCharts.tsx:115-119` — the missing-planned-line hint, gated on the wrong condition
 - **Re-verified:** hardening pass — **SURVIVES**. The example block renders four labelled panels (`CostCharts.tsx:89-94`), while the live path can produce at most two — the crew curve needs awarded labor hours and the burn-by-line needs entries.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — 'Burn by budget line' (ChartKit.tsx:134 BarList) is drawn only for stand-in data and can never appear for a project's own numbers, so the preview advertises a view the product does not have. The arithmetic in the title is loose (the example frame renders three charts plus the forecast sentence; the real path renders two charts plus the sentence), but the substantive defect is exactly as stated. MEDIUM stands.
 
 **Mechanism.** "Burn by budget line" — arguably the most decision-useful cost
 view — appears only inside the example branch. The crew curve additionally

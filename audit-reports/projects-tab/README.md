@@ -23,10 +23,15 @@ before and after.
 
 | Severity | Count |
 |---|---|
-| CRITICAL | 29 |
-| HIGH | 72 |
-| MEDIUM | 32 |
+| CRITICAL | 17 |
+| HIGH | 52 |
+| MEDIUM | 62 |
+| LOW | 2 |
 | **Total** | **133** |
+
+Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
+disproved them. They are kept with the reason rather than deleted (`DEC-41`);
+**do not queue them as work.**
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see

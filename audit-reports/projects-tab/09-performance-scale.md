@@ -50,7 +50,7 @@ more times.
 
 ## PERF-1 · The companies registry fires over eleven hundred queries per page view, with no cache, pagination or abort
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED (query counts exact; timing estimated)
 - **Blast radius:** performance / availability
@@ -61,6 +61,7 @@ more times.
   - `app/(protected)/companies/page.tsx:74-79` — the kind and text filters, client-side only
   - `app/(protected)/companies/[id]/page.tsx:54-71` — runs the gather a **second** time for the clicked company
 - **Re-verified:** hardening pass — **SURVIVES** as a mechanism, with the count restated. `listCompanies` is a single query; the N+1 is the block beneath it — `gatherCompanyProfile(c)` per company, four workers deep (`companies/page.tsx:55-65`) — and that function issues **8** queries. Total is `1 + 8N`, so the headline "over eleven hundred" corresponds to roughly 137 companies rather than being a fixed number. The defect, the absence of caching and the severity are unchanged; only the figure is conditional.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Everything about the fan-out, the missing pagination and the missing abort is confirmed. Two corrections pull the severity down from CRITICAL: the page is not blocked — `setLoading(false)` fires at line 52 immediately after the list, so cards paint and the scores stream in; and the per-company cost is 9 only for companies with linked parties — `partyIds.length ? … : Promise.resolve([])` (companies.ts:249-254) collapses a company with no linked party to 2 queries, which per MON-7 is the common case. HIGH.
 
 **Mechanism.** Each profile costs nine queries. Across 150 companies:
 **1 + (150 × 9) = 1,351** ceiling; realistically ≈**1,141** (companies with no
@@ -100,7 +101,7 @@ company restarts the whole sweep.
 
 ## PERF-2 · Exporting all projects is 360 sequential round trips behind a button that gives no feedback
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED (round-trip count exact; timing estimated)
 - **Blast radius:** availability / ux
@@ -110,6 +111,7 @@ company restarts the whole sweep.
   - `lib/projectExport.ts:40-42` — unbounded `checkout_sessions` and `project_documents` per project
   - `app/(protected)/projects/page.tsx:103-114` — the button, no busy state, not disabled while running
 - **Re-verified:** hardening pass — **SURVIVES** as a mechanism, with the same caveat as `PERF-1`. `for (const p of projects) { const bundle = await loadProjectBundle(p.id, orgId); }` (`projectExport.ts:121-122`) is a strictly sequential await with no concurrency and no progress feedback; the round-trip total scales with project count rather than being fixed at 360.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Both halves confirmed, including the re-click hazard: nothing debounces or guards the handler, so each impatient click starts another full sweep. But the work is async and non-blocking, produces a download, and corrupts nothing, so CRITICAL is too high; HIGH.
 
 **Mechanism.** 120 projects × 3 serial round trips = **360 sequential**. At 80ms
 that is ≈29 s; at 150ms (mobile or a distant region) ≈54 s. Everything
@@ -134,7 +136,7 @@ memory.
 
 ## PERF-3 · The coach re-gathers on every Costs and Quality mount, throwing away thirteen queries every time
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
@@ -146,6 +148,7 @@ memory.
   - `components/projects/ProjectCoach.tsx:33, 41` — cleanup sets `cancelled = true` but does **not** abort the requests
   - `lib/projectSnapshot.ts:25-26` — `cost_documents.select("*")`, pulling every `parsed` blob to read five scalar fields
 - **Re-verified:** hardening pass — **SURVIVES**. `onDataChanged?.()` fires from the mount effect (`CostsTab.tsx:83`), so the coach's gather re-runs on every tab mount rather than on an actual data change.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The redundant mount-time gather is real, as is the fat select(*). But the finding double-counts: the gathers triggered by a budget-line edit or a posted comment are not thrown away — the coach's health scores and suggestions are derived from that snapshot, so refreshing them after a mutation is the intended behaviour, not waste. The genuine defect is the duplicated gather on mount plus the missing select-list narrowing, which is MEDIUM.
 
 **Mechanism.** Both tabs call the data-changed callback from inside their
 refresh, so it fires on mount as well as on mutation. The coach's cleanup only
@@ -171,7 +174,7 @@ and add an `AbortController` to the coach.
 
 ## PERF-4 · An unbounded query loop is held back only by an eslint-disable comment
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (latent — does not fire today)
 - **Blast radius:** availability
@@ -181,6 +184,7 @@ and add an `AbortController` to the coach.
   - `app/(protected)/projects/[id]/page.tsx:494` — `onDataChanged={() => setCoachKey(k => k + 1)}`, an inline arrow
 - **Related:** `PERF-3` (same root)
 - **Re-verified:** hardening pass — **SURVIVES**. `// eslint-disable-next-line react-hooks/exhaustive-deps` sits directly above the query effects in both `CostsTab.tsx:84` and `QualityTab.tsx:73` — the loop is prevented by a suppressed lint rule rather than by the dependency array being correct.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The loop mechanism is real: adding onDataChanged to the deps gives refresh a new identity each render, the effect refires, refresh calls onDataChanged, setCoachKey re-renders, repeat forever. Two inaccuracies: it is ~5 queries per iteration in CostsTab and ~3 in QualityTab, not 'roughly twenty', and only one tab is mounted at a time; and the shipped code is correct today, so this is a latent maintenance trap rather than a live outage — MEDIUM.
 
 **Mechanism.** The callback is an inline arrow, so it gets a new identity on
 every page render. `setCoachKey` re-renders the page → new callback → but
@@ -207,7 +211,7 @@ the loop the suppression prevents.
 
 ## PERF-5 · The execution board renders eight hundred components into a viewport showing fifteen
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (structure); node counts estimated
 - **Blast radius:** performance
@@ -221,6 +225,7 @@ the loop the suppression prevents.
   - `components/projects/ExecutionView.tsx:842, 1395` — `DependencyArrows`, plain component, 4 `new Date` per edge per render
   - Grep for `react-window|react-virtual|virtuoso|IntersectionObserver` across the Projects surface → **zero hits**
 - **Re-verified:** hardening pass — **SURVIVES**. `rows.map(…)` (`ExecutionView.tsx:816`) inside a `maxHeight: "70vh"` container (`:808`) with no virtualization or windowing anywhere in the file.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Non-virtualized rendering, the O(n²) leaf scans, the unbounded dependency dropdown (TaskDetailPanel.tsx:690-693 maps every task through wouldCreateCycle), and the MIN_PX_PER_DAY floor are all confirmed. The '~250,000 comparisons per drag frame' figure is wrong: ExecutionView.tsx:225 `const critical = useMemo(() => computeCriticalPathLite(items), [items]);` and drag state never touches `items`, so the O(n²) pass runs once per data change, not per pointermove. What does re-run per frame is the un-memoized `rows.map` over Bar (declared at :1172 as a plain `function Bar(`), which is a rendering cost, not a comparison cost.
 
 **Mechanism.** No virtualization anywhere. Worse, the summary strip's quadratic
 leaf computation recomputes on **every pointermove frame during a drag**,
@@ -251,7 +256,7 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
 
 ## PERF-6 · PDF rendering plus inference can exceed the function's own time limit, and the user gets "HTTP 504"
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (arithmetic); SUSPECTED (hosting plan cap)
 - **Blast radius:** availability / cost
@@ -262,6 +267,7 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
   - `lib/ai/providerCall.ts:128-129` — retries share one 90s `AbortSignal`, which is correct
   - Client call sites with no timeout and no abort: `QuotesPanel.tsx:61-70`, `QualityTab.tsx:178-189`, `QualityTab.tsx:296-305`
 - **Re-verified:** hardening pass — **SURVIVES**. `renderKnowledgePages` does an R2 fetch, a PDF rasterize and an inference call (`knowledgePageRender.ts:25-36`) behind a route declaring `export const maxDuration = 120` (`cost-docs/route.ts:24`), with no client-side timeout handling to turn the platform 504 into a message.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The gap is real — 90s of model budget plus up to 8-10 serially rendered PDF pages is not bounded below the 120s function limit, and the client's fallback string is literally the status code. Downgraded to MEDIUM because the outcome is a bad error message plus a wasted (billed) call rather than data loss or corruption, and the render step would have to consume >30s for the overrun to actually trigger.
 
 **Mechanism.** For a ten-page **scanned** vendor quote — exactly the document
 this route exists to read:
@@ -311,7 +317,7 @@ customer's own key, and a 504 burns it entirely.
 
 ## PERF-7 · Applying an AI assessment issues one update per item, sequentially
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / data-integrity
@@ -320,6 +326,7 @@ customer's own key, and a 504 burns it entirely.
   - `lib/checklists.ts:298-322` — `runAutoEvidence`, same shape plus a snapshot-based array append
 - **Related:** `SAF-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `for (const p of input.proposals)` with a per-item write inside (`checklists.ts:158-161`) — the batch is a loop, not a batch.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Confirmed at both cited sites — sequential awaited updates from the browser, no batching/upsert, plus an O(n²) `items.find` inside the runAutoEvidence loop. MEDIUM rather than HIGH: for a realistically sized checklist (50-150 items segmented from a 10-page PDF) this is a 5-20s spinner, not a broken feature. Worth noting the loops also swallow per-row errors (`if (!error) applied += 1` / `if (error) continue`), so a partially applied assessment reports a lower count with no error surfaced.
 
 **Mechanism.** A 300-item checklist means **300 sequential updates** — roughly
 18–36 seconds with the tab frozen and no progress indicator. Per-row errors are
@@ -344,7 +351,7 @@ server-side.
 
 ## PERF-8 · The full timeline loads on every project open, for a tab most users never click
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
@@ -356,6 +363,7 @@ server-side.
   - `app/(protected)/projects/[id]/page.tsx:180` — a 5th round trip to re-read `job_kind`, one column of a row already fetched
   - Duplicates: `lib/timeline.ts:417` vs `lib/projects.ts:419` (`project_activity` ×2); `lib/projectSnapshot.ts:22, 42` vs `page.tsx:141, 180` (`projects` ×3–4, `project_members` ×2)
 - **Re-verified:** hardening pass — **SURVIVES**. `getProjectTimeline` runs at project open (`timeline.ts:411-422`) and additionally queries `audit_logs` (`:441`), regardless of whether the Timeline tab is ever selected.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Eager loading confirmed: the timeline is fetched on every project open regardless of tab, and it duplicates work — lib/projects.ts:419-425 listActivity queries the same `project_activity` table for the same project with the same limit in the same Promise.all. The uncapped project_documents fetch at :441 is the sharper problem the title understates. Downgraded to MEDIUM: the effect is wasted latency and duplicated queries on page load, not incorrect or lost data.
 
 **Mechanism.** The timeline sits on the blocking path of every project page load
 regardless of which tab is opened, and first paint waits for the whole chain
@@ -385,6 +393,7 @@ the project row lands rather than blocking on everything.
   - Grep for `next/dynamic|React.lazy|await import(` across the Projects tree → **zero hits**
   - Built output: `.next/static/chunks/046b04fbfdf1b49e.js` — **571 KB**, referenced only by the project detail route's client manifest
 - **Re-verified:** hardening pass — **SURVIVES**. `lib/rfqDocx.ts:17` statically imports `pizzip`, and `QuotesPanel.tsx:30` statically imports `downloadStarterRfq` from it — so the zip library is in the project route's bundle for every visitor, not behind a dynamic import.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The import graph makes PizZip unconditionally part of the project-detail page bundle even for users who never open Costs, let alone click Download RFQ — the claim holds on mechanism. Caveat: the cited artifact `.next/static/chunks/046b04fbfdf1b49e.js` does not exist in the tree (there is no `.next` build at all), so the specific 571 KB figure could not be reproduced. MEDIUM is right.
 
 **Mechanism.** No lazy boundary anywhere in the Projects tree, and the page is
 itself a client component, so the whole subtree is one client entry. Total
@@ -412,7 +421,7 @@ in `next/dynamic`.
 
 ## PERF-10 · Money formatting constructs a new formatter on every call
 
-- **Severity:** MEDIUM
+- **Severity:** LOW
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
@@ -423,6 +432,7 @@ in `next/dynamic`.
   - Per-render `new Date(...).toLocaleString()`: `TimelineFeed.tsx:201-206` (×200), `projects/[id]/page.tsx:1012`, `CostsTab.tsx:377`, `QualityTab.tsx:589, 690`, `ChartKit.tsx:56-57` (×40)
   - The right pattern, already in the codebase: `QualityTab.tsx:639` — `const [now] = useState(() => Date.now())` with the comment "Captured once at mount — render stays pure."
 - **Re-verified:** hardening pass — **SURVIVES**. `new Intl.NumberFormat(…)` is constructed **inside** `fmtMoney` on every invocation (`costs.ts:352-356`), and the function is called once per rendered figure.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Only one of the four cited locations supports the title. lib/costSeries.ts:37-44 is `cumulativeAt` and 67-68 are the two `.sort()` calls — neither constructs a formatter (they are a different, unstated O(points x entries) concern), and app/(protected)/projects/[id]/page.tsx:1012 is `formatRelative`, which does pure arithmetic; the nearest formatter is `formatDate` at line 1010. With only a genuine micro-allocation left, on render volumes of tens-to-hundreds of cells, MEDIUM overstates it; LOW.
 
 **Mechanism.** A Costs tab with 60 accounts and an open account detail
 constructs roughly **370–570 formatters per render** — ten to twenty-five
@@ -457,6 +467,7 @@ once. Hoist the `toLocaleString` formatters out of the row components.
   - `documents.title` / `name` / `document_number` — the type-ahead searches at `QualityTab.tsx:158-172` and `ProjectDocumentsCard.tsx:85-100`
 - **Related:** `PERF-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence in the migration set — the named join and search columns carry no index, so every filter is a sequential scan.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The count is exact — four party_id joins and two ILIKE columns, all unindexed — and these are precisely the queries PERF-1 fans out. MEDIUM is right: the tables are small today, so this is latent rather than acute.
 
 **Mechanism.** ~600 sequential scans plus 150 scans of a 48,000-row table on
 every `/companies` visit, and one leading-wildcard scan per 250 ms of typing in

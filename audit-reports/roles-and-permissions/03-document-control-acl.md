@@ -48,6 +48,7 @@ policy and the ACL policy. A direct API call cannot route around it.
   - `lib/acl.ts:20` — `SubjectContext.role?: Role` — singular, no `roles` array
 - **Related:** `ROLE-1`, `ADD-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `SELECT role INTO v_role FROM org_members … LIMIT 1` (`20260708_acl_rls_enforcement.sql:58-59`) — singular column, so a role held only in `roles[]` matches no ACL rule.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the repo proves the DB knows better elsewhere — 20260901_db_hard_enforcement.sql:135-140 reads `COALESCE(roles, ARRAY[role])` and unnests it for DENY checks, while node_visible never does. Also cuts fail-open, not only fail-closed: a deny rule on role 'Contractor' misses a member holding ["Contractor","Requester"] because primaryRole ranks Requester (40) above Contractor (30). HIGH stands.
 
 **Mechanism.** `node_visible` is defined once, in `20260708`, and never
 redefined. It reads a single `role` column. Teams in the same function are read
@@ -98,6 +99,7 @@ use the same `bool_or` shape it already uses for teams. Mirror the change in
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:10-15` — the header, which states this is deliberate: *"FAIL-SAFE by design (chosen to avoid lockouts)"*
   - `app/(protected)/documents/[libraryId]/page.tsx:2450` — new nodes inherit `library.defaultNewAcl`
 - **Re-verified:** hardening pass — **SURVIVES**, and the migration says so in its own header: *"FAIL-SAFE by design (chosen to avoid lockouts): visibility 'normal' / NULL -> always visible to org members"* (`:10-11`), implemented at `:52-55`. Recording it as a **deliberate** design choice rather than an oversight is the point — the finding is that the choice is undocumented outside this file.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. I looked for a mitigation and found the drawer does expose a Normal/Hidden toggle (PermissionDrawer.tsx:366-391) — so 'nothing tells you' is slightly overstated — but I found evidence that makes the finding worse, not better: visibility never inherits. lib/acl.ts:190 `if (nodeVisibility === "normal") visibility = "normal";` resets an inherited hidden, and new children are stamped from the LIBRARY default, not the parent (page.tsx:593 and :2065 `visibility: library.defaultNewVisibility ?? "normal"`), so a folder or document created inside a hidden folder is readable by every org member at the database. HIGH stands.
 
 **Mechanism.** A node whose visibility is `normal` or unset is visible to every
 active org member, regardless of any ACL rules on it. Restriction requires
@@ -148,6 +150,7 @@ risks exactly the lockout it was written to avoid. Instead:
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:58-62` — the controller bypass, evaluated before any rule
   - `lib/permissions.ts` — `isControllerRole`
 - **Re-verified:** hardening pass — **SURVIVES**. `-- Admin / DocCtrl -> always visible` (`20260708_acl_rls_enforcement.sql:12`), with no scoping mechanism anywhere.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed with no scoping seam anywhere: the controller exemption is a hardcoded literal in SQL, not a capability id, so it is not reachable from the org capability policy (CAPABILITY_DEFS in lib/capabilityPolicy.ts has no ACL/visibility capability). The 20260901 write guards repeat the same exemption (`OR is_org_controller(org_id)`, lines 157/169). MEDIUM is appropriate.
 
 **Mechanism.** The bypass runs before the deny check, so an explicit deny on a
 controller has no effect at the database.
@@ -195,6 +198,7 @@ you described.
   - `lib/libraryCollections.ts:94` — `buildAclIndex` on collection create
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:85-92` — the policies that trust it
 - **Re-verified:** hardening pass — **SURVIVES**. `acl_index` is rebuilt by whichever writer touches the node (`acl.ts:279` and three separate call sites in `documents/[libraryId]/page.tsx`), and nothing anywhere recomputes or verifies it. Same family as `DB-4`, `DB-5` and `OWN-20`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on the move path too: moveFolderServer (lib/libraryCollections.ts:269-285) posts to /api/collections/move, and that route (106 lines) contains no occurrence of 'acl' at all — it re-parents and rebuilds `path`/`path_names` but leaves every descendant's acl_index encoding the old inherited chain, which is exactly what documents_acl_select/collections_acl_select enforce. MEDIUM stands.
 
 **Mechanism.** The database enforces against the **flattened** `acl_index`, not
 the source `acl`. That index is rebuilt in application code at five call sites.
@@ -236,6 +240,7 @@ health signal.
   - `lib/acl.ts:133-137` — the app layer, which does distinguish all ten actions
   - `app/api/storage/download-url/route.ts:93-95` — the download route re-checks `acl_index` deny separately, because the row-level policy cannot
 - **Re-verified:** hardening pass — **SURVIVES**, quoted from the code: *"Any allow grant (any action) lets the row through; finer read-vs-discover distinctions stay in the app layer"* (`:78-79`). Deny is action-aware (`:69-72`); allow is not.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and if anything understated. The claim that 'the app layer is what withholds the content' does not hold at the byte-issuing endpoint: app/api/storage/download-url/route.ts:76-89 gates on `canDiscover(...)`, which for a private node returns `decision.can("discover")` (lib/permissions.ts:127-129), so a discover-only grantee passes and is issued a signed URL unless a separate explicit `deny.download` entry exists (lines 97-110). MEDIUM is a floor, not a ceiling.
 
 **Mechanism.** `PermissionAction` has ten values — `discover`, `read`,
 `download`, `upload`, `createFolder`, `editMetadata`, `write`, `publish`,

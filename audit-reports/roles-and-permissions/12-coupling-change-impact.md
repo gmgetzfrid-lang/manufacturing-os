@@ -53,6 +53,7 @@ See `CHAIN-1`.
   - `lib/roleCapabilities.ts:120-123` — `primaryRole()` returns the highest-ranked role
 - **Related:** `ROLE-1`, `ADD-1`, `DB-7`
 - **Re-verified:** hardening pass — **SURVIVES**. `canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}` (`documents/[libraryId]/page.tsx:4010`) and the same shape in `Sidebar.tsx:247-248`. Because the test is on the *headline*, adding any higher-ranked role removes the restriction rather than adding a permission.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Right, and adding a role genuinely REMOVES a restriction — the inverse of what an additive model should do. I checked for a backstop and found none: the only DB-hard write blocks are ACL deny rules (20260901_db_hard_enforcement.sql §4), which are content rules, not role restrictions, so nothing stops the now-editable Auditor's metadata write. HIGH stands.
 
 **Mechanism.** `primaryRole` is a *max-rank* projection. For a **grant** check
 that is harmless-to-restrictive. For a **restriction** check it is an escalation:
@@ -98,6 +99,7 @@ other five department roles is unaffected.
   - consumed as truth by the headline-only census in [`11-database-authority.md`](./11-database-authority.md) (`DB-7`)
 - **Related:** `DB-3`, `DB-7`, `ADD-1`, `OWN-3`
 - **Re-verified:** hardening pass — **SURVIVES**, with the count made exact: `activeRole` appears **209** times across `app/` and `components/`. Not all are authority checks, but the magnitude the finding claims holds, and every one of them resolves through a four-line browser sort.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on counts and on the claimed write paths. Nothing server-side or in the database recomputes or validates the headline, so a restore or a direct console edit can leave `role` disagreeing with `roles`, and 209 call sites follow the singular. HIGH stands.
 
 **Mechanism.** `org_members.role` is a **denormalized cache of a computation that
 happens in the browser**. Nothing in the database enforces that
@@ -159,6 +161,7 @@ headline.
   - `lib/ticketAttention.ts:21` carries a comment claiming it is in sync with routing
 - **Related:** `WF-7`, `WF-19`, `WF-24`
 - **Re-verified:** hardening pass — **SURVIVES**. Three models, all present: the `MANAGEMENT_ROLES` const (`ticketAttention.ts:22-27`), `policyAllows` with `extraRoles: null` (`workflow.ts:65`), and `byRole` on the headline column (`ticketRouting.ts:79`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and the contradiction is even sharper than the summary: a plain DraftingSupervisor needs no secondary role to hit it — attention marks PENDING_ENG_INITIAL as action-required for them (MANAGEMENT_ROLES includes DraftingSupervisor) while getActions offers nothing (MGMT excludes DraftingSupervisor, and initial_review is MGMT+Engineer), and routing sends that state to engineers instead. Three subsystems, three answers. HIGH stands.
 
 **Mechanism.** Three subsystems answer the same question with three different
 role resolutions and three different role lists. The comment asserting they are
@@ -196,6 +199,7 @@ better.
   - `components/permissions/PermissionsExplorer.tsx` — the capability matrix, including a row claiming access recertification works *"If library owner"* (contradicted by `DEL-6`)
 - **Related:** `OWN-7`, `OWN-10`, `DEL-6`, `ROLE-*`
 - **Re-verified:** hardening pass — **SURVIVES**. `RoleModelTree.tsx:79` still carries *"NOTE: not currently assignable in /admin/users (known…"* — the app's own documentation of its role model is stale in the file that exists to explain it.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — the tree is internally inconsistent, with stale per-role text sitting above a comment that says those very gaps are fixed. And GAPS[0] at :117 understates the real state: `a few older checks still read only the headline role` describes 45 role-only SQL predicates across 24 migration files plus 209 activeRole references. MEDIUM is fair for a documentation-integrity finding.
 
 **Mechanism.** The product contains a self-documenting authority model. It is
 **the right idea** and unusual to find — but several of its claims no longer
@@ -238,6 +242,7 @@ matches the enforced behaviour or is explicitly listed under "Known gaps."
   - `documents.acl` / `acl_index`, `collections.acl` / `acl_index`, `libraries.acl` / `acl_index`, `org_configurations.data` — all JSONB blobs holding role **names**
 - **Related:** `ROLE-1`, `ROLE-*`, `CHAIN-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `AccessRule`/`PermissionSubject` (`types/schema.ts:96-107`) carry no version or schema marker, and `buildAclIndexFromRules` bakes bare role names into the allow/deny buckets (`acl.ts:256-267`). A removed role leaves grants that match nothing and deny nothing.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence: three stored blob shapes, zero version fields, and no normalization pass anywhere prunes or migrates an unknown role string. The failure is silent in the dangerous direction — a deny rule naming a deleted role simply stops matching, widening access with no error. MEDIUM stands.
 
 **Mechanism.** Role identity is the role's *name*, stored as a string inside
 customer JSON in at least seven places. There is no id, no version stamp, and no
@@ -276,6 +281,7 @@ it.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** Re-read in the hardening pass. **This is a change-impact map, not a defect** — there is nothing to refute. Its value is as a blast-radius reference before touching the role model.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. The content is accurate on every row I sampled, so nothing here is refuted — but it carries a MEDIUM severity while being, by its own text, reference material with no remediation and no 'done when'. Corrected severity: none/informational; it should not be counted as an open MEDIUM defect in the severity rollup at :572-579.
 
 **Mechanism.** This entry exists so that a resolving agent can check a proposed
 change against its real reach before starting. It is reference material, not a

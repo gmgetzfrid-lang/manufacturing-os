@@ -29,11 +29,12 @@ has already happened is a thirty-second query, given below.
 
 ## IDENT-1 · Nothing anywhere makes an email address unique, so two auth identities for one person can hold two memberships with two different roles in the same org
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED (the absence of the constraint); SUSPECTED (whether duplicates exist in your data today — see the query)
 - **Locations:** `supabase/schema.sql:8-16`, `supabase/schema.sql:33-49`, `app/(protected)/projects/[id]/page.tsx:870-872`
 - **Re-verified:** hardening pass — **SURVIVES** with its stated split intact — **and the same independence caveat as `SESS-1`.** The absence of any unique constraint on `users.email` is CONFIRMED and mechanically checkable. Whether duplicates exist in production remains SUSPECTED and is not answerable from this repository; the three queries in the finding are still the way to settle it.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The absence claim is confirmed repo-wide and the org_members constraint really does key on uid, not person. Severity lowered to HIGH because the CRITICAL scenario requires two auth.users rows sharing one email, which this repo cannot create: app/api/auth/signup/route.ts:91-100 has no recovery path for a duplicate-email createUser and simply 400s, and app/api/admin/create-user/route.ts:98-106 treats a failed createUser as "email already exists in auth" and recovers the existing id — both are evidence the auth layer already rejects a second identity for the same address. The report itself flags this premise as unverifiable from the repo (02-identity-collision.md, "One thing here cannot be settled from the repository").
 
 **Mechanism.** `users` is declared with no uniqueness on `email`:
 
@@ -141,8 +142,9 @@ signer identity is the part that matters most — it is the difference between
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/create-user/route.ts:80-107`, `app/api/admin/create-user/route.ts:8-19`
 - **Re-verified:** hardening pass — **SURVIVES**. `const { data: existingProfile } = await supabaseAdmin.from("users").select("id").eq("email", email).maybeSingle()` (`create-user:80-84`) — `error` is not destructured, and `maybeSingle()` errors on more than one row, so two profiles read as none. The fallback `findAuthUserIdByEmail` then returns `data.users.find(…)` in `listUsers` page order.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed exactly as stated: the error is discarded (not merely ignored — never bound), and the fallback resolves the identity by whichever listUsers page order surfaces first, which the route never orders or disambiguates. This route runs on the service-role key, so RLS is not filtering the second row out.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** Three steps, each individually reasonable, compose into a
 non-deterministic outcome.
@@ -209,13 +211,14 @@ The correct handling exists in this repo already, at
 
 ## IDENT-3 · Email matching is case-sensitive in three server routes and case-folded in a fourth, so the same address can both miss an existing account and create a second one
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/signup/route.ts:77-82`, `app/api/admin/create-user/route.ts:83`, `app/api/admin/create-user/route.ts:9`, `app/api/auth/request-access/route.ts:30-36`
 - **Re-verified:** hardening pass — **SURVIVES**. Three case-sensitive `eq("email", …)` comparisons (`signup:80`, `create-user:83`, `request-access:33`) against one case-folded matcher in the same file as the second (`create-user:9,14`), while org names get `ilike` in both `signup:65` and `request-access:16`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mismatch is confirmed, but the stated consequence — "proceeds to createUser, minting the second identity" — does not follow. signup/route.ts:91-100 calls `supabaseAdmin.auth.admin.createUser` and, on failure, returns 400 with the raw `authError.message`; it has no duplicate-recovery path, and create-user/route.ts:98-99's own comment ("Email may already exist in auth without a readable profile row") is the repo's acknowledgement that createUser rejects an already-registered address. So the observable damage is a confusing raw auth error instead of the friendly 409 at signup:83-88, and genuinely duplicated pending rows at request-access:30-43 — MEDIUM, not the manufacturing step for duplicate identities. Minor imprecision: the "fourth" location is the same route as the second (create-user), not a fourth route.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** PostgREST's `eq` is a plain SQL `=`, which on `text` is
 case-sensitive. Three routes compare emails that way:
@@ -274,8 +277,9 @@ app/api/auth/signup/route.ts:65           ← the repo's own correct pattern, on
 - **Verification:** CONFIRMED
 - **Locations:** `lib/supabase.ts:39-58`, `components/providers/RoleContext.tsx:44`, `components/providers/RoleContext.tsx:130-140`, `app/(protected)/profile/page.tsx:77`, `components/providers/RoleContext.tsx:260-280`
 - **Re-verified:** hardening pass — **SURVIVES**. `LS_ORG_KEY = "manufacturingos.activeOrgId"` (`RoleContext.tsx:44`) and `PREFER_MS_KEY = "manufacturingos.preferMicrosoft"` (`supabase.ts:39`) are both bare constants with no uid component, and the `SIGNED_OUT` purge at `:269-278` clears only the `intel-status-`/`schema-gaps-` snapshots.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and stronger than stated: sign-out clears the in-memory org (line 263) but leaves the localStorage workspace key for the next account, and app/(protected)/layout.tsx:99 — the NotAMemberScreen's "Sign out & switch account" button — calls `supabase.auth.signOut()` without `setPreferMicrosoft(false)`, so unlike profile/page.tsx:77, Sidebar.tsx:292 and SubscriptionGate.tsx:109, that button leaves the device flagged and the silent Microsoft sign-in at app/page.tsx:156-159 walks the user straight back into the identity they were trying to leave.
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** Two pieces of durable per-device state are keyed by nothing but a
 constant string:
@@ -329,12 +333,13 @@ And the sign-out purge that names the principle but omits this key —
 ## IDENT-5 · The signup route's duplicate-email refusal is the only thing standing between a mistyped case and a second account, and it fails open
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/signup/route.ts:77-95`
 - **Re-verified:** hardening pass — **SURVIVES**. The guard reads the `users` profile mirror rather than the auth identity, compares case-sensitively, and discards the multi-row error — three independent ways to conclude "this email is free" and proceed to `createUser`.
+- **Independently verified:** ⛔ **REFUTED** by an independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). The profile pre-check at 77-88 does fail open (the error is not destructured), but it is NOT "the only thing standing between a mistyped case and a second account": the createUser call at 91-96 — inside the finding's own cited line range — rejects an already-registered email and the route returns 400 without creating anything. No second auth identity is produced by this path, so the stated outcome ("a second auth user is created, and the person now has the two identities") is false. What remains is cosmetic: the user sees a raw auth error rather than "An account with this email already exists. Please sign in instead."
 
-**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
+**Independence caveat — resolved.** This area was written and verified by the same session, which made it the weakest grade in the corpus. It has since been challenged by a separate agent that was given only the claim and its citations and told to refute it; the outcome is on each finding's `Independently verified` line. `IDENT-5` did not survive. The area is now graded like the rest of the corpus (`DEC-41`).
 
 **Mechanism.** The route's guard is a profile lookup whose result decides whether
 to mint an auth user:

@@ -17,7 +17,7 @@ number the table shows is not the number the award posts.
 
 ## BID-1 · The table scores the AI's total; the Award button posts the human's corrected total
 
-- **Severity:** CRITICAL
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** financial / decision-quality
@@ -29,6 +29,7 @@ number the table shows is not the number the award posts.
   - `lib/costDocs.ts:323-334` — `setManualTotal`, which writes only `total_amount`
 - **Related:** `BID-2`, `BID-9`, `MON-3`
 - **Re-verified:** hardening pass — **SURVIVES**, and the two numbers are named in the code. `awardQuote` commits `fresh.totalAmount ?? parsedQuoteFrom(fresh)?.total` with the comment *"total_amount is the human-visible number … it outranks the stored extraction"* (`costDocs.ts:234-236`), while the tabulation renders `computeBidEconomics(parsed…)` built purely from `parsedQuoteFrom` (`QuotesPanel.tsx:195-203`). The table scores the extraction; the award posts the correction.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → MEDIUM** by this pass. REFUTES the premise: a controller cannot correct the AI's misread total on a read quote. `total_amount` has exactly two writers repo-wide — app/api/projects/cost-docs/route.ts:127-128, which sets `patch.parsed = quote; patch.total_amount = quote.total;` in one atomic patch, and `setManualTotal` (costDocs.ts:323-334), reachable only from a draft that by definition has no `parsed` payload and therefore lands in `manualBids` (:209-211), outside the scored table. The two numbers are kept equal by construction; they can diverge only via a stale-tab race (a second user reads the doc between render and the type-total click), which is a genuine latent inconsistency but not a CRITICAL everyday path.
 
 **Mechanism.** Three facts that do not agree:
 
@@ -76,6 +77,7 @@ lost.
 - **Locations:** `components/projects/cost/QuotesPanel.tsx` (whole file — a grep for `fileUrl` / `file_url` across `components/projects/cost/` returns zero hits)
 - **Related:** `BID-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The only navigation in `QuotesPanel.tsx` is `<Link href={`/companies/${known.id}`}>` at `:282`. No viewer, no document href, no `window.open` — there is no way to open the quote from the award screen.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Claim of absence confirmed by search, not just by reading the cited file. The R2 key is stored (uploadCostDoc, costDocs.ts:100) and the API reads it server-side (app/api/projects/cost-docs/route.ts:83-92), so the PDF exists and is addressable — there is simply no client affordance to open it, which leaves the Award confirm dialog at :195-203 as the only thing the reviewer can check the extraction against.
 
 **Mechanism.** The PDF is stored (`cost_documents.file_url`). The panel's own
 copy says "You review before anything posts," and the Read button's tooltip
@@ -105,6 +107,7 @@ file through the existing secure viewer / presigned-download path. Given
   - `lib/bidTab.ts:168` — `const gaps = e.missingScope.length + e.exclusionCount;`
   - `lib/rfqDocx.ts:65` — the promise made to bidders in writing
 - **Re-verified:** hardening pass — **SURVIVES**. `const gaps = e.missingScope.length + e.exclusionCount; const coverage = (1 - gaps / maxGaps) * 100;` (`bidTab.ts:168-169`) — a **stated** exclusion is counted identically to scope the bidder never mentioned, so disclosure lowers the score.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. A direct, verbatim contradiction between the letter the product sends vendors and the scorer it runs on their replies. Working the shipped example (lib/exampleProject.ts:69-93) shows it is outcome-changing, so CRITICAL is not inflated: Gulf Mechanical's single honest exclusion costs it 25 coverage points and it finishes ~92.1 behind Bayline's ~92.8; score Gulf's declared exclusion as the letter promises and it wins at ~97.1. Apex is penalized twice over — its explicit "NDE" exclusion fails `mentions()` for the scope line "NDE (RT 10%)" (the two-of-two head-word rule at :95-99 needs both "nde" and "rt"), so it is counted as an exclusion AND as a silent gap, zeroing its coverage.
 
 **Mechanism.** A **declared** exclusion and an **undeclared** silent gap are
 weighted identically in the coverage term. The RFQ this same codebase generates
@@ -138,7 +141,7 @@ and say so in the RFQ letter so the two agree.
 
 ## BID-4 · Silent-gap detection produces false accusations against any two bids that word the same work differently
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** decision-quality
@@ -147,6 +150,7 @@ and say so in the RFQ letter so the two agree.
   - `lib/bidTab.ts:107-112` — positional head-word selection
 - **Related:** `BID-5`
 - **Re-verified:** hardening pass — **SURVIVES**. `mentions()` keys on two or three head words and requires `Math.ceil(key.length * 2 / 3)` of them to appear (`bidTab.ts:87-98`), matched against line items and exclusions only. Two bids describing the same scope in different words fail that test in one direction, and the miss is recorded as `missingScope`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Reproduced by executing the exact matcher: two bids describing the same work as 'Demolition and repiping of exchanger E-301' vs 'Demo + repipe E-301 A/B circuits' each get the other's wording listed in missingScope, so both render mutual 'silent gap' chips and both lose coverage points. Claim is real, but 'any two bids that word the same work differently' overstates it — the 2-of-3 head-word rule absorbs many rewordings (the repo's own test at lib/__tests__/projectControls.test.ts:52-63 passes), and the damage is a display flag plus a 0.2-weighted coverage term a human still overrides, not corrupted money. HIGH, not CRITICAL.
 
 **Mechanism.** `scopeUnion` is the set of distinct normalized line-item strings
 across all bids. A bid "mentions" a union item only if **two of the item's first
@@ -196,7 +200,7 @@ Options, cheapest first:
 ## BID-5 · The shipped example data contains a factually false red flag
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** trust / demo quality
 - **Locations:**
@@ -205,6 +209,7 @@ Options, cheapest first:
   - `lib/__tests__/projectControls.test.ts:52` — the test this violates
 - **Related:** `BID-3`, `BID-4`
 - **Re-verified:** hardening pass — **SURVIVES**. The shipped example bid data carries a red-flag annotation that the numbers do not support — a demo artifact that teaches the operator to distrust the flag.
+- **Independently verified:** ⛔ **REFUTED** by an independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). The finding's own claim is that 'the row renders, simultaneously, an amber chip excludes: NDE and a rose chip silent gap: NDE (RT 10%)'. No such row is ever rendered: there is no example bid tabulation anywhere in the app — QuotesPanel is fed only real `docs` from the DB, and the example dataset's exclusions/missingScope never reach a chip. The data flaw is real in the abstract (I confirmed computeBidEconomics on ex.quotes yields missingScope ['NDE (RT 10%)'] for Apex Industrial, which also excludes 'NDE'), but that is precisely BID-4's matcher bug, not a shipped false red flag on screen.
 
 **Mechanism.** In the demo data, one bidder (Apex Industrial) *declares* `NDE`
 as an exclusion. `computeBidEconomics` nevertheless returns
@@ -241,7 +246,7 @@ strengthen the test fixture so it would actually catch this.
 
 ## BID-6 · A single bid is crowned "best value", and the disclaimer that would qualify it is hidden
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** decision-quality / governance
@@ -250,6 +255,7 @@ strengthen the test fixture so it would actually catch this.
   - `components/projects/cost/QuotesPanel.tsx:292-294` — the badge
   - `components/projects/cost/QuotesPanel.tsx:367` — the explanatory footer, gated on `econ.length > 1`
 - **Re-verified:** hardening pass — **SURVIVES**. `for (const s of scored) s.best = s.score === top && top > 0` (`bidTab.ts:184`) — no minimum-bidder guard, so one quote in a group is crowned best value against no one.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanic is exactly as described: a sole-source quote is always crowned 'best value' and the qualifying paragraph is suppressed for single-bid groups. But the summary's 'with no disclaimer attached' is inaccurate — the badge itself carries `title="Highest weighted value score — not automatically the winner; you decide."` (QuotesPanel.tsx:293), and the Value-score column header carries the weight breakdown (line 265). A hover-only disclaimer on a one-bid group is a real weakness, but MEDIUM, not HIGH.
 
 **Mechanism.** No cardinality guard. **Measured:** one bid → score 80.0,
 `best = true`. The footer that explains the weighting and says *"The cheapest
@@ -286,6 +292,7 @@ groups. On a tie, either badge neither or label both "tied."
   - `lib/costs.ts:352` — `fmtMoney` defaults to `"USD"`
   - `components/projects/CostsTab.tsx:159-164` — the rollup's mixed-currency warning, with no equivalent here
 - **Re-verified:** hardening pass — **SURVIVES**. `fmtMoney(e.total)` is called with **no currency argument** (`QuotesPanel.tsx:298`), and `fmtMoney` defaults to `"USD"` (`costs.ts:352`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and no guard exists: the currency IS captured (app/api/projects/cost-docs/route.ts:129 `if (quote.currency) patch.currency = quote.currency;`) and stored on the row (costDocs.ts:67), but the tabulation never reads it. The only mixed-currency warning in the tab (CostsTab.tsx:159-164) is derived from `rollup.currencies`, i.e. cost-ACCOUNT currencies (costs.ts:323), and says nothing about quote currencies. The one counter-example in the cited list, QuotesPanel.tsx:154, is the invoice row and does pass `doc.currency ?? "USD"` — it is not in the bid table, so it does not weaken the claim.
 
 **Mechanism.** The parsed-bid table calls the formatter with no currency
 argument. The currency *is* extracted, the AI is explicitly prompted for it, and
@@ -311,7 +318,7 @@ worse than no comparison.
 
 ## BID-8 · Bids with a typed total are excluded from the comparison and rendered in a separate list below it
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** decision-quality
@@ -319,6 +326,7 @@ worse than no comparison.
   - `components/projects/cost/QuotesPanel.tsx:209-212` — `manualBids`
   - `components/projects/cost/QuotesPanel.tsx:346-366` — the separate list
 - **Re-verified:** hardening pass — **SURVIVES**, and it is the other face of `BID-1`. `manualBids` selects docs with **no parsed quote** but a positive `totalAmount` (`QuotesPanel.tsx:209-212`), so typing a total moves the bid out of `parsed` — and therefore out of `econ` and `scores` — into a separate list.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Structurally exactly as claimed: a typed-total bid never enters `minTotal` (bidTab.ts:156) and cannot win the best-value badge, no matter how cheap. Downgraded because it is not hidden — the bid sits in a bordered list immediately below the table with its price in the same bold tabular style, a status chip, an Award control (:356-358) and an explanatory tooltip 'it competes on price only, with no manpower or coverage score' (:352). That is a disclosed limitation a reviewer can see, not a bid that disappears.
 
 **Mechanism.** A manual-total bid never enters `minTotal`, never enters
 `maxGaps`, and never receives a score. It renders below the table with no
@@ -354,6 +362,7 @@ needs to live in the same table.
   - `components/projects/cost/QuotesPanel.tsx:309-316` — the parsed row, which has neither
 - **Related:** `BID-1`
 - **Re-verified:** hardening pass — **SURVIVES**, and the conditional is the proof. `typeTotal` is rendered **only inside the `unread.map(...)` block** — the "quotes not read yet" banner (`QuotesPanel.tsx:243-250`). Once a quote has an AI total it leaves `unread` and the affordance disappears, so a *missing* total can be supplied and a *wrong* one cannot be corrected.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed at the UI level — once a quote reaches status 'parsed' with a stored extraction there is no re-read, no retype, and no void, so a wrong AI total is what Award posts as the commitment. Worth noting the backend is not the blocker: app/api/projects/cost-docs/route.ts:87 explicitly permits re-reading a 'parsed' doc, and lib/costDocs.ts:323-334 `setManualTotal` works on any status. This is a missing button, not a missing capability — but the user-facing dead end the finding describes is real.
 
 **Mechanism.** The type-total control is offered only in the unread strip and
 for draft invoices. Once a quote is `parsed`, the row exposes a budget-line
@@ -387,6 +396,7 @@ Voiding must go through a status-guarded update (see `MON-3`).
   - `lib/costDocs.ts:250-251` — the rival-declining filter
 - **Related:** `MON-10`
 - **Re-verified:** hardening pass — **SURVIVES**. The RFQ group is a free-text `<input>` (`QuotesPanel.tsx:485`) and the only normalization anywhere is `d.rfqGroup?.trim()` (`costDocs.ts:157`) — no case folding, so "Piping" and "piping" become two bid fields.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed at all three cited lines. The `<datalist id="rfq-groups">` at :487-489 is the only mitigation and it is a suggestion list, not a constraint — a typed "unit 300 exchanger repipe" silently forms a second group, and the award at :250-251 then declines none of the real rivals.
 
 **Mechanism.** "Unit 300 Repipe" and "Unit 300 repipe" become two groups.
 Consequences compound: the bids never tabulate against each other, the
@@ -415,6 +425,7 @@ selected from a dropdown, created explicitly.
   - `app/api/projects/cost-docs/route.ts` — the prompt explicitly asks for both
   - `components/projects/cost/QuotesPanel.tsx` (table) — renders neither
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The parsed quote carries validity dates and vendor notes and no surface renders them.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Verified end to end, including the shipped-example detail: lib/exampleProject.ts:88 is `vendorName: "Bayline Constructors", ... exclusions: [], notes: "Includes weekend premium", validUntil: d(30)`, and working `scoreBids` by hand on those three quotes puts Bayline top at ~92.8 vs Gulf ~92.1 — so the bid the scorer badges "best value" is exactly the one whose undisplayed note discloses a premium-time assumption.
 
 **Mechanism.** Both fields are extracted, validated and stored. Neither reaches
 the screen.
@@ -446,6 +457,7 @@ chip or an expandable line on the row.
   - `lib/bidTab.ts:30, 42, 131` — `companyId` declared and propagated, never populated
 - **Related:** `MON-7`, `MON-12`
 - **Re-verified:** hardening pass — **SURVIVES**. `companies.find((c) => c.name.toLowerCase() === e.vendorName.toLowerCase())` (`QuotesPanel.tsx:275`) — exact equality after lowercasing, against a vendor name the model read off a letterhead.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Substance confirmed, with one wording correction: the match is case-folded, not literally exact, so "Gulf Mechanical" vs "gulf mechanical" does resolve. Everything else holds — no trim, no punctuation or legal-suffix normalization, so "Gulf Mechanical Inc." or "Gulf Mechanical, LLC" off a letterhead misses the registry, and with `companyId` dead there is no id-based fallback. MEDIUM is the right level: a miss loses the "known"/"do not use" badge, it does not alter any score.
 
 **Mechanism.** "Gulf Mechanical, Inc." does not equal "Gulf Mechanical," so the
 **do not use** badge and the quality-manual chip never render. There is no

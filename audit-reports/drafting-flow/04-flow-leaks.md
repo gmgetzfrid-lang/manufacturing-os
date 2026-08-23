@@ -13,7 +13,7 @@ does not come back.
 
 ## LEAK-1 · Queue routing runs once, at ticket creation, and never again
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** friction / adoption
@@ -25,6 +25,7 @@ does not come back.
   - `app/api/tickets/workflow-action/route.ts:309` — `if (recipients.length === 0) return;`
 - **Related:** `FRIC-1`, `WF-19` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**. `resolveTicketRecipients` has exactly one production import in the entire codebase — `app/(protected)/requests/new/page.tsx:11`. Every other reference is a test. Routing is computed at creation and never recomputed.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The structural claim is exactly right — the queue-owner pool is never recomputed on a transition. But the specific failure scenario is largely covered by a guard the finding missed: ticketTransitions.ts:296 makes every actor a watcher, and :300-304 unions `ticket.watchers` into unread_by whenever unread_by is non-empty. The person who fires `request_eng_review` from PENDING_ASSIGNMENT is by definition the assignment-queue owner, so on the engineer's `approve_team` they ARE notified as a watcher. The leak is real for queue owners who never touched the ticket (and for PENDING_IFC), which is narrower than CRITICAL. Also note the report's own re-verification line ('exactly one production import') contradicts its Locations list ('only three callers'); the list is correct.
 
 **Mechanism.** At creation, the right people are notified. After that, every
 transition notifies only the requester and the assigned drafter — regardless of
@@ -73,6 +74,7 @@ in, it covers two live states of twelve.
   - `lib/roleCapabilities.ts:74-94` — `ROLE_RANK`: `Manager: 90` outranks `DraftingSupervisor: 75`
 - **Related:** `LEAK-1`, `CHAIN-2`, `DB-7` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**. `const byRole = (r: Role) => members.filter((m) => m.role === r)` (`ticketRouting.ts:79`) reads the headline column only, and `byRole("DraftingSupervisor")` at `:91` is what decides the routing target. Same class as `EDGE-6` and `roles-and-permissions/ADD-1`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed with no mitigation found: a member with roles ['Manager','DraftingSupervisor'] has role='Manager', byRole('DraftingSupervisor') is empty, and the Admin fallback fires silently. The second-order actor-drop claim also checks out (ticketRouting.ts:111-114 filters the actor, and both callers early-return on an empty list).
 
 **Mechanism.** A member with `roles = ['Manager','DraftingSupervisor']` has
 `org_members.role = 'Manager'`, because `primaryRole` picks by rank. So
@@ -105,7 +107,7 @@ receives the queue notifications for it.
 
 ## LEAK-3 · Any RFI-typed ticket can be closed from `DRAFTING` in one click, skipping every gate
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / data-integrity
@@ -116,6 +118,7 @@ receives the queue notifications for it.
   - `lib/capabilityPolicy.ts:70-71` — `ticket.draft_work` defaults to `["Drafter"]`, and per `WF-8` it is **org-wide, not ticket-scoped**
 - **Related:** `WF-15`, `WF-8`, `TIER-2`
 - **Re-verified:** hardening pass — **SURVIVES**. The `Answer & Close RFI` action is pushed on `requestType === 'RFI'` (`workflow.ts:185-192`) and `close_rfi` sets `status = "CLOSED"` outright (`ticketTransitions.ts:285-287`). Compounded by `TIER-2`: `RequestType` is an unconstrained `string`, so the value that unlocks the one-click close is client-set.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The mechanism is exactly as described and no guard exists anywhere (the server route re-derives the same getActions, so it enforces the same hole). Severity should be HIGH, not CRITICAL: close_rfi publishes nothing to the document register, stamps no deliverable_rev, requires a comment, writes a TICKET_CLOSE_RFI audit row (route.ts:214-223), and is recoverable via `reopen_ticket` (workflow.ts:331-341). The harm is a prematurely terminated ticket, not an unreviewed drawing issued for construction.
 
 **Mechanism.** `close_rfi` is the only `DRAFTING → CLOSED` edge in the machine.
 It is gated on a **free-text string** that nothing validates, offered to anyone
@@ -159,6 +162,7 @@ unvalidated type string becomes an authority-bearing string. **`WF-15`
   - `app/(protected)/requests/page.tsx:620,638` — bulk "mark urgent", same shape
 - **Related:** `WF-9`, `WF-2` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**. `await supabase.from('tickets').update({ attachments, last_modified, history }).eq('id', ticketId)` (`requests/[id]/page.tsx:1010-1014`) writes the table directly, bypassing `workflow-action/route.ts` and therefore the capability check at `:91-102`. Reachable because `tickets` RLS is `FOR ALL USING (org membership)` (`roles-and-permissions/WF-2`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, including the RLS premise the finding relies on. The lost-write scenario is real because the write replaces the whole `history` JSONB array from a stale snapshot and the workflow route's CAS on (status, last_modified) (route.ts:155-191) is not involved. Partial mitigation only: a TICKET_FILE_UPLOAD audit_logs row is still written (:1016-1020), so the upload itself is traceable even when the overwritten history entry is not.
 
 **Mechanism.** The workflow route is the enforcement point, with
 compare-and-set on `(status, last_modified)` and a server-written audit row.
@@ -189,6 +193,7 @@ compare-and-set and audit path as every other ticket mutation.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-loss / adoption
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `FullScreenViewer` exposes `initialPageStates`, `onPageStatesChange` and `onCommit` (`:138-143`), and the document page passes **none of them** — a grep for all three at the call site (`documents/[libraryId]/page.tsx:3025-3036`) returns nothing. Markup lives in component state only.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence, verified with a repo-wide grep for the component (two references only: the dynamic import at page.tsx:64 and the single render at :3025). The handoff path is worse than described: requests/new/page.tsx:104-115 calls takeDraft in a useEffect whose IndexedDB row is destroyed on first read, so the baked markup lives only in React `files` state — one refresh and both copies are gone.
 
 > **Recorded in full as `LIFE-3`** in the roles-and-permissions area, and
 > specified as `GAP-7`. Repeated here because it is the most likely single cause
@@ -217,11 +222,12 @@ it asks the human to launder it through their filesystem.
 
 ## LEAK-6 · A check-in interrupted mid-commit orphans the ticket it already created
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Re-verified:** hardening pass — **SURVIVES**. `doneRef` is a `useRef` (`CheckInPanel.tsx:155`) — in-memory, per-mount. An interruption between creating the ticket and completing the commit loses the only record that the ticket exists.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The fact is right — doneRef does not survive unmount, so closing and reopening the panel after a failure creates a second ticket, upload set and PSM alert. But the finding overstates reachability: the catch at :435-439 only calls `showToast` and `setBusy(false)`, and `onDone()` (CheckoutFlowModal.tsx:658 → onClose) fires only on success, so the panel stays mounted and the natural in-place retry IS idempotent. A duplicate requires the user to actively dismiss the modal and reopen it, which makes this MEDIUM rather than HIGH.
 
 > **Recorded in full as `LIFE-14`** in the roles-and-permissions area.
 
@@ -247,6 +253,7 @@ evidence that a discrepancy was reported through that session at all.
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / field-truth
 - **Re-verified:** hardening pass — **SURVIVES**. `deliverable_rev = issuedRevLabel(ticket.revisionCount)` at three transition sites (`ticketTransitions.ts:223, 232, 250`), so a reopen that does not advance `revisionCount` re-issues the same label — and `EDGE-2` shows the public verify endpoint computes its verdict from `deliverable_rev` with no status term.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both halves confirmed. The reopen path is the only transition into a live status that does not advance revision_count (compare :254-259 and :273-279, which both do `updates.revision_count = (ticket.revisionCount || 0) + 1`), and the public endpoint's verdict ladder has no status term at all.
 
 > **Recorded in full as `WF-21`** in the roles-and-permissions area; `DEC-15`
 > settles the direction (a reopen starts a new cycle).
@@ -269,6 +276,7 @@ back under review, `/api/verify-ticket` still reports the field copy as
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / compliance
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The route validates exactly two preconditions — `requiresComment` and `requiresEngineerPick` (`workflow-action/route.ts:104-109`). `finalAttachment` is an optional body field passed straight through as `body.finalAttachment ?? undefined` (`:38, :145`). Nothing requires `submit_final` to carry anything.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence and verified with a repo-wide grep. The client gate is weaker still than the finding says: page.tsx:1031 checks `ticket.attachments && ticket.attachments.length > 0` — ANY attachment, including the requester's original Source file — so even the browser does not require a Final deliverable.
 
 > **Recorded in full as `WF-6`** in the roles-and-permissions area.
 
@@ -297,6 +305,7 @@ with no Final attachment. The requester acknowledges, the ticket closes, and
   - `lib/ticketTransitions.ts:284-287` — `close_ticket` records no reason
 - **Related:** `FRIC-1`, `GAP-13` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**. `close_ticket` sets `CLOSED` and nothing else (`ticketTransitions.ts:284-287`); no field, table or transition records that the deliverable was produced outside the app.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on every limb, including the sharpest one: components/requests/WorkflowDiagramModal.tsx:36 shows users a 'Canceled — Withdrawn or returned to the requester. A terminal exit off the main flow' state that no code path can ever produce.
 
 **Mechanism.** When someone shoulder-taps and the work happens outside the app,
 the ticket has three possible fates: it is force-closed with no reason, it is

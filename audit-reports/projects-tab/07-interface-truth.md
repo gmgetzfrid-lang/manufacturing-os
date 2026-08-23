@@ -29,6 +29,7 @@ the tool.
   - `components/projects/EditProjectModal.tsx:36-42` — patches only `name`/`description`/`mocReference`/`targetCompletionDate`/`visibility`
   - `components/projects/ProjectWizard.tsx:153` — the comment claiming "typed input is never silently discarded"
 - **Re-verified:** hardening pass — **SURVIVES**. `if (accErr) console.warn(…)` and the equivalent at `:149-151` log and continue — nothing reaches the user and nothing aborts the wizard, so a rejected write reads as a successful step.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Every sub-claim verified line by line. The silent money loss is unconditional, not migration-dependent: :155 filters on `Number(r.budget || 0) >= 0`, and `Number("1,200,000")` is NaN, so a comma-typed budget drops the whole row with no warning. (20261013 does add the columns and an owner-write policy on the cost tables, so on a migrated DB the RLS/schema failure modes are narrower than the report implies — but the swallow structure and the four uneditable fields stand.)
 
 **Mechanism.** Only the first write reports failure. Compounding it,
 `Number("1,200,000")` is `NaN`, so a budget typed the way people type money is
@@ -65,13 +66,14 @@ so.
 ## UX-2 · Every brand-new project scores zero and is labelled Concern
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / trust
 - **Locations:**
   - `lib/projectHealth.ts` — `computeProjectHealth`
   - `lib/companyScore.ts:153-164` — the correct pattern, in the same codebase
 - **Re-verified:** hardening pass — **SURVIVES**. `composite` is `null` when no dimension has a score (`companyScore.ts:160-161`), and a brand-new project has `evidenceCount` zero across every term of the sum (`:154-158`) — the band the UI derives from that is what produces the Concern label.
+- **Independently verified:** ⛔ **REFUTED** by an independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). False as written: the finding's own remediation ("copy lib/companyScore.ts — null parts excluded, composite null renders 'not enough data'") is already the shipped behaviour in computeProjectHealth. The claimed dashboard blast radius is also unreachable — grep shows gatherProjectSnapshot/ProjectCoach render on the project detail page only, with no project health score on the projects list or any dashboard widget.
 
 **Mechanism.** A project created thirty seconds ago has no cost data, no
 schedule and no quality records, so every health part scores zero and the
@@ -105,6 +107,7 @@ parts renders as "Not enough data yet" rather than 0 · Concern.
   - `components/projects/QualityTab.tsx:324` — `runAutoEvidence`'s only caller in the repo
   - `components/projects/QualityTab.tsx:378-382` — the button, explained only by a tooltip
 - **Re-verified:** hardening pass — **SURVIVES**. The coach promises *"Each one auto-greens the moment its document lands"* (`projectHealth.ts:225`) while `runAutoEvidence` is invoked only from a button handler (`QualityTab.tsx:324`). Nothing schedules it.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Absence verified by repo-wide search, so the copy promises automation that has exactly one manual trigger.
 
 **Mechanism.** The evidence sweep has exactly one caller: a manual button
 labelled "Check evidence we already hold." Nothing calls it on document upload,
@@ -142,6 +145,7 @@ unreviewed draft filename makes that problem worse, not better.
   - `lib/costDocs.ts:93-94` — the comment stating it plainly: *"The AI hasn't read it yet — that's the parse route, and it's a separate, deliberate click."*
   - `app/api/intake/upload/route.ts:107` — the app's own honest wording
 - **Re-verified:** hardening pass — **SURVIVES**. *"Their documents and quotes land here and process themselves"* (`projectHealth.ts:243`) and the panel's own copy repeating it (`QuotesPanel.tsx:599-601`), against a `ReadButton` a human must click before any total exists.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Checked for an auto-parse the finding might have missed — no parse endpoint is invoked from the intake upload route or from any upload handler; the two overstating strings contradict the notification the same route sends.
 
 **Mechanism.** The quote lands as a draft. A human must click **Read**.
 
@@ -172,6 +176,7 @@ prefer fixing the copy.)
   - Repeated at `lib/turnover.ts:8-9`, `lib/turnover.ts:187-188`, `components/projects/QualityTab.tsx:17`
 - **Related:** `MON-7`
 - **Re-verified:** hardening pass — **SURVIVES**, and the app contradicts itself on one screen. `payoff: "Closeout is gated on acceptance; contractors are scored on it."` (`projectHealth.ts:231`) against the closeout panel's own text — *"You can complete anyway — the open items stay on the record and in the report"* (`projects/[id]/page.tsx:646-649`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The 'no interface ever sets party_id' claim is the kind that needed a repo-wide check; it holds for turnover_items and punch_items, so those scorecard counts are structurally zero. Same copy repeated at turnover.ts:7-8 and QualityTab.tsx:17.
 
 **Mechanism.** **Not gated:** the transition dialog says, correctly, "You can
 complete anyway — the open items stay on the record." The behaviour is right;
@@ -204,6 +209,7 @@ design.
   - `lib/projectHealth.ts:208, 214` — the sow/purpose items, unactionable
   - `app/(protected)/projects/[id]/page.tsx:105-110` — one of them does not even change tabs
 - **Re-verified:** hardening pass — **SURVIVES**. The coach names a confirmation step (`projectHealth.ts:182-183`) that no surface implements — the tabulation is computed straight from `parsedQuoteFrom` with no confirm state (`QuotesPanel.tsx:195-204`) — and the metric it advertises is `cpi`, which `MON-5` shows is null on the printed report.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both halves verified, including the dead SPI branches and the same-page href that cannot change tabs (page.tsx:105-110 only reacts to a `tab` param the purpose item never sets).
 
 **Mechanism.** There is no "confirm" action anywhere in the quotes panel — the
 verbs are **Award**, **Void**, and **type total** — and a parsed quote joins the
@@ -243,6 +249,7 @@ for a step that already happened.
   - `components/projects/QualityTab.tsx:81-86` — the rose-bordered `AlertTriangle` banner both land in
   - `components/projects/IntakePanel.tsx:292` — the inverse: one neutral grey banner carrying both success and failure
 - **Re-verified:** hardening pass — **SURVIVES**. `setErr("Applied N; left M alone…")` (`QualityTab.tsx:314`) and `setErr("Evidence sweep: nothing new to prove or demand…")` (`:328`) — the two most common successful outcomes routed into the error channel.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: neither component has a tone prop, so QualityTab has only an error channel and IntakePanel only a neutral one — a failed intake action is visually indistinguishable from a successful one.
 
 **Mechanism.** `QualityTab` has only an error tone, so successes are announced
 in red. `IntakePanel` has only a neutral tone, so failures — "Couldn't revoke:
@@ -273,6 +280,7 @@ return.
   - `components/projects/QualityTab.tsx:81-86` vs `:331, :339` — same shape
   - `components/projects/QualityTab.tsx:383-386` + `lib/checklists.ts:218-223` — "Mark complete" always enabled, refusal lands off-screen
 - **Re-verified:** hardening pass — **SURVIVES**. The error state renders at the top of the page while the controls that raise it sit far below in the tab content, so on a long project page the feedback is off-screen.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on every cited line. I looked specifically for a mitigation and found none: grep for `scrollIntoView`, `toast`, or focus management across CostsTab.tsx, QualityTab.tsx and components/projects/cost/*.tsx returns zero hits, so nothing brings the banner into view. The only correction is a path detail — the Approve button lives in components/projects/cost/ChangeOrdersPanel.tsx, not CostsTab.tsx itself (the report's own Locations block already says this).
 
 **Mechanism.** Between the banner and the change-orders panel sit the stat
 strip, the burn bar, the S-curve, the forecast, the crew curve and the whole
@@ -305,6 +313,7 @@ explain why on the button.
   - `app/(protected)/companies/[id]/page.tsx:153, 157` — panels receive the page's `setError` as `setErr`
   - `app/(protected)/projects/[id]/page.tsx:82-85` — the same bug, already fixed and documented there
 - **Re-verified:** hardening pass — **SURVIVES**. `if (error || !company) return (…)` (`companies/[id]/page.tsx:75-80`) replaces the entire page, so a transient action error discards the loaded company view.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Right, and the sibling page's comment is the settling proof that this is a known bug pattern already fixed in projects/[id] and left standing in companies/[id]. A transient action failure (e.g. a failed event save at line 344) unmounts the header, scorecard, profile and both panels — discarding whatever the user had typed into the EventsPanel form. HIGH with a data-loss facet is fair.
 
 **Mechanism.** `if (error || !company) return <red box + "Back to companies">`.
 So a failed quality-manual evaluation — including the entirely ordinary "add
@@ -335,6 +344,7 @@ failed COMMENT blank the entire project view."*
   - `components/projects/cost/QuotesPanel.tsx:545` — the one call site that does it right
 - **Related:** `REL-2`, `REL-3`
 - **Re-verified:** hardening pass — **SURVIVES**. The list functions discard their error and return `[]` (`costs.ts`), so a missing migration and a denied policy both render as the friendly empty state. Same root as `REL-2`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Claim of absence checked repo-wide: the only schema-gap detector, lib/schemaExpectations.ts, is consumed solely by app/api/admin/schema-health/route.ts and the intelligence page — nothing in the Projects surface distinguishes empty from missing-table from RLS-denied. Only the cited line numbers drift slightly.
 
 **Mechanism.** Every list function destructures `{ data }` and discards the
 error. A missing table or a policy denial returns null data, so the interface
@@ -372,6 +382,7 @@ database migration (20261013) applied."*
   - `lib/projects.ts:322-330` — `listProjectCheckouts`, one row per session
   - `app/(protected)/projects/[id]/page.tsx:3-6` — the header comment still describing a three-tab page that now has seven
 - **Re-verified:** hardening pass — **SURVIVES**. The Documents tab badge counts one collection while the panel below renders another (`projects/[id]/page.tsx:420`), so the number and the list disagree.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Every sub-claim in the report's table verified, including that adoption is manual (lib/transitionIn.ts:221 is the sole writer of project_documents from intake) and that the Intake tab hosting TransitionInPanel is gated at page.tsx:508 `{tab === "intake" && !canManage && ...}`. The batch summary overstates one case: an ADOPTED intake sheet does appear, in the register card above; only approved-but-unadopted sheets are invisible outside Intake.
 
 **Mechanism.** Two independent sources render stacked, and the badge counts
 sessions rather than documents.
@@ -406,7 +417,7 @@ update the stale header comment.
 
 ## UX-12 · Creating a project costs eight clicks, five of which are pure tax
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
@@ -416,6 +427,7 @@ update the stale header comment.
   - `components/projects/ProjectWizard.tsx:222` — the "everything after Basics is optional" message, in 11px grey
   - `components/projects/ProjectWizard.tsx:434-444` — "Skip for now", which only appears once a step is empty
 - **Re-verified:** hardening pass — **SURVIVES**. Only step 0 has required fields (`ProjectWizard.tsx:440`); every later step is advanced by the same Next button and can be skipped (`:120`), so the clicks are ceremony rather than input.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real — no early exit from the six-step flow — but the headline count is wrong: projects/page.tsx:116 "New Project" (1) + five Next clicks (2-6) + "Create project" (7) is seven, not eight, and the first Next commits the required fields, so four rather than five are ceremony. Pure friction with no data-loss or correctness consequence (the surrounding HIGHs in this report carry data-loss or false-statement impact), so MEDIUM.
 
 **Mechanism.** There is no escape from step 0. A user who has typed a name and a
 description — everything actually required — must click through five screens
@@ -442,6 +454,7 @@ step 0 onward. This is the single most fixable friction point in the area.
   - `components/projects/cost/QuotesPanel.tsx:409-411` — "needs a budget line", with the fix in a `title`
   - `components/projects/QualityTab.tsx:129-131` — the checklist empty state, which points at Document Control with no upload affordance here
 - **Re-verified:** hardening pass — **SURVIVES**. `governedCall` throws its 412 — *"Add your Claude or OpenAI key in AI settings first"* — only once invoked (`governedCall.ts:41-47`), while the button that invokes it is `disabled={!doc || evaluating}` (`companies/[id]/page.tsx:279`), never disabled on the missing precondition.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Checked for a guard the finding might have missed: `ai_connections` is queried from exactly one client file repo-wide (app/(protected)/setup/page.tsx:89), so no Projects-area surface knows whether a key exists before the click.
 
 **Mechanism.** Nothing signals the three AI gates until after the click. The
 user searches for a document, selects it, picks a kind, clicks, watches a
@@ -481,6 +494,7 @@ the vendor, and spending an AI call on the read**.
   - `lib/projects.ts:686-707` — notifications fan out to all members
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:40-54` — `project_visible_to_me` checks membership, not role
 - **Re-verified:** hardening pass — **SURVIVES**. `ProjectMemberRole = "owner" | "collaborator" | "observer"` (`types/schema.ts:944`) is declared and never read for authority — cross-area duplicate of `roles-and-permissions/SURF-11`, which shows the policies resolve from `org_members` instead.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The absence claim is confirmed by exhaustive search, not inference — the role is declared, offered in the picker, and never consulted by any read, write, notification, or policy path.
 
 **Mechanism.** No read path, write path, notification path or guard checks it.
 
@@ -506,6 +520,7 @@ distinction it does not make.
 - **Blast radius:** ux / rookie-readability
 - **Locations:** across the Projects surface; representative sites below
 - **Re-verified:** hardening pass — **SURVIVES**. Three different phrasings for the same concept across three surfaces, with no shared vocabulary constant.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Spot-checked five of the report's representative sites and all five hold (one line number off by four). MEDIUM is right for an aggregate vocabulary finding.
 
 **Mechanism — dismissal (7 words).** `na` / "Not applicable" (checklist),
 `waived` (turnover), `void` (punch), `void` (cost entry), `void` (cost

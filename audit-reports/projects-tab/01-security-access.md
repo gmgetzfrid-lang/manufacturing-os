@@ -22,6 +22,7 @@ Who can reach what, and what an outsider can put inside the perimeter.
   - `components/viewers/SecureDocViewer.tsx:274` — `<iframe>` with no `sandbox`
 - **Related:** `SEC-6` (no type validation), `SEC-7` (inline disposition), `SEC-5` (link never expires)
 - **Re-verified:** hardening pass — **SURVIVES**. Both halves confirmed. `ContentType: file.type || "application/octet-stream"` (`intake/upload:270`) takes the type from the uploader unvalidated; `SecureDocViewer.tsx:274-275` renders the fetched bytes as `<iframe src={blobUrl}>`, and a `blob:` URL inherits the creating origin. Unauthenticated upload → script execution on the app's own origin.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed end to end. blob: URLs inherit the creating document's origin, there is no CSP anywhere (next.config.ts sets no headers and there is no middleware.ts), the viewer is never gated on file type (InspectorPanel.tsx:442 renders any selectedVersion.fileUrl), and lib/supabase.ts keeps the session in localStorage by default ('Absent flag → remember'). Same unvalidated ContentType also at l.76 and l.165 for the quote branch.
 
 **Mechanism.** The intake route stores the object with `ContentType: file.type`
 — whatever the client claimed — with no sniffing and no allowlist.
@@ -65,6 +66,7 @@ of the chain.
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:40` — `project_visible_to_me()` defined
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:91` — its only consumer
 - **Re-verified:** hardening pass — **SURVIVES**. The loop at `20261013…:253-258` creates `%I_member_read … FOR SELECT USING (EXISTS … org_members … status = 'active')` for `change_orders`, `project_checklists`, `checklist_items`, `turnover_items` and `punch_items` — the predicate is **org-wide membership**, with no project-membership term. Private projects are not private for any of that data.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives at CRITICAL. Grep confirms the claim of absence: `project_visible_to_me` appears exactly three times in the whole migration tree — its definition, its GRANT, and the single project_activity policy — so every cost, bid, change-order, checklist, turnover and punch table is org-member-readable regardless of projects.visibility. And it does surface on the ordinary profile page: lib/companies.ts:248-251 (called by app/(protected)/companies/[id]/page.tsx via gatherCompanyProfile) reads change_orders amounts, turnover_items, punch_items and cost_documents `total_amount` for quotes, all through the authenticated client.
 
 **Mechanism.** `project_visible_to_me()` is defined, granted to `authenticated`,
 and then referenced by **exactly one policy in the entire schema** — the one on
@@ -109,6 +111,7 @@ Write it as a new migration; do not edit `20261013` in place.
   - `app/api/intake/upload/route.ts:257` — the pending-submission guard it defeats
   - `app/api/intake/upload/route.ts:302` — `autoNow`
 - **Re-verified:** hardening pass — **SURVIVES**, and the mechanism is exact. `linkAuthored` is true once a version authored by this link exists (`:246-248`); the pending-review block is `if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored))` (`:257`). So the first submission is held for review and every later one takes the auto path. The route's own comment two hundred lines down — *"an assigned org-authored controlled drawing ALWAYS goes through review"* — is false from the second submission onward.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives at CRITICAL, and the code refutes its own contract: the comment immediately above line 302 states 'an assigned org-authored controlled drawing ALWAYS goes through review, whatever the link's trust level', and the migration comment at 20260903_intake_assignments.sql:22 and the UI text at IntakePanel.tsx:409 repeat that promise — but `linkAuthored` is computed from the version chain, not from provenance, so the first accepted assigned-document submission converts the org's own drawing into 'the link's own work' forever after. Submission two publishes and orphans the Rev A review row at review_state 'in_review' with pending_version_id cleared.
 
 **Mechanism.** `linkAuthored` is computed as "a version row on this record
 carries this link's id":
@@ -162,6 +165,7 @@ implement it.
   - `supabase/migrations/20260822_review_completion_guard.sql:32-34` — the skip
 - **Related:** `SEC-13`, `SEC-14`, `SAF-5`
 - **Re-verified:** hardening pass — **SURVIVES**. Every write on this route uses `supabaseAdmin`; the publish-guard trigger exempts service-role writes by design, so no hold, lock or review gate is consulted.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives at CRITICAL. 20260822 is the newest of the five definitions of enforce_document_publish_guard (20260713, 20260812, 20260816, 20260822) and it is the one installed on trg_document_publish_guard (:92-96), so the NULL-actor early return is live. The route also never reads or touches checkout_sessions, so an open checkout is left dangling exactly as described, and document_holds is never consulted on this path.
 
 **Mechanism.** The publish-guard trigger opens with:
 
@@ -209,6 +213,7 @@ hold is silently ignored.
   - `components/projects/IntakePanel.tsx:150` — `expires_at: expires ? … : null`
 - **Related:** report [`11-upload-door-controls.md`](./11-upload-door-controls.md)
 - **Re-verified:** hardening pass — **SURVIVES**, and the contrast is exact. The quote-link insert sets no `expires_at` column at all (`QuotesPanel.tsx:539-544`), while the document intake link at least offers one and defaults it to `null` (`IntakePanel.tsx:150`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives at HIGH. Both halves confirmed: quote links have no expiry field at all, document links default to NULL, and the only ceiling on reuse is a counter — bump_intake_use (20260902_project_intake.sql:74-79) does `submission_count = submission_count + 1` and enforces no cap. The sole kill switch is a manual revoke, which QuotesPanel does not even offer at mint time.
 
 **Mechanism.** The quote-link insert has no `expires_at` at all — no field in
 the form, no default, and no revoke button where the link is minted. The
@@ -243,6 +248,7 @@ forwarded email, a departed employee, a shared inbox.
   - `app/api/intake/upload/route.ts:270` — client MIME stored verbatim
 - **Related:** `SEC-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The route's only content check is `if (file.size > MAX_BYTES)` (`intake/upload/route.ts:46`) — no MIME test, no extension allowlist, no magic-byte sniff. This is the input side of `SEC-1`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives at HIGH. I read the whole route: across all four branches (quote, redline, new document, revision) there is no extension allowlist, no MIME allowlist, no magic-byte sniff and no antivirus hook; a repo-wide grep finds no shared upload validator that this route could be said to have skipped. The client-supplied MIME is persisted onto the object and is what R2 later replays on download, which is what makes SEC-7 exploitable.
 
 **Mechanism.** The only check is size: `MAX_BYTES` = 100 MB, applied *after*
 the whole body has been buffered, which is then buffered a second time via
@@ -266,7 +272,7 @@ before reading the body, and read the body once.
 
 ## SEC-7 · Presigned downloads are served inline rather than as attachments
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** security
@@ -276,6 +282,7 @@ before reading the body, and read the body once.
   - `app/api/transmittal/route.ts:73` — the correct pattern, for reference
 - **Related:** `SEC-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `GetObjectCommand({ Bucket, Key })` is signed with no `ResponseContentDisposition` (`download-url/route.ts:146-151`), so the object is served with its stored content type and renders inline. This is the delivery side of `SEC-1`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The technical claim is correct and the one-parameter fix is real. Lowered to MEDIUM because the blast radius is smaller than 'active half of SEC-1' implies: lib/r2.ts:5 presigns against `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`, a different origin from the application, so an inline-rendered HTML/SVG upload cannot read the app's session or DOM — it is malware/phishing delivery from a Cloudflare-hosted URL, not stored XSS against the product. Worth noting the finding's own third citation (transmittal/route.ts:73) is the counterexample that already sets attachment, not an instance of the bug.
 
 **Mechanism.** The route does its authorization properly —
 `assertSafeStorageKey` plus an org-prefix membership check. What it omits is
@@ -309,6 +316,7 @@ inline case must be opted into explicitly by callers that genuinely need it
   - `app/api/intake/upload/route.ts:349-385` — in-app + queued email + drain kick
   - `signup_attempts` table — the existing anti-abuse primitive, not wired here
 - **Re-verified:** hardening pass — **SURVIVES**. No rate limit guards the intake route, and each successful upload inserts one notification row per target (`intake/upload/route.ts:104-113` and `:349-358`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives at HIGH — verified as a claim of absence. There is no middleware.ts / src/middleware.ts in the repo at all, and rate limiting exists only in app/api/auth/signup/route.ts:42 and app/api/data-export/run/route.ts:89-90; neither covers the intake door. bump_intake_use (20260902_project_intake.sql:74-79) increments submission_count but enforces no ceiling, so a single non-expiring token yields unbounded 100 MB R2 writes and unbounded outbound mail to every Admin/DocCtrl in the org.
 
 **Mechanism.** Nothing throttles submissions per token, per IP, or per hour.
 Every upload writes an in-app notification to controllers plus the project
@@ -339,6 +347,7 @@ window produce one digest rather than N emails.
   - `supabase/migrations/20260906_projects_hardening.sql:61-68` — `projects_delete_owner`
   - `supabase/migrations/20261013_project_controls_program.sql` — `user_owns_project()`, which does it correctly
 - **Re-verified:** hardening pass — **SURVIVES**. `projects_delete_owner` is predicated on `owner_user_id::text = auth.uid()::text` (`20260906_projects_hardening.sql:61-66`) with **no `org_members.status` term**, so an offboarded owner still matches and the delete cascades the financial and quality record.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Claim holds at both layers, and the repo itself contains the corrected pattern (user_owns_project) that the delete policy was never updated to use. Repo-wide grep found no other FOR DELETE policy on `projects` and no RESTRICTIVE delete policy that would AND in an active check. The only mitigation is cosmetic: RoleContext.tsx:210-212 sets membershipState 'none' for a non-active member so the UI hard-stops — but RLS, not the SPA, is the boundary, and a deactivated user's existing JWT reaches PostgREST directly (DELETE does not require the SELECT policy to pass).
 
 **Mechanism.** `projects_delete_owner` tests
 `owner_user_id::text = auth.uid()::text` with no active-membership check —
@@ -372,6 +381,7 @@ cost entries should be deletable at all, versus archive-only.
   - `app/api/projects/checklist/route.ts:67` — admits any active org member
   - `lib/docFileServer.ts` — `resolveDocumentFile` uses `supabaseAdmin`
 - **Re-verified:** hardening pass — **SURVIVES**. The route gates on `member.status === "active"` (`checklist/route.ts:67`) and then reads documents with the service role, so ACL-restricted content reaches a member the ACL excludes.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: any active org member can name a private/hidden or deny-listed document and get its pages read back as verbatim items — the system prompt at l.36 explicitly says 'Keep the item's own wording — do not paraphrase', and l.105 returns `{ items, pagesRead, sourceLabel: file.label }`. The service-role read bypasses RLS and the ACL layer that the download path enforces. HIGH is right (bounded to MAX_PAGES = 10 and to renderable PDFs).
 
 **Mechanism.** The route admits any active org member, then resolves the
 document through `supabaseAdmin`, which bypasses `documents_acl_select`
@@ -396,7 +406,7 @@ resolve documents the same way.
 
 ## SEC-11 · `assigned_doc_ids` is validated against nothing — not the project, not the ACL, not even the org
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED for project/ACL scope; the *absence* of an org check is CONFIRMED, cross-org exploitation is SUSPECTED (needs a foreign UUID)
 - **Blast radius:** security / data-confidentiality
@@ -406,6 +416,7 @@ resolve documents the same way.
   - `app/api/intake/resolve/route.ts:144` — the redline query, which *does* filter by org
   - `supabase/migrations/20260903_intake_assignments.sql:20` — bare `UUID[]`, no FK, no CHECK
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `.update({ assigned_doc_ids: ids }).eq("id", l.id)` (`IntakePanel.tsx:218-219`) validates the ids against nothing — not the project, not the document ACL, not the org.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The structural claim is exactly right: nothing anywhere validates assigned_doc_ids against the project, the ACL, or even the org, and the resolve route reads them as service role with no org filter (so a UUID from another org would render on the portal). Lowered to MEDIUM because the stated scenario needs an already-privileged actor AND a UUID they cannot obtain in-product: the assign picker at IntakePanel.tsx:199-204 runs under RLS and `documents_acl_select` (20260708_acl_rls_enforcement.sql:86, `AS RESTRICTIVE FOR SELECT USING (node_visible(visibility, acl_index, org_id))`) hides a restricted HSE document from a non-controller project owner, so the restricted UUID must come from out of band.
 
 **Mechanism.** The column has no foreign key, no check constraint and no
 trigger. The authorization question asked on write is "may you manage this
@@ -448,6 +459,7 @@ says an out-of-project restricted document was exposed.
 - **Locations:** `app/api/intake/upload/route.ts:302`
 - **Related:** `SEC-3` (same root cause)
 - **Re-verified:** hardening pass — **SURVIVES**. `autoNow = !!docId && !!link.allow_auto_supersede && linkAuthored` (`intake/upload/route.ts:302`) — the first upload sets `linkAuthored`, and the second therefore takes the auto path into the controlled library. Same mechanism as `SEC-3`, seen from the new-document side.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed end to end: upload 1 (title, no docId) creates a Draft document with pending_version_id set and review_state 'in_review'; the portal hands the contractor that docId back (resolve/route.ts:94-112, keyed on intake_link_id); upload 2 with that docId is linkAuthored, so the pending-review 409 is skipped and the document goes to Issued with pending_version_id cleared, leaving the Rev A row stranded at review_state 'in_review'. A fully controlled document enters the library with zero internal review — beyond the trusted flag's own stated scope ('revisions of their own documents').
 
 **Mechanism.** `autoNow` requires an existing `docId`, so the first upload of a
 new document always routes to review. Once that document row exists, the second
@@ -485,6 +497,7 @@ authorship) also covers this.
   - `supabase/migrations/20260822_review_completion_guard.sql:46-58` — the guard that only bites when roster rows exist
 - **Related:** `SEC-4`
 - **Re-verified:** hardening pass — **SURVIVES**, and it is explicit in the call. `finalizeReviewedRevision({ …, requireRosterComplete: false })` (`IntakePanel.tsx:237-239`) — the library's configured review gate is switched off by the argument.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives: a repo-wide grep confirms neither app/api/intake/* nor IntakePanel.tsx ever calls effectiveReviewControlForDocument or reads review_control, so a library configured mode:'require' is never consulted on the intake path and no roster is ever created — leaving the DB completion gate with nothing to enforce. One correction to the wording, not the severity: the publish trigger's authority leg still runs (20260822:60-75, Admin/DocCtrl short-circuit else user_can_publish_on_library / user_is_effective_owner), so the approver must at least hold library publish authority — but they need not be a controller or a rostered reviewer, and zero e-signatures are recorded.
 
 **Mechanism.** Approve passes `requireRosterComplete: false`. The upload route
 never reads `review_control` and never creates `document_review_signoffs` rows,
@@ -517,6 +530,7 @@ completion. Approval then requires the configured signatures.
   - `supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql` — adds `moc_reference` columns, no trigger, no CHECK
   - `components/documents/RevUpModal.tsx:219` — where the gate *does* exist
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. Neither intake path consults `docClass` or any MOC requirement before promoting a revision.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed as a claim of absence by repo-wide grep: `moc_reference`/`mocReference` appears in RevUpModal, BackfillVersionModal, Supersede/Revert/Split/Merge and the publish-contract RPCs, but never once in app/api/intake/ or in the IntakePanel approve path (which promotes an already-written version via finalizeReviewedRevision and adds no MOC). Both external routes to a live revision therefore land moc_reference NULL on a declared drawing, and no database object would refuse it.
 
 **Mechanism.** The MOC gate lives only in two client components. There is no
 database constraint on `moc_reference`, and `lib/docClass.ts` is never imported
@@ -542,7 +556,7 @@ screen so a reviewer can supply it.
 
 ## SEC-15 · Transferring project ownership is rejected by row-level security for the exact user offered the button
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** SUSPECTED (policy read is unambiguous; not exercised live)
 - **Blast radius:** ux / correctness
@@ -552,6 +566,7 @@ screen so a reviewer can supply it.
   - `app/(protected)/projects/[id]/page.tsx:977-982` — the button
   - `app/(protected)/projects/[id]/page.tsx:913` — where the raw error surfaces
 - **Re-verified:** hardening pass — **SURVIVES**, and the mechanism is the `WITH CHECK`. `projects_update_owner` is `USING (is_org_controller(org_id) OR owner_user_id::text = auth.uid()::text)` **and the same expression as `WITH CHECK`** (`20260906_projects_hardening.sql:60-65`). `WITH CHECK` evaluates against the **new** row, where `owner_user_id` is the incoming owner — so a non-controller owner transferring away fails their own policy. `transferOwnership` only checks `assertCanManageProject` first (`projects.ts:625`) and then surfaces the raw refusal.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is exactly as described — the button is offered to a plain project owner and the database rejects their transfer with the raw RLS violation text. Lowered to MEDIUM because this is a fail-closed denial of function plus a leaked internal error string, not an access-control breach: no data is exposed and no privilege is gained; the only party who loses is the legitimately authorized owner.
 
 **Mechanism.** The policy's `WITH CHECK` is evaluated against the **new** row:
 
@@ -591,6 +606,7 @@ validate the recipient's active membership (see `SEC-17` note below).
   - `components/projects/IntakePanel.tsx:145, 350-353` — token read and copy
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:99-102` — `project_intake_links_select`
 - **Re-verified:** hardening pass — **SURVIVES**. The token is generated client-side (`IntakePanel.tsx:145`) and stored on a `project_intake_links` row the project owner can read, so the owner holds the contractor's credential.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives at MEDIUM as filed. The project owner reads the raw token and can drive /api/intake/upload as the contractor, where the write runs as service role with `user_id: null, user_email: link.contact_email` (upload/route.ts:390) and `created_by_name: company` (:310) — so the record attributes the publish to the outside firm, and the service-role path skips the publish trigger entirely (see SEC-4). Needs an already-privileged actor, so MEDIUM is the right band.
 
 **Mechanism.** Link SELECT is correctly scoped to controllers plus the project
 owner (it was org-wide in `20260902` — that was a real fix). But a
@@ -627,6 +643,7 @@ writes, so a token used from inside the app is distinguishable.
   - `supabase/migrations/20260913_projects_rls_recursion_fix.sql:79-86` — `project_members_write`, for contrast, correctly gated
 - **Related:** `SAF-17` (detach amputates the timeline)
 - **Re-verified:** hardening pass — **SURVIVES**. `project_documents_member_all FOR ALL` with active-member membership in both `USING` and `WITH CHECK` (`20260609_phase1_normalization.sql:194-197`) — the same `FOR ALL`-with-membership shape catalogued in `document-control/DRLS-1`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives. A repo-wide grep finds no later migration that narrows project_documents (only the CATCHUP file repeats the same policy), and audit_logs carries only an INSERT policy (20260813_acl_close_gaps_and_audit_scope.sql:84-85) — no ACL SELECT policy — so the leak channel the finding describes is real, and the detach half is unguarded too. One citation error worth noting: the second cited location, 20260913_projects_rls_recursion_fix.sql:79-86, is `project_members_write`, not a project_documents policy; the substantive claim rests entirely on the 20260609 lines and holds there.
 
 **Mechanism.** The policy is `FOR ALL` to any active org member. The
 `ProjectDocumentsCard` gates attach and detach on `canManage`; the database does

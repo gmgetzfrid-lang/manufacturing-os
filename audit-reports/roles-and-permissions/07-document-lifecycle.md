@@ -38,7 +38,7 @@ by bug.
 
 ## LIFE-1 · The drafting loop has no return path — a closed ticket never becomes a revision
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / data-integrity
@@ -50,6 +50,7 @@ by bug.
   - `lib/revisions.ts:398-540` — `revUpDocument`'s input contract: takes a `File`, never a ticket
 - **Related:** `LIFE-2`, `LIFE-5`, `LIFE-6`, `LIFE-11`, `GAP-7`
 - **Re-verified:** hardening pass — **SURVIVES**. `close_ticket` sets `status = "CLOSED"` and nothing else (`ticketTransitions.ts:284-287`); no ticket path calls `revUpDocument` or any revision creator.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The absence claim is correct: a closed ticket writes nothing to the document, and the ticket's IFC/Final attachment never becomes a version. CRITICAL overstates it, though — publishing is fully supported and the loop is not invisible: the drafter/controller can publish the returned file through RevUpModal, and lib/impact.ts:113-119 surfaces open tickets on the document by `metadata->source_document->>id`, so the pending work is displayed on the publish surface. This is a missing automated write-back plus a discipline dependency, i.e. HIGH.
 
 **Mechanism.** `computeTransition` for `close_ticket` is three lines:
 `updates.status = "CLOSED"`. The `Final` attachment is appended to the ticket's
@@ -113,7 +114,7 @@ guard and the MOC gate in one move.
 
 ## LIFE-2 · `related_ticket_id` is a review-gate waiver that no code path writes — a loaded gun
 
-- **Severity:** CRITICAL
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
@@ -126,6 +127,7 @@ guard and the MOC gate in one move.
   - `lib/__tests__/reviewControl.test.ts:42` — a test asserting behavior no user can reach
 - **Related:** `LIFE-1`, `LIFE-12`
 - **Re-verified:** hardening pass — **SURVIVES**. `effectiveModeForRevUp` returns `"none"` on any truthy `relatedTicketId` (`reviewControl.ts:60`). Both occurrences of the column in application code — `documents/[libraryId]/page.tsx:1893` and `revisions.ts:958` — are **reads**. The waiver is unreachable today and fires the moment anything writes the column; "a loaded gun" is the right description.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → MEDIUM** by this pass. The factual claim is right (nothing writes the column) and in fact stronger than stated: even a populated column would not fire the waiver today, because neither of the two gate callers passes relatedTicketId. That makes it inert dead code whose harm is entirely contingent on LIFE-1 being built and wired a particular way. CRITICAL is not defensible for a branch with zero reachable callers; MEDIUM (latent-hazard / remove-or-gate) fits.
 
 **Mechanism.** `effectiveModeForRevUp` contains three escape hatches:
 
@@ -195,6 +197,7 @@ waive review is not.
   - `app/(protected)/requests/new/page.tsx:104-115` — reads (and thereby destroys) the stash on mount
 - **Related:** `LIFE-4`, `LIFE-8`, `GAP-4`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `FullScreenViewer` exposes `initialPageStates`, `onPageStatesChange` and `onCommit` (`:138-143`); the call site passes **none of them** (`documents/[libraryId]/page.tsx:3025-3036`). Cross-area duplicate of `drafting-flow/LEAK-5` — fix once.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Verified end to end: markup is React state in the viewer, the hand-off stash is one-shot and deleted on read, and the destination form holds it only in memory with no unsaved-work warning — a refresh or tab restore loses the redlines with no error shown. HIGH is warranted for silent loss of safety-critical markup.
 
 **Mechanism.** `FullScreenViewer` holds markup in `useState` and offers three
 persistence hooks. The document library page — the surface where a controlled
@@ -250,6 +253,7 @@ the human to launder it through their filesystem. Persisting markup unblocks
   - `lib/impact.ts:113-119` — the query that depends on it
 - **Related:** `LIFE-13`, `GAP-3`
 - **Re-verified:** hardening pass — **SURVIVES**, and the contrast is exact. `FullScreenViewer.tsx:928-935` sets `sourceDocId`, `sourceDocNum`, `sourceDocTitle`, `sourceDocRev`; `MultiDocViewer.tsx:878-884` sets only `title`, `description`, `draft` and `unit`. The book-viewer path drops the document link entirely.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Correct, and the wasted capability makes it sharper: lib/draftHandoff.ts:8-13 already carries `docId`/`docNumber` per file into IndexedDB, and the requests/new consumer ignores both. Book-viewer markups therefore create tickets invisible to the Impact panel. One nuance on the word 'entirely': MultiDocViewer.tsx:867-874 does write the document numbers and revs into the free-text description, so the link is lost machine-readably, not from human view. HIGH stands — the coordination guard is silently disabled.
 
 **Mechanism.** `sendMarkupsToDrafting` builds `DraftHandoffFile[]` where each
 entry *does* carry `docId` and `docNumber`, then sends only:
@@ -317,6 +321,7 @@ multi-sheet request still cannot be fully represented; see `GAP-3`.
   - `components/documents/RevUpModal.tsx:739` — the input, labelled *"Optional ticket # from change platform"*
 - **Related:** `LIFE-1`, `LIFE-6`
 - **Re-verified:** hardening pass — **SURVIVES**. Cross-area duplicate of `drafting-flow/TIER-6` — `mocRequirementFor` computes the requirement (`checkinOutcomes.ts:87-93`) and `CheckInPanel.tsx:224-229` renders it into prose. Nothing carries it forward.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The absence is verified: no code path reads a ticket's or a check-in's MOC state into the publish, so the published version's moc_reference is unvalidated free text typed weeks later, and the 'no MOC on record' flag never reaches the document record at all. HIGH is appropriate — this is the PSM/MOC linkage the publish gate exists to enforce.
 
 **Mechanism.** Two MOC gates exist and they do not speak. At check-in, a
 drawing-class discrepancy or revision request **requires** an MOC position, and
@@ -362,7 +367,7 @@ fix with no dependencies.
 
 ## LIFE-6 · The "Field Verification Needed" hold is unlinked, unrecorded, and never released
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / safety
@@ -376,6 +381,7 @@ fix with no dependencies.
   - `components/documents/CheckInPanel.tsx:626-629` — the promise made to the user
 - **Related:** `LIFE-1`, `LIFE-10`
 - **Re-verified:** hardening pass — **SURVIVES**. `openHold({ reason: "Field Verification Needed", notes: note.trim(), … })` (`CheckInPanel.tsx:366-371`) carries no ticket id, no check-in id and no release condition.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. 'Unlinked' and 'no automatic release' hold. 'Unrecorded' and 'nobody can track' do not: lib/holds.ts:139-152 writes a HOLD_OPENED audit event and fires notifyHoldChange, app/(protected)/admin/holds/page.tsx lists active holds org-wide with metrics and a release button, HoldStrip shows and releases them on the document, and lib/impact.ts:127-133 counts them — while lib/documentGuards.ts:139-146 makes the hold genuinely block. Downgrade to MEDIUM: the hold is visible, auditable and releasable by a human; what is missing is the ticket linkage and the release-on-close automation.
 
 **Mechanism.** The hold genuinely blocks publishing — `evaluatePublishGuard`
 treats any active hold as a hard block, overridable only by Admin/DocCtrl, with
@@ -437,6 +443,7 @@ already says it goes, and surface the open hold to whoever closes the ticket.
   - `lib/checkinOutcomes.ts:200` — the card copy promising durability
 - **Related:** `SURF-*`, `OWN-12`
 - **Re-verified:** hardening pass — **SURVIVES**, and the asymmetry is inside one function. The PSM undocumented-field-change alert uses `notifyMany` — bell only (`CheckInPanel.tsx:296`) — while the lesser "change proposed" event a hundred lines later uses `emit` from `lib/notify/dispatch` (`:400-408`), which is the path that also mails.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Claim holds on every load-bearing point: the PSM escalation is bell-only, the identical-kind intake/portal events get email via emit(), and the daily compliance digest excludes this kind so there is no second chance at email. One overstatement: the check-in ticket's own assignment-queue notify (CheckInPanel.tsx:276) is also notifyMany/bell-only, so 'every comparable alert gets email' is not literally true within that file.
 
 **Mechanism.** `CheckInPanel` uses both notification systems and picks the weaker
 one for the more urgent event. The `sent_to_owner` card promises *"Your notes go
@@ -487,6 +494,7 @@ explicitly detects and reports an empty roster.
   - `components/documents/ActivityThread.tsx:474-484` — the renderer for a message kind nothing produces
 - **Related:** `LIFE-3`, `GAP-4`
 - **Re-verified:** hardening pass — **SURVIVES**, by caller census. `sharedMarkupUrl` is an optional input written at `markupRequests.ts:123`, and **no caller anywhere passes it** — every other reference is either inside that module or a consumer that reads the column (`dataExport.ts:338`, `storageOrphans.ts:57`). The write path exists and is never exercised.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Both halves confirmed by repo-wide search: shared_markup_url is always written as null, and postMarkupRef is dead code, so a 'Share' produces only a status flip plus a project-feed line with no artifact, link, or thread entry.
 
 **Mechanism.** The markup-request channel is a request/response with no payload.
 Both call sites pass `status: "shared"` and neither passes `sharedMarkupUrl` or
@@ -530,6 +538,7 @@ stop the toast claiming availability it cannot deliver.**
   - `app/(protected)/requests/page.tsx:400,545,984,1046,1151` — unit in search, export and three UI surfaces
 - **Related:** `LIFE-14`, `GAP-5`
 - **Re-verified:** hardening pass — **SURVIVES**. `requests/new/page.tsx:201` refuses without `unit`; `CheckInPanel.tsx:236-247` inserts a ticket with no unit at all.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — both in-app ticket producers bypass the portal's mandatory `unit`, and transitionIn additionally skips the SLA clock that CheckInPanel deliberately sets, so intake-collision tickets have no due date at all.
 
 **Mechanism.** Three ticket-origination points, three field contracts:
 
@@ -582,6 +591,7 @@ already the fallback vocabulary at `app/(protected)/requests/new/page.tsx:139-15
   - `components/documents/CheckInPanel.tsx:338-347` — the `FIELD_VERIFIED` audit row
 - **Related:** `LIFE-6`, `GAP-6`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `outcome_ref` appears only in `lib/checkoutEpisodes.ts` — the writer at `:466` and a comment at `:145`. Nothing reads it, and `checkout_sessions_outcome_idx` (`20261012…:49-51`) was built for a query the codebase never issues.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Half the finding is exactly right — outcome_ref is write-only, so the ticketId/versionId/holdId/moc pointers it stores are unreachable, and the (document_id, outcome) index from 20261012:47-51 is used by no query. But "no screen, no query, no report" is false: the checkout-history panel shows 'Field verified ✓' with its note per session, and FIELD_VERIFIED audit rows appear in the admin audit log (they are merely absent from ACTION_STYLE, so not in the action filter dropdown). Suggest LOW: the real gap is a dedicated 'last field-verified' report and a reader for outcome_ref, not a missing record.
 
 **Mechanism.** The migration builds a partial index specifically to answer a
 stated question:
@@ -635,6 +645,7 @@ created. That is the single most useful traversal in the whole flow.
   - `lib/checkinOutcomes.ts:133` — `ticketKind: "asbuilt"`
 - **Related:** `LIFE-1`
 - **Re-verified:** hardening pass — **SURVIVES** — **and the title is easy to misread.** `issue_type` *is* written to `document_versions` (`revisions.ts:512, 889, 1636`), so the dropdown is not unwired. What never connects is the **intent**: the check-in captures `ticketKind: "asbuilt"` → `request_type: "ASBUILT"`, and the publisher's `issueType` choice weeks later is an independent free selection with no knowledge of that ticket. The body states this correctly; verify against the body, not the headline.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Correct the claim, keep the severity: 'issueType: "As-Built" is an unconnected dropdown' is false — it is wired end-to-end to the version row and to the Lifecycle board (VersionHistoryPanel.tsx:284 and evidencePack.ts:56 also render it). What is missing is propagation of the as-built intent into the modal's default, so the wrong-column outcome in the summary still follows from the sticky "Issued for Construction" default.
 
 **Mechanism.** The system knows a document needs to be as-built at three points
 and forgets at each boundary. The check-in card sets `ticketKind: "asbuilt"`;
@@ -681,6 +692,7 @@ classification is a precondition for the turnover item *"Final as-built drawings
   - The only declared bridge: `lib/reviewControl.ts:60` — dead (`LIFE-2`)
 - **Related:** `LIFE-2`, `WF-*`
 - **Re-verified:** hardening pass — **SURVIVES**. Cross-area duplicate of `drafting-flow/TIER-8` — the ticket engine's `approve_*` vocabulary and the document review gate share no state, no terms and no data path.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Verified as an absence claim by repo-wide search: the two approval systems share no table, no signature, and no vocabulary, and the only mechanism that could have bridged them — reviewControl.ts:60's `if (input.relatedTicketId) return "none"` — is dead (see LIFE-2). The duplicate-notification consequence in the summary follows directly. MEDIUM is appropriate for a design/integration gap with no data-integrity loss.
 
 **Mechanism.** Two complete, well-built, mutually invisible approval systems.
 
@@ -736,6 +748,7 @@ but nothing composes them. **Do not merge the two systems.**
   - `app/(protected)/requests/[id]/page.tsx:1351,1796` — source files render as a flat filename list; **no reference to `source_document` anywhere in the file**
 - **Related:** `LIFE-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `CheckInPanel.tsx:259-262` and `requests/new/page.tsx:290-298` both write `metadata.source_document` onto the ticket, and no ticket surface renders it — the link exists in the data and not in the product.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed one-way: the document surface reads the link, the ticket surface never renders it — no document number, no rev, no navigation back, so a drafter cannot see that metadata.source_document.rev is stale. MEDIUM is right.
 
 **Mechanism.** Three producers write a structured backlink
 `{ id, document_number, title, rev, path }`. Two server-side consumers read it.
@@ -781,6 +794,7 @@ by a missing field, with no visible fallback on the ticket page.
   - `lib/checkoutEpisodes.ts:475-480` — `if (endErr) throw new Error(endErr.message)`
 - **Related:** `LIFE-9`
 - **Re-verified:** hardening pass — **SURVIVES**. `doneRef` is a `useRef` (`CheckInPanel.tsx:155-159`) tracking what has already succeeded within the commit sequence at `:359-390`. It does not survive an unmount, so an interruption leaves the ticket created and the checkout open. Cross-area duplicate of `drafting-flow/LEAK-6`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. REFUTES the summary's mechanism — the session-close timeout it describes is precisely the case doneRef covers, so a second tap reuses the ticket and re-fires no PSM alert (a duplicate needs a full remount/refresh, or a timeout on the ticket INSERT itself, neither of which is the stated scenario). What survives is milder: the checkout stays open and the check-in register/audit row is missing while a live ticket exists — and the open checkout is arguably the correct fail-safe. Suggest LOW rather than MEDIUM.
 
 **Mechanism.** The ordering is deliberate and correct in spirit — the comments
 explain that the audit row is written only after the session actually ends, since

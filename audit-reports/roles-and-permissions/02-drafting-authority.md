@@ -48,6 +48,7 @@ route, so a tampered client changes nothing. **That part is solid.**
   - `lib/capabilityPolicy.ts:63-65` — `ticket.eng_review` defaults to `["Engineer"]`
 - **Related:** `ROLE-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `capabilityPolicy.ts` contains no reference to request type in any form, so there is no dimension along which authority could vary. Compounded by `drafting-flow/TIER-2` — `RequestType` is an unconstrained `string`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. requestType is read exactly once in the whole state machine and only to add an action, never to gate one: lib/workflow.ts:185 `if (ticket.requestType === 'RFI')`. The per-person `grants` escape hatch (capabilityPolicy.ts:98-101) is documented as 'ADDITIVE ONLY', so it cannot narrow authority by discipline either.
 
 **Mechanism.** The authority evaluator takes a capability, a role, extra roles
 and a uid. The ticket's `type` never enters the decision. `RequestType` is an
@@ -112,6 +113,7 @@ evaluated correctly (see `ROLE-1`).
   - `lib/ticketRouting.ts:43-56` — `getRoutingConfig`, `adminsAlsoReceiveWhenSupervisorSet`
 - **Related:** `DRAFT-1`, `DRAFT-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `getInitialStatus: (_type: RequestType, _requesterRole: Role)` — **both parameters are underscore-prefixed as unused** — and the body returns the constant `'PENDING_ASSIGNMENT'` (`workflow.ts:47-52`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the signature exists but the type is discarded, so no request type can pre-route to engineering or shorten the ceremony for a trivial fix. Notably ticketRouting.ts:79 `const byRole = (r: Role) => members.filter((m) => m.role === r)` also matches the mirrored primary role only, so an additive DraftingSupervisor is never notified — a second, unreported defect in the same file.
 
 **Mechanism.** Both parameters are underscore-prefixed and unused. Every request
 — every type, from every role — lands in `PENDING_ASSIGNMENT`, and routing
@@ -153,6 +155,7 @@ exist.
   - `lib/workflow.ts:22-24` — `isManagementRole`, exact string equality
 - **Related:** `ADD-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `requiresEngineerApproval(requesterRole)` takes one argument and returns on role alone (`workflow.ts:37-42`), called as `requiresEngineerApproval(ticket.requesterRole)` (`:78`). Same mechanism as `WF-12` and `drafting-flow/TIER-1`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed, and it is a frozen snapshot as well as primary-only: a requester holding ["Requester","Engineer-1"] resolves to Engineer-1 (rank 61 > 40), so requiresEngineerApproval returns false and lib/workflow.ts:212-217 gives them 'Approve (Issue for Construction)' on their own request with no engineer in the loop. HIGH stands.
 
 **Mechanism.**
 
@@ -202,7 +205,7 @@ a snapshot is defensible, an accidental snapshot is not.
 ## DRAFT-4 · Triage can reject, but the reason is not captured as data
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** REFUTED
 - **Verification:** CONFIRMED
 - **Blast radius:** process / your stated goal
 - **Locations:**
@@ -211,6 +214,7 @@ a snapshot is defensible, an accidental snapshot is not.
   - `lib/capabilityPolicy.ts:66-68` — `ticket.assign` defaults to `[...MGMT, "DraftingSupervisor"]`
 - **Related:** `DRAFT-2`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `ticket.initial_review` is described as *"approve / flag / reject"* (`capabilityPolicy.ts:61-62`), and no rejection-reason field exists on `tickets` — the reason survives only as free text in `history`.
+- **Independently verified:** ⛔ **REFUTED** by an independent adversarial pass — do not work this finding. Kept in place with the reason rather than deleted (`DEC-41`). False as stated: the reason is captured as an enumerated `category` field, is mandatory on reject, and is tallied and drilled into in analytics (even preserved across archiving via `archive_summary.revisionCategories`, :228-234). The residual, much smaller critique the finding could have made is that the seven categories are a hardcoded const in a page file rather than org-configurable, and are revision-flavored rather than a 'we don't/can't do that' triage vocabulary — that is a wording gap, not 'not captured as data'.
 
 **Mechanism.** The initial-review stage offers approve / flag-for-engineering /
 reject. Rejection takes a free-text comment (`requiresComment`), which is
@@ -262,6 +266,7 @@ want to be mandatory.
   - `lib/capabilityPolicy.ts:69-70` — `ticket.self_assign` defaults to `["Drafter"]`
   - `lib/capabilityPolicy.ts:66-68` — `ticket.assign` defaults to `[...MGMT, "DraftingSupervisor"]`
 - **Re-verified:** hardening pass — **SURVIVES**. `ticket.self_assign` defaults to `["Drafter"]` while `ticket.assign` defaults to management plus `DraftingSupervisor` (`capabilityPolicy.ts:66-69`), so a drafter can take work the assignment queue never routed.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed. Since getInitialStatus (workflow.ts:52) drops every new request straight into PENDING_ASSIGNMENT, self_assign is available from the moment a ticket is created, before any assigner has looked at it. Mitigating: it is policy-configurable (an admin can empty the token list) and non-critical, which is consistent with MEDIUM.
 
 **Mechanism.** Two capabilities reach the same outcome. `ticket.assign` runs the
 queue; `ticket.self_assign` lets a drafter pick up unassigned work directly.

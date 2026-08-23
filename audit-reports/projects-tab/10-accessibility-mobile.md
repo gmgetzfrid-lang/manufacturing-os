@@ -26,6 +26,7 @@ the app had already solved. Most fixes are substitutions, not new engineering.
   - `app/submit/[token]/page.tsx:173, 245, 274` — the same, on the **public, unauthenticated** portal
   - `app/(protected)/plot-plans/page.tsx:166` — the working pattern already in the repo: `className="sr-only"`
 - **Re-verified:** hardening pass — **SURVIVES**. Every file input on both surfaces carries `className="hidden"` — `QuotesPanel.tsx:478` and `app/submit/[token]/page.tsx:173, 245, 274` — and a grep for `sr-only` on the public portal returns **0**. `display: none` removes an element from the tab order, so on the vendor portal there is no keyboard path to submit at all.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Scope correction, not a severity correction: the plot-plans citation is refuted (sr-only inputs stay in the tab order, so redline/background upload there IS keyboard-reachable), while the QuotesPanel and the public unauthenticated /submit/[token] pickers — including the redlines picker at :274 — are genuinely unreachable, which sustains CRITICAL on its own.
 
 **Mechanism.** `hidden` compiles to `display: none`, which removes the element
 from the tab order entirely. The wrapping `<label>` is not focusable and carries
@@ -50,7 +51,7 @@ working one, so fix these four and consider a sweep.)
 
 ## A11Y-2 · Checklist item status is conveyed entirely by an eight-pixel coloured dot, on the PSSR surface
 
-- **Severity:** CRITICAL
+- **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility / safety
@@ -61,6 +62,7 @@ working one, so fix these four and consider a sweep.)
   - `components/projects/QualityTab.tsx:439-485` — the row, which renders item text, AI rationale, manual note and evidence chips, and never the status
   - `components/dashboard/viz.tsx` — the house rule this breaks: "identity never colour-alone"
 - **Re-verified:** hardening pass — **SURVIVES**. `StatusDot` is `<span className="w-2 h-2 rounded-full …" title={m.t} />` (`QualityTab.tsx:488-497`) — colour plus a `title`, with no text, no `aria-label` and no `role`. `title` is not reliably announced and is unreachable without a pointer.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Verified: an 8px `w-2 h-2` dot carrying `title` on a non-focusable, role-less span is the only status carrier, QualityTab contains zero aria/role/sr-only, and the cited counterexample components/dashboard/viz.tsx:104,185 does use `role="img" aria-label`, so the codebase knows the pattern. Severity corrected down because the state is not entirely absent from the accessible surface — the presence/absence of the evidence chips (:456-465), the `Assessment:` rationale text (:445-449), and the status-dependent action buttons (:466-483) give a screen-reader user indirect signal — and because A11Y-2 is a perception defect, not one that moves money or record state.
 
 **Mechanism.** `satisfied` / `needs_evidence` / `open` / `na` are distinguished
 only by hue in an 8×8 px dot with no text, no glyph, no `aria-label` and no
@@ -101,6 +103,7 @@ the checklist card. Three components, one pattern.
   - `components/projects/ScheduleTab.tsx:558` — the date / duration / responsible-party line
   - `components/projects/ScheduleTab.tsx:578, 582` — the overdue and slip text
 - **Re-verified:** hardening pass — **SURVIVES**. The tints at `ScheduleTab.tsx:527-532` are `bg-emerald-50/50`, `bg-red-50/50`, `bg-amber-50/50` with **no `dark:` variant**, while the row's text is `text-[var(--color-text)]`, which flips light in dark mode. Light text on a light tint.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The claim holds and the guard I went looking for is documented as deliberately absent. In `.dark` the row keeps a light tint (emerald-50 #ecfdf5 at 50% over canvas #0b1120 composites to roughly #7c8a8a) while the text on it flips to `--color-text` #f1f5f9 (~3.3:1) and the secondary date line at :559 to `--color-text-muted` #94a3b8 (~1.4:1); the hardcoded `text-red-700`/`text-emerald-700` at :578-582 land at ~1.4:1 on that same composite. Unreadable is accurate for the muted line.
 
 **Mechanism.**
 
@@ -152,6 +155,7 @@ both grounds.
   - `components/ui/Modal.tsx` — the canonical shell all five should compose: portal, `role="dialog"`, `aria-modal`, Escape, backdrop click, labelled close
   - Same-folder siblings that already do it right: `MovePreviewSheet.tsx:87`, `ExecutionGuide.tsx:69`, `ScheduleCalendarTileView.tsx:430`, `EditProjectModal.tsx:52`
 - **Re-verified:** hardening pass — **SURVIVES**. Each modal root is a bare `<div className="fixed inset-0 z-[200] …">` (`ProjectWizard.tsx:213`, `projects/[id]/page.tsx:562`) — no `role="dialog"`, no `aria-modal`, no focus trap, no Escape handler, no backdrop click.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by repo-wide search: no focus-trap/inert utility exists anywhere (`grep -rn "focus-trap\|useFocusTrap\|trapFocus\|inert"` hits only components/marketing/TourTabs.tsx), and none of the five files registers a keydown listener. Even Modal.tsx itself, the shell they should be using, has no focus trap and no focus restore — so adopting it would fix role/Escape/backdrop but not the tab-out or return-focus half of the finding.
 
 **Mechanism.** All five hand-roll a `fixed inset-0` shell and inherit none of
 the base modal's behaviour. None locks body scroll, so the page behind keeps
@@ -182,7 +186,7 @@ matching `Modal.tsx`. Do not "fix" those.*
 
 ## A11Y-5 · The wizard's lookalike `Field` breaks label association, so every wizard input is unlabeled
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility
@@ -190,6 +194,7 @@ matching `Modal.tsx`. Do not "fix" those.*
   - `components/projects/ProjectWizard.tsx:456-463` — the local `Field`
   - `components/ui/Field.tsx:50-57` — the shared one, which wraps its children in the `<label>`
 - **Re-verified:** hardening pass — **SURVIVES**, and the correct implementation is in the same codebase. The wizard's local `Field` renders `<label>{label}</label>` as a **sibling** of the control with no `htmlFor` (`ProjectWizard.tsx:456-463`), while the shared `components/ui/Field.tsx:50-54` **wraps** the control inside the `<label>`. Same name, opposite semantics.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The association defect is real and the wizard's local `Field` genuinely shadows the correct one. Severity corrected because the headline "every wizard input is unlabeled" overstates it: Name (:240), Description (:245), MOC reference (:261), Purpose (:284), Goals (:299) and Success criteria (:308) all carry `placeholder` text, which the accessible-name computation uses as a fallback, so they announce their placeholder rather than "blank". Only Job size (:248), Target completion (:265) and Visibility (:270) — a date input and two selects, where placeholder cannot apply — are truly nameless.
 
 **Mechanism.**
 
@@ -229,6 +234,7 @@ tree either, for the same reason.
   - `components/projects/IntakePanel.tsx:292` — one banner carrying both success and failure with identical styling (see `UX-7`)
   - Silent confirmations: `QuotesPanel.tsx:630` ("Copied!"), `IntakePanel.tsx:352`
 - **Re-verified:** hardening pass — **SURVIVES**. `{actionError && <div className="mt-2 text-xs text-red-600">{actionError}</div>}` (`projects/[id]/page.tsx:665`) and the equivalent at `companies/page.tsx:319` — no `role="alert"`, no `aria-live`.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The claim of absence is confirmed by repo-wide search, not just at the cited lines. The wizard sub-claim also holds: ProjectWizard.tsx:124-125 calls `setStep(0)` alongside `setError(...)`, unmounting the step the user was focused on with nothing announced.
 
 **Failure scenario.** A screen-reader user gets no feedback at all when an
 action fails. In the wizard's case they are additionally left focused on a
@@ -246,7 +252,7 @@ banner when an error lands, and to the offending field where there is one.
 
 ## A11Y-7 · The selected filter pill is invisible in dark mode, and carries no state for assistive technology
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (computed contrast)
 - **Blast radius:** accessibility
@@ -256,6 +262,7 @@ banner when an error lands, and to the offending field where there is one.
   - Toggle groups with no `aria-pressed` / `aria-current` / radiogroup semantics: `projects/page.tsx:125-141`, `companies/page.tsx:94-100`, `ProjectWizard.tsx:251, 272-273`, `CostsTab.tsx:440`, `ScheduleTab.tsx:240-252`, `submit/[token]/page.tsx:223-224`
   - `app/(protected)/projects/[id]/page.tsx:418-448, 709-720` — seven tabs with no `role="tablist"` / `tab` / `tabpanel`, no `aria-selected`
 - **Re-verified:** hardening pass — **SURVIVES**. The selected pill is `bg-slate-900 text-white` (`projects/page.tsx:130`, `companies/page.tsx:97`) with no `dark:` variant — against a near-slate-900 dark canvas it disappears — and carries no `aria-pressed` or `aria-current`.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The dark-mode contrast failure and the missing aria-pressed are both real, but "invisible" overstates it and "unknowable ... for everyone" is false: `text-white` is not remapped by the bridge, so the selected pill's label stays fully legible, and on the projects page the count badge `bg-white/20 text-white` (:137) is also unmapped and reads as a visibly lighter pip on the active tab whenever a count is non-zero. The defect is that selected and unselected become near-indistinguishable, not that the control disappears.
 
 **Mechanism.** In dark mode the selected pill's background measures **1.05 : 1**
 against the unselected pills' surface and **1.07 : 1** against the canvas. Its
@@ -287,6 +294,7 @@ and proper tab semantics to the tab strip.
   - `app/globals.css:298-303` — the existing `@media (pointer: coarse)` rule that enlarges checkboxes and radios, and nothing else
 - **Related:** `SAF-4` (Waive needs no reason)
 - **Re-verified:** hardening pass — **SURVIVES**, and the app's own coarse-pointer rule proves the gap. The Accept/Reject controls are `px-1.5 py-0.5 text-[10px]` buttons (`QualityTab.tsx:571`), while `globals.css:298-303` raises minimum sizes for `input[type=checkbox]` and `input[type=radio]` only — buttons are not covered.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Verified, and the consequence is worse than stated: once `status === "accepted"` none of the four button conditions at :570-581 match, so no Undo/Reopen control renders — a mis-tapped acceptance on a QA/QC turnover item is unrecoverable through the UI, not merely unconfirmed.
 
 **Mechanism.** WCAG 2.2 SC 2.5.8 asks for 24×24 px; a gloved hand needs 44.
 These four decisions land on a contractor's permanent record, and **Reject and
@@ -310,7 +318,7 @@ give the current step `aria-current="step"`.
 
 ## A11Y-9 · Company dimension bars overflow their card on a phone
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** mobile
@@ -319,6 +327,7 @@ give the current step `aria-current="step"`.
   - `app/(protected)/companies/[id]/page.tsx:127-133` — `w-28` + `w-32` + `w-8` + gaps, and the detail span here has **no `truncate`**
   - Neither card sets `overflow-hidden`
 - **Re-verified:** hardening pass — **SURVIVES**. The row is `w-24 shrink-0` label + `w-24 shrink-0` track + `w-7 shrink-0` value (`companies/page.tsx:196-202`), and `w-28`/`w-32`/`w-8` on the detail page (`companies/[id]/page.tsx:127-133`) — over 220px of non-shrinking content inside a phone-width card.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The arithmetic confirms overflow at any common phone width (on a 390px viewport the list card leaves roughly 234px for a 244px minimum). Severity corrected because this is a clipped/spilling row in a scorecard — the numbers are still rendered and the page still functions — which sits below the workflow-breaking bar the other HIGH findings in this batch clear.
 
 **Mechanism.** List card: **244 px irreducible** against 219 available at 375px
 (the `truncate` detail collapses to zero, but the fixed elements still overflow
@@ -337,7 +346,7 @@ flex, and stack the label above the bar on narrow screens. Add `min-w-0` and
 
 ## A11Y-10 · The wizard's repeater rows leave about thirty pixels for the name field on a phone
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** mobile
@@ -352,6 +361,7 @@ flex, and stack the label above the bar on narrow screens. Add `min-w-0` and
   - `app/(protected)/projects/[id]/page.tsx:268, 455` and `app/(protected)/companies/[id]/page.tsx:88` — hardcoded `px-6` instead of `PageShell`'s `px-4 sm:px-6 lg:px-8`
   - `components/projects/CostsTab.tsx:127, 301` — stat values `truncate` with **no `title`**, so a clipped `$1,234,567` is unrecoverable by any means
 - **Re-verified:** hardening pass — **SURVIVES**. Both repeater rows put a `flex-1` name input beside a `<select>`, a `w-32` input and a delete button in one flex row (`ProjectWizard.tsx:352-363` and `:396-407`); on a 360px viewport the flexible field is what absorbs the shortfall.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The rows really are unusable on a phone, but the stated mechanism is wrong: flex and grid items default to `min-width:auto`, and an `<input>`'s automatic minimum is its intrinsic (size-attribute) width — roughly 170px at text-sm — so the name field does NOT collapse to ~30px. The row overflows its container instead; the wizard body at ProjectWizard.tsx:236 is `max-h-[60vh] overflow-y-auto`, and because one axis is non-visible the other computes to `auto`, leaving a horizontally scrollable (ugly, discoverable-by-accident) row rather than an unfillable field. Real but degraded to MEDIUM.
 
 **Mechanism.** Inside the wizard modal at 375px there are 295 usable pixels. The
 budget row's amount field (128), kind select (~90), remove button (~22) and gaps
@@ -385,6 +395,7 @@ to the truncating stat values.
   - The weekly headcounts live only in `title` attributes on plain `<div>`s
 - **Related:** `CHART-3` (the curve is flat anyway)
 - **Re-verified:** hardening pass — **SURVIVES**. `MiniBars` hardcodes `role="img" aria-label="Daily activity"` (`components/dashboard/viz.tsx:104`) and is reused for crew size (`CostCharts.tsx:90`). The label is wrong and no per-bar value is exposed.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed on both halves — wrong accessible name and zero exposed values. Minor caveat on the 'no text equivalent anywhere on the page' claim: the same Costs tab renders QuotesPanel's bid table, which has a numeric 'Peak crew' column (QuotesPanel.tsx:264), so the peak is available in text; the per-week distribution the chart shows is not.
 
 **Mechanism.** A screen reader hears a chart called *Daily activity* with zero
 values.
@@ -426,6 +437,7 @@ disappears with it — resolve that one first.
   - `components/ui/HelpTooltip.tsx` — the right pattern (click-to-toggle, Escape, click-away), used twice
   - `components/projects/CostsTab.tsx:277` — the comment reading "Plain-language glossary — visible, not a hover Easter egg", above a glossary that defaults collapsed at the page bottom
 - **Re-verified:** hardening pass — **SURVIVES**, with the count made exact: **100** `title=` attributes across `components/projects/`, `app/(protected)/projects/` and `app/(protected)/companies/` — more than the ~65 claimed. Includes decision-critical text such as the checklist status dot (`QualityTab.tsx:496`) and the AI-assessment explanation (`:375`).
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — title tooltips never fire on keyboard focus and are unreachable on touch, and the QualityTab status dot is the worst case: color-only plus a title on a non-interactive span, so its meaning is available to no one but a hovering mouse user. Count of ~65 decision-critical sites is consistent with the 86 raw `title=` occurrences in that directory.
 
 **Mechanism.** `title` on a non-focusable element is invisible on touch, to the
 keyboard, and to screen readers.
@@ -449,6 +461,7 @@ this is mostly substitution.
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** accessibility
 - **Re-verified:** hardening pass — **SURVIVES**. `text-red-600` on a cancelled banner (`projects/[id]/page.tsx:307`) and `bg-red-50 border-red-200 text-red-700` on the error card (`projects/page.tsx:161`), neither with a `dark:` variant.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed as a dark-mode failure rather than a light-mode one: #dc2626 (red-600) on #111827 is ~3.3:1, well under the 4.5:1 AA floor for the text-xs error strings, and the hardcoded red-50/emerald-50 chips keep light backgrounds inside a dark shell. MEDIUM is the right level — the light-mode pairings (red-700 on red-50, red-600 on white) do pass.
 
 **Mechanism and locations, worst first:**
 

@@ -44,7 +44,7 @@ chain.**
 
 ## DEL-1 · An owner cannot delegate anything — the permission drawer is hard-wired to Admin/DocCtrl at every call site
 
-- **Severity:** HIGH
+- **Severity:** MEDIUM
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / access-control
@@ -58,6 +58,7 @@ chain.**
   - A repo-wide search for `managePermissions` returns **zero** client-side authorization reads
 - **Related:** `OWN-19`, `DOCACL-*`, `GAP-3`
 - **Re-verified:** hardening pass — **SURVIVES**. Both `PermissionDrawer` call sites pass `canEdit={isController}` (`documents/[libraryId]/page.tsx:4654, 4671`) — ownership is not in the expression, so an owner cannot delegate any part of their own authority.
+- **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The absence claim is confirmed, and the DB is strictly more permissive than the UI: 20260816:66-85 `can_manage_node` already honours an `admin`/`managePermissions` grant on the node, so the delegation model exists in Postgres with no client that can reach it. Lowered to MEDIUM: this is an unimplemented capability, not a fault — nothing is exposed, nothing corrupts, and the report itself concedes PermissionsExplorer honestly shows the drawer as Admin/DocCtrl only.
 
 **Mechanism.** There are exactly three drawer instantiations and all three pass
 the controller boolean. An owner is therefore never `canEdit`, so the ACL editor
@@ -116,6 +117,7 @@ without mentioning that delegating is not among them.
   - `user_is_effective_owner` appears in the publish guard (×2), the review-completion guard, and the two publisher-row-management policies — and in **no SELECT policy**
 - **Related:** `OWN-12`, `DEL-9`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `node_visible` reads visibility, `acl_index`, the singular `role` and team ids (`20260708_acl_rls_enforcement.sql:42-80`). **No ownership term appears anywhere in it**, so ownership confers publish and roster authority without conferring read.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by repo-wide search: `user_is_effective_owner` appears only in the publish guard (20260816:60, 20260822/20260824), the review-completion guard, and the two publisher-row-management policies (20260830:36-50, 20260828:237) — never in a SELECT policy, and no other policy references `owner_user_id` for reads (the sole hit, schema.sql:1125, is an unrelated table). 20260816_owner_publish_access.sql is titled "Phase 2: access grant" but ships publish only.
 
 **Mechanism.** Phase 2 shipped ownership **write** authority
 (`20260816_owner_publish_access.sql`) and never shipped ownership **read**
@@ -171,6 +173,7 @@ backfill. Ownership visibility is solved separately by `DEL-7`. Spec: `GAP-15`.
   - `app/(protected)/admin/teams/page.tsx:204` — the *only* line of UI that reveals the collapse
 - **Related:** `OWN-12`, `OWN-16`, `DEL-4`
 - **Re-verified:** hardening pass — **SURVIVES**. `SELECT supervisor_user_id INTO v_owner FROM teams` (`20260824_team_departments.sql:36`) and the mirror at `ownership.ts:50-55` — a single uid, with no succession, no requirement that the supervisor be a member, and no audit of the change.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. All four sub-claims verified: single scalar (no deputy/succession), no FK, no membership requirement, and no audit row — contrast lib/ownership.ts:63-72 setLibraryOwnerTeam, which does log OWNER_TEAM_ASSIGNED. Publish authority genuinely rides on this value via 20260824:35-38 (`SELECT supervisor_user_id INTO v_owner FROM teams` inside user_is_effective_owner).
 
 **Mechanism.** "A team owns the library" is a two-hop pointer that dereferences
 to exactly **one person**. Every failure mode of that person is a failure mode of
@@ -239,6 +242,7 @@ with no signal. The four fixes below are the whole of the work.
   - `components/permissions/RoleModelTree.tsx:47` — the role tree states Manager has *"No publish authority unless granted per-library or made an owner"*
 - **Related:** `OWN-1`, `DEL-3`
 - **Re-verified:** hardening pass — **SURVIVES**. `teams_admin_write` and `team_members_admin_write` both admit `role IN ('Admin','Manager')` (`20260707_teams.sql:37-48`), and the UI gate agrees (`admin/teams/page.tsx:25`). Setting a team supervisor makes that person the effective owner of every team-owned library, which is publish authority a Manager otherwise does not hold.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. The DB offers no backstop: the only policy on libraries is schema.sql:1060 `CREATE POLICY "libraries_org_access" ON libraries FOR ALL USING (org_id IN (SELECT my_org_ids()))`, so writing `owner_team_id` is unrestricted to any org member, and lib/ownership.ts:66 does exactly that with no controller check. The audit trail records OWNER_TEAM_ASSIGNED but the supervisor swap that actually moves the authority (updateTeam) logs nothing — see DEL-3.
 
 **Mechanism.** Two authority domains designed separately now compose. Teams were
 *"named groups for ACL subjects"* (`lib/teams.ts:1-4`); migration `20260824`
@@ -284,6 +288,7 @@ member for libraries and documents (`OWN-1`), and Admin/Manager for teams.
   - a search of `lib/reviewControl.ts` finds **no author/self-review exclusion**
 - **Related:** `OWN-1`, `OWN-11`, `WF-4`, `WF-14`
 - **Re-verified:** hardening pass — **SURVIVES**. `canManage={canPublishEff}` is passed to both `ReviewersSection` and `AckSection` (`InspectorPanel.tsx:718-726`), so one flag governs who sets the roster and who publishes. The DB guard (`20260822_review_completion_guard.sql:44-55`) counts signatures but never compares signer to publisher.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence — a repo-wide search for any self-review/separation-of-duties predicate (author vs reviewer, created_by vs reviewer_user_id) returns nothing in lib/reviewControl.ts or any migration. lib/reviewControl.ts:287-303 recordReviewSignoff signs whatever signoffId it is given with no actor-vs-owner comparison, and finalize auto-publishes on the last signature.
 
 **Mechanism.** The review gate enforces *that* the roster is complete. It never
 enforces that the roster contains anyone other than the publisher.
@@ -327,6 +332,7 @@ decision rather than an invisible gap.
   - `components/permissions/PermissionsExplorer.tsx` — the matrix row claims `"If library owner"`
 - **Related:** `DEL-1`, `OWN-1`
 - **Re-verified:** hardening pass — **SURVIVES**. `accessRecert.ts` targets `[ownerId, ...controllers]` (`:135-136`) while the ACL edit surface is controller-gated. The owner is asked to perform a review they have no control to complete.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. All three legs verified: the owner is notified, the owner cannot reach the modal (AccessRecertModal is rendered only behind `recertOpen`, set only from that controller-gated menu item), and the published matrix claims owners can do it. lib/accessRecert.ts:3-4's own header says "the library's owner / Admin / DocCtrl reviews who has access".
 
 **Mechanism.** The notification targets and the UI gate were written against
 different mental models and never reconciled. Three places in the codebase say
@@ -365,6 +371,7 @@ behaviour.
   - `app/(protected)/admin/libraries/LibraryWizard.tsx` — **no owner field anywhere**, so libraries are born unowned
 - **Related:** `OWN-12`, `DEL-8`
 - **Re-verified:** hardening pass — **SURVIVES**. `loadDocControlRegister` selects from `documents` only (`docControlRegister.ts:94-103`). No register exists at library or folder level, and `RegisterFilter` (`:201`) offers `unowned` for documents alone.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives, with one softening the finding already concedes in its own location list: RoleModelTree.tsx:227-238 does render a live per-library owner list ("Live: library owners & publish grants"), so "no screen answers it" is strictly true only for folders and for export; for libraries it is buried rather than absent. Note that fold selects `owner_name` without `owner_user_id` (RoleModelTree.tsx:145), which is the DEL-8 defect.
 
 **Mechanism.** Ownership was built as an attribute of the review-cycle feature
 and never promoted to a first-class concept with its own surface.
@@ -409,6 +416,7 @@ fix with no dependencies.
   - `lib/docControlRegister.ts:216` — `filterRegister` searches on `r.ownerName`
 - **Related:** `DEL-7`, `OWN-21`
 - **Re-verified:** hardening pass — **SURVIVES**. `owner_name TEXT` is a plain denormalized column (`20260630_document_ownership.sql:10`) written beside `owner_user_id` (`ownership.ts:130`) and never re-synced when the person's display name changes.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed by absence: repo-wide, nothing updates `owner_name` on a profile/display-name change — no trigger, no backfill, and users/org_members display_name writes (e.g. create-user/route.ts:165) never touch it. The RoleModelTree case is worse exactly as described: since owner_user_id is not even fetched, an owned library with a null owner_name renders as team-owned or as "none → falls to Admin/DocCtrl".
 
 **Mechanism.** Nothing re-syncs `owner_name` when `org_members.display_name`
 changes, when the person is removed, or when the owner is inherited from a team
@@ -453,6 +461,7 @@ correctly does and `RoleModelTree` incorrectly does not.
   - `supabase/migrations/20260824_team_departments.sql:19` — the SQL resolver is `SECURITY DEFINER` and sees everything
 - **Related:** `DEL-2`, `OWN-16`
 - **Re-verified:** hardening pass — **SURVIVES**. `ownership.ts:40` and `docControlRegister.ts:110-111` read `collections`/`libraries` through the **anon client under the caller's RLS**, while the database resolves ownership through `user_is_effective_owner`, a `SECURITY DEFINER` function that sees every row. The two answer differently for the same document.
+- **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed: the client resolver runs under caller RLS and the DB guard bypasses it, so the two genuinely disagree whenever an intermediate folder is invisible to the viewer. Scenario is reachable because visibility is per-node and never inherited (lib/acl.ts:190 resets to 'normal'), so a 'normal' document inside a private folder is DB-visible while its folder is not. Impact is a UI/notification lie plus a publish button that the DB trigger then rejects — not privilege escalation — so MEDIUM is right.
 
 **Mechanism.** When a folder is invisible to the reader, the folder lookup misses
 and the chain **skips a rung** — resolving to the *library* owner instead of the

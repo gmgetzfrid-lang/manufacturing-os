@@ -77,8 +77,14 @@ In order. Each one closes a door that the next finding's fix assumes is closed.
    step*: case-sensitive `eq` on identity is what mints the second account.
    Until it is closed, reconciling existing duplicates just creates room for new
    ones.
-2. **`IDENT-5`** — the signup guard fails open in three independent ways. Same
-   pass as `IDENT-3`; they touch adjacent lines.
+2. ~~**`IDENT-5`** — the signup guard fails open in three independent ways. Same
+   pass as `IDENT-3`; they touch adjacent lines.~~
+   **REFUTED — do not do this step.** The pre-check does fail open, but
+   `createUser` on the next lines rejects an already-registered email and the
+   route returns 400 without creating anything, so no second identity is minted
+   here. What is left is a copy fix: show "An account with this email already
+   exists. Please sign in instead." rather than a raw auth error. Fold it into
+   step 1 if you are in the file anyway; it is not security work.
 3. **`IDENT-2`** — Team Management must refuse a collision rather than guess
    which identity gets the role. Copy the pattern from
    `app/(protected)/projects/[id]/page.tsx:870-872`, which already does this
