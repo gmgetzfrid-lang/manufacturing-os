@@ -258,6 +258,13 @@ time for each run.
 
 **Honest ones, not hedges.**
 
+0. **This has not been tested on real phone footage.** Everything verified above
+   used either synthetic ground truth or rendered test clips. The code path is
+   proven end to end; the *capture* is not. Rolling shutter, electronic
+   stabilisation, real motion blur, auto-exposure and blank painted walls are
+   all real failure modes that rendered frames do not have. Treat the first run
+   on your own video as the actual experiment.
+
 1. **Point cloud, not Gaussian splats.** Splats look markedly better. Training
    them in-browser is possible — [Brush](https://github.com/ArthurBrussee/brush)
    (Apache-2.0) is a real WASM+WebGPU 3DGS trainer — but it has no published npm
