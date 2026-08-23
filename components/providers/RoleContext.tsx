@@ -8,6 +8,7 @@ import type { MembershipState } from "@/lib/protectedGate";
 import { pickBestMembership } from "@/lib/membershipSelection";
 import { readStoredOrgId, readStoredOrgIdFor, writeStoredOrgId, clearStoredOrgId } from "@/lib/workspaceDeviceState";
 import { logWorkspaceRelocation } from "@/lib/audit";
+import { normalizeEmail } from "@/lib/identity";
 
 type OrgMember = {
   orgId: string;
@@ -50,6 +51,10 @@ export type WorkspaceRelocation = {
 
 type RoleContextValue = {
   loading: boolean;
+  /** True once the boot sequence has settled — getSession returned (with or
+   *  without a session) or the boot timeout gave up. Before that, a null
+   *  `uid` means "not known yet", not "signed out". */
+  booted: boolean;
   /** ⚠ Placeholder until `membershipState === "member"`. The literal
    *  "Viewer" here means "not known yet", not "is a Viewer" — the protected
    *  layout guarantees the app shell never renders during resolution
@@ -110,6 +115,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [member, setMember] = useState<OrgMember | null>(null);
   const [membershipState, setMembershipState] = useState<MembershipState>("resolving");
   const [workspaceRelocation, setWorkspaceRelocation] = useState<WorkspaceRelocation | null>(null);
+  const [booted, setBooted] = useState(false);
   const bootedRef = useRef(false);
   // Track the *current* uid in a ref so the auth-state callback (which
   // captures the initial closure) can detect "this SIGNED_IN is just a
@@ -119,6 +125,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   // Keep uidRef in sync so the auth-state subscription (which only closes
   // over the initial value) can check identity changes.
   useEffect(() => { uidRef.current = uid; }, [uid]);
+
+  // Resolve bookkeeping. Resolves can overlap (boot + a user switch, or a
+  // rescue from a token refresh); the GENERATION counter makes them
+  // last-STARTED-wins instead of last-FINISHED-wins — a superseded resolve
+  // must not write state, persist a workspace, announce a relocation, or
+  // stamp "error" over a newer resolve's progress.
+  const resolveGenRef = useRef(0);
+  const resolveInFlightRef = useRef(false);
+  const membershipStateRef = useRef<MembershipState>("resolving");
+  useEffect(() => { membershipStateRef.current = membershipState; }, [membershipState]);
 
   // Watchdog: never let `loading` stay true forever. Whenever loading flips
   // to true post-boot, give it a few seconds to resolve; after that, force it
@@ -134,14 +150,6 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     }, LOADING_WATCHDOG_MS);
     return () => window.clearTimeout(t);
   }, [loading]);
-
-  // If a resolve outruns its budget, land on the honest terminal state: the
-  // retry screen. Never leave the user parked on "resolving" forever, and
-  // never fall through to a placeholder render. A late-landing resolve still
-  // wins — it overwrites "error" with the real answer when it arrives.
-  const failResolveIfStillPending = useCallback(() => {
-    setMembershipState((s) => (s === "resolving" ? "error" : s));
-  }, []);
 
   // Shared budget wrapper (SESS-2): both resolve paths race the same clock.
   const raceWithBudget = useCallback(async (p: Promise<void>) => {
@@ -185,7 +193,11 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     setWorkspaceRelocation(null);
   }, []);
 
-  const resolveOrgAndRole = async (userId: string, email: string | null) => {
+  const resolveOrgAndRole = async (userId: string, email: string | null, gen: number) => {
+    // Every state write below is guarded: a resolve that has been superseded
+    // (a newer one started — user switch, rescue, retry) must contribute
+    // nothing, not even an error stamp.
+    const isCurrent = () => resolveGenRef.current === gen;
     setMembershipState("resolving");
     setWorkspaceRelocation(null);
 
@@ -231,9 +243,15 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       //    persisted the accident as the new default (ORGSEL-1).
       let relocation: Attempt["relocation"] = null;
       if (!mem || mem.status !== "active") {
+        // Server-side ORDER BY so the fetched subset is itself stable: with
+        // more than 20 active memberships the cap would otherwise reintroduce
+        // the arbitrary-subset problem one level up from the picker. Ranking
+        // still happens client-side (role rank isn't expressible here).
         const { data, error } = await supabase
           .from("org_members").select("*")
           .eq("uid", userId).eq("status", "active")
+          .order("created_at", { ascending: true })
+          .order("org_id", { ascending: true })
           .limit(20);
         if (error) throw new Error(error.message);
         const pick = pickBestMembership((data ?? []) as Array<Record<string, unknown>>);
@@ -259,12 +277,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     if (!resolved) {
       // Real lookup failure — say so and let the shell offer a retry.
       console.warn("[RoleContext] membership resolution failed after retries", lastErr);
+      if (!isCurrent()) return;
       setMember(null);
       setRoles([]);
       setActiveRole("Viewer");
       setMembershipState("error");
       return;
     }
+    if (!isCurrent()) return; // a newer resolve owns the state now
 
     const { orgId, mem, relocation } = resolved;
     _setActiveOrgId(orgId);
@@ -323,12 +343,34 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
 
     // Upsert user profile — pure bookkeeping, so it must never hold the
     // boot: awaiting this write kept every hard page load on the
-    // "Authenticating…" spinner for an extra database round trip.
+    // "Authenticating…" spinner for an extra database round trip. Email is
+    // stored in canonical form (IDENT-3) — Azure returns the UPN in
+    // directory casing, and this fire-and-forget write must not undo the
+    // normalization the server routes and migration establish.
     void supabase.from("users").upsert({
       id: userId,
-      email: email ?? null,
+      email: email ? normalizeEmail(email) : null,
       updated_at: new Date().toISOString(),
     }).then(() => undefined, () => undefined);
+  };
+
+  // The one entry point for membership resolution: allocates the generation,
+  // races the shared budget, and lands budget exhaustion on the honest
+  // "error" retry screen — but only if this resolve is still the current
+  // one. Never throws.
+  const startResolve = async (userId: string, email: string | null) => {
+    const gen = ++resolveGenRef.current;
+    resolveInFlightRef.current = true;
+    try {
+      await raceWithBudget(resolveOrgAndRole(userId, email, gen));
+    } catch (err) {
+      console.warn("[RoleContext] membership resolve exceeded its budget", err);
+      if (resolveGenRef.current === gen) {
+        setMembershipState((s) => (s === "resolving" ? "error" : s));
+      }
+    } finally {
+      if (resolveGenRef.current === gen) resolveInFlightRef.current = false;
+    }
   };
 
   useEffect(() => {
@@ -339,6 +381,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     const bootTimeout = window.setTimeout(() => {
       setLoading(false);
       bootedRef.current = true;
+      setBooted(true);
     }, BOOT_SPINNER_MS);
 
     // Get initial session
@@ -351,15 +394,11 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         // to have no timeout at all, so a hung query parked the app on a
         // placeholder forever. On budget exhaustion, land on "error" (the
         // retry screen); a resolve that limps in later still overwrites it.
-        try {
-          await raceWithBudget(resolveOrgAndRole(u.id, u.email ?? null));
-        } catch (err) {
-          console.warn("[RoleContext] boot membership resolve exceeded its budget", err);
-          failResolveIfStillPending();
-        }
+        await startResolve(u.id, u.email ?? null);
       }
       setLoading(false);
       bootedRef.current = true;
+      setBooted(true);
       window.clearTimeout(bootTimeout);
     });
 
@@ -406,8 +445,20 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       // and return to the tab.
       if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
         if (session?.user) {
-          setUid(session.user.id);
-          setUserEmail(session.user.email ?? null);
+          const u = session.user;
+          const uidChanged = uidRef.current !== u.id;
+          setUid(u.id);
+          setUserEmail(u.email ?? null);
+          // A refresh can be the FIRST event that establishes an identity:
+          // boot's getSession can come back sessionless when an expired
+          // token can't refresh on a flaky network, and the auto-refresh
+          // ticker then succeeds seconds later. Without a resolve here the
+          // layout's resolving screen would wait on nothing, forever.
+          // Ordinary hourly refreshes skip this — membership is already
+          // resolved and the uid unchanged.
+          if ((uidChanged || membershipStateRef.current === "resolving") && !resolveInFlightRef.current) {
+            void startResolve(u.id, u.email ?? null);
+          }
         }
         return;
       }
@@ -432,13 +483,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
             // in the context at the time.
             setLoading(true);
             try {
-              await raceWithBudget(resolveOrgAndRole(u.id, u.email ?? null));
-            } catch (err) {
-              console.warn("[RoleContext] role resolve exceeded its budget", err);
-              failResolveIfStillPending();
+              await startResolve(u.id, u.email ?? null);
             } finally {
               setLoading(false);
             }
+          } else if (membershipStateRef.current === "resolving" && !resolveInFlightRef.current) {
+            // Same user, but membership never resolved and nothing is in
+            // flight (boot saw no session; this re-emit is the rescue).
+            void startResolve(u.id, u.email ?? null);
           }
         }
       } else {
@@ -483,6 +535,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<RoleContextValue>(
     () => ({
       loading,
+      booted,
       activeRole,
       roles,
       hasRole: (r: Role) => roles.includes(r),
@@ -496,7 +549,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       workspaceRelocation,
       acknowledgeWorkspaceRelocation,
     }),
-    [loading, activeRole, roles, userEmail, uid, activeOrgId, member, membershipState, workspaceRelocation, acknowledgeWorkspaceRelocation, setActiveOrgId]
+    [loading, booted, activeRole, roles, userEmail, uid, activeOrgId, member, membershipState, workspaceRelocation, acknowledgeWorkspaceRelocation, setActiveOrgId]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;

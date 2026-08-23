@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
+import { normalizeEmail } from '@/lib/identity';
 import { useRouter } from 'next/navigation';
 import { Layout, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
 
@@ -74,11 +75,13 @@ export default function LoginPage() {
       setPreferMicrosoft(true);
     }
 
-    // Ensure a profile row exists so an admin can attach them by email.
+    // Ensure a profile row exists so an admin can attach them by email —
+    // stored canonical (IDENT-3): Azure hands back the UPN in directory
+    // casing, and this write must not undo the normalization.
     try {
       await supabase.from("users").upsert({
         id: uid,
-        email: userEmail ?? null,
+        email: userEmail ? normalizeEmail(userEmail) : null,
         updated_at: new Date().toISOString(),
       });
     } catch {

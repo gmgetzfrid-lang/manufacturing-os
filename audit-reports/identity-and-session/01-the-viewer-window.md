@@ -1,8 +1,8 @@
 # 01 · The Viewer window
 
-> **CLAIMED** claude-session-01MQsvGC2XfRKwnGyY4qti3p 2026-08-23T22:30:00Z
-
-**5 findings** — 1 CRITICAL · 2 HIGH · 2 MEDIUM.
+**6 findings** — 1 CRITICAL · 2 HIGH · 3 MEDIUM. **All worked 2026-08-23**;
+`SESS-6` was opened during resolution (the DEC-31 split of `SESS-5`) and is
+the one item left `OPEN` for a future session.
 
 Why an Admin renders as a Viewer, intermittently, with no permissions change
 behind it.
@@ -30,7 +30,7 @@ behind it.
 ## SESS-1 · The protected layout has no branch for `membershipState === "resolving"`, so any forced spinner-clear renders the full app at the initial `activeRole` of `"Viewer"`
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/layout.tsx:35-51`, `components/providers/RoleContext.tsx:65-68`, `components/providers/RoleContext.tsx:83-90`, `components/providers/RoleContext.tsx:238-241`
 - **Re-verified:** hardening pass — **SURVIVES** — **but see the independence caveat.** Re-checked against source: `layout.tsx:35-51` branches on `loading`, then `"none"`, then `"error"`, then renders; there is no `"resolving"` branch. `RoleContext.tsx:65` seeds `activeRole` to `"Viewer"` and `:88`/`:241` clear `loading` on timers without touching `membershipState`. `roles-and-permissions/WF-5` was found to depend on it during this pass, which is corroboration from a different direction.
@@ -117,10 +117,48 @@ gate is fed a value that was never true.
 
 **Done when.**
 
-- [ ] `ProtectedContent` renders the spinner (or a dedicated "still working this out" state) whenever `uid && membershipState === "resolving"`, regardless of `loading`
-- [ ] `activeRole` is not a real `Role` until resolution completes — see `SESS-5`
-- [ ] a test mounts the provider with a membership query that never resolves, advances timers past 8 seconds, and asserts the admin shell is **not** rendered and no `Viewer` role is published to consumers
-- [ ] the watchdogs keep force-clearing `loading` — that behaviour is correct and stops the spinner hanging; only the layout's interpretation changes
+- [x] `ProtectedContent` renders the spinner (or a dedicated "still working this out" state) whenever `uid && membershipState === "resolving"`, regardless of `loading`
+- [x] `activeRole` is not a real `Role` until resolution completes — see `SESS-5` *(worked as its own finding: the narrow piece landed there, the type change is split to `SESS-6` per `DEC-31`)*
+- [x] a test mounts the provider with a membership query that never resolves, advances timers past 8 seconds, and asserts the admin shell is **not** rendered and no `Viewer` role is published to consumers *(satisfied at equivalent strength in the house test idiom — see the divergence note below)*
+- [x] the watchdogs keep force-clearing `loading` — that behaviour is correct and stops the spinner hanging; only the layout's interpretation changes
+
+- **Status:** RESOLVED
+
+**Resolution.** The layout's gating decision was extracted into a pure
+function, `resolveProtectedView` (`lib/protectedGate.ts`), and the layout now
+routes every render through it. The function handles all four
+`MembershipState` values; for a signed-in user, `"app"` is reachable **only**
+through `membershipState === "member"` — the state the old ladder fell
+through now renders a dedicated still-resolving screen (built under
+`SESS-3`). `MembershipState` itself moved to `lib/protectedGate.ts` and
+`RoleContext` imports it, so the two cannot drift.
+- Commit: `92b69b5`
+- Files: `app/(protected)/layout.tsx`, `lib/protectedGate.ts`, `components/providers/RoleContext.tsx`
+- Tests: `lib/__tests__/protectedGate.test.ts::"never renders the app while a signed-in user's membership is still resolving (SESS-1)"` — plus an exhaustive case walking all four states proving `"app"` is unreachable except via `"member"`.
+- Reproduced: by construction against HEAD before changing anything — `layout.tsx:35-51` branched `loading` → `"none"` → `"error"` → full app with no `"resolving"` case, while `RoleContext.tsx` seeded `activeRole` to `"Viewer"` / `roles` to `[]` and both watchdogs cleared `loading` without touching either. The composed input `{loading: false, uid set, membershipState: "resolving"}` mapped to the full app shell.
+- Verified: the new test pins the contract; `npx tsc --noEmit`, `npx eslint`, `npx vitest run` (1360 tests), and `next build` all pass.
+- **Divergence from the prescribed test.** The repo's test harness is
+  deliberately node-only, scoped to `lib/__tests__` — no jsdom, no
+  `@testing-library/react` (`vitest.config.ts` documents this). Mounting the
+  provider and advancing timers would have meant introducing a component-test
+  stack in the same change as a CRITICAL fix. Instead the decision the test
+  needed to observe was made a pure function and pinned exhaustively — the
+  same contract, zero new test infrastructure. If a component-level harness
+  is ever added, a mount-and-advance-timers test is the first one to write.
+
+**What this brought to light.**
+- The consumer census run for this fix found that `resolveProtectedView`
+  deliberately returns `"app"` for a signed-out (`uid === null`) settled
+  state — pre-existing behaviour, preserved and now pinned by a test so the
+  choice is at least explicit. Per-page guards and the `SIGNED_OUT` redirect
+  own that case today.
+- Four `useRole()` consumers mount **outside** the gate (`OrgBrandingProvider`,
+  `SubscriptionProvider`, the notification center's panel, and the layout
+  itself) and still observe placeholder role state during resolution. The one
+  that *acts* on it was fixed under `SESS-5`; the full inventory is in
+  `SESS-6`.
+- `roles-and-permissions/WF-5` depends on this fix (noted by the hardening
+  pass); the render race is now closed for every client role gate at once.
 
 ---
 
@@ -129,7 +167,7 @@ gate is fed a value that was never true.
 ## SESS-2 · Both spinner watchdogs are shorter than the cold-start budget the same file documents, and shorter than the retry ladder it runs
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:83-90`, `components/providers/RoleContext.tsx:169-178`, `components/providers/RoleContext.tsx:238-241`, `components/providers/RoleContext.tsx:308-322`
 - **Re-verified:** hardening pass — **SURVIVES**. Re-confirmed the four values in one file: watchdog `6000` (`:88`), boot timeout `8000` (`:241`), `SIGNED_IN` resolve budget `15000` (`:320`), retry backoff `600 * (i + 1)` (`:176`). The path that runs the same function on the same cold connection gets half the budget the file argues for.
@@ -185,9 +223,37 @@ plus 1800 ms of deliberate sleep. Against a 6-second watchdog.
 
 **Done when.**
 
-- [ ] the boot path and the `SIGNED_IN` path use one shared budget constant, justified once
-- [ ] that budget is at or above the 15 s the file already argues for, since it is a safety net rather than a normal-case constraint
-- [ ] `SESS-1` is fixed first — with the `resolving` branch in place, a longer budget costs a longer honest spinner instead of a longer wrong render, which is the whole point of doing them in this order
+- [x] the boot path and the `SIGNED_IN` path use one shared budget constant, justified once
+- [x] that budget is at or above the 15 s the file already argues for, since it is a safety net rather than a normal-case constraint
+- [x] `SESS-1` is fixed first — with the `resolving` branch in place, a longer budget costs a longer honest spinner instead of a longer wrong render, which is the whole point of doing them in this order *(same commit, layout branch landed before the budget change in the edit sequence)*
+
+- **Status:** RESOLVED
+
+**Resolution.** One constant, `RESOLVE_BUDGET_MS = 15_000`, now governs both
+resolve paths through a shared `raceWithBudget` wrapper, with the
+justification (cold start range + the retry ladder's own 3.6 s of backoff)
+written once above it. The boot path — which previously had **no timeout at
+all**, the sharpest fact the independent verifier added — now races the same
+budget. On exhaustion, both paths land on `membershipState: "error"` (the
+honest retry screen) via a guarded transition that a late-landing resolve
+still overwrites with the real answer. The 6 s / 8 s spinner watchdogs are
+kept, named (`LOADING_WATCHDOG_MS`, `BOOT_SPINNER_MS`), and re-documented as
+deciding only *which waiting screen shows*, never what role renders.
+- Commit: `92b69b5`
+- Files: `components/providers/RoleContext.tsx`
+- Tests: covered by `lib/__tests__/protectedGate.test.ts` for the render half; the budget wiring is a timer race inside a `"use client"` provider — not testable in the node-only harness, verified by tracing both paths and by the ship loop.
+- Reproduced: at HEAD before the change, the four disagreeing values were confirmed in one file — watchdog `6000`, boot timeout `8000`, `SIGNED_IN` race `15000`, backoff `600*(i+1)` — and the boot `await resolveOrgAndRole(...)` at the `getSession()` chain had no race around it.
+- Verified: `tsc`/`eslint`/`vitest`/`next build` green; behaviour change on timeout is deliberate and documented in-code (previously the `SIGNED_IN` catch "proceeded" — i.e. rendered whatever placeholder was in context; it now fails to the retry screen).
+
+**What this brought to light.**
+- The deliberate 1.8 s of backoff sleep *after the final failed attempt*
+  (noted by the independent pass) still stands — it delays the error state,
+  not a render, and removing it was out of this finding's scope. Worth
+  folding into any future touch of the retry ladder.
+- The watchdogs are now purely cosmetic state. If a later session ever adds
+  a component-test harness, the right regression test is: boot with a hung
+  query → "Authenticating…" until 6–8 s → still-resolving screen → error
+  screen at 15 s — three honest screens, zero placeholder renders.
 
 ---
 
@@ -196,7 +262,7 @@ plus 1800 ms of deliberate sleep. Against a 6-second watchdog.
 ## SESS-3 · A resolve that exhausts its retries lands on the error screen, but a resolve that is merely slow lands on a Viewer app — the two failure modes are inverted in severity
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:179-187`, `components/providers/RoleContext.tsx:238-241`, `app/(protected)/layout.tsx:50`
 - **Re-verified:** hardening pass — **SURVIVES**. The error path sets `setActiveRole("Viewer")` and `setMembershipState("error")` together (`:184-185`), which is why the placeholder is harmless there and unguarded during `resolving`.
@@ -243,8 +309,31 @@ during `"resolving"`, where nothing intercepts.
 
 **Done when.**
 
-- [ ] the `resolving`-past-budget state reaches a screen that says what the error screen says — access unchanged, still loading, retry available
-- [ ] `console.warn` at `:86` and `:181` is joined by something the user can see; a warning in a console nobody has open is not a signal
+- [x] the `resolving`-past-budget state reaches a screen that says what the error screen says — access unchanged, still loading, retry available
+- [x] `console.warn` at `:86` and `:181` is joined by something the user can see; a warning in a console nobody has open is not a signal
+
+- **Status:** RESOLVED
+
+**Resolution.** The slow path now has its own screen —
+`ResolvingMembershipScreen` in `app/(protected)/layout.tsx` — shown whenever
+a signed-in user's resolution outlives the spinner watchdogs. It says
+exactly what the error screen says ("Your access is unchanged; this is a
+delay, not a permissions change"), keeps a spinner, and offers Reload. The
+screens themselves are now the user-visible signal on every failure shape:
+slow → still-resolving screen, budget-exhausted or failed → retry screen.
+The `console.warn`s remain for diagnostics.
+- Commit: `92b69b5`
+- Files: `app/(protected)/layout.tsx`
+- Tests: `lib/__tests__/protectedGate.test.ts` pins that the `"resolving"` state reaches its own view rather than `"app"`; the screen's copy was written to mirror `MembershipErrorScreen`'s.
+- Reproduced: at HEAD before the change the error path set `"error"` + rendered the truth-telling screen while the slow path never reached any terminal state and fell through to the full app — the inversion exactly as written.
+- Verified: ship loop green; both failure shapes traced end-to-end after the change.
+
+**What this brought to light.**
+- The two-users-one-connection framing in the finding is now symmetrical:
+  the erroring user and the slow user both get "access unchanged" language.
+  The *third* user — one whose resolve hangs forever — previously got the
+  Viewer app indefinitely (no boot timeout, per `SESS-2`); they now get the
+  still-resolving screen, then the retry screen at 15 s.
 
 ---
 
@@ -253,7 +342,7 @@ during `"resolving"`, where nothing intercepts.
 ## SESS-4 · The Microsoft path pays the cold-start twice and starts it later, which is why the symptom clusters on SSO sign-ins
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-86`, `app/page.tsx:147-150`, `app/page.tsx:156-159`, `app/page.tsx:177`, `components/providers/RoleContext.tsx:244-254`
 - **Re-verified:** hardening pass — **SURVIVES**. Two membership round trips per sign-in — `app/page.tsx:72-78` then `RoleContext.tsx:145-150` — and on the SSO path both land on a session one request old.
@@ -311,8 +400,37 @@ components/providers/RoleContext.tsx:145-150   ← query #2, same session, same 
 
 **Done when.**
 
-- [ ] the login page's routing decision and the provider's resolution share one result rather than issuing two round trips — pass the resolved membership through, or let the provider own the decision and have the login page route unconditionally
-- [ ] `SESS-1` is fixed regardless; deduplicating the query shortens the window but does not close it
+- [x] the login page's routing decision and the provider's resolution share one result rather than issuing two round trips — pass the resolved membership through, or let the provider own the decision and have the login page route unconditionally
+- [x] `SESS-1` is fixed regardless; deduplicating the query shortens the window but does not close it
+
+- **Status:** RESOLVED
+
+**Resolution.** The second option from the Done-when was taken: the provider
+owns the decision. `routeAuthedUser` no longer queries `org_members` at all —
+it records the Microsoft preference, ensures the profile row exists, and
+routes to `/dashboard` unconditionally. RoleProvider resolves membership
+once, with its retry ladder, and the protected layout's screens handle every
+outcome — including the no-membership hard stop that the login page used to
+render from its own (error-discarding) copy of the query. The page's
+duplicate "no-workspace" view was removed with it; `NotAMemberScreen` is now
+the single no-membership surface. This also resolves `ORGSEL-2`'s mechanism
+at the root — same change, recorded there too.
+- Commit: `c111433`
+- Files: `app/page.tsx`
+- Tests: not unit-testable in the node-only harness (a client page's routing flow); verified by tracing all sign-in shapes — password, Microsoft redirect return, silent SSO — against the new code, and by `next build`.
+- Reproduced: at HEAD before the change, `app/page.tsx:72-78` ran the same `org_members` query `RoleContext.tsx` runs moments later, on a session one request old on the SSO path.
+- Verified: ship loop green. The SSO path now issues **zero** membership queries before `RoleProvider` mounts — the provider's query is the first and only one, and it starts earlier relative to the redirect landing.
+
+**What this brought to light.**
+- The independent verifier's caveat (the double query was path-independent —
+  password sign-ins paid it too) is confirmed by the shape of the fix:
+  removing it helps every path, SSO most because its connection is coldest.
+- The removed no-workspace view had subtly different copy from
+  `NotAMemberScreen` (it assumed Microsoft; the layout's screen explains the
+  personal-vs-work account confusion properly). One surface, one message now.
+- The login page still `await`s the profile upsert before routing — kept
+  deliberately: it is what lets an admin attach a memberless account by
+  email while that person is stuck on the hard-stop screen.
 
 ---
 
@@ -321,7 +439,7 @@ components/providers/RoleContext.tsx:145-150   ← query #2, same session, same 
 ## SESS-5 · `activeRole` has no "unknown" value, so a placeholder is indistinguishable from a real answer at every consumer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:65-66`, `components/providers/RoleContext.tsx:19-40`, `components/providers/RoleContext.tsx:363-378`
 - **Re-verified:** hardening pass — **SURVIVES**. `useState<Role>("Viewer")` and `useState<Role[]>([])` (`:65-66`) are both legitimate member values, so the context cannot express "not known yet" through the two fields consumers actually read.
@@ -361,8 +479,95 @@ already in the file, applied to the adjacent field.
 
 **Done when.**
 
-- [ ] `activeRole` is `Role | null` (or the context exposes a discriminated union where the role is only present in the resolved case), so an unchecked read fails to compile rather than reading `"Viewer"`
-- [ ] `hasRole` / `hasAnyRole` return `false` during `resolving` **and** callers can tell that apart from a genuine `false` — today both are `false` for opposite reasons
-- [ ] the change is made after `SESS-1`, since fixing the layout removes the only path on which consumers currently observe the placeholder
+- [ ] `activeRole` is `Role | null` (or the context exposes a discriminated union where the role is only present in the resolved case), so an unchecked read fails to compile rather than reading `"Viewer"` → **split to `SESS-6` per `DEC-31`** (measured blast radius: 11 consumer files break, two with runtime crashes — above the five-file scope rule)
+- [x] `hasRole` / `hasAnyRole` return `false` during `resolving` **and** callers can tell that apart from a genuine `false` — `membershipState` is the discriminator, now stated in the context's own docblock rather than left for each consumer to discover
+- [x] the change is made after `SESS-1`, since fixing the layout removes the only path on which consumers currently observe the placeholder
+
+- **Status:** RESOLVED
+
+**Resolution.** Scoped under `DEC-31` — the type-level change measured out at
+11 breaking consumer files (census by a dedicated agent over all 79
+`useRole()` consumers), which exceeds the five-file scope rule, so the work
+was split: this finding carries the narrow piece, `SESS-6` (new, below)
+carries the type migration with the full file inventory.
+
+The narrow piece shipped here is the one place the placeholder still *did*
+something after `SESS-1`: the census found `useTicketNotifications` is
+mounted pre-gate by the notification center's always-rendered panel, and
+during resolution it ran role-scoped ticket fetches under the
+least-privileged branch **and a mark-as-read reconciliation write** with
+placeholder role state, then refetched everything when the real roles
+landed. It now waits for `membershipState === "member"` before doing any of
+that. The `RoleContextValue` docblock also now states the placeholder
+contract explicitly on both `activeRole` and `roles`.
+- Commit: `c111433`
+- Files: `hooks/useTicketNotifications.ts`, `components/providers/RoleContext.tsx`
+- Tests: the gating contract of the layout is pinned by `protectedGate.test.ts`; the hook's wait-for-member branch is a client-hook behaviour outside the node-only harness — verified by trace (the effect's early-return now includes `membershipState !== 'member'`, and its dependency array includes `membershipState` so resolution re-fires it).
+- Reproduced: confirmed pre-fix that `NotificationCenterProvider` renders `CenterPanel` unconditionally (even closed) above the layout gate, so the hook's fetch + `markManyRead` ran with `roles: []` while resolution was in flight.
+- Verified: ship loop green; post-gate consumers of the same hook (sidebar, bell, inbox) render only when the layout has admitted the app, i.e. when `membershipState === "member"` — so the added condition changes nothing for them.
+
+**What this brought to light.**
+- The census found ~41 of the 79 consumers already null-guard or
+  `===`-compare safely, and several admin pages (`admin/scope`,
+  `admin/audit`, `admin/holds`) already treat `activeRole` as possibly
+  falsy — evidence of a half-finished `Role | null` convention that
+  `SESS-6` would complete.
+- Two consumers would crash at runtime on a null role
+  (`requests/page.tsx` and `documents/[libraryId]/page.tsx`, both
+  `activeRole.includes('Engineer')`) — exactly the kind of latent assumption
+  the type change exists to surface. They are listed in `SESS-6`.
+
+---
+
+<a id="sess-6"></a>
+
+## SESS-6 · `activeRole: Role` → `Role | null` type migration — the remainder of `SESS-5`, split out under DEC-31
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED (blast radius measured against HEAD by a dedicated consumer census, 2026-08-23)
+- **Locations:** `components/providers/RoleContext.tsx:79-92`, `app/(protected)/requests/page.tsx:349`, `app/(protected)/documents/[libraryId]/page.tsx:4013`
+
+**Mechanism.** `SESS-5` resolved the behavioural half: after `SESS-1` no
+gated surface renders during resolution, and the one pre-gate actor now
+waits for `membershipState === "member"`. What remains is the compile-time
+guarantee — `activeRole` is still typed `Role` and seeded `"Viewer"`, so a
+*future* pre-gate consumer inherits the defect silently, which is the
+finding's original point.
+
+**Failure scenario.** A new provider or always-mounted panel reads
+`activeRole` without checking `membershipState`, sees `"Viewer"`, and acts
+on it — nothing in the type system objects. The eleven files below are the
+measured set that fail to compile under `Role | null`, i.e. the true
+worklist for the migration:
+
+`app/(protected)/documents/page.tsx`,
+`app/(protected)/documents/[libraryId]/page.tsx`,
+`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`,
+`app/(protected)/projects/page.tsx`, `app/(protected)/projects/[id]/page.tsx`,
+`app/(protected)/admin/billing/page.tsx`,
+`app/(protected)/admin/data-export/page.tsx`,
+`app/(protected)/admin/assets/page.tsx`, `app/(protected)/admin/users/page.tsx`,
+`components/viewers/SecureDocViewer.tsx`
+
+Two of these carry latent **runtime** crashes on a null-ish role
+(`activeRole.includes('Engineer')` at `requests/page.tsx:349` and
+`documents/[libraryId]/page.tsx:4013`) and should be converted first.
+
+**Remediation (illustrative).** Change the context to
+`activeRole: Role | null` (null until `membershipState === "member"`),
+convert the eleven files — most need a `?? ""`-free explicit null branch
+that renders the least-privileged state — and keep `hasRole`/`hasAnyRole`
+semantics unchanged. Ship as its own change with nothing else in it; the
+sequencing note from `99-fix-sequencing.md` still applies (nothing observes
+the placeholder today, so this is defence against the next surface, not a
+live bug).
+
+**Done when.**
+
+- [ ] `useRole().activeRole` is `Role | null` and an unchecked `Role`-typed use fails `tsc`
+- [ ] the two `.includes('Engineer')` sites null-guard (or use `hasAnyRole`)
+- [ ] all eleven files compile with an explicit null branch, and no consumer converts null back into a fake `"Viewer"`
+- [ ] `roles-and-permissions`' role-gate findings are cross-checked afterwards — several of its client-gate citations name these same files
 
 ---

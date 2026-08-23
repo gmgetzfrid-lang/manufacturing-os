@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ALL_ROLES, type Role } from "@/types/schema";
-import { normalizeEmail, emailLikePattern } from "@/lib/identity";
+import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 
 // Bounded lookup of auth users by email. Only used in the rare path where the
@@ -108,11 +108,11 @@ export async function POST(req: NextRequest) {
   let userId: string | null = null;
   let createdNewUser = false;
 
-  const { data: profileRows, error: profileLookupError } = await supabaseAdmin
-    .from("users")
-    .select("id, email")
-    .ilike("email", emailLikePattern(email))
-    .limit(2);
+  const { data: profileRows, error: profileLookupError } = await applyEmailLookup(
+    supabaseAdmin.from("users").select("id, email"),
+    "email",
+    email
+  ).limit(2);
   if (profileLookupError) {
     return NextResponse.json(
       { error: `Couldn't verify whether ${email} already has an account — try again. No role was granted.` },
@@ -160,9 +160,13 @@ export async function POST(req: NextRequest) {
   // member (re)activates them and ADDS the chosen role to their collection.
   // A transient lookup error must refuse here — misreading "member exists"
   // as "new member" would send an existing member down the insert path.
+  // select("*") rather than naming columns: a pre-migration database has no
+  // `roles` column, and naming it would turn every "Add member" call into a
+  // 42703 error — the same pre-migration tolerance the roles seed below
+  // promises. normalizeRoles handles the column's absence.
   const { data: existingMember, error: memberLookupError } = await supabaseAdmin
     .from("org_members")
-    .select("uid, role, roles, display_name")
+    .select("*")
     .eq("org_id", orgId)
     .eq("uid", userId)
     .maybeSingle();
@@ -245,16 +249,27 @@ export async function POST(req: NextRequest) {
     if (createdNewUser && userId) {
       await supabaseAdmin.auth.admin.deleteUser(userId);
     }
-    // The org_members_org_email_active_unique_ci index refuses a second
-    // ACTIVE membership on this email under a different identity — that is
-    // the IDENT-2 collision reaching the database backstop. Say what it
-    // means instead of relaying the raw unique-violation message.
+    // Two distinct unique backstops can fire here, and they mean different
+    // things — do not conflate them (adversarial-review finding):
+    //  · org_members_org_email_active_unique_ci → a DIFFERENT identity is
+    //    already active on this email in this org: the IDENT-2 collision
+    //    reaching the database. Refuse with the collision explanation.
+    //  · UNIQUE(org_id, uid) → a concurrent request already added THIS
+    //    identity (two admins double-adding): the membership exists; saying
+    //    "another account" would be false.
     const code = (memberError as { code?: string }).code;
-    if (code === "23505" || /org_members_org_email_active_unique/i.test(memberError.message ?? "")) {
+    const msg = memberError.message ?? "";
+    if (/org_members_org_email_active_unique/i.test(msg)) {
       return NextResponse.json(
         {
           error: `Another account already holds an active membership for ${email} in this workspace — contact your admin. No role was granted.`,
         },
+        { status: 409 }
+      );
+    }
+    if (code === "23505") {
+      return NextResponse.json(
+        { error: `${email} was just added by a concurrent request — refresh the member list. This request made no changes.` },
         { status: 409 }
       );
     }

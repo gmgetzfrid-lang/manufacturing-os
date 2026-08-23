@@ -67,6 +67,20 @@ describe("pickBestMembership", () => {
     expect(two!.candidateCount).toBe(2);
   });
 
+  it("stays deterministic when two equal-rank rows both lack a parseable created_at", () => {
+    // Regression pin for the NaN-comparator defect: Infinity - Infinity is
+    // NaN, which Array.sort treats as 0 — silently skipping the org_id
+    // tiebreak and making the pick depend on input order.
+    const a = { org_id: "aaa", role: "Viewer", roles: ["Viewer"], status: "active" };
+    const b = { org_id: "bbb", role: "Viewer", roles: ["Viewer"], status: "active" };
+    expect(pickBestMembership([a, b])!.orgId).toBe("aaa");
+    expect(pickBestMembership([b, a])!.orgId).toBe("aaa");
+
+    const c = { ...a, created_at: "not-a-date" };
+    const d = { ...b, created_at: "also-not-a-date" };
+    expect(pickBestMembership([d, c])!.orgId).toBe("aaa");
+  });
+
   it("tolerates legacy rows: missing roles[], missing created_at, missing org_id", () => {
     const legacy = { org_id: "org-legacy", role: "Admin", status: "active" };
     const broken = { role: "Admin", status: "active" }; // no org_id — unusable

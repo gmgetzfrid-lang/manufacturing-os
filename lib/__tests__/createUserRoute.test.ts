@@ -22,6 +22,8 @@ const mockState = vi.hoisted(() => ({
   authUser: null as null | { id: string; email?: string },
   createUserResult: { data: { user: null as null | { id: string } }, error: null as null | { message: string; code?: string } },
   listUsersPages: [] as Array<Array<{ id: string; email: string }>>,
+  listUsersError: null as null | { message: string },
+  deletedUsers: [] as string[],
   // FIFO of results per table — each awaited terminal (then/maybeSingle/
   // single) consumes the next queued result for its table.
   queues: {} as Record<string, QueuedResult[]>,
@@ -64,11 +66,14 @@ vi.mock("@/lib/supabaseAdmin", () => ({
           : { data: { user: null }, error: { message: "bad token" } }),
       admin: {
         createUser: vi.fn(async () => mockState.createUserResult),
-        listUsers: vi.fn(async ({ page }: { page: number }) => ({
-          data: { users: mockState.listUsersPages[page - 1] ?? [] },
-          error: null,
-        })),
-        deleteUser: vi.fn(async () => ({ data: null, error: null })),
+        listUsers: vi.fn(async ({ page }: { page: number }) =>
+          mockState.listUsersError
+            ? { data: { users: [] }, error: mockState.listUsersError }
+            : { data: { users: mockState.listUsersPages[page - 1] ?? [] }, error: null }),
+        deleteUser: vi.fn(async (id: string) => {
+          mockState.deletedUsers.push(id);
+          return { data: null, error: null };
+        }),
       },
     },
     from: (table: string) => makeChain(table),
@@ -95,6 +100,8 @@ beforeEach(() => {
   mockState.authUser = { id: "admin-1", email: "admin@corp.com" };
   mockState.createUserResult = { data: { user: null }, error: { message: "should not be called" } };
   mockState.listUsersPages = [];
+  mockState.listUsersError = null;
+  mockState.deletedUsers = [];
   mockState.queues = {};
   mockState.calls = [];
 });
@@ -219,6 +226,152 @@ describe("POST /api/admin/create-user — re-add merges roles (ORGSEL-3)", () =>
     };
     const res = await POST(makeRequest({ email: "boss@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
     expect(res.status).toBe(403);
+    expect(memberWrites()).toHaveLength(0);
+  });
+});
+
+describe("POST /api/admin/create-user — auth fallback failure and pagination (adversarial-review pins)", () => {
+  it("fails closed (500, no writes) when listUsers itself errors mid-recovery", () => {
+    mockState.queues = {
+      org_members: [{ data: { role: "Admin" } }],
+      users: [{ data: [] }],
+    };
+    mockState.createUserResult = { data: { user: null }, error: { message: "A user with this email address has already been registered" } };
+    mockState.listUsersError = { message: "connection reset" };
+    return POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "Drafter" })).then(async (res) => {
+      expect(res.status).toBe(500);
+      expect(memberWrites()).toHaveLength(0);
+    });
+  });
+
+  it("finds a collision split across listUsers pages — refusal must see EVERY page", async () => {
+    mockState.queues = {
+      org_members: [{ data: { role: "Admin" } }],
+      users: [{ data: [] }],
+    };
+    mockState.createUserResult = { data: { user: null }, error: { message: "already been registered" } };
+    const page1 = Array.from({ length: 199 }, (_, i) => ({ id: `filler-${i}`, email: `f${i}@x.com` }));
+    page1.push({ id: "uid-a", email: "greg@corp.com" }); // exactly 200 → pagination continues
+    mockState.listUsersPages = [page1, [{ id: "uid-b", email: "GREG@corp.com" }]];
+    const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "Drafter" }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.collidingUids).toEqual(["uid-a", "uid-b"]);
+    expect(memberWrites()).toHaveLength(0);
+  });
+});
+
+describe("POST /api/admin/create-user — guard and insert-path pins (adversarial-review)", () => {
+  it("refuses a DocCtrl altering a member whose Admin hat hides in the roles collection behind a lower headline", async () => {
+    mockState.authUser = { id: "docctrl-1" };
+    mockState.queues = {
+      org_members: [
+        { data: { role: "DocCtrl" } }, // caller
+        { data: { uid: "uid-a", role: "DocCtrl", roles: ["DocCtrl", "Admin"], display_name: null } }, // drifted headline
+      ],
+      users: [{ data: [{ id: "uid-a", email: "boss@corp.com" }] }],
+    };
+    const res = await POST(makeRequest({ email: "boss@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
+    expect(res.status).toBe(403);
+    expect(memberWrites()).toHaveLength(0);
+  });
+
+  it("maps the email-collision unique index to the collision 409, by constraint name", async () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },
+        { data: null }, // no existing member
+        { error: { message: 'duplicate key value violates unique constraint "org_members_org_email_active_unique_ci"', code: "23505" } },
+      ],
+      users: [{ data: [{ id: "uid-a", email: "greg@corp.com" }] }],
+    };
+    const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "Drafter" }));
+    expect(res.status).toBe(409);
+    expect(String((await res.json()).error)).toContain("Another account");
+  });
+
+  it("maps a concurrent double-add (UNIQUE(org_id, uid) 23505) to an honest concurrent-request 409, not the collision message", async () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },
+        { data: null },
+        { error: { message: 'duplicate key value violates unique constraint "org_members_org_id_uid_key"', code: "23505" } },
+      ],
+      users: [{ data: [{ id: "uid-a", email: "greg@corp.com" }] }],
+    };
+    const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "Drafter" }));
+    expect(res.status).toBe(409);
+    const err = String((await res.json()).error);
+    expect(err).toContain("concurrent");
+    expect(err).not.toContain("Another account");
+  });
+
+  it("rolls back a just-created auth user when the membership insert fails for another reason", async () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },
+        { data: null },
+        { error: { message: "insert exploded" } },
+      ],
+      users: [{ data: [] }], // no profile → creation path
+    };
+    mockState.createUserResult = { data: { user: { id: "brand-new-uid" } }, error: null };
+    const res = await POST(makeRequest({ email: "new@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
+    expect(res.status).toBe(500);
+    expect(mockState.deletedUsers).toEqual(["brand-new-uid"]);
+  });
+
+  it("seeds default_org_id for a brand-new account so its first sign-in has a candidate workspace", async () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },
+        { data: null },              // no existing member
+        { data: null, error: null }, // insert
+        { data: null, error: null }, // roles seed
+      ],
+      users: [
+        { data: [] },                // no profile
+        { data: null, error: null }, // profile upsert
+      ],
+    };
+    mockState.createUserResult = { data: { user: { id: "brand-new-uid" } }, error: null };
+    const res = await POST(makeRequest({ email: "new@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
+    expect(res.status).toBe(200);
+    const upsert = mockState.calls.find((c) => c.table === "users" && c.method === "upsert");
+    expect(upsert).toBeDefined();
+    expect((upsert!.args[0] as { default_org_id?: string }).default_org_id).toBe("org-1");
+  });
+
+  it("does NOT repoint an existing account's default workspace when adding them to a second org", async () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },
+        { data: null },              // not a member of THIS org
+        { data: null, error: null }, // insert
+        { data: null, error: null }, // roles seed
+      ],
+      users: [
+        { data: [{ id: "uid-existing", email: "greg@corp.com" }] }, // existing profile
+        { data: null, error: null },                                  // profile upsert
+      ],
+    };
+    const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-2", role: "Viewer" }));
+    expect(res.status).toBe(200);
+    const upsert = mockState.calls.find((c) => c.table === "users" && c.method === "upsert");
+    expect(upsert).toBeDefined();
+    expect(upsert!.args[0]).not.toHaveProperty("default_org_id");
+  });
+
+  it("fails closed (500, no writes) when the existing-membership lookup errors", async () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },
+        { error: { message: "transient" } }, // membership lookup fails
+      ],
+      users: [{ data: [{ id: "uid-a", email: "greg@corp.com" }] }],
+    };
+    const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
+    expect(res.status).toBe(500);
     expect(memberWrites()).toHaveLength(0);
   });
 });

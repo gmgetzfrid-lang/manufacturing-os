@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import { logAuditAction } from '@/lib/audit';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
@@ -121,11 +122,25 @@ export default function AdminUsersPage() {
   // Persist a member's additive role collection. Writes the full `roles` array
   // plus the headline `role` (highest-ranked) so the legacy single-role checks
   // and the database RLS policies stay correct. Optimistic, reverts on failure.
+  // This is the ONLY surface allowed to shrink a collection (the Add-member
+  // route merges, never removes — ORGSEL-3), so a removal here is confirmed
+  // and audited: capability loss reaches RLS via the recomputed headline, and
+  // "who removed this person's hat, and when" must have an answer.
   const persistRoles = async (member: MemberRow, nextRoles: Role[]) => {
     const cleaned = Array.from(new Set(nextRoles)) as Role[];
     if (cleaned.length === 0) {
       await appAlert('A member needs at least one role.');
       return;
+    }
+    const before = rolesOf(member);
+    const removed = before.filter((r) => !cleaned.includes(r));
+    if (removed.length > 0) {
+      const ok = await appConfirm({
+        message: `Remove the ${removed.join(', ')} role${removed.length > 1 ? 's' : ''} from ${member.display_name || member.email}? They lose that role's capabilities immediately.`,
+        tone: 'danger',
+        confirmLabel: 'Remove role',
+      });
+      if (!ok) return;
     }
     const headline = primaryRole(cleaned);
     setSavingRoleId(member.id);
@@ -147,6 +162,19 @@ export default function AdminUsersPage() {
         } else {
           throw error;
         }
+      }
+      // A role removal is a capability loss that reaches RLS — record it
+      // (fire-and-forget, same contract as every audit write).
+      if (removed.length > 0 && uid) {
+        void logAuditAction({
+          action: 'ROLE_REMOVED',
+          resourceType: 'org_member',
+          resourceId: (member.uid as string | null) || member.id,
+          orgId: activeOrgId || undefined,
+          userId: uid,
+          userRole: activeRole,
+          details: { memberEmail: member.email, removed, before, after: cleaned, headlineBefore: member.role, headlineAfter: headline },
+        });
       }
     } catch (err) {
       console.error('Role update failed:', err);

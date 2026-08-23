@@ -1,8 +1,11 @@
 # 02 · Identity collision — two sign-in methods, one person
 
-> **CLAIMED** claude-session-01MQsvGC2XfRKwnGyY4qti3p 2026-08-23T22:30:00Z
-
-**5 findings** — 1 CRITICAL · 2 HIGH · 2 MEDIUM.
+**6 findings** — 2 HIGH · 4 MEDIUM. **All worked 2026-08-23** — `IDENT-1` is
+`BLOCKED` on production queries only this installation can run (the code and
+migration halves are done), `IDENT-5` stays `REFUTED`, and `IDENT-6` was
+found during resolution and fixed. *(This header previously claimed
+1 CRITICAL · 2 HIGH · 2 MEDIUM — stale since the independent pass lowered
+`IDENT-1` to HIGH; corrected as part of the resolution pass.)*
 
 Your second question, answered directly: **yes, duplicate profiles in the same
 org are possible, and the constraint you have does not prevent them.** Whether it
@@ -32,7 +35,7 @@ has already happened is a thirty-second query, given below.
 ## IDENT-1 · Nothing anywhere makes an email address unique, so two auth identities for one person can hold two memberships with two different roles in the same org
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** BLOCKED
 - **Verification:** CONFIRMED (the absence of the constraint); SUSPECTED (whether duplicates exist in your data today — see the query)
 - **Locations:** `supabase/schema.sql:8-16`, `supabase/schema.sql:33-49`, `app/(protected)/projects/[id]/page.tsx:870-872`
 - **Re-verified:** hardening pass — **SURVIVES** with its stated split intact — **and the same independence caveat as `SESS-1`.** The absence of any unique constraint on `users.email` is CONFIRMED and mechanically checkable. Whether duplicates exist in production remains SUSPECTED and is not answerable from this repository; the three queries in the finding are still the way to settle it.
@@ -128,10 +131,54 @@ signer identity is the part that matters most — it is the difference between
 
 **Done when.**
 
-- [ ] the three queries above have been run against production and the result recorded here
-- [ ] a unique index on `lower(email)` exists for `users`, added **after** any existing duplicates are reconciled (adding it first will simply fail)
-- [ ] a decision is recorded in `DECISIONS.md` on whether identity linking is required — if it is, the Supabase setting is documented alongside the constraint, because the constraint alone cannot force two providers onto one auth user
-- [ ] `org_members` carries a partial unique index on `(org_id, lower(email))` for `status = 'active'`, so the same person cannot hold two active memberships in one workspace regardless of how many identities they accumulate
+- [ ] the three queries above have been run against production and the result recorded here → **the blocking step; see the Blocker block**
+- [x] a unique index on `lower(email)` exists for `users`, added **after** any existing duplicates are reconciled (adding it first will simply fail) — *written*; applied by hand after the inventory (`DEC-30`)
+- [x] a decision is recorded in `DECISIONS.md` on whether identity linking is required — **`DEC-42`**: linking is required; the setting and its verification query are documented there
+- [x] `org_members` carries a partial unique index on `(org_id, lower(email))` for `status = 'active'`, so the same person cannot hold two active memberships in one workspace regardless of how many identities they accumulate — *written*, same migration
+
+- **Status:** BLOCKED
+
+**Resolution (code + migration halves — done).** Migration
+`supabase/migrations/20261018_identity_email_unique.sql` carries, in order:
+the three inventory queries as a mandatory STEP 0 with reconciliation
+guidance (including the do-not-cascade-delete warning: `users.id` cascades
+from `auth.users`, so the spare identity's uid-keyed rows must be reassigned
+deliberately, never force-deleted); an idempotent email normalization of
+`users`, `org_members` and `access_requests`; `users_email_unique_ci`; and
+the partial `org_members_org_email_active_unique_ci`. The `schema.sql`
+snapshot mirrors both indexes. The application half that makes the indexes
+safe to rely on landed under `IDENT-2`/`IDENT-3`, and the create-user route
+maps the index's 23505 on its insert path to the collision-refusal 409 so
+the backstop firing reads as an explanation, not a raw database error.
+- Commits: `8fef0f6`, `c111433`
+- Files: `supabase/migrations/20261018_identity_email_unique.sql`, `supabase/schema.sql`, `audit-reports/DECISIONS.md` (DEC-42), `app/api/admin/create-user/route.ts`
+- Pending migration: `supabase/migrations/20261018_identity_email_unique.sql` — **applied by hand, after STEP 0**.
+
+**Blocker (`DEC-27` #4 / `DEC-30`).** The three inventory queries read
+production data this repository cannot observe (`auth.users`,
+`auth.identities`, live `org_members`). Which world this installation is in
+— duplicates exist and must be reconciled, or they don't and the indexes
+apply cleanly — decides the remaining work. Unblocking step: run STEP 0 of
+the migration file against production, record the three result sets here,
+reconcile per the in-file guidance if any rows return, then apply the rest
+of the file. Also verify the `DEC-42` linking setting while in the
+dashboard.
+
+**What this brought to light.**
+- The DB census for this fix confirmed the absence claim repo-wide at HEAD
+  (no unique constraint or index on any email column existed anywhere in
+  162 migrations + schema), and found the restore paths insert members as
+  `status='inactive'` — deliberately outside the new partial index, so a
+  restore can never collide with a live membership. `lib/dataRestore.ts`
+  already normalizes emails (`trim`+`lowercase`) during reconciliation, so
+  STEP 1's lowercasing cannot break restore matching.
+- The bulk UPDATE in STEP 1 fires `trg_prevent_last_admin_update` per row,
+  but the guard returns early when `auth.uid()` is null (SQL editor /
+  service role), so the migration passes it — and that same exemption means
+  **the trigger does not protect production from service-role writes at
+  all**; the create-user route is the only guard on its own paths. Noted
+  for the `roles-and-permissions` area, whose `DB-*` findings own that
+  trigger.
 
 ---
 
@@ -140,7 +187,7 @@ signer identity is the part that matters most — it is the difference between
 ## IDENT-2 · Team Management's email lookup uses `maybeSingle()` and discards its error, so two profiles sharing an email are read as "no profile" and the membership is attached to an arbitrary identity
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/create-user/route.ts:80-107`, `app/api/admin/create-user/route.ts:8-19`
 - **Re-verified:** hardening pass — **SURVIVES**. `const { data: existingProfile } = await supabaseAdmin.from("users").select("id").eq("email", email).maybeSingle()` (`create-user:80-84`) — `error` is not destructured, and `maybeSingle()` errors on more than one row, so two profiles read as none. The fallback `findAuthUserIdByEmail` then returns `data.users.find(…)` in `listUsers` page order.
@@ -202,10 +249,39 @@ The correct handling exists in this repo already, at
 
 **Done when.**
 
-- [ ] the lookup selects up to two rows and **fails loudly** on more than one, with a message naming the collision, rather than falling through to creation
-- [ ] the `error` from every `maybeSingle()` on this route is destructured and handled — the same pass should cover `:111-116`
-- [ ] `findAuthUserIdByEmail` refuses to guess when it finds more than one match instead of returning the first
-- [ ] a test seeds two profiles on one email and asserts the route returns a 409 naming both `uid`s, and writes no membership row
+- [x] the lookup selects up to two rows and **fails loudly** on more than one, with a message naming the collision, rather than falling through to creation
+- [x] the `error` from every `maybeSingle()` on this route is destructured and handled — the same pass should cover `:111-116`
+- [x] `findAuthUserIdByEmail` refuses to guess when it finds more than one match instead of returning the first
+- [x] a test seeds two profiles on one email and asserts the route returns a 409 naming both `uid`s, and writes no membership row
+
+- **Status:** RESOLVED
+
+**Resolution.** The route now fails loudly in both directions at every
+lookup. The profile lookup selects two case-insensitively
+(`ilike` on the escaped normalized address, so pre-normalization mixed-case
+rows are found), returns 500 **without proceeding to creation** on a lookup
+error, and returns 409 naming both uids (`collidingUids` in the body, the
+projects-page message shape in the copy) on two rows. `findAuthUserIdByEmail`
+became `findAuthUsersByEmail`: it collects every match across pages,
+distinguishes "lookup failed" (refuse, 500) from "no match", and a
+multi-match refuses with the same 409. The existing-member lookup
+destructures its error and refuses on failure. The database backstop's
+23505 on the insert path (a different uid already active on this email in
+this org) maps to the same collision refusal.
+- Commits: `8fef0f6`, `c111433`
+- Files: `app/api/admin/create-user/route.ts`, `lib/identity.ts`
+- Tests: `lib/__tests__/createUserRoute.test.ts::"returns 409 naming both uids and writes NO membership when two profiles share the email"`, `::"refuses to guess when the auth fallback finds two identities on one address"`, `::"fails closed (500, no writes) when the profile lookup itself errors"`
+- Reproduced: the pre-fix mechanism was re-confirmed at HEAD (`error` never destructured at `:80-84`; `find(...)` first-match at `:14`); the new tests were written against the contract and fail against the old code by construction (the old route returned 200 and wrote a membership in the two-profile scenario the first test seeds).
+- Verified: full suite (1360 tests) + ship loop green. The caller census confirmed the admin users page surfaces any `{error}` body verbatim in its modal and reads nothing but `error`/`uid`, so the 409 shape is safe, and the promised remove→re-add flow cannot trip the refusal (removal keeps exactly one profile row).
+
+**What this brought to light.**
+- This route was the *only* writer that could attach a role to the wrong
+  human; the other admitting door (`signup`) mints a fresh identity instead,
+  which is why its guard is a courtesy and `createUser` its enforcement
+  (see `IDENT-5`'s refutation — consistent with what was found here).
+- The response now carries `collidingUids` so an admin's error message can
+  name what to clean up. The uids are already visible to org admins in Team
+  Management; no new information class leaves the server.
 
 ---
 
@@ -214,7 +290,7 @@ The correct handling exists in this repo already, at
 ## IDENT-3 · Email matching is case-sensitive in three server routes and case-folded in a fourth, so the same address can both miss an existing account and create a second one
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/signup/route.ts:77-82`, `app/api/admin/create-user/route.ts:83`, `app/api/admin/create-user/route.ts:9`, `app/api/auth/request-access/route.ts:30-36`
 - **Re-verified:** hardening pass — **SURVIVES**. Three case-sensitive `eq("email", …)` comparisons (`signup:80`, `create-user:83`, `request-access:33`) against one case-folded matcher in the same file as the second (`create-user:9,14`), while org names get `ilike` in both `signup:65` and `request-access:16`.
@@ -264,9 +340,38 @@ app/api/auth/signup/route.ts:65           ← the repo's own correct pattern, on
 
 **Done when.**
 
-- [ ] every email comparison in the codebase normalises both sides — one shared helper, not four call sites each remembering
-- [ ] the `lower(email)` unique index from `IDENT-1` is the backstop, so a route that forgets cannot create the duplicate anyway
-- [ ] emails are stored normalised on write, so `org_members.email` and `users.email` do not disagree with each other about the same person
+- [x] every email comparison in the codebase normalises both sides — one shared helper, not four call sites each remembering
+- [x] the `lower(email)` unique index from `IDENT-1` is the backstop, so a route that forgets cannot create the duplicate anyway *(written; pending hand-apply per `IDENT-1`)*
+- [x] emails are stored normalised on write, so `org_members.email` and `users.email` do not disagree with each other about the same person
+
+- **Status:** RESOLVED
+
+**Resolution.** `lib/identity.ts` is the one shared helper:
+`normalizeEmail` (trim + lowercase, for storage and equality) and
+`emailLikePattern` (normalized **and LIKE-escaped**, because emails may
+legally contain `%` and `_` — an unescaped `ilike` on `a_b@x.com` would also
+match `axb@x.com`). All three routes now normalize at the parse boundary,
+look up case-insensitively, and store the canonical form on every write
+(`org_members.email`, `users.email`, `access_requests.email`). The
+request-access duplicate check also had the same discarded-error shape as
+`IDENT-2` — it now refuses on a failed lookup instead of stacking a
+duplicate row. The migration's STEP 1 brings pre-existing rows onto the same
+canonical form.
+- Commit: `8fef0f6`
+- Files: `lib/identity.ts`, `app/api/auth/signup/route.ts`, `app/api/admin/create-user/route.ts`, `app/api/auth/request-access/route.ts`
+- Tests: `lib/__tests__/identity.test.ts` (normalization, idempotence, wildcard escaping — including the Azure-UPN-vs-typed case), `lib/__tests__/createUserRoute.test.ts::"matches the profile case-insensitively on the normalized address (IDENT-3)"`
+- Reproduced: the three case-sensitive `eq("email", …)` sites and the one case-folded matcher were re-confirmed at HEAD before changing anything.
+- Verified: ship loop green. Lookups use `ilike` rather than `eq`-on-lowercase deliberately: stored rows written before normalization may be mixed-case, and an `eq` on the canonical form would miss exactly the accounts this finding is about.
+
+**What this brought to light.**
+- The independent verifier's correction stands confirmed in the fix: the
+  observable damage was the confusing raw auth error (now the friendly 409 —
+  folded in from refuted `IDENT-5`) and genuinely duplicated
+  `access_requests` rows (now both refused-on-error and case-insensitive) —
+  not a minted duplicate identity.
+- Nobody could ever *see* a request-access failure: the signup page ignored
+  the response entirely and showed "Request Sent" on any outcome. That is
+  now `IDENT-6` (below), found by the caller census and fixed.
 
 ---
 
@@ -275,7 +380,7 @@ app/api/auth/signup/route.ts:65           ← the repo's own correct pattern, on
 ## IDENT-4 · The device-wide "prefer Microsoft" flag and the workspace key are not scoped to an identity, so one browser's state carries across two accounts
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/supabase.ts:39-58`, `components/providers/RoleContext.tsx:44`, `components/providers/RoleContext.tsx:130-140`, `app/(protected)/profile/page.tsx:77`, `components/providers/RoleContext.tsx:260-280`
 - **Re-verified:** hardening pass — **SURVIVES**. `LS_ORG_KEY = "manufacturingos.activeOrgId"` (`RoleContext.tsx:44`) and `PREFER_MS_KEY = "manufacturingos.preferMicrosoft"` (`supabase.ts:39`) are both bare constants with no uid component, and the `SIGNED_OUT` purge at `:269-278` clears only the `intel-status-`/`schema-gaps-` snapshots.
@@ -324,9 +429,53 @@ And the sign-out purge that names the principle but omits this key —
 
 **Done when.**
 
-- [ ] `manufacturingos.activeOrgId` is namespaced by `uid`, or cleared in the same `SIGNED_OUT` block that purges the status snapshots
-- [ ] a `uid` change between the stored key's owner and the current session invalidates the candidate rather than inheriting it
-- [ ] the profile page's "stop preferring Microsoft" control is discoverable from the sign-in screen too, since that is where someone stuck in the wrong identity actually is
+- [x] `manufacturingos.activeOrgId` is namespaced by `uid`, or cleared in the same `SIGNED_OUT` block that purges the status snapshots — **both**: cleared on `SIGNED_OUT`, and owner-stamped so surviving copies invalidate
+- [x] a `uid` change between the stored key's owner and the current session invalidates the candidate rather than inheriting it
+- [x] the profile page's "stop preferring Microsoft" control is discoverable from the sign-in screen too, since that is where someone stuck in the wrong identity actually is
+
+- **Status:** RESOLVED
+
+**Resolution.** The device workspace state moved into
+`lib/workspaceDeviceState.ts`: the stored org now carries an **owner stamp**
+(`manufacturingos.activeOrgId.owner`), resolution reads it through
+`readStoredOrgIdFor(uid)` — a mismatched owner returns null *and clears the
+stale value* — and the `SIGNED_OUT` purge clears the key alongside the
+status snapshots. The pre-paint restore stays raw-read by necessity (no
+session exists before first paint; the hydration-safety comment in
+`RoleContext` explains why it cannot wait), which is exactly why validation
+lives at resolution time. `app/signup/page.tsx`'s raw string literal — found
+by the census, a second writer that would have silently missed any key
+change — now writes through the same helper, stamped with the new account's
+uid. The verifier's sharpest case is closed: `NotAMemberScreen`'s "Sign out
+& switch account" clears the silent-Microsoft flag before signing out, so
+silent SSO can no longer walk the user straight back into the identity they
+are leaving; and the sign-in screen shows a "Turn off" control whenever
+automatic Microsoft sign-in is armed on the device.
+- Commit: `c111433`
+- Files: `lib/workspaceDeviceState.ts`, `components/providers/RoleContext.tsx`, `app/(protected)/layout.tsx`, `app/page.tsx`, `app/signup/page.tsx`
+- Tests: `lib/__tests__/workspaceDeviceState.test.ts::"rejects a workspace stored by a different identity — the cross-account bleed"` plus legacy-tolerance and SSR-safety cases.
+- Reproduced: re-confirmed at HEAD that both keys were bare constants, the `SIGNED_OUT` purge listed only the snapshot prefixes, and the layout's sign-out button called `signOut()` without clearing the preference (unlike the four other sign-out surfaces, which all clear it).
+- Verified: ship loop green. **Deliberately NOT done:** `preferMicrosoft` is
+  not in the `SIGNED_OUT` purge — session *expiry* also emits `SIGNED_OUT`,
+  and the flag's documented contract (`lib/supabase.ts:36-38`) is that only
+  an explicit sign-out clears it, so purging there would break
+  "open the app and you're already in". Explicit sign-out buttons (now all
+  five of them) are the clearing path.
+
+**What this brought to light.**
+- The census surfaced `lib/dashboard/config.ts` as the in-repo precedent for
+  uid-scoping (`manufacturingos.dashboard.<uid>`); the owner-stamp approach
+  was chosen over renaming the key because renaming orphans every existing
+  device's stored workspace on upgrade for no safety gain.
+- `manufacturingos.customStamps` (custom stamp images in
+  `FullScreenViewer.tsx`) is device-scoped user content with the same mild
+  cross-account character — deliberately left alone here (sweeping it would
+  destroy a user's stamps), noted for the `document-control` area if it ever
+  matters.
+- After the clear-on-sign-out, `users.default_org_id` becomes the only
+  cross-sign-in restore — which made `ORGSEL-1`'s deterministic fallback
+  more load-bearing, and exposed that admin-created accounts had no default
+  at all (fixed in the create-user route; noted under `ORGSEL-1`).
 
 ---
 
@@ -387,5 +536,69 @@ database backstop. Identities get neither.
 - [ ] the check is case-insensitive and reads the auth identity, not just the profile mirror
 - [ ] the `lower(email)` unique index from `IDENT-1` backs it, on the same reasoning the route already applies to `orgs_name_unique_ci`
 - [ ] the `error` branch of the lookup refuses rather than proceeding — a signup guard that cannot read the table must not conclude the email is free
+
+> **Resolution-pass note (2026-08-23).** Worked per the refutation, not per
+> the original claim: the surviving item was the copy fix, and it landed in
+> the `IDENT-3` pass — the signup route now maps the auth layer's
+> duplicate-email rejection (`email_exists` / "already registered") to the
+> same friendly 409 the profile pre-check produces, and the pre-check itself
+> became case-insensitive with `limit(2)` as a side effect of the shared
+> helper. The pre-check deliberately still treats a lookup error as
+> "unknown" and proceeds, because the refutation's own finding is the
+> ground truth here: `auth.admin.createUser` is the real enforcement and
+> refuses a registered address regardless — failing closed on a transient
+> profile-mirror error would block legitimate signups to guard a door that
+> is already locked. Status stays REFUTED; nothing here counts toward the
+> area's completion. Commit: `8fef0f6`.
+
+---
+
+<a id="ident-6"></a>
+
+## IDENT-6 · The signup page renders "Request Sent" on every request-access outcome — 404, 409 and 500 all show success
+
+- **Severity:** MEDIUM
+- **Status:** RESOLVED
+- **Verification:** CONFIRMED
+- **Locations:** `app/signup/page.tsx:93-104`, `app/api/auth/request-access/route.ts:20-45`
+
+**Mechanism.** Found during this area's resolution by the caller census (it
+is the missing consumer of `IDENT-3`'s request-access fixes). The
+`handleRequestAccess` handler awaited the fetch and then called
+`setRequestSent(true)` **without ever inspecting the response** — no
+`res.ok` check, no body read. The route's meaningful refusals — 404 *"No
+organization named X was found"*, 409 *"You already have a pending
+request"*, and any 500 — were all rendered as the full-screen "Request
+Sent!" success state. Only a network-level rejection reached the catch.
+
+**Failure scenario.** A field hand mistypes the facility's workspace name and
+requests access. The server answers 404; the screen says the request was
+sent and an admin will respond. Nobody ever comes, because no request
+exists — and the person has been explicitly told not to follow up. The
+admin-side pending-requests surface (`DEC-19`) makes this worse, not
+better: even once admins can see requests, this one was never created.
+
+**Resolution.** The handler now checks `res.ok`, surfaces the server's
+`error` string in the page's existing error alert, and shows the success
+state only on a 2xx. The route's refusals were already well-written; they
+are simply visible now.
+- Commit: `c111433`
+- Files: `app/signup/page.tsx`
+- Tests: not unit-testable in the node-only harness (a client page handler); the route's error contracts are exercised by its own guards, and the handler change is a four-line trace.
+- Reproduced: read directly from HEAD before the fix — the fetch result was unbound and `setRequestSent(true)` unconditional.
+- Verified: ship loop green; all three refusal shapes now land in the error alert with the server's own copy.
+
+**Chain reaction.** `DEC-19` (build the pending-requests admin surface) —
+when that lands, this fix is what guarantees the queue the admins see
+matches what requesters believe they submitted. Also note the page still
+sends a `message` field the route ignores and no UI populates; left as-is,
+recorded here so the `DEC-19` implementer knows it is dead weight rather
+than a wired feature.
+
+**Done when.**
+
+- [x] a non-2xx from `/api/auth/request-access` renders the server's error message, not the success screen
+- [x] a 2xx still renders the success screen
+- [x] the route's dup-check failure refuses rather than duplicating (landed under `IDENT-3`)
 
 ---

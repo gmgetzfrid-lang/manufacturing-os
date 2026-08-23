@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { normalizeEmail, emailLikePattern } from "@/lib/identity";
+import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,10 +32,11 @@ export async function POST(req: NextRequest) {
     // 2. Check for duplicate pending request — case-insensitively (IDENT-3),
     // and refuse on a failed lookup rather than reading it as "no pending
     // request" and stacking a duplicate row.
-    const { data: existingReqs, error: dupCheckError } = await supabaseAdmin
-      .from("access_requests")
-      .select("id, status")
-      .ilike("email", emailLikePattern(email))
+    const { data: existingReqs, error: dupCheckError } = await applyEmailLookup(
+      supabaseAdmin.from("access_requests").select("id, status"),
+      "email",
+      email
+    )
       .eq("org_id", orgId)
       .eq("status", "pending")
       .limit(1);

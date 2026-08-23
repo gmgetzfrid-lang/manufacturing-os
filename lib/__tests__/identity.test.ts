@@ -7,7 +7,7 @@
 // whatever was typed, and the two never matched each other.
 
 import { describe, it, expect } from "vitest";
-import { normalizeEmail, emailLikePattern } from "@/lib/identity";
+import { normalizeEmail, emailLikePattern, applyEmailLookup } from "@/lib/identity";
 
 describe("normalizeEmail", () => {
   it("folds case and trims — the Azure-UPN vs typed-signup case", () => {
@@ -39,5 +39,29 @@ describe("emailLikePattern", () => {
 
   it("leaves ordinary addresses untouched", () => {
     expect(emailLikePattern("user@example.com")).toBe("user@example.com");
+  });
+});
+
+describe("applyEmailLookup", () => {
+  // A stub builder recording which filter was applied — the contract under
+  // test is the ROUTING between ilike and eq, per address shape.
+  type Stub = { calls: Array<{ op: string; column: string; value: string }>; eq(c: string, v: string): Stub; ilike(c: string, v: string): Stub };
+  const stub = (): Stub => ({
+    calls: [],
+    eq(c: string, v: string) { this.calls.push({ op: "eq", column: c, value: v }); return this; },
+    ilike(c: string, v: string) { this.calls.push({ op: "ilike", column: c, value: v }); return this; },
+  });
+
+  it("uses the escaped ilike pattern for ordinary addresses", () => {
+    const q = applyEmailLookup(stub(), "email", "  A_B@X.COM ");
+    expect(q.calls).toEqual([{ op: "ilike", column: "email", value: "a\\_b@x.com" }]);
+  });
+
+  it("never sends `*` through ilike — PostgREST would rewrite it to the % wildcard", () => {
+    // The adversarial-review scenario: 'greg*@corp.com' via ilike becomes
+    // ILIKE 'greg%@corp.com' and matches gregory@corp.com — a role granted
+    // to the wrong human. Such addresses must exact-match instead.
+    const q = applyEmailLookup(stub(), "email", "greg*@Corp.com");
+    expect(q.calls).toEqual([{ op: "eq", column: "email", value: "greg*@corp.com" }]);
   });
 });

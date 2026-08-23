@@ -47,6 +47,7 @@ import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
+import { applyEmailLookup } from "@/lib/identity";
 import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
@@ -867,7 +868,10 @@ function MembersTab({
     if (!email) return;
     setBusy(true); setError(null);
     try {
-      const { data: userRows } = await supabase.from("users").select("id, email").eq("email", email).limit(2);
+      // Case-insensitive exact lookup (IDENT-3): a plain eq missed rows
+      // stored before email normalization, and made the two-row collision
+      // refusal below case-blind.
+      const { data: userRows } = await applyEmailLookup(supabase.from("users").select("id, email"), "email", email).limit(2);
       const candidates = (userRows ?? []) as Array<{ id: string; email: string }>;
       if (candidates.length > 1) throw new Error("Multiple accounts share that email — contact your admin.");
       const candidate = candidates[0] ?? null;

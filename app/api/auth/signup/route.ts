@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { normalizeEmail, emailLikePattern } from "@/lib/identity";
+import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 
 const TRIAL_DAYS = 60;
 
@@ -83,11 +83,11 @@ export async function POST(req: NextRequest) {
     // errors (previously swallowed) on two rows — any row at all means
     // "taken". This pre-check is a courtesy; auth.createUser below is the
     // real enforcement and rejects an already-registered address either way.
-    const { data: existingUsers } = await supabaseAdmin
-      .from("users")
-      .select("id")
-      .ilike("email", emailLikePattern(email))
-      .limit(2);
+    const { data: existingUsers } = await applyEmailLookup(
+      supabaseAdmin.from("users").select("id"),
+      "email",
+      email
+    ).limit(2);
 
     if (existingUsers && existingUsers.length > 0) {
       return NextResponse.json(

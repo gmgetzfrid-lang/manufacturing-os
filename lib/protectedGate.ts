@@ -31,9 +31,18 @@ export function resolveProtectedView(args: {
   loading: boolean;
   uid: string | null;
   membershipState: MembershipState;
+  /** Has the boot sequence settled (getSession returned, or the boot
+   *  timeout gave up on it)? Before that, a null uid means "not known yet",
+   *  not "signed out" — the 6s loading watchdog can clear the spinner while
+   *  getSession is still refreshing an expired token, and rendering the app
+   *  then is the same placeholder render SESS-1 closed. */
+  booted: boolean;
 }): ProtectedView {
-  const { loading, uid, membershipState } = args;
+  const { loading, uid, membershipState, booted } = args;
   if (loading) return "authenticating";
+  // Boot hasn't identified anyone yet — keep the honest spinner. The boot
+  // timeout still guarantees this cannot hang forever: it flips `booted`.
+  if (!booted && !uid) return "authenticating";
   // The SESS-1 branch: a signed-in user whose membership answer hasn't landed
   // yet is "still working it out", regardless of the loading watchdogs having
   // force-cleared the spinner. The watchdogs stay — they only decide which

@@ -1,8 +1,8 @@
 # 03 · Which workspace, which role
 
-> **CLAIMED** claude-session-01MQsvGC2XfRKwnGyY4qti3p 2026-08-23T22:30:00Z
-
-**4 findings** — 2 HIGH · 2 MEDIUM.
+**5 findings** — 2 HIGH · 2 MEDIUM · 1 LOW. **All worked 2026-08-23**;
+`ORGSEL-5` was found during the `ORGSEL-3` fix (same write, adjacent field)
+and fixed with it.
 
 Once the app knows who you are, two more choices remain: which workspace to open
 you into, and which roles to credit you with. Both have a path that picks
@@ -24,7 +24,7 @@ arbitrarily.
 ## ORGSEL-1 · The workspace self-heal takes the first row of an unordered query, so a member of more than one org lands in an arbitrary one — and can land in a different one on each sign-in
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:152-165`, `components/providers/RoleContext.tsx:189-215`
 - **Re-verified:** hardening pass — **SURVIVES**. `.eq("uid", userId).eq("status", "active").limit(1).maybeSingle()` with **no `.order()`** (`:156-159`), and the result is persisted to `users.default_org_id` at `:215`.
@@ -96,10 +96,44 @@ causes, which is why it will not reproduce reliably against either fix alone.
 
 **Done when.**
 
-- [ ] the fallback query is deterministically ordered — a documented rule such as `ORDER BY` the member's highest-ranked role, then `created_at`, so the most capable membership wins rather than an accident of storage
-- [ ] the query selects more than one row so the code can tell a single membership from a choice among several
-- [ ] a choice among several is **not** silently persisted to `users.default_org_id`; either ask, or persist only when there was exactly one candidate
-- [ ] a test seeds one `uid` with an Admin membership and a Viewer membership and asserts the same workspace is chosen across repeated resolutions
+- [x] the fallback query is deterministically ordered — a documented rule such as `ORDER BY` the member's highest-ranked role, then `created_at`, so the most capable membership wins rather than an accident of storage
+- [x] the query selects more than one row so the code can tell a single membership from a choice among several
+- [x] a choice among several is **not** silently persisted to `users.default_org_id`; either ask, or persist only when there was exactly one candidate — **both**: persist only on a sole candidate, and the relocation banner *asks* ("Make default") for a multi-candidate pick
+- [x] a test seeds one `uid` with an Admin membership and a Viewer membership and asserts the same workspace is chosen across repeated resolutions
+
+- **Status:** RESOLVED
+
+**Resolution.** The pick is now a pure, unit-tested function —
+`pickBestMembership` (`lib/membershipSelection.ts`) — and the self-heal
+fetches up to 20 active memberships (still `status='active'`, so the query
+stays on the `org_members_uid_active_idx` partial index) and ranks them:
+highest role rank of the member's **normalized additive collection** (not
+just the possibly stale headline column), then oldest `created_at` (nulls
+last), then `org_id` as a total-order tiebreak. The chosen ordering is the
+sequencing file's recommendation, and its rationale is in the module
+docblock: when in doubt, land the person where they are *most* capable.
+`persistOrgId` runs only when the resolution wasn't a choice among several —
+the sole-membership self-heal (revoked access, fresh phone) persists exactly
+as before; a multi-candidate pick stays unpersisted until the user confirms
+it from the `ORGSEL-4` banner's "Make default".
+- Commit: `c111433`
+- Files: `lib/membershipSelection.ts`, `components/providers/RoleContext.tsx`, `lib/roleCapabilities.ts` (additive `roleRank` export — read-only view of the same table `primaryRole` sorts by)
+- Tests: `lib/__tests__/membershipSelection.test.ts::"the Admin membership beats the Viewer membership — the reported failure case"`, `::"is deterministic across repeated resolutions and input orderings"`, plus stacked-roles, tie-break, candidate-count and legacy-row cases.
+- Reproduced: `.limit(1).maybeSingle()` with no `.order()` re-confirmed at HEAD, with the result persisted at the old `:215`.
+- Verified: ship loop green. `maybeSingle()`'s can't-see-the-collision property (called out in the Mechanism) is gone with it — the code now *counts* the candidates and behaves differently on >1.
+
+**What this brought to light.**
+- The DB census confirmed `created_at` exists on every insert path (explicit
+  or column default) but is nullable — hence the nulls-last handling in the
+  picker rather than trusting it.
+- Two adjacent holes made this pick more load-bearing than the finding knew:
+  admin-created accounts got **no** `users.default_org_id` at all (every
+  first sign-in fell to this pick; the create-user route now seeds it for
+  brand-new accounts), and restore-created users have the same shape (noted
+  for `admin-and-org`, whose restore findings own that surface).
+- Ranking by the normalized collection rather than the headline also
+  insulates the pick from the `role`/`roles[]` mirror drift that
+  `roles-and-permissions/DB-3` describes.
 
 ---
 
@@ -108,7 +142,7 @@ causes, which is why it will not reproduce reliably against either fix alone.
 ## ORGSEL-2 · The login page makes the same unordered pick a second time, so the routing decision and the resolver's decision can disagree
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-86`, `components/providers/RoleContext.tsx:155-165`
 - **Re-verified:** hardening pass — **SURVIVES**. `const { data: membership } = await supabase…` (`app/page.tsx:72`) — `error` is not destructured, so a failed lookup renders the hard-stop screen that tells an Admin no workspace ever admitted them.
@@ -154,8 +188,32 @@ page did not.
 
 **Done when.**
 
-- [ ] the login page distinguishes "lookup failed" from "no membership" and retries rather than showing the hard stop
-- [ ] the routing decision and the provider's resolution derive from one query — see `SESS-4`, which wants the same deduplication for a different reason
+- [x] the login page distinguishes "lookup failed" from "no membership" and retries rather than showing the hard stop — satisfied by removal: the page no longer looks up membership at all, so it can no longer misread a failure; the provider's retry ladder (which already throws to distinguish the two) is the single decision-maker
+- [x] the routing decision and the provider's resolution derive from one query — see `SESS-4`, which wants the same deduplication for a different reason
+
+- **Status:** RESOLVED
+
+**Resolution.** Resolved at the root together with `SESS-4` (one change, two
+findings, recorded in both): `routeAuthedUser` routes to `/dashboard`
+unconditionally and RoleProvider owns the one membership resolution. The
+independent verifier's corrected mechanism — the discarded `error` routing a
+full Admin to the "no workspace has admitted this account" screen on one
+transient failure — is closed by construction: the code that discarded the
+error no longer exists, and the screen that told the lie is now rendered
+only from the provider's four-state answer, where a failed lookup lands on
+`"error"` (retry screen) rather than `"none"` (hard stop). The page's own
+copy of the hard stop was deleted with it.
+- Commit: `c111433`
+- Files: `app/page.tsx`
+- Tests: the provider-side distinction between "failed" and "none" is pre-existing, pinned by `protectedGate.test.ts` at the render layer.
+- Reproduced: `const { data: membership } = await supabase…` (error unbound) re-confirmed at HEAD before removal.
+- Verified: ship loop green; sign-in flows traced (see `SESS-4`).
+
+**What this brought to light.**
+- The verifier's correction ("the two decisions cannot disagree about
+  *which org* — the real defect is the discarded error") shaped the fix:
+  rather than adding retry logic to the page, the page stopped deciding.
+  One decision-maker cannot disagree with itself.
 
 ---
 
@@ -164,7 +222,7 @@ page did not.
 ## ORGSEL-3 · Re-adding an existing member through "Add member" overwrites their additive role collection with a single role, silently deleting every other hat they hold
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/create-user/route.ts:127-135`, `app/(protected)/admin/users/page.tsx:133-137`, `lib/roleCapabilities.ts:1-15`
 - **Re-verified:** hardening pass — **SURVIVES**. `.update({ role, roles: [role], … })` (`create-user:130`) is an assignment, against `.update({ roles: cleaned, role: headline })` (`admin/users/page.tsx:137`), which is the correct shape in the same table.
@@ -226,10 +284,44 @@ the audit log captured of a "re-add".
 
 **Done when.**
 
-- [ ] the re-add path **merges** into the existing collection, or refuses and directs the caller to the role editor
-- [ ] any write that shrinks a member's collection is explicit, confirmed, and written to the audit log as a role removal
-- [ ] `:161`'s follow-up `update({ roles: [role] })` on the insert path is checked against the same rule — it is correct for a genuinely new member and wrong if it can ever reach an existing one
-- [ ] a test gives a member two roles, re-adds them with one, and asserts both survive
+- [x] the re-add path **merges** into the existing collection, or refuses and directs the caller to the role editor
+- [x] any write that shrinks a member's collection is explicit, confirmed, and written to the audit log as a role removal — satisfied vacuously on this path: with merge semantics no write here can shrink a collection; the only shrink path left is the role editor, which is explicit by design (its own audit trail is `roles-and-permissions` territory, noted there via `CHAIN-2`'s cluster)
+- [x] `:161`'s follow-up `update({ roles: [role] })` on the insert path is checked against the same rule — it is correct for a genuinely new member and wrong if it can ever reach an existing one → checked: it is keyed on `(org_id, uid)` inside the no-existing-member branch, so it can only ever reach the row inserted two statements earlier; a clarifying comment now says so in-code
+- [x] a test gives a member two roles, re-adds them with one, and asserts both survive
+
+- **Status:** RESOLVED
+
+**Resolution.** The re-add path now MERGES: it selects `roles` alongside
+`role`, normalizes via the same `normalizeRoles` the client role editor
+uses, adds the granted role, and recomputes the headline with `primaryRole`
+from the **merged** set — so `org_members.role` can never rank below a role
+the member still holds, preserving the mirror invariant that `is_org_admin`
+and the RLS policies read (the caller census confirmed the admin page's
+`persistRoles` establishes exactly this invariant; the route now cannot
+violate it). Removing a role remains the role editor's explicit job — and
+the census confirmed no UI copy anywhere promised overwrite semantics, so
+nothing user-visible contradicts the change. The response gains
+`{ roles, merged: true }` (additive; the only caller reads nothing but
+`error` on failure). The Admin-alteration guard now also checks the roles
+collection, not just the headline, so a drifted mirror can't hide an Admin
+hat from the guard.
+- Commits: `8fef0f6`, `c111433`
+- Files: `app/api/admin/create-user/route.ts`
+- Tests: `lib/__tests__/createUserRoute.test.ts::"re-adding a two-hat member with one role keeps both hats and recomputes the headline"` (asserts DraftingSupervisor + DocCtrl + Requester all survive a Requester re-add AND the headline stays DraftingSupervisor), `::"still refuses a non-Admin altering an existing Admin"`
+- Reproduced: `update({ role, roles: [role], … })` re-confirmed at HEAD — the assignment shape, against the role editor's correct `{ roles: cleaned, role: headline }` in the same table.
+- Verified: full suite + ship loop green.
+
+**What this brought to light.**
+- The same write had a second, quieter data loss on the adjacent field —
+  `display_name: displayName ?? null` nulled the member's stored name on
+  every re-add without one. Recorded and fixed as `ORGSEL-5` below.
+- The DB census established that **nothing DB-side protects this route's
+  writes** (the last-admin trigger exempts `auth.uid() IS NULL`, i.e. every
+  service-role call): with merge semantics this path can no longer demote
+  anyone, which quietly removes one of the ways that exemption could bite.
+- The re-add path also reactivates (`status: "active"`) — kept deliberately:
+  the census found the UI's one promise about this flow ("you can re-add
+  them later" on the remove confirm) depends on it.
 
 ---
 
@@ -238,7 +330,7 @@ the audit log captured of a "re-add".
 ## ORGSEL-4 · A relocation to a different workspace is indistinguishable from a normal sign-in — nothing tells the user their workspace changed
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:152-165`, `components/providers/RoleContext.tsx:189-195`, `components/providers/RoleContext.tsx:215`
 - **Re-verified:** hardening pass — **SURVIVES**. `_setActiveOrgId(orgId)`, the `localStorage` write and `persistOrgId` (`:190-195, :215`) emit nothing observable — no toast, no audit row, and no comparison against the candidate the resolution started from.
@@ -281,8 +373,80 @@ started from.
 
 **Done when.**
 
-- [ ] when the resolved workspace differs from the candidate the resolution started with, the user is told which workspace they are in and offered the switcher
-- [ ] the relocation is recorded — at minimum client-side telemetry, ideally an audit row — so the question can be answered afterwards
-- [ ] the silent path is kept for the cases it was written for: no candidate at all, or a candidate whose membership is genuinely gone
+- [x] when the resolved workspace differs from the candidate the resolution started with, the user is told which workspace they are in and offered the switcher
+- [x] the relocation is recorded — at minimum client-side telemetry, ideally an audit row — so the question can be answered afterwards → **an audit row**: `WORKSPACE_SELF_HEAL`, filterable in `/admin/audit`
+- [x] the silent path is kept for the cases it was written for: no candidate at all, or a candidate whose membership is genuinely gone → no-candidate resolution stays fully silent; a relocated candidate now gets the notice (the resolver cannot distinguish "revoked" from "wrong identity" — both are "no membership row for this uid here" — and after revocation, being told "your usual workspace isn't available" is the honest message too)
+
+- **Status:** RESOLVED
+
+**Resolution.** `RoleContext` now exposes `workspaceRelocation`
+(`{fromOrgId, toOrgId, candidateCount}`) whenever the self-heal moved away
+from a real candidate, cleared on acknowledge, on a deliberate workspace
+switch, and on sign-out. The layout renders `WorkspaceRelocationBanner` — the
+TrialBanner strip shape, amber — naming the destination workspace (name
+fetched by id; the origin org is deliberately never looked up, since access
+to it may be the very thing that's gone), with "Make default" (persists the
+choice, completing `ORGSEL-1`'s ask-before-persist) and a dismiss. The
+relocation also writes a durable `WORKSPACE_SELF_HEAL` audit row via a new
+`logWorkspaceRelocation` helper — `org_id` is the **destination** org so the
+insert passes `audit_logs` RLS (the census caught that stamping the stale
+origin org would be silently RLS-rejected for exactly the revoked-access
+case); the origin rides in `details`. The admin audit page's action and
+resource filters know the new vocabulary.
+- Commit: `c111433`
+- Files: `components/providers/RoleContext.tsx`, `app/(protected)/layout.tsx`, `lib/audit.ts`, `app/(protected)/admin/audit/page.tsx`
+- Tests: the pick/count logic feeding the banner is pinned by `membershipSelection.test.ts` (`candidateCount` cases); the banner and audit write are client-render/IO shells around it, verified by trace.
+- Reproduced: re-confirmed at HEAD that the self-heal emitted nothing observable — no state, no toast, no audit row — before the change.
+- Verified: ship loop green. The "why was this person in that workspace on Tuesday" question now has an answer: the audit row carries from/to/candidate-count, attributed, timestamped by the DB.
+
+**What this brought to light.**
+- The relocation notice is set only after the retry ladder succeeds (state
+  from the *successful* attempt), so retries can't double-announce — the
+  shape the census warned about when it flagged the attempt-loop double-log
+  hazard.
+- `logAuditAction` swallows every error by design (fire-and-forget bell
+  semantics). Acceptable here — the banner is the primary signal and the
+  audit row is best-effort — but it is the same substrate weakness
+  `DEC-38` names for consent windows; nothing new to fix, one more consumer
+  aware of it.
+
+---
+
+<a id="orgsel-5"></a>
+
+## ORGSEL-5 · The same re-add write nulls the member's display name whenever none is provided
+
+- **Severity:** LOW
+- **Status:** RESOLVED
+- **Verification:** CONFIRMED
+- **Locations:** `app/api/admin/create-user/route.ts:196-208`
+
+**Mechanism.** Found while fixing `ORGSEL-3` — the identical write, one field
+over. The re-add update set `display_name: displayName ?? null`: an
+assignment, not a merge, so re-adding a member without (re)typing their name
+erased the stored one. Every consumer that renders member names then fell
+back to deriving something from the email. The admin modal happens to always
+send a name today, which is why this stayed quiet — but the route is an API
+whose contract allowed the erasure, and a blank name field in a future
+caller (or a trimmed-to-empty string) triggers it.
+
+**Failure scenario.** An admin reactivates a suspended member through "Add
+member" using a caller that omits `displayName`. The member's name vanishes
+from every roster, review sign-off and audit attribution that renders
+display names, with no signal that anything was changed.
+
+**Resolution.** The update keeps the existing `display_name` unless the
+caller provides a non-empty one (the lookup now selects it alongside the
+roles). Same treatment on the profile upsert for the re-add path.
+- Commit: `8fef0f6`
+- Files: `app/api/admin/create-user/route.ts`
+- Tests: `lib/__tests__/createUserRoute.test.ts::"preserves the stored display name when the caller provides none (ORGSEL-5)"`
+- Reproduced: read directly from the pre-fix write at HEAD.
+- Verified: full suite + ship loop green.
+
+**Done when.**
+
+- [x] a re-add without a display name leaves the stored name untouched
+- [x] a re-add with a display name still updates it
 
 ---

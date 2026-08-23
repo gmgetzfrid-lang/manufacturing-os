@@ -26,7 +26,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { resolveProtectedView } from "@/lib/protectedGate";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
-  const { loading, uid, userEmail, membershipState } = useRole();
+  const { loading, booted, uid, userEmail, membershipState } = useRole();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
   // Stable callbacks so the Sidebar's route-change / Escape effects can list
   // them as deps honestly without re-firing every render.
@@ -39,7 +39,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   // force-clear `loading` while the membership answer is still in flight, and
   // rendering the app then means rendering it at the placeholder role
   // ("Viewer", roles: []) — a fake Viewer app for a signed-in Admin.
-  const view = resolveProtectedView({ loading, uid, membershipState });
+  const view = resolveProtectedView({ loading, uid, membershipState, booted });
 
   if (view === "authenticating") {
     return (

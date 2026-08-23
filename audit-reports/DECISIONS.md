@@ -75,6 +75,7 @@ about the system.
 | [DEC-38](#dec-38) | **No delivery record, no silent advance.** The consent clock starts at confirmed delivery | high | `GAP-109`, `GAP-113` |
 | [DEC-39](#dec-39) | Warn before expiry; the non-response record lives on the **ticket**, not the bell | medium | `GAP-113`, `GAP-106` |
 | [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
+| [DEC-42](#dec-42) | Supabase identity linking is **required**; the unique index is the backstop, not the mechanism | medium | `IDENT-1`, `IDENT-2`, `IDENT-3` |
 
 ---
 
@@ -1586,3 +1587,48 @@ The failure it guards against — a challenge that happened but was invisible to
 consumer, or one that never happened but looked the same — is permanent.
 
 **Risk:** low.
+
+---
+
+# Identity
+
+<a id="dec-42"></a>
+## DEC-42 · Is Supabase identity linking required?
+
+**Decision. Yes. The Supabase project MUST have automatic identity linking for
+verified-email providers enabled, so Microsoft sign-in and password sign-in
+resolve to ONE `auth.users` row whose `auth.identities` are `{azure, email}`.
+The `lower(email)` unique indexes (migration `20261018_identity_email_unique.sql`)
+are the backstop that keeps a second identity from acquiring a second profile
+or a second active membership — they cannot force two providers onto one auth
+user, which only the project setting does.**
+
+> **Stated default.** Made during the identity-and-session resolution
+> (2026-08-23) under the protocol's fail-safe rule: the repository cannot
+> observe the project setting, and every `IDENT-*` fix is written to hold
+> either way. Recorded so the next agent inherits the requirement instead of
+> re-deriving it.
+
+**Rationale.** One person, one signer identity. `org_members.uid` is the join
+key for e-signatures, acknowledgments, checkout locks and audit rows; two auth
+identities for one email split a person's regulatory history across two actors
+— *"an account with this person's email signed"* is not *"this person
+signed"*. The application half (normalized matching, collision refusal, the
+device-workspace owner stamp) reduces how often a second identity can act, but
+only linking prevents the second identity existing.
+
+**Implementation.** In the Supabase dashboard: Authentication → Providers →
+enable automatic linking for verified-email providers (Azure returns verified
+emails for M365 tenants). Verify with the `IDENT-1` inventory query: a healthy
+account shows one `auth.users` row with providers `{azure, email}`. Record the
+check's result in `02-identity-collision.md` under `IDENT-1`.
+
+**Acceptance.** The `IDENT-1` duplicate-identities query returns zero rows,
+and a password sign-in and a Microsoft sign-in for the same address land on
+the same `uid`.
+
+**Reversal.** If a facility deliberately wants separate identities per
+provider (none stated), the unique indexes must then key on
+`(provider, email)` instead — a different data model, decided then.
+
+**Risk:** medium — a project-setting dependency the repo cannot enforce.

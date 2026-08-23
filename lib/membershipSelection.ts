@@ -47,8 +47,13 @@ export function pickBestMembership(rows: Array<Record<string, unknown>>): Member
   const sorted = [...candidates].sort((a, b) => {
     const byRank = rankOf(b) - rankOf(a);
     if (byRank !== 0) return byRank;
-    const byAge = createdAtOf(a) - createdAtOf(b);
-    if (byAge !== 0) return byAge;
+    // Compare, never subtract: two unknown ages are both Infinity, and
+    // Infinity - Infinity is NaN — which sort treats as "equal" while
+    // SKIPPING the tiebreak below, making the pick input-order-dependent
+    // for equal-rank legacy rows (caught by adversarial review).
+    const ageA = createdAtOf(a);
+    const ageB = createdAtOf(b);
+    if (ageA !== ageB) return ageA < ageB ? -1 : 1;
     return String(a.org_id).localeCompare(String(b.org_id));
   });
   const row = sorted[0];
