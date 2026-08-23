@@ -167,6 +167,14 @@ function parseArea(area) {
         blast_radius: field(block, "Blast radius"),
         related: (field(block, "Related") ?? "").match(/[A-Z0-9]+-\d+/g) ?? [],
         locations: locations(block),
+        // A verifier correction can invalidate the fields above it — most
+        // consequentially the cited line numbers, which several corrections
+        // rewrite in prose ("every cited line number is wrong; the real anchors
+        // are ..."). `locations` is scraped from the ORIGINAL Locations line and
+        // is not rewritten, so an agent that trusts the index without reading
+        // the body can open the wrong lines. Surface the flag so it knows to
+        // read. See audit-reports/META-AUDIT.md, MA-1.
+        has_verifier_correction: /^> \*\*Verifier correction\.\*\*/m.test(block),
         summary: summary(block),
         area,
         report: relative(REPO, path),
@@ -182,8 +190,10 @@ function parseArea(area) {
   return { findings: found, gaps };
 }
 
+// Dot-directories are support, not audit areas — `.evidence/` holds the
+// regeneration inputs. Without this filter they get an empty findings.json.
 const areas = readdirSync(ROOT)
-  .filter((d) => statSync(join(ROOT, d)).isDirectory())
+  .filter((d) => !d.startsWith(".") && statSync(join(ROOT, d)).isDirectory())
   .sort();
 
 for (const area of areas) {

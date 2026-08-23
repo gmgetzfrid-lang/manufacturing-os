@@ -51,6 +51,7 @@
         "lib/ticketTransitions.ts:221-235",
         "app/api/tickets/workflow-action/route.ts:96-103"
       ],
+      "has_verifier_correction": true,
       "summary": "A Maintenance-role requester gets a draft back. The green 'Send for Engineer Final Approval' button requires naming an engineer and waiting. Right below it is 'Approve with Minor Correction', which only asks for a comment. They type 'valve tag reads FV-101, should be FV-1001' and click. The ticket jumps to PENDINGIFC with Rev 1 issued, the drafter folds in the note, and the IFC package goes to the",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -71,6 +72,7 @@
         "supabase/migrations/20260901_db_hard_enforcement.sql:1-24",
         "app/api/tickets/workflow-action/route.ts:15-26"
       ],
+      "has_verifier_correction": false,
       "summary": "A Drafter who wants their work to stop bouncing opens devtools on /requests, and runs one update against the Supabase REST endpoint setting their own ticket to status: 'PENDINGIFC' and deliverablerev: '2'. No engineer ever saw it. The ticket now renders as an approved, issued Rev 2 everywhere: the queue, the traveler sheet, and the public /verify-ticket QR that the contractor in the field scans, w",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -92,6 +94,7 @@
         "lib/workflow.ts:78",
         "lib/workflow.ts:198-218"
       ],
+      "has_verifier_correction": false,
       "summary": "An Operations tech files a request via the API (or a tampered form post) with requesterrole: 'Engineer-4' — everything else identical, and requesterid still their own uid so the identity path grants them requester rights. A drafter produces the drawing. At PENDINGREVIEW the same tech is offered 'Approve (Issue for Construction)' instead of 'Send for Engineer Final Approval', clicks it, and the ser",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -115,6 +118,7 @@
         "app/(protected)/requests/new/page.tsx:286-330",
         "app/(protected)/requests/new/page.tsx:290-298"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafting supervisor wants P&IDs to route to the P&ID library's document controller for release, while sketches route straight back to the requester. There is no field to hang that rule on. The rule cannot be written regardless of how the reviewer model is designed.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -138,6 +142,7 @@
         "lib/ticketRouting.ts:70-117",
         "lib/ticketAttention.ts:106-108"
       ],
+      "has_verifier_correction": false,
       "summary": "The IFC package is issued and the requester acknowledges. The ticket closes. Document control never saw it. Whether the deliverable is numbered correctly, carries the right title block, supersedes the right revision, or belongs in that library at all — none of it was checked by the function whose job that is. The controlled register learns about the drawing only if somebody separately uploads it (",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -158,6 +163,7 @@
         "app/verify-ticket/[ticketId]/page.tsx:35-38",
         "app/api/verify-ticket/route.ts:72-89"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafting request for a tie-in isometric reaches PENDINGIFC, Rev 1 is issued, and a stamped print with the QR goes to a contractor. Two weeks later the MOC is withdrawn and the request is CANCELED. The contractor's foreman, holding the print at the unit, scans the QR to do the right thing. He gets a full-screen green 'LATEST ISSUE — This copy is the latest issued revision of this deliverable.' No",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -179,6 +185,7 @@
         "app/api/verify-ticket/route.ts:51-56",
         "supabase/schema.sql:1079-1081"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter whose revision was rejected opens devtools (or any REST client with their own session token) and PATCHes the ticket row: history replaced with a fabricated 'Engineer approved final — issued Rev 2' entry naming a real engineer's email and role, status set to PENDINGIFC, deliverablerev set to '2'. The ticket page renders the forged history as the record of approval. Worse, /api/verify-tick",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -202,6 +209,7 @@
         "lib/notifications.ts:257-271",
         "lib/search.ts:376"
       ],
+      "has_verifier_correction": false,
       "summary": "A request sits at PENDINGASSIGNMENT because the drafting supervisor is on nights. Day 3, the requester wonders. Day 5, they walk to drafting and ask. At that moment the app has lost. The work now happens outside it, and the ticket becomes a stale record nobody closes — which makes the next person trust the queue even less.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -227,6 +235,7 @@
         "lib/ticketTransitions.ts:140-142",
         "app/api/tickets/workflow-action/route.ts:309"
       ],
+      "has_verifier_correction": false,
       "summary": "A ticket goes out for engineering review, comes back approved, and sits in the assignment queue. The requester sees \"engineering review complete\" and assumes it is moving. The supervisor never hears. Three days later the requester walks over to ask. The app has now taught someone that the app does not work.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -250,6 +259,7 @@
         "types/schema.ts:1019",
         "lib/capabilityPolicy.ts:70-71"
       ],
+      "has_verifier_correction": false,
       "summary": "A ticket is created with requesttype: \"RFI\" — by mistake, by a misconfigured org dropdown, or deliberately. It routes normally to PENDINGASSIGNMENT, gets assigned, reaches DRAFTING. Any drafter in the org now sees \"Answer & Close RFI\" and can move it straight to CLOSED — skipping PENDINGREVIEW, PENDINGFINALAPPROVAL, PENDINGIFC, FINALDRAFT, every approval, and every deliverable-rev assignment.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -269,6 +279,7 @@
         "app/api/tickets/workflow-action/route.ts:91-103",
         "app/(protected)/requests/page.tsx:639"
       ],
+      "has_verifier_correction": false,
       "summary": "A Viewer- or Requester-role member of the workspace opens devtools on any page of the app and issues supabase.from('tickets').update({ status: 'CLOSED', deliverablerev: '2', engineerapprovedat: new Date().toISOString(), assignedengineername: 'J. Doe, PE' }).eq('id', <ticketId>). RLS accepts it: the row is in their org. The ticket now reads as engineer-approved and issued at Rev 2. No row lands in ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -289,6 +300,7 @@
         "lib/__tests__/workflow.test.ts:163-175",
         "app/api/tickets/workflow-action/route.ts:96-103"
       ],
+      "has_verifier_correction": false,
       "summary": "An operations coordinator (Viewer role) raises a request for a P&ID revision. The drafter submits Rev 1A. The UI correctly refuses to let her approve it and shows \"Send for Engineer Final Approval\". She instead clicks the button directly beneath it, \"Approve with Minor Correction\", types \"fix the tag on V-101\", and the ticket jumps to PENDINGIFC with deliverablerev \"1\". No engineer ever opened it.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -310,6 +322,7 @@
         "app/(protected)/requests/[id]/page.tsx:1328",
         "supabase/schema.sql:1079-1081"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor with a Viewer seat opens devtools on the requests page, copies the Supabase URL and anon key already present in the bundle, and issues PATCH /rest/v1/tickets?id=eq.<uuid> with {\"status\":\"PENDINGIFC\",\"deliverablerev\":\"2\"}. The ticket now shows as approved for construction. No auditlogs row exists (that insert only happens inside the route), no notification fires, and the ticket page re",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -335,6 +348,7 @@
         "lib/roleCapabilities.ts:63-69",
         "app/(protected)/requests/new/page.tsx:309"
       ],
+      "has_verifier_correction": false,
       "summary": "A Manager files a request for a new 6\" process line tie-in. It reaches PENDINGREVIEW. requiresEngineerApproval(\"Manager\") is false, so their branch offers \"Approve (Issue for Construction)\" — one button, no second person, no engineering calculation, no code check. The drawing is issued for construction. The audit trail shows a legitimate, permitted approval.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -360,6 +374,7 @@
         "lib/docClass.ts:28",
         "app/(protected)/admin/requests/page.tsx:179-195"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafting supervisor triaging the queue sees \"Revision — Unit 200 — replace relief valve\" and has no way to record whether the replacement is identical-for-identical or a resize. The ticket carries the same metadata either way, routes identically, and reaches the same reviewer set. The distinction survives only in the description prose and in whatever the supervisor remembers.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -378,6 +393,7 @@
         "app/api/storage/resolve/route.ts:81-84",
         "app/api/storage/download-url/route.ts:35-110"
       ],
+      "has_verifier_correction": true,
       "summary": "A Contractor-role member of the workspace reads the ticket rows they are not supposed to see (finding 8), harvests attachments[].url values and any orgs/<org>/libraries/... key they can observe, and GETs /api/storage/resolve?path=<key> for each. Every one comes back with {archived:false, url:<signed>} — including the bytes of a document whose ACL marks it private/hidden from them, which /api/stora",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -398,6 +414,7 @@
         "app/api/admin/ticket-shed/restore/route.ts:101",
         "app/api/admin/ticket-shed/restore/route.ts:140-144"
       ],
+      "has_verifier_correction": false,
       "summary": "A member appends an attachment {name:'scope.pdf', url:'orgs/<other-tenant-org-id>/libraries/<lib>/P&ID-2201RevC.pdf'} to one of their own long-closed tickets (or points it at their own org's controlled P&ID). Months later an admin runs the routine space-saver: produce bundles the referenced object into the archive ZIP, then commit calls DeleteObjects on that key. The controlled P&ID binary is gone",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -418,6 +435,7 @@
         "lib/workflow.ts:198-234",
         "lib/workflow.ts:319-323"
       ],
+      "has_verifier_correction": false,
       "summary": "A 40-person refinery gives its operators the Requester role so they can file drawing requests. Any one of them can open any other person's ticket sitting at PENDINGREVIEW — a hot-tap isometric they have never seen — and click 'Approve with Minor Correction' (finding 3) or 'Request Revision'. The approval is recorded as legitimate: the server re-derives it through the same policy and writes the aud",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -438,6 +456,7 @@
         "lib/capabilityPolicy.ts:159-160",
         "app/api/tickets/workflow-action/route.ts:95-96"
       ],
+      "has_verifier_correction": true,
       "summary": "A refinery removes Engineer from ticket.directapprove after an incident, so only the assigned engineer may approve. Postgres has a slow minute during a maintenance window. Every workflow-action request in that window loads {}, re-grants direct approval to every Engineer-N in the org, and an engineer with no connection to the job approves a draft to IFC. The audit row records a permitted action; no",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -457,6 +476,7 @@
         "supabase/schema.sql:553-558",
         "app/api/tickets/comment/route.ts:101-106"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor-role member (or any member) posts directly to the RPC with {\"user\":\"lead.engineer@refinery.com\",\"role\":\"Engineer-4\",\"authorUid\":\"<lead engineer's uid>\",\"text\":\"Reviewed — scope is fine, proceed to IFC\",\"date\":\"2026-08-01T09:00:00Z\"} and pwatchers: []. The ticket thread now shows a backdated engineering blessing attributed to a named PE, the real engineer is silently removed from the w",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -480,6 +500,7 @@
         "types/schema.ts:760",
         "lib/filenameParser.ts:36"
       ],
+      "has_verifier_correction": false,
       "summary": "The rule the supervisor wants is \"P&IDs and process datasheets go through doc control for release; field sketches and markups do not.\" There is no field that separates them. The closest available proxy is the library the drawing lives in — which is itself unavailable on the ticket (DCW-1).",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -501,6 +522,7 @@
         "lib/ticketTransitions.ts:284-287",
         "app/api/tickets/workflow-action/route.ts:263-270"
       ],
+      "has_verifier_correction": false,
       "summary": "A drawing is issued for construction, the field builds to it, and the controlled register never learns it exists. Six months later the document control library still shows the superseded revision — or nothing at all, for a new drawing — while the accurate copy sits on a closed ticket.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -522,6 +544,7 @@
         "supabase/migrations/20260708_acl_rls_enforcement.sql:85-91",
         "supabase/migrations/20260708_acl_rls_enforcement.sql:42-82"
       ],
+      "has_verifier_correction": false,
       "summary": "An operations tech needs a change to a P&ID in a restricted library. They can describe it and cannot link it. The ticket arrives with a document number typed into the description. Triage has to find the drawing by hand, and every downstream mechanism that keys on metadata.sourcedocument.id — the Impact panel, the intent bridge, overlap advisories — is blind to it (LIFE-4).",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -545,6 +568,7 @@
         "supabase/migrations/20260605_rls_policies_new_tables.sql:112",
         "lib/notifications.ts:59-61"
       ],
+      "has_verifier_correction": false,
       "summary": "A DraftingSupervisor turns off 'Assignments' (or Email notifications entirely) on /settings/notifications because she works her queue through the portal. She still receives an email for every new drafting request filed by anyone in the org, forever, because the requester's browser cannot read her preference row. She filters the sender to spam — and the one email class that DOES honor her preferenc",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -564,6 +588,7 @@
         "hooks/useTicketNotifications.ts:159-161",
         "hooks/useTicketNotifications.ts:170"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter with three years on site has 600+ tickets bearing his uid, ~580 closed. His attention feed fetches the 500 most recently modified — almost all closed — and the two oldest DRAFTING requests, one a REVISIONREQ on a P&ID untouched for four months, fall outside the window. His sidebar badge omits them. The supervisor's board (a different query) still shows them assigned to him. Each side bel",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -584,6 +609,7 @@
         "lib/notify/dispatch.ts:136-142",
         "lib/notify/recipients.ts:36-42"
       ],
+      "has_verifier_correction": false,
       "summary": "A contract drafter is removed from the workspace on his last day. Three drafting requests sit in DRAFTING against his uid, one an as-built for a relief header. Nothing changes on the portal — his denormalized assigneddraftername still renders, so the board looks staffed. No supervisor alert fires because PENDINGDRAFTING routes to nobody. Every subsequent comment or status email addressed to him is",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -605,6 +631,7 @@
         "supabase/schema.sql:495",
         "supabase/migrations/20260724_ticket_numbering.sql:20-25"
       ],
+      "has_verifier_correction": false,
       "summary": "Two plants merge and an admin restores Plant B's backup into Plant A's workspace — the flow the confirm dialog explicitly supports ('Existing data is kept — this is additive'). Both used the default record code, so both have KE-DDRT-26-0001..0400. Chunk 1 of tickets violates the unique index, the client breaks, and roughly 400 drafting requests plus their comment threads are absent from the restor",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -626,6 +653,7 @@
         "lib/roleCapabilities.ts:120-123",
         "supabase/migrations/20260722_member_roles_collection.sql:13"
       ],
+      "has_verifier_correction": false,
       "summary": "A small refinery has four people, each holding two hats: the two drafters are also Engineer-2, and the supervisor drafts as well. persistRoles sets every headline to the higher-ranked role. A new drafting request lands in PENDINGASSIGNMENT. The supervisor opens the assign modal and it is empty — the org has three qualified drafters and the picker can see none of them. The request cannot be advance",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -647,6 +675,7 @@
         "lib/notifications.ts:276-282",
         "app/(protected)/requests/page.tsx:508"
       ],
+      "has_verifier_correction": false,
       "summary": "An org configures request types with SLA-shaped labels ('1 - Urgent (1-2 Days)') and enables 'SLA warnings', which reads 'A ticket you're responsible for is at risk of breaching its target completion date.' An urgent inspection isometric is filed with a 1-day target on a Friday. Nobody opens the ticket. No warning email, no bell row, no cron scan, no slabreachedat stamp is ever produced. On Monday",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -667,6 +696,7 @@
         "app/api/tickets/workflow-action/route.ts:20-25",
         "lib/notify/dispatch.ts:78-131"
       ],
+      "has_verifier_correction": false,
       "summary": "An operator files an urgent MOC drafting request from a tablet in the field, sees 'Done!', and locks the tablet. The tickets row committed. The fan-out died after two of four bell rows and before any email was queued. The DraftingSupervisor never learns the request exists. It sits in PENDINGASSIGNMENT — a status only surfaced to people who happen to load the app — with a target completion date not",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -688,6 +718,7 @@
         "lib/publicOrigin.ts:17-22",
         "lib/transmittals.ts:389-392"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer @-mentions the process safety lead on a MOC drafting request: 'confirm the relief valve set point before we issue this.' She gets the email on her phone, taps 'Open ticket', and Gmail navigates to mail.google.com/requests/<uuid> — a 404 inside her mail client. The confirmation never happens and the package advances.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -707,6 +738,7 @@
         "supabase/migrations/20260825_work_packages_acks.sql:99-116",
         "supabase/migrations/20260828_integrity_hardening.sql:15-26"
       ],
+      "has_verifier_correction": true,
       "summary": "Rev 5 of a P&ID goes out to twelve field personnel with acknowledgment requested. Two operators never open it. A coordinator who wants the dashboard to read 12/12 before a turnaround opens the ack list, reads the pending row ids (SELECT is granted org-wide by distributionacksorgselect), and PATCHes acknowledgedat on both. The DistributionAcks panel now renders 'confirmed <date>' for those two oper",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -727,6 +759,7 @@
         "lib/revisions.ts:177-181",
         "lib/revisions.ts:873"
       ],
+      "has_verifier_correction": true,
       "summary": "A Viewer-role contractor with an active membership POSTs directly to /rest/v1/esignatures with signeruserid = their own uid (satisfying RLS), intent 'Approved', signerrole 'Lead Process Engineer', statement 'I approve this for construction', and the documentversionid of a P&ID draft. The row is accepted. SignaturePanel and any evidence gathering that reads esignatures render it as a formal approva",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -748,6 +781,7 @@
         "lib/evidencePack.ts:62",
         "components/documents/VersionHistoryPanel.tsx:395"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter rev-ups a P&ID to Rev 4 and types 'J. Okafor, PE' into the Approved By box. J. Okafor never saw the drawing. The Version History panel renders a stamp icon and 'Approved — J. Okafor, PE' (VersionHistoryPanel.tsx:395), and the one-click Compliance Evidence Pack prints it in the 'Approved' column of the revision-lineage table (evidencePack.ts:62) under a footer asserting the pack is assemb",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -768,6 +802,7 @@
         "components/assets/FileReferenceModal.tsx:189",
         "components/viewers/SecureDocViewer.tsx:52-59"
       ],
+      "has_verifier_correction": false,
       "summary": "A supervisor prints a stamped copy of a superseded P&ID and takes it to the field. The insert is fired with void while the print dialog opens; the user closes the tab before the request completes, or the request fails, and the row never exists. Later, after an incident, the operator runs the stale-copy recall (lib/staleCopies.ts, which is built entirely on downloadaudits) and the supervisor's copy",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -787,6 +822,7 @@
         "node_modules/@supabase/postgrest-js/src/PostgrestBuilder.ts:371-372",
         "node_modules/@supabase/postgrest-js/src/PostgrestBuilder.ts:534-536"
       ],
+      "has_verifier_correction": true,
       "summary": "A concrete, already-present instance: activateAlternate is called from the daily cron with actorId: null (lib/reviewControl.ts:558), and its audit call passes userId: input.actorId ?? \"\" (lib/reviewControl.ts:386). auditlogs.userid is UUID (supabase/schema.sql:777), so the empty string is invalid input syntax (22P02) and the INSERT fails. logAuditAction swallows it, .catch(() => {}) at the call si",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -809,6 +845,7 @@
         "lib/workflow.ts:74",
         "lib/roleCapabilities.ts:63-69"
       ],
+      "has_verifier_correction": false,
       "summary": "The planner does not know what they are looking at, so they either rubber-stamp it (the review is theatre) or sit on it (the ticket stalls with no escalation, per FRIC-1). Neither outcome is the one the state was designed for.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -833,6 +870,7 @@
         "lib/transitionIn.ts:304-331",
         "app/(protected)/requests/new/page.tsx:139-150"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor or a new hire opens the request form, does not know the unit code for the area they are standing in, guesses, and creates a ticket that the supervisor's unit-filtered queue view will not match — or gives up and calls someone.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -856,6 +894,7 @@
         "components/requests/EngineerPickerModal.tsx:93",
         "components/requests/EngineerPickerModal.tsx:100-105"
       ],
+      "has_verifier_correction": false,
       "summary": "The planner picks the engineer whose name they recognise — who is on vacation, or covers a different unit. The ticket sits at PENDINGFINALAPPROVAL with no escalation (FRIC-1). Reassignment requires ticket.reassignengineer, which defaults to Admin only.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -877,6 +916,7 @@
         "lib/workflow.ts:345-350",
         "lib/ticketShed.ts:83-96"
       ],
+      "has_verifier_correction": false,
       "summary": "The queue accumulates tickets whose work completed weeks ago. Every metric built on open-ticket counts is wrong. The drafting supervisor's backlog looks worse than it is, so real backlog becomes invisible inside the noise. Nobody trusts the queue; people stop working from it.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -902,6 +942,7 @@
         "app/(protected)/requests/[id]/page.tsx:1605",
         "lib/ticketAttention.ts:60"
       ],
+      "has_verifier_correction": false,
       "summary": "A document controller's badge shows a number. They open each ticket. Every one says \"View Only — No Actions Available.\" The badge never clears, because it is computed from role + status rather than from getActions. They learn to ignore the badge — and the badge is also how real work reaches them.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -923,6 +964,7 @@
         "components/documents/RevUpModal.tsx:210",
         "lib/documentLifecycle/setRevUp.ts:84"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter opens Rev Up on a P&ID in a library configured mode: \"require\" with three named reviewers. The libraries select returns an error (transient network, a PostgREST hiccup, an RLS change that narrows library visibility for non-controllers). The modal shows no review banner, no escape-hatch warning, and the Publish button behaves normally. The revision goes live as the controlled copy with ze",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -943,6 +985,7 @@
         "lib/documentGuards.ts:117",
         "lib/holds.ts:105"
       ],
+      "has_verifier_correction": false,
       "summary": "DocCtrl places a \"Field Verification Needed\" hold on a P&ID after a discrepancy report, specifically to stop revisions publishing until the field is walked. The Drafting Supervisor — who holds publish on that library but is not a controller — hits the hold when publishing. Rather than escalating, they open the hold strip, click Release (allowed: holds.release defaults to everyone), and publish imm",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -963,6 +1006,7 @@
         "app/api/tickets/workflow-action/route.ts:240",
         "app/(protected)/requests/[id]/page.tsx:577"
       ],
+      "has_verifier_correction": true,
       "summary": "A field engineer reports an as-built discrepancy on P-101 Rev 3. The ticket is drafted, engineer-approved, and issued as \"Rev 1\" (ticket-local numbering — unrelated to the document's Rev 3). The drafter uploads the final package under submitfinal; the requester clicks Acknowledge & Close. The ticket now reads CLOSED / Rev 1, the QR verifies, and the crew prints the stamped package. The controlled ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -982,6 +1026,7 @@
         "supabase/migrations/20260828_integrity_hardening.sql:223",
         "supabase/migrations/20260822_review_completion_guard.sql:48"
       ],
+      "has_verifier_correction": false,
       "summary": "A Drafting Supervisor holds publish on the P&ID library and submits a draft that requires two engineer sign-offs. They are blocked from finalizing. From the same authenticated session they PATCH documentreviewsignoffs for their draft's version, setting status='signed' on both reviewer rows (permitted: they satisfy the usercanpublishonlibrary arm, and WITH CHECK only asks that they be an active mem",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -1000,6 +1045,7 @@
         "app/api/intake/upload/route.ts:322",
         "supabase/migrations/20260822_review_completion_guard.sql:32"
       ],
+      "has_verifier_correction": true,
       "summary": "DocCtrl places a \"Field Verification Needed\" hold on a drawing an intake link authored, because the field crew reported it does not match reality. The vendor, holding the same trusted link, uploads a new sheet. The route takes the autoNow branch, sets the document to Issued at the new rev, and supersedes the prior version — the hold is never consulted. Nobody who downloaded the previous rev is tol",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -1022,6 +1068,7 @@
         "lib/reviewControl.ts:545",
         "supabase/schema.sql:94"
       ],
+      "has_verifier_correction": false,
       "summary": "DocCtrl opens the \"P&IDs\" folder, sets change-control to require with the process-safety engineer as reviewer, and reasonably expects everything beneath it to inherit. Drawings actually live in \"P&IDs / Unit 400 / Current\". For those documents doc.collectionId is the \"Current\" folder, which has no reviewcontrol, so resolution falls straight through to the library — which is unset — and returns {mo",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -1045,6 +1092,7 @@
         "lib/ticketRouting.ts:99",
         "lib/roleCapabilities.ts:74-94"
       ],
+      "has_verifier_correction": false,
       "summary": "The drafting supervisor is also a manager — which is common. Every new request notifies the Admins instead of them. The Admins learn to ignore it. The supervisor works from memory and from people asking.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1066,6 +1114,7 @@
         "app/(protected)/requests/[id]/page.tsx:1546",
         "app/(protected)/requests/page.tsx:620,638"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1085,6 +1134,7 @@
         "lib/draftHandoff.ts:53-66",
         "lib/checkinOutcomes.ts:169-170"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1101,6 +1151,7 @@
       "locations": [
         "components/documents/CheckInPanel.tsx:155-159"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1121,6 +1172,7 @@
         "app/api/tickets/comment/route.ts:202-216",
         "supabase/migrations/20260726_ticket_comments.sql:1-18"
       ],
+      "has_verifier_correction": false,
       "summary": "A supervisor is classifying the root cause of a revision comment (Revision → 'Client Scope Change') at the moment the assigned engineer clicks Request Revision. The server route posts the engineer's revision comment atomically via postticketcomment (comments || jsonbbuildarray($1), schema.sql:553-556) and moves the ticket to REVISIONREQ. Half a second later the supervisor's write lands, replacing ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -1142,6 +1194,7 @@
         "app/(protected)/requests/page.tsx:620",
         "app/(protected)/requests/page.tsx:639"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter uploads the final IFC PDF for a construction package. uploadTicketAttachment puts the bytes in R2 successfully. The ticket row update at line 1010 is rejected (RLS, a transient 5xx from PostgREST, or a payload that trips a constraint). The user sees the spinner clear and no error. auditlogs gains a TICKETFILEUPLOAD row claiming the file was attached. The ticket row has no attachment. Whe",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -1162,6 +1215,7 @@
         "app/(protected)/requests/[id]/page.tsx:1360",
         "types/schema.ts:1038"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafting request for a revised isometric closes with an approved Final attachment. That PDF is the deliverable the field will build from, and it has no document number, no revision chain, no supersession record, no review-gate history, no hold coverage, no effective-date control and no distribution acknowledgement — none of the controls the rest of this system exists to enforce. Because it is al",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -1181,6 +1235,7 @@
         "supabase/migrations/20260721_tickets_metadata.sql:16",
         "supabase/migrations/20260827_ticket_deliverable_rev.sql:25"
       ],
+      "has_verifier_correction": true,
       "summary": "A turnaround PM has an active project and a drafting request open against one of its P&IDs. There is no field, no join row, and no query that can associate the two, so the request is invisible on the project and the project is invisible on the request. When the PM marks the project complete and hands the package to the field, the open request — which may be an as-built discrepancy raised from a ch",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -1201,6 +1256,7 @@
         "app/(protected)/projects/[id]/page.tsx:134",
         "supabase/migrations/20260906_projects_hardening.sql:122"
       ],
+      "has_verifier_correction": false,
       "summary": "A member of the org who is not on a private capital project enumerates project ids (they are returned by any projectdocuments select, which is unrestricted) and issues DELETE FROM projectdocuments WHERE id = .... The drawing disappears from that project's Documents card, from getProjectTimeline (which resolves linked doc ids from this table), from searchDocuments({projectId}), from the CSV export ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -1221,6 +1277,7 @@
         "app/api/tickets/workflow-action/route.ts:113-132",
         "lib/capabilityPolicy.ts:55-60"
       ],
+      "has_verifier_correction": true,
       "summary": "A viewer-tier requester correctly routes a drawing to Engineer-2 for final approval. Engineer-2 is on shift change. The area Supervisor, wanting the job to start, opens the ticket, sees \"Approve as Engineer (Issue for Construction)\" and clicks it. engineerapprovedat is stamped, the ticket goes to PENDINGIFC with an issued rev, and the record now asserts an engineering sign-off that no engineer per",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -1241,6 +1298,7 @@
         "app/api/tickets/workflow-action/route.ts:69-74",
         "app/(protected)/admin/storage/page.tsx:520-585"
       ],
+      "has_verifier_correction": false,
       "summary": "Friday: an admin runs the closed-ticket archive, which claims 400 tickets including KE-DDRT-26-0117 (a completed line-relocation package). Monday: the requester notices the as-built didn't match, opens KE-DDRT-26-0117 and clicks \"Reopen Ticket\"; it goes to PENDINGREVIEW, the drafter is re-engaged, a revision comment thread starts. Tuesday: the admin, having saved the zip, clicks \"Reclaim space\". c",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -1261,6 +1319,7 @@
         "lib/workflow.ts:331-341",
         "app/api/verify-ticket/route.ts:62-89"
       ],
+      "has_verifier_correction": false,
       "summary": "KE-DDRT-26-0088 is issued as Rev 1 and closed; prints go to the field. A week later the requester reopens it (\"we missed a nozzle\"), the drafter uploads a corrected drawing, the requester approves. deliverablerev is written as \"1\" again. A pipefitter holding the ORIGINAL Rev 1 print scans its QR: verdict: \"current\", \"this is the latest issue\". A second fitter holding the corrected Rev 1 scans his:",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -1284,6 +1343,7 @@
         "lib/workflow.ts:80-342",
         "types/schema.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "A like-in-kind pipe spool replacement in a B31.3 service is drafted and issued. Nobody has recorded what NDE applies, whether radiography is required at the tie-in welds, or that the design factors were checked against the governing code case. The ticket closes clean. The information exists only in whatever conversation happened outside the app — which is precisely the shoulder-tap the system is m",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1306,6 +1366,7 @@
         "lib/reviewControl.ts:126-132",
         "types/schema.ts:191-210"
       ],
+      "has_verifier_correction": false,
       "summary": "An org that runs B31.3 piping and an org that runs API 653 tankage get an identical, code-blind review model. Neither can express its own governing standard, so both encode it in prose in the request description — where it is unsearchable, unreportable, and invisible to the reviewer roster.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1329,6 +1390,7 @@
         "lib/reviewControl.ts:196-238",
         "lib/reviewControl.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "The moment the review model in TIER-1 through TIER-4 is implemented on the current serial machine, a new-design B31.3 package becomes: triage → drafter → requester review → engineering review → QA/QC review → code review → IFC → acknowledge. Eight hops, six people, seven waits. People will route around it — which is the outcome this whole audit exists to prevent.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1351,6 +1413,7 @@
         "components/documents/RevUpModal.tsx:739",
         "lib/revisions.ts:522"
       ],
+      "has_verifier_correction": false,
       "summary": "A field report states \"No MOC exists\" — correctly and honestly — and the system flags it as an undocumented change. Weeks later the as-built is published and the publisher types an MOC number they happen to remember. The undocumented-change finding is laundered into a documented one, and the only record contradicting it sits on a closed ticket nothing links to the version.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1373,6 +1436,7 @@
         "hooks/useTicketNotifications.ts:265",
         "app/(protected)/requests/[id]/page.tsx:1488"
       ],
+      "has_verifier_correction": false,
       "summary": "The planner opens their request. It says PENDING FINAL APPROVAL. They do not know what that means, who has it, whether they need to do anything, or how long it has been there. The only way to find out is to ask someone — which is the exact behaviour the app exists to replace.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1393,6 +1457,7 @@
         "components/requests/WorkflowDiagramModal.tsx:27",
         "app/(protected)/requests/[id]/page.tsx:1482-1488"
       ],
+      "has_verifier_correction": false,
       "summary": "A first-time requester submits a request and lands on the ticket. The explanation of the entire process is one hover away and they will never find it. They learn the workflow the way they learn everything else: by asking a colleague.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1410,6 +1475,7 @@
         "lib/ticketAttention.ts:106-108",
         "app/(protected)/requests/[id]/page.tsx:1605"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1430,6 +1496,7 @@
         "app/(protected)/requests/new/page.tsx:201",
         "app/(protected)/requests/new/page.tsx:272-280"
       ],
+      "has_verifier_correction": false,
       "summary": "The planner fills in Title and Detailed Scope, attaches their markup, presses Submit Request, and the page does nothing. No error, no spinner, no movement. They press it again. Still nothing. At this point a reasonable person concludes the app is broken and phones drafting — with their markup still unsaved (LEAK-5).",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1450,6 +1517,7 @@
         "app/api/tickets/workflow-action/route.ts:124-130",
         "lib/serverAuth.ts:50-58"
       ],
+      "has_verifier_correction": true,
       "summary": "A DraftingSupervisor is given Engineer-3 as a secondary role so they can cover scope reviews. primaryRole keeps DraftingSupervisor as the headline. A ticket sits at PENDINGENGTEAM with no engineer assigned: allows('ticket.engreview') tests only 'DraftingSupervisor' against [\"Engineer\"] and returns false, so the ticket has no available actions for them and stalls. Meanwhile the engineer picker WILL",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -1470,6 +1538,7 @@
         "supabase/migrations/20260818_followups_rls.sql:23-31",
         "lib/roleCapabilities.ts:53"
       ],
+      "has_verifier_correction": false,
       "summary": "A document controller adds the request types and unit list for a new area, hits Save, and gets 'Failed to save configuration.' with an RLS denial in the console — the only visible cause is the generic catch. They retry, then edit the underlying row by hand or ask an Admin to redo the work. Meanwhile a DraftingSupervisor, whose job is exactly this routing config, cannot reach the screen at all.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -1490,6 +1559,7 @@
         "lib/ticketTransitions.ts:280-283",
         "app/(protected)/requests/[id]/page.tsx:1160-1173"
       ],
+      "has_verifier_correction": false,
       "summary": "At submitfinal the drafter posts finalAttachment: {name:'ISO-2201-ARev2IFC.pdf', url:'orgs/<org>/tickets/<other-ticket>/1699supersededRevA.pdf', uploadedBy:'checker@refinery.com'}. The ticket reaches FINALDRAFT showing an IFC package with a correct-looking filename and someone else's name on it, while the bytes served are a superseded revision from an unrelated ticket. Every downstream surface — t",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -1509,6 +1579,7 @@
         "app/api/verify-ticket/route.ts:6-10",
         "app/api/verify/route.ts:60-63"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor is handed one stamped deliverable for a job in Unit 200. The QR gives them a permanent, login-free poller. They script it weekly and watch ticketStatus walk from PENDINGIFC to REVISIONREQ to PENDINGFINALAPPROVAL — reading the plant's internal engineering churn on that unit long after their contract ends, with the org holding no way to revoke the link and no log that anyone is watching",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -1527,6 +1598,7 @@
         "supabase/schema.sql:1079-1081",
         "app/(protected)/requests/[id]/page.tsx:913"
       ],
+      "has_verifier_correction": true,
       "summary": "A Contractor account is added to the workspace so an outside firm can file requests. Their queue shows only their own tickets, which is what the org believes the account can see. One REST call later they have every drafting ticket in the plant: turnaround scope descriptions, unit numbers, the reviewer discussion threads, and the storage keys for every attached drawing — which they then dereference",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
@@ -1549,6 +1621,7 @@
         "lib/reviewControl.ts:527,575-579",
         "lib/workflow.ts:61-65"
       ],
+      "has_verifier_correction": false,
       "summary": "The Process Safety library requires two named reviewers. A drafting request produces a revision for it and routes through the ticket's own role-based approval, which knows nothing about those two people. They are asked to review at publish time instead — after the ticket closed — which is TIER-8's duplicate-review problem.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -1572,6 +1645,7 @@
         "components/documents/CheckInPanel.tsx:236-267",
         "lib/transitionIn.ts:304-331"
       ],
+      "has_verifier_correction": false,
       "summary": "Unit-filtered queue views miss tickets. Reporting by area is unreliable. And because unit is the only locator a ticket has, its looseness is inherited by everything downstream that tries to group work geographically.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -1591,6 +1665,7 @@
         "lib/clientBackup.ts:184-188",
         "lib/clientBackup.ts:200-205"
       ],
+      "has_verifier_correction": false,
       "summary": "A records custodian starts the full backup before a migration window, realises it will run past the maintenance start, and cancels. The parts already downloaded sit in her Downloads folder. Eighteen months later, answering an auditor, someone opens backup-report.json, reads 'Every file verified by SHA-256', and treats the archive as the complete binary set for that date. It holds three drawings ou",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1617,6 +1692,7 @@
         "supabase/schema.sql:408",
         "supabase/schema.sql:776"
       ],
+      "has_verifier_correction": false,
       "summary": "The risk is a well-intentioned fix undoing one of these. Concretely: 'simplifying' the comment route's fallback test to any RPC error would silently reroute genuine in-function failures back to the lossy client-shaped write that postticketcomment exists to replace. Moving number allocation client-side to close the sequence-gap finding would reintroduce collisions the row lock prevents. Loosening t",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1635,6 +1711,7 @@
         "supabase/migrations/20260605_rls_policies_new_tables.sql:117-124",
         "supabase/migrations/20260529_phase_b_notifications.sql:63-64"
       ],
+      "has_verifier_correction": false,
       "summary": "A supervisor is both an Admin and a watcher on a request, with adminsAlsoReceiveWhenSupervisorSet on. A burst of client-side emits about one ticket in the same minute each queue their own row for her. The guard written to collapse them — 'prevents burst-spam when a workflow action triggers multiple watchers + assignments simultaneously' — is inert, so she gets one email per emit. Combined with the",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1656,6 +1733,7 @@
         "supabase/migrations/20260724_ticket_numbering.sql:4-6",
         "lib/storageOrphans.ts:52"
       ],
+      "has_verifier_correction": false,
       "summary": "An operator fills the request form, attaches four field photos and a marked-up scan, and hits submit, leaving a required custom field ('Work Order #') blank. The five files upload — the slow part he watches — and only then does an alert tell him a field is missing. He fills it in and resubmits, consuming a second number and re-uploading the same five files. The register now reads ...-0041, ...-004",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1675,6 +1753,7 @@
         "lib/notify/dispatch.ts:4-6",
         "lib/inAppNotifications.ts:81-96"
       ],
+      "has_verifier_correction": false,
       "summary": "An operator asks to stop the bell for drafting-request status changes because he only wants email. An admin finds inappenabled in the schema, flips it in the database, and reports it done. Nothing changes — every ticketstatus row still lands in his bell. Time is spent debugging a column that was never wired, and trust in the settings surface erodes for the toggles that DO work.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1694,6 +1773,7 @@
         "lib/distributionAcks.ts:76-97",
         "components/documents/DistributionAcks.tsx:106"
       ],
+      "has_verifier_correction": true,
       "summary": "After a deploy leaves the PostgREST schema cache momentarily stale, a controller opens the inspector on a safety-critical revision. The first ack query returns PGRST204, the latch flips, and for the rest of that session every document shows 'no acknowledgments requested' and no recipient sees the 'I have this revision' bar (getMyPendingAck returns null, so the acknowledge affordance never renders ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1714,6 +1794,7 @@
         "supabase/migrations/20260825_work_packages_acks.sql:99-116",
         "lib/acknowledgments.ts:507"
       ],
+      "has_verifier_correction": false,
       "summary": "Twelve months after issue, a regulator asks 'you say the operator never confirmed receipt of Rev 5 — show me what you did about it'. The distributionacks row shows requestedat and a NULL acknowledgedat: it proves nobody confirmed, but proves nothing about the nine reminders and the two escalations to the requester, because those existed only as notification rows that a purge removed. The review si",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1734,6 +1815,7 @@
         "app/api/tickets/workflow-action/route.ts:401-403",
         "app/api/admin/purge/route.ts:40-44"
       ],
+      "has_verifier_correction": true,
       "summary": "The final-approval email to the responsible engineer is queued and Resend accepts it; the engineer's corporate mail server then rejects it (full mailbox, quarantine, address change). emailnotifications says status='sent', sentat=<t> and the system will assert for the rest of the record's life that the engineer was emailed. Nobody is ever told it bounced. In a second variant, the engineer had turne",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1754,6 +1836,7 @@
         "components/documents/InspectorPanel.tsx:950",
         "components/navigation/GlobalCommandPalette.tsx:205"
       ],
+      "has_verifier_correction": true,
       "summary": "An auditor asks for the evidence on DWG-1042 Rev 4. The operator clicks 'Evidence pack for this document' and produces a PDF whose Approved column reads a name someone typed (finding 4), whose audit section may be silently truncated at 1000 rows, and which contains no signature block, no reviewer roster, no acknowledgment roster and no distribution confirmations — even where all four exist in the ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1773,6 +1856,7 @@
         "lib/reviewControl.ts:301-304",
         "components/permissions/PermissionDrawer.tsx:291-302"
       ],
+      "has_verifier_correction": true,
       "summary": "An operator completes the read-and-understood ceremony on Rev 5. The esignatures row is written. The documentacknowledgments UPDATE matches zero rows — because the roster row was voided by a concurrent recompute (lib/acknowledgments.ts:326-338 sets status 'void' on republish), or because the hardened docackupdate policy denied it. The operator sees a green 'Signed' toast. The ack roster still read",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1792,6 +1876,7 @@
         "lib/ticketTransitions.ts:247-253",
         "types/schema.ts:1038-1047"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer clicks 'Approve final'. The ticket flips to PENDINGIFC and deliverablerev becomes '2'. The function instance is recycled (or the audit insert hits a transient error) before line 214 completes. The route already returned nothing to distinguish this case. The regulator later asks 'show me the audit record of the approval of Rev 2': auditlogs has no TICKETENGINEERAPPROVEFINAL row, and the",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1812,6 +1897,7 @@
         "app/api/admin/purge/route.ts:34-38",
         "app/api/admin/purge/route.ts:24"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer is notified 'Final approval needed — DWG-1042'. They never open it. Eight days later a coordinator advances the ticket by another route; fanOut stamps readat on the engineer's untouched row. An Admin/DocCtrl runs the purge with days=7 and the row is deleted. The regulator asks 'show me that the engineer was notified and whether they ever looked at it' and the system can produce nothing",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1831,6 +1917,7 @@
         "app/api/knowledge/drawing/route.ts:453-456",
         "lib/drawingAuditLog.ts:139-149"
       ],
+      "has_verifier_correction": true,
       "summary": "The OPC reference audit records P-101-02 at Rev C as brokenconnectors with the specific defect list in auditdetails. Someone asks the orchestrator assistant to 'mark P-101-02 rev C as reviewed and passed'; the tool upserts status 'passed' with auditdetails: { note: \"\", by: <uid> }. The original finding — that a connector on a live P&ID leads nowhere — is gone, with no prior-value record anywhere, ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
@@ -1852,6 +1939,7 @@
         "lib/workflow.ts:301-316",
         "lib/ticketTransitions.ts:280-283"
       ],
+      "has_verifier_correction": false,
       "summary": "The drafter has moved to other work. The ticket waits at PENDINGIFC for them to come back, re-open it, and upload a file that is often the same file. With no escalation (FRIC-1), this is a common stall point.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -1866,6 +1954,7 @@
       "blast_radius": "data quality / friction",
       "related": [],
       "locations": [],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -1886,6 +1975,7 @@
         "app/(protected)/requests/page.tsx:329",
         "app/(protected)/requests/page.tsx:335-337"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter with three assigned tickets opens /requests and sees every open ticket in the plant. Their own work is somewhere in the list. They filter, or they scroll, or they use the badge and click through one at a time.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -1905,6 +1995,7 @@
         "app/api/tickets/workflow-action/route.ts:254",
         "lib/revisions.ts:439"
       ],
+      "has_verifier_correction": false,
       "summary": "A field engineer redlines P-101 Rev 3 on Tuesday and files an as-built request. On Thursday, unrelated MOC work publishes Rev 4 through the normal path. On the following Monday a drafter picks up the ticket, opens the attached marked-up Rev 3 PDF, and drafts from it. Nothing in the ticket, the drafting queue, or the deliverable review flags that the redlines were made against a superseded revision",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -1925,6 +2016,7 @@
         "app/(protected)/inbox/page.tsx:139",
         "components/dashboard/widgets.tsx:795"
       ],
+      "has_verifier_correction": true,
       "summary": "A process engineer checks out P-101 for As-Built Verification, spends an hour redlining twelve changes across four sheets in the viewer, and clicks Send to Drafting. pdf-lib throws on that particular PDF (encrypted, malformed xref, oversize). The drafting request is created with the pristine Rev 3 PDF attached and a description that no longer mentions markups. The engineer closes the tab; the redl",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -1944,6 +2036,7 @@
         "app/api/intake/upload/route.ts:330",
         "supabase/migrations/20260822_review_completion_guard.sql:53"
       ],
+      "has_verifier_correction": true,
       "summary": "A library is configured mode: \"require\" with two named process-safety reviewers. A contractor submits a revised P&ID through their assigned intake link. It lands as pendingversionid. A project owner with library publish authority — not a configured reviewer, and possibly the person who commissioned the work — opens the Intake tab and clicks Approve. finalizeReviewedRevision promotes it to currentv",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -1963,6 +2056,7 @@
         "lib/revisions.ts:546",
         "lib/documentLifecycle/merge.ts:170"
       ],
+      "has_verifier_correction": false,
       "summary": "Two engineers work the same P&ID. The second to publish hits the conflict screen and, rather than reconciling, types a branch reason and publishes. In a library configured mode: \"require\", that revision is created without any reviewer being notified. It lands in the DocCtrl open-items queue as debt, but it is a real Issued-labelled version row with a file that can be fetched, and nothing on it rec",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -1983,6 +2077,7 @@
         "components/documents/DocumentLinkPicker.tsx:107",
         "lib/outputTemplates.ts:226"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl splits a multi-sheet P&ID set that lives in a library configured mode: \"require\" with named reviewers. Each resulting sheet is created as a brand-new document at status Issued with its first version already current. No reviewer is notified, no roster is opened, and the new documents carry neither the source's docclass (so the MOC gate is off for their next revision until someone re-decla",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -2003,6 +2098,7 @@
         "components/documents/RevUpModal.tsx:218",
         "lib/reviewControl.ts:59"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter publishes a genuine process change to a P&ID — a new isolation valve on a PSV discharge. They fill in the file, label, and narrative, glance at the amber note, and click Publish with Change Type still on the remembered \"Minor\". No MOC reference is required or recorded. The configured two-reviewer gate is skipped. The revision becomes the controlled copy immediately. enforcedocumentpublis",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -2022,6 +2118,7 @@
         "supabase/migrations/20260812_per_library_publish_authority.sql:133",
         "supabase/migrations/20260822_review_completion_guard.sql:21"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer, mid-audit, is told the checkout lock is enforced at the database and reasons that no code path can clobber a colleague's in-flight work. Any write to documents.currentversionid that does not go through the publishrevision RPC — the legacy fallback path at revisions.ts:614 that fires whenever the RPC is missing, or a future direct PostgREST update — will advance a document that another",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/11-document-handoff.md"
@@ -2036,6 +2133,7 @@
       "blast_radius": "safety / field-truth",
       "related": [],
       "locations": [],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -2052,6 +2150,7 @@
       "locations": [
         "app/api/tickets/workflow-action/route.ts:104-109"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -2073,6 +2172,7 @@
         "types/schema.ts",
         "lib/ticketTransitions.ts:284-287"
       ],
+      "has_verifier_correction": false,
       "summary": "The thing this whole audit is about — people bypassing the app — is structurally invisible. You cannot count it, cannot find which request types or which queues leak most, and cannot tell an abandoned ticket from a completed one. The metric that would tell you whether the friction fixes are working does not exist.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -2093,6 +2193,7 @@
         "supabase/schema.sql:840",
         "app/api/admin/ticket-shed/commit/route.ts:186-194"
       ],
+      "has_verifier_correction": true,
       "summary": "A member with any role issues supabase.from('tickets').delete().eq('id', <id>) (or a future admin 'purge' feature is added assuming RLS would stop the wrong people). The row and its ticketcomments vanish. The construction drawings and source DWGs attached to that request stay in the R2 bucket forever with no row referencing them — invisible to the storage-orphan sweeper's ticket accounting and unr",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -2112,6 +2213,7 @@
         "app/api/tickets/workflow-action/route.ts:245-261",
         "components/documents/EditOverlapBanner.tsx:49-52"
       ],
+      "has_verifier_correction": true,
       "summary": "Drafter A is assigned a ticket raised from P&ID 12-D-4021 and the ticket moves to DRAFTING. No documentintents row is created. Drafter B opens the same drawing to check it out for an unrelated MOC. EditOverlapBanner (components/documents/EditOverlapBanner.tsx:49) calls listOrgEditOverlaps(orgId) and finds nothing, so no advisory renders — B sees a clean drawing and starts editing. Two people revis",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -2132,6 +2234,7 @@
         "types/schema.ts:1112",
         "supabase/schema.sql:402"
       ],
+      "has_verifier_correction": true,
       "summary": "A field tech checks in a P&ID and reports an undocumented field change with no MOC on record — the highest-consequence ticket the system creates, escalated straight to controllers (CheckInPanel.tsx:288-297). The ticket lands with unit = NULL. On /requests the Unit column renders blank (requests/page.tsx:1046, {ticket.unit}), the free-text search that matches on (ticket.unit || '').toLowerCase() (l",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -2152,6 +2255,7 @@
         "app/(protected)/requests/[id]/page.tsx:979-983",
         "app/(protected)/requests/page.tsx:623-627"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter's session token has just expired in the background (uid resolves null while the page still renders). They classify a revision comment's root cause and upload the IFC drawing. handleUpdateCategory and handleFileUpload both call logAuditAction; both inserts are rejected by Postgres; both are swallowed; both handlers proceed to setEditingCommentId(null) / clear the upload spinner, so the UI",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -2169,6 +2273,7 @@
         "supabase/schema.sql:1030-1034",
         "supabase/schema.sql:1080-1081"
       ],
+      "has_verifier_correction": true,
       "summary": "Any role that can create objects in a schema that lands ahead of public on the session searchpath (in a default Supabase project, public itself is world-creatable unless it has been locked down) can define orgmembers(orgid, uid, status) in that schema. myorgids() then executes with definer privileges against the attacker-controlled table, returns whatever org ids it likes, and ticketsorgaccess gra",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/07-persistence-and-rls.md"
@@ -2188,6 +2293,7 @@
         "components/documents/CheckInPanel.tsx:263",
         "types/schema.ts:929"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter checks out P&ID 12-D-401 under project \"U2 Reformer Turnaround\", finds the field differs from the drawing, and checks in with an as-built discrepancy. A Revision request is created and routed to the assignment queue. Nobody on the project page ever sees it: the request has no project id, the project has no request list, and the only durable trace of the project connection — the checkout ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2209,6 +2315,7 @@
         "lib/projectExport.ts:42",
         "components/projects/ProjectDocumentsCard.tsx:52"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor submits four revised isometrics through the project's tokenized portal. They land in the project's own intake folder as real documents. The PM opens the project's Documents tab and sees none of them; the project timeline shows no version events for them; \"Export CSV\" hands a reviewer a document list that omits them. Only the Intake tab knows they exist, and only until someone adopts t",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2229,6 +2336,7 @@
         "lib/projects.ts:259",
         "lib/projects.ts:300"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafting request created by CheckInPanel for an undocumented field change (priority 1, escalated to controllers as a PSM alert) is still in DRAFTING. The PM opens Complete, sees four green gates, confirms, and the project is marked completed. Every active checkout on the project is released (lib/projects.ts:300-306), the closeout report is generated from the snapshot that never saw the ticket, a",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2248,6 +2356,7 @@
         "lib/orgGraph.ts:121",
         "lib/orgGraph.ts:12"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer opens the graph to answer \"what is happening around this P&ID\" — the page whose premise is that nothing is inferred and every relationship is a real row — and sees its documents, assets, units and projects, but not the open revision request against it. The absence reads as \"no drafting work\", which is exactly the wrong conclusion before a rev-up decision.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2268,6 +2377,7 @@
         "lib/impact.ts:96",
         "lib/transitionIn.ts:167"
       ],
+      "has_verifier_correction": false,
       "summary": "A PM attaching drawings to a turnaround project searches \"12-D-401\", gets several hits including the superseded Rev C alongside the current Rev D, and picks the wrong one. The register now lists a superseded drawing as a project document; it flows into exportProjectToCsv's DOCUMENTS block (which prints doc number, title, rev, status) and into the project timeline, and the only signal that anything",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2288,6 +2398,7 @@
         "app/(protected)/requests/new/page.tsx:289",
         "app/(protected)/requests/new/page.tsx:536"
       ],
+      "has_verifier_correction": true,
       "summary": "An org admin defines a custom category field \"Project / Job\" to work around the missing link (the only free-text avenue available, since tickets have no MOC field either — MOC is merely one of the request-type options). Requesters dutifully fill it in on every request. Nobody ever sees it again: it is stored in metadata.customcategories and rendered nowhere, so the workaround silently fails and th",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2308,6 +2419,7 @@
         "lib/projects.ts:965",
         "lib/checkoutEpisodes.ts:715"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer looking for \"which requests came out of this project's work\" has, in principle, a two-hop path — project -> checkoutsessions -> tickets — and it returns nothing, on every project, forever. The same is true of the project -> milestones -> tickets path. Both FKs make the schema read as though the boundary is wired.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2329,6 +2441,7 @@
         "components/documents/RevUpModal.tsx:210",
         "lib/documentLifecycle/setRevUp.ts:83"
       ],
+      "has_verifier_correction": true,
       "summary": "The next engineer building the Projects<->request boundary does the obvious thing and starts stamping relatedticketid on versions produced from a drafting request. From that commit forward, every such rev-up skips the review gate on every library configured with mode 'require' — including P&IDs — because the bypass is keyed on the mere presence of a ticket id, not on evidence that the ticket's own",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2349,6 +2462,7 @@
         "app/api/intake/upload/route.ts:154",
         "app/(protected)/admin/audit/page.tsx:137"
       ],
+      "has_verifier_correction": false,
       "summary": "A PM reviewing intake flags a number collision on a contractor-submitted sheet, sees the toast \"...flagged to drafting — ticket DR-2026-0417 is in the assignment queue\", and navigates away. There is now no surface anywhere that connects that request back to the project: the project page has no requests tab, the ticket page shows no project, the audit trail files it under the document, and the one ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2369,6 +2483,7 @@
         "app/(protected)/projects/[id]/page.tsx:308",
         "supabase/schema.sql:906"
       ],
+      "has_verifier_correction": true,
       "summary": "A PM reads the project header looking for the request this project came from, sees no chip, and concludes no request exists — when in fact the system simply has no way to record one. Worse, the column's presence in schema.sql and in the Project type makes reviewers believe the link is implemented.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
@@ -2389,6 +2504,7 @@
         "lib/ticketAttention.ts:79",
         "lib/workflow.ts:166"
       ],
+      "has_verifier_correction": true,
       "summary": "A supervisor routes an as-built request to an engineer for scope review. The engineer returns it with questions. The ticket is now REVISIONREQ with no drafter. It shows no red dot for anyone: not the supervisor (management list omits REVISIONREQ), not the drafter pool (they only see PENDINGASSIGNMENT), not the requester, not the engineer. The requester gets one unread flag and a bell row whose sub",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2411,6 +2527,7 @@
         "lib/capabilityPolicy.ts:70",
         "hooks/useTicketNotifications.ts:265"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafting supervisor opens their bell to a red 'Action needed' row reading \"Issue the IFC package\" on an approved construction package. They click through to the ticket and the action rail is empty — the only person the state machine will accept is the assigned drafter. They cannot dismiss it (the row is derived from ticket state, not a notification they can mark read), so it persists across ever",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2431,6 +2548,7 @@
         "public/sw.js:226",
         "supabase/migrations/20260804_push_subscriptions.sql:1"
       ],
+      "has_verifier_correction": true,
       "summary": "An operator reading lib/notify/recipients.ts:5-12 (\"folding together EVERY follow/subscribe mechanism in the app\") or the push migration header (\"reminders that reach you even when the app is closed\") reasonably concludes that watching a ticket routes through the unified resolver and that urgent alerts reach a phone. Neither is true. A maintainer later 'fixing' ticket notifications by adding audie",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2451,6 +2569,7 @@
         "app/(protected)/requests/new/page.tsx:342",
         "lib/transitionIn.ts:339"
       ],
+      "has_verifier_correction": false,
       "summary": "A field engineer checks a P&ID back in and reports an as-built discrepancy, raising a drafting request. The routing notification goes to the drafting supervisor's bell — and nowhere else. If the supervisor is out of the app that day (or that week), nothing lands in their inbox. The second call at line 296 is the PSM escalation for an UNDOCUMENTED FIELD CHANGE, described in the surrounding comment ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2472,6 +2591,7 @@
         "app/api/tickets/workflow-action/route.ts:310",
         "lib/ticketRouting.ts:64"
       ],
+      "has_verifier_correction": true,
       "summary": "A supervisor flags an MOC request for engineering scope review. The engineer clicks \"Engineering Review Complete\" (approveteam). The ticket returns to PENDINGASSIGNMENT — the state that exists precisely because it is waiting on the drafting supervisor's pool — and the pool is told nothing. Any supervisor who was not the original flagger, and the entire Admin fallback pool in an org with no supervi",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2492,6 +2612,7 @@
         "app/api/tickets/workflow-action/route.ts:310",
         "app/(protected)/requests/[id]/page.tsx:1774"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafting supervisor clicks Watch on a hot MOC request so they can track it without owning it; the counter says \"2 subscribers\". A drafter then hits \"Pick Up Ticket\". The ticket moves PENDINGASSIGNMENT → DRAFTING with zero notifications: the watcher gets nothing, the assignment queue is never told the ticket left it, and any earlier \"needs a drafter assigned\" bell rows are not superseded because ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2511,6 +2632,7 @@
         "hooks/useTicketNotifications.ts:160",
         "hooks/useTicketNotifications.ts:170"
       ],
+      "has_verifier_correction": true,
       "summary": "A workspace that has run for a couple of years accumulates more than 500 open drafting requests (a realistic figure for a multi-unit plant with RFIs and as-builts). A PENDINGASSIGNMENT request from eight months ago is now the 520th most-recently-modified open ticket. It is silently excluded from the supervisor's badge count, from the bell list and from the /inbox AttentionFeed — permanently, becau",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2530,6 +2652,7 @@
         "components/requests/EngineerPickerModal.tsx:77",
         "app/api/tickets/workflow-action/route.ts:113"
       ],
+      "has_verifier_correction": true,
       "summary": "An org gives its senior Engineer-3 a second hat as a drafter (roles: ['Engineer-3','Drafter']) so she can produce isometrics during a turnaround. The supervisor opens Assign Ticket and she is not in the list — or, in a small org where she is the only drafter, the modal renders \"No drafters found in the system.\" and the assignment queue is a dead end. The supervisor's only route forward is to strip",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2551,6 +2674,7 @@
         "app/(protected)/settings/notifications/page.tsx:143",
         "app/api/cron/maintenance/route.ts:159"
       ],
+      "has_verifier_correction": true,
       "summary": "An ISO/MOC drafting request is created with a 7-day SLA. The assigned drafter goes on leave. Day 8, day 15, day 30 pass. No email, no bell row, no digest line is ever generated — because the only thing that knows the ticket is late is a red chip that renders if and only if a human opens /requests and scrolls to that row. Meanwhile the user's notification settings page told them, in their own words",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2573,6 +2697,7 @@
         "app/(protected)/admin/users/page.tsx:136",
         "lib/ticketRouting.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "A workspace names its Maintenance Manager as the drafting supervisor by stacking roles: roles = ['Manager','DraftingSupervisor'], headline role = 'Manager'. From then on every new drafting request — portal, check-in, and intake-collision — resolves byRole(\"DraftingSupervisor\") = [], falls through to return admins, and blasts the whole Admin list while the person who actually runs the assignment qu",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2592,6 +2717,7 @@
         "hooks/useTicketNotifications.ts:188",
         "app/api/tickets/workflow-action/route.ts:347"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafting supervisor accumulates 'New drafting request: … Ready for a drafter to be assigned.' bell rows. Each ticket is assigned within the hour, drafted, approved and closed — and every one of those creation rows stays unread and un-superseded forever, inflating the badge with items whose stated ask ('Ready for a drafter to be assigned') has been false for months. The only way to clear them is ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
@@ -2612,6 +2738,7 @@
         "lib/workflow.ts:166-194",
         "lib/ticketAttention.ts:62-110"
       ],
+      "has_verifier_correction": true,
       "summary": "A maintenance planner submits a request. The DraftingSupervisor flags it for engineering review and picks Engineer-1. Engineer-1 reads the scope, has a question, and clicks \"Return with Questions\" with a comment. The ticket moves to REVISIONREQ with no drafter. The planner opens it: no buttons. The supervisor's queue: gone (REVISIONREQ isn't an assignment state and isn't in the attention list). En",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2631,6 +2758,7 @@
         "app/api/tickets/workflow-action/route.ts:214-223",
         "app/api/tickets/workflow-action/route.ts:279-294"
       ],
+      "has_verifier_correction": true,
       "summary": "An approval to IFC commits: tickets.status becomes PENDINGIFC. The auditlogs insert fails — a transient connection reset, or the row is rejected. The route returns {ok: true}. The transition is real and visible to everyone; the compliance record of who approved it, from what state, and when, does not exist. An OSHA PSM audit later reconstructs approvals from auditlogs and finds a package issued wi",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2651,6 +2779,7 @@
         "lib/ticketTransitions.ts:311",
         "lib/workflow.ts:80-342"
       ],
+      "has_verifier_correction": true,
       "summary": "A requester wants to withdraw a request that is no longer needed. The workflow diagram modal — the app's own explanation of the lifecycle — tells them Canceled is where withdrawn requests go. There is no button anywhere that produces it. They either abandon the ticket in place (where it keeps generating SLA/attention noise, since lib/notifications.ts:259 only suppresses CLOSED and CANCELED) or an ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2674,6 +2803,7 @@
         "app/api/tickets/workflow-action/route.ts:155-191",
         "requests/page.tsx:620,639"
       ],
+      "has_verifier_correction": true,
       "summary": "A reviewer clicks \"Approve (Issue for Construction)\". The route reads the row, computes attachments with the staged→submitted flips plus the redline, and writes it. Two seconds earlier the drafter had started a file upload; the upload's R2 put finishes just after, and handleFileUpload writes attachments: [...snapshot, newFile] and history: [...snapshot, uploadEntry] from state captured BEFORE the ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2694,6 +2824,7 @@
         "app/api/tickets/workflow-action/route.ts:96-103",
         "supabase/schema.sql:405"
       ],
+      "has_verifier_correction": true,
       "summary": "A ticket exists at NEW — the table default is status TEXT NOT NULL DEFAULT 'NEW', so any insert that omits status (an external tool, a data restore, a future code path, or a row predating the assignment-first routing) lands there. Its owner opens it, sees the full and correct set of buttons the state machine renders, clicks \"Approve Request (To Assignment)\", and gets a 403 error toast. The other t",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2713,6 +2844,7 @@
         "lib/intents.ts:58",
         "lib/intents.ts:68"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter is assigned a revision ticket raised from P&ID D-3021 via the check-in flow (which does populate metadata.sourcedocument). The coordination surfaces are supposed to show \"someone is drafting a revision to this document right now.\" They never do. A second engineer, checking the document's overlap advisories before starting his own change, sees no in-progress work, checks it out, and revis",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2731,6 +2863,7 @@
         "lib/ticketTransitions.ts:193-200",
         "lib/workflow.ts:69-75"
       ],
+      "has_verifier_correction": false,
       "summary": "An assigner picking from a list mis-clicks and assigns the drafting ticket to an Accounting or Contractor seat. The server accepts it. That person now holds the drafter's authority on a construction package: they can submit the draft that goes for approval and, after approval, click \"ISSUE FINAL IFC PACKAGE\". Nothing in the flow ever questions whether they are qualified to produce drawings, and th",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2750,6 +2883,7 @@
         "lib/ticketTransitions.ts:280-283",
         "app/(protected)/requests/[id]/page.tsx:1028-1034"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter (or anything replaying the endpoint) POSTs {actionType:\"submitfinal\", finalAttachment:null}. The ticket lands in FINALDRAFT — \"The issued package awaiting the requester's acknowledgement\" per the workflow diagram — with no Final file. The requester clicks \"Acknowledge & Close\". The ticket is CLOSED, recorded as an issued IFC package, closedat is stamped, and it becomes archive-eligible. ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
@@ -2770,6 +2904,7 @@
         "lib/workflow.ts:219-228",
         "lib/ticketTransitions.ts:221-237"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -2793,6 +2928,7 @@
         "lib/reviewControl.ts:193-256",
         "lib/reviewControl.ts:60"
       ],
+      "has_verifier_correction": false,
       "summary": "The engineer either signs twice (two approval records for one change, different timestamps, no link) or dismisses the second as a duplicate and blocks the publish. Either way the reviewer concludes the app is wasting their time — the precise sentiment that produces shoulder-tapping.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -2813,6 +2949,7 @@
       "locations": [
         "app/(protected)/requests/[id]/page.tsx:1604-1605"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter whose headline role resolved to DocCtrl or Engineer-2 (WF-7) opens their own assigned ticket and sees \"View Only\". It is their work. The message tells them nothing about why they cannot proceed.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -2829,6 +2966,7 @@
       "locations": [
         "app/(protected)/requests/page.tsx:329"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -2850,6 +2988,7 @@
         "lib/ticketAttention.ts:115-128",
         "components/requests/WorkflowDiagramModal.tsx:27"
       ],
+      "has_verifier_correction": false,
       "summary": "FINALDRAFT is the state where the work is finished and awaiting acknowledgment. To a requester, \"Final Draft\" reads like not finished — the opposite of the truth. PENDINGIFC requires knowing that IFC means Issued For Construction and that the pending party is the drafter, not them.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"

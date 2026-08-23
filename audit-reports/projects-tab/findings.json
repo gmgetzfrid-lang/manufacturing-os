@@ -47,6 +47,7 @@
         "app/submit/[token]/page.tsx:173, 245, 274",
         "app/(protected)/plot-plans/page.tsx:166"
       ],
+      "has_verifier_correction": false,
       "summary": "A keyboard-only user cannot upload a quote PDF, cannot submit a drawing, and cannot upload redlines. On /submit/[token] that is the entire purpose of the page — and that page is public and unauthenticated, making it the highest-exposure accessibility surface in the product.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -67,6 +68,7 @@
         "components/projects/QualityTab.tsx:439-485",
         "components/dashboard/viz.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "A screen-reader user cannot tell a proven item from one nobody has looked at. Emerald against amber is the canonical deutan/protan confusion pair. The tooltip gives touch users nothing. And this sits inside the safety-critical PSSR/MI/QA-QC surface.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -86,6 +88,7 @@
         "components/projects/ScheduleTab.tsx:558",
         "components/projects/ScheduleTab.tsx:578, 582"
       ],
+      "has_verifier_correction": false,
       "summary": "Every completed, missed, blocked, on-hold and overdue milestone — precisely the rows a field user needs — becomes unreadable in dark mode. This is the single worst rendering defect found.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -110,6 +113,7 @@
         "lib/costDocs.ts:226",
         "lib/costDocs.ts:323-334"
       ],
+      "has_verifier_correction": false,
       "summary": "The AI misreads $1,182,000 as $182,000. A controller corrects it. The Price column, the $ / hr column, the minTotal normalization for the entire field, and every value score still use $182,000 — so the corrected bidder keeps a price part of 100 and the best value badge. Only the confirm dialog shows $1,182,000. Click through it and a $1.18M commitment posts against a table that said $182K.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -128,6 +132,7 @@
       "locations": [
         "components/projects/cost/QuotesPanel.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "The reviewer's only option is to trust the extraction. Combined with BID-1, the system holds two different numbers for the same bid, shows the reviewer the wrong one, and gives them no way to adjudicate.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -145,6 +150,7 @@
         "lib/bidTab.ts:168",
         "lib/rfqDocx.ts:65"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -164,6 +170,7 @@
         "lib/bidTab.ts:82-99",
         "lib/bidTab.ts:107-112"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -185,6 +192,7 @@
         "lib/costDocs.ts:170-192",
         "app/api/projects/cost-docs/route.ts:87-92"
       ],
+      "has_verifier_correction": false,
       "summary": "The user clicks Award. The claim succeeds, so the document is now awarded. The network drops, addEntry fails, and the revert also fails and is swallowed. The quote is awarded with no commitment in the rollup. It cannot be re-read (the route returns 409 \"already moved money — its extraction is locked\") and cannot be re-awarded (the claim requires draft|parsed). There is no interface, no reconciliat",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -204,6 +212,7 @@
       "locations": [
         "components/projects/CostsTab.tsx:76-79"
       ],
+      "has_verifier_correction": false,
       "summary": "A schedule whose first activity runs 1–12 June and whose last finishes 30 September has a real span of 122 days. The planned budget line is drawn across 110 days, starting eleven days late and climbing eleven percent steeper — so it reads above actuals for the whole first month and the on-track comparison is wrong from day one. plannedManpowerSeries inherits the same compression, inflating the cre",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -224,6 +233,7 @@
         "app/(protected)/companies/page.tsx:74-79",
         "app/(protected)/companies/[id]/page.tsx:54-71"
       ],
+      "has_verifier_correction": false,
       "summary": "Fifteen to forty seconds of background querying. Navigate away mid-sweep and the four workers drain the queue to completion — and because supabase-js multiplexes over one HTTP/2 connection, the page you left slows down the page you went to. Press Back and all 1,141 run again. Adding one company restarts the whole sweep.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -243,6 +253,7 @@
         "lib/projectExport.ts:40-42",
         "app/(protected)/projects/page.tsx:103-114"
       ],
+      "has_verifier_correction": false,
       "summary": "The button gives no feedback and stays clickable, so an impatient user fires a second and third 360-round-trip sweep on top of the first.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -260,6 +271,7 @@
         "lib/checklists.ts:250-266",
         "lib/checklistEngine.ts:69"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor uploads a file and types the title \"Hydrotest Report.\" It lands in the project's intake collection as a Draft, unreviewed, from an unauthenticated link. The evidence sweep matches the phrase, marks the pressure-test checklist item satisfied, and attaches the citation Document on file: \"Hydrotest Report\". Nobody checked that the document contains a hydrotest, covers this equipment, or ",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -282,6 +294,7 @@
         "lib/checklists.ts:339",
         "lib/checklistEngine.ts:141"
       ],
+      "has_verifier_correction": false,
       "summary": "A rookie clicks OK and thirty safety lines go not-applicable sight-unseen. Because a not-applicable item is excluded from the progress count (computeChecklistProgress, lib/checklists.ts:339), the checklist jumps to complete. And because the write sets a manual note, no future sweep or assessment will ever revisit those items (lib/checklistEngine.ts:141 — if (item.manualNote) continue).",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -301,6 +314,7 @@
         "lib/costs.ts:111-116",
         "lib/changeOrders.ts:151-161"
       ],
+      "has_verifier_correction": false,
       "summary": "A user without write authority accepts a turnover item. The interface says accepted. The audit log says accepted, by them, at that time. The database still says open. The record and the reality disagree, and the record is the one that gets exported.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -322,6 +336,7 @@
         "lib/turnover.ts:204",
         "lib/turnover.ts:225"
       ],
+      "has_verifier_correction": false,
       "summary": "A user who wants a clean closeout can turn every gate green in about a dozen keystrokes, and the audit log will record \"decided by reviewer\", null, and nothing at all as the reasons.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -343,6 +358,7 @@
         "lib/reviewControl.ts:495-510",
         "lib/postPublish.ts:1-13"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor supersedes an operating procedure that forty operators had acknowledged. No new acknowledgment roster is issued, the periodic-review clock never resets, and retention is never recomputed — so the compliance record still shows everyone signed off on the previous revision. The only signal is one docsuperseded notification to Admin, Document Control and the project owner.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -361,6 +377,7 @@
         "lib/timeline.ts:441-443",
         "lib/timeline.ts:287-292"
       ],
+      "has_verifier_correction": false,
       "summary": "An auditor opens a project's Activity tab and sees comments and checkouts. Invisible:",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -377,6 +394,7 @@
       "locations": [
         "lib/scheduleParsers.ts:918-925"
       ],
+      "has_verifier_correction": false,
       "summary": "A planner outside the United States imports a P6 XER or an MS Project CSV with dd/mm/yyyy dates. Rows dated 1–12 of the month land on a wrong but entirely plausible date. Rows dated 13–31 fail with a raw Postgres error. The modal reports \"Inserted: 140 / 12 errors\" and there is no way to discover that the 140 are wrong.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -395,6 +413,7 @@
         "lib/milestones.ts:1005-1019",
         "components/projects/ScheduleImportModal.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "The crew marks forty tasks 60–100% complete over a shift. The scheduler re-imports the weekly refresh from P6, where those tasks still read zero. All forty reset to percentcomplete = 0, status = 'planned', actualat = null. Earned value, CPI, SPI, the S-curve and the health score all snap backwards. The only warning is \"Re-importing the same file upserts rows with stable IDs.\" No diff, no confirmat",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -411,6 +430,7 @@
       "locations": [
         "lib/scheduleParsers.ts:710"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -432,6 +452,7 @@
         "components/projects/ExecutionView.tsx:449-461",
         "components/projects/MovePreviewSheet.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "This is not a preview. withCascade merges the cascade into the primary change set, and commitMove / resizeEdge / resizeSummaryEdge / sequencePhase persist the whole set through the batch-move RPC. The preview sheet is fed the originally-dragged ids, so it says \"Move 1 task 1 day later\", the user confirms, and two tasks jump fourteen years. Undo exists but the toast lives 7 seconds and its snapshot",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -455,6 +476,7 @@
         "components/projects/ExecutionView.tsx:949",
         "lib/scheduleProgress.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "The Date.now() rule marks a task overdue from 00:01 UTC on its own due date — for a US user, from five or eight in the evening the day before. Simultaneously visible: SchedulePulse says \"5 overdue tasks\" directly above SummaryStrip saying \"Overdue 0\", two inches apart, from the same data. And projectSnapshot.overdueMilestones feeds the health penalty, so the score is docked for tasks that are not ",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -475,6 +497,7 @@
         "components/projects/ScheduleTab.tsx:317",
         "components/projects/ScheduleTab.tsx:233"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -493,6 +516,7 @@
         "lib/milestones.ts:1221",
         "components/projects/ScheduleTab.tsx:105-120"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -516,6 +540,7 @@
         "components/viewers/SecureDocViewer.tsx:274",
         "app/api/transmittal/route.ts:73"
       ],
+      "has_verifier_correction": false,
       "summary": "A vendor holding the link uploads payload.html declaring Content-Type: text/html. Anyone who opens it in the document viewer runs the attacker's script as themselves, on the application's origin, with access to localStorage — which holds the Supabase session and refresh token. On a trusted auto-supersede link no approval click is needed first.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -534,6 +559,7 @@
         "supabase/migrations/20260913_projects_rls_recursion_fix.sql:40",
         "supabase/migrations/20260913_projects_rls_recursion_fix.sql:91"
       ],
+      "has_verifier_correction": false,
       "summary": "Any active org member can read the budgets, bid prices, change orders, PSSR findings and turnover records of a project marked private. Not by crafting a query — the data surfaces on the ordinary /companies/[id] profile page.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -553,6 +579,7 @@
         "app/api/intake/upload/route.ts:302",
         "docs/ARCHITECTURE.md:752-756"
       ],
+      "has_verifier_correction": false,
       "summary": "Document Control assigns a PSM-covered P&ID to a trusted contractor link. Submission one routes to review, correctly. Submission two sees linkAuthored = true, skips the pending-submission 409, and publishes: status: \"Issued\", new currentversionid, pendingversionid cleared — orphaning the first review in the same write.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -574,6 +601,7 @@
         "app/api/intake/upload/route.ts:322-334",
         "supabase/migrations/20260822_review_completion_guard.sql:32-34"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer has a drawing checked out for as-built verification and Document Control has an active \"Field Verification Needed\" hold on it. A trusted contractor link supersedes it anyway. The engineer's lock stays open on a document whose current revision changed underneath them; the hold is silently ignored.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -597,6 +625,7 @@
         "components/projects/EditProjectModal.tsx:36-42",
         "components/projects/ProjectWizard.tsx:153"
       ],
+      "has_verifier_correction": false,
       "summary": "The user types a purpose, three goals, four budget lines, two milestones and two contractors, and lands on a project with none of it — where the coach immediately asks for all of it back. This is the impatience tax inverted: you invest the effort and the system throws it away without saying so.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -618,6 +647,7 @@
         "app/(protected)/companies/[id]/page.tsx:500",
         "components/ui/Modal.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "A screen-reader user tabbing into the open wizard walks straight out the bottom into the projects grid behind it, with no announcement that a dialog opened and no way back except reverse-tabbing the whole page. Closing returns focus to <body>, not to the button that opened it. And two of the five have no dismissal affordance other than a footer button — on a phone, if that footer scrolls out of vi",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -635,6 +665,7 @@
         "components/projects/ProjectWizard.tsx:456-463",
         "components/ui/Field.tsx:50-57"
       ],
+      "has_verifier_correction": false,
       "summary": "A screen reader announces \"edit text, blank\" for Name, Description, MOC reference, Target completion, Purpose, Goals and Success criteria. The required-field asterisks (UX-15) are not in the accessibility tree either, for the same reason.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -656,6 +687,7 @@
         "components/projects/ProjectWizard.tsx:124-125",
         "components/projects/IntakePanel.tsx:292"
       ],
+      "has_verifier_correction": false,
       "summary": "A screen-reader user gets no feedback at all when an action fails. In the wizard's case they are additionally left focused on a control that no longer exists.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -678,6 +710,7 @@
         "app/submit/[token]/page.tsx:223-224",
         "app/(protected)/projects/[id]/page.tsx:418-448, 709-720"
       ],
+      "has_verifier_correction": false,
       "summary": "Combined with the missing aria-pressed, which status filter is active is unknowable in dark mode for everyone — sighted or not.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -697,6 +730,7 @@
         "components/projects/QualityTab.tsx:571, 574, 577, 580",
         "app/globals.css:298-303"
       ],
+      "has_verifier_correction": false,
       "summary": "A mis-tap on a tablet is an acceptance nobody made, with no confirmation to catch it.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -714,6 +748,7 @@
         "app/(protected)/companies/page.tsx:196-202",
         "app/(protected)/companies/[id]/page.tsx:127-133"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -740,6 +775,7 @@
         "app/(protected)/companies/[id]/page.tsx:88",
         "components/projects/CostsTab.tsx:127, 301"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -761,6 +797,7 @@
         "lib/bidTab.ts:86-98",
         "lib/__tests__/projectControls.test.ts:52"
       ],
+      "has_verifier_correction": false,
       "summary": "The row renders, simultaneously, an amber chip excludes: NDE and a rose chip silent gap: NDE (RT 10%) whose tooltip reads \"Other bidders priced this — this bid neither priced nor excluded it.\" That statement is false about the data on screen.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -779,6 +816,7 @@
         "components/projects/cost/QuotesPanel.tsx:292-294",
         "components/projects/cost/QuotesPanel.tsx:367"
       ],
+      "has_verifier_correction": false,
       "summary": "A sole-source quote acquires an authoritative award justification the system invented, with no disclaimer attached — which is exactly the situation where a reviewer most needs to be told the tool is not choosing for them.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -801,6 +839,7 @@
         "components/projects/CostsTab.tsx:159-164",
         "app/api/projects/cost-docs/route.ts:127"
       ],
+      "has_verifier_correction": false,
       "summary": "A €150,000 bid displays as $150,000 and is scored head-to-head against dollar bids as though the numbers were commensurate (minTotal / e.total).",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -818,6 +857,7 @@
         "components/projects/cost/QuotesPanel.tsx:209-212",
         "components/projects/cost/QuotesPanel.tsx:346-366"
       ],
+      "has_verifier_correction": false,
       "summary": "A typed-total bid that is $40,000 cheaper than everyone leaves the table's price scores untouched and the best-value badge unaffected. A reviewer scanning the table can miss a competing bid entirely.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -839,6 +879,7 @@
         "components/projects/cost/QuotesPanel.tsx:156-161",
         "components/projects/cost/QuotesPanel.tsx:309-316"
       ],
+      "has_verifier_correction": false,
       "summary": "The AI misreads a total. There is no correction path and no removal path. The only escape is a duplicate upload, which then sits in the tabulation permanently, inflating scopeUnion and skewing minTotal.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -855,6 +896,7 @@
       "locations": [
         "components/ui/ChartKit.tsx:35-41"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/05-charts-and-rfq.md"
@@ -874,6 +916,7 @@
         "app/globals.css:31-34",
         "components/dashboard/viz.tsx:11"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/05-charts-and-rfq.md"
@@ -891,6 +934,7 @@
         "lib/costSeries.ts:152-157",
         "components/projects/cost/CostCharts.tsx:126-127"
       ],
+      "has_verifier_correction": false,
       "summary": "The panel is titled \"Planned crew size by week\" and is meant to be the curve a superintendent argues manpower from. It cannot show a ramp, a peak, or a demobilization, because there is no shape in the data.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/05-charts-and-rfq.md"
@@ -910,6 +954,7 @@
         "lib/costDocs.ts:170-192",
         "app/api/intake/resolve/route.ts:86"
       ],
+      "has_verifier_correction": false,
       "summary": "A document awarded in another tab gets voided anyway: the paper says void, the commitment stays posted, and the contractor portal flips their bid to \"not selected\" (app/api/intake/resolve/route.ts:86). Or a total is overwritten on an already-awarded document, so the paper stops matching the posted cost entry — which is also the input to BID-1.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -929,6 +974,7 @@
         "components/projects/CostsTab.tsx:145-156",
         "lib/projectReport.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "$200,000 budget, $190,000 committed to an awarded subcontractor, $10,000 invoiced. The headline tile reads \"Remaining $190,000\". The uncommitted balance is $10,000. This is the most-glanced number on the screen and it points a manager nineteen times in the wrong direction. The auto-drafted lessons-learned then writes it into the project's closing record.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -947,6 +993,7 @@
         "lib/costs.ts:305-313",
         "components/projects/CostsTab.tsx:137-141"
       ],
+      "has_verifier_correction": false,
       "summary": "The number on the printed brief and the number in the application are computed on different bases and do not match. The report's closing sentence claims \"Every figure above is drawn live from the platform's records.\"",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -969,6 +1016,7 @@
         "supabase/migrations/20260614_phase7_milestones.sql:61",
         "types/schema.ts:429"
       ],
+      "has_verifier_correction": false,
       "summary": "A project with a 400-line P6 import is told \"Schedule: No schedule yet,\" is nagged to \"Add a schedule,\" and is nagged to set a baseline forever after one has been set (setBaseline writes to imported rows; hasBaseline cannot see them). The printed report says \"No schedule loaded.\" Meanwhile the Costs tab applies no source filter at all, shows the schedule, and computes against it. Two panels on one",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -994,6 +1042,7 @@
         "lib/companies.ts:240-252",
         "lib/turnover.ts:8"
       ],
+      "has_verifier_correction": false,
       "summary": "Turnover acceptance never reaches any scorecard, so the company Quality dimension is permanently Unrated. Bid history never appears, so \"N/M bids won\" never renders and the Bid-history panel never shows. The coach's promise that \"their performance record starts building\" is false as wired, and so is lib/turnover.ts:8's claim that \"acceptance rates roll up to the contractor's permanent scorecard.\"",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -1014,6 +1063,7 @@
         "components/projects/cost/QuotesPanel.tsx:221",
         "supabase/migrations/20260819_orphan_tables_backfill.sql:184"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -1035,6 +1085,7 @@
         "components/projects/ProjectCoach.tsx:33, 41",
         "lib/projectSnapshot.ts:25-26"
       ],
+      "has_verifier_correction": false,
       "summary": "Opening the Costs tab costs 46 queries and ~2.8 MB. Switching to it costs 20. Changing one budget line costs 21. Posting a comment costs 27. The user sees a second spinner pass and the scores flicker.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -1055,6 +1106,7 @@
         "components/projects/QualityTab.tsx:73",
         "app/(protected)/projects/[id]/page.tsx:494"
       ],
+      "has_verifier_correction": false,
       "summary": "Remove that comment and let the lint rule \"fix\" the dependencies — which is exactly what react-hooks/exhaustive-deps demands — and you get an unbounded loop at roughly twenty queries per iteration. A latent outage sitting behind a suppression comment, with no test and no note saying what it holds back.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -1077,6 +1129,7 @@
         "components/projects/TaskDetailPanel.tsx:690-693",
         "components/projects/ExecutionView.tsx:842, 1395"
       ],
+      "has_verifier_correction": false,
       "summary": "At 400 milestones: ~8,000–15,000 DOM nodes for ~15 visible rows, and ~250,000 comparisons per drag frame — visible stutter. At 5,000: ~100k nodes, 25M comparisons per frame, and the dependency dropdown becomes a 5,000-option list that blocks the main thread. MINPXPERDAY = 30 also means \"Fit\" cannot fit a long schedule (a two-year project is ~22,000 px wide).",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -1097,6 +1150,7 @@
         "app/api/companies/quality-manual/route.ts:27",
         "lib/ai/providerCall.ts:128-129"
       ],
+      "has_verifier_correction": false,
       "summary": "All three clients do await res.json().catch(() => null) then throw body?.error || \\HTTP ${res.status}\\. A platform timeout returns a non-JSON 504, so body is null and the user sees a red banner reading literally \"HTTP 504\" after two minutes of spinner. The document is unchanged, and the model call the customer's own key was charged for is lost.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -1116,6 +1170,7 @@
         "lib/checklists.ts:150-176",
         "lib/checklists.ts:298-322"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -1139,6 +1194,7 @@
         "lib/projects.ts:419",
         "lib/projectSnapshot.ts:22, 42"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -1159,6 +1215,7 @@
         "app/(protected)/projects/page.tsx:64",
         "app/loading.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "\"Loading the registry…\" forever — no error, no retry, no timeout. And because the route has no loading.tsx, the nearest ancestor is app/loading.tsx, which renders outside the protected shell — so a cold navigation flashes the entire application away, sidebar included.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -1182,6 +1239,7 @@
         "components/projects/CostsTab.tsx:65",
         "lib/costDocs.ts:106-128"
       ],
+      "has_verifier_correction": false,
       "summary": "A project with 8 accounts, 40 entries and 3 awarded quotes renders four $0 tiles, no burn bar, every empty state — and, because the rollup is zero and there are no entries, watermarked EXAMPLE charts showing a healthy $305,000 job (REL-10). The user's only feedback is an invitation to start over. If they take it, the upload posts the file to R2 (orphaning it) and then surfaces a raw Postgres strin",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -1204,6 +1262,7 @@
         "lib/companies.ts:134-136",
         "components/projects/cost/QuotesPanel.tsx:545"
       ],
+      "has_verifier_correction": false,
       "summary": "What a superintendent sees when a policy denies a write, or when a migration has not been applied, is a sentence about relations and row-level security policies.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -1229,6 +1288,7 @@
         "lib/checklists.ts:80",
         "lib/companies.ts:75"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -1246,6 +1306,7 @@
         "app/(protected)/projects/[id]/page.tsx",
         "app/(protected)/error.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "The user is left with \"Try again\", which re-renders the same crashing tree, and \"Dashboard\". There is no way to escape to a working tab — so a bug in Costs makes Schedule unreachable too.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -1266,6 +1327,7 @@
         "app/api/companies/quality-manual/route.ts:46",
         "lib/__tests__/apiRouteAuth.test.ts"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -1282,6 +1344,7 @@
       "locations": [
         "lib/schemaExpectations.ts:29+"
       ],
+      "has_verifier_correction": false,
       "summary": "Migrations are applied by hand. 20261013 is skipped, /api/admin/schema-health reports green, and the Costs and Quality tabs render as empty, cheerful, apparently-working screens (REL-2).",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -1298,6 +1361,7 @@
       "locations": [
         "lib/rfqDocx.ts:31-32"
       ],
+      "has_verifier_correction": false,
       "summary": "Word refuses the file — \"The file cannot be opened because there are problems with the contents\" — with no client-side error, no warning, and no clue which field caused it.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/05-charts-and-rfq.md"
@@ -1316,6 +1380,7 @@
         "lib/milestones.ts:1490-1499",
         "components/projects/ScheduleTab.tsx:284"
       ],
+      "has_verifier_correction": false,
       "summary": "A job is sixty days late. A manager re-plans and clicks Re-baseline. The dialog reads \"Re-capture the current plan as the new baseline? Drift will be measured from now on against this snapshot\" — accurate, reassuring, and the last moment the original dates exist. Afterwards finishDriftDays reads 0, the drift nudge disappears, and every \"vs plan\" badge vanishes. The evidence of a sixty-day slip is ",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -1333,6 +1398,7 @@
         "lib/milestones.ts:389-395",
         "lib/scheduleProgress.ts:35-39"
       ],
+      "has_verifier_correction": false,
       "summary": "A task completes at 100%. A supervisor later re-classifies it Missed. Result: percentcomplete = 100, actualat = null, status = 'missed'. ScheduleProgress shows \"1 Missed\" while computeScheduleMetrics adds its full weight to earned value and SPI — so schedule performance improves at the moment somebody records a failure.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -1355,6 +1421,7 @@
         "app/api/intake/resolve/route.ts:100-105",
         "components/projects/QualityTab.tsx:524"
       ],
+      "has_verifier_correction": false,
       "summary": "The contractor resubmits blind, and the reviewer rejects again.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -1376,6 +1443,7 @@
         "app/api/intake/upload/route.ts:325",
         "components/projects/IntakePanel.tsx:113"
       ],
+      "has_verifier_correction": false,
       "summary": "Reachable via SEC-3 and SEC-12, and additionally whenever an internal reviewer has an in-review draft with a signed roster on an assigned document — that draft and its e-signatures are orphaned by the external write.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -1393,6 +1461,7 @@
         "lib/transitionIn.ts:69-91",
         "components/projects/IntakePanel.tsx:257-259"
       ],
+      "has_verifier_correction": false,
       "summary": "A drawing the organization explicitly refused gets adopted into the library with one click. The same applies to a submission still awaiting review — adoption places it in the controlled library with no currentversionid and its only version inreview.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -1412,6 +1481,7 @@
         "lib/transitionIn.ts:10-12",
         "lib/uniqueness.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "The panel shows \"P&ID-2101 — ⚠ number collision: P&ID-2101 (Rev 4) already exists.\" The manager expands it, does not type a new number, and clicks Adopt. Both documents are now live in the controlled register under the same number, in different libraries, neither superseded — the exact \"two sources of truth\" the module header declares impossible.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -1430,6 +1500,7 @@
         "supabase/migrations/20261011_collections_guard_and_trash.sql:44-53",
         "app/(protected)/projects/[id]/page.tsx:508-523"
       ],
+      "has_verifier_correction": false,
       "summary": "A non-controller project owner picks a destination and clicks \"Adopt 12 clean.\" Every one fails: \"Adopted 0 of 12 — failed: …\", surfacing the raw trigger message \"Moving documents between folders requires Admin or Document Control.\"",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -1450,6 +1521,7 @@
         "lib/scheduleParsers.ts:372-379",
         "lib/scheduleParsers.ts:508-523"
       ],
+      "has_verifier_correction": false,
       "summary": "A routine start-to-start plus finish-to-finish pair between two activities — legal and common in real P6 networks — lands as A dependson B and B dependson A: a cycle, which is the input to SCH-4. Beyond that, every reflow computes against the wrong relationship semantics.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -1471,6 +1543,7 @@
         "lib/scheduleReflow.ts:272",
         "components/projects/TaskDetailPanel.tsx:727"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -1488,6 +1561,7 @@
         "components/projects/RebaseScheduleModal.tsx:51-57",
         "components/projects/RebaseScheduleModal.tsx:76"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -1504,6 +1578,7 @@
       "locations": [
         "lib/scheduleReflow.ts:531, 542"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -1520,6 +1595,7 @@
       "locations": [
         "lib/milestones.ts:1410"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -1539,6 +1615,7 @@
         "components/projects/ExecutionView.tsx",
         "components/projects/ScheduleTab.tsx:607"
       ],
+      "has_verifier_correction": false,
       "summary": "A user edits an imported row believing it is protected, and the next re-import silently destroys the edit (SCH-2). The tooltip is flatly false.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -1557,6 +1634,7 @@
         "lib/milestones.ts:938-1064",
         "lib/milestones.ts:1072-1107"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -1574,6 +1652,7 @@
         "components/projects/cost/QuotesPanel.tsx:539-544",
         "components/projects/IntakePanel.tsx:150"
       ],
+      "has_verifier_correction": false,
       "summary": "A link emailed to a vendor for a job that closed two years ago still accepts uploads today, from anyone who has ever had the URL — a forwarded email, a departed employee, a shared inbox.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1594,6 +1673,7 @@
         "app/api/intake/upload/route.ts:46, 73",
         "app/api/intake/upload/route.ts:270"
       ],
+      "has_verifier_correction": false,
       "summary": "Any file of any type up to 100 MB is accepted, stored, and later served. SEC-1 is the sharpest consequence; a stored malware sample served to whoever opens it is the other.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1614,6 +1694,7 @@
         "app/api/storage/download-url/route.ts:146-151",
         "app/api/transmittal/route.ts:73"
       ],
+      "has_verifier_correction": false,
       "summary": "This is the active half of SEC-1. Adding one parameter defuses the execution path independently of every other layer.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1631,6 +1712,7 @@
         "app/api/intake/upload/route.ts:104-113",
         "app/api/intake/upload/route.ts:349-385"
       ],
+      "has_verifier_correction": false,
       "summary": "Anyone with a link can generate unbounded storage writes and unbounded outbound email addressed to your controllers. No account needed.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1648,6 +1730,7 @@
         "supabase/migrations/20260906_projects_hardening.sql:61-68",
         "supabase/migrations/20261013_project_controls_program.sql"
       ],
+      "has_verifier_correction": false,
       "summary": "Someone leaves and is deactivated. The write gate correctly blocks them from editing costs. The delete gate does not block them from destroying the project — and foreign-key cascade takes the cost accounts, entries, change orders, checklists, turnover and punch records with it.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1665,6 +1748,7 @@
         "app/api/projects/checklist/route.ts:67",
         "lib/docFileServer.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "A member with no read grant on the HSE library points the checklist reader at a restricted incident procedure and receives its verbatim text.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1685,6 +1769,7 @@
         "supabase/migrations/20260903_intake_assignments.sql:20",
         "app/api/intake/resolve/route.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "A non-controller project owner adds a restricted HSE document's UUID to a contractor's assigneddocids. The contractor's portal now lists it by number and title, and can push revisions into its pendingversionid. Nothing in the UI, the audit summary, or the timeline says an out-of-project restricted document was exposed.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1703,6 +1788,7 @@
       "locations": [
         "app/api/intake/upload/route.ts:302"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor uploads a new isometric (goes to review, sits pending), then immediately uploads Rev B. The document becomes Issued with a current version and a cleared pending pointer — a fully controlled document in the org's library authored entirely by an outside party, with the Rev A review orphaned. Aggravated when projects.intakelibraryid points at a real P&ID library, which the project owner ",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1723,6 +1809,7 @@
         "lib/reviewControl.ts:395-411",
         "supabase/migrations/20260822_review_completion_guard.sql:46-58"
       ],
+      "has_verifier_correction": false,
       "summary": "A library configured for mandatory two-reviewer sign-off is satisfied by one click from one person, who need not be a controller or a reviewer on that library's roster, with zero e-signatures recorded.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1742,6 +1829,7 @@
         "supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql",
         "components/documents/RevUpModal.tsx:219"
       ],
+      "has_verifier_correction": false,
       "summary": "Both external routes to a live drawing revision — trusted auto-supersede and Intake-tab approve — write a version with mocreference = NULL on a declared drawing. The row that lands in the revision chain reads blank for what OSHA treats as a change.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1761,6 +1849,7 @@
         "app/(protected)/projects/[id]/page.tsx:977-982",
         "app/(protected)/projects/[id]/page.tsx:913"
       ],
+      "has_verifier_correction": false,
       "summary": "The user gets new row violates row-level security policy for table \"projects\" in an alert. The button renders for every non-owner member with no hint that it only works for Admin or Document Control.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -1779,6 +1868,7 @@
         "lib/companyScore.ts:153-164",
         "lib/companyScore.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "The first thing a new user sees after creating their first project is a red \"Concern\" verdict on a project they have not started. It is also actively misleading on a dashboard of many projects, where a new project is indistinguishable from a failing one.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1797,6 +1887,7 @@
         "components/projects/QualityTab.tsx:324",
         "components/projects/QualityTab.tsx:378-382"
       ],
+      "has_verifier_correction": false,
       "summary": "A PSSR reviewer uploads the hydrotest records the day before startup, watches the coach still say \"3 items need evidence,\" and concludes the system is broken or lying.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1817,6 +1908,7 @@
         "lib/costDocs.ts:93-94",
         "app/api/intake/upload/route.ts:107"
       ],
+      "has_verifier_correction": false,
       "summary": "The owner sends four contractors links, goes home, comes back expecting a bid tab, and finds four rows saying \"Uploaded — not read yet.\"",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1840,6 +1932,7 @@
         "lib/turnover.ts:187-188",
         "components/projects/QualityTab.tsx:17"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1861,6 +1954,7 @@
         "lib/projectHealth.ts:208, 214",
         "app/(protected)/projects/[id]/page.tsx:105-110"
       ],
+      "has_verifier_correction": false,
       "summary": "The user is sent hunting for a button that does not exist, for a step that already happened.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1880,6 +1974,7 @@
         "components/projects/QualityTab.tsx:81-86",
         "components/projects/IntakePanel.tsx:292"
       ],
+      "has_verifier_correction": false,
       "summary": "An impatient user reads red and stops trusting the feature. On the Intake panel, a failed approval looks like it worked.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1899,6 +1994,7 @@
         "components/projects/QualityTab.tsx:383-386",
         "lib/checklists.ts:218-223"
       ],
+      "has_verifier_correction": false,
       "summary": "The user clicks Approve and nothing appears to happen. Same for \"Mark complete\" on a checklist: the button is always enabled and styled as the primary green action, and the refusal — \"N items are not satisfied yet…\" — lands hundreds of pixels above where the user is looking.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1917,6 +2013,7 @@
         "app/(protected)/companies/[id]/page.tsx:153, 157",
         "app/(protected)/projects/[id]/page.tsx:82-85"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1940,6 +2037,7 @@
         "lib/costs.ts:189",
         "components/projects/cost/QuotesPanel.tsx:545"
       ],
+      "has_verifier_correction": false,
       "summary": "The user cannot distinguish empty from broken from not-allowed. Then the first write surfaces the raw string: relation \"public.costaccounts\" does not exist, or new row violates row-level security policy for table \"costentries\".",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1961,6 +2059,7 @@
         "lib/projects.ts:322-330",
         "app/(protected)/projects/[id]/page.tsx:3-6"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor submits 40 sheets and all 40 are approved. The project manager opens Documents and reads \"No documents checked out yet. Open a doc in a library and check it out to this project.\" The sheets exist, are versioned and are audited — and are visible only inside the Transition-in panel nested in the Intake tab, which is itself hidden from anyone who is not the owner or a controller.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1980,6 +2079,7 @@
         "components/projects/ProjectWizard.tsx:222",
         "components/projects/ProjectWizard.tsx:434-444"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -1999,6 +2099,7 @@
         "components/projects/cost/QuotesPanel.tsx:409-411",
         "components/projects/QualityTab.tsx:129-131"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -2018,6 +2119,7 @@
         "components/projects/cost/CostCharts.tsx:90, 126",
         "components/dashboard/viz.tsx:104"
       ],
+      "has_verifier_correction": false,
       "summary": "This is the one place in the new work where information is conveyed as a chart with no text equivalent anywhere on the page. Every other chart pairs its visual with real text.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -2047,6 +2149,7 @@
         "components/ui/HelpTooltip.tsx",
         "components/projects/CostsTab.tsx:277"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -2073,6 +2176,7 @@
         "app/(protected)/companies/page.tsx:120",
         "app/submit/[token]/page.tsx:155, 182, 196, 199, 212, 251, 293-296"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
@@ -2093,6 +2197,7 @@
         "lib/costDocs.ts:157",
         "lib/costDocs.ts:250-251"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -2111,6 +2216,7 @@
         "app/api/projects/cost-docs/route.ts",
         "components/projects/cost/QuotesPanel.tsx"
       ],
+      "has_verifier_correction": false,
       "summary": "A user can award an expired quote with no warning. And the shipped example literally carries notes: \"Includes weekend premium\" on Bayline — the bid the scorer picks as best value — which the interface never displays.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -2132,6 +2238,7 @@
         "components/projects/cost/QuotesPanel.tsx:50-52",
         "lib/bidTab.ts:30, 42, 131"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/04-bid-tabulation.md"
@@ -2153,6 +2260,7 @@
         "app/(protected)/companies/[id]/page.tsx:97",
         "app/(protected)/companies/page.tsx:172"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/05-charts-and-rfq.md"
@@ -2171,6 +2279,7 @@
         "components/ui/ChartKit.tsx:82-85",
         "components/ui/ChartKit.tsx:64-67"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/05-charts-and-rfq.md"
@@ -2188,6 +2297,7 @@
         "lib/changeOrders.ts:88-110",
         "lib/companies.ts:134-136"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -2209,6 +2319,7 @@
         "app/api/intake/upload/route.ts:127",
         "app/submit/[token]/page.tsx:195-199"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -2231,6 +2342,7 @@
         "lib/companies.ts",
         "app/api/intake/upload/route.ts:349-385"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -2252,6 +2364,7 @@
         "app/(protected)/companies/[id]/page.tsx:522",
         "lib/companies.ts:24"
       ],
+      "has_verifier_correction": false,
       "summary": "A blacklisted contractor is awarded work with no resistance and no recorded override. Worse, per BID-12, the chip frequently does not render at all because the name match is exact string equality — and per report 01's note on the company-list fallback, a failed load removes the flag from every bidder while the table still looks normal.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/03-money-ledger.md"
@@ -2272,6 +2385,7 @@
         "app/(protected)/projects/[id]/page.tsx:25",
         ".next/static/chunks/046b04fbfdf1b49e.js"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -2291,6 +2405,7 @@
         "lib/costSeries.ts:69-70",
         "app/(protected)/projects/[id]/page.tsx:1012"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -2307,6 +2422,7 @@
         "PERF-1"
       ],
       "locations": [],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
@@ -2324,6 +2440,7 @@
         "app/api/intake/upload/route.ts:104, 121",
         "lib/companies.ts:304"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -2349,6 +2466,7 @@
         "app/(protected)/companies/[id]/page.tsx:405",
         "lib/projectHealth.ts:57, 145"
       ],
+      "has_verifier_correction": false,
       "summary": "The two that bite users: a checklist created by mistake can never be voided or deleted, and approving a change order is irreversible from the interface — to unwind it you must hunt the entry down in the accounts panel and void it, after which the change-order row still reads approved while its money is gone. That last one is worse because postedentryid exists specifically to make the unwind exact,",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -2371,6 +2489,7 @@
         "components/ui/ChartKit.tsx:285-288",
         "components/projects/cost/CostCharts.tsx:86"
       ],
+      "has_verifier_correction": false,
       "summary": "A superintendent screenshots the region below the chip — by cropping, or by capturing just the forecast box — and sends it to a VP. It is indistinguishable from a real forecast.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -2392,6 +2511,7 @@
         "components/projects/cost/CostCharts.tsx:107",
         "components/projects/cost/CostCharts.tsx:115-119"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/08-reliability.md"
@@ -2410,6 +2530,7 @@
         "lib/rfqDocx.ts:123-126",
         "lib/rfqDocx.ts:51"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/05-charts-and-rfq.md"
@@ -2430,6 +2551,7 @@
         "lib/projectReport.ts:159",
         "lib/turnover.ts:225"
       ],
+      "has_verifier_correction": false,
       "summary": "A project closed over four open turnover items and eleven open punch items records only a free-text note. The report then counts waived items as accepted and omits N/A'd items entirely, so on paper the project reads as fully accepted. Six months later nobody can reconstruct what was outstanding at closeout.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -2447,6 +2569,7 @@
         "components/projects/IntakePanel.tsx:237-241",
         "lib/reviewControl.ts:402-406"
       ],
+      "has_verifier_correction": false,
       "summary": "Reviewer A has \"P&ID-2101 Rev 5 pending\" on screen. Reviewer B rejects Rev 5 and the contractor submits Rev 6. Reviewer A, who never refreshed, clicks Approve on the Rev 5 row. Rev 6 is promoted, and the toast says \"P&ID-2101 Rev 5 approved — it is now the current revision.\" An approval of a file the approver never opened, recorded against a different revision.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -2465,6 +2588,7 @@
         "lib/timeline.ts:447-452",
         "lib/timeline.ts:513-514"
       ],
+      "has_verifier_correction": false,
       "summary": "Any project viewer who can read the document sees pending intake submissions' revision labels, change logs and submitting company before review. Two of three readers get this right; only the project reader is wrong.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -2484,6 +2608,7 @@
         "components/projects/ProjectDocumentsCard.tsx:135-144",
         "lib/timeline.ts:423-433"
       ],
+      "has_verifier_correction": false,
       "summary": "One ✕ click erases a drawing's history from the project view. A docremoved activity row is written, but the loss is invisible: the tooltip only warns \"it will re-link on the next checkout.\" For a PSM shop this is a one-click history erasure. Combined with SEC-17, any active org member can do it.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
@@ -2500,6 +2625,7 @@
       "locations": [
         "lib/criticalPath.ts"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -2516,6 +2642,7 @@
       "locations": [
         "lib/milestones.ts:1072-1107"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -2533,6 +2660,7 @@
         "lib/milestones.ts:565-584",
         "supabase/migrations/20260703_milestones_hierarchy.sql"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -2550,6 +2678,7 @@
         "components/projects/useUndoableActions.ts:58-71",
         "components/projects/ScheduleTab.tsx:326-376"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/06-schedule-engine.md"
@@ -2567,6 +2696,7 @@
         "components/projects/IntakePanel.tsx:145, 350-353",
         "supabase/migrations/20260913_projects_rls_recursion_fix.sql:99-102"
       ],
+      "has_verifier_correction": false,
       "summary": "The publish is attributed to the outside firm, not to the human who did it, and it skips the publish guard. It needs an already-privileged actor, so it is not an escalation — it is the cleanest audit-evasion path in the system.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -2586,6 +2716,7 @@
         "supabase/migrations/20260609_phase1_normalization.sql:194-197",
         "supabase/migrations/20260913_projects_rls_recursion_fix.sql:79-86"
       ],
+      "has_verifier_correction": false,
       "summary": "A member can attach a document UUID they cannot read, whose audit events then flow into that project's timeline. documentversions is separately ACL-gated so the leak is limited to auditlogs, which has no ACL SELECT policy. A member can also detach documents from a project they do not manage — which, per SAF-17, erases that document's history from the project view.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
@@ -2606,6 +2737,7 @@
         "lib/projects.ts:686-707",
         "supabase/migrations/20260913_projects_rls_recursion_fix.sql:40-54"
       ],
+      "has_verifier_correction": false,
       "summary": "An observer can post comments, receives every project notification, and on a private project has read access identical to a collaborator. Adding someone as an observer to keep them at arm's length does nothing of the sort.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"
@@ -2623,6 +2755,7 @@
         "lib/costs.ts:151",
         "app/(protected)/projects/[id]/page.tsx:323-373"
       ],
+      "has_verifier_correction": false,
       "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/07-interface-truth.md"

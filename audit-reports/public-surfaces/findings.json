@@ -46,6 +46,7 @@
         "app/api/verify-package/route.ts:67-76",
         "app/api/verify-ticket/route.ts:91-102"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor scans the QR on drawing 2002-D-10001 Rev C at the unit on Monday; the phone is online, gets isCurrent: true, paints the green CURRENT screen, and the service worker (registered from the root layout at app/layout.tsx:93, so it installs on this public page too) writes that verdict to Cache Storage keyed by /api/verify?doc=<id>&v=<versionId>. Tuesday an MOC issues Rev D and supersedes Re",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -69,6 +70,7 @@
         "lib/documentGuards.ts:1-7",
         "lib/downloads.ts:227-240"
       ],
+      "has_verifier_correction": false,
       "summary": "Document Control opens a \"Field Verification Needed\" hold on P&ID 2002-D-10001 after a near-miss. Prints of Rev 4 are already in the field. An operator scans the QR stamped on his copy: Rev 4 is still currentversionid and status is still \"Issued\", so the phone fills with a green CURRENT screen and the words \"This print matches the current revision.\" The hold — the entire reason work was supposed t",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -92,6 +94,7 @@
         "app/(protected)/requests/[id]/page.tsx:1360",
         "app/api/verify-ticket/route.ts:78-83"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafting ticket issues Rev 1 of a tie-in isometric, then Rev 2 after a line-class change. A PM opens the ticket, clicks the Rev 1 Final attachment (still listed under Final files), and prints it for a fitter. The footer reads \"deliverable Rev 2 at time of printing\" and the QR resolves to a green LATEST ISSUE screen. The fitter scans, gets green, and welds to the superseded isometric — with the a",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -112,6 +115,7 @@
         "app/api/share/file/route.ts:42-58",
         "app/d/[number]/route.ts:26-46"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor holds a Viewer seat in org A (their own small engineering shop) on the same instance as a refinery, org B. They hit /d/2002-D-10001 unauthenticated (see the /d finding) and read the Location header /documents/<libB>?doc=<docUUID> — the refinery's document UUID, handed over with no session. Back in org A they open any document's share modal, and in the browser console re-issue the same",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -133,6 +137,7 @@
         "lib/docControlRegister.ts:101",
         "lib/downloads.ts:52-68"
       ],
+      "has_verifier_correction": false,
       "summary": "A P&ID is Voided — the drawing was issued in error, or the equipment it shows was never installed. Its currentversionid is unchanged and its status is 'Void', not 'Superseded'. A contractor scans the QR on his copy. /api/verify computes docRetired=false, isCurrent = versionId === currentversionid = true, and returns isCurrent:true. The page paints full-screen emerald with a 24px check mark, 'CURRE",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -153,6 +158,7 @@
         "components/providers/RoleContext.tsx:169-187",
         "app/(protected)/layout.tsx:49-50"
       ],
+      "has_verifier_correction": true,
       "summary": "A tablet has been in a locker for a week. A technician launches the installed app inside the unit with no signal. If the stored session is still readable, the app tells them their account was never admitted to a workspace and offers Sign out. If they tap it, the session is cleared and the device cannot sign in again until it reaches the network — a one-tap, irreversible lockout produced entirely b",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -175,6 +181,7 @@
         "lib/docPack.ts:100-106",
         "lib/docPack.ts:3-7"
       ],
+      "has_verifier_correction": false,
       "summary": "A pump has six tagged drawings; one was voided last month and two are under \"Field Verification Needed\" holds — all three visible on screen with status pills and hold chips. A supervisor clicks Print doc pack, gets a single merged PDF, and reads \"Pack ready — 6 drawings, all current, all stamped.\" He walks the pack to the field. Three of the six sheets should never have left the building, and no s",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -197,6 +204,7 @@
         "app/api/verify/route.ts:96-108",
         "components/documents/RelatedPanel.tsx:111-113"
       ],
+      "has_verifier_correction": false,
       "summary": "A competitor or a former contractor enumerates /d/2002-D-1000{1..9999} against the production host with no account. Each hit returns a 307 whose Location carries the document UUID; each UUID feeds /api/verify and yields the drawing number, title, current revision, and status. The result is a cross-tenant drawing register — exactly what a PSM document-control system is supposed to keep inside the o",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -217,6 +225,7 @@
         "components/viewers/FullScreenViewer.tsx:985-1000",
         "lib/downloads.ts:30-37"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter checks out a piping iso, redlines a field change over it, exports, and emails/prints the PDF for the fitter. The sheet has fresh red linework on it and nothing anywhere saying the markups are not the issued revision, no watermark, and no QR to scan. It is visually indistinguishable from an issued drawing with approved as-built markups. The fitter builds the redline.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -237,6 +246,7 @@
         "components/documents/VersionHistoryPanel.tsx:150-159",
         "lib/downloads.ts:95-102"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer pulls Rev 2 from history for a root-cause investigation while the drawing is at Rev 5. The file lands on his desktop named ...Rev5UNCONTROLLED.pdf. He forwards it, or prints it; anyone reading the footer sees \"Rev 5 at time of issue\". The only thing contradicting it is the QR, which requires a phone and a decision to scan. The stamp — the thing that exists so paper does not lie — is th",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -259,6 +269,7 @@
         "app/(protected)/assets/[tag]/page.tsx:1",
         "app/(protected)/layout.tsx:27-51"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor at a pump sees the QR sticker promising drawings, holds, and a way to report a problem. He scans it and gets a spinner, then a signed-out app chrome with no documents — no drawings, no indication the equipment is on hold, and no report-a-problem link (which is itself a protected /requests/new deep link, page.tsx:172-176). The label's three promises are all unreachable to exactly the a",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -280,6 +291,7 @@
         "lib/downloads.ts:131-145",
         "lib/staleCopies.ts:39-47"
       ],
+      "has_verifier_correction": false,
       "summary": "An incident review asks who holds prints of the drawing involved. downloadaudits contains only the internal viewer pulls; the share-link download to the outside contractor and every drafting-portal print are absent, because each insert was rejected on an unknown column and the rejection was discarded. lib/staleCopies.ts:39-47 reads this table to build the recall list, so those holders are also inv",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -301,6 +313,7 @@
         "lib/downloads.ts:30-37",
         "lib/downloads.ts:222-226"
       ],
+      "has_verifier_correction": false,
       "summary": "A PM downloads an issued deliverable and hands the print to a contractor. The contractor sees CONTROLLED COPY across the sheet and files it as the authoritative drawing that Document Control will replace when it changes — while the footer on the same page says UNCONTROLLED. Whichever he believes, no recall list contains him: the copy was never registered as controlled, and (see the downloadaudits ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -320,6 +333,7 @@
         "app/d/[number]/route.ts:34-36",
         "app/d/[number]/route.ts:30"
       ],
+      "has_verifier_correction": true,
       "summary": "A pipefitter reads a smudged title block and types /d/D-101 on their phone. Their own org has no D-101, but org B (a different tenant) has 2002-D-1010 updated yesterday and their own org has PID-D-101-A. find at line 35 finds no exact normalized match ('d101' matches neither 'd1010' nor 'pidd101a'), so line 36 falls through to rows[0] — the newest by updatedat across all orgs, org B's 2002-D-1010.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -339,6 +353,7 @@
         "app/api/storage/download-url/route.ts:47-113",
         "app/api/verify/route.ts:88"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer opens a hold on a piping isometric — reason 'Field Verification Needed' — because the as-built run does not match the drawing. Every internal publish path is now blocked by the DB guard. A share link created before the hold (or after — nothing stops creation either) still resolves: /api/share/file finds revokedat null and expiresat in the future, pulls currentversionid's file from R2, ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -360,6 +375,7 @@
         "lib/documentShares.ts:59-66",
         "supabase/migrations/20260623_document_shares.sql:20"
       ],
+      "has_verifier_correction": true,
       "summary": "A junior Viewer, helping a vendor, opens the inspector on a PSM-covered P&ID, picks 'Never expires', and pastes the URL into a vendor portal thread. That URL now serves the plant's current P&ID to anyone on the internet who sees it, forever, with no expiry to age it out. Nobody can find it: the only way to discover an outstanding link is to open the share modal on that specific document, and there",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -379,6 +395,7 @@
         "supabase/schema.sql:789-799",
         "app/api/share/file/route.ts:15-16"
       ],
+      "has_verifier_correction": true,
       "summary": "A document controller shares Rev 4 of a relief-valve P&ID with an outside inspector. The inspector downloads it. /api/share/file streams the stamped PDF and attempts the audit insert, which PostgREST rejects for the unknown source column; nothing is logged, nothing is thrown, no console line appears. Six weeks later a PSM auditor asks 'who outside the plant received this drawing and which revision",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -398,6 +415,7 @@
         "app/(protected)/packages/page.tsx:108-128",
         "lib/physicalBridge.ts:275"
       ],
+      "has_verifier_correction": true,
       "summary": "A pump-swap pack for U-200 is printed Monday with P&ID Rev 3. Tuesday an MOC issues P&ID Rev 4. The package owner opens /packages, sees '1 stale', clicks 'Refresh pins', confirms, and gets 'Package refreshed'. He does not reprint — the crew already has the folder. Wednesday morning the crew scans the cover sheet under the words 'SCAN BEFORE STARTING WORK. No login needed. Green = this pack is curr",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -417,6 +435,7 @@
         "lib/docPack.ts:104-105",
         "app/api/share/file/route.ts:114-115"
       ],
+      "has_verifier_correction": false,
       "summary": "A document ingested without a version row (external-origin import, legacy attachment) is printed. buildVerifyUrl produces yourdomain/verify/<docId> with no ?v=. Anyone who scans it — forever, at any revision, past any number of subsequent rev-ups — gets full-screen emerald 'CURRENT — This print matches the current revision.' The stamp is a permanent green light. Independently, the truncation is tr",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -439,6 +458,7 @@
         "app/(protected)/layout.tsx:1-26",
         "app/(protected)/layout.tsx:1"
       ],
+      "has_verifier_correction": true,
       "summary": "A technician loses signal mid-inspection. The amber pill appears and says the app is showing cached data, so he trusts what is on screen and keeps working from it. In reality every panel is empty or erroring, and the shell above them is whatever React rendered before the queries failed — and if he navigates or reloads he lands on the membership-failure screen. The pill has converted \"this app has ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -459,6 +479,7 @@
         "public/sw.js:52-65",
         "public/sw.js:68-70"
       ],
+      "has_verifier_correction": true,
       "summary": "A deploy fixes the revision-comparison logic. A plant tablet that has been on one tab all shift shows the amber \"Update available — tap to refresh\" pill. The user taps it. Nothing happens. They tap again. Nothing happens. The tab keeps running the old bundle, and the fix \"looks like it never happened\" — the exact failure the sibling UpdatePill component was written to solve (components/system/Upda",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -479,6 +500,7 @@
         "app/share/[token]/page.tsx:42-58",
         "app/share/[token]/page.tsx:67-74"
       ],
+      "has_verifier_correction": true,
       "summary": "Document Control revokes a share after discovering the drawing went to the wrong contractor, then confirms the link is dead by opening it (410, \"Link revoked\" — correct). The contractor, on a job site with no signal, opens the same bookmarked link on the tablet he used last week. He gets the document page and a working \"Download stamped copy\" button, and saves the drawing. Nothing in the downloada",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -502,6 +524,7 @@
         "lib/storage.ts:126-131",
         "components/viewers/SecureDocViewer.tsx:105-110"
       ],
+      "has_verifier_correction": true,
       "summary": "A shared plant tablet. A Doc Control user opens a restricted drawing; the worker caches /api/storage/download-url?path=orgs/<org>/<key>&expiresIn=3600 → {url: <presigned>}. She signs out (which clears two localStorage prefixes and nothing else — RoleContext.tsx:270-280). A Viewer whose ACL carries an explicit deny.download on that document signs in, opens the same document, and the tablet's Wi-Fi ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -521,6 +544,7 @@
         "app/api/share/resolve/route.ts:83",
         "app/api/transmittal/route.ts:76-83"
       ],
+      "has_verifier_correction": true,
       "summary": "An incident review asks who pulled Rev C of the failed spool drawing after the hold was placed. The downloadaudits table shows three pulls; the actual number was six, because three field tablets served the PDF from Cache Storage. Nobody can distinguish \"was never downloaded\" from \"was downloaded from cache\", and the on-screen promise the recipient saw — \"Access counted on the distribution record\" ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -540,6 +564,7 @@
         "app/page.tsx:97",
         "lib/eSignatures.ts:82-86"
       ],
+      "has_verifier_correction": true,
       "summary": "A rounds tablet is shared across three shifts. Each sign-out clears two localStorage prefixes and reloads to /. Cache Storage keeps growing across all three accounts. Offline, any of them can be served a response another account fetched (see the Vary finding for the concrete authorization consequence). Separately, an inspection of that tablet's site data lists cache keys of the form https://app/?c",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -560,6 +585,7 @@
         "app/api/share/file/route.ts:145-151",
         "lib/supabase.ts:64-104"
       ],
+      "has_verifier_correction": true,
       "summary": "A document controller uses the same browser profile for months, viewing hundreds of pages and downloading dozens of shared PDFs. Cache Storage for the origin grows into the hundreds of megabytes. The browser reclaims space for the origin. The Supabase session in localStorage goes with it, and the user is signed out with no explanation — and if this happens on a field tablet, they cannot sign back ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -581,6 +607,7 @@
         "public/sw.js:213-218",
         "app/d/[number]/route.ts:38-46"
       ],
+      "has_verifier_correction": true,
       "summary": "A technician on a slow plant link taps a document link, changes his mind, and taps a different one. The first navigation aborts. The worker answers it with a 503 offline page. Depending on timing the browser may commit that response, so a fully-online user is dropped onto \"You're offline — this page isn't cached yet\" and concludes the network died. The support report is \"the app keeps telling me I",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -600,6 +627,7 @@
         "components/pwa/ServiceWorkerManager.tsx:36-46",
         "public/pdf.worker.min.mjs"
       ],
+      "has_verifier_correction": true,
       "summary": "A release ships the correct supersede logic and a corrected verify verdict. Every field device keeps answering from mfgos-v5-runtime whenever it is offline, and no device shows an update prompt, because sw.js has not changed since v5. The team's stated escape hatch is intact but nobody pulls it, and there is nothing that would tell them to.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -619,6 +647,7 @@
         "public/sw.js:167-171",
         "app/manifest.ts:9-33"
       ],
+      "has_verifier_correction": true,
       "summary": "A deploy changes the manifest route or a CDN rule briefly 404s /icon.svg during a rollout. Every device that installs or reinstalls the worker in that window gets an empty shell cache. Nothing logs it, no state differs, and the pill still says the app is showing cached data. Months later someone notices field devices show a bare dark \"You're offline\" card instead of the branded offline page and ca",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -641,6 +670,7 @@
         "app/api/version/route.ts:20",
         "app/api/data-export/run/route.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer shares a P&ID with an outside contractor. The contractor opens the link on a tablet and downloads the stamped copy. /api/share/file responds no-store — but the service worker has already forked a clone into mfgos-v5-runtime. The PDF now lives on that tablet's disk under an origin the contractor's IT department does not know is storing plant drawings, survives closing the browser, and i",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -661,6 +691,7 @@
         "lib/__tests__/sw.test.ts:89-115",
         "lib/__tests__/sw.test.ts:130-136"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer fixes the verify-verdict caching by adding a path exclusion, runs npm test, sees six green service-worker tests, and ships. A later refactor reorders the branch checks and silently reintroduces caching for /api/verify — all six tests still pass, because none of them ever looks at the cache. The suite's existence makes the worker look guarded and therefore safe to change.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
@@ -683,6 +714,7 @@
         "lib/physicalBridge.ts:150",
         "lib/physicalBridge.ts:170-172"
       ],
+      "has_verifier_correction": true,
       "summary": "A vessel drawing carries two holds: \"Missing Vendor Data\" and \"Field Verification Needed\". Two red cards hang on the equipment. Vendor data arrives; Document Control releases that hold. A field lead scans the vendor card, gets a full-screen green RELEASED with \"this tag can come down\", removes it — and by the same logic assumes the second card, which he does not scan, is the stale duplicate. The e",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -704,6 +736,7 @@
         "lib/downloads.ts:95-102",
         "lib/physicalBridge.ts:49-53"
       ],
+      "has_verifier_correction": true,
       "summary": "A plant deploys without setting NEXTPUBLICSITEURL — reasonable, since .env.example lists it under optional and promises a Vercel fallback. Document Control shares an issued drawing with an outside inspector via a share link. The server stamps it, drops the QR because publicOrigin() returned \"\", and delivers a PDF whose footer says \"scan the QR to confirm it is still current.\" The inspector looks f",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -724,6 +757,7 @@
         "lib/stampLayout.ts:169-199",
         "lib/stampLayout.ts:5-11"
       ],
+      "has_verifier_correction": false,
       "summary": "A D-size piping isometric is stored with /Rotate 90 (common for drawings produced landscape from a portrait MediaBox). The ink analysis correctly identifies the top-left as empty and the bottom-right as the title block. placeQr is told \"tl\" but computes plateX/plateY against the transposed page, and the white plate plus SCAN TO VERIFY caption print over the title block — obscuring the revision blo",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -745,6 +779,7 @@
         "components/documents/ShareLinkModal.tsx:209",
         "lib/publicOrigin.ts:8-12"
       ],
+      "has_verifier_correction": true,
       "summary": "Document Control is testing on a Vercel preview deploy and generates a share link for an outside inspector, showing him the QR on screen or printing the modal. The encoded host is the preview deployment, which Vercel gates behind its own login. The inspector scans and lands on a Vercel auth screen — the share token is valid, the document is fine, and the bridge is dead. The same holds for the phon",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
@@ -763,6 +798,7 @@
         "app/api/share/file/route.ts:60-80",
         "lib/reviewControl.ts:429-446"
       ],
+      "has_verifier_correction": true,
       "summary": "The review-completion transaction promotes an approved draft (reviewControl.ts:430) and then the relabel/approve update at line 445 fails — a transient PostgREST error, an RLS edge, a network blip — and returns an unchecked { error } that nothing reads. documents.currentversionid now names a documentversions row with reviewstate = 'inreview' and releasedat = null. Every outstanding share link on t",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -782,6 +818,7 @@
         "app/api/share/file/route.ts:102-117",
         "components/documents/ShareLinkModal.tsx:133-135"
       ],
+      "has_verifier_correction": true,
       "summary": "A controller shares Rev 2 of a relief-system P&ID with an insurance inspector, notes 'for the Oct audit', 90-day expiry. In week 6 the drawing is revved to Rev 3 with a materially different relief path. The inspector re-opens their bookmarked link expecting the copy they were reviewing and receives Rev 3, footer reading 'Rev 3' — a different drawing, at the same URL, silently. Neither side is told",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -802,6 +839,7 @@
         "lib/stampLayout.ts:150-154",
         "lib/stampLayout.ts:131-146"
       ],
+      "has_verifier_correction": true,
       "summary": "An outside fabricator downloads a shared piping isometric. The QR plate and the footer notice land over the bottom-right title block, covering the drawing number, revision letter and the checked/approved signature blocks — the fields a receiving shop reads first to confirm what it is holding. The recipient now has a marked copy whose identity block is obscured, and the route's own header comment (",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -822,6 +860,7 @@
         "app/layout.tsx:103",
         "components/pwa/ServiceWorkerManager.tsx:30-33"
       ],
+      "has_verifier_correction": true,
       "summary": "A vendor is sent a share link to a Rev 3 piping isometric. They open it on a tablet; the SW caches both the resolve JSON and the full stamped PDF into RUNTIMECACHE. The drawing is found to have a wrong wall-thickness call-out and the controller revokes the link the same afternoon. The vendor's tablet goes into the plant, where cell coverage drops. Their fetch of /api/share/file throws, the SW's ca",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -841,6 +880,7 @@
         "app/api/share/resolve/route.ts:83",
         "supabase/migrations/20260623_document_shares.sql:8-10"
       ],
+      "has_verifier_correction": true,
       "summary": "A PSM incident review asks who outside the plant received the pre-incident revision of a P&ID. The share modal shows a link with note 'for John at the vendor' — free text typed by the sharer, ShareLinkModal.tsx:107-112 — and an access count of 4. Whether those four opens were John, John's four colleagues, someone who found the URL in a forwarded email thread, or a crawler is unknowable and unrecov",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -861,6 +901,7 @@
         "app/api/share/file/route.ts:113",
         "app/share/[token]/page.tsx:140-142"
       ],
+      "has_verifier_correction": true,
       "summary": "NEXTPUBLICSITEURL is not configured (it is blank in .env.example and the deploy has a Vercel-assigned domain). An outside welder receives a shared isometric, downloads it, prints it, and takes the paper into the field. The footer instructs them to scan a QR to confirm currency. There is no QR anywhere on the sheet. The one control that makes an uncontrolled copy self-verifying is absent, and the i",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -880,6 +921,7 @@
         "components/documents/ShareLinkModal.tsx:205",
         "app/share/[token]/page.tsx:141"
       ],
+      "has_verifier_correction": true,
       "summary": "An instance is provisioned where 20260818followupsrls.sql has not been applied — plausible, since the share feature's own migration is 20260623 and nothing in lib/schemaExpectations.ts checks for the function (it registers the table only, schemaExpectations.ts:63). Every /share resolve calls a nonexistent RPC, PostgREST returns PGRST202, supabase-js resolves with an error nobody reads, and accessc",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -899,6 +941,7 @@
         "app/api/share/file/route.ts:129-140",
         "lib/staleCopies.ts:124-137"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer downloads a drawing they should not have, or an outside share is pulled and later becomes contentious. Any active member of that org — the same person included — issues a DELETE or UPDATE against downloadaudits for their orgid from the browser client and the row is gone or altered. RLS permits it, no trigger blocks it, and there is no separate immutable log of the download. The 'distri",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/02-share-links.md"
@@ -918,6 +961,7 @@
         "lib/docControlRegister.ts:187",
         "supabase/migrations/20260819_effective_date.sql:17"
       ],
+      "has_verifier_correction": true,
       "summary": "A revised operating procedure is issued with effectivedate 2026-03-02 because it requires a training window. At 19:30 CST on 2026-03-01, a night-shift operator scans the print. The server's UTC date is already 2026-03-02, so '2026-03-02' > '2026-03-02' is false, notYetEffective is false, isCurrent is true, and the page paints emerald 'CURRENT — This print matches the current revision.' The banner ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -937,6 +981,7 @@
         "app/verify-hold/[holdId]/page.tsx:93-94",
         "supabase/migrations/20260713_document_publish_guard.sql:70-79"
       ],
+      "has_verifier_correction": false,
       "summary": "An iso drawing goes on hold for 'Field Verification Needed' — the as-built does not match the field. The drawing is not superseded and no new revision exists, so currentversionid is unchanged. A crew scans their print: green CURRENT. They scan the work-package cover: green PACK IS CURRENT. Nothing in either answer mentions that the drawing is under an open hold placed precisely because it cannot b",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -956,6 +1001,7 @@
         "supabase/migrations/20260612_phase5_holds.sql:26-33",
         "app/verify-hold/[holdId]/page.tsx:110-113"
       ],
+      "has_verifier_correction": true,
       "summary": "Document Control places a hold with the custom reason 'Hold pending OSHA 1910.119 finding — Fuller incident, do not distribute'. printHoldCard produces the red tag; the tag hangs on a unit in an open yard for six weeks. A contractor, a visitor, a journalist, or anyone who photographs the tag scans the QR from outside the fence and, with no login, reads the reason string in bold, plus the drawing n",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -973,6 +1019,7 @@
         "app/d/[number]/route.ts:19-36",
         "app/d/[number]/route.ts:24-25"
       ],
+      "has_verifier_correction": true,
       "summary": "A technician reads '2002-D-10001' off a title block and types yourdomain/d/2002 D 10001 (or 2002D10001, or 2002.D.10001). The ilike pattern becomes %2002 D 10001% / %2002D10001% — no row matches, and he is dumped on /documents?q=... behind a login wall for a number the system holds. Worse case: he types the short form /d/10001. The ilike matches 2002-D-10001, 2003-P-100012 and SPEC-10001-A; the ex",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -991,6 +1038,7 @@
         "app/verify-package/[packageId]/page.tsx:57-59,89-101",
         "app/(protected)/packages/page.tsx:130-147"
       ],
+      "has_verifier_correction": true,
       "summary": "A turnaround job finishes and the package is closed. Months later the folder resurfaces in a shop drawer and someone scans the cover under 'SCAN BEFORE STARTING WORK'. The pins were never touched after closure, so staleCount is 0 and the phone fills with emerald 'PACK IS CURRENT — Every sheet in this pack is still the current revision', with the closure mentioned in eight words of small type at th",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -1009,6 +1057,7 @@
         "app/verify/[docId]/page.tsx:99-110",
         "lib/downloads.ts:52-68"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer downloads an in-progress Draft revision for markup. Because he does not hold the checkout, determineControlState returns 'uncontrolled' and the print is stamped 'UNCONTROLLED — FOR REVIEW ONLY' with a verify QR (downloads.ts:229-240). The paper reaches a contractor. He scans it, because the QR is the authority he was told to trust, and the phone fills with green: 'CURRENT — This print ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -1027,6 +1076,7 @@
         "app/verify-hold/[holdId]/page.tsx:92-95",
         "supabase/migrations/20260612_phase5_holds.sql:20-24"
       ],
+      "has_verifier_correction": true,
       "summary": "A vessel drawing carries two holds: 'Field Verification Needed' and 'Missing Vendor Data'. Two red HOLD cards hang on the equipment. Engineering releases the field-verification hold. Someone scans that card and gets full-screen emerald, 'RELEASED — This hold has been released — this tag can come down.' They take the tag down. The vendor-data hold is still open and its card may already have been lo",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -1044,6 +1094,7 @@
         "app/api/verify-package/route.ts:73",
         "app/verify-package/[packageId]/page.tsx:89-101,116-118"
       ],
+      "has_verifier_correction": false,
       "summary": "A cover sheet is printed for a package whose documents were later all removed, or a QR is scanned for a package assembled but never populated. The crew gets the identical full-screen red STOP they would get for a genuinely superseded pack, telling them zero of zero sheets changed and instructing them to obtain new sheets that do not exist. The two states — 'this pack is dangerous' and 'this pack i",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -1064,6 +1115,7 @@
         "app/api/verify-ticket/route.ts:38-49",
         "app/api/auth/signup/route.ts:6-33"
       ],
+      "has_verifier_correction": true,
       "summary": "Two consequences. (1) An attacker who has obtained one document UUID — the DACL-3 chain via /d/[number] supplies them at will — can drive /api/verify at full speed to walk a tenant's register, and nothing throttles it or records it; the operator has no signal an enumeration occurred and no log to hand a PSM auditor afterwards. (2) In the ordinary case, a contractor who scans a superseded print and",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -1083,6 +1135,7 @@
         "app/verify-package/[packageId]/page.tsx",
         "app/api/verify/route.ts:96-108"
       ],
+      "has_verifier_correction": true,
       "summary": "A verify URL escapes into anything a crawler reads — an email thread indexed by a vendor portal, a support ticket, a QR-decoder site that logs and republishes decoded URLs, a contractor pasting the link into a public forum asking why his print is red. The page is then eligible for indexing under the plant's own domain, with the document number and title in the crawled body. A search for a drawing ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
@@ -1101,6 +1154,7 @@
         "app/api/verify/route.ts:36,56",
         "app/api/verify-ticket/route.ts:51"
       ],
+      "has_verifier_correction": true,
       "summary": "Someone adds a field to the hold response — 'the field asked for the expected release date' — and writes return NextResponse.json({ ...h, active: !h.releasedat, ... }) because h is already a Record<string, unknown> and the select already contains everything. openedbyname, releasedbyname, releasedreason and the operator's notes ship to the open internet in one line, past a code review that sees a o",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"

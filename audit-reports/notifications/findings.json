@@ -49,6 +49,7 @@
         "components/navigation/Sidebar.tsx:235",
         "lib/inAppNotifications.ts:38-58"
       ],
+      "has_verifier_correction": false,
       "summary": "Document control places a legal hold on a P&ID. lib/retention.ts fans out legalholdplaced to the owner and every Admin/DocCtrl. Each recipient gets a bell row and an email. sectionForKind('legalholdplaced') hits the default branch and returns 'other'; sectionCounts.other is incremented; nothing renders it. The Documents sidebar entry shows no badge, the Projects entry shows no badge, the Requests ",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -71,6 +72,7 @@
         "supabase/migrations/20260529_phase_b_notifications.sql:77",
         "supabase/schema.sql:660"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer is drowning in watcher-activity email. They open /settings/notifications (linked from the bell at NotificationBell.tsx:153, from /profile, from /admin/settings, and from the g n command-palette shortcut), toggle \"Watched activity\" off, and click Save preferences. The upsert carries digestfrequency='immediate'. Postgres raises new row for relation \"notificationpreferences\" violates chec",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -94,6 +96,7 @@
         "components/documents/InspectorPanel.tsx:411-430",
         "app/(protected)/projects/page.tsx:199-261"
       ],
+      "has_verifier_correction": true,
       "summary": "Documents shows a blue '3'. User clicks the row, lands on /documents. Six library cards, all visually identical. They open the right one by guessing; the folder tree shows nine folders, all visually identical; the document table shows 140 rows, all visually identical. There is no per-container or per-item marker anywhere to narrow the search, and no 'show me the 3' affordance on the page. The only",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -112,6 +115,7 @@
         "app/api/notifications/send-queued/route.ts:140-153",
         "lib/notifications.ts:124-147"
       ],
+      "has_verifier_correction": true,
       "summary": "A Viewer-role contractor with a valid session posts one PostgREST insert to emailnotifications with toemail set to a customer's address, a subject like \"Revised P&ID issued for construction\", and bodyhtml containing a link to a site they control. The maintenance cron picks it up and Resend delivers it from the refinery's verified notifications@ domain, complete with SPF/DKIM alignment. There is no",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -131,6 +135,7 @@
         "lib/supabase.ts:110",
         "app/(protected)/settings/notifications/page.tsx:126-135"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer turns the master \"Email notifications\" switch off at /settings/notifications. Every notification routed through lib/notify/dispatch.ts emit() (holds, packages, intake, revisions, work packages) is produced client-side and calls queueEmail with the engineer's uid. The prefs lookup returns null, the opt-out is never seen, and they keep receiving email. The settings page's own copy — \"Mas",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -151,6 +156,7 @@
         "lib/inAppNotifications.ts:37-58",
         "lib/storageAlerts.ts:60-62"
       ],
+      "has_verifier_correction": true,
       "summary": "An ackrequested arrives for an issued revision. The header bell total goes up by one. The Documents sidebar badge does NOT — ackrequested is 'other'. The user clicks Documents looking for the source of the alert, finds no badge on the library, none on the folder, none on the document, and gives up. That is complaint #1 verbatim, and the reason is not a missing library→folder→document cascade; it i",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -171,6 +177,7 @@
         "app/(protected)/admin/settings/page.tsx:274-276",
         "app/api/notifications/send-queued/route.ts:175"
       ],
+      "has_verifier_correction": true,
       "summary": "RESENDAPIKEY is briefly wrong (rotated key, wrong sender domain). Every queued email burns its 5 attempts and lands at status:'failed' (send-queued/route.ts:175). Those rows are now terminal — the drain's candidate query is .in(\"status\",[\"queued\",\"failed\"]).lt(\"attemptcount\", 5), so nothing will ever retry them. The one recovery path shipped for this is the admin Requeue button. An admin opens /ad",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -192,6 +199,7 @@
         "lib/publicOrigin.ts:18-22",
         "lib/notifications.ts:248-253"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer is @-mentioned on an RFI. The email arrives; \"Open ticket\" resolves against mail.google.com or the Outlook client and 404s or does nothing. The recipient cannot reach the ticket from the notification. Because the in-app bell is separately capped (finding 8) and push does not exist (finding 7), the email was the escalation path — and it lands with an unusable call to action.",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -215,6 +223,7 @@
         "lib/notify/recipients.ts:47-62",
         "lib/notify/recipients.ts:22-45"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer is suspended pending an investigation (status → 'suspended'). They remain a watcher on 40 drawings and 6 tickets. Over the following weeks every rev-up, every hold, every branch on those documents resolves them through resolveFollowers, inserts a bell row, finds their still-present email in orgmembers, and mails them the document number and the hold reason at their personal-forwarded a",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -237,6 +246,7 @@
         "lib/notifications.ts:16-27",
         "app/api/cron/maintenance/route.ts:425-431"
       ],
+      "has_verifier_correction": false,
       "summary": "A hold is placed on a drawing. lib/holds.ts emits; dispatch.ts queues an email whose entire body is Jane Doe placed a \"MOC pending\" hold. Work from this document should stop until it's released. There is no link. The recipient must go find the document by hand. Separately, an engineer is @-mentioned on a ticket; they receive an HTML email whose 'Open ticket' button points at href=\"/requests/8f3a…\"",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -258,6 +268,7 @@
         "components/providers/ToastProvider.tsx:90-95",
         "components/ui/CornerDock.tsx:23-27"
       ],
+      "has_verifier_correction": false,
       "summary": "A screen-reader user on the platform tabs through the header. The bell announces '7, button' — no indication it is notifications, no indication seven items need attention. They activate it; focus stays on the button while a list renders below, unannounced and unreachable by their reading order until they hunt for it. Meanwhile a background AI-ingestion toast fires bottom-right, is never announced,",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -280,6 +291,7 @@
         "lib/acl.ts:207",
         "app/api/cron/maintenance/route.ts:421-426"
       ],
+      "has_verifier_correction": false,
       "summary": "Counsel places a hold with reason 'litigation hold — Baytown incident, do not distribute' on drawing PID-4412-R3, a document ACL-restricted to a three-person team. lib/holds.ts fans out to every Admin and DocCtrl in the org. A DocCtrl who cannot open PID-4412 receives a bell row titled HOLD placed on PID-4412-R3 — litigation hold — Baytown incident, do not distribute and an email with that exact s",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -300,6 +312,7 @@
         "lib/inAppNotifications.ts:157-174",
         "app/api/admin/purge/route.ts:70"
       ],
+      "has_verifier_correction": false,
       "summary": "A contract engineer is let go and removed from the workspace. Their orgmembers row is deleted; the app immediately denies them every document. Their Supabase auth account still exists. Using their still-valid session token they query the notifications table directly and receive every title and body ever addressed to them: HOLD placed on PID-4412-R3 — litigation hold, Baytown incident, SPEC-220-A a",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -321,6 +334,7 @@
         "supabase/migrations/20260723_notifications_unify.sql:55",
         "lib/exportTables.ts:159"
       ],
+      "has_verifier_correction": false,
       "summary": "An org restores from backup after a data incident. Documents, tickets, holds, acknowledgments and notifications all come back (notifications and emailnotifications are in the restore order list at dataRestore.ts:311). Every user's watch list does not. resolveFollowers now returns an empty set for every document, library, project and asset. Every emit() with audience: { followers: true } — docsuper",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -341,6 +355,7 @@
         "app/api/cron/maintenance/route.ts:421-436",
         "lib/notifications.ts:59-61"
       ],
+      "has_verifier_correction": false,
       "summary": "A superintendent sets Delivery cadence to 'Never' on /settings/notifications, expecting silence. (Assume they got past finding #1 by clicking Never before saving — the only path that saves successfully.) queueEmail now correctly suppresses their per-event mail. But at 03:00 UTC the maintenance cron composes a compliance digest, sees emailenabled is still true, and mails them a list of every review",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -361,6 +376,7 @@
         "components/documents/EditOverlapBanner.tsx:84",
         "components/documents/CheckoutFlowModal.tsx:403"
       ],
+      "has_verifier_correction": true,
       "summary": "A requester impatient about an engineer's approval clicks a future 'Nudge engineer' button ten times in a minute; ten notification rows land, the engineer's bell counts to ten, and NotificationListener fires ten toasts (see the toast-storm finding). Worse, because kind is unvalidated, a client can insert kind:\"checkoutconflict\" — which useTicketNotifications treats as actionRequired — turning any ",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -379,6 +395,7 @@
         "supabase/migrations/20260804_push_subscriptions.sql:7-35",
         "supabase/schema.sql:659"
       ],
+      "has_verifier_correction": true,
       "summary": "The owner asks 'why don't I get phone notifications, the service worker has a push handler?' — a developer greps public/sw.js, finds a complete and well-commented push implementation plus a pushsubscriptions table with RLS, and reasonably concludes push works and is merely misconfigured. They hunt for missing VAPID env vars that were never referenced by any surviving file. No amount of configurati",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -397,6 +414,7 @@
         "hooks/useTicketNotifications.ts:124-132",
         "components/navigation/Sidebar.tsx:229-235"
       ],
+      "has_verifier_correction": true,
       "summary": "A controlled document is issued and lib/acknowledgments.ts:501 emits ackrequested to every assignee. sectionForKind('ackrequested') returns 'other'. sectionCounts.other is incremented and then never read by any component. The Documents sidebar item shows no badge. The user's legal obligation to read-and-acknowledge an issued revision is visible only if they happen to open the bell dropdown, whose ",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -413,6 +431,7 @@
       "locations": [
         "app/api/auth/request-access/route.ts:44-57"
       ],
+      "has_verifier_correction": false,
       "summary": "A new engineer submits a join request for the workspace. The row is written. The response tells them 'Please wait for an admin to respond.' No admin receives a bell row, an email, or a badge. The request is discovered only if an admin proactively navigates to the members/access screen. In a regulated environment this is the on-ramp to the whole document-control system.",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -430,6 +449,7 @@
         "lib/branches.ts:148",
         "lib/branches.ts:204-215"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter publishes off a stale base. Every DocCtrl receives 'Unreconciled branch opened on P-101', flagged Action needed, badged on the Documents section. The drafter later merges the branch. resolveBranch notifies only branch.createdBy — the drafter, who already knows. Every DocCtrl's alert stays unread and action-required. The stale-workflow reconciler at useTicketNotifications.ts:188-210 canno",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -449,6 +469,7 @@
         "components/providers/NotificationListener.tsx:100",
         "components/providers/RoleContext.tsx:343-354"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer leaves the app open on a second monitor over lunch. The laptop sleeps; the websocket dies. While asleep, a drafting request is routed to them (tickets UPDATE) and a checkoutconflict notification row is inserted. They wake the laptop at 13:00. The socket rejoins silently, but no event is replayed and no refetch is triggered. The bell reads the same number it read at 11:45. The badge sta",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -468,6 +489,7 @@
         "lib/activityThread.ts:153-164",
         "supabase/migrations/20260727_checkout_activity_fix.sql:26-30"
       ],
+      "has_verifier_correction": false,
       "summary": "Two draftsmen hold a working conversation in the activity thread of one P&ID — twelve messages over ten minutes. Every one of the plant's 40 signed-in members gets 12 toast pop-ups about a document they have never opened, and the two people actually on the thread get 24 (12 from checkout-messages-, 12 more from notifs-listener-). The corner dock fills with duplicated cards; the one toast that matt",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -493,6 +515,7 @@
         "components/dashboard/widgets.tsx:1223",
         "app/(protected)/inbox/page.tsx:38"
       ],
+      "has_verifier_correction": true,
       "summary": "A supervisor bulk-advances 20 drafting requests. Each UPDATE is one realtime event. With the three always-mounted instances that is 60 invocations of fetchAll, each pulling up to 500 full ticket rows with their embedded comment and history JSON, plus 60 listMyNotifications queries and 60 stale-alert reconcile queries — from a single user's browser tab, in a few seconds. On the dashboard route it i",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -512,6 +535,7 @@
         "components/notifications/NotificationCenter.tsx:112-117",
         "components/cockpit/AttentionFeed.tsx:22"
       ],
+      "has_verifier_correction": true,
       "summary": "Documents shows a blue 3 (three document-section items). The user clicks the 3. The panel opens headed \"Needs your attention - 11 items - every badge in the app counts these\" and lists 11 rows spanning requests, projects and documents. The user cannot tell which 3 the badge meant. This is the owner's complaint #1 restated: the number is a doorway that opens onto a different room.",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -532,6 +556,7 @@
         "app/api/cron/maintenance/route.ts:361-374",
         "lib/reviewCycles.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "A controlled P&ID hits its periodic-review date. lib/reviewCycles.ts writes a reviewdue row and the cron emails a digest. The bell's total count goes up by one, but sectionCounts.documents does not move, so the Documents nav row shows no badge. The engineer sees the bell number rise, opens Documents looking for what changed, and finds nothing highlighted anywhere - exactly the owner's \"the trail g",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -552,6 +577,7 @@
         "hooks/useTicketNotifications.ts:279",
         "lib/notify/dispatch.ts:82-131"
       ],
+      "has_verifier_correction": false,
       "summary": "Bob's checkout is force-released while he is on the Projects page. He sees a blue informational card saying \"System Alert\" (which he has learned to ignore, since every org member gets those) and a second blue card saying \"Your checkout was force-released\". Both auto-dismiss in 5-6s. If he was away from the keyboard, the only durable trace is a bell row he must notice is orange. The most consequent",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -571,6 +597,7 @@
         "lib/activityThread.ts:97-99",
         "lib/activityThread.ts:153-164"
       ],
+      "has_verifier_correction": false,
       "summary": "Alice posts \"pressure relief sizing looks wrong on sheet 3\" in a checkout thread Bob is watching. Bob sees two stacked cards in the corner: an amber \"New Message from Alice\" and a blue \"Alice posted to P-1204-03\". He assumes two things happened. Meanwhile every other signed-in member of the workspace - contractors and viewers included - sees \"New Message from Alice / pressure relief sizing looks w",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -595,6 +622,7 @@
         "app/api/cron/maintenance/route.ts:361-374",
         "lib/notificationKinds.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "A markuprequest row: sectionForKind returns 'documents' so it badges the Documents nav row, but groupOf('markuprequest') hits KINDGROUPS \"requests\" (k.includes(\"markup\")) so inside the Notification Center it files under \"Requests\" - the badge points one way, the feed files it the other. A reviewrequested row: KINDICON has no entry so the bell draws a generic Bell; attentionVisual matches k.include",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -614,6 +642,7 @@
         "lib/inAppNotifications.ts:176-185",
         "hooks/useTicketNotifications.ts:311-312"
       ],
+      "has_verifier_correction": true,
       "summary": "After a bulk publish fans ackrequested out to 30 people and the nightly compliance scan adds reviewdue rows, a DocCtrl accumulates 180 unread rows. The bell shows 50-ish and stops moving. Marking items read makes the badge stay at the same number (older rows page in), which reads as a broken counter; more importantly the user has no way to see, or even learn the existence of, rows 51-180.",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -633,6 +662,7 @@
         "components/navigation/Sidebar.tsx:225-250",
         "lib/inAppNotifications.ts:10-58"
       ],
+      "has_verifier_correction": true,
       "summary": "An issued revision assigns you a read-and-understand acknowledgment (ackrequested). The bell counts it. The Documents row badges nothing, the Projects row badges nothing, no row badges anything. In a PSM/OSHA context the single most audit-relevant nudge in the product — 'you must read & acknowledge an issued revision' — is invisible to the navigation rail. Same for 'you're asked to review & sign o",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -652,6 +682,7 @@
         "components/notifications/NotificationCenter.tsx:112-117",
         "components/cockpit/AttentionFeed.tsx:22"
       ],
+      "has_verifier_correction": true,
       "summary": "Documents badge reads 3 (three document notifications). User clicks it. Panel header says '17 items — every badge in the app counts these.' Seventeen rows appear, mostly drafting requests. The three document items are somewhere in that list with no visual distinction. The one surface explicitly built to answer 'the badge says 3 and I can't find them' has just widened the haystack.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -671,6 +702,7 @@
         "lib/inAppNotifications.ts:187-189",
         "components/notifications/NotificationBell.tsx:91"
       ],
+      "has_verifier_correction": true,
       "summary": "Bell says 4 on Documents. User opens each of the four documents via the bell, reads them, and returns. The badge still says 4 because reading was never recorded. The only way to clear it is 'mark all read' — which nukes items the user has NOT dealt with. The badge therefore trains users to ignore it, which is the terminal state of the cold-trail complaint.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -690,6 +722,7 @@
         "hooks/useTicketNotifications.ts:272",
         "components/navigation/Sidebar.tsx:128-131"
       ],
+      "has_verifier_correction": true,
       "summary": "Someone force-releases your checkout on a P&ID you have open (kind checkoutreleased, which IS in actionKinds and IS mapped to the documents section). The Documents row badges blue — the tone the Sidebar's own design contract at line 22 defines as 'unread FYI'. A stale-base branch (branchopen), an edit overlap (overlapadvisory) and a checkout conflict all behave identically. The red/pulse treatment",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -709,6 +742,7 @@
         "hooks/useTicketNotifications.ts:293-297",
         "components/providers/NotificationListener.tsx:84-98"
       ],
+      "has_verifier_correction": true,
       "summary": "A user inserts rows for every Admin and DocCtrl in the org with kind:'ackrequested', actorname:'System', title:'Read & acknowledge: Rev C of PSM-0142', and link:'https://evil.example/login'. Each target sees a real-time toast (NotificationListener:92-97) and a bell row indistinguishable from a genuine compliance obligation. In a PSM/OSHA workflow where acks are the audit trail, a forged ack reques",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -731,6 +765,7 @@
         "lib/projects.ts:1116-1118",
         "lib/postPublish.ts:171-183"
       ],
+      "has_verifier_correction": true,
       "summary": "A notifications insert is rejected — a transient connection error, a future NOT NULL/CHECK constraint, or an RLS tightening. notify() logs to a browser console nobody is reading and the calling flow reports success. The recipient is never told. Nothing retries, nothing queues, nothing alerts. For the cron path, escalateStaleCheckouts returns a number the operator reads as \"3 stale checkouts escala",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -750,6 +785,7 @@
         "app/api/admin/purge/route.ts:161",
         "supabase/migrations/20260529_phase_b_notifications.sql:47-48"
       ],
+      "has_verifier_correction": true,
       "summary": "An operator stands up the app, runs it for three weeks without RESENDAPIKEY under the older code path that flipped rows to suppressed, then configures the key. The first drain recovers the last 7 days. The prior two weeks of ack requests, review nudges and transmittal notices are silently abandoned. An admin later runs the storage purge, and those rows — the only evidence anything was owed — are d",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -768,6 +804,7 @@
         "supabase/migrations/20260605_rls_policies_new_tables.sql:120-124",
         "lib/notify/dispatch.ts:107-129"
       ],
+      "has_verifier_correction": true,
       "summary": "A publish fans out through emit(): the same user is in audience.involved, is a subscriber of the document, AND is a member of the project. resolveRecipients() dedupes them to one uid, so dispatch.ts is safe — but the same publish also triggers postPublish's separate notifySuperseded and notifyPackagesOfRetirement paths, each calling queueEmail independently within the same second. The DB-level gua",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -789,6 +826,7 @@
         "lib/inbox.ts:163-165",
         "components/notifications/NotificationCenter.tsx:76-80"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl in a busy workspace accrues 120 unread rows over a quarter. The oldest 70 — which by createdat DESC ordering are exactly the longest-outstanding obligations, the ackoverdue and reviewoverdue ones — fall off the end of the query. They are not in the bell, not in the NotificationCenter (which filters the same items array, NotificationCenter.tsx:76-85), and not in the count. The badge reads",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -808,6 +846,7 @@
         "app/api/notifications/send-queued/route.ts:70-83",
         "app/api/notifications/send-queued/route.ts:186"
       ],
+      "has_verifier_correction": true,
       "summary": "The Resend sender domain's DNS lapses. Every night the cron attempts 100 sends, all 502, all fail, and the JSON response reads notificationsDrained: 0, errors: [] — byte-identical to a night with an empty queue. Five nights later every one of those rows has burned MAXATTEMPTS and is terminal failed (send-queued:175), which is precisely the bucket the admin panel cannot see (finding 1). The system ",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -828,6 +867,7 @@
         "supabase/schema.sql:660",
         "supabase/migrations/20260529_phase_b_notifications.sql:77-78"
       ],
+      "has_verifier_correction": true,
       "summary": "A user decides the email volume is too much (a volume that findings 2 and 3 guarantee is inflated) and goes to /settings/notifications to turn the master switch off. They have never saved before, so digestfrequency is \"immediate\". Save fails with a raw Postgres constraint message. The only way through is to first click \"Hourly\", \"Daily\" or \"Never\" — and Hourly/Daily are labelled in the page's own ",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -847,6 +887,7 @@
         "supabase/migrations/20260621_in_app_notifications.sql:65-67",
         "lib/inAppNotifications.ts:187-205"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer receives kind:'reviewoverdue' — \"Your sign-off on Rev B is 21 days late\". Rather than acting, they issue one PostgREST DELETE on that row id, or UPDATE its title/createdat. It is gone from their bell, from the /inbox cockpit, and from the maintenance cron's 25-hour compliance-digest window (maintenance/route.ts:375-381 selects from notifications). The scans in lib/reviewControl.ts will",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -866,6 +907,7 @@
         "supabase/migrations/20260723_notifications_unify.sql:85-87",
         "lib/notify/dispatch.ts:20"
       ],
+      "has_verifier_correction": true,
       "summary": "This is the owner's complaint #2 with a receipt: outside an open browser tab there is no delivery presence at all. The only in-session signal is the NotificationListener toast (NotificationListener.tsx:92-97), which requires the app to be open and focused; the only out-of-session signal is email, which is separately compromised by findings 1-3. A holdopened on a live P&ID at 02:00 reaches nobody u",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
@@ -885,6 +927,7 @@
         "app/api/tickets/comment/route.ts:308-311",
         "lib/notifications.ts:168-183"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer is mentioned in a ticket comment reading 'can you check this with @[Mike Leonard](3f2b8c14-9d7a-4e11-b0f3-5a6c9e2d4188) before Friday'. The email they receive contains that string literally, internal user UUID and all. There is no footer, no unsubscribe link, and no List-Unsubscribe header — so when they mark it as spam (the only control their mail client offers), the sending domain's ",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -906,6 +949,7 @@
         "lib/transmittals.ts:579",
         "lib/publicOrigin.ts:5-15"
       ],
+      "has_verifier_correction": false,
       "summary": "A document controller issues a transmittal from a Vercel preview deploy (a staging URL, a branch review link, a custom domain not matching NEXTPUBLICSITEURL). renderTransmittalEmail embeds https://mfgos-git-feature-xyz.vercel.app/transmittal/<token> as both the button href and the copy-paste fallback. The external contractor clicks it and hits Vercel's own SSO wall. They cannot download the as-iss",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -924,6 +968,7 @@
         "app/api/cron/maintenance/route.ts:348",
         "app/api/cron/maintenance/route.ts:411"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor acknowledges a transmittal at 6:15 pm Central on 20 March. The confirmation email to the issuer reads '…confirmed receipt of transmittal T-0412 through the recipient portal on 3/20/2026, 11:15:15 PM.' — UTC, unlabelled, and for an acknowledgment landing after 7pm Central it will read as the NEXT calendar day. That sentence is the human-readable record of when a controlled document was",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -944,6 +989,7 @@
         "lib/storageAlerts.ts:60-61",
         "app/api/data-export/run/route.ts:54-58"
       ],
+      "has_verifier_correction": false,
       "summary": "A maintainer implementing the owner's request for login-time nudges reads lib/inAppNotifications.ts, sees morningdigest — composed daily digest: overdue + today + aging dateless with a comment describing exactly the feature they were asked to build, and concludes the composition already exists and just needs surfacing. It does not exist. Conversely, an operator whose workspace is 92% full receives",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
@@ -962,6 +1008,7 @@
         "app/layout.tsx:93",
         "app/(protected)/layout.tsx:60-73"
       ],
+      "has_verifier_correction": true,
       "summary": "The obvious build — 'add requestPermission() where the service worker is already registered' — prompts every anonymous visitor on the marketing/login page before they have any reason to say yes. Most click Block. A blocked origin cannot re-prompt; the only recovery is the user manually editing site settings, which no plant worker will do. One shipped line permanently forecloses OS notifications fo",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -980,6 +1027,7 @@
         "components/providers/ToastProvider.tsx:39-49",
         "components/ui/CornerDock.tsx:22-27"
       ],
+      "has_verifier_correction": true,
       "summary": "Combined with the unlimited-insert RLS policy and the refresh-defeated nudge guard above, one impatient colleague clicking a poke button repeatedly fills the recipient's screen bottom-to-top with stacked toast cards that outrun the 6-second expiry, obscuring the page they are working on. The same happens innocently when a bulk operation (a publish fan-out, a distribution ack request to many docs) ",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -999,6 +1047,7 @@
         "components/navigation/Sidebar.tsx:508-511",
         "components/notifications/NotificationCenter.tsx:132"
       ],
+      "has_verifier_correction": true,
       "summary": "Not a defect so much as a truthful inventory: a build for complaint #3 must add the bell icon animation, the badge pulse and the count-up interpolation from scratch. The one thing already present — the sidebar red-badge pulse — is tied to actionRequired > 0, not to unread-ness, so reusing it for a login nudge would make FYI notifications look like action-required ones.",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1017,6 +1066,7 @@
         "app/(protected)/checkouts/page.tsx:508-518",
         "app/(protected)/checkouts/page.tsx:242-269"
       ],
+      "has_verifier_correction": true,
       "summary": "A supervisor nudges an overlap, the button goes green, they change the user filter to double-check who was notified, the card remounts with nudged=false, and they nudge again. Two identical 'Coordinate — overlapping checkout' rows land in each recipient's bell and NotificationListener fires two toasts. Nothing anywhere records that this is a duplicate. Scale that to a person-to-person poke button ",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1036,6 +1086,7 @@
         "hooks/useTicketNotifications.ts:130-137",
         "components/navigation/Sidebar.tsx:229-235"
       ],
+      "has_verifier_correction": false,
       "summary": "A build for (C) reuses kind:\"tasknudge\" because the name fits. The row inserts fine, the bell shows it (the bell falls back to a generic Bell icon since KINDICON has no tasknudge entry), and NotificationCenter shows it — but the sidebar badge silently swallows it into sectionCounts.scratchpad, which no nav item renders. The engineer being poked sees a bell count that no sidebar section explains. T",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1055,6 +1106,7 @@
         "lib/eSignatures.ts:67",
         "components/providers/RoleContext.tsx:306-320"
       ],
+      "has_verifier_correction": false,
       "summary": "A login nudge is built on 'unread count > 0'. Because readat only clears when the user clicks the specific row or hits Mark all read, a user with three old, never-clicked but already-seen notifications gets the same dismissible banner on every single login, forever. The nudge becomes wallpaper within a week and the one login where something genuinely new arrived is indistinguishable from the other",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1073,6 +1125,7 @@
         "lib/notify/dispatch.ts:2-8",
         "lib/notify/dispatch.ts:78-124"
       ],
+      "has_verifier_correction": true,
       "summary": "A push build is added at one call site (say, the ticket comment route) instead of inside emit(). Holds, publishes, branch conflicts, stale-copy recalls and distribution acks — every event that already routes through emit() — keep reaching only the bell and email. The owner concludes 'push works sometimes' and cannot predict which events reach their phone.",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1091,6 +1144,7 @@
         "supabase/migrations/20260723_notifications_unify.sql:87",
         "app/(protected)/settings/notifications/page.tsx:24-40"
       ],
+      "has_verifier_correction": true,
       "summary": "A push build ships and consults pushenabled for the opt-out. Because the column defaults TRUE and no user has ever seen a control for it, every existing member is opted IN to OS notifications the moment the sender goes live — a silent org-wide opt-in for a PSM workforce that never consented. Worse, the natural fix (surface the toggle) still leaves the pre-existing rows at TRUE.",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1109,6 +1163,7 @@
         "lib/exportTables.ts:167",
         "lib/dataRestore.ts:92"
       ],
+      "has_verifier_correction": true,
       "summary": "An admin opens the schema verification surface, sees 'pushsubscriptions missing — apply 20260804pushsubscriptions.sql', applies the migration, and gets exactly nothing: no new capability, no setting, no UI. The verification check has trained them that a reported gap may be meaningless, which is corrosive for every other (real) gap the check reports.",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1128,6 +1183,7 @@
         "hooks/useTicketNotifications.ts:284-303",
         "components/navigation/Sidebar.tsx:229-235"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer is asked to sign off a draft (reviewrequested). The bell count goes up. Every sidebar item stays clean. The engineer scans the rail, sees nothing lit, and assumes the bell is stale. In a PSM/OSHA context the un-badged set includes legalholdplaced, retentioneligible, accessrecertdue and ackoverdue — the compliance-clock notifications, which are exactly the ones that must not be missed.",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
@@ -1152,6 +1208,7 @@
         "lib/notify/recipients.ts:65-72",
         "lib/ticketTransitions.ts:130-132"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl uses WatchButton (components/ui/WatchButton.tsx) to subscribe to a critical P&ID, writing a subscriptions row. Someone force-releases a checkout on it: lib/checkoutEpisodes.ts:676 emits to { involved: victims } only. Someone's downloaded copy goes stale: lib/staleCopies.ts:205 emits to { involved: outdated.map(h => h.userId) } only. A work package pinning it goes stale: lib/workPackages.",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1170,6 +1227,7 @@
         "app/(protected)/documents/[libraryId]/page.tsx:2300-2314",
         "app/(protected)/documents/[libraryId]/page.tsx:2508"
       ],
+      "has_verifier_correction": false,
       "summary": "A DocCtrl bulk-imports 200 drawings into a library via CSV. Every user who pressed Watch on that library — the exact mechanism task #92 ('Library subscriptions — watch button + notify on new/revised docs') was built for — receives nothing. Uploading the same 200 files through the staging modal would have notified all of them.",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1192,6 +1250,7 @@
         "lib/equipmentBridgeServer.ts",
         "lib/documentShares.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "A change order is raised against a project budget, a PSSR checklist item is signed off, a punch item is assigned, or a turnover package is marked complete. No stakeholder is notified through any channel. The information is available only by navigating to the relevant project tab. A change order awaiting approval can sit indefinitely with no escalation clock, unlike drafting requests (requestpendin",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1210,6 +1269,7 @@
         "lib/notify/dispatch.ts:65-79",
         "lib/notify/dispatch.ts:42-43"
       ],
+      "has_verifier_correction": true,
       "summary": "Two consequences. First, because countUnread is unused, the only unread count in the app is derived from a page of 50 (listMyNotifications({ onlyUnread: true, limit: 50, orgId }) at useTicketNotifications.ts:176) unioned with open tickets — a user with more than 50 unread rows sees a count that silently understates reality and loses the oldest items from the feed entirely. Second, because channels",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1229,6 +1289,7 @@
         "hooks/useTicketNotifications.ts:80-87",
         "components/notifications/NotificationBell.tsx:26"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter uses CheckInPanel's postHandoff (components/documents/CheckInPanel.tsx:424) to leave a formal handoff note for the next person. The recipient's bell shows a generic MessageSquare 'checkoutmessage' icon reading 'Alice left a handoff on P-101' — indistinguishable in tone, icon, and section-routing from ordinary checkout chat. The Lock icon registered for checkouthandoff at NotificationBell",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1247,6 +1308,7 @@
         "lib/inAppNotifications.ts:24",
         "lib/ownership.ts:79"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl places a STOP-WORK hold on a P&ID whose owner is a process engineer who has not pressed Watch on it (ownership is assigned by lib/ownership.ts:130, watching is a separate opt-in). The hold fires to every Admin/DocCtrl and to subscribers. The document's accountable owner — the person answerable for it in the PSM record — is never told work on their document has been stopped, unless they c",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1265,6 +1327,7 @@
         "lib/storageUsage.ts:255-258",
         "supabase/migrations/20260621_in_app_notifications.sql:17"
       ],
+      "has_verifier_correction": true,
       "summary": "The workspace crosses its storage quota. lib/storageAlerts.ts:60 writes a storagealert row to every Admin/DocCtrl. It appears in the bell drawer with a generic Bell icon and no section badge. The 7-day dedupe at storageAlerts.ts:56-59 means if it is missed in the drawer, the next reminder is a week away. Meanwhile a developer adding an exhaustiveness check over NotificationKind would get a clean c",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1286,6 +1349,7 @@
         "lib/milestones.ts:456",
         "lib/milestones.ts:565"
       ],
+      "has_verifier_correction": true,
       "summary": "A project manager rebaselines the schedule via applyMilestoneMoves, pushing eight milestones two weeks right. Nobody on the project — not the owner, not projectmembers, not assignees — receives a bell row or an email. The slip is detectable only by opening the project's Schedule tab, or later via lib/nudges.ts:53-62, which derives an 'N milestones are overdue' string from the already-loaded inbox ",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1304,6 +1368,7 @@
         "lib/transmittals.ts:593-620",
         "app/api/transmittal/route.ts:148-158"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl phones the contractor, confirms receipt, and records it via acknowledgeTransmittal in the app. The transmittal flips to acknowledged and an audit row is written; the issuer (if different from the recorder) gets nothing. The same contractor clicking the portal link instead would have produced a bell row and an email to the issuer. Two paths, two different notification outcomes for one rec",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1327,6 +1392,7 @@
         "lib/workPackages.ts:279",
         "app/api/intake/upload/route.ts:351"
       ],
+      "has_verifier_correction": true,
       "summary": "A distribution acknowledgment is requested — a PSM record obligation where the recipient must tap 'I have this revision'. It arrives in the bell as kind docsuperseded with a branch icon and no 'Action needed' flag, visually identical to the purely informational 'Doc X advanced to Rev 3' notice sitting next to it. The recipient reads it as FYI and does not act. lib/distributionAcks.ts:229-232 then ",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1345,6 +1411,7 @@
         "components/notifications/NotificationBell.tsx:34",
         "hooks/useTicketNotifications.ts:85"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer opens MarkupRequestModal and asks a specific colleague to mark up a P&ID. The row is written with requestedfromuserid set. The colleague gets no bell row, no email, no badge. If the document has no projectId, not even a project-feed entry is written. The request sits in the markuprequests table until someone opens /inbox, which reads it at lib/inbox.ts:152 — the only surface where it i",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
@@ -1366,6 +1433,7 @@
         "app/(protected)/requests/page.tsx:315-318",
         "hooks/useTicketNotifications.ts:223-224"
       ],
+      "has_verifier_correction": false,
       "summary": "A document is hard-deleted from a library while another controller has that library open. The documents DELETE is published, the filter libraryid=eq.<id> cannot be evaluated against a PK-only old record, no event is delivered, and the deleted row stays on screen and in the sort/filter set until a manual reload — the exact bug that was diagnosed and fixed for folders and left in place for documents",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1384,6 +1452,7 @@
         "components/providers/NotificationListener.tsx:17-36",
         "components/providers/NotificationListener.tsx:48-59"
       ],
+      "has_verifier_correction": true,
       "summary": "A user navigates into the protected shell at the moment a colleague posts a handoff note. The socket joins in ~200ms, the seed query takes ~400ms, and the message lands in that window — the toast is suppressed as if it were backfill. Separately, a control-room browser left open for a week accumulates every checkout message id in the workspace in memory.",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1407,6 +1476,7 @@
         "lib/inAppNotifications.ts:10-58",
         "lib/inAppNotifications.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "A controlled P&ID is issued and ackrequested rows are written to fourteen operators (lib/acknowledgments.ts:375). Each operator's bell count goes up by one and a 6-second toast appears. The toast expires. Nothing in the sidebar changes — Documents, Projects and Drafting Requests all still read zero, because ackrequested tallies into other. The operator remembers 'something popped up' and has no ba",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1429,6 +1499,7 @@
         "app/layout.tsx:93",
         "public/sw.js"
       ],
+      "has_verifier_correction": false,
       "summary": "The owner's complaint #2 — 'the app needs real OS-level notification presence' — is one client-side wiring step and one server-side sender away, not a from-scratch build. But as shipped, a user who grants the site notification permission in browser settings will still never receive a push, because the browser has no subscription to deliver to, and the app never asks.",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1447,6 +1518,7 @@
         "hooks/useTicketNotifications.ts:225-226",
         "lib/inAppNotifications.ts:193-196"
       ],
+      "has_verifier_correction": false,
       "summary": "A user clicks a request in the bell. Opening it writes unreadby and readat. Those two UPDATEs fan out to the three mounted attention channels via both the tickets leg and the notifications leg, producing roughly six fetchAll passes, each pulling up to 500 full ticket rows. If any of those passes also finds stale workflow alerts, three more writes go out and the cycle repeats once more. A single cl",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1468,6 +1540,7 @@
         "components/notifications/NotificationBell.tsx:137-143",
         "lib/inAppNotifications.ts:201-205"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter's bell reads 7. Six are notification rows, one is a request sitting in DRAFTING assigned to them. They click 'Mark all read'. The notifications UPDATE fires, the realtime echo triggers refetches, and the badge settles on 1 — a number they cannot clear by any action in the notification UI, because the only way to clear it is to finish the drafting work. This is the owner's complaint #4: '",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1488,6 +1561,7 @@
         "lib/notify/dispatch.ts:104-106",
         "components/providers/NotificationListener.tsx:92-97"
       ],
+      "has_verifier_correction": false,
       "summary": "A plant manager who is a follower on eight libraries and a member of every project is toasted continuously all day. They open Settings → Notifications looking for the off switch, find six toggles that all say 'email', turn them all off, and the toasts keep coming. The rational next step is to stop using the app's live surface entirely — which defeats every other notification feature.",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1507,6 +1581,7 @@
         "components/ui/CornerDock.tsx:22-27",
         "lib/postPublish.ts:36-60"
       ],
+      "has_verifier_correction": true,
       "summary": "Twelve documents are rev'd up in one bulk operation. A library subscriber who also holds intents receives ~24 notifications INSERTs in a few seconds. Twenty-four w-80 cards stack upward in a fixed-position column with no scroll container; on a 1080p screen roughly the top eighteen render above the viewport and are unreachable and unreadable. They each expire on their own 6s timer regardless of whe",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1528,6 +1603,7 @@
         "supabase/migrations/20260729_checkout_episodes.sql:97-98",
         "lib/tableViews.ts:261"
       ],
+      "has_verifier_correction": true,
       "summary": "Two planners work the same project schedule. ScheduleTab's comment promises 'another planner's edits stream in (debounced) so two people can work the same schedule without silently overwriting each other's view' — but if milestones is not published, planner B never sees planner A's changes and both keep editing a stale board, which is precisely the silent-overwrite the comment claims to prevent. L",
       "area": "notifications",
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
@@ -1545,6 +1621,7 @@
         "components/knowledge/SemanticIndexPanel.tsx:44-107",
         "components/knowledge/SemanticIndexPanel.tsx:194"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl starts a meaning-index rebuild that costs real money on their API key, then navigates to a drawing. Progress vanishes, Stop vanishes, and the loop keeps spending. The eventual outcome arrives only as a toast (ToastProvider outlives the route), which they may miss entirely.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1564,6 +1641,7 @@
         "lib/storage.ts:420-430",
         "components/providers/UploadIndicator.tsx:57-75"
       ],
+      "has_verifier_correction": true,
       "summary": "A user presses Stop on a staged batch. Every in-flight file's card turns red and reads \"Failed / cancelled\" for seven seconds. In a PSM/OSHA context that reads as a document-control failure and prompts an unnecessary re-upload and a support call.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1583,6 +1661,7 @@
         "lib/knowledge.ts:450-458",
         "app/(protected)/knowledge/[id]/page.tsx:1931"
       ],
+      "has_verifier_correction": true,
       "summary": "A controller uploads a 900-page SHX-export standard into a watched folder. The driver picks it up, the card says \"Indexing knowledge in the background\". Vision stalls; ingestLoop throws after three no-progress rounds. The card flips to a green CheckCircle2 reading \"Knowledge indexing caught up\" / \"0 documents indexed.\" The only place the real reason surfaces is app/(protected)/knowledge/[id]/page.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1602,6 +1681,7 @@
         "app/(protected)/layout.tsx:68",
         "components/projects/ExecutionView.tsx:926"
       ],
+      "has_verifier_correction": true,
       "summary": "A user opens a project from the org graph (URL keeps ?from=graph), performs an undoable action in the execution view, and the undo toast lands exactly on top of the \"Back to graph\" chip. That chip is the only affordance preserving their saved graph layout, and it is hidden for the toast's lifetime — which is also the window in which they must click Undo.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1618,6 +1698,7 @@
       "locations": [
         "components/ui/CornerDock.tsx:32-48"
       ],
+      "has_verifier_correction": true,
       "summary": "An upload starts while the indexing card is already docked. For at least one frame the upload card renders in its own corner box directly on top of the indexing card — exactly the overlap CornerDock's header comment says it was built to eliminate — then snaps into the stack. On a loaded plant laptop this reads as a flicker or jump every time a job starts.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1637,6 +1718,7 @@
         "components/providers/UploadIndicator.tsx:39-44",
         "lib/clientBackup.ts:227-229"
       ],
+      "has_verifier_correction": true,
       "summary": "A user with a 12-document queue closes the \"caught up\" card. Ninety seconds later the driver starts document 2 and setHidden(false) re-opens a 330px card over their work. Repeat eleven times. The user learns Dismiss does not work and stops attending to the corner — which is precisely what makes the occlusion findings dangerous.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1657,6 +1739,7 @@
         "components/documents/StagingTray.tsx:20",
         "components/ui/CornerDock.tsx:25"
       ],
+      "has_verifier_correction": true,
       "summary": "A supervisor on a phone in the plant opens a library with a Reference Stack active. The staging tray's right-hand controls (Clear / Open) are covered by an upload card, and any toast blankets almost the whole bottom of the screen while the page's own bottom bar is unreachable underneath.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1676,6 +1759,7 @@
         "components/ui/CornerDock.tsx:3-13",
         "lib/clientBackup.ts:224"
       ],
+      "has_verifier_correction": true,
       "summary": "An admin starts a multi-gigabyte full backup and the plant network drops. The amber \"Offline — showing cached data\" pill renders at bottom-left z-200 and is completely hidden behind the 340px backup card at z-300, so the user watches file fetches fail into progress.errors with no idea the network is the cause. Separately, one stray click on the unconfirmed \"Cancel\" ends a 40-minute run.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1695,6 +1779,7 @@
         "components/providers/ToastProvider.tsx:57-59",
         "components/providers/UploadIndicator.tsx:46"
       ],
+      "has_verifier_correction": true,
       "summary": "A 40-file bulk upload puts 40 cards (each ~56px plus an 8px gap) in the dock at once — roughly 2,500px of column, far taller than any viewport, with no scroll container and no \"+37 more\". The dock grows upward from bottom-4, so the oldest cards render off the top of the screen. Separately, dismissing the last upload card unmounts the portal, so the next upload's cards appear on the opposite side o",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1716,6 +1801,7 @@
         "components/assets/AssetPhotoUploader.tsx:140",
         "components/documents/CustomizeNodeModal.tsx:98"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl stages 40 drawings in the title-block wizard and hits commit. For the whole run, every UploadIndicator card the dock is stacking (filename, live percent, per-file \"Failed\" with reason) renders underneath a blurred slate overlay. If any file fails the modal never closes, so the corner stays covered — and the per-file error text at UploadIndicator.tsx:73-75 is never seen. On the photo uplo",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1735,6 +1821,7 @@
         "components/notifications/NotificationCenter.tsx:102",
         "components/ui/CornerDock.tsx:25"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer opens the Inspector on a controlled drawing (the primary document-control workspace) and a colleague's realtime notification toast fires. The 320px toast lands squarely over the bottom-right of the drawer — the region holding its action controls — and stays 5s. Worse, if an upload or index card is docked it sits there indefinitely, permanently masking that part of the drawer until the ",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1753,6 +1840,7 @@
         "components/knowledge/SemanticIndexPanel.tsx:81-102",
         "components/providers/NotificationListener.tsx:64-69"
       ],
+      "has_verifier_correction": true,
       "summary": "A knowledge index build fails while the user is in another browser tab. The 15s error toast fires and expires. They return to an empty corner and a bell with no row. The failure has left no trace anywhere in the UI.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1773,6 +1861,7 @@
         "lib/clientBackup.ts:211-214",
         "components/system/UpdatePill.tsx:41-43"
       ],
+      "has_verifier_correction": true,
       "summary": "A user is 80% through a 300MB multipart DWG upload and hits Cmd-R, or taps UpdatePill's \"This tab is running an old version — tap to load the update\" which calls window.location.reload(). The transfer dies with zero warning and zero trace; the corner is empty on the next paint. They believe the file landed because nothing said otherwise.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
@@ -1795,6 +1884,7 @@
         "app/(protected)/inbox/page.tsx:72-77",
         "components/dashboard/widgets.tsx:673-677"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer reads the Center header \"11 items\", the Activity chip \"7\", and the sidebar Documents badge \"3\", and cannot reconcile them because \"unread\" silently changes definition between them. A developer adding a surface picks unreadCount off the hook (it reads like the right thing), gets a ticket-only number that disagrees with every visible badge, and ships a fourth count.",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1815,6 +1905,7 @@
         "components/documents/EditOverlapBanner.tsx:133-137",
         "components/ui/FirstRunHint.tsx:26-50"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl dismisses the \"Knowledge indexing caught up\" card. The 2-minute poll finds one more queued PDF, setHidden(false) fires, and the card is back - for the rest of the day, on every page. Likewise a user dismisses the amber overlap banner on a document, navigates away and back, and the banner returns with the same \"Send heads-up\" button they already used, since nudged is also component state ",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1836,6 +1927,7 @@
         "components/ui/CornerDock.tsx:25",
         "app/(protected)/settings/notifications/page.tsx:7-9"
       ],
+      "has_verifier_correction": true,
       "summary": "The nightly maintenance cron inserts 40 compliance rows (reviewdue, ackoverdue, retentioneligible, ...) for a DocCtrl who happens to have the tab open. Supabase realtime delivers 40 INSERTs; NotificationListener calls showToast 40 times; ToastProvider renders 40 stacked cards in a fixed bottom-right column with no scroll. The stack runs off the top of the viewport, covers the page, and there is no",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1857,6 +1949,7 @@
         "lib/orchestrator/tools.ts:505-515",
         "app/(protected)/requests/[id]/page.tsx"
       ],
+      "has_verifier_correction": true,
       "summary": "A user sees the red 3 on Drafting Requests, clicks through to /requests, and the list renders no per-row marker sourced from the feed - they must eyeball statuses to find which three. Inside a request stuck at PENDINGFINALAPPROVAL there is no way to prod the assigned engineer, even though the app already has three working person-to-person notify paths elsewhere, each named differently.",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1876,6 +1969,7 @@
         "lib/inAppNotifications.ts:10-58",
         "supabase/migrations/20260621_in_app_notifications.sql:17"
       ],
+      "has_verifier_correction": false,
       "summary": "Storage crosses 90%. Every Admin gets a row titled \"Storage critical - 96% full\". In the bell it renders with a generic Bell icon; in the Notification Center's group chips it matches no group, so it lands in the hidden 'other' bucket with no chip and cannot be filtered to; no sidebar row badges. The most urgent infrastructure warning the product produces is the least visible one.",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1898,6 +1992,7 @@
         "components/pwa/ServiceWorkerManager.tsx:30-51",
         "public/sw.js"
       ],
+      "has_verifier_correction": true,
       "summary": "A user closes the tab. Nothing can reach them - no OS banner, no badge, no sound. The pushenabled toggle they'd expect isn't even rendered on /settings/notifications. The one place the app claims otherwise is the sw.js comment \"fires whether the app is open or closed\", which is currently false.",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1918,6 +2013,7 @@
         "app/api/intake/upload/route.ts:349-351",
         "app/api/cron/maintenance/route.ts:370-373"
       ],
+      "has_verifier_correction": true,
       "summary": "An Admin's bell shows two orange \"Action needed\" rows with a padlock icon. One means \"your work was destroyed, coordinate before publishing\"; the other means \"go poke Bob about his old checkout\". Nothing in the icon, the tone or the section distinguishes them. Any future filter, mute or push-channel rule keyed on checkoutreleased necessarily hits both.",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1939,6 +2035,7 @@
         "components/system/UpdatePill.tsx:41-48",
         "app/(protected)/layout.tsx"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl on the Projects -> Execution tab starts a full backup after a deploy, on flaky site Wi-Fi. The backup card (z-300, bottom-left) covers the amber \"Offline - showing cached data\" pill and the \"Update available - tap to refresh\" button (both z-200, bottom-left); an undo toast appears bottom-centre (z-280); upload + index cards stack bottom-right (z-300); and five minutes later \"This tab is ",
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
@@ -1958,6 +2055,7 @@
         "lib/holds.ts:232-251",
         "hooks/useTicketNotifications.ts:176"
       ],
+      "has_verifier_correction": true,
       "summary": "Any attempt to badge a library card or folder row today requires a second round-trip per page load, and the roll-up for FOLDERS is worse: documents.collectionid gives the leaf folder but the folder tree needs ancestors, so a folder badge also needs collections.pathIds (already present — FolderTree.tsx:92 reads target.pathIds) to fan a document's count up its ancestor chain.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -1977,6 +2075,7 @@
         "hooks/useTicketNotifications.ts:31",
         "hooks/useTicketNotifications.ts:156"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl in a large facility has 120 unread notifications. Sidebar totals are computed from 50 of them. An ackoverdue from three weeks ago — the one an auditor will ask about — is arithmetically excluded from every badge, every count, and the notification center, with no 'showing 50 of 120' indicator anywhere.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -1998,6 +2097,7 @@
         "components/dashboard/widgets.tsx:669",
         "app/(protected)/inbox/page.tsx:38"
       ],
+      "has_verifier_correction": true,
       "summary": "On a busy morning, one colleague's ticket comment causes each open tab to re-pull up to 500 ticket rows four times over. If the reconciler finds a stale row it writes readat, which the notifications subscription observes, causing a second round. Counts flicker while the four instances resolve at different times.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -2016,6 +2116,7 @@
         "lib/holds.ts:238-241",
         "hooks/useTicketNotifications.ts:86-95"
       ],
+      "has_verifier_correction": true,
       "summary": "A hold is placed on a drawing Monday and released Tuesday. On Wednesday the Documents badge reads 2 for that one document. Clicking it opens the org-wide center where both rows say something about a hold that no longer exists. The badge is not merely cold — it is false: it is pointing at a resolved condition. Same shape for branchopen followed by branchresolved (both mapped to 'documents'), and ch",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -2035,6 +2136,7 @@
         "components/navigation/Sidebar.tsx:229",
         "hooks/useTicketNotifications.ts:86-95"
       ],
+      "has_verifier_correction": true,
       "summary": "Your checkout was force-released. The Documents row badges. You click the row and arrive at a grid of library cards — the wrong one of the six views, with no tab highlighted for the view that actually holds your item, and no hint that /checkouts is where to look.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -2054,6 +2156,7 @@
         "app/(protected)/projects/page.tsx:199-261",
         "app/(protected)/documents/page.tsx:389-467"
       ],
+      "has_verifier_correction": true,
       "summary": "A user learns from the Drafting Requests section that a badge means 'go look for the red dot'. They apply the same mental model in Documents and Projects and find no dots at any level, so they conclude the badge is broken rather than that the feature is missing.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -2075,6 +2178,7 @@
         "lib/staleCopies.ts:201",
         "components/documents/EditOverlapBanner.tsx:92"
       ],
+      "has_verifier_correction": true,
       "summary": "A branch is opened on a document whose libraryId wasn't in scope at emit time. The Documents badge increments. The user opens the bell, clicks the row, and lands on /search showing 'no results' for a 36-character uuid — the only pointer to the resource has been converted into a guaranteed miss.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
@@ -2094,6 +2198,7 @@
         "components/notifications/NotificationCenter.tsx:78",
         "components/dashboard/widgets.tsx:1223"
       ],
+      "has_verifier_correction": true,
       "summary": "The dashboard's action stat reads 2 while the center's 'Action' tab, opened from that very stat, lists 4 rows — the two tickets plus a checkoutconflict and a branchopen. Two surfaces documented as sharing one source of truth print different numbers from the same hook call.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"

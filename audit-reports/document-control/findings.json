@@ -51,6 +51,7 @@
         "lib/revisions.ts:1147-1180",
         "lib/revisions.ts:1416-1462"
       ],
+      "has_verifier_correction": false,
       "summary": "OSHA 1910.119(l): a P&ID revision reflecting a real field change publishes with mocreference NULL. Three ways with no code change: (a) set change type to \"Minor\" or \"Correction\" in RevUpModal — isMinorLike short-circuits mocRequired even for a drawing-class document; (b) call publishrevision directly with no mocreference in pversion; (c) use revertToVersion to make an older drawing current again, ",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -70,6 +71,7 @@
         "supabase/migrations/20260901_db_hard_enforcement.sql:109-121",
         "supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql:39-45"
       ],
+      "has_verifier_correction": false,
       "summary": "Two paths. (1) A member who wants a locked P&ID issues DELETE /rest/v1/checkoutsessions?id=eq.<holder's session>; the release guard never runs, then any surface that calls reconcileDocumentCheckoutState (the modal's \"Release Lock\", the project bulk release, the sweep) sees zero active sessions and clears the lock and closes the episode — the exact outcome the 20260831 rail was written to make cont",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -89,6 +91,7 @@
         "supabase/migrations/20260901_db_hard_enforcement.sql:152-163",
         "supabase/migrations/20260831_capability_policy_and_rails.sql:99-102"
       ],
+      "has_verifier_correction": false,
       "summary": "Any active member — a Viewer — issues PATCH /rest/v1/documents?id=eq.<doc> {\"checkedoutby\": \"<their own uid>\", \"checkedoutbyname\": \"me\"} with their own anon-key JWT. The lock badge now says they hold it, the real holder's checkoutsessions row is untouched and still active, and publishrevision's lock test (vdoc.checkedoutby <> pactor) now passes for them. Conversely {\"checkedoutby\": null} frees a d",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -109,6 +112,7 @@
         "components/documents/DistributionRecall.tsx:48-59",
         "lib/postPublish.ts:100-145"
       ],
+      "has_verifier_correction": true,
       "summary": "P-101 is superseded by P-101A/P-101B after a loop split. Nine people downloaded P-101 in the last month; several printed it. Nobody is told. The work-package owners hear about it (notifyPackagesOfRetirement) and the one person holding the checkout hears about it — everyone actually holding a copy hears nothing. When one of those nine opens their own \"my outdated copies\" view to self-check, P-101 h",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -129,6 +133,7 @@
         "lib/staleCopies.ts:76",
         "lib/downloads.ts:60-65"
       ],
+      "has_verifier_correction": false,
       "summary": "A P&ID is voided after an MOC determines the loop it shows was never built as drawn. Every uncontrolled copy already in the plant carries a QR footer reading \"scan the QR to confirm it is still current\". A pipefitter with a print on the scaffold scans it, gets the full-screen emerald verdict, and works the job from a drawing Document Control has formally voided. The paper stamp, the QR, and the ve",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -148,6 +153,7 @@
         "supabase/migrations/20260828_integrity_hardening.sql:248-281",
         "lib/distributionAcks.ts:57-73"
       ],
+      "has_verifier_correction": false,
       "summary": "Doc Control sends P-101 Rev 5 to 12 field personnel and the register/inspector must show \"8 of 12 confirmed\". Any active org member (a Viewer, a contractor account, the person who wants the count to look clean) SELECTs distributionacks for that versionid, then issues PATCH /rest/v1/distributionacks?id=eq.<row> with {\"acknowledgedat\":\"…\"} for the four outstanding recipients. The panel reads \"12 of ",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -169,6 +175,7 @@
         "supabase/migrations/20260817_read_understood.sql:84-88",
         "supabase/migrations/20260818_review_before_publish.sql:91-95"
       ],
+      "has_verifier_correction": true,
       "summary": "A Viewer PATCHes another engineer's documentacknowledgments row to status='acknowledged', or DELETEs the documentreviewsignoffs rows of a review roster — both permitted by the surviving memberall policy regardless of what docackupdate / docreviewsignoffdelete say. The PSM §1910.119 read-and-understood register shows a revision fully acknowledged by people who never opened it, and the reviewer rost",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -187,6 +194,7 @@
         "supabase/migrations/20260815_versions_collections_delete_controllers.sql:22-25",
         "lib/revisions.ts:824-831"
       ],
+      "has_verifier_correction": true,
       "summary": "A Viewer in org A (or any authenticated user of the deployment, in any tenant) enumerates a documentversions.id — they only need one, and their own org's version ids are readable — and POSTs {\"pversion\": \"<id of the current controlled revision of a P&ID>\", \"pprev\": \"<id of the revision before it>\"}. The controlled revision row is deleted outright, taking fileurl, filehash, approvedbyname, released",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -208,6 +216,7 @@
         "lib/transmittals.ts:385-387",
         "supabase/migrations/20260910_transmittal_portal.sql:40-51"
       ],
+      "has_verifier_correction": true,
       "summary": "A Viewer in org A obtains a document id for a PSM-restricted drawing — either a hidden/private document in their own org (whose documents row RLS hides but whose id leaks through documentassets, projectdocuments, checkoutsessions or notes) or, cross-tenant, any competitor's drawing id harvested from the unauthenticated /d/[number] oracle (finding below). From the browser console they call createTr",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -227,6 +236,7 @@
         "supabase/schema.sql:1071-1073",
         "lib/docPack.ts:84-90"
       ],
+      "has_verifier_correction": false,
       "summary": "A Viewer-role contractor reads the fileurl of P-101 Rev 5 (Issued, approved, three signatures), asks upload-url for a PUT on that exact key, and uploads a modified P&ID. No database row changes: rev is still 5, filehash still records the original SHA-256, currentversionid is unchanged, the approvals stand. Every doc pack, every download, every print from that moment serves the substituted drawing ",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -248,6 +258,7 @@
         "lib/workPackages.ts:176-191",
         "components/documents/AddToPackageButton.tsx:30-43"
       ],
+      "has_verifier_correction": false,
       "summary": "A pack for 'E-204 bundle swap' is printed Monday with P-101 at Rev 3; the paper folder goes to the job site. Tuesday P-101 is published to Rev 4 — the package correctly flags STALE and the owner is notified. Wednesday the owner clicks 'Refresh pins' from their desk (or anyone clicks 'Add to work package' on P-101 from the inspector), moving the pin to Rev 4. The paper in the field is untouched and",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -267,6 +278,7 @@
         "lib/storage.ts:205-216",
         "app/(protected)/documents/[libraryId]/page.tsx:2390-2401"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter bulk-uploads P-101.pdf into the Piping library root; document P-101 Rev 0 is created. Weeks later someone uploads a different drawing that also happens to be named P-101.pdf into the same folder. The UI reports the friendly auto-rename P-101 → P-101-2 and both documents appear in the register with different numbers, titles and revs. But both documentversions.fileurl values are orgs/<org>",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -287,6 +299,7 @@
         "app/(protected)/assets/[tag]/page.tsx:129-141",
         "lib/holds.ts:246"
       ],
+      "has_verifier_correction": false,
       "summary": "FE-201 has a P&ID marked Void (a cancelled tie-in detail) and an iso under an open 'Field Verification Needed' hold. A supervisor opens /assets/FE-201, clicks 'Print doc pack', and gets one merged PDF containing both, each stamped 'Rev 3 at time of issue — verify current revision before use' with a verify-QR. Scanning the Void sheet's QR returns GREEN/CURRENT (see the verify-status finding), and t",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -307,6 +320,7 @@
         "app/api/verify-package/route.ts:38-52",
         "app/(protected)/packages/page.tsx:33"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractor with Viewer access issues one PostgREST UPDATE: workpackagedocuments set pinnedversionid = <the doc's currentversionid> where packageid = <the turnaround pack>. Every sheet now reads fresh. The /packages page shows a green 'Fresh' badge, the owner is never notified (notifyPackagesOfRevUp only fires on publish), and the crew scanning the cover QR in the field gets 'PACK IS CURRENT'. Th",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -327,6 +341,7 @@
         "supabase/migrations/20260826_legal_hold_delete_guard.sql:29-56",
         "lib/retention.ts:9-10"
       ],
+      "has_verifier_correction": true,
       "summary": "Counsel places a litigation hold on P-101 Rev A–F (lib/retention.ts:120-132 sets legalhold=true on every revision's parent document; the UI shows the red 'This record can't be deleted or disposed' banner). An admin runs the routine keep-last-5 space saver. Revisions A and B are superseded and beyond keep-5, so they are bundled and, on commit, DeleteObjectsCommand removes their bytes from R2 perman",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -351,6 +366,7 @@
         "lib/downloads.ts:245-252",
         "app/api/verify/route.ts:90"
       ],
+      "has_verifier_correction": true,
       "summary": "A pipefitter holds the checkout on P-200-301 (current Rev 5). He opens Rev 2 from Version History to compare, then clicks Download. determineControlState sees his checkout, takes the controlled branch, and hands him the Rev 2 bytes with no UNCONTROLLED watermark at all, saved as P-200-301Rev5.pdf. He prints it, walks it to the field, and the paper carries no mark saying it is superseded. If he had",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -373,6 +389,7 @@
         "lib/revisions.ts:1171-1184",
         "supabase/migrations/20260822_review_completion_guard.sql:46-58"
       ],
+      "has_verifier_correction": true,
       "summary": "A require-mode drawings library. An engineer submits Rev 3 for review; submitForReview creates draft \"3A\" with reviewstate='inreview' and no releasedat. Two reviewers have open sign-offs. A Doc Control manager opens Version History and sees three rows: Rev 2 (Current), Rev 3A, Rev 1. Rev 3A is badged \"Superseded\" in amber (line 279-283 — the panel's only non-current, non-branch label) and carries ",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -392,6 +409,7 @@
         "lib/reviewControl.ts:363-369",
         "lib/reviewControl.ts:661-665"
       ],
+      "has_verifier_correction": false,
       "summary": "A Viewer-role contractor with an active membership POSTs one row to /rest/v1/documentreviewsignoffs: {orgid: <their org>, documentid: <the P&ID>, documentversionid: <the in-review draft 2A>, revieweruserid: <their own uid>, slot: 'alternate', status: 'signed', signedat: now}. RLS accepts it — they are an active member. reviewCompletionForDraft now returns signed >= requiredPrimaries, so complete f",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -411,6 +429,7 @@
         "components/documents/ReviewGateSection.tsx:131-135",
         "components/documents/ReviewGateSection.tsx:191-203"
       ],
+      "has_verifier_correction": false,
       "summary": "The publisher of a B31.3 line-list revision is also the document's effective owner. Two primaries are outstanding and the turnaround is tomorrow. They call recordReviewSignoff (or issue the PATCH directly) with the Piping Lead's signoffId. RLS permits it — they are the effective owner. An esignatures row is written with signeruserid = the publisher (RLS forces that), intent 'Reviewed'. The roster ",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -431,6 +450,7 @@
         "app/api/storage/download-url/route.ts:29-45",
         "lib/knowledgeAccess.ts:31-46"
       ],
+      "has_verifier_correction": false,
       "summary": "A Viewer in org A is denied read on a private cost model or a controlled drawing's native source (documentversions.sourcefilekey holds .xlsx natives, lib/revisions.ts:506,524). They POST {orgId: <their own org>, templateId: <any template of theirs>, sourceFileKey: \"orgs/<orgB>/documents/…/schedule.xlsx\"}. The route authorizes them against THEIR org, fetches org B's object, parses it and returns it",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -449,6 +469,7 @@
         "components/documents/CheckoutFlowModal.tsx:383-442",
         "lib/checkoutEpisodes.ts:752-778"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer whose role carries an ACL 'write' deny on a library folder checks out a drawing. The session insert succeeds (checkoutsessions has no such guard); the documents UPDATE is filtered out by documentsdenywriteguard. lockedRow is null, so the modal posts \"X joined the checkout\" to the thread, notifies the (nonexistent) other participants, writes a CHECKOUT audit row with joined: true, and t",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -469,6 +490,7 @@
         "components/documents/InspectorPanel.tsx:765-773",
         "lib/checkoutEpisodes.ts:602-682"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl force-releases a checked-out isometric from the Inspector drawer during a turnaround. The checkout ends, the episode is sealed as forcereleased, the holder is notified — and auditlogs contains no FORCERELEASE entry. Six weeks later, reconstructing why an unfinished as-built was released before the walkdown closed, the audit trail shows a CHECKOUT with no corresponding release event and n",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -489,6 +511,7 @@
         "supabase/migrations/20260816_owner_publish_access.sql:32-88",
         "supabase/migrations/20260822_review_completion_guard.sql:21-96"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter with publish on the library, or the document's effective owner, PATCHes documents.currentversionid directly through PostgREST with their own JWT while an isometric is checked out by the field engineer doing a walkdown. The trigger checks authority (passes), review completion (no roster, passes), and holds (none, passes) — and lets the promote through. The lib guard (evaluatePublishGuard)",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -510,6 +533,7 @@
         "app/(protected)/documents/[libraryId]/page.tsx:352-355",
         "supabase/migrations/20260901_db_hard_enforcement.sql:109-121"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter opens a library page. The sweep finds four expired quick-holds, three of them other people's. The trigger rejects the batch; nothing is released; the drafter's own expired hold also survives. Four people are told their checkout auto-released — and it is re-sent on every page load, forever, because the sessions never leave status='active'. Meanwhile the actual enforcement is deferred to t",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -529,6 +553,7 @@
         "lib/revisions.ts:239-257",
         "components/documents/RevUpModal.tsx:258-263"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter with library publish authority calls POST /rest/v1/rpc/publishrevision with poverridelock: true and no override reason while the process engineer holds the drawing for an As-Built walkdown. The RPC skips the lock branch, promotes the new version, and returns 'published'. Because the call never went through revUpDocument, noteOverrideOnHolder (lib/revisions.ts:264-300) never runs: no syst",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -550,6 +575,7 @@
         "app/(protected)/activity/page.tsx:195",
         "supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql:18-29"
       ],
+      "has_verifier_correction": true,
       "summary": "A drawing is checked out, then released from the stale-checkout banner. checkoutsessions.outcome is NULL, so CheckoutHistoryPanel renders no register line for the session. auditlogs gets CHECKOUTRELEASED, which the activity page does not count as a lock event and the timeline renders through its default: fallback as the lowercase string \"checkout released\". The document's control history shows a C",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -570,6 +596,7 @@
         "supabase/migrations/20260901_db_hard_enforcement.sql:109-121",
         "components/documents/CheckoutStatusCell.tsx:238"
       ],
+      "has_verifier_correction": true,
       "summary": "An admin narrows checkout.forcerelease to [\"Admin\"] in Admin → Permissions (a supported, advertised action — capabilityPolicy.ts:89 says \"widen or narrow freely\"). A DocCtrl still sees the Force Release button, confirms the dialog, and the sessions UPDATE is rejected by the trigger. The error is dropped on the floor; the lock columns are cleared anyway, the episode is sealed as forcereleased, and ",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -591,6 +618,7 @@
         "lib/docControlRegister.ts:117",
         "components/documents/InspectorPanel.tsx:194-204"
       ],
+      "has_verifier_correction": true,
       "summary": "P-101 Rev 4 is distributed to 12 people; 4 confirm. Rev 5 issues the next week. Those 8 Rev-4 rows are now immortal: the inbox card \"Confirm you have these revisions\" lists P-101 forever, its link opens the document at Rev 5 where DistributionAcks queries versionid = Rev5 and finds nothing, so no \"I have this revision\" bar appears. The daily maintenance cron re-nags each of the 8 every 3 days inde",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -611,6 +639,7 @@
         "lib/ownership.ts:92-95",
         "lib/acknowledgments.ts:393-405"
       ],
+      "has_verifier_correction": false,
       "summary": "A safety procedure is set to require acknowledgment from role \"Operator\". Six of the eight operators are also Supervisors or Leads, so their headline role is the higher-ranked one and \"Operator\" lives only in their roles array. The roster opens with two people. Both sign. getAckSummaries reports required=2, done=2; the pill reads \"complete\"; maybeNotifyComplete tells the owner \"Everyone assigned h",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -632,6 +661,7 @@
         "app/api/share/resolve/route.ts:30-48",
         "supabase/migrations/20260708_acl_rls_enforcement.sql:1-17"
       ],
+      "has_verifier_correction": true,
       "summary": "A member with a Viewer role opens any drawing and clicks Share → \"Never expires\" → copy link. That URL now serves the document's current published revision, forever, to anyone on the internet who has the string, with no expiry sweep (no cron touches documentshares) and no org-wide review surface (listShareLinks is per-document and called only from ShareLinkModal.tsx:51, so nobody can enumerate liv",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -652,6 +682,7 @@
         "app/api/share/file/route.ts:14-16",
         "lib/staleCopies.ts:125-140"
       ],
+      "has_verifier_correction": false,
       "summary": "A drawing is shared to a vendor. They pull it four times over a month. downloadaudits gains zero rows. getDocumentRecall (lib/staleCopies.ts:125-180) — which is built entirely on downloadaudits — has no idea a copy left the building, so \"Copies in circulation\" shows only internal staff and a recall nudge reaches nobody outside. When the rev advances, the vendor holds a stale stamped PDF with no ch",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -671,6 +702,7 @@
         "components/documents/AckSection.tsx:98-104",
         "lib/acknowledgments.ts:142-214"
       ],
+      "has_verifier_correction": true,
       "summary": "An operator is on the roster for a hard-gated SOP revision and is blocked from downloading it (lib/downloads.ts:198-210 assertAckGate). Rather than read it, they PATCH their own documentacknowledgments row to status='waived'. getAckSummaries (lib/acknowledgments.ts:170-175) counts waived rows into s.waived and NOT into s.required, so the pill goes to \"complete\", maybeNotifyComplete fires \"Fully ac",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -691,6 +723,7 @@
         "lib/staleCopies.ts:125-180",
         "lib/downloads.ts:123-146"
       ],
+      "has_verifier_correction": false,
       "summary": "Someone downloads a drawing, works from it, and later wants no record that they held that revision. They issue DELETE /rest/v1/downloadaudits?documentid=eq.<doc>&userid=eq.<self>. They vanish from \"Copies in circulation\" in the inspector, from the recall nudge list (nudgeStaleHolders filters holders derived from that table), and from their own \"my outdated copies\" view. More broadly, any member ca",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -711,6 +744,7 @@
         "supabase/migrations/20261011_collections_guard_and_trash.sql:38-62",
         "supabase/migrations/20260819_effective_date.sql:17-28"
       ],
+      "has_verifier_correction": true,
       "summary": "A member PATCHes {\"rev\": \"5\", \"revision\": \"5\", \"status\": \"Issued\"} on a document whose currentversionid still points at the Rev 3 file. Every list view, the document-control register, the transmittal item snapshot and the share landing page read documents.rev — they now all say Rev 5. The file a worker downloads is Rev 3. Nothing in the version history records a change, because no version row move",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -732,6 +766,7 @@
         "lib/retention.ts:235",
         "lib/reviewCycles.ts:138"
       ],
+      "has_verifier_correction": true,
       "summary": "A litigation hold is placed on a batch of records; the holdplaced disposition event is written. The employee under investigation DELETEs those documentdispositionevents rows through PostgREST, then clears documents.legalhold (unguarded per SURF-3) and disposes the records. There is no trail of the hold ever having existed — the very evidence a spoliation claim turns on. The same applies to documen",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -750,6 +785,7 @@
         "app/api/share/resolve/route.ts:43-49",
         "supabase/migrations/20260823_publish_contract.sql:70-95"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor opens the share link they were given last month. The drawing has since been split and its currentversionid cleared, or the link points at a document whose promotion was rolled back. The route walks back to the newest documentversions row, which is an isbranch = TRUE override somebody published over a stale base with the reason \"publish anyway, will reconcile\" — work that by constructi",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -769,6 +805,7 @@
         "lib/reviewControl.ts:363-368",
         "lib/reviewControl.ts:355"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter who holds per-library publish authority (or is the document's effective owner) has an in-review 2A draft with two pending primary reviewers and a deadline. They POST two rows to /rest/v1/documentreviewsignoffs with documentversionid = the draft, slot='alternate', status='signed', revieweruserid = any uuid. vsigned is now 2, vprimaryreqs is 2, the trigger passes, and they promote the draf",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -787,6 +824,7 @@
         "lib/documentShares.ts:65-70",
         "supabase/migrations/20260818_followups_rls.sql:95-101"
       ],
+      "has_verifier_correction": true,
       "summary": "Document Control revokes a share link that was handing a superseded P&ID to a vendor. Any active member — the person who created it, or anyone else — PATCHes revokedat back to null and expiresat forward, and /api/share/resolve (which checks only share.revokedat and share.expiresat, route.ts:38-41) serves the file again. Alternatively they DELETE the row: the link dies, but so does accesscount / ac",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -805,6 +843,7 @@
         "supabase/schema.sql:1090-1091",
         "supabase/schema.sql:1084-1087"
       ],
+      "has_verifier_correction": false,
       "summary": "A member downloads a restricted vendor drawing, then DELETEs their own downloadaudits rows — or rewrites userid to a colleague's uuid. The distribution record that Document Control produces for a PSM audit (\"who has had this drawing, and when\") is missing the pull that matters, or attributes it to the wrong person. Because orgid is nullable and unconstrained on write, a row can also be inserted wi",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -825,6 +864,7 @@
         "app/api/share/file/route.ts:92-96",
         "app/api/share/resolve/route.ts:43-48"
       ],
+      "has_verifier_correction": true,
       "summary": "A Viewer in org A inserts one row into documentshares: {token: <they choose it>, orgid: <org A>, documentid: <a drawing in org B, or a hidden PSM document in org A>}. RLS accepts the insert. They open /share/<token>. /api/share/resolve returns the victim document's number, title and rev; /api/share/file streams its full PDF. The downloadaudits row that would have recorded this is attributed to sha",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -844,6 +884,7 @@
         "supabase/schema.sql:789-799",
         "lib/staleCopies.ts:40"
       ],
+      "has_verifier_correction": true,
       "summary": "An org shares an issued P&ID with a contractor and relies on the share-link audit trail. After an incident, document control pulls the distribution record for that drawing to answer 'who held a copy of Rev 2'. Every internal pull is there; not one external share-link download is, because every insert has been rejected for the entire life of the feature. lib/staleCopies.ts, which reads downloadaudi",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -869,6 +910,7 @@
         "lib/documentShares.ts",
         "lib/documentLifecycle/renumber.ts"
       ],
+      "has_verifier_correction": false,
       "summary": "An MOC-driven \"Client Review\" hold sits on a piping isometric. During the hold: a contractor is sent a transmittal containing it, twelve people are assigned a read-and-understood acknowledgment against it and all sign, a public share link is issued, its revision label is corrected from 3 to 3A (changing what the register, the inspector and every hold card display), and — once the retention clock e",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -889,6 +931,7 @@
         "lib/documentLifecycle/common.ts:319-377",
         "lib/revisions.ts:1425-1428"
       ],
+      "has_verifier_correction": true,
       "summary": "A cluttered P&ID under an \"Awaiting Engineering\" hold is split into three sheets by a DocCtrl. The supersession succeeds with no hold prompt. RLS or a transient error rejects the three hold inserts (or the caller passed copyHolds:false). The result object reports holdsCopied:0 and the split \"succeeded.\" The source is now Superseded and its hold is stranded on a retired document; the three new live",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -911,6 +954,7 @@
         "lib/docPack.ts:100-105",
         "lib/physicalBridge.ts:275-281"
       ],
+      "has_verifier_correction": true,
       "summary": "DocCtrl places a \"Field Verification Needed\" hold on P&ID PID-2201 Rev 4 after a walkdown finds the line routing does not match. Nobody prints a red hold card. A pipefitter holding a stamped print from last week scans the footer QR — the page turns emerald and says CURRENT, \"this print matches the current revision.\" He welds to a drawing that document control has formally stopped work on. The same",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -930,6 +974,7 @@
         "app/(protected)/assets/[tag]/page.tsx:129-142",
         "app/(protected)/assets/[tag]/page.tsx:215"
       ],
+      "has_verifier_correction": true,
       "summary": "A planner opens /assets/E-204, sees one of the six drawings badged \"hold\", clicks Doc Pack anyway (or does not notice the badge among six rows), and gets a single merged PDF whose banner says \"Pack ready — 6 drawings, all current, all stamped.\" Each page's footer says \"verify current revision before use\" and carries a QR that (per the previous finding) answers CURRENT. The held drawing goes to the",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -950,6 +995,7 @@
         "lib/holds.ts:173-218",
         "lib/audit.ts:129-150"
       ],
+      "has_verifier_correction": false,
       "summary": "A drafter blocked by a controller's hold opens devtools, copies the session bearer token, and issues PATCH /rest/v1/documentholds?id=eq.<uuid> with {\"releasedat\":\"<now>\",\"releasedbyname\":\"Document Control\"}. RLS allows it (holds.release defaults to \"\"). No HOLDRELEASED row is written, no bell fires, and the document's timeline — which prefers the hold row over the audit rows — renders a tidy \"Hold",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -969,6 +1015,7 @@
         "lib/retention.ts:151-158",
         "supabase/migrations/20260826_legal_hold_delete_guard.sql:17-33"
       ],
+      "has_verifier_correction": true,
       "summary": "Counsel asks for a litigation hold across a folder of 380 incident drawings. A transient PostgREST error, an RLS denial on a subset, or a schema-cache miss makes every UPDATE fail. placeLegalHold returns 380, the UI reports \"380 documents placed on legal hold,\" a holdplaced retention event is written, and everyone is notified. legalhold is still false on all 380 rows. Six weeks later a controller ",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -988,6 +1035,7 @@
         "lib/docPack.ts:77-140",
         "lib/docPack.ts:142-148"
       ],
+      "has_verifier_correction": true,
       "summary": "An owner clicks 'Print pack' on a pack that has gone stale. R2 is briefly unreachable, so every fetch fails and docPack throws 'No documents could be packed'. The toast says the print failed. The pins, however, are now all at the current revision: /packages shows the pack green and 'Fresh', the amber 'Refresh pins' button disappears, and the paper pack already in the field — printed last week at t",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -1009,6 +1057,7 @@
         "lib/docPack.ts:77-83",
         "app/(protected)/packages/page.tsx:161-176"
       ],
+      "has_verifier_correction": true,
       "summary": "A turnaround package contains a P&ID whose library ACL hides it from the contractor coordinator. The coordinator opens /packages: the pack shows green 'Fresh' even after that P&ID advances two revisions, because the hidden member can never be drifted. They click 'Print pack'. refreshWorkPackage writes NULL into that member's pinnedversionid — the pin is permanently gone. The merged PDF is missing ",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -1029,6 +1078,7 @@
         "app/verify/[docId]/page.tsx:99-107",
         "types/schema.ts:613"
       ],
+      "has_verifier_correction": false,
       "summary": "A detail drawing is VOIDED after a design change — the org's formal statement that the drawing must not be used. It is still in a work package (nothing removes it) and still tagged to the equipment. A crew member scans the cover QR before starting work and gets the emerald screen: 'PACK IS CURRENT — Every sheet in this pack is still the current revision.' Scanning that individual sheet's own QR gi",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -1048,6 +1098,7 @@
         "lib/downloads.ts:261-262",
         "lib/docPack.ts:40-140"
       ],
+      "has_verifier_correction": true,
       "summary": "Document control sets a hard acknowledgment gate on a revised relief-valve P&ID: nobody may take a copy until they have signed that they read the change. A superintendent who has not signed clicks 'Print doc pack' on /assets/PSV-42 — or 'Print pack' on the work package containing it — and receives the full stamped PDF including that drawing. The gate the UI advertises as blocking is routable aroun",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -1067,6 +1118,7 @@
         "components/documents/VersionHistoryPanel.tsx:151-159",
         "lib/downloads.ts:228-240"
       ],
+      "has_verifier_correction": false,
       "summary": "An engineer opens version history to pull the as-built Rev 2 of a line iso for an incident review. They receive P-101Rev5UNCONTROLLED.pdf; every page is footered 'Rev 5 at time of issue — verify current revision before use.' The pages are Rev 2. If that print is filed, emailed or carried to the field it is a superseded drawing wearing the current revision number — the precise failure ASME/PSM docu",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -1086,6 +1138,7 @@
         "lib/storageKey.ts:1-16",
         "lib/storageKey.ts:40-52"
       ],
+      "has_verifier_correction": true,
       "summary": "Any authenticated member — a Viewer, a departed contractor whose membership was not deactivated — sends DELETE /api/storage/delete {\"path\":\"orgs/<myOrg>/libraries/<lib>/P-101-RevD.pdf\"}. The current, issued, legal-hold-protected revision of a B31.3 piping drawing is removed from R2. The DB row is untouched, so the register still shows the document as Issued with a valid checksum; the next person t",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -1105,6 +1158,7 @@
         "supabase/migrations/20260708_acl_rls_enforcement.sql:44-80",
         "supabase/migrations/20260821_access_recert.sql:22-35"
       ],
+      "has_verifier_correction": true,
       "summary": "A default-visibility 'Piping Drawings' library has no explicit ACL rules. The recertification modal shows an empty access list; the reviewer sees nothing to prune and clicks Recertify. accessrecertificationevents records grantcount: 0 with an empty grantssnapshot, lastrecertifiedat is stamped and the clock resets six months. The attested record says nobody has access to the library, while in truth",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -1126,6 +1180,7 @@
         "lib/retention.ts:113-116",
         "components/documents/RetentionSection.tsx:29-33"
       ],
+      "has_verifier_correction": true,
       "summary": "A member under investigation issues one PostgREST PATCH: PATCH /rest/v1/documents?id=eq.<id> body {\"legalhold\":false,\"legalholdmatter\":null,\"retentionuntil\":null,\"dispositionstate\":null}. The hold banner disappears, the delete triggers now pass, the register's legal-hold tile drops the record, and the retention clock is gone. A second DELETE against documentdispositionevents?documentid=eq.<id> rem",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -1147,6 +1202,7 @@
         "lib/retention.ts:68-91",
         "lib/retention.ts:231-244"
       ],
+      "has_verifier_correction": true,
       "summary": "A DocCtrl places a litigation hold on a folder of 400 drawings. Half sit in a library the actor cannot SELECT under the ACL restrictive policy, so scopeDocumentIds returns only the visible ids; of those, some rows are filtered by the deny guard on UPDATE. Every call resolves without error. placeLegalHold returns 400, a holdplaced disposition event is written, and every controller gets a notificati",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -1168,6 +1224,7 @@
         "app/api/admin/ticket-shed/restore/route.ts:139-144",
         "app/api/admin/shed/route.ts:150-168"
       ],
+      "has_verifier_correction": true,
       "summary": "An active member (any role — Viewer suffices for RLS) PATCHes a long-closed ticket's attachments to [{\"url\":\"orgs/<sameOrg>/libraries/<lib>/P-101-RevD.pdf\"}], or sets a decade-old superseded version's fileurl to the current revision's key. The next routine space-saver bundles that key into the archive (exfiltrating a document the member may not be able to read, since document ACLs do not gate an R",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -1187,6 +1244,7 @@
         "app/api/admin/orphans/route.ts:22-33",
         "app/api/admin/orphans/route.ts:35-58"
       ],
+      "has_verifier_correction": true,
       "summary": "Org A's Admin clicks 'Delete orphans' to reclaim 4 GB. The sweep deletes unreferenced objects belonging to Orgs B, C and D as well — including any object whose owning table was not registered in the reference collector (the file's own comment records that outputtemplates was exactly such a miss, making 'every uploaded template an orphan seven days after upload'). Org B loses files it never authori",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -1207,6 +1265,7 @@
         "app/api/storage/resolve/route.ts:31-38",
         "app/api/storage/resolve/route.ts:74-90"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter reverts P-101 from Rev C back to Rev A (say Rev C had a wrong line spec). The revert creates Rev 'A-revert-<ts>' as current, sharing Rev A's key. Months later Rev A is beyond keep-5 and superseded, so the shed bundles it; commit deletes the key. The CURRENT, issued revision of P-101 now has archivedat = null and a dangling fileurl. /api/storage/resolve finds the newest row for that key (",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -1229,6 +1288,7 @@
         "lib/docControlRegister.ts:96",
         "components/documents/VersionHistoryPanel.tsx:263"
       ],
+      "has_verifier_correction": true,
       "summary": "Rev 4 of a P&ID is found to have a wrong line class. Doc Control reverts to Rev 3. The document's controlled revision is now 3-revert-1755823041992. A field print of it carries a watermark footer reading \"Rev 3-revert-1755823041992 at time of issue — verify current revision before use.\" The drawing's own title block says Rev 3. A contractor comparing his paper against the title block cannot tell w",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -1250,6 +1310,7 @@
         "app/(protected)/documents/[libraryId]/page.tsx:3024-3032,4238-4241",
         "app/(protected)/documents/[libraryId]/page.tsx:4238"
       ],
+      "has_verifier_correction": true,
       "summary": "An operator opens P-200-301 and clicks the eye icon on Rev 2 in Version History to check what a line looked like before the tie-in. The viewer fills with the Rev 2 drawing and the badge in the corner reads, in green, \"Controlled · Rev 5\". Rev 5 added an isolation valve that Rev 2 does not show. The operator writes the line-break permit from what is on screen, having been told by the application th",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -1272,6 +1333,7 @@
         "lib/revisions.ts:1325-1355",
         "lib/documentLifecycle/common.ts:266-281"
       ],
+      "has_verifier_correction": true,
       "summary": "A procedure is submitted for review as draft 4A. Two days later an incident review retires it: Doc Control runs Supersede, and supersedeDocument sets status='Superseded', supersededat, supersessionreason (revisions.ts:1455-1466) — it does not touch pendingversionid. A week later the second reviewer, working her inbox, signs off on 4A. recordReviewSignoff sees complete and auto-finalizes. The retir",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -1296,6 +1358,7 @@
         "app/api/intake/upload/route.ts:325,332",
         "components/projects/IntakePanel.tsx:258"
       ],
+      "has_verifier_correction": true,
       "summary": "Draft 3A is in review on P-101. Doc Control splits P-101 into P-101A and P-101B; markSupersededAndLink sets P-101 to Superseded and writes the lineage rows. P-101 is now retired and its replacements are the controlled sheets. Its pendingversionid still points at 3A. The last reviewer signs 3A from her inbox; auto-finalize promotes it and sets P-101 back to Issued at Rev 3. The plant now has three ",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -1316,6 +1379,7 @@
         "components/documents/ReviewControlModal.tsx:3-6",
         "supabase/schema.sql:94"
       ],
+      "has_verifier_correction": false,
       "summary": "A controller sets mode 'require' with the Piping Lead as primary reviewer on the folder 'Piping / P&IDs', intending it to cover the whole discipline. Drawings actually live in 'Piping / P&IDs / Unit 12'. For every one of them doc.collectionId is the Unit 12 subfolder, whose reviewcontrol is null, so resolution falls straight through to the library — which is mode 'none'. effectiveModeForRevUp retu",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -1335,6 +1399,7 @@
         "lib/reviewControl.ts:204-217",
         "supabase/migrations/20260822_review_completion_guard.sql:48-57"
       ],
+      "has_verifier_correction": false,
       "summary": "A library gates a code-governed revision on two primaries — the Piping Lead (B31.3 stress) and the I&E Lead (loop integrity) — plus one alternate, a second piping engineer. The Piping Lead signs. The alternate is auto-activated at timeout (scanReviews:556) and signs too. signed = 2 >= requiredPrimaries = 2, so the review is complete and the last signature auto-finalizes the promote. The I&E Lead i",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -1353,6 +1418,7 @@
         "supabase/schema.sql:1063-1073",
         "supabase/migrations/20260818_review_before_publish.sql:24-26"
       ],
+      "has_verifier_correction": true,
       "summary": "Because most-specific-defined wins (resolveEffectiveReviewControl:34-37) and a document-level 'none' overrides an inherited 'require' — an intended behaviour the test suite pins ('lets a document-level none override an inherited require') — any active member can PATCH a single document row with reviewcontrol = {\"mode\":\"none\"} and permanently exempt that controlled drawing from the library's gate. ",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -1373,6 +1439,7 @@
         "components/documents/RevUpModal.tsx:218-219",
         "components/documents/ReviewGateSection.tsx:39-64"
       ],
+      "has_verifier_correction": false,
       "summary": "The collections SELECT returns a PostgREST error (schema-cache miss after a migration, an ACL RESTRICTIVE policy the user does not satisfy, a cold-start timeout). reviewControl resolves to null. The rev-up form shows no 'route through review' section and no warning; the publisher attaches the revised P&ID and clicks Publish. revUpDocument runs, currentversionid advances, and the DB publish guard d",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -1394,6 +1461,7 @@
         "lib/roleCapabilities.ts:48-67",
         "app/(protected)/transmittals/page.tsx:54-70"
       ],
+      "has_verifier_correction": false,
       "summary": "A member with the Viewer role (ROLECAPABILITIES.Viewer is [], roleCapabilities.ts:67) or the Contractor role opens /transmittals, adds a set of IFC drawings, types an outside email address, and clicks Issue. createTransmittal inserts status='issued' with a portal token; the RLS INSERT policy passes; the portal link is emailed to the outside party; a numbered TR- record now asserts the org formally",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -1414,6 +1482,7 @@
         "lib/transmittals.ts:641-645",
         "supabase/migrations/20260826_legal_hold_delete_guard.sql:29-33"
       ],
+      "has_verifier_correction": false,
       "summary": "A contractual dispute surfaces over TR-0042. The engineer who issued it opens the browser console (or any PostgREST client with their session token) and issues DELETE /rest/v1/transmittals?id=eq.<uuid>. RLS permits it: they are createdby. The numbered, acknowledged record of \"we issued you P-200-001 Rev C for construction on this date\" — including the acknowledgment, the recipient, and the item li",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -1436,6 +1505,7 @@
         "supabase/migrations/20260820_retention.sql:31",
         "lib/effectiveDate.ts:14-27"
       ],
+      "has_verifier_correction": false,
       "summary": "A P&ID is placed on hold for \"Missing Vendor Data\" and its Rev D is dated effective the first of next month. A project engineer opens the Inspector, clicks \"Issue this document via transmittal\", and issues it For Construction. The cover sheet (lib/transmittals.ts:176-182) prints only #/Number/Title/Rev and closes with \"This is the controlled record of the documents and revisions issued above.\" The",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -1459,6 +1529,7 @@
         "lib/dataExport.ts:300",
         "app/(protected)/transmittals/page.tsx:258-269"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor's project ends and the relationship sours. The org wants to cut off their access to the IFC set. Voiding TR-0042 works, but it also stamps the contractual record \"voided — no longer a valid record\", destroying the proof that the drawings were properly issued. The alternative is leaving a permanent, un-expiring download link in the hands of a former counterparty. Meanwhile a routine wo",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -1480,6 +1551,7 @@
         "lib/stamping.ts:211",
         "app/transmittal/[token]/page.tsx:54"
       ],
+      "has_verifier_correction": true,
       "summary": "Doc control issues TR-0042 \"For Construction\" to Acme Fabricators for P-200-001 Rev C. The contractor clicks Download in the portal and receives the byte-identical controlled master PDF — no UNCONTROLLED watermark, no \"Rev C at time of download\" footer, no verify QR. That file is printed in the shop and pinned to the wall. Six weeks later Rev D lands after an MOC; the paper on the wall carries no ",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -1499,6 +1571,7 @@
         "supabase/migrations/20260910_transmittal_portal.sql:33-37",
         "supabase/migrations/20260814_documents_delete_controllers.sql:31-40"
       ],
+      "has_verifier_correction": true,
       "summary": "An engineer is terminated and their orgmembers row is set to status = 'inactive'. Their Supabase session is still valid. They call PATCH /rest/v1/transmittals?id=eq.<uuid> on a transmittal they issued and rewrite items to a different document/rev set, or set acknowledgedat and acknowledgedbyname to fabricate a receipt, or mint a fresh portaltoken and hand it to an outside party. RLS permits every ",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -1521,6 +1594,7 @@
         "app/(protected)/transmittals/page.tsx:136-179",
         "app/(protected)/transmittals/page.tsx:280-289"
       ],
+      "has_verifier_correction": false,
       "summary": "A Viewer sees TR-0042 in the register, clicks Receipt, and types the recipient's name. RLS rejects the UPDATE (they are neither creator nor controller); supabase returns zero rows and no error; acknowledgeTransmittal writes a TRANSMITTALACKNOWLEDGED audit row anyway (:609-618) and returns; the toast says \"Receipt recorded — TR-0042 marked acknowledged.\" The register still shows Issued after refres",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -1540,6 +1614,7 @@
         "app/api/templates/generate/route.ts:371-377",
         "lib/outputTemplateText.ts:120-138"
       ],
+      "has_verifier_correction": false,
       "summary": "A controller generates 12 RFQ letters and clicks download (not \"file into document control\"). The server renders all 12, records a production run of 12 documents and an audit entry saying 12 were generated, then throws while building the response; the browser sees a 500 and the user has zero files. The compliance record now claims a document production run that never reached anyone, and repeating ",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1560,6 +1635,7 @@
         "app/api/admin/restore/apply/route.ts:214-224",
         "app/api/admin/restore/begin/route.ts:78-85"
       ],
+      "has_verifier_correction": false,
       "summary": "An Admin (or anyone who has taken an Admin session) posts fabricated esignatures and documentacknowledgments rows dated last quarter, and auditlogs rows attributing an approval to a controller who never made it — then posts a matching documents/documentversions slice so the record set is internally consistent. Nothing in the workspace records that a restore happened: the audit trail an OSHA/PSM au",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1578,6 +1654,7 @@
         "lib/exportRunner.ts:374-405",
         "app/api/data-export/destinations/route.ts:122,134"
       ],
+      "has_verifier_correction": false,
       "summary": "An admin points a backup destination at an existing corporate bucket (s3://acme-eng-archive) without filling in the optional Prefix field, and sets Retention to 30 days because that is what their policy says. The first scheduled run at 05:00 UTC uploads the ZIP, then enumerates the whole bucket and permanently deletes every object last modified more than 30 days ago — the customer's own archived P",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1599,6 +1676,7 @@
         "lib/docPack.ts:104-105",
         "app/api/share/file/route.ts:114-116"
       ],
+      "has_verifier_correction": false,
       "summary": "A document controller working from a preview deployment (or any non-canonical host) issues a transmittal to a contractor and prints the cover sheet. The QR encodes https://mfgos-git-branch-x.vercel.app/transmittal/<token>. The contractor scans it at the gate and lands on a Vercel login wall; the electronic acknowledgment is never made, so the org's proof that the drawing package was received — the",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1619,6 +1697,7 @@
         "app/api/share/file/route.ts:145-151",
         "app/api/storage/download-url/route.ts:144-153"
       ],
+      "has_verifier_correction": false,
       "summary": "A shared field tablet in Field Mode. A supervisor opens a share link for Rev C of a line drawing; the stamped PDF lands in RUNTIMECACHE. The share is later revoked and the drawing superseded by Rev D. Out in the unit with no signal, anyone holding the tablet re-opens that URL: the network-first fetch fails and sw.js:167-172 (navigation) or :214-215 (sub-resource) returns the cached Rev C from disk",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1640,6 +1719,7 @@
         "lib/checkoutEpisodes.ts:264",
         "app/api/cron/maintenance/route.ts:27"
       ],
+      "has_verifier_correction": true,
       "summary": "A future migration adds or renames a column and one checkoutmessages insert comes back PGRST204 for an unrelated field. episodeSchemaMissing flips. Every subsequent checkout in that browser tab (or, server-side, every request handled by that process) creates sessions with no episodeid and posts thread messages with no episodeid, on a database where checkoutepisodes is perfectly healthy. Those sess",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -1659,6 +1739,7 @@
         "components/documents/CheckInPanel.tsx:337-349",
         "lib/checkinOutcomes.ts:110-120"
       ],
+      "has_verifier_correction": true,
       "summary": "A field engineer completes an As-Built walkdown and records \"Field matches — verified\" against Rev 4 — the card whose hint promises \"This is the drawing's accuracy record\" (lib/checkinOutcomes.ts:115). To answer \"when was P-101-ISO-004 last verified against the field, and against which revision?\" — the question a PSI accuracy programme is built on — there is no screen, no report, and no query. The",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -1681,6 +1762,7 @@
         "lib/documentGuards.ts:61",
         "lib/holds.ts:88-101"
       ],
+      "has_verifier_correction": false,
       "summary": "Two symmetrical failures. Widening: an admin delegates checkout.forcerelease to the Drafting Supervisor so a stuck lock can be cleared without paging DocCtrl. The DB now permits it; no button ever appears, so the delegation is inert and the admin believes it took effect. Narrowing: an admin removes DocCtrl from the capability; the button still renders for every DocCtrl and clicking it produces the",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -1700,6 +1782,7 @@
         "lib/checkoutEpisodes.ts:334-355",
         "lib/checkoutEpisodes.ts:485-539"
       ],
+      "has_verifier_correction": false,
       "summary": "Race: the last collaborator clicks Release at the moment a second engineer completes a checkout. ensureActiveEpisode hands the newcomer the same episode; the leaver's session fetch predates the newcomer's insert, so the transition is \"close\". The documents update is correctly skipped (the newcomer now holds the lock), but closeEpisode runs and seals the episode while the newcomer's session is acti",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
@@ -1719,6 +1802,7 @@
         "components/documents/DistributionRecall.tsx:102-117",
         "lib/distributionAcks.ts:306-333"
       ],
+      "has_verifier_correction": true,
       "summary": "Doc Control recalls outdated copies of a P&ID after a Rev 5 that moved a relief valve. Three months later an incident investigation asks: when was the recall issued, who was on the list, who confirmed they destroyed their print? The system can answer none of it. The bell notifications may have been read and cleared; auditlogs has no entry; nothing distinguishes \"we recalled it and eight people con",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -1739,6 +1823,7 @@
         "components/documents/InspectorPanel.tsx:186-190",
         "components/documents/DistributionRecall.tsx:72-80"
       ],
+      "has_verifier_correction": false,
       "summary": "A heavily used general-arrangement drawing is downloaded hundreds of times during a turnaround. The panel reads \"3 of 12 outdated\" — 12 being the distinct users inside the truncated 400-row slice — and the controller clicks recall, believing everyone is covered. Field personnel whose download was 70 days ago, or buried under the turnaround's download volume, are neither counted nor notified, and n",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -1758,6 +1843,7 @@
         "components/documents/DistributionAcks.tsx:83-124",
         "components/documents/DistributionAcks.tsx:143,208,218"
       ],
+      "has_verifier_correction": true,
       "summary": "Someone has ignored a Rev 5 confirmation for 25 days and is one scan away from escalating to the requester. A controller opens the picker, ticks the same names to \"remind\" them (the natural reading of \"Request confirmations…\"), and the upsert rewrites requestedat to today. The 10-day escalation clock restarts from zero; the requester is never told this person has gone quiet. Meanwhile, if the writ",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -1777,6 +1863,7 @@
         "lib/notifications.ts:149-166",
         "lib/distributionAcks.ts:135-147"
       ],
+      "has_verifier_correction": false,
       "summary": "An operator disabled ticket-status emails months ago because ticket churn was noisy. A P&ID revs; a controller clicks \"Recall outdated copies — notify 6 people\". Five get the email; the operator gets only a bell badge they never open, because they primarily work from printed packs. The message they miss is \"Your copy of P-101 is out of date… re-download before doing any work from it, and destroy o",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -1796,6 +1883,7 @@
         "app/api/share/resolve/route.ts:83",
         "supabase/migrations/20261013_project_controls_program.sql:56-58"
       ],
+      "has_verifier_correction": false,
       "summary": "An unqualified reference inside a definer-rights function resolves against the caller's searchpath. Any principal able to create objects in a schema that precedes public on their searchpath can shadow documentshares (or, for revuprollbackorphan, documentversions) and have the function operate on their object with the definer's privileges. bumpshareaccess is on the unauthenticated share path (await",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
@@ -1814,6 +1902,7 @@
         "supabase/migrations/20260823_publish_contract.sql:70-95",
         "supabase/schema.sql:1217-1236"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter publishes over a stale base as a branch — deliberately unreconciled work that does not include somebody else's revision. The branch-debt row appears on the document-control queue. The same drafter (or anyone) PATCHes {\"resolvedat\": \"<now>\", \"resolution\": \"merged\"}. The queue clears. The branch version still sits in documentversions with isbranch = TRUE, never promoted, never merged, and ",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -1831,6 +1920,7 @@
         "supabase/migrations/20260825_work_packages_acks.sql:37-95",
         "supabase/migrations/20260828_integrity_hardening.sql:283-292"
       ],
+      "has_verifier_correction": false,
       "summary": "A pump-swap package pins the P&ID at Rev 4. The P&ID advances to Rev 5 mid-job and the package correctly reads STALE — the tripwire the migration was built for. Any member (or a mis-scoped 'refresh pack' click by someone who should not have it) re-pins every member document to current, and the package reads FRESH again with no record that it was ever stale and no re-verification of the field copie",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -1856,6 +1946,7 @@
         "supabase/migrations/20260713_branding_admin_writes.sql:11-12",
         "supabase/migrations/20260817_org_members_escalation_and_config.sql:21-22"
       ],
+      "has_verifier_correction": true,
       "summary": "Same exposure DB-6 describes — a caller who can create objects in a schema earlier on their searchpath shadows orgmembers and myorgids() returns whatever they choose, which is the sole predicate on the documents and documentversions policies. Whether any role in this deployment can create schemas was not verified from the repo. What is verified is the inconsistency: useriseffectiveowner (20260816o",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -1874,6 +1965,7 @@
         "supabase/migrations/20260831_capability_policy_and_rails.sql:80-102",
         "supabase/migrations/20260901_db_hard_enforcement.sql:109-121"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafter wants a P&ID another engineer has checked out. They DELETE the engineer's checkoutsessions row (guard never runs), then PATCH documents.checkedoutby = null (unguarded — the SURF-4 path). publishrevision's lock check reads vdoc.checkedoutby, now NULL, so the publish proceeds cleanly over live in-progress work. Deleting rather than closing the session is strictly worse than SURF-4's path: ",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -1893,6 +1985,7 @@
         "lib/documentLifecycle/common.ts:293",
         "lib/revisions.ts:1481"
       ],
+      "has_verifier_correction": false,
       "summary": "A split or merge records that drawing A-101 was superseded by A-101A and A-101B. A member deletes those two rows. The document detail view, the impact walk and any 'what replaced this?' query now show A-101 as a live standalone drawing with no successor, and a worker searching for the isolation boundary is handed the retired sheet with nothing pointing forward. In the other direction a member can ",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -1913,6 +2006,7 @@
         "supabase/migrations/20260817_read_understood.sql:37",
         "supabase/migrations/20260823_publish_contract.sql:76"
       ],
+      "has_verifier_correction": true,
       "summary": "A controller deletes a documentversions row (permitted by documentversionsdeletecontrollers), or anyone calls the unauthenticated revuprollbackorphan RPC. documents.currentversionid is left pointing at a row that no longer exists and the database raises nothing. The share route (route.ts:56-59) queries that id, gets no row, falls through to its newest-row fallback and serves a different drawing; t",
       "area": "document-control",
       "report": "audit-reports/document-control/10-rls.md"
@@ -1930,6 +2024,7 @@
         "app/api/storage/download-url/route.ts:144-153",
         "lib/storage.ts:118-154"
       ],
+      "has_verifier_correction": true,
       "summary": "A drafting contractor whose engagement ends Friday spends Thursday calling /api/storage/download-url?path=<key>&expiresIn=604800 for every drawing in the unit. Their membership is set to inactive on Friday; the ACL is tightened; the documents are put on hold. All of it is irrelevant — the URLs they hold keep returning the raw controlled PDFs for another week, from any browser, with no account. The",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -1949,6 +2044,7 @@
         "app/api/verify/route.ts:34-108",
         "lib/documentGuards.ts:139-146"
       ],
+      "has_verifier_correction": true,
       "summary": "A drawing is put on an active hold — 'Field Verification Needed' — because a dimension is suspect. Publishing is correctly blocked. Distribution is not: the existing share link keeps serving the drawing to the vendor, and when the vendor scans the stamped QR the verify page answers 'current' in green, because /api/verify has no idea a hold is open. Separately, if the document is later Voided, the ",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -1969,6 +2065,7 @@
         "lib/docPack.ts:114-123",
         "components/viewers/MultiDocViewer.tsx:747"
       ],
+      "has_verifier_correction": true,
       "summary": "A drawing is discovered to have been shared with the wrong vendor. Document control opens the share panel and clicks Revoke; the UI shows the link as revoked because the local state was updated optimistically and the promise resolved. The UPDATE was in fact rejected. /api/share/file, which checks share.revokedat (:48), still finds it null and keeps streaming the drawing to anyone with the URL — fo",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -1992,6 +2089,7 @@
         "app/api/data-export/structured/route.ts:53-57",
         "tables/document_shares.json"
       ],
+      "has_verifier_correction": true,
       "summary": "An org configures a nightly backup to their contractor's S3 bucket. Every night the ZIP carries every live, unexpired, unrevoked share token and transmittal portal token in the org. Anyone who can read that bucket — the contractor's staff, a mis-scoped IAM policy, a stale credential — can paste any token into /share/<token> or /transmittal/<token> and pull controlled drawings with no account, inde",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -2010,6 +2108,7 @@
         "app/api/share/file/route.ts:1-16",
         "app/api/share/file/route.ts:107-125"
       ],
+      "has_verifier_correction": true,
       "summary": "A PM issues a transmittal to a fabricator. The fabricator downloads DWG-2002-D-10001 Rev 2 from the portal and gets a pristine, unmarked PDF — indistinguishable from a controlled master. It is printed, filed, and photocopied around the shop. Rev 3 issues two weeks later. Nothing on the paper says 'uncontrolled', nothing states the rev at time of issue, and there is no QR to scan — the one mechanis",
       "area": "document-control",
       "report": "audit-reports/document-control/09-egress.md"
@@ -2030,6 +2129,7 @@
         "supabase/migrations/20260612_phase5_holds.sql:44-58",
         "lib/physicalBridge.ts:152-155"
       ],
+      "has_verifier_correction": true,
       "summary": "Document control opens a hold with the free-text reason \"Hold per legal — Aug 12 release incident, do not distribute.\" A red card is printed and hung on the compressor. Anyone who photographs or scans that QR — a contractor, a visitor, a passer-by — gets that sentence back from an unauthenticated endpoint. Separately: the card was printed showing \"P-2201 · Rev 3.\" A controller later force-publishe",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2053,6 +2153,7 @@
         "app/(protected)/admin/holds/page.tsx:181",
         "lib/capabilityPolicy.ts:103-113"
       ],
+      "has_verifier_correction": false,
       "summary": "An admin, following the guidance in the hold error message (\"An Admin can change this under Admin → Permissions → Action permissions\"), delegates holds.release to the turnaround coordinator for the duration of the outage. The coordinator logs in, opens the held drawing, and sees the hold strip in read-only mode with no Release button — on both the inspector and the hold queue. The delegation is re",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2073,6 +2174,7 @@
         "lib/holds.ts:271-280",
         "lib/documentLifecycle/common.ts:353-356"
       ],
+      "has_verifier_correction": true,
       "summary": "A hold row lands with an orgid that does not match its document (a cross-org actor context in a lifecycle copy, a restore/import that remaps org ids, or a member of org A inserting against a document UUID from org B). Org B's inspector shows \"No active holds,\" /admin/holds shows nothing, and every rev-up, revert and supersede on that drawing fails with \"Document has an active hold; release the hol",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2095,6 +2197,7 @@
         "app/(protected)/admin/holds/page.tsx:204",
         "supabase/migrations/20260612_phase5_holds.sql:57"
       ],
+      "has_verifier_correction": false,
       "summary": "An Engineer places \"Awaiting Engineering\" on an isometric because a support location is wrong. A drafter releases it with the resolution box left blank (the button is enabled), publishes Rev 5, and moves on. The audit row records HOLDRELEASED with releasedReason: null; the timeline reads \"Hold released — Awaiting Engineering (2d)\" with no explanation. The Engineer who placed the hold is not on the",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2114,6 +2217,7 @@
         "lib/timeline.ts:124-169",
         "supabase/migrations/20260901_db_hard_enforcement.sql:103-105"
       ],
+      "has_verifier_correction": true,
       "summary": "An incident review pulls the drawing's timeline to reconstruct why a superseded sheet reached the field. A controller had, weeks earlier, deleted the awkward \"Field Verification Needed\" hold row rather than releasing it. The timeline shows a clean rev-up with no hold ever placed. The HOLDOPENED auditlogs row is still in the database, and the reviewer never sees it because the timeline filters that",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2136,6 +2240,7 @@
         "supabase/schema.sql:1011-1028",
         "supabase/schema.sql"
       ],
+      "has_verifier_correction": true,
       "summary": "searchpath: an unpinned SECURITY DEFINER function resolves documentholds, orgmembers and documents against the caller's searchpath. Any path that lets a role prepend a schema turns the hold check into a lookup against attacker-controlled objects, and the trigger that refuses to publish over a hold silently returns clean. RLS: an environment bootstrapped from schema.sql alone (a demo, a staging reb",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2158,6 +2263,7 @@
         "lib/physicalBridge.ts:272-275",
         "app/(protected)/assets/[tag]/page.tsx"
       ],
+      "has_verifier_correction": true,
       "summary": "Every pump and exchanger in the unit carries a sticker that says scanning it shows drawings and holds. An operator who notices something wrong scans the label on E-204, lands on a sign-in screen, has no account, and gives up. The hold badge that the /assets/[tag] page renders (line 215) — the one place in the product where a hold is visible next to an equipment tag — is unreachable by exactly the ",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2180,6 +2286,7 @@
         "lib/holds.ts:75",
         "lib/holds.ts:122"
       ],
+      "has_verifier_correction": false,
       "summary": "A \"Missing Vendor Data\" hold is opened in March. The vendor never responds. Nothing ever turns red, nothing renudges, no digest names it. The only signal is the /admin/holds \"Longest open\" KPI, which someone has to go look at. In September the drawing is still stopped and the only people who know are the ones who remember. Note also that adding a cron here is constrained — a third vercel.json entr",
       "area": "document-control",
       "report": "audit-reports/document-control/04-holds.md"
@@ -2199,6 +2306,7 @@
         "lib/downloads.ts:220",
         "lib/downloads.ts:139"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor about to roll off the project requests ?path=<issued drawing key>&expiresIn=604800 and saves the URL. Their org membership is revoked the next day. For the following week the drawing's raw, unwatermarked bytes are retrievable by anyone holding that link, with no further authentication, no watermark, no verify QR and no additional downloadaudits row. The expiresat recorded on the downl",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -2220,6 +2328,7 @@
         "lib/physicalBridge.ts:262-270",
         "lib/workPackages.ts:75-79"
       ],
+      "has_verifier_correction": true,
       "summary": "A superintendent opens the asset hub for a major unit tag with 180 tagged drawings and clicks 'Print doc pack'. The tab rasterizes thousands of pages and accumulates every one in memory; on a field tablet it locks up or is killed by the browser, and because the pins for a work-package print were already refreshed (see the print-ordering finding) the system may already believe a pack was produced. ",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -2239,6 +2348,7 @@
         "lib/stampLayout.ts:120-190",
         "lib/markupExport.ts:32-44"
       ],
+      "has_verifier_correction": true,
       "summary": "A CAD-exported D-size iso is stored with /Rotate 90 (common for landscape drawings exported from portrait templates). The analyzer reports the emptiest corner as, say, 'br' of the displayed sheet; placeQr then puts the QR plate in the bottom-right of the UNROTATED page — which is a different physical corner, quite possibly on top of the title block or the revision table. The footer picks its band ",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -2257,6 +2367,7 @@
         "supabase/schema.sql:1011-1028",
         "supabase/migrations/20260825_work_packages_acks.sql:57-58"
       ],
+      "has_verifier_correction": true,
       "summary": "A new deployment (or a restored/rebuilt environment) is created by running schema.sql end to end. Work packages function normally, so nothing surfaces the gap. Any authenticated user — including a self-signup personal-org account — can enumerate workpackages across every tenant, read distributionacks (who was told about which safety-critical revision and whether they confirmed), and set acknowledg",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
@@ -2276,6 +2387,7 @@
         "supabase/migrations/20260810_archive_invariants.sql:18-21",
         "supabase/schema.sql:1031-1034"
       ],
+      "has_verifier_correction": true,
       "summary": "Any role that can create objects in a schema earlier in the effective searchpath (a Postgres role with CREATE on a schema, or a future migration that adds one) shadows documents with its own relation. The version guard's unqualified SELECT then reads the shadow table, returns NULL, COALESCE makes it false, and documentversions rows belonging to a held record delete freely — while every UI still sh",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -2296,6 +2408,7 @@
         "lib/serverRetention.ts:42-51",
         "supabase/migrations/20260820_retention.sql:19-26"
       ],
+      "has_verifier_correction": true,
       "summary": "A controller deletes the folder 'Unit 4 / Radiography Records', which carried a 30-year retention policy; its 800 documents step up to a library root with no policy and are re-clocked to retentionuntil = NULL, dispositionstate = NULL. The register now shows them as having no retention policy, they never appear in scanRetention (which requires a non-null retentionuntil), and no disposition obligati",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -2317,6 +2430,7 @@
         "lib/retention.ts:151-159",
         "lib/retentionPolicy.ts:21-27"
       ],
+      "has_verifier_correction": true,
       "summary": "A records manager configures the piping library as 'Retain 7 years from issued, then destroy' to satisfy a records schedule. Seven years later the record becomes eligible and the notification says 'eligible for disposition review' — the same wording as a 'review' policy. The Dispose button archives it and marks it disposed. Nobody is ever told the schedule called for destruction, and no report dis",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -2336,6 +2450,7 @@
         "app/api/admin/ticket-shed/route.ts:212",
         "components/archive/BackupViewer.tsx:100-110"
       ],
+      "has_verifier_correction": true,
       "summary": "A revision's R2 object was replaced or truncated at some earlier point (a repointed fileurl per finding 3, a partial upload). Produce reads whatever is there, writes the stale DB filehash beside it, and streams the zip. Commit deletes the live object. Years later, during an incident investigation, the admin drops the archive in: BackupViewer computes the actual hash, it disagrees with the manifest",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -2357,6 +2472,7 @@
         "app/api/admin/shed/commit/route.ts:53-57",
         "app/api/admin/archives/route.ts:74-82"
       ],
+      "has_verifier_correction": true,
       "summary": "An admin commits archive MOS-2026Q3-A1B2; 40 of 900 keys fail to delete (R2 hiccup). The amber banner says 40 objects 'failed to delete and are still billed. Run Reclaim on it again from the catalog below — re-running retries the deletes safely.' setPendingArchive(null) has already cleared the inline panel, and the catalog row now shows the green 'reclaimed — the zip is the only copy' chip with no",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -2378,6 +2494,7 @@
         "lib/archive.ts:108-122",
         "components/archive/BackupViewer.tsx:100-110"
       ],
+      "has_verifier_correction": true,
       "summary": "An admin restores a ticket archive that has been edited (or silently corrupted in transit, or is the wrong quarter's zip with colliding trailing filenames). Restore finds a suffix-matching entry for each key the live stub owns, uploads those bytes to the real R2 keys, clears archivedat, and reports 'Restored N ticket(s), M file(s) re-uploaded.' The attachment on a closed NDE/radiography ticket now",
       "area": "document-control",
       "report": "audit-reports/document-control/08-retention.md"
@@ -2399,6 +2516,7 @@
         "supabase/migrations/20260828_integrity_hardening.sql:140-178",
         "lib/revisions.ts:407-409,657-667"
       ],
+      "has_verifier_correction": true,
       "summary": "Two drafters both start from Rev 2 of a P&ID in a require-review library and both type \"3\". The first publishes; the second hits the stale-base conflict screen, types a branch reason, and clicks \"publish anyway\". Her version row is written with revisionlabel = '3', isbranch = true, provenance, filehash, approvedbyname — all of it — with no reviewer roster and no sign-offs, in a library configured ",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2421,6 +2539,7 @@
         "lib/revisions.ts:1191-1207",
         "supabase/migrations/20260823_publish_contract.sql:1-31"
       ],
+      "has_verifier_correction": true,
       "summary": "Two drafters both start from Rev 4 of a P&ID. One publishes during a PostgREST schema reload; the RPC returns PGRST202, the v1 retry also fails, the 60-second flag is set, and her publish goes through the legacy path. Within that window the second drafter publishes too. Both version rows are written with supersedesversionid = <Rev 4>, both documents updates run, the second wins, and the first draf",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2443,6 +2562,7 @@
         "app/api/verify/route.ts:93-94",
         "lib/__tests__/effectiveDate.test.ts:5"
       ],
+      "has_verifier_correction": true,
       "summary": "A Doc Control manager in Houston (UTC-5) publishes a revised operating procedure at 8:30 pm on 21 August with an effective date of 22 August — the day after the crew's training session. UTC is already 01:30 on 22 August, so todayISO() returns \"2026-08-22\", suppress evaluates \"2026-08-22\" <= \"2026-08-22\" → true, and effectivenotifiedat is stamped immediately. Her screen still shows the amber \"Effec",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2466,6 +2586,7 @@
         "lib/documentLifecycle/common.ts:266-281",
         "lib/documentShares.ts"
       ],
+      "has_verifier_correction": true,
       "summary": "A fabricator is sent a share link to P-101 for a bid. Six weeks later P-101 is split into P-101A and P-101B; the source goes Superseded. The fabricator's link still works. /api/share/file fetches the retired document's current version, stamps it \"UNCONTROLLED — SHARED COPY\" with the footer P-101 Rev 4 at time of download — scan the QR to confirm it is still current. (route.ts:110) and serves it. N",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2489,6 +2610,7 @@
         "lib/documentLifecycle/split.ts:96-134",
         "lib/documentLifecycle/merge.ts:107-142"
       ],
+      "has_verifier_correction": true,
       "summary": "A require-review drawings library. A drafter splits a cluttered P&ID into two sheets through the Split wizard. Two brand-new controlled drawings appear at status: Issued, Rev 0, releasedat set, with the source's active holds and project memberships copied onto them — and no reviewer ever saw either sheet. The library's review policy applied to the rev-up that would have produced the same content a",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2511,6 +2633,7 @@
         "lib/documentLifecycle/common.ts:93-119",
         "lib/audit.ts:16-31"
       ],
+      "has_verifier_correction": true,
       "summary": "A drawing sits at status: \"Void\" — withdrawn after a design error. It is merged into a replacement sheet, which sets it Superseded. The merge is later reversed. reverseMerge writes status: \"Issued\" on it. A voided drawing is now a live controlled document in the register, in search, in /api/verify (which reports isCurrent for anything not Superseded/Archived, route.ts:89-90) and in work-package re",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2534,6 +2657,7 @@
         "lib/retention.ts:86",
         "app/api/intake/upload/route.ts:325"
       ],
+      "has_verifier_correction": true,
       "summary": "A procedure is issued at Rev 4 with an effective date of 1 December (after a training window); documents.effectivedate = '2026-12-01' and effectivenotifiedat = NULL. On 10 November the revision is found to be defective and Doc Control reverts to Rev 3. Rev 3 is effective immediately and has no future date — but documents.effectivedate is untouched. The register keeps rendering the \"Effective 1 Dec",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2554,6 +2678,7 @@
         "components/documents/SupersedeModal.tsx:52-77",
         "lib/revisions.ts:1432-1452"
       ],
+      "has_verifier_correction": true,
       "summary": "P-101 was superseded by P-101A. A week later Doc Control realises P-101B also replaces it and re-runs Supersede with both numbers. The (P-101, P-101A) pair already exists; the two-row insert is rejected in full; the error is discarded; the modal reports success and closes. documentsupersessions still contains only the P-101A link — the P-101B relationship exists nowhere except the SUPERSEDEDOC aud",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
@@ -2573,6 +2698,7 @@
         "supabase/migrations/20260822_review_completion_guard.sql:53",
         "components/documents/ReviewGateSection.tsx:206-213"
       ],
+      "has_verifier_correction": true,
       "summary": "The upsert fails (RLS, a CHECK on a value the environment's constraint has not been widened for, a transient error). The publisher gets an alert saying 'Reviewers have been notified. The current revision stays the controlled copy; the moment the last required reviewer signs, the draft publishes automatically' (RevUpModal.tsx:287-290) — the roster does not exist and nobody was notified. The Inspect",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -2592,6 +2718,7 @@
         "lib/reviewControl.ts:316-332",
         "components/documents/ReviewGateSection.tsx:82"
       ],
+      "has_verifier_correction": false,
       "summary": "A library gates on reviewerRoles: ['Engineer']. An Engineer with publish authority revises a P&ID and submits it for review. expandSet resolves every active Engineer including them, so they appear on their own roster as a primary. If they are the only Engineer, requiredPrimaries = 1 and they sign their own draft; the last-signature auto-finalize promotes it immediately under their own uid, which a",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -2612,6 +2739,7 @@
         "components/signatures/SignatureCeremony.tsx:74-88",
         "supabase/migrations/20260720_e_signatures.sql:26-38"
       ],
+      "has_verifier_correction": false,
       "summary": "The control the code names — 'A signature that anyone at an unlocked workstation can produce is a click, not a signature' — holds only against a person using the modal. Any script running with the session (a browser extension, a bookmarklet, an automation harness, or the app's own SignatureCaptureHost invoked through the global request-signature event) reaches recordSignature without the password ",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -2632,6 +2760,7 @@
         "components/projects/IntakePanel.tsx:247-262",
         "lib/reviewControl.ts:516-522"
       ],
+      "has_verifier_correction": true,
       "summary": "An assigned document is mid-review: draft 2A, pendingversionid = V2A, three primaries on the roster, two already signed. The vendor submits through their intake link. pendingversionid is repointed at the intake version, which has no roster. The 2A rows keep status 'pending' and stay attached to V2A, so scanReviews (which selects on .eq(\"orgid\", orgId).eq(\"status\", \"pending\") with no check that the",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -2651,6 +2780,7 @@
         "components/documents/RevUpModal.tsx:311",
         "lib/reviewControl.ts:55-62"
       ],
+      "has_verifier_correction": false,
       "summary": "A publisher in a mode 'require' library opens the rev-up modal for a line-routing change. changeType is already 'Minor' from the last time. The banner at :646-649 does warn ('This library normally requires pre-publish review, but a Minor change publishes directly, skipping the reviewers'), but the default state means the skip is what happens if nobody actively changes anything, and the MOC gate at",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -2671,6 +2801,7 @@
         "components/documents/HistoryDrawer.tsx:60",
         "lib/timeline.ts:330"
       ],
+      "has_verifier_correction": true,
       "summary": "The promote commits — documents.currentversionid = the approved draft, rev = '2', status 'Issued'. The follow-up UPDATE then fails: a transient error, or a unique-index collision on documentversionsactivelabeluniq (recordid, revisionlabel) WHERE supersededat IS NULL AND isbranch = FALSE (20260823publishcontract.sql:63-65) if any active version already carries the label '2' — reachable via correctR",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -2690,6 +2821,7 @@
         "lib/reviewControl.ts:156-163",
         "lib/revisions.ts:871"
       ],
+      "has_verifier_correction": false,
       "summary": "A facility whose numbering standard has no letter revisions — or one where 'A', 'B', 'C' are already the issued-for-review revision letters in the title block — configures review control expecting to turn the suffix off, because both the migration comment and the TypeScript type say the option exists. It has no effect: every in-review draft is labelled baseRev + a letter. Where the base rev is its",
       "area": "document-control",
       "report": "audit-reports/document-control/03-review-gate.md"
@@ -2712,6 +2844,7 @@
         "supabase/migrations/20260720_e_signatures.sql:23",
         "supabase/migrations/20260817_read_understood.sql:39"
       ],
+      "has_verifier_correction": true,
       "summary": "A dispute arises over whether the spool detail Acme built was the one issued on TR-0042. The transmittal says P-200-001 Rev C, versionId v-123. The org can prove a row named v-123 exists and points at an R2 key; it cannot prove the bytes behind that key are the bytes that were delivered, because nothing recorded a digest at issue time and no download record captured one at delivery time. The fileh",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -2733,6 +2866,7 @@
         "lib/transmittals.ts:396-406",
         "components/documents/InspectorPanel.tsx:1036-1078"
       ],
+      "has_verifier_correction": true,
       "summary": "P-200-001 revs C→D. A controller opens the Inspector's recall panel to answer \"who is holding the old copy?\" — getDocumentRecall reads downloadaudits and lists three internal engineers. Acme Fabricators, who pulled Rev C through the transmittal portal and are the party actually building from it, do not appear: no downloadaudits row exists for them. If the transmittal-trail query also errors, the T",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -2753,6 +2887,7 @@
         "lib/transmittals.ts:188-196",
         "lib/transmittals.ts:275-307"
       ],
+      "has_verifier_correction": false,
       "summary": "A controller drafts TR-0042 on Monday, edits it Friday and clicks Issue. The toast says \"TR-0042 issued — portal link emailed to jane@buildco.com and cover sheet opened.\" The cover sheet opens and is printed for the project file — with no QR and no portal URL, so the paper record of a portal-enabled transmittal carries no way to reach the portal. On a database where 20260910 has not been applied, ",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -2773,6 +2908,7 @@
         "supabase/migrations/20260910_transmittal_portal.sql:40-44",
         "app/api/transmittal/route.ts:5-6"
       ],
+      "has_verifier_correction": true,
       "summary": "An active member of org A crafts a transmittal whose items array contains { documentId: \"<uuid>\", number: \"x\", rev: \"A\", versionId: \"<a version uuid from org B>\" }, issues it (RLS permits — they are createdby), opens their own portal link, and clicks Download. The route matches the item by documentId, resolves fileurl from org B's version row with no org check, and returns a presigned URL to org B",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -2793,6 +2929,7 @@
         "app/api/intake/upload/route.ts:303-317",
         "supabase/migrations/20260906_projects_hardening.sql:42-43"
       ],
+      "has_verifier_correction": true,
       "summary": "P-200-001 is transmitted at Rev C on a record whose currentversionid was null at compose time, so item.versionId is null. Later a publisher lands an unreconciled branch revision also labelled C (isbranch = TRUE, exempt from the unique index) with a newer createdat. The contractor clicks Download in the portal and receives the branch file — work explicitly marked as never promoted to current — whil",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -2814,6 +2951,7 @@
         "lib/transmittals.ts:116-121",
         "lib/evidencePack.ts:184-190"
       ],
+      "has_verifier_correction": true,
       "summary": "A contractor disputes ever having received TR-0042. The org points at the acknowledgment, but the artifacts that leave the system — the printed cover sheet and the project evidence pack — show only a typed name and a timestamp, indistinguishable from the manual path where an org member typed the recipient's name themselves (the very weakness 20260910:9-10 says the portal was built to fix). The IP ",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -2834,6 +2972,7 @@
         "lib/transmittals.ts:312-322",
         "app/(protected)/transmittals/page.tsx:261"
       ],
+      "has_verifier_correction": true,
       "summary": "A doc controller validating a change opens the app on a Vercel preview deploy and issues TR-0042. The contractor receives an email whose \"Download & acknowledge receipt\" button points at https://manufacturing-os-git-<branch>.vercel.app/transmittal/<token>, which Vercel gates behind its own login. The printed cover sheet's QR encodes the same dead URL. The contractor cannot download the IFC set or ",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
@@ -2853,6 +2992,7 @@
         "app/api/stripe/webhook/route.ts:80-95",
         "components/subscription/SubscriptionGate.tsx:41-48"
       ],
+      "has_verifier_correction": false,
       "summary": "Edge traced end to end: an org cancels. customer.subscription.deleted sets status canceled. Every night at 05:00 UTC the cron still builds a complete export of that workspace — all tables plus embedded binaries under a 1.5GB cap — and pushes it to whatever bucket or webhook is on file. If the person who configured that destination is the departed engineer whose account was deactivated months earli",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -2870,6 +3010,7 @@
         "app/api/data-export/destinations/route.ts:81-95",
         "app/api/data-export/destinations/[id]/route.ts:49-56"
       ],
+      "has_verifier_correction": false,
       "summary": "A Starter-plan org creates a webhook or bucket-less destination (passes, no gate), then PATCHes it with {bucket, endpoint, region, accesskeyid, secretaccesskey, schedulekind:\"daily\"}. It now has a fully functional scheduled S3/R2 backup — the paid Growth feature — and the nightly cron (run-scheduled) never re-checks the plan either.",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -2889,6 +3030,7 @@
         "lib/exportRunner.ts:429-438",
         "lib/exportRunner.ts:247,412"
       ],
+      "has_verifier_correction": false,
       "summary": "An Admin (or anyone with Admin/Manager/DocCtrl, per destinations ADMINROLES) creates a webhook destination at a host they control that 307-redirects to an internal address. testDestinationConnection reports ok and the HTTP status of the internal service is echoed back in { ok:false, error: Webhook returned HTTP ${r.status} } (:436) — a port/liveness oracle for the deployment's private network. On ",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -2909,6 +3051,7 @@
         "lib/exportRunner.ts:333-343",
         "lib/serverCrypto.ts:22-31"
       ],
+      "has_verifier_correction": false,
       "summary": "Org A's nightly backup ZIP is delivered to a shared/managed webhook or bucket, or an ex-admin keeps their last export. Whoever holds it now has org A's S3 credentials as ciphertext. On the same deployment, an Admin of org B posts those rows to /api/admin/restore/apply-table with table \"exportdestinations\"; orgid is rewritten to B, but the ciphertext is unchanged and buildS3ClientFromDestination de",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -2927,6 +3070,7 @@
         "lib/docxRender.ts:60-99",
         "lib/outputTemplateText.ts:32,41-54"
       ],
+      "has_verifier_correction": false,
       "summary": "Generation is deliberately open to every member (the Generate button is outside the isController guard, app/(protected)/output-templates/page.tsx:111 vs :141-144). A member posts 5,000 documents in one render call: the function renders 5,000 .docx in a loop and builds the zip in RAM until the 300s/​memory ceiling kills it — after the audit row and production record are written. The raw-XML variant",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -2944,6 +3088,7 @@
         "lib/xlsxData.ts:9,33",
         "app/api/templates/generate/route.ts:131"
       ],
+      "has_verifier_correction": false,
       "summary": "Any active org member uploads a crafted workbook to their own output-data prefix (permitted by /api/storage/upload-url) and calls the draft action. The parse runs in the Next.js server runtime with the service-role Supabase client and R2 credentials in scope; a successful Object.prototype pollution in that process affects every subsequent request handled by the same warm instance, and the ReDoS pa",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -2963,6 +3108,7 @@
         "lib/storageOrphans.ts:154-180",
         "app/api/admin/orphans/route.ts:27,47"
       ],
+      "has_verifier_correction": false,
       "summary": "A plant with 40k documentversions rows runs the orphan sweep from /admin (route:47 deleteOrphans). While page 12 of the documentversions scan is running, a check-in updates rows in that table; two rows shift across the page boundary and one is never returned. Its fileurl — the current published PDF of a controlled drawing older than 7 days — is not in the reference set, so it is deleted from R2. T",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -2982,6 +3128,7 @@
         "app/api/stripe/portal/route.ts:140-145",
         "lib/stripe.ts:30-36"
       ],
+      "has_verifier_correction": false,
       "summary": "An admin upgrades Starter→Growth in the portal. Stripe bills Growth; the webhook fires with the original metadata and writes subscribedplan: \"starter\". The org is refused cloud backup destinations with \"require the Growth plan. Upgrade in Billing\" (destinations/route.ts:91) while paying for Growth. The reverse is equally live: a downgrade leaves subscribedplan: \"growth\" and the entitlement stays o",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
