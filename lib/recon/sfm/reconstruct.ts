@@ -1030,6 +1030,7 @@ export async function reconstruct(
     failedFrames: frames.map((f) => f.index).filter((i) => !registered.has(i)),
     components,
     crossClipPairs,
+    diagnostics,
   };
 }
 

@@ -22,6 +22,7 @@ import { loadOpenCv, type OpenCv } from "../opencv";
 import { buildScene, type PointCloud } from "../scene";
 import { extractFeatures, medianDisplacement, sharpness } from "../sfm/features";
 import { reconstruct, type FrameMeta } from "../sfm/reconstruct";
+import { describeMotion, judgeMotion } from "../captureHealth";
 import { FrameStore, clearStaleFrames } from "../store";
 import {
   CLIP_ROLE_LABELS, type ClipStats, type FrameFeatures, type ReconReport,
@@ -81,6 +82,8 @@ async function run(
   const stageMs: Partial<Record<StageId, number>> = {};
   const jobId = `job-${Date.now().toString(36)}`;
   const store = new FrameStore(jobId);
+  /** Median feature displacement between consecutive kept frames, in pixels. */
+  const motionSamples: number[] = [];
   await clearStaleFrames(jobId);
 
   let cfg = applyPreset(DEFAULT_RECON_CONFIG, quality);
@@ -203,6 +206,11 @@ async function run(
       // and no parallax.
       if (previous) {
         const moved = medianDisplacement(previous, features);
+        // How far the image actually travels between kept frames is the single
+        // most diagnostic number about a capture. Too small and there is no
+        // parallax to triangulate from; too large and consecutive frames stop
+        // sharing enough to match at all. Recorded either way.
+        if (Number.isFinite(moved)) motionSamples.push(moved);
         if (Number.isFinite(moved) && moved < cfg.frames.minMotionPx) {
           stats.droppedStatic++;
           return;
@@ -400,6 +408,14 @@ async function run(
   const registeredFraction = usedFrames > 0 ? sfm.registeredFrames.length / usedFrames : 0;
   const biggestGroup = sfm.components.reduce((m, c) => Math.max(m, c.length), 0);
   if (registeredFraction < 0.35 || biggestGroup < 8) {
+    motionSamples.sort((a, b) => a - b);
+    const medianMotion = motionSamples.length
+      ? motionSamples[Math.floor(motionSamples.length / 2)] : 0;
+    const decoded = clipStats.reduce((a, c) => a + c.decodedFrames, 0);
+    const longEdge = kept[0]?.meta.width ?? 0;
+    // Everything needed to tell the three causes apart, in the message the user
+    // can actually see and copy. Asking someone to report a number the UI never
+    // shows them is not a diagnostic.
     throw new Error(
       `The capture did not reconstruct. Only ${sfm.registeredFrames.length} of ${usedFrames} ` +
       `frames could be positioned` +
@@ -408,8 +424,13 @@ async function run(
           `${biggestGroup}`
         : ""}` +
       `. That is far too little to build a space from: densifying it would produce a couple of ` +
-      `cones of points where those few cameras happened to look, not a room. ` +
-      `${sfm.points.length.toLocaleString()} sparse points were triangulated at ` +
+      `cones of points where those few cameras happened to look, not a room.` +
+      `\n\nWhat the run measured — ` +
+      `${decoded} frames decoded, ${usedFrames} kept at ${longEdge}px wide; ` +
+      `the image moved ${medianMotion.toFixed(0)}px between consecutive kept frames ` +
+      `(${describeMotion(judgeMotion(medianMotion, longEdge))}); ` +
+      `${sfm.diagnostics}; ` +
+      `${sfm.points.length.toLocaleString()} sparse points at ` +
       `${sfm.rmsePx.toFixed(2)}px reprojection error.`,
     );
   }

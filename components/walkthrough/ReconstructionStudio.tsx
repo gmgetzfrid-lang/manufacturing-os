@@ -57,6 +57,7 @@ export default function ReconstructionStudio({
   const [job, setJob] = useState<JobState>(initialJobState);
   const [saved, setSaved] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(0);
 
   const runnerRef = useRef<ReconstructionJob | null>(null);
@@ -439,7 +440,7 @@ export default function ReconstructionStudio({
                 {job.status === "cancelled" ? "Reconstruction cancelled" : "Reconstruction failed"}
               </div>
               {job.error && (
-                <div className="mt-1 text-xs leading-relaxed text-red-700 dark:text-red-300">
+                <div className="mt-1 whitespace-pre-line text-xs leading-relaxed text-red-700 dark:text-red-300">
                   {job.error}
                 </div>
               )}
@@ -447,6 +448,35 @@ export default function ReconstructionStudio({
                 <div className="mt-2 rounded-lg bg-red-100 px-2.5 py-2 text-xs text-red-800 dark:bg-red-900/40 dark:text-red-200">
                   {job.hint}
                 </div>
+              )}
+              {/* A failure is only diagnosable if the numbers can leave the
+                  screen. Reading them back over a chat is not a workflow. */}
+              {job.error && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const report = [
+                      job.error,
+                      job.hint ? `\nAdvice: ${job.hint}` : "",
+                      job.clipStats.length
+                        ? `\nPer clip: ${job.clipStats
+                            .map((c) => `${c.name} ${c.decodedFrames} decoded / ` +
+                              `${c.keptFrames} used / ${c.registeredFrames} placed`)
+                            .join("; ")}`
+                        : "",
+                      job.warnings.length
+                        ? `\nWarnings: ${job.warnings.map((w) => w.message).join(" | ")}`
+                        : "",
+                    ].filter(Boolean).join("\n");
+                    void navigator.clipboard?.writeText(report).then(
+                      () => setCopied(true),
+                      () => setCopied(false),
+                    );
+                  }}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-red-100 px-2.5 py-1.5 text-[11px] font-bold text-red-800 hover:bg-red-200 dark:border-red-800 dark:bg-red-900/40 dark:text-red-200"
+                >
+                  {copied ? "Copied" : "Copy full diagnostic report"}
+                </button>
               )}
             </div>
           </div>

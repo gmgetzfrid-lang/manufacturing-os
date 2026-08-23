@@ -117,6 +117,8 @@ export interface SfmResult {
   components: number[][];
   /** Geometrically verified pairs whose two frames came from different clips. */
   crossClipPairs: number;
+  /** Human-readable account of where pairs were won and lost during matching. */
+  diagnostics: string;
 }
 
 export interface ReconWarning {
