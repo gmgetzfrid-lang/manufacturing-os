@@ -84,8 +84,8 @@ severity changes are the point of doing this.
 - [ ] `projects-tab` — 104 (72H, 32M)
 - [ ] `roles-and-permissions` — 103 (53H, 50M)
 - [ ] `drafting-flow` — 46 (28H, 18M)
-- [ ] `document-control` — 13 (5H, 8M)
-- [ ] `identity-and-session` — 12 (6H, 6M)
+- [x] `document-control` — 13 — **13/13 SURVIVE**
+- [x] `identity-and-session` — 12 — **12/12 SURVIVE**, all flagged non-independent
 - [x] `notifications` — 11 — **11/11 SURVIVE**
 - [x] `intelligence` — 10 — **10/10 SURVIVE**
 

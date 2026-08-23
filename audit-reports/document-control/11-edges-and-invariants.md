@@ -72,6 +72,7 @@ app/api/templates/generate/route.ts:131 `sheetData = parseWorkbook(await fetchBy
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/templates/generate/route.ts:383-388`, `app/api/templates/generate/route.ts:343-354`, `app/api/templates/generate/route.ts:371-377`, `lib/outputTemplateText.ts:120-138`
+- **Re-verified:** hardening pass — **SURVIVES**. `const zipName = `…` — ${rendered.length} documents.zip`` (`generate/route.ts:383`) carries a literal em dash (U+2014) and goes straight into `content-disposition` at `:387`. HTTP header values are latin1; U+2014 is outside it and undici rejects it, so the batch throws **after** the `output_generations` production record is written.
 
 **Mechanism.** The batch path builds `const zipName = `${tpl.name.replace(/[\\/:*?"<>|]+/g, "-")} — ${rendered.length} documents.zip`;` (:383) — the separator is U+2014 EM DASH, a literal in the source — and passes it as a header value: `"content-disposition": `attachment; filename="${zipName.replace(/"/g, "")}"`` (:386). NextResponse extends the web Response, whose Headers are ByteStrings: any code point > 255 throws a TypeError at construction. The same hazard exists on the single-file path (:375) because `renderFilename` only strips `[\\/:*?"<>|]` (outputTemplateText.ts:120,134) — any non-Latin-1 character coming out of a spreadsheet cell (CJK, Cyrillic, “ ” — ) survives into the header. The throw happens AFTER `output_generations` is inserted (:343-348) and after the `OUTPUT_DOCS_GENERATED` audit row is written (:349-354).
 
@@ -100,6 +101,7 @@ Executed under this repo's Node (v22.22.2): `new Response("x", { headers: { "con
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/restore/apply-table/route.ts:24,38-43,74-89`, `lib/exportTables.ts:53,67,130`, `lib/dataRestore.ts:86-93,249-251`, `app/api/admin/restore/apply/route.ts:130`, `app/api/admin/restore/begin/route.ts:78-85`
+- **Re-verified:** hardening pass — **SURVIVES**. Re-checked: `IMPORTABLE = new Set([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES])` (`apply-table:24`), `ORG_SCOPED_TABLES` lists 104 tables including `audit_logs`, `e_signatures` and `document_acknowledgments`, and `grep -c audit_logs apply-table/route.ts` returns **0**.
 
 > **Post-hoc verification (hardening pass).** **SURVIVES.** Re-checked against source:
 > `IMPORTABLE` is `new Set([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES])`
@@ -139,6 +141,7 @@ app/api/admin/restore/apply-table/route.ts:38-43 `if (!table || !IMPORTABLE.has(
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportRunner.ts:257-265`, `lib/exportRunner.ts:374-405`, `app/api/data-export/destinations/route.ts:122,134`
+- **Re-verified:** hardening pass — **SURVIVES**. `Prefix: params.prefix ? … : undefined` (`exportRunner.ts:386`) makes an empty prefix enumerate the whole bucket, and the only per-object test is `obj.LastModified < cutoff`. The purge is wrapped in `.catch()`, so the run still records `succeeded`.
 
 **Mechanism.** After a successful push, `if (dest.retention_days && dest.retention_days > 0) { … s3PurgeOlderThan({ dest, prefix: dest.prefix || "", keepDays: dest.retention_days }) }` (:258-264). In s3PurgeOlderThan the empty prefix becomes no filter at all: `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+$/g, "") + "/" : undefined` (:386) — ListObjectsV2 with `Prefix: undefined` enumerates the whole bucket, paging until exhausted (:383-395). The only test applied to each object is age: `if (obj.Key && obj.LastModified && obj.LastModified < cutoff) toDelete.push({ Key: obj.Key })` (:389-391). There is no check that the key matches the export filename pattern built at :239-244, no check that it is a .zip, and no cap on how many objects may be deleted — they are deleted 1000 at a time (:398-404). Both `prefix` and `retention_days` are free-form fields the create route stores verbatim (destinations/route.ts:122,134) with no validation that a retention policy requires a prefix.
 
@@ -167,6 +170,7 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:389-393`, `lib/transmittals.ts:278`, `lib/transmittals.ts:309-321`, `lib/publicOrigin.ts:1-22`, `lib/docPack.ts:104-105`, `app/api/share/file/route.ts:114-116`
+- **Re-verified:** hardening pass — **SURVIVES**. `transmittalPortalUrl` is `typeof window !== "undefined" ? window.location.origin : ""` (`transmittals.ts:390`), so the server produces a relative URL on the one artifact that leaves the site. Same root as `notifications/NEDGE-11` — fix once.
 
 **Mechanism.** `export function transmittalPortalUrl(token: string): string { const origin = typeof window !== "undefined" ? window.location.origin : ""; return `${origin}/transmittal/${token}`; }` (transmittals.ts:390-393). Both external consumers use it: `sendTransmittalEmail` embeds it in the email body sent to the recipient (:278 → renderTransmittalEmail → queueExternalEmail :280-289), and `openTransmittalSheet` encodes it into the QR printed on the cover sheet — `portalUrl = transmittalPortalUrl(t.portalToken); … qrDataUrl = await toDataURL(portalUrl, …)` (:309-317). lib/publicOrigin.ts:6-15 states the contract these two violate: "those URLs get scanned by phones in the field, often with no session… `window.location.origin` is wrong whenever the person generating the print is on a preview/branch deploy — Vercel gates those behind its own login, so the scan dead-ends on a Vercel auth screen instead of the verify page." The stamped-PDF paths do it correctly (docPack.ts:104-105, share/file/route.ts:114-116, MultiDocViewer.tsx:724-725, FullScreenViewer.tsx:1015-1016), so this is a deviation from an established, working discipline, not an unbuilt feature.
 
@@ -194,6 +198,7 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:114-120`, `public/sw.js:156-177`, `public/sw.js:203-220`, `app/api/share/file/route.ts:145-151`, `app/api/storage/download-url/route.ts:144-153`
+- **Re-verified:** hardening pass — **SURVIVES**. `cachePut` tests only `response.ok` and `response.type !== "opaque"` (`sw.js:117`) — **no `Cache-Control` inspection at all** — so a `no-store` authenticated document response is written to durable Cache Storage.
 
 **Mechanism.** The fetch handler intercepts every same-origin GET that is not an RSC payload (sw.js:122-154). Both remaining branches write to Cache Storage: navigations `cachePut(RUNTIME_CACHE, request, res)` (:162) and everything else `cachePut(RUNTIME_CACHE, request, res)` (:211). `cachePut` (:116-120) gates only on `response.ok` — it never inspects Cache-Control, so `/api/share/file`'s explicit `"Cache-Control": "no-store"` (share/file/route.ts:149) is ignored and the stamped controlled PDF is written to disk. `/api/storage/download-url` responses are cached the same way, and that route mints a presigned R2 URL whose lifetime the caller chooses with no upper bound: `const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");` (download-url:144). Cache entries are keyed by URL and matched without regard to request headers (no Vary is set), and the only cache eviction in the codebase is the VERSION sweep in `activate` (sw.js:52-65) — `grep -rn "caches\." app components lib` returns exactly one hit, in lib/__tests__/sw.test.ts:114, and none of the five `supabase.auth.signOut()` call sites (app/(protected)/profile/page.tsx:78, app/(protected)/layout.tsx:99, app/page.tsx:225, components/navigation/Sidebar.tsx:293, components/subscription/SubscriptionGate.tsx:109) clears it.
 
@@ -224,6 +229,7 @@ public/sw.js:117 `if (!response || !response.ok || response.type === "opaque") r
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/run-scheduled/route.ts:60-66,106-115`, `lib/serverAuth.ts:69-98`, `app/api/stripe/webhook/route.ts:80-95`, `components/subscription/SubscriptionGate.tsx:41-48`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. Neither cited range contains a subscription-status or org-membership predicate; a grep for `subscription`/`status`/`org_members`/`active` across them returns nothing.
 
 **Mechanism.** The daily sweep selects purely on destination state: `.eq("enabled", true).not("next_run_at","is",null).lte("next_run_at", nowIso).limit(50)` (:60-66), then builds and delivers the full org export with the service role (:107-115). No org, subscription or membership predicate exists in the file. Cancellation only writes `subscription_status: "canceled"` on the org (webhook:84-87); nothing disables destinations, and the two enforcement points are inert — `assertOrgHasAccess` has zero callers (already reported as roles-and-permissions SURF-15) and SubscriptionGate hardcodes `const ENFORCE = false;` (SubscriptionGate.tsx:41-48). Removing a member likewise touches nothing: destinations carry only `created_by`/`updated_by` (destinations/route.ts:135-136) and no route re-validates them.
 
@@ -251,6 +257,7 @@ app/api/data-export/run-scheduled/route.ts:60-66 is the complete selection predi
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/destinations/route.ts:81-95`, `app/api/data-export/destinations/[id]/route.ts:49-56`
+- **Re-verified:** hardening pass — **SURVIVES**. The plan gate lives only in `destinations/route.ts:81-95`; a grep for `Growth`/`plan` in `destinations/[id]/route.ts` returns **nothing**, so PATCH can add the bucket after creation.
 
 **Mechanism.** POST gates on the plan, but only when the create body already carries a bucket: `if (body.bucket) { … const allowed = plan === "growth" || plan === "enterprise" || status === "trialing"; if (!allowed) return 402 }` (route.ts:83-94). PATCH has no plan lookup at all — it copies a fixed field list, `bucket` among them, straight into the update: `const fields: (keyof DestinationPatchBody)[] = ["name", "destination_type", "enabled", "endpoint", "region", "bucket", …]; for (const f of fields) if (f in body) updates[f] = body[f];` ([id]/route.ts:49-55). Credentials are equally patchable (:59-67).
 
@@ -278,6 +285,7 @@ app/api/data-export/destinations/route.ts:83 `if (body.bucket) {` … :88 `const
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportRunner.ts:58-76`, `lib/exportRunner.ts:308-313`, `lib/exportRunner.ts:429-438`, `lib/exportRunner.ts:247,412`
+- **Re-verified:** hardening pass — **SURVIVES**, both halves. The guard resolves the host itself — `const { address } = await lookup(host)` (`exportRunner.ts:72`) — and the request is then a plain `await fetch(dest.webhook_url, …)` (`:308`), which follows redirects and resolves DNS again independently of the guard's lookup.
 
 **Mechanism.** `assertSafeExternalUrl` parses the URL, blocks non-http(s), blocks literal private IPs and localhost/.internal, then does `const { address } = await lookup(host)` and rejects a private first address (:58-76). The subsequent calls are plain fetches with default redirect handling: the delivery POST at :308-312 `await fetch(dest.webhook_url, { method: "POST", headers, body: zipBytes … })` and the connection test at :433 `await fetch(dest.webhook_url, { method: "HEAD" })`. Nothing sets `redirect: "manual"`, so a destination on a perfectly public host that answers 307/308 with `Location: http://169.254.169.254/latest/meta-data/…` (or an RFC1918 address) is followed with the body intact and the guard never re-runs. Separately, `lookup()` returns one address and the connection re-resolves later, so a host with a short TTL alternating public/private records (DNS rebinding) passes the check and connects to the private address; multi-record hosts are only checked on the first address returned.
 
@@ -306,6 +314,7 @@ lib/exportRunner.ts:308-312 — the fetch with no `redirect` option, immediately
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:157,171-176`, `lib/dataExport.ts:31-32`, `app/api/data-export/destinations/route.ts:55-66`, `lib/exportRunner.ts:333-343`, `lib/serverCrypto.ts:22-31`
+- **Re-verified:** hardening pass — **SURVIVES**, and the contrast is the evidence. `export_destinations` sits in `ORG_SCOPED_TABLES` (`exportTables.ts:157`) while `EXPORT_EXCLUDED_TABLES` excludes `ai_connections` on the reasoning *"holds live AI provider API keys — secrets never leave the database"* (`:173-174`). The identical reasoning was never applied to the table holding encrypted bucket credentials.
 
 **Mechanism.** `"export_destinations"` is an ORG_SCOPED_TABLE (exportTables.ts:157) and the exporter dumps whole rows with no column filtering — `grep -n "encrypted\|redact\|secret\|api_key" lib/dataExport.ts` returns nothing — so `access_key_id_encrypted`, `secret_access_key_encrypted` and `webhook_secret_encrypted` land in tables/export_destinations.json inside every backup ZIP and every /api/data-export/structured download. That contradicts the contract stated three lines below in the same file: ai_connections is excluded because it "holds live AI provider API keys — secrets never leave the database" (exportTables.ts:172-174), and the API surface for these same columns is careful — the destinations GET strips and masks them (destinations/route.ts:56-65). Decryption depends on a single deployment-wide `EXPORT_ENCRYPTION_KEY` (serverCrypto.ts:22-31), and `export_destinations` is importable through /api/admin/restore/apply-table, which forces only org_id (apply-table:54-58).
 
@@ -333,6 +342,7 @@ lib/exportTables.ts:157 `"export_destinations",` inside ORG_SCOPED_TABLES vs :17
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/templates/generate/route.ts:66,317-339`, `lib/docxRender.ts:60-99`, `lib/outputTemplateText.ts:32,41-54`
+- **Re-verified:** hardening pass — **SURVIVES** — **and the bound that looks like a refutation is on the other path.** `MAX_ROWS_PER_CALL = 25` (`:66`) is referenced exactly once, at `:162`, slicing spreadsheet rows in the **draft** branch. The render branch is `const docs = Array.isArray(body.documents) ? body.documents : []` with only an empty check (`:317-318`), then `for (let i = 0; i < docs.length; i++)` rendering each into memory (`:332-334`). No upper bound, and `d.values` is an arbitrary tag→value map.
 
 **Mechanism.** `MAX_ROWS_PER_CALL = 25` (:66) is applied only in the draft branch (`slice = sheetData.rows.slice(offset, offset + MAX_ROWS_PER_CALL)`, :162). The render branch takes `const docs = Array.isArray(body.documents) ? body.documents : [];` (:317) with no length check and loops `rendered.push({ name: names[i], bytes: renderTemplate(templateBytes, docs[i].values) })` (:333-335), holding every rendered file in memory before zipping (:380-382). `docs[i].values` is passed to docxtemplater untouched — nothing intersects it with `tpl.placeholders`, so any key/value pair the caller invents is injected. Separately, the placeholder detector cannot see raw-XML tags: `const TAG_RE = /\{([#^/]?)\s*([A-Za-z0-9_.\-]+)\s*\}/g;` (outputTemplateText.ts:32) admits `#`, `^`, `/` markers only, so a `{@field}` in an uploaded template is invisible in the reviewed placeholder spec while docxtemplater's raw-XML handling would still consume a caller-supplied value for it.
 
@@ -360,6 +370,7 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 - **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `package.json:29`, `package-lock.json (node_modules/xlsx 0.18.5)`, `lib/xlsxData.ts:9,33`, `app/api/templates/generate/route.ts:131`
+- **Re-verified:** hardening pass — **SURVIVES**. `package.json:36` pins `"xlsx": "^0.18.5"`, the final npm release of the package, and `lib/xlsxData.ts:9` imports it. Reachable with an attacker-chosen bucket object via `XEDGE-1`.
 
 **Mechanism.** `"xlsx": "^0.18.5"` resolves to the npm-registry build 0.18.5 (confirmed in package-lock: `node_modules/xlsx 0.18.5 https://registry.npmjs.org/xlsx/-/xlsx-0.18.5.tgz`). SheetJS stopped publishing to npm after 0.18.5; the prototype-pollution fix (0.19.3) and the ReDoS fix (0.20.2) exist only on the vendor CDN, so `npm audit`-visible advisories against this package can never be satisfied by a registry bump. The single call site is server-side and reached before any file-ownership check: lib/xlsxData.ts:33 `const wb = XLSX.read(bytes, { type: "buffer", cellDates: true });`, called from app/api/templates/generate/route.ts:131 with bytes fetched from a caller-supplied key. `grep -rn "XLSX.read\|from \"xlsx\"" app lib components` returns exactly these two lines, so the blast surface is one function — which is also what makes it cheap to isolate.
 
@@ -387,6 +398,7 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageOrphans.ts:90-104`, `lib/storageOrphans.ts:118-150`, `lib/storageOrphans.ts:154-180`, `app/api/admin/orphans/route.ts:27,47`
+- **Re-verified:** hardening pass — **SURVIVES**. `.range(from, from + 999)` with **no `.order()`** (`storageOrphans.ts:94`). Postgres gives no stable row order across windows without an ORDER BY, so a reference can be skipped and its object permanently deleted.
 
 **Mechanism.** `collectReferencedKeys` walks each source table in 1000-row windows: `const { data, error } = await sb.from(table).select(select).range(from, from + 999);` (:95) — no `.order(...)` anywhere in the loop (:91-102). PostgREST/Postgres give no ordering guarantee across separate LIMIT/OFFSET queries; concurrent updates (HOT tuple moves), a plan switch to a bitmap or parallel scan, or autovacuum between pages can make one row appear twice and another never appear. A row missed in the reference set means its `file_url` is absent from the `referenced` Set, and scanOrphans then classifies the object as an orphan (:132 `if (!key || referenced.has(key)) continue;`) and deleteOrphans deletes it for real (:154-180, `DeleteObjectsCommand`). The module is explicitly built to fail closed — "deleting a live file is unrecoverable" (:9-19) — and it does so for query errors, young objects and protected prefixes, but unstable pagination is a silent way to produce an incomplete reference set that looks complete, which is exactly the failure the comment at :32-33 says must never happen: "an incomplete reference set must never masquerade as a complete one."
 
@@ -414,6 +426,7 @@ lib/storageOrphans.ts:95 `const { data, error } = await sb.from(table).select(se
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/stripe/webhook/route.ts:52`, `app/api/stripe/webhook/route.ts:56`, `app/api/stripe/webhook/route.ts:63`, `app/api/stripe/checkout/route.ts:79-81`
+- **Re-verified:** hardening pass — **SURVIVES**. `const plan = (sub.metadata?.plan as string) || null;` (`webhook/route.ts:56`) then `subscribed_plan: plan` (`:63`). Metadata is written at `checkout/route.ts:79-81` and nowhere else, so a portal-side plan change never arrives and a metadata-less update event writes `null` over the stored plan.
 
 > **Post-hoc verification (hardening pass).** **SURVIVES — the citations were wrong.**
 > The finding cited `checkout/route.ts:119-122` (98 lines) and `portal/route.ts:140-145`

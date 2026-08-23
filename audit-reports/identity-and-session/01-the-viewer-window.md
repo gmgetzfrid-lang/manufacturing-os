@@ -129,6 +129,9 @@ gate is fed a value that was never true.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:83-90`, `components/providers/RoleContext.tsx:169-178`, `components/providers/RoleContext.tsx:238-241`, `components/providers/RoleContext.tsx:308-322`
+- **Re-verified:** hardening pass — **SURVIVES**. Re-confirmed the four values in one file: watchdog `6000` (`:88`), boot timeout `8000` (`:241`), `SIGNED_IN` resolve budget `15000` (`:320`), retry backoff `600 * (i + 1)` (`:176`). The path that runs the same function on the same cold connection gets half the budget the file argues for.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** Three timeouts govern the same operation and they disagree with
 each other by a factor of two and a half.
@@ -192,6 +195,9 @@ plus 1800 ms of deliberate sleep. Against a 6-second watchdog.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:179-187`, `components/providers/RoleContext.tsx:238-241`, `app/(protected)/layout.tsx:50`
+- **Re-verified:** hardening pass — **SURVIVES**. The error path sets `setActiveRole("Viewer")` and `setMembershipState("error")` together (`:184-185`), which is why the placeholder is harmless there and unguarded during `resolving`.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** When resolution fails outright, the code is careful:
 `membershipState` becomes `"error"` (`:185`), the layout shows
@@ -245,6 +251,9 @@ during `"resolving"`, where nothing intercepts.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-86`, `app/page.tsx:147-150`, `app/page.tsx:156-159`, `app/page.tsx:177`, `components/providers/RoleContext.tsx:244-254`
+- **Re-verified:** hardening pass — **SURVIVES**. Two membership round trips per sign-in — `app/page.tsx:72-78` then `RoleContext.tsx:145-150` — and on the SSO path both land on a session one request old.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** The login page runs its own membership query before routing —
 `org_members` filtered by `uid` and `status`, `limit(1).maybeSingle()`
@@ -309,6 +318,9 @@ components/providers/RoleContext.tsx:145-150   ← query #2, same session, same 
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:65-66`, `components/providers/RoleContext.tsx:19-40`, `components/providers/RoleContext.tsx:363-378`
+- **Re-verified:** hardening pass — **SURVIVES**. `useState<Role>("Viewer")` and `useState<Role[]>([])` (`:65-66`) are both legitimate member values, so the context cannot express "not known yet" through the two fields consumers actually read.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** `activeRole` is typed `Role` and seeded `"Viewer"`; `roles` is
 typed `Role[]` and seeded `[]`. Both are legitimate values that a real member

@@ -140,6 +140,9 @@ signer identity is the part that matters most — it is the difference between
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/create-user/route.ts:80-107`, `app/api/admin/create-user/route.ts:8-19`
+- **Re-verified:** hardening pass — **SURVIVES**. `const { data: existingProfile } = await supabaseAdmin.from("users").select("id").eq("email", email).maybeSingle()` (`create-user:80-84`) — `error` is not destructured, and `maybeSingle()` errors on more than one row, so two profiles read as none. The fallback `findAuthUserIdByEmail` then returns `data.users.find(…)` in `listUsers` page order.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** Three steps, each individually reasonable, compose into a
 non-deterministic outcome.
@@ -210,6 +213,9 @@ The correct handling exists in this repo already, at
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/signup/route.ts:77-82`, `app/api/admin/create-user/route.ts:83`, `app/api/admin/create-user/route.ts:9`, `app/api/auth/request-access/route.ts:30-36`
+- **Re-verified:** hardening pass — **SURVIVES**. Three case-sensitive `eq("email", …)` comparisons (`signup:80`, `create-user:83`, `request-access:33`) against one case-folded matcher in the same file as the second (`create-user:9,14`), while org names get `ilike` in both `signup:65` and `request-access:16`.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** PostgREST's `eq` is a plain SQL `=`, which on `text` is
 case-sensitive. Three routes compare emails that way:
@@ -267,6 +273,9 @@ app/api/auth/signup/route.ts:65           ← the repo's own correct pattern, on
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/supabase.ts:39-58`, `components/providers/RoleContext.tsx:44`, `components/providers/RoleContext.tsx:130-140`, `app/(protected)/profile/page.tsx:77`, `components/providers/RoleContext.tsx:260-280`
+- **Re-verified:** hardening pass — **SURVIVES**. `LS_ORG_KEY = "manufacturingos.activeOrgId"` (`RoleContext.tsx:44`) and `PREFER_MS_KEY = "manufacturingos.preferMicrosoft"` (`supabase.ts:39`) are both bare constants with no uid component, and the `SIGNED_OUT` purge at `:269-278` clears only the `intel-status-`/`schema-gaps-` snapshots.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** Two pieces of durable per-device state are keyed by nothing but a
 constant string:
@@ -323,6 +332,9 @@ And the sign-out purge that names the principle but omits this key —
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/signup/route.ts:77-95`
+- **Re-verified:** hardening pass — **SURVIVES**. The guard reads the `users` profile mirror rather than the auth identity, compares case-sensitively, and discards the multi-row error — three independent ways to conclude "this email is free" and proceed to `createUser`.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** The route's guard is a profile lookup whose result decides whether
 to mint an auth user:

@@ -25,6 +25,9 @@ arbitrarily.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:152-165`, `components/providers/RoleContext.tsx:189-215`
+- **Re-verified:** hardening pass — **SURVIVES**. `.eq("uid", userId).eq("status", "active").limit(1).maybeSingle()` with **no `.order()`** (`:156-159`), and the result is persisted to `users.default_org_id` at `:215`.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** When the candidate workspace yields no active membership, the
 resolver falls back to "their first active membership anywhere":
@@ -105,6 +108,9 @@ causes, which is why it will not reproduce reliably against either fix alone.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-86`, `components/providers/RoleContext.tsx:155-165`
+- **Re-verified:** hardening pass — **SURVIVES**. `const { data: membership } = await supabase…` (`app/page.tsx:72`) — `error` is not destructured, so a failed lookup renders the hard-stop screen that tells an Admin no workspace ever admitted them.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** `routeAuthedUser` runs its own copy of the same query — same
 table, same filters, same `limit(1)`, same absent ordering:
@@ -157,6 +163,9 @@ page did not.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/create-user/route.ts:127-135`, `app/(protected)/admin/users/page.tsx:133-137`, `lib/roleCapabilities.ts:1-15`
+- **Re-verified:** hardening pass — **SURVIVES**. `.update({ role, roles: [role], … })` (`create-user:130`) is an assignment, against `.update({ roles: cleaned, role: headline })` (`admin/users/page.tsx:137`), which is the correct shape in the same table.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** The route documents that "Add member" doubles as a role change on
 the re-add path (`:118-122`), and implements it as:
@@ -227,6 +236,9 @@ the audit log captured of a "re-add".
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:152-165`, `components/providers/RoleContext.tsx:189-195`, `components/providers/RoleContext.tsx:215`
+- **Re-verified:** hardening pass — **SURVIVES**. `_setActiveOrgId(orgId)`, the `localStorage` write and `persistOrgId` (`:190-195, :215`) emit nothing observable — no toast, no audit row, and no comparison against the candidate the resolution started from.
+
+**Independence caveat.** This area was written and verified by the same session, so this is a re-read rather than an independent challenge — the weakest grade in the corpus. Treat as `author`-grade until someone else reads it (`DEC-41`).
 
 **Mechanism.** The self-heal changes `activeOrgId` (`:190`), rewrites
 `localStorage` (`:193`) and upserts `users.default_org_id` (`:215`) without

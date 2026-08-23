@@ -1686,7 +1686,7 @@
         "lib/outputTemplateText.ts:120-138"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "A controller generates 12 RFQ letters and clicks download (not \"file into document control\"). The server renders all 12, records a production run of 12 documents and an audit entry saying 12 were generated, then throws while building the response; the browser sees a 500 and the user has zero files. The compliance record now claims a document production run that never reached anyone, and repeating ",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1708,7 +1708,7 @@
         "app/api/admin/restore/begin/route.ts:78-85"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "An Admin (or anyone who has taken an Admin session) posts fabricated esignatures and documentacknowledgments rows dated last quarter, and auditlogs rows attributing an approval to a controller who never made it — then posts a matching documents/documentversions slice so the record set is internally consistent. Nothing in the workspace records that a restore happened: the audit trail an OSHA/PSM au",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1728,7 +1728,7 @@
         "app/api/data-export/destinations/route.ts:122,134"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "An admin points a backup destination at an existing corporate bucket (s3://acme-eng-archive) without filling in the optional Prefix field, and sets Retention to 30 days because that is what their policy says. The first scheduled run at 05:00 UTC uploads the ZIP, then enumerates the whole bucket and permanently deletes every object last modified more than 30 days ago — the customer's own archived P",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1751,7 +1751,7 @@
         "app/api/share/file/route.ts:114-116"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "A document controller working from a preview deployment (or any non-canonical host) issues a transmittal to a contractor and prints the cover sheet. The QR encodes https://mfgos-git-branch-x.vercel.app/transmittal/<token>. The contractor scans it at the gate and lands on a Vercel login wall; the electronic acknowledgment is never made, so the org's proof that the drawing package was received — the",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -1773,7 +1773,7 @@
         "app/api/storage/download-url/route.ts:144-153"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "A shared field tablet in Field Mode. A supervisor opens a share link for Rev C of a line drawing; the stamped PDF lands in RUNTIMECACHE. The share is later revoked and the drawing superseded by Rev D. Out in the unit with no signal, anyone holding the tablet re-opens that URL: the network-first fetch fails and sw.js:167-172 (navigation) or :214-215 (sub-resource) returns the cached Rev C from disk",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3124,7 +3124,7 @@
         "components/subscription/SubscriptionGate.tsx:41-48"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "Edge traced end to end: an org cancels. customer.subscription.deleted sets status canceled. Every night at 05:00 UTC the cron still builds a complete export of that workspace — all tables plus embedded binaries under a 1.5GB cap — and pushes it to whatever bucket or webhook is on file. If the person who configured that destination is the departed engineer whose account was deactivated months earli",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3143,7 +3143,7 @@
         "app/api/data-export/destinations/[id]/route.ts:49-56"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "A Starter-plan org creates a webhook or bucket-less destination (passes, no gate), then PATCHes it with {bucket, endpoint, region, accesskeyid, secretaccesskey, schedulekind:\"daily\"}. It now has a fully functional scheduled S3/R2 backup — the paid Growth feature — and the nightly cron (run-scheduled) never re-checks the plan either.",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3164,7 +3164,7 @@
         "lib/exportRunner.ts:247,412"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "An Admin (or anyone with Admin/Manager/DocCtrl, per destinations ADMINROLES) creates a webhook destination at a host they control that 307-redirects to an internal address. testDestinationConnection reports ok and the HTTP status of the internal service is echoed back in { ok:false, error: Webhook returned HTTP ${r.status} } (:436) — a port/liveness oracle for the deployment's private network. On ",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3186,7 +3186,7 @@
         "lib/serverCrypto.ts:22-31"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "Org A's nightly backup ZIP is delivered to a shared/managed webhook or bucket, or an ex-admin keeps their last export. Whoever holds it now has org A's S3 credentials as ciphertext. On the same deployment, an Admin of org B posts those rows to /api/admin/restore/apply-table with table \"exportdestinations\"; orgid is rewritten to B, but the ciphertext is unchanged and buildS3ClientFromDestination de",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3206,7 +3206,7 @@
         "lib/outputTemplateText.ts:32,41-54"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "Generation is deliberately open to every member (the Generate button is outside the isController guard, app/(protected)/output-templates/page.tsx:111 vs :141-144). A member posts 5,000 documents in one render call: the function renders 5,000 .docx in a loop and builds the zip in RAM until the 300s/​memory ceiling kills it — after the audit row and production record are written. The raw-XML variant",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3225,7 +3225,7 @@
         "app/api/templates/generate/route.ts:131"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "Any active org member uploads a crafted workbook to their own output-data prefix (permitted by /api/storage/upload-url) and calls the draft action. The parse runs in the Next.js server runtime with the service-role Supabase client and R2 credentials in scope; a successful Object.prototype pollution in that process affects every subsequent request handled by the same warm instance, and the ReDoS pa",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3246,7 +3246,7 @@
         "app/api/admin/orphans/route.ts:27,47"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "A plant with 40k documentversions rows runs the orphan sweep from /admin (route:47 deleteOrphans). While page 12 of the documentversions scan is running, a check-in updates rows in that table; two rows shift across the page boundary and one is never returned. Its fileurl — the current published PDF of a controlled drawing older than 7 days — is not in the reference set, so it is deleted from R2. T",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
@@ -3267,7 +3267,7 @@
         "app/api/stripe/checkout/route.ts:79-81"
       ],
       "has_verifier_correction": false,
-      "verified_by": "unverified",
+      "verified_by": "hardening-pass",
       "summary": "An admin upgrades Starter→Growth in the portal. Stripe bills Growth; the webhook fires with the original metadata and writes subscribedplan: \"starter\". The org is refused cloud backup destinations with \"require the Growth plan. Upgrade in Billing\" (destinations/route.ts:91) while paying for Growth. The reverse is equally live: a downgrade leaves subscribedplan: \"growth\" and the entitlement stays o",
       "area": "document-control",
       "report": "audit-reports/document-control/11-edges-and-invariants.md"
