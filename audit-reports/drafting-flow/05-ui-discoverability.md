@@ -23,6 +23,7 @@ to proceed is a finding.
   - `hooks/useTicketNotifications.ts:265` — its **only** consumer, as the subtitle in the bell feed
   - `app/(protected)/requests/[id]/page.tsx:1488` — what the ticket page shows instead: `{ticket.status.replace(/_/g, ' ')}`
 - **Related:** `UI-2`, `FRIC-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `attentionLabel` maps status → what the *ticket* needs (`ticketAttention.ts:115-126`) and is rendered as the feed subtitle (`useTicketNotifications.ts:265`). No branch names a person.
 
 **Mechanism.** The plain-English answer to "what is happening to my request?"
 exists, is well written, covers every status — and is rendered **only in the
@@ -60,6 +61,7 @@ current holder is a small change against an existing, tested function.
   - `app/(protected)/requests/[id]/page.tsx:1482-1488` — the **only** trigger: the status pill itself, styled as a rounded badge, with discoverability provided entirely by `title="See where this request is in the workflow"`
   - it is imported by **one file** — the ticket detail page. It is absent from `/requests` and from `/requests/new`.
 - **Related:** `UI-1`, `UI-5`
+- **Re-verified:** hardening pass — **SURVIVES**. The workflow map opens from a `<button>` styled `rounded-full text-xs font-bold border uppercase tracking-wider` rendering `ticket.status.replace(/_/g,' ')` (`requests/[id]/page.tsx:1482-1488`) — visually a status badge, with only a `title` attribute to suggest otherwise.
 
 **Mechanism.** Somebody built the map that answers "what happens to my request?"
 and then attached it to a badge. Status badges are not interactive anywhere else
@@ -89,6 +91,7 @@ good. It needs a visible affordance, and it needs to exist on the request form
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
+- **Re-verified:** hardening pass — **SURVIVES**. Same evidence as `FRIC-7` — `ticketAttention.ts:106-108` against `workflow.ts:301-312`. Duplicate within this area; fix once.
 
 > **Recorded in full as `FRIC-7`.** Repeated here because it is the clearest
 > single answer to "is there a weird UI where people don't know where to look":
@@ -118,6 +121,7 @@ channel real work arrives through.**
 - **Locations:**
   - `app/(protected)/requests/[id]/page.tsx:1604-1605` — the empty-actions branch
 - **Related:** `UI-1`, `UI-3`, `FRIC-7`
+- **Re-verified:** hardening pass — **SURVIVES**. `availableActions.length === 0 ? (…)` (`requests/[id]/page.tsx:1604-1605`) renders one static panel for every reason a person might have no actions — wrong role, wrong state, not their ticket — and distinguishes none of them.
 
 **Mechanism.** When `getActions` returns nothing, the page renders a grey italic
 chip. It does not say **why** there is nothing — whether the user lacks
@@ -151,6 +155,7 @@ permitted", and names who to talk to in each case.
   - `app/(protected)/requests/new/page.tsx:201` — `if (!title || !description || !unit) return;` — a bare return: **no message, no field highlight, no scroll-to-error, no focus move**
   - contrast `app/(protected)/requests/new/page.tsx:272-280` — custom required fields **do** get a blocking `appAlert` naming the field
 - **Related:** `FRIC-3`, `DCW-7`
+- **Re-verified:** hardening pass — **SURVIVES**, and the contrast inside the same function is the evidence. `if (!title || !description || !unit) return;` (`requests/new/page.tsx:201`) is a bare return with no feedback, while the custom-field validation seventy lines later does `await appAlert(...)` on the same class of failure (`:279-280`).
 
 **Mechanism.** The three core required fields fail silently; the org-configured
 custom fields fail loudly. The **more** important validation is the quieter one.
@@ -182,6 +187,7 @@ with no recovery path and no explanation.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
+- **Re-verified:** hardening pass — **SURVIVES**. `myActionItems` is computed at `requests/page.tsx:329` but the initial `filters` state opens on `status: 'ALL'` across the org (`:180-187`). Duplicate of `FRIC-9` within this area; fix once.
 
 > **Recorded in full as `FRIC-9`.**
 
@@ -205,6 +211,7 @@ result is already on screen, and the list does not use it.
   - `lib/ticketAttention.ts:115-128` — plain-English equivalents exist for every status
   - `components/requests/WorkflowDiagramModal.tsx:27` — a second set of plain-English blurbs, also written, also unused outside the modal
 - **Related:** `UI-1`, `UI-2`
+- **Re-verified:** hardening pass — **SURVIVES**. `ticket.status.replace(/_/g, ' ')` is the primary on-screen vocabulary (`requests/[id]/page.tsx:1488`), while the human phrasing in `attentionLabel` (`ticketAttention.ts:115-124`) is used only as a feed subtitle.
 
 **Mechanism.** `PENDING_ENG_TEAM`, `REVISION_REQ`, `PENDING_IFC` and
 `FINAL_DRAFT` are database identifiers. They are shown to end users as the

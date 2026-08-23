@@ -112,6 +112,7 @@ date nobody is watching.** That is the shoulder-tap generator.
   - `lib/workflow.ts:74` — `canActAsRequester = isRequesterIdentity || allows('ticket.requester_review')`
   - `lib/roleCapabilities.ts:63-69` — Maintenance / Operations / Safety hold `["create_requests"]` and nothing else
 - **Related:** `TIER-1`, `FRIC-4`, `FRIC-6`
+- **Re-verified:** hardening pass — **SURVIVES**. `case 'PENDING_REVIEW': if (canActAsRequester)` (`workflow.ts:198-199`) — every advancing action at that state is gated on the requester's identity or an explicit `ticket.requester_review` grant (`:74`).
 
 **Mechanism.** After the drafter submits, the ticket waits on the **requester**
 to review the draft. For an engineer-requester that is sensible. For a
@@ -151,6 +152,7 @@ technical review is not blocked on their answering it.
   - `app/(protected)/requests/new/page.tsx:272-280` — custom required fields, validated with a blocking `appAlert`
   - `components/documents/CheckInPanel.tsx:236-267` and `lib/transitionIn.ts:304-331` — the two programmatic creators, which **omit `unit` entirely**
 - **Related:** `LIFE-9` (roles-and-permissions area), `FRIC-8`
+- **Re-verified:** hardening pass — **SURVIVES**. `if (!title || !description || !unit) return;` (`requests/new/page.tsx:201`) with `required` on the input (`:469`).
 
 **Mechanism.** The portal form refuses to submit without a unit. When the org has
 not configured a unit list, the field is **free text** — so the requester must
@@ -196,6 +198,7 @@ document.
   - `components/requests/EngineerPickerModal.tsx:93` — the display name is `(m.email || "").split("@")[0]`
   - `components/requests/EngineerPickerModal.tsx:100-105` — a best-effort open-ticket count as `workload`
 - **Related:** `TIER-1`, `FRIC-2`, `WF-14` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `requiresEngineerPick: true` (`workflow.ts:207`) forces the modal, and the modal labels each option `(m.email || "").split("@")[0] || "Engineer"` (`EngineerPickerModal.tsx:97`) — an email prefix, not a name or a discipline.
 
 **Mechanism.** The lowest-authority requester in the flow — the one the
 engineering gate just told cannot sign off — is handed a list of every engineer
@@ -235,6 +238,7 @@ removes both this friction **and** that hole, because nobody is choosing by hand
   - `lib/workflow.ts:301-316` — `PENDING_IFC` → `submit_final` → `FINAL_DRAFT`
   - `lib/ticketTransitions.ts:280-283` — `submit_final` sets `FINAL_DRAFT` and appends the attachment
 - **Related:** `FRIC-6`, `WF-6`
+- **Re-verified:** hardening pass — **SURVIVES**. `save_progress` is offered at `DRAFTING`/`REVISION_REQ` (`workflow.ts:168-174`) and again at `PENDING_IFC` (`:302-307`), with `submit_final` after it — two separate drafter interruptions for one deliverable.
 
 **Mechanism.** After approval the ticket returns to the drafter at `PENDING_IFC`
 so they can issue the final package. That is a real step when the approval
@@ -268,6 +272,7 @@ the ticket says plainly what is different about the final package.
   - `lib/workflow.ts:345-350` — `ticket.force_close` (default: Admin/Manager/Supervisor) is the only bypass
   - `lib/ticketShed.ts:83-96` — archive eligibility keys off `closed_at`
 - **Related:** `FRIC-1`, `LEAK-3`
+- **Re-verified:** hardening pass — **SURVIVES**. `FINAL_DRAFT` offers `close_ticket` only to `canActAsRequester || allows('ticket.direct_approve') || isManagement` (`workflow.ts:320-321`). The `ticket.force_close` escape at `:345-350` is an override, not a fallback — it fires only for whoever holds that capability.
 
 **Mechanism.** The deliverable is issued. The work is done. The ticket stays open
 until the requester logs in and clicks **Acknowledge & Close**. If they never do
@@ -307,6 +312,7 @@ That is again the **work class** (`TIER-2`) deciding, not a global rule.
   - `lib/capabilityPolicy.ts:73-77` — `ticket.direct_approve` defaults to `["Engineer"]`; `ticket.manage` to `["Admin","Manager","Supervisor"]` — **DocCtrl is in neither**
   - `app/(protected)/requests/[id]/page.tsx:1605` — the result: *"View Only - No Actions Available"*
 - **Related:** `WF-24`, `CHAIN-3` (roles-and-permissions area), `DCW-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `ticketAttention.ts:106-108` flags DocCtrl at `FINAL_DRAFT` and `PENDING_IFC`; `workflow.ts:301-312` gives `PENDING_IFC` actions to `canActAsDrafter` only. The badge and the action list disagree. Duplicate of `UI-3` within this area — fix once.
 
 **Mechanism.** The attention feed asserts that a DocCtrl must act on every ticket
 at `FINAL_DRAFT` and `PENDING_IFC`. The workflow engine offers a DocCtrl
@@ -343,6 +349,7 @@ role/status combination, ideally because attention is derived from the engine.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data quality / friction
+- **Re-verified:** hardening pass — **SURVIVES**. Three creation paths were counted directly during the drafting-flow audit and re-counted here: `requests/new/page.tsx`, `lib/transitionIn.ts` and `components/documents/CheckInPanel.tsx`. Each assembles its own field set.
 
 > **Recorded in full as `LIFE-9`** in the roles-and-permissions area. Repeated
 > here because the friction consequence is this report's concern: a check-in
@@ -368,6 +375,7 @@ The highest-priority ticket kind in the system is the one that can never be late
   - `app/(protected)/requests/page.tsx:329` — `myActionItems` **is computed** via `isActionRequired`
   - `app/(protected)/requests/page.tsx:335-337` — per-role slot counts are computed for the header stat strip
 - **Related:** `FRIC-7`, `UI-*`
+- **Re-verified:** hardening pass — **SURVIVES**. The queue's default filters are `status: 'ALL'` with `assignedTo` narrowed to `'me'` **only for a Drafter** (`requests/page.tsx:180-187`), while `myActionItems` is computed at `:329` and not used to shape the initial view.
 
 **Mechanism.** The page computes exactly the right number — how many tickets need
 *you* — and renders it as a statistic. The list underneath still opens on the

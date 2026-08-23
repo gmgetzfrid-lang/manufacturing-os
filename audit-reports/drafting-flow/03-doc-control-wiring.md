@@ -126,6 +126,7 @@ the model and the flow never implemented it.**
   - `types/schema.ts:760` — `issueType?: "Internal Review" | "Issued for Construction" | "As-Built" | "Void"` — on the document version
   - `lib/filenameParser.ts:36` — infers As-Built from filenames, evidence the concept is load-bearing
 - **Related:** `DCW-1`, `TIER-2`, `LIFE-11`
+- **Re-verified:** hardening pass — **SURVIVES**. `RequestType` is an unconstrained `string` (`types/schema.ts:1019`) and no drawing-type field exists anywhere. Same substrate as `TIER-2`.
 
 **Mechanism.** "Specific types of drawings" needs a type taxonomy. The nearest
 things that exist are `docClass` (two values, document-scoped) and `request_type`
@@ -165,6 +166,7 @@ inherited, without maintaining a separate drawing-type taxonomy.
   - `lib/ticketTransitions.ts:284-287` — `close_ticket` is three lines: `updates.status = "CLOSED"`
   - `app/api/tickets/workflow-action/route.ts:263-270` — the only document-side effect of closure **deletes** the drafter's `document_intents` row
 - **Related:** `LIFE-1`, `GAP-6` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `submit_final` appends to `currentAttachments` (`ticketTransitions.ts:282`) and `close_ticket` sets `CLOSED` (`:286`). Nothing on the path creates a document version. Same root as `roles-and-permissions/LIFE-1`.
 
 **Mechanism.** The IFC package lives on the ticket as an attachment and stays
 there. Nothing writes `document_versions`, nothing touches `documents.rev`,
@@ -201,6 +203,7 @@ every issued deliverable, or visibly knows it does not.
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:85-91` — `documents_acl_select` filters the document row entirely when `node_visible` is false
   - `supabase/migrations/20260708_acl_rls_enforcement.sql:42-82` — `node_visible` has no ownership branch (`DEL-2`) and reads the singular role (`DB-7`)
 - **Related:** `DCW-1`, `DEL-2` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `documents_acl_select` is `AS RESTRICTIVE FOR SELECT USING (node_visible(...))` (`20260708_acl_rls_enforcement.sql:86-87`), so a document the requester cannot read cannot appear in the picker that populates `metadata.source_document` (`requests/new/page.tsx:290-298`). The person who spots the error on a printed sheet is the one who cannot file about it.
 
 **Mechanism.** The only way to attach a source document is to arrive from the
 document viewer with `?sourceDocId=…`. A requester who cannot *see* a restricted
@@ -244,6 +247,7 @@ exists; the request form does not use it.
   - `lib/reviewControl.ts:527,575-579` — resolution: document → folder → library
   - `lib/workflow.ts:61-65` — `getActions` receives `ticket`, `userRole`, `userId`, `policy`. **No library, no review control, no document context.**
 - **Related:** `DCW-1`, `TIER-5`, `TIER-8`
+- **Re-verified:** hardening pass — **SURVIVES**. `ReviewControl` is a real, well-formed structure on libraries (`types/schema.ts:191-202`) that `reviewControl.ts:527` reads per library — and the ticket has no library to resolve it against (`DCW-1`). The policy exists and the flow cannot see it.
 
 **Mechanism.** A library can already declare "revisions here need these two
 reviewers." The drafting flow that produces those revisions cannot read it —
@@ -277,6 +281,7 @@ after.
   - `app/(protected)/requests/new/page.tsx:139-153` — the Site Codebook provides options when configured, and the first option is auto-selected
   - `components/documents/CheckInPanel.tsx:236-267`, `lib/transitionIn.ts:304-331` — both omit `unit`
 - **Related:** `FRIC-3`, `FRIC-8`, `DCW-1`
+- **Re-verified:** hardening pass — **SURVIVES**. `unit` is a `required` free-text input upper-cased on change (`requests/new/page.tsx:466-469`); the codebook only *optionally* supplies options, and the catch comment says so outright — *"codebook optional — free-text unit input remains"* (`:149`).
 
 **Mechanism.** With the Site Codebook configured, `unit` is a clean enum. Without
 it, it is whatever the requester types. The same physical area can arrive as

@@ -516,7 +516,7 @@
         "lib/filenameParser.ts:36"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The rule the supervisor wants is \"P&IDs and process datasheets go through doc control for release; field sketches and markups do not.\" There is no field that separates them. The closest available proxy is the library the drawing lives in — which is itself unavailable on the ticket (DCW-1).",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -539,7 +539,7 @@
         "app/api/tickets/workflow-action/route.ts:263-270"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A drawing is issued for construction, the field builds to it, and the controlled register never learns it exists. Six months later the document control library still shows the superseded revision — or nothing at all, for a new drawing — while the accurate copy sits on a closed ticket.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -562,7 +562,7 @@
         "supabase/migrations/20260708_acl_rls_enforcement.sql:42-82"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An operations tech needs a change to a P&ID in a restricted library. They can describe it and cannot link it. The ticket arrives with a document number typed into the description. Triage has to find the drawing by hand, and every downstream mechanism that keys on metadata.sourcedocument.id — the Impact panel, the intent bridge, overlap advisories — is blind to it (LIFE-4).",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -586,7 +586,7 @@
         "supabase/migrations/20260605_rls_policies_new_tables.sql:112"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A DraftingSupervisor turns off 'Assignments' (or Email notifications entirely) on /settings/notifications because she works her queue through the portal. She still receives an email for every new drafting request filed by anyone in the org, forever, because the requester's browser cannot read her preference row. She filters the sender to spam — and the one email class that DOES honor her preferenc",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -607,7 +607,7 @@
         "hooks/useTicketNotifications.ts:170"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A drafter with three years on site has 600+ tickets bearing his uid, ~580 closed. His attention feed fetches the 500 most recently modified — almost all closed — and the two oldest DRAFTING requests, one a REVISIONREQ on a P&ID untouched for four months, fall outside the window. His sidebar badge omits them. The supervisor's board (a different query) still shows them assigned to him. Each side bel",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -629,7 +629,7 @@
         "lib/notify/recipients.ts:36-42"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A contract drafter is removed from the workspace on his last day. Three drafting requests sit in DRAFTING against his uid, one an as-built for a relief header. Nothing changes on the portal — his denormalized assigneddraftername still renders, so the board looks staffed. No supervisor alert fires because PENDINGDRAFTING routes to nobody. Every subsequent comment or status email addressed to him is",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -652,7 +652,7 @@
         "supabase/migrations/20260724_ticket_numbering.sql:20-25"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Two plants merge and an admin restores Plant B's backup into Plant A's workspace — the flow the confirm dialog explicitly supports ('Existing data is kept — this is additive'). Both used the default record code, so both have KE-DDRT-26-0001..0400. Chunk 1 of tickets violates the unique index, the client breaks, and roughly 400 drafting requests plus their comment threads are absent from the restor",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -675,7 +675,7 @@
         "supabase/migrations/20260722_member_roles_collection.sql:13"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A small refinery has four people, each holding two hats: the two drafters are also Engineer-2, and the supervisor drafts as well. persistRoles sets every headline to the higher-ranked role. A new drafting request lands in PENDINGASSIGNMENT. The supervisor opens the assign modal and it is empty — the org has three qualified drafters and the picker can see none of them. The request cannot be advance",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -698,7 +698,7 @@
         "app/(protected)/requests/page.tsx:508"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An org configures request types with SLA-shaped labels ('1 - Urgent (1-2 Days)') and enables 'SLA warnings', which reads 'A ticket you're responsible for is at risk of breaching its target completion date.' An urgent inspection isometric is filed with a 1-day target on a Friday. Nobody opens the ticket. No warning email, no bell row, no cron scan, no slabreachedat stamp is ever produced. On Monday",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -720,7 +720,7 @@
         "lib/notify/dispatch.ts:78-131"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An operator files an urgent MOC drafting request from a tablet in the field, sees 'Done!', and locks the tablet. The tickets row committed. The fan-out died after two of four bell rows and before any email was queued. The DraftingSupervisor never learns the request exists. It sits in PENDINGASSIGNMENT — a status only surfaced to people who happen to load the app — with a target completion date not",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -743,7 +743,7 @@
         "lib/transmittals.ts:389-392"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An engineer @-mentions the process safety lead on a MOC drafting request: 'confirm the relief valve set point before we issue this.' She gets the email on her phone, taps 'Open ticket', and Gmail navigates to mail.google.com/requests/<uuid> — a 404 inside her mail client. The confirmation never happens and the package advances.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -876,7 +876,7 @@
         "lib/roleCapabilities.ts:63-69"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The planner does not know what they are looking at, so they either rubber-stamp it (the review is theatre) or sit on it (the ticket stalls with no escalation, per FRIC-1). Neither outcome is the one the state was designed for.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -901,7 +901,7 @@
         "lib/transitionIn.ts:304-331"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A contractor or a new hire opens the request form, does not know the unit code for the area they are standing in, guesses, and creates a ticket that the supervisor's unit-filtered queue view will not match — or gives up and calls someone.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -926,7 +926,7 @@
         "components/requests/EngineerPickerModal.tsx:100-105"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The planner picks the engineer whose name they recognise — who is on vacation, or covers a different unit. The ticket sits at PENDINGFINALAPPROVAL with no escalation (FRIC-1). Reassignment requires ticket.reassignengineer, which defaults to Admin only.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -949,7 +949,7 @@
         "lib/ticketShed.ts:83-96"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The queue accumulates tickets whose work completed weeks ago. Every metric built on open-ticket counts is wrong. The drafting supervisor's backlog looks worse than it is, so real backlog becomes invisible inside the noise. Nobody trusts the queue; people stop working from it.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -975,7 +975,7 @@
         "app/(protected)/requests/[id]/page.tsx:1605"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A document controller's badge shows a number. They open each ticket. Every one says \"View Only — No Actions Available.\" The badge never clears, because it is computed from role + status rather than from getActions. They learn to ignore the badge — and the badge is also how real work reaches them.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -1131,7 +1131,7 @@
         "lib/roleCapabilities.ts:74-94"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The drafting supervisor is also a manager — which is common. Every new request notifies the Admins instead of them. The Admins learn to ignore it. The supervisor works from memory and from people asking.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1154,7 +1154,7 @@
         "app/(protected)/requests/page.tsx:620,638"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1169,13 +1169,14 @@
       "blast_radius": "data-loss / adoption",
       "related": [],
       "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx:3025-3036",
         "components/viewers/FullScreenViewer.tsx:138-143",
         "app/(protected)/documents/[libraryId]/page.tsx:3025-3039",
         "lib/draftHandoff.ts:53-66",
         "lib/checkinOutcomes.ts:169-170"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1193,7 +1194,7 @@
         "components/documents/CheckInPanel.tsx:155-159"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -1386,15 +1387,9 @@
         "TIER-4",
         "GAP-102"
       ],
-      "locations": [
-        "lib/__tests__/projectControls.test.ts:29",
-        "lib/__tests__/knowledgeText.test.ts:108",
-        "lib/capabilityPolicy.ts:57-96",
-        "lib/workflow.ts:80-342",
-        "types/schema.ts"
-      ],
+      "locations": [],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A like-in-kind pipe spool replacement in a B31.3 service is drafted and issued. Nobody has recorded what NDE applies, whether radiography is required at the tie-in welds, or that the design factors were checked against the governing code case. The ticket closes clean. The information exists only in whatever conversation happened outside the app — which is precisely the shoulder-tap the system is m",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1418,7 +1413,7 @@
         "types/schema.ts:191-210"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An org that runs B31.3 piping and an org that runs API 653 tankage get an identical, code-blind review model. Neither can express its own governing standard, so both encode it in prose in the request description — where it is unsearchable, unreportable, and invisible to the reviewer roster.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1442,7 +1437,7 @@
         "lib/reviewControl.ts:196-238"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The moment the review model in TIER-1 through TIER-4 is implemented on the current serial machine, a new-design B31.3 package becomes: triage → drafter → requester review → engineering review → QA/QC review → code review → IFC → acknowledge. Eight hops, six people, seven waits. People will route around it — which is the outcome this whole audit exists to prevent.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1466,7 +1461,7 @@
         "lib/revisions.ts:522"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A field report states \"No MOC exists\" — correctly and honestly — and the system flags it as an undocumented change. Weeks later the as-built is published and the publisher types an MOC number they happen to remember. The undocumented-change finding is laundered into a documented one, and the only record contradicting it sits on a closed ticket nothing links to the version.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -1490,7 +1485,7 @@
         "app/(protected)/requests/[id]/page.tsx:1488"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The planner opens their request. It says PENDING FINAL APPROVAL. They do not know what that means, who has it, whether they need to do anything, or how long it has been there. The only way to find out is to ask someone — which is the exact behaviour the app exists to replace.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1512,7 +1507,7 @@
         "app/(protected)/requests/[id]/page.tsx:1482-1488"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A first-time requester submits a request and lands on the ticket. The explanation of the entire process is one hover away and they will never find it. They learn the workflow the way they learn everything else: by asking a colleague.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1531,7 +1526,7 @@
         "app/(protected)/requests/[id]/page.tsx:1605"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1553,7 +1548,7 @@
         "app/(protected)/requests/new/page.tsx:272-280"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The planner fills in Title and Detailed Scope, attaches their markup, presses Submit Request, and the page does nothing. No error, no spinner, no movement. They press it again. Still nothing. At this point a reasonable person concludes the app is broken and phones drafting — with their markup still unsaved (LEAK-5).",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -1684,7 +1679,7 @@
         "lib/workflow.ts:61-65"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The Process Safety library requires two named reviewers. A drafting request produces a revision for it and routes through the ticket's own role-based approval, which knows nothing about those two people. They are asked to review at publish time instead — after the ticket closed — which is TIER-8's duplicate-review problem.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -1709,7 +1704,7 @@
         "lib/transitionIn.ts:304-331"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "Unit-filtered queue views miss tickets. Reporting by area is unreliable. And because unit is the only locator a ticket has, its looseness is inherited by everything downstream that tries to group work geographically.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/03-doc-control-wiring.md"
@@ -1730,7 +1725,7 @@
         "lib/clientBackup.ts:200-205"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A records custodian starts the full backup before a migration window, realises it will run past the maintenance start, and cancels. The parts already downloaded sit in her Downloads folder. Eighteen months later, answering an auditor, someone opens backup-report.json, reads 'Every file verified by SHA-256', and treats the archive as the complete binary set for that date. It holds three drawings ou",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1758,7 +1753,7 @@
         "supabase/schema.sql:776"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The risk is a well-intentioned fix undoing one of these. Concretely: 'simplifying' the comment route's fallback test to any RPC error would silently reroute genuine in-function failures back to the lossy client-shaped write that postticketcomment exists to replace. Moving number allocation client-side to close the sequence-gap finding would reintroduce collisions the row lock prevents. Loosening t",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1778,7 +1773,7 @@
         "supabase/migrations/20260529_phase_b_notifications.sql:63-64"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A supervisor is both an Admin and a watcher on a request, with adminsAlsoReceiveWhenSupervisorSet on. A burst of client-side emits about one ticket in the same minute each queue their own row for her. The guard written to collapse them — 'prevents burst-spam when a workflow action triggers multiple watchers + assignments simultaneously' — is inert, so she gets one email per emit. Combined with the",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1801,7 +1796,7 @@
         "lib/storageOrphans.ts:52"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An operator fills the request form, attaches four field photos and a marked-up scan, and hits submit, leaving a required custom field ('Work Order #') blank. The five files upload — the slow part he watches — and only then does an alert tell him a field is missing. He fills it in and resubmits, consuming a second number and re-uploading the same five files. The register now reads ...-0041, ...-004",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -1822,7 +1817,7 @@
         "lib/inAppNotifications.ts:81-96"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "An operator asks to stop the bell for drafting-request status changes because he only wants email. An admin finds inappenabled in the schema, flips it in the database, and reports it done. Nothing changes — every ticketstatus row still lands in his bell. Time is spent debugging a column that was never wired, and trust in the settings surface erodes for the toggles that DO work.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
@@ -2017,7 +2012,7 @@
         "lib/ticketTransitions.ts:280-283"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The drafter has moved to other work. The ticket waits at PENDINGIFC for them to come back, re-open it, and upload a file that is often the same file. With no escalation (FRIC-1), this is a common stall point.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -2031,9 +2026,13 @@
       "verification_note": null,
       "blast_radius": "data quality / friction",
       "related": [],
-      "locations": [],
+      "locations": [
+        "app/(protected)/requests/new/page.tsx",
+        "lib/transitionIn.ts",
+        "components/documents/CheckInPanel.tsx"
+      ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -2055,7 +2054,7 @@
         "app/(protected)/requests/page.tsx:335-337"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A drafter with three assigned tickets opens /requests and sees every open ticket in the plant. Their own work is somewhere in the list. They filter, or they scroll, or they use the badge and click through one at a time.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/02-friction-latency.md"
@@ -2220,7 +2219,7 @@
       "related": [],
       "locations": [],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -2238,7 +2237,7 @@
         "app/api/tickets/workflow-action/route.ts:104-109"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -2261,7 +2260,7 @@
         "lib/ticketTransitions.ts:284-287"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The thing this whole audit is about — people bypassing the app — is structurally invisible. You cannot count it, cannot find which request types or which queues leak most, and cannot tell an abandoned ticket from a completed one. The metric that would tell you whether the friction fixes are working does not exist.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
@@ -3026,7 +3025,7 @@
         "lib/ticketTransitions.ts:221-237"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -3051,7 +3050,7 @@
         "lib/reviewControl.ts:60"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "The engineer either signs twice (two approval records for one change, different timestamps, no link) or dismisses the second as a duplicate and blocks the publish. Either way the reviewer concludes the app is wasting their time — the precise sentiment that produces shoulder-tapping.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/01-review-tiering.md"
@@ -3073,7 +3072,7 @@
         "app/(protected)/requests/[id]/page.tsx:1604-1605"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "A drafter whose headline role resolved to DocCtrl or Engineer-2 (WF-7) opens their own assigned ticket and sees \"View Only\". It is their work. The message tells them nothing about why they cannot proceed.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -3088,10 +3087,11 @@
       "blast_radius": "ux",
       "related": [],
       "locations": [
+        "requests/page.tsx:329",
         "app/(protected)/requests/page.tsx:329"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": null,
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"
@@ -3114,7 +3114,7 @@
         "components/requests/WorkflowDiagramModal.tsx:27"
       ],
       "has_verifier_correction": false,
-      "verified_by": "author",
+      "verified_by": "hardening-pass",
       "summary": "FINALDRAFT is the state where the work is finished and awaiting acknowledgment. To a requester, \"Final Draft\" reads like not finished — the opposite of the truth. PENDINGIFC requires knowing that IFC means Issued For Construction and that the pending party is the drafter, not them.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/05-ui-discoverability.md"

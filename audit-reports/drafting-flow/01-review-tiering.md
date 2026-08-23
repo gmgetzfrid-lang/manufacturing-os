@@ -165,6 +165,7 @@ frequently cannot answer it, and asking them is itself friction (`FRIC-3`).
 - **Blast radius:** safety / compliance
 - **Locations:**
   - A repo-wide search across `lib/`, `app/`, `components/`, `types/` for
+- **Re-verified:** hardening pass — **SURVIVES**, and the census locates it precisely. `qaqc`/`QA/QC` appear only in the **projects** quality program — `api/projects/checklist/route.ts`, `lib/turnover.ts`, `lib/checklists.ts`, `components/projects/QualityTab.tsx` — and **0 times** in `lib/workflow.ts`, `lib/ticketTransitions.ts` or `lib/ticketRouting.ts`. The concept is modelled in the product; it is simply not wired to drafting.
     `qaqc`, `qa_qc`, `NDE`, `radiograph`, `x-ray`, `hold point`, `witness point`,
     `B31` returns **zero production hits** — only test fixtures
     (`lib/__tests__/projectControls.test.ts:29`,
@@ -218,6 +219,7 @@ QA/QC reviewer signs concurrently with the design reviewer, not after them.
   - `lib/reviewControl.ts:126-132` — `expandReviewers` reads `reviewerIds` / `reviewerRoles` / `reviewerTeamIds` only
   - `types/schema.ts:191-210` — `ReviewControl` has no code, discipline or service-class dimension
 - **Related:** `TIER-3`, `WF-13`, `GAP-101`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `policyAllows` keys on capability, role tokens and per-person grants (`capabilityPolicy.ts:141-152`); `expandReviewers` keys on ids, roles and teams (`reviewControl.ts:126-131`). Neither carries a code, standard or discipline dimension, so "B31.3 signatory" is unrepresentable except by inventing a role name.
 
 **Mechanism.** The requirement is org-specific by nature: *"there's ASME B31.3
 in my case, not another organization's case — it could be whatever, that NDE and
@@ -259,6 +261,7 @@ this finding says the `resource` shape must carry a service/code class, not only
   - `lib/ticketTransitions.ts:140-142` — the recipient set for every action is `[requesterId, assignedDrafterId]`
   - contrast `lib/reviewControl.ts:196-238` — `openReviewRoster` on the **document** side: primaries + alternates, **parallel**, with timeout-driven alternate activation and auto-finalize on the last signature
 - **Related:** `TIER-3`, `FRIC-1`, `GAP-103`
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The state machine's review stages are distinct sequential cases — `PENDING_ENG_INITIAL` (`workflow.ts:83`), `PENDING_REVIEW` (`:198`) — and no concurrency or fan-out concept exists in the engine. Each added requirement is another state to wait in.
 
 **Mechanism.** The ticket flow is a linear status machine. Each review is a
 status; each status has one waiting party; the ticket advances when that party
@@ -304,6 +307,7 @@ state, not three.
   - `components/documents/RevUpModal.tsx:739` — the input, labelled *"Optional ticket # from change platform"*
   - `lib/revisions.ts:522` — `moc_reference: mocReference?.trim() || null`
 - **Related:** `LIFE-5` (roles-and-permissions area — same defect, recorded there in full)
+- **Re-verified:** hardening pass — **SURVIVES**. `mocRequirementFor` derives the requirement at check-in from doc class and outcome (`checkinOutcomes.ts:87-93`), and `CheckInPanel.tsx:224-229` renders a hand-typed `mocNumber` into a text line. Nothing carries either value to publish.
 
 **Mechanism.** Two MOC gates exist and they do not speak. The check-in gate
 **requires** an MOC position for a drawing-class discrepancy and deliberately
@@ -341,6 +345,7 @@ its own parallel rule.
   - `lib/workflow.ts:219-228` — offered unconditionally, with the comment *"Available to every requester tier by design."*
   - `lib/ticketTransitions.ts:221-237` — identical terminal effect to `approve_draft_ifc`
 - **Related:** `WF-3` (roles-and-permissions area — recorded there in full), `TIER-1`
+- **Re-verified:** hardening pass — **SURVIVES**, and the two transitions are byte-identical in effect. `approve_draft_ifc` sets `PENDING_IFC` + `deliverable_rev = issuedRevLabel(ticket.revisionCount)` (`ticketTransitions.ts:221-224`); `approve_minor_correction` sets exactly the same two fields (`:230-232`). The only tiering the system has is the one that skips the gate.
 
 **Mechanism.** The one place the system *does* express "this change is small
 enough to need less review" is a button that produces the **identical** terminal
@@ -375,6 +380,7 @@ applied.
   - Document side: `lib/reviewControl.ts:193-256`, `:283-320` — a reviewer roster with **e-signatures bound to the draft's `content_hash`**, invalidation on change, alternate activation, auto-finalize
   - The only declared bridge: `lib/reviewControl.ts:60` — dead, and a trap (`LIFE-2`)
 - **Related:** `LIFE-12`, `LIFE-2`, `TIER-5`
+- **Re-verified:** hardening pass — **SURVIVES**. The ticket engine's `approve_*` actions (`workflow.ts:198-228`) and the document `reviewControl` sign-off share no vocabulary, no state and no data path; the server enforcement at `workflow-action/route.ts:91-102` knows only the ticket side.
 
 **Mechanism.** An engineer who approves a drafting deliverable on the ticket has
 **not** signed anything on the document. When the resulting revision is

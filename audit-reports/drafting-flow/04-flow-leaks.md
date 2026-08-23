@@ -72,6 +72,7 @@ in, it covers two live states of twelve.
   - `lib/ticketRouting.ts:99` — `engineerRoles.includes(m.role)`, same singular read
   - `lib/roleCapabilities.ts:74-94` — `ROLE_RANK`: `Manager: 90` outranks `DraftingSupervisor: 75`
 - **Related:** `LEAK-1`, `CHAIN-2`, `DB-7` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `const byRole = (r: Role) => members.filter((m) => m.role === r)` (`ticketRouting.ts:79`) reads the headline column only, and `byRole("DraftingSupervisor")` at `:91` is what decides the routing target. Same class as `EDGE-6` and `roles-and-permissions/ADD-1`.
 
 **Mechanism.** A member with `roles = ['Manager','DraftingSupervisor']` has
 `org_members.role = 'Manager'`, because `primaryRole` picks by rank. So
@@ -157,6 +158,7 @@ unvalidated type string becomes an authority-bearing string. **`WF-15`
   - `app/(protected)/requests/[id]/page.tsx:1546` — the only gate: a hardcoded role list
   - `app/(protected)/requests/page.tsx:620,638` — bulk "mark urgent", same shape
 - **Related:** `WF-9`, `WF-2` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `await supabase.from('tickets').update({ attachments, last_modified, history }).eq('id', ticketId)` (`requests/[id]/page.tsx:1010-1014`) writes the table directly, bypassing `workflow-action/route.ts` and therefore the capability check at `:91-102`. Reachable because `tickets` RLS is `FOR ALL USING (org membership)` (`roles-and-permissions/WF-2`).
 
 **Mechanism.** The workflow route is the enforcement point, with
 compare-and-set on `(status, last_modified)` and a server-written audit row.
@@ -186,6 +188,7 @@ compare-and-set and audit path as every other ticket mutation.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-loss / adoption
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. `FullScreenViewer` exposes `initialPageStates`, `onPageStatesChange` and `onCommit` (`:138-143`), and the document page passes **none of them** — a grep for all three at the call site (`documents/[libraryId]/page.tsx:3025-3036`) returns nothing. Markup lives in component state only.
 
 > **Recorded in full as `LIFE-3`** in the roles-and-permissions area, and
 > specified as `GAP-7`. Repeated here because it is the most likely single cause
@@ -218,6 +221,7 @@ it asks the human to launder it through their filesystem.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
+- **Re-verified:** hardening pass — **SURVIVES**. `doneRef` is a `useRef` (`CheckInPanel.tsx:155`) — in-memory, per-mount. An interruption between creating the ticket and completing the commit loses the only record that the ticket exists.
 
 > **Recorded in full as `LIFE-14`** in the roles-and-permissions area.
 
@@ -242,6 +246,7 @@ evidence that a discrepancy was reported through that session at all.
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / field-truth
+- **Re-verified:** hardening pass — **SURVIVES**. `deliverable_rev = issuedRevLabel(ticket.revisionCount)` at three transition sites (`ticketTransitions.ts:223, 232, 250`), so a reopen that does not advance `revisionCount` re-issues the same label — and `EDGE-2` shows the public verify endpoint computes its verdict from `deliverable_rev` with no status term.
 
 > **Recorded in full as `WF-21`** in the roles-and-permissions area; `DEC-15`
 > settles the direction (a reopen starts a new cycle).
@@ -263,6 +268,7 @@ back under review, `/api/verify-ticket` still reports the field copy as
 - **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / compliance
+- **Re-verified:** hardening pass — **SURVIVES**, by absence. The route validates exactly two preconditions — `requiresComment` and `requiresEngineerPick` (`workflow-action/route.ts:104-109`). `finalAttachment` is an optional body field passed straight through as `body.finalAttachment ?? undefined` (`:38, :145`). Nothing requires `submit_final` to carry anything.
 
 > **Recorded in full as `WF-6`** in the roles-and-permissions area.
 
@@ -290,6 +296,7 @@ with no Final attachment. The requester acknowledges, the ticket closes, and
   - `types/schema.ts` — the `TicketStatus` union; `CANCELED` exists and **no action produces it** (`WF-17`, `DEC-14`)
   - `lib/ticketTransitions.ts:284-287` — `close_ticket` records no reason
 - **Related:** `FRIC-1`, `GAP-13` (roles-and-permissions area)
+- **Re-verified:** hardening pass — **SURVIVES**. `close_ticket` sets `CLOSED` and nothing else (`ticketTransitions.ts:284-287`); no field, table or transition records that the deliverable was produced outside the app.
 
 **Mechanism.** When someone shoulder-taps and the work happens outside the app,
 the ticket has three possible fates: it is force-closed with no reason, it is
