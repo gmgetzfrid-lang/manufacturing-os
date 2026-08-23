@@ -389,6 +389,21 @@ SHOTS: dict[str, dict] = {
                 [-0.1, 1.57, -1.8], [0.1, 1.56, -3.2], [0.0, 1.55, -4.8]],
         "look": "forward", "seconds": 24,
     },
+    # The app tells people to walk the same route twice so the clips have
+    # something to fuse on. These two are that advice, rendered: the same
+    # hallway-to-room traverse from either side of the corridor.
+    "video-f": {
+        "label": "Hallway into the room, left of centre",
+        "eye": [[-0.55, 1.60, -5.2], [-0.5, 1.58, -3.8], [-0.45, 1.57, -2.4], [-0.5, 1.59, -1.0],
+                [-0.4, 1.57, 0.6], [-0.35, 1.56, 2.0], [-0.3, 1.55, 3.1], [-0.2, 1.54, 3.8]],
+        "look": "forward", "seconds": 24,
+    },
+    "video-g": {
+        "label": "The same traverse, right of centre and a little lower",
+        "eye": [[0.55, 1.42, -5.2], [0.5, 1.40, -3.8], [0.45, 1.41, -2.4], [0.5, 1.39, -1.0],
+                [0.4, 1.41, 0.6], [0.35, 1.40, 2.0], [0.3, 1.42, 3.1], [0.2, 1.41, 3.8]],
+        "look": "forward", "seconds": 24,
+    },
     "video-e": {
         "label": "Couch detail pass at a lower height",
         "eye": [[-1.2, 1.15, 3.4], [-0.9, 1.10, 4.2], [-0.5, 1.05, 5.0], [0.4, 1.08, 5.3],
@@ -488,7 +503,7 @@ def main() -> int:
         render_clip(name, s, renderer, args.out, args.fps, args.jitter)
 
     print(f"\nSynthetic capture written to {args.out}")
-    print("Run the pipeline:  python -m processing.pipeline")
+    print("Load the clips in the app's Create 3D environment panel to run them.")
     return 0
 
 

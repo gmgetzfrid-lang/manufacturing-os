@@ -174,12 +174,21 @@ into smaller connected zones — it does not silently truncate.
 ### Test footage without filming
 
 `tools/test-footage/make_test_capture.py` renders a synthetic living room and
-hallway and flies five camera paths through it following the same shot list the
+hallway and flies seven camera paths through it following the same shot list the
 app's capture guide prescribes.
+
+Two of those paths (`video-f`, `video-g`) exist specifically to test multi-clip
+fusion: they walk the same hallway-to-room route from either side of the
+corridor, which is exactly the "walk the same route twice" advice the capture
+guide gives. Clips that traverse the same space in *opposite* directions — as
+`video-c` and `video-d` do — look at opposite walls and share almost nothing to
+match on, which is a property of the capture, not a pipeline failure.
 
 ```bash
 pip install numpy opencv-python-headless imageio-ffmpeg
 python tools/test-footage/make_test_capture.py --out ./clips
+# One shot at a time, e.g. just the overlapping pair:
+python tools/test-footage/make_test_capture.py --out ./clips --only video-f video-g
 ```
 
 **Read the caveat in that file's docstring.** Synthetic frames have no rolling
