@@ -146,8 +146,12 @@ export interface ReconReport {
 }
 
 /** Payload the viewer consumes. Mirrors what gets written to OPFS. */
+/** Bytes per encoded point: 3 x int16 position, RGB, octahedral normal, pad. */
+export const POINT_STRIDE = 12;
+
 export interface SceneData {
-  format: 2;
+  /** 3 added per-point normals and widened the stride from 10 bytes to 12. */
+  format: 2 | 3;
   id: string;
   label: string;
   generated: string;

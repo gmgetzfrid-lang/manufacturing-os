@@ -47,6 +47,10 @@ export interface DenseOptions {
 export interface DensePoint {
   xyz: [number, number, number];
   rgb: [number, number, number];
+  /** Unit surface normal in world space. Zero when it could not be estimated. */
+  normal: [number, number, number];
+  /** 0..1, from the matching cost that produced this depth. */
+  confidence: number;
 }
 
 const WORKGROUP_X = 8;
@@ -163,6 +167,14 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 
   var bestCost  : f32 = 1e9;
   var bestDepth : f32 = 0.0;
+  // Sub-pixel refinement needs the costs either side of the winner. The sweep
+  // is sequential, so the low neighbour is remembered when the winner is found
+  // and the high one is picked up on the iteration straight after.
+  var bestIdx   : i32 = -1;
+  var costLow   : f32 = 0.0;
+  var costHigh  : f32 = 0.0;
+  var prevCost  : f32 = 0.0;
+  var awaitHigh : bool = false;
 
   for (var d = 0u; d < params.depthSamples; d = d + 1u) {
     // Sample uniformly in INVERSE depth: that spaces candidates evenly in
@@ -219,14 +231,38 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 
     if (used == 0u) { continue; }
     let cost = costSum / f32(used);
+    if (awaitHigh) {
+      costHigh = cost;
+      awaitHigh = false;
+    }
     if (cost < bestCost) {
       bestCost = cost;
       bestDepth = depth;
+      bestIdx = i32(d);
+      costLow = select(cost, prevCost, d > 0u);
+      costHigh = cost;
+      awaitHigh = true;
     }
+    prevCost = cost;
   }
 
   if (bestCost <= params.maxCost) {
-    depthOut[outIdx] = bestDepth;
+    var outDepth = bestDepth;
+    // Winner-take-all snaps depth to one of depthSamples planes, which quantises
+    // every surface into visible shells. Fitting a parabola through the winning
+    // cost and its two neighbours recovers the minimum between the planes, in
+    // the same inverse-depth space the planes are spaced in.
+    let last = i32(params.depthSamples) - 1;
+    if (bestIdx > 0 && bestIdx < last) {
+      let denom = costLow - 2.0 * bestCost + costHigh;
+      if (abs(denom) > 1e-9) {
+        let shift = clamp(0.5 * (costLow - costHigh) / denom, -0.5, 0.5);
+        let t = (f32(bestIdx) + shift) / f32(max(1, last));
+        let invDepth = mix(params.invDepthMin, params.invDepthMax, t);
+        if (invDepth > 0.0) { outDepth = 1.0 / invDepth; }
+      }
+    }
+    depthOut[outIdx] = outDepth;
     costOut[outIdx]  = bestCost;
   }
 }
@@ -444,6 +480,14 @@ export function depthToPoints(
 
   const Rt = mat3Transpose(view.pose.R);
 
+  /** Camera-space point for a pixel, or null where there is no depth. */
+  const camAt = (x: number, y: number): [number, number, number] | null => {
+    if (x < 0 || y < 0 || x >= sweep.width || y >= sweep.height) return null;
+    const d = sweep.depth[y * sweep.width + x];
+    if (!(d > 0) || !Number.isFinite(d)) return null;
+    return [((x - cx) / fx) * d, ((y - cy) / fy) * d, d];
+  };
+
   for (let y = 0; y < sweep.height; y += stride) {
     for (let x = 0; x < sweep.width; x += stride) {
       const i = y * sweep.width + x;
@@ -455,13 +499,63 @@ export function depthToPoints(
       const shifted = [cam[0] - view.pose.t[0], cam[1] - view.pose.t[1], cam[2] - view.pose.t[2]];
       const world = mat3MulVec(Rt, shifted);
 
+      // Surface normal from neighbouring depths. Without one every point can
+      // only be drawn as a camera-facing dot, which is why a wall reads as a
+      // spray rather than a surface. Central differences where both sides have
+      // depth, one-sided at a depth discontinuity.
+      let normal: [number, number, number] = [0, 0, 0];
+      const c = cam as [number, number, number];
+      const left = camAt(x - stride, y), right = camAt(x + stride, y);
+      const up = camAt(x, y - stride), down = camAt(x, y + stride);
+      const ddx = right && left
+        ? sub3(right, left)
+        : right ? sub3(right, c) : left ? sub3(c, left) : null;
+      const ddy = down && up
+        ? sub3(down, up)
+        : down ? sub3(down, c) : up ? sub3(c, up) : null;
+      if (ddx && ddy) {
+        const n = cross3(ddx, ddy);
+        const len = Math.hypot(n[0], n[1], n[2]);
+        if (len > 1e-9) {
+          // Face the camera: the surface we can see cannot point away from it.
+          const sign = (n[0] * c[0] + n[1] * c[1] + n[2] * c[2]) > 0 ? -1 : 1;
+          const camN: [number, number, number] = [
+            (n[0] / len) * sign, (n[1] / len) * sign, (n[2] / len) * sign,
+          ];
+          const wn = mat3MulVec(Rt, camN);
+          normal = [wn[0], wn[1], wn[2]];
+        }
+      }
+
+      // Cost is 0 (perfect correlation) to 1. Turn it into a usable weight.
+      const cost = sweep.cost[i];
+      const confidence = Number.isFinite(cost) ? Math.max(0, Math.min(1, 1 - cost * 2)) : 0;
+
       out.push({
         xyz: [world[0], world[1], world[2]],
         rgb: [view.rgb[i * 3], view.rgb[i * 3 + 1], view.rgb[i * 3 + 2]],
+        normal,
+        confidence,
       });
     }
   }
   return out;
+}
+
+function sub3(
+  a: [number, number, number], b: [number, number, number],
+): [number, number, number] {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function cross3(
+  a: [number, number, number], b: [number, number, number],
+): [number, number, number] {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
 }
 
 /**
@@ -481,12 +575,23 @@ export class PointFuser {
   private buckets = new Map<number, {
     x: number; y: number; z: number;
     r: number; g: number; b: number;
+    nx: number; ny: number; nz: number;
+    /** Running sum of squared colour, to measure how much views disagree. */
+    r2: number; g2: number; b2: number;
+    weight: number;
     n: number; views: Set<number>;
   }>();
 
   constructor(
     private readonly voxel: number,
     private readonly origin: [number, number, number],
+    /**
+     * Largest per-channel colour spread, 0-255, that still counts as the views
+     * agreeing. Geometric agreement alone lets a mismatch that happens to land
+     * in the right cell survive with a completely wrong colour, which is what
+     * saturated speckle in the cloud actually is.
+     */
+    private readonly colourTolerance = 46,
   ) {}
 
   add(points: DensePoint[], viewIndex: number): void {
@@ -498,17 +603,32 @@ export class PointFuser {
       if (gx < 0 || gy < 0 || gz < 0 || gx > 2097151 || gy > 2097151 || gz > 2097151) continue;
       const key = gx * 4398046511104 + gy * 2097152 + gz;
 
+      // A confident sample should pull the fused position more than a marginal
+      // one, so everything below is a weighted mean rather than a plain one.
+      const w = 0.15 + p.confidence;
       const cell = this.buckets.get(key);
       if (cell) {
-        cell.x += p.xyz[0]; cell.y += p.xyz[1]; cell.z += p.xyz[2];
-        cell.r += p.rgb[0]; cell.g += p.rgb[1]; cell.b += p.rgb[2];
+        cell.x += p.xyz[0] * w; cell.y += p.xyz[1] * w; cell.z += p.xyz[2] * w;
+        cell.r += p.rgb[0] * w; cell.g += p.rgb[1] * w; cell.b += p.rgb[2] * w;
+        cell.r2 += p.rgb[0] * p.rgb[0] * w;
+        cell.g2 += p.rgb[1] * p.rgb[1] * w;
+        cell.b2 += p.rgb[2] * p.rgb[2] * w;
+        // Normals are summed, not averaged as unit vectors: samples that agree
+        // reinforce, samples that scatter cancel, and the length that survives
+        // is itself a measure of how flat the cell is.
+        cell.nx += p.normal[0] * w; cell.ny += p.normal[1] * w; cell.nz += p.normal[2] * w;
+        cell.weight += w;
         cell.n++;
         cell.views.add(viewIndex);
       } else {
         this.buckets.set(key, {
-          x: p.xyz[0], y: p.xyz[1], z: p.xyz[2],
-          r: p.rgb[0], g: p.rgb[1], b: p.rgb[2],
-          n: 1, views: new Set([viewIndex]),
+          x: p.xyz[0] * w, y: p.xyz[1] * w, z: p.xyz[2] * w,
+          r: p.rgb[0] * w, g: p.rgb[1] * w, b: p.rgb[2] * w,
+          r2: p.rgb[0] * p.rgb[0] * w,
+          g2: p.rgb[1] * p.rgb[1] * w,
+          b2: p.rgb[2] * p.rgb[2] * w,
+          nx: p.normal[0] * w, ny: p.normal[1] * w, nz: p.normal[2] * w,
+          weight: w, n: 1, views: new Set([viewIndex]),
         });
       }
     }
@@ -518,28 +638,59 @@ export class PointFuser {
     return this.buckets.size;
   }
 
-  result(minViews: number): { xyz: Float32Array; rgb: Uint8Array; count: number } {
-    let kept: Array<{ x: number; y: number; z: number; r: number; g: number; b: number; n: number }> = [];
-    for (const cell of this.buckets.values()) {
-      if (cell.views.size >= minViews) kept.push(cell);
-    }
+  /** Per-channel standard deviation of the colours that landed in a cell. */
+  private colourSpread(c: {
+    r: number; g: number; b: number; r2: number; g2: number; b2: number; weight: number;
+  }): number {
+    const w = Math.max(1e-6, c.weight);
+    const varOf = (sum: number, sumSq: number) => Math.max(0, sumSq / w - (sum / w) ** 2);
+    return Math.sqrt(Math.max(varOf(c.r, c.r2), varOf(c.g, c.g2), varOf(c.b, c.b2)));
+  }
+
+  result(minViews: number): {
+    xyz: Float32Array; rgb: Uint8Array; normals: Float32Array; count: number;
+  } {
+    type Cell = ReturnType<PointFuser["bucketList"]>[number];
+    const all = this.bucketList();
+
+    const survives = (c: Cell) =>
+      c.views.size >= minViews &&
+      // Views that agree on where a surface is but not on its colour did not
+      // see the same surface. This is the direct test for a stereo mismatch,
+      // and it is only meaningful once more than one view has landed here.
+      (c.views.size < 2 || this.colourSpread(c) <= this.colourTolerance);
+
+    let kept = all.filter(survives);
     // If the consistency test was too strict for this capture, fall back rather
     // than handing the viewer an empty scene.
     if (kept.length < 20000 && minViews > 1) {
-      kept = [...this.buckets.values()];
+      kept = all.filter((c) => c.views.size < 2 || this.colourSpread(c) <= this.colourTolerance * 1.6);
+      if (kept.length < 20000) kept = all;
     }
 
     const xyz = new Float32Array(kept.length * 3);
     const rgb = new Uint8Array(kept.length * 3);
+    const normals = new Float32Array(kept.length * 3);
     kept.forEach((c, i) => {
-      xyz[i * 3] = c.x / c.n;
-      xyz[i * 3 + 1] = c.y / c.n;
-      xyz[i * 3 + 2] = c.z / c.n;
-      rgb[i * 3] = Math.min(255, Math.round(c.r / c.n));
-      rgb[i * 3 + 1] = Math.min(255, Math.round(c.g / c.n));
-      rgb[i * 3 + 2] = Math.min(255, Math.round(c.b / c.n));
+      const w = Math.max(1e-6, c.weight);
+      xyz[i * 3] = c.x / w;
+      xyz[i * 3 + 1] = c.y / w;
+      xyz[i * 3 + 2] = c.z / w;
+      rgb[i * 3] = Math.min(255, Math.round(c.r / w));
+      rgb[i * 3 + 1] = Math.min(255, Math.round(c.g / w));
+      rgb[i * 3 + 2] = Math.min(255, Math.round(c.b / w));
+      const len = Math.hypot(c.nx, c.ny, c.nz);
+      if (len > 1e-6) {
+        normals[i * 3] = c.nx / len;
+        normals[i * 3 + 1] = c.ny / len;
+        normals[i * 3 + 2] = c.nz / len;
+      }
     });
-    return { xyz, rgb, count: kept.length };
+    return { xyz, rgb, normals, count: kept.length };
+  }
+
+  private bucketList() {
+    return [...this.buckets.values()];
   }
 }
 

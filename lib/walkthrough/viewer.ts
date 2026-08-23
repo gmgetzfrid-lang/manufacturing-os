@@ -34,27 +34,6 @@ export interface ViewerStats {
   pointCount: number;
 }
 
-const POINT_VERTEX = /* glsl */ `
-uniform float uPointScale;
-uniform float uSizeMultiplier;
-attribute vec3 color;
-varying vec3 vColor;
-varying float vDepth;
-
-void main() {
-  vColor = color;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  vDepth = -mv.z;
-  gl_Position = projectionMatrix * mv;
-  // World-constant splat size: points grow on approach and shrink with
-  // distance, which is what closes the gaps between samples on a nearby wall.
-  // Cap the on-screen size: a sample a metre away legitimately wants a splat
-  // tens of pixels across, but letting it grow without limit turns the odd
-  // stray point right in front of the camera into a saucer covering the view.
-  gl_PointSize = clamp(uPointScale * uSizeMultiplier / max(vDepth, 0.05), 1.0, 22.0);
-}
-`;
-
 // three.js only injects its output colour-space conversion into its own
 // materials. These are hand-written shaders, so the encode has to be explicit —
 // without it the whole cloud renders about 2.5x too dark.
@@ -66,24 +45,79 @@ vec3 linearToSrgb(vec3 c) {
 }
 `;
 
+const POINT_VERTEX = /* glsl */ `
+uniform float uPointScale;
+uniform float uSizeMultiplier;
+attribute vec3 color;
+attribute vec3 splatNormal;
+varying vec3 vColor;
+varying float vDepth;
+varying vec2 vMinorDir;
+varying float vSquash;
+varying float vShade;
+
+void main() {
+  vColor = color;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vDepth = -mv.z;
+  gl_Position = projectionMatrix * mv;
+  // World-constant splat size: points grow on approach and shrink with
+  // distance, which is what closes the gaps between samples on a nearby wall.
+  gl_PointSize = clamp(uPointScale * uSizeMultiplier / max(vDepth, 0.05), 1.0, 22.0);
+
+  if (dot(splatNormal, splatNormal) > 0.25) {
+    // A disc lying on the surface projects to an ellipse: the semi-axis across
+    // the normal's screen direction keeps its length, the one along it shrinks
+    // by |n . viewDir|. Carrying that to the fragment shader is what makes a
+    // splat lie ON the wall instead of facing the camera like a dot.
+    vec3 nView = normalize(normalMatrix * splatNormal);
+    vec3 viewDir = normalize(-mv.xyz);
+    vSquash = clamp(abs(dot(nView, viewDir)), 0.3, 1.0);
+    vec2 mn = nView.xy;
+    float mlen = length(mn);
+    vMinorDir = mlen > 1e-4 ? mn / mlen : vec2(1.0, 0.0);
+
+    // Hemisphere term: up-facing surfaces catch the sky, down-facing ones do
+    // not. Without it a floor and a wall are the same flat colour, which is
+    // much of why an untextured cloud reads as indistinguishable mush.
+    vec3 nWorld = normalize(mat3(modelMatrix) * splatNormal);
+    vShade = mix(0.62, 1.18, nWorld.y * 0.5 + 0.5);
+  } else {
+    vSquash = 1.0;
+    vMinorDir = vec2(1.0, 0.0);
+    vShade = 1.0;
+  }
+}
+`;
+
 const POINT_FRAGMENT = /* glsl */ `
 varying vec3 vColor;
 varying float vDepth;
+varying vec2 vMinorDir;
+varying float vSquash;
+varying float vShade;
 uniform float uOpacity;
 uniform float uEncode;
+uniform float uShadeAmount;
 
 ${SRGB_ENCODE}
 
 void main() {
-  // Round splats with a soft edge — square points read as noise.
-  vec2 offset = gl_PointCoord - vec2(0.5);
-  float r2 = dot(offset, offset);
-  if (r2 > 0.25) discard;
-  float alpha = smoothstep(0.25, 0.06, r2);
+  // Rotate into the splat's own frame, then stretch the axis along the normal
+  // so a plain unit-circle test carves out the projected ellipse.
+  vec2 offset = (gl_PointCoord - vec2(0.5)) * 2.0;
+  vec2 e = vec2(
+    dot(offset, vMinorDir),
+    dot(offset, vec2(-vMinorDir.y, vMinorDir.x))
+  );
+  e.x /= vSquash;
+  if (dot(e, e) > 1.0) discard;
+
+  vec3 shaded = vColor * mix(1.0, vShade, uShadeAmount);
   // Straight to the canvas: encode here. Into the EDL buffer: stay linear so
-  // the shading multiply below happens in the right space.
-  vec3 rgb = uEncode > 0.5 ? linearToSrgb(vColor) : vColor;
-  gl_FragColor = vec4(rgb, alpha * uOpacity);
+  // the shading multiply there happens in the right space.
+  vec3 rgb = uEncode > 0.5 ? linearToSrgb(shaded) : shaded;
+  gl_FragColor = vec4(rgb, uOpacity);
 }
 `;
 
@@ -205,6 +239,22 @@ export interface TouchNavState {
   boost: number;
 }
 
+/** Inverse of the encoder in scene.ts: two bytes back to a unit vector. */
+function decodeOctahedral(nu: number, nv: number): [number, number, number] {
+  let x = (nu / 255) * 2 - 1;
+  let y = (nv / 255) * 2 - 1;
+  const z = 1 - Math.abs(x) - Math.abs(y);
+  if (z < 0) {
+    const sx = x >= 0 ? 1 : -1;
+    const sy = y >= 0 ? 1 : -1;
+    const nx = (1 - Math.abs(y)) * sx;
+    const ny = (1 - Math.abs(x)) * sy;
+    x = nx; y = ny;
+  }
+  const len = Math.hypot(x, y, z) || 1;
+  return [x / len, y / len, z / len];
+}
+
 interface KeyState {
   forward: boolean;
   back: boolean;
@@ -324,14 +374,22 @@ export class WalkthroughViewer {
 
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
+    const normals = new Float32Array(count * 3);
     const [minX, minY, minZ] = data.quantization.min;
     const [spanX, spanY, spanZ] = data.quantization.span;
     const sx = spanX / 65535;
     const sy = spanY / 65535;
     const sz = spanZ / 65535;
 
+    // Format 2 packed 10 bytes per point with a pad byte; format 3 spends 12
+    // and puts an octahedral normal in the last two. Scenes saved by an older
+    // build are still in the browser's storage, so the stride is taken from the
+    // payload rather than assumed.
+    const stride = data.format >= 3 ? 12 : buffer.byteLength / Math.max(1, count) >= 12 ? 12 : 10;
+    const hasNormals = stride >= 12;
+
     for (let i = 0; i < count; i++) {
-      const b = i * 10;
+      const b = i * stride;
       positions[i * 3] = (view.getInt16(b, true) + 32768) * sx + minX;
       positions[i * 3 + 1] = (view.getInt16(b + 2, true) + 32768) * sy + minY;
       positions[i * 3 + 2] = (view.getInt16(b + 4, true) + 32768) * sz + minZ;
@@ -339,11 +397,24 @@ export class WalkthroughViewer {
       colors[i * 3] = (bytes[b + 6] / 255) ** 2.2;
       colors[i * 3 + 1] = (bytes[b + 7] / 255) ** 2.2;
       colors[i * 3 + 2] = (bytes[b + 8] / 255) ** 2.2;
+
+      if (hasNormals) {
+        const nu = bytes[b + 9];
+        const nv = bytes[b + 10];
+        // 128,128 is the sentinel the encoder writes when it had no normal.
+        if (nu !== 128 || nv !== 128) {
+          const n = decodeOctahedral(nu, nv);
+          normals[i * 3] = n[0];
+          normals[i * 3 + 1] = n[1];
+          normals[i * 3 + 2] = n[2];
+        }
+      }
     }
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute("splatNormal", new THREE.BufferAttribute(normals, 3));
     geometry.computeBoundingSphere();
 
     this.pointSpacing = measureSpacing(positions, count, data.navigation.bounds);
@@ -353,12 +424,16 @@ export class WalkthroughViewer {
         uPointScale: { value: 1 },
         uSizeMultiplier: { value: this.pointSizeMultiplier },
         uOpacity: { value: 1 },
+        uShadeAmount: { value: 1 },
         // The EDL pass does the encode when it is in play; see SRGB_ENCODE.
         uEncode: { value: 0 },
       },
       vertexShader: POINT_VERTEX,
       fragmentShader: POINT_FRAGMENT,
-      transparent: true,
+      // Opaque. The ellipse test discards outside the splat, so there is
+      // nothing to blend, and blending was order-dependent — nearer splats
+      // drawn after farther ones showed through them.
+      transparent: false,
       depthWrite: true,
       depthTest: true,
     });

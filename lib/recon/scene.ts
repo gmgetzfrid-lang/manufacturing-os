@@ -11,11 +11,13 @@
 import type { ReconConfig } from "./config";
 import { jacobiEigenSymmetric, mat3MulVec, mat3Transpose } from "./math/linalg";
 import type { Pose } from "./math/twoView";
-import { CLIP_COLORS, type ReconReport, type SceneData } from "./types";
+import { CLIP_COLORS, POINT_STRIDE, type ReconReport, type SceneData } from "./types";
 
 export interface PointCloud {
   xyz: Float32Array;
   rgb: Uint8Array;
+  /** Unit surface normals, 3 per point. Absent on clouds built before format 3. */
+  normals?: Float32Array;
   count: number;
 }
 
@@ -219,8 +221,32 @@ function pickStart(
  * and handed to the GPU. int16 over a 20 m room quantises to about 0.3 mm, far
  * below reconstruction noise.
  */
+/**
+ * Octahedral normal encoding: a unit vector into two bytes.
+ *
+ * Cheaper than three components and, unlike storing xy and recovering z, it
+ * covers the whole sphere — which matters because a surfel seen from behind
+ * still has to shade correctly. Worst-case error is well under two degrees,
+ * far finer than the normals themselves.
+ */
+function encodeOctahedral(x: number, y: number, z: number): [number, number] {
+  const l1 = Math.abs(x) + Math.abs(y) + Math.abs(z);
+  if (l1 < 1e-9) return [128, 128];
+  let u = x / l1;
+  let v = y / l1;
+  if (z < 0) {
+    const su = u >= 0 ? 1 : -1;
+    const sv = v >= 0 ? 1 : -1;
+    const nu = (1 - Math.abs(v)) * su;
+    const nv = (1 - Math.abs(u)) * sv;
+    u = nu; v = nv;
+  }
+  const q = (t: number) => Math.max(0, Math.min(255, Math.round((t * 0.5 + 0.5) * 255)));
+  return [q(u), q(v)];
+}
+
 export function encodePoints(
-  xyz: Float32Array, rgb: Uint8Array, count: number,
+  xyz: Float32Array, rgb: Uint8Array, count: number, normals?: Float32Array,
 ): { buffer: ArrayBuffer; quantization: SceneData["quantization"] } {
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
@@ -237,11 +263,14 @@ export function encodePoints(
     Math.max(1e-6, max[2] - min[2]),
   ];
 
-  const buffer = new ArrayBuffer(count * 10);
+  // 12 bytes per point: 3 x int16 position, RGB, then the octahedral normal.
+  // The old layout spent 10 with a pad byte; the normal costs one more byte
+  // than that pad and is what lets the viewer draw surfaces instead of dots.
+  const buffer = new ArrayBuffer(count * POINT_STRIDE);
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);
   for (let i = 0; i < count; i++) {
-    const b = i * 10;
+    const b = i * POINT_STRIDE;
     for (let a = 0; a < 3; a++) {
       const norm = (xyz[i * 3 + a] - min[a]) / span[a];
       const q = Math.max(-32768, Math.min(32767, Math.round(norm * 65535 - 32768)));
@@ -250,6 +279,12 @@ export function encodePoints(
     bytes[b + 6] = rgb[i * 3];
     bytes[b + 7] = rgb[i * 3 + 1];
     bytes[b + 8] = rgb[i * 3 + 2];
+    const [nu, nv] = normals
+      ? encodeOctahedral(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2])
+      : [128, 128];
+    bytes[b + 9] = nu;
+    bytes[b + 10] = nv;
+    bytes[b + 11] = 0;
   }
   return { buffer, quantization: { min, span } };
 }
@@ -294,6 +329,25 @@ export function buildScene(input: SceneInput): SceneData {
     outXyz[i * 3 + 2] = v[2];
   }
 
+  // Normals are directions, so they take the rotation into the Y-up frame but
+  // neither the metric scale nor the floor offset. The scale here is uniform,
+  // which is what makes the plain rotation correct rather than needing the
+  // inverse transpose.
+  const outNormals = points.normals ? new Float32Array(points.count * 3) : null;
+  if (outNormals && points.normals) {
+    for (let i = 0; i < points.count; i++) {
+      const n = rotate([
+        points.normals[i * 3], points.normals[i * 3 + 1], points.normals[i * 3 + 2],
+      ]);
+      const len = Math.hypot(n[0], n[1], n[2]);
+      if (len > 1e-9) {
+        outNormals[i * 3] = n[0] / len;
+        outNormals[i * 3 + 1] = n[1] / len;
+        outNormals[i * 3 + 2] = n[2] / len;
+      }
+    }
+  }
+
   // Trim statistical outliers so the bounds are not dictated by a handful of
   // stray stereo points a hundred metres away.
   const axisSorted: number[][] = [[], [], []];
@@ -320,6 +374,7 @@ export function buildScene(input: SceneInput): SceneData {
   const finalCount = kept > 1000 ? kept : points.count;
   const finalXyz = new Float32Array(finalCount * 3);
   const finalRgb = new Uint8Array(finalCount * 3);
+  const finalNormals = outNormals ? new Float32Array(finalCount * 3) : undefined;
   let w = 0;
   for (let i = 0; i < points.count; i++) {
     if (kept > 1000 && !keep[i]) continue;
@@ -329,10 +384,15 @@ export function buildScene(input: SceneInput): SceneData {
     finalRgb[w * 3] = points.rgb[i * 3];
     finalRgb[w * 3 + 1] = points.rgb[i * 3 + 1];
     finalRgb[w * 3 + 2] = points.rgb[i * 3 + 2];
+    if (finalNormals && outNormals) {
+      finalNormals[w * 3] = outNormals[i * 3];
+      finalNormals[w * 3 + 1] = outNormals[i * 3 + 1];
+      finalNormals[w * 3 + 2] = outNormals[i * 3 + 2];
+    }
     w++;
   }
 
-  const { buffer, quantization } = encodePoints(finalXyz, finalRgb, finalCount);
+  const { buffer, quantization } = encodePoints(finalXyz, finalRgb, finalCount, finalNormals);
 
   // ── Navigation ──────────────────────────────────────────────────────────
   const start = pickStart(poses, input.frameClip, input.frameOrder);
@@ -369,7 +429,7 @@ export function buildScene(input: SceneInput): SceneData {
   });
 
   return {
-    format: 2,
+    format: 3,
     id: input.id,
     label: input.label,
     generated: new Date().toISOString(),

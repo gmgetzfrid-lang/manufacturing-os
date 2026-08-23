@@ -121,8 +121,8 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
     sampleFps: 6,
     targetFps: 2,
     maxFramesPerClip: 70,
-    workingLongEdge: 960,
-    colorLongEdge: 960,
+    workingLongEdge: 1280,
+    colorLongEdge: 1280,
     blurFloorRatio: 0.35,
     minMotionPx: 5,
   },
@@ -151,13 +151,13 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
     enabled: true,
     neighbors: 4,
     maxReferenceViews: 160,
-    longEdge: 480,
-    depthSamples: 96,
+    longEdge: 960,
+    depthSamples: 128,
     patchRadius: 3,
     maxCost: 0.42,
     minConsistentViews: 2,
     depthUncertaintyVoxels: 2,
-    voxelFraction: 0.005,
+    voxelFraction: 0.0015,
     maxPoints: 2_400_000,
   },
   viewer: {
@@ -180,18 +180,20 @@ export function applyPreset(base: ReconConfig, preset: QualityPreset): ReconConf
     cfg.frames.workingLongEdge = 720;
     cfg.features.maxPerFrame = 1500;
     cfg.dense.maxReferenceViews = 70;
-    cfg.dense.longEdge = 360;
-    cfg.dense.depthSamples = 64;
+    cfg.dense.longEdge = 640;
+    cfg.dense.depthSamples = 80;
+    cfg.dense.voxelFraction = 0.0028;
     cfg.dense.maxPoints = 900_000;
     cfg.sfm.globalBaIterations = 12;
   } else if (preset === "high") {
     cfg.frames.targetFps = 2.6;
     cfg.frames.maxFramesPerClip = 110;
-    cfg.frames.workingLongEdge = 1280;
+    cfg.frames.workingLongEdge = 1600;
     cfg.features.maxPerFrame = 3500;
     cfg.dense.maxReferenceViews = 260;
-    cfg.dense.longEdge = 640;
-    cfg.dense.depthSamples = 128;
+    cfg.dense.longEdge = 1280;
+    cfg.dense.depthSamples = 176;
+    cfg.dense.voxelFraction = 0.001;
     cfg.dense.maxPoints = 3_500_000;
   }
   return cfg;
