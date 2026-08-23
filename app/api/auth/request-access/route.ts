@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { normalizeEmail, emailLikePattern } from "@/lib/identity";
 
 export async function POST(req: NextRequest) {
   try {
-    const { displayName, email, orgName } = await req.json();
+    const { displayName, email: rawEmail, orgName } = await req.json();
 
-    if (!displayName || !email || !orgName) {
+    if (!displayName || !rawEmail || !orgName) {
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
     }
+    // One canonical casing for identity (IDENT-3).
+    const email = normalizeEmail(String(rawEmail));
 
     // 1. Find the organization (case-insensitive)
     const { data: org } = await supabaseAdmin
@@ -26,14 +29,23 @@ export async function POST(req: NextRequest) {
     const orgId = (org as { id: string; name: string }).id;
     const orgRealName = (org as { id: string; name: string }).name;
 
-    // 2. Check for duplicate pending request
-    const { data: existingReq } = await supabaseAdmin
+    // 2. Check for duplicate pending request — case-insensitively (IDENT-3),
+    // and refuse on a failed lookup rather than reading it as "no pending
+    // request" and stacking a duplicate row.
+    const { data: existingReqs, error: dupCheckError } = await supabaseAdmin
       .from("access_requests")
       .select("id, status")
-      .eq("email", email)
+      .ilike("email", emailLikePattern(email))
       .eq("org_id", orgId)
       .eq("status", "pending")
-      .maybeSingle();
+      .limit(1);
+    if (dupCheckError) {
+      return NextResponse.json(
+        { error: "Couldn't check for an existing request — please try again." },
+        { status: 500 }
+      );
+    }
+    const existingReq = existingReqs?.[0] ?? null;
 
     if (existingReq) {
       return NextResponse.json(

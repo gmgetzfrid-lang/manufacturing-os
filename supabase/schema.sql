@@ -48,6 +48,19 @@ CREATE TABLE IF NOT EXISTS org_members (
   UNIQUE(org_id, uid)
 );
 
+-- Identity backstops (see migration 20261018_identity_email_unique.sql).
+-- UNIQUE(org_id, uid) above prevents one AUTH USER being doubled in an org;
+-- these prevent one PERSON (one address) being doubled — one profile per
+-- email, and at most one active membership per (org, email) however many
+-- auth identities that address accumulates. Same case-folded technique as
+-- orgs_name_unique_ci.
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_ci
+  ON users (lower(email))
+  WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS org_members_org_email_active_unique_ci
+  ON org_members (org_id, lower(email))
+  WHERE status = 'active' AND email IS NOT NULL;
+
 -- Org Configurations (e.g. drafting settings)
 CREATE TABLE IF NOT EXISTS org_configurations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { normalizeEmail, emailLikePattern } from "@/lib/identity";
 
 const TRIAL_DAYS = 60;
 
@@ -43,12 +44,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, password, displayName, companyName } = await req.json();
+    const { email: rawEmail, password, displayName, companyName } = await req.json();
 
-    if (!email || !password || !displayName || !companyName) {
+    if (!rawEmail || !password || !displayName || !companyName) {
       await recordSignupAttempt(ip, null, "error");
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
     }
+    // One canonical casing for identity (IDENT-3) — otherwise an Azure-cased
+    // UPN and a typed signup of the same address read as two different people.
+    const email = normalizeEmail(String(rawEmail));
 
     const trimmedOrgName = companyName.trim();
     if (trimmedOrgName.length < 2) {
@@ -73,14 +77,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Check if email already exists
-    const { data: existingUser } = await supabaseAdmin
+    // 2. Check if email already exists — case-insensitively, so a re-cased
+    // address finds its account (IDENT-3). limit(2) instead of maybeSingle:
+    // pre-index data may hold two profiles on one address, and maybeSingle
+    // errors (previously swallowed) on two rows — any row at all means
+    // "taken". This pre-check is a courtesy; auth.createUser below is the
+    // real enforcement and rejects an already-registered address either way.
+    const { data: existingUsers } = await supabaseAdmin
       .from("users")
       .select("id")
-      .eq("email", email)
-      .maybeSingle();
+      .ilike("email", emailLikePattern(email))
+      .limit(2);
 
-    if (existingUser) {
+    if (existingUsers && existingUsers.length > 0) {
       return NextResponse.json(
         { error: "An account with this email already exists. Please sign in instead." },
         { status: 409 }
@@ -96,7 +105,18 @@ export async function POST(req: NextRequest) {
     });
 
     if (authError || !authData.user) {
-      return NextResponse.json({ error: authError?.message || "Failed to create account." }, { status: 400 });
+      // The duplicate-email refusal from auth lands here whenever the
+      // pre-check missed (it reads the profile mirror, which can lag).
+      // Say what happened instead of relaying the raw auth error.
+      const authMsg = authError?.message ?? "";
+      const authCode = (authError as { code?: string } | null)?.code;
+      if (authCode === "email_exists" || /already (been )?registered/i.test(authMsg)) {
+        return NextResponse.json(
+          { error: "An account with this email already exists. Please sign in instead." },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json({ error: authMsg || "Failed to create account." }, { status: 400 });
     }
     const userId = authData.user.id;
 
