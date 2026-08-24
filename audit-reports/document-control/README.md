@@ -79,8 +79,9 @@ counts require the reviewer's own bound e-signature) and `RG-2` (a publisher
 could mark another reviewer's row signed → a BEFORE UPDATE trigger makes row
 identity immutable and the →signed transition the reviewer's own act; the app
 pins the write and surfaces zero-row refusals). Ship loop green: `tsc`,
-`eslint`, **1498 vitest**, full `next build`. **One migration to hand-apply:**
-`20261030_dc_phase4_review_gate.sql`.
+`eslint`, **1498 vitest**, full `next build`. Migration
+`20261030_dc_phase4_review_gate.sql` **applied & verified live 2026-08-24**
+(3-point probe all true).
 
 | # | Report | n | Note |
 |---|---|---|---|
