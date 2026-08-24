@@ -957,6 +957,8 @@ export async function reconstruct(
   triangulatePending();
 
   const failed = new Set<number>();
+  /** Bridges that failed composition, keyed to the model size they failed at. */
+  const bridgeFailedAt = new Map<string, number>();
   let sinceBa = 0;
   let minSupport = cfg.sfm.minPnpInliers;
 
@@ -975,7 +977,13 @@ export async function reconstruct(
       .slice(0, 24);
 
     for (const bridge of bridges) {
+      // A bridge that failed is deterministic until the model changes: retrying
+      // it before another frame registers just burns the budget on a known
+      // answer (one stubborn bridge was measured retrying six times unchanged).
+      const key = pairKey(bridge.a, bridge.b);
+      if (bridgeFailedAt.get(key) === poses.size) continue;
       if (composeFrom(bridge)) return true;
+      bridgeFailedAt.set(key, poses.size);
     }
     return false;
   };
@@ -1013,7 +1021,8 @@ export async function reconstruct(
       return [Ar[0], Ar[1], Ar[2]] as [number, number, number];
     };
     const scaleObs: Array<{
-      X: [number, number, number]; A: [number, number, number]; x: number; y: number;
+      X: [number, number, number]; A: [number, number, number];
+      x: number; y: number; ti: number;
     }> = [];
     const seenTracks = new Set<number>();
     for (const [ka, kb] of bestPair.matches) {
@@ -1026,7 +1035,7 @@ export async function reconstruct(
       const o = observationOf(candidate, candidateKp);
       if (!o) continue;
       seenTracks.add(ti);
-      scaleObs.push({ X: track.xyz, A: toWorld(track.xyz), x: o.x, y: o.y });
+      scaleObs.push({ X: track.xyz, A: toWorld(track.xyz), x: o.x, y: o.y, ti });
     }
     // Tracks the candidate is already part of contribute too.
     for (const ti of tracksByFrame.get(candidate) ?? []) {
@@ -1038,7 +1047,7 @@ export async function reconstruct(
       const o = observationOf(candidate, kp);
       if (!o) continue;
       seenTracks.add(ti);
-      scaleObs.push({ X: track.xyz, A: toWorld(track.xyz), x: o.x, y: o.y });
+      scaleObs.push({ X: track.xyz, A: toWorld(track.xyz), x: o.x, y: o.y, ti });
     }
     if (scaleObs.length < 3) { composeStats.fewAnchors++; return false; }
 
@@ -1098,6 +1107,23 @@ export async function reconstruct(
     }
     if (bestInliers < 3) { composeStats.scaleVote++; return false; }
 
+    // A bridge whose anchors cannot tell baselines apart must not place a
+    // camera. When the anchors sit far away, EVERY scale fits them at the
+    // loose gate, the winning hypothesis is arbitrary, and one such bridge
+    // kept composing a zero-baseline camera. Perturb the scale by more than
+    // the gate should tolerate; if the basin barely shrinks, the scale was
+    // never actually measured — skip and let a better bridge place the frame.
+    const depths = scaleObs
+      .map((o) => o.A[2] + bestS * b[2])
+      .filter((z) => z > 0)
+      .sort((x, y) => x - y);
+    const medDepth = depths.length ? depths[depths.length >> 1] : 1;
+    const ds = Math.max(bestS * 0.6, medDepth * 0.08);
+    const inliersAt = (sc: number) =>
+      sc > 0 ? scaleObs.reduce((n, o) => n + (errAt(sc, o) < basinLimit ? 1 : 0), 0) : 0;
+    const offSupport = Math.max(inliersAt(bestS + ds), inliersAt(bestS - ds));
+    if (offSupport >= bestInliers * 0.85) { composeStats.scaleVote++; return false; }
+
     const Rf = mat3Mul(Rrel, anchorPose.R);
     const ta = mat3MulVec(Rrel, anchorPose.t);
     const composed: Pose = {
@@ -1124,9 +1150,9 @@ export async function reconstruct(
         (v[1] + p.t[1]) / z - c.y,
       ) * focal;
     };
-    const basin: PnpCorrespondence[] = scaleObs
+    const basin: Array<PnpCorrespondence & { ti: number }> = scaleObs
       .filter((o) => errAt(bestS, o) < basinLimit)
-      .map((o) => ({ X: o.X, x: o.x, y: o.y }));
+      .map((o) => ({ X: o.X, x: o.x, y: o.y, ti: o.ti }));
     // Refining 6 DOF against 3 points is a tautology — they fit afterwards no
     // matter what. With so few, judge the UNREFINED composed pose, whose only
     // fitted freedom is the voted scale, and demand every point agree.
@@ -1156,6 +1182,44 @@ export async function reconstruct(
       );
     }
     if (strict.length < needed) {
+      // Near-misses are the COMMON case at a frontier: the anchors are young
+      // tracks that no bundle adjustment has touched, so a correct pose often
+      // measures a 5–8px median against the 5px gate. Give such a bridge the
+      // polish it is missing — place the frame provisionally, run the local
+      // bundle adjustment, and keep it only if the consensus then passes the
+      // SAME strict gate against the adjusted structure. Everything is
+      // restored if it does not, so a wrong pose still cannot get in.
+      if (strict.length < Math.max(4, Math.ceil(basin.length * 0.35))) {
+        composeStats.strictGate++;
+        return false;
+      }
+      const posesSnap = new Map(poses);
+      const xyzSnap = tracks.map((t) =>
+        t.xyz ? ([...t.xyz] as [number, number, number]) : null,
+      );
+      poses.set(candidate, pose);
+      triangulatePending();
+      runBundle(cfg.sfm.localBaWindow);
+      const post = poses.get(candidate)!;
+      let postCount = 0;
+      for (const o of basin) {
+        const X = tracks[o.ti].xyz;
+        if (!X) continue;
+        if (reprojPx(post, { X, x: o.x, y: o.y }) < limit) postCount++;
+      }
+      if (postCount >= needed) {
+        if (cfg.sfm.debugCompose) {
+          console.log(
+            `[compose] ${anchorFrame}->${candidate} accepted after local BA ` +
+            `(${postCount}/${needed})`,
+          );
+        }
+        compositionRescues++;
+        sinceBa = 0;
+        return true;
+      }
+      poses = posesSnap;
+      for (let i = 0; i < tracks.length; i++) tracks[i].xyz = xyzSnap[i];
       composeStats.strictGate++;
       return false;
     }
