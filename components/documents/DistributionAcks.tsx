@@ -103,7 +103,7 @@ export default function DistributionAcks({
     if (!myPending) return;
     setAcking(true);
     try {
-      await acknowledge(myPending.id);
+      await acknowledge(myPending.id, currentUserId);
       await load();
     } finally {
       setAcking(false);

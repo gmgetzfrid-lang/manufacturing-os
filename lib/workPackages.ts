@@ -270,7 +270,7 @@ export async function refreshWorkPackage(packageId: string): Promise<void> {
     throw new Error(
       failed > 0
         ? `Refresh failed for ${failed} of ${rows.length} pins: ${results.find((r) => r.error)?.error?.message}`
-        : `Refresh matched 0 rows for ${unmatched} of ${rows.length} pins — the pins did NOT move. Apply migration 20260828 (work_package_documents update policy) and retry.`,
+        : `Refresh matched 0 rows for ${unmatched} of ${rows.length} pins — the pins did NOT move. Moving pins requires being the package's owner or Document Control (PKG-5); on an older database, apply migration 20260828 and retry.`,
     );
   }
 }
