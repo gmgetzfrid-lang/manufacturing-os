@@ -1087,20 +1087,47 @@ export async function reconstruct(
       ],
     };
 
-    const corr: PnpCorrespondence[] = scaleObs.map((o) => ({ X: o.X, x: o.x, y: o.y }));
-    const pose = refinePose(composed, corr);
-    let strictInliers = 0;
-    for (const c of corr) {
-      const p = mat3MulVec(pose.R, c.X);
-      const z = p[2] + pose.t[2];
-      if (z <= 1e-9) continue;
-      const e = Math.hypot(
-        (p[0] + pose.t[0]) / z - c.x,
-        (p[1] + pose.t[1]) / z - c.y,
+    // In self-similar footage a share of the bridge's matches are WRONG
+    // correspondences — epipolar-consistent, but on a different repeat of the
+    // texture — so they must not steer the refinement or vote in the final
+    // gate. Refine on the basin consensus only, re-fit once on the strict
+    // survivors, and measure support against the consensus rather than the
+    // raw match count: outliers abstain, as in every other RANSAC step here.
+    const reprojPx = (p: Pose, c: PnpCorrespondence): number => {
+      const v = mat3MulVec(p.R, c.X);
+      const z = v[2] + p.t[2];
+      if (z <= 1e-9) return Infinity;
+      return Math.hypot(
+        (v[0] + p.t[0]) / z - c.x,
+        (v[1] + p.t[1]) / z - c.y,
       ) * focal;
-      if (e < limit) strictInliers++;
+    };
+    const basin: PnpCorrespondence[] = scaleObs
+      .filter((o) => errAt(bestS, o) < basinLimit)
+      .map((o) => ({ X: o.X, x: o.x, y: o.y }));
+    // Refining 6 DOF against 3 points is a tautology — they fit afterwards no
+    // matter what. With so few, judge the UNREFINED composed pose, whose only
+    // fitted freedom is the voted scale, and demand every point agree.
+    let pose = composed;
+    let strict: PnpCorrespondence[];
+    const strictOf = (p: Pose) => basin.filter((c) => reprojPx(p, c) < limit);
+    if (basin.length >= 4) {
+      pose = refinePose(composed, basin);
+      strict = strictOf(pose);
+      if (strict.length >= 4) {
+        pose = refinePose(pose, strict);
+        strict = strictOf(pose);
+      }
+    } else {
+      strict = strictOf(pose);
     }
-    if (strictInliers < Math.max(3, Math.ceil(scaleObs.length * 0.5))) {
+    const needed = basin.length >= 4
+      ? Math.max(4, Math.ceil(basin.length * 0.6))
+      : basin.length;
+    if (typeof globalThis !== "undefined" && (globalThis as Record<string, unknown>).__COMPOSE_DEBUG) {
+      console.log(`[compose] ${anchorFrame}->${candidate} obs=${scaleObs.length} s=${bestS.toFixed(3)} basin=${basin.length} strict=${strict.length} need=${needed}`);
+    }
+    if (strict.length < needed) {
       composeStats.strictGate++;
       return false;
     }
