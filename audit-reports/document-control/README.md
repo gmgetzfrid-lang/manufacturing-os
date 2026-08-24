@@ -42,6 +42,19 @@ authorized to the caller's own orphan and revoked from PUBLIC). Ship loop green:
 and installs the transmittal write rail. `XEDGE-1` and `PKG-1` are pure app-side
 and live on the branch.
 
+**Phase 2 — the field-verdict cluster (the sequencing file's top priority) —
+is complete.** The paper-facing half of document control was telling the field
+the wrong answer; three CRITICALs closed, each reproduced first, with tests:
+`REV-1` (an old revision downloaded/printed as CURRENT, and unstamped for the
+checkout holder → downloads describe the served version and a non-current copy
+is never a controlled master), `DIST-2` (the QR verify endpoint reported Void,
+Draft and held drawings as green → verdict now derives from the shared
+not-current set and checks active holds, fail-safe), `PKG-2` (the pack QR
+verified the live pin so a desk refresh re-armed field paper to green → an
+immutable print snapshot the QR verifies against). Ship loop green: `tsc`,
+`eslint`, **1486 vitest**, full `next build`. **One migration to hand-apply:**
+`20261028_work_package_prints.sql` (the print snapshot table).
+
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |

@@ -232,6 +232,10 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
 
 export interface PackageCoverInput {
   packageId: string;
+  /** The immutable print-snapshot id (PKG-2). When present the QR verifies
+   *  against WHAT WAS PRINTED, so refreshing pins can't flip this paper's
+   *  verdict. Omitted → legacy package-level QR. */
+  printId?: string | null;
   name: string;
   description?: string | null;
   ownerName?: string | null;
@@ -272,7 +276,10 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
   // PUBLIC verify page — the crew member scanning in the field has no
   // account; the old /packages target was a login wall under the words
   // "SCAN BEFORE STARTING WORK".
-  const qr = await qrPng(doc, `${origin()}/verify-package/${input.packageId}`);
+  const verifyTarget = input.printId
+    ? `${origin()}/verify-package/${input.packageId}?print=${input.printId}`
+    : `${origin()}/verify-package/${input.packageId}`;
+  const qr = await qrPng(doc, verifyTarget);
   if (qr) {
     page.drawImage(qr, { x: 440, y: 80, width: 130, height: 130 });
     page.drawText("SCAN BEFORE STARTING WORK", { x: 428, y: 66, size: 9, font: bold, color: AMBER });

@@ -68,7 +68,18 @@ app/api/storage/upload-url/route.ts:33-53 — `const orgMatch = path.match(/^org
 ## PKG-2 · The cover-sheet QR verifies the LIVE database pin, not the paper — so 'Refresh pins', or simply re-adding a drawing, re-arms an already-printed stale pack to GREEN
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 2 — the field-verdict cluster).** Confirmed: the cover QR encoded only the package id, so `/api/verify-package` read the mutable `work_package_documents` pins, and "Refresh pins" or re-adding a drawing re-armed already-printed paper to green. Fixed with an immutable print snapshot:
+- New table `work_package_prints` (migration `20261028`) records, at print time, the exact version of every sheet as printed. It is INSERT-once — RLS grants active members SELECT + INSERT and NO update/delete, so the snapshot cannot be mutated (a mutable snapshot would reintroduce this bug).
+- `recordPackagePrint` writes the snapshot from the just-refreshed pins; `buildPackageCover` encodes `?print=<printId>` in the cover QR. Both are best-effort/deploy-safe — if the table is absent the print still runs with the legacy package-level QR.
+- `/api/verify-package` compares each **recorded** version against the document's current version, so refreshing pins after printing can no longer flip the verdict for paper in the field. A print id that resolves to no snapshot reads "CAN'T VERIFY THIS PACK" (red), never green.
+- `addDocumentToPackage` no longer silently re-pins an already-present document (the old `upsert`): it returns `"already"` and leaves the pin where it is — moving a pin is `refreshWorkPackage`'s explicit job. The Add button says "already in — pin unchanged".
+- Done-when: (1) printing writes an immutable print record (print id + per-doc version id + printed_at) and the cover QR encodes the print id ✓; (2) verify compares the scanned print's recorded versions against current ✓; (3) re-adding a pinned document no-ops the pin ✓.
+- Files: `supabase/migrations/20261028_work_package_prints.sql`, `lib/workPackages.ts`, `lib/physicalBridge.ts`, `app/api/verify-package/route.ts`, `app/verify-package/[packageId]/page.tsx`, `app/(protected)/packages/page.tsx`, `components/documents/AddToPackageButton.tsx`, plus export/restore coverage (`lib/exportTables.ts`, `lib/dataRestore.ts`, `lib/schemaExpectations.ts`).
+- Tests: `lib/__tests__/verifyPackageSnapshot.test.ts` — a snapshot at v1 reads STALE even after the live pin is refreshed to v2; a snapshot at current reads CURRENT; an unknown print never reads green; the legacy no-print QR still uses live pins.
+- **Pending hand-apply (DEC-30):** `20261028` creates the print table. Until applied, `recordPackagePrint` no-ops and the QR falls back to the legacy package-level check (the pre-fix behaviour) — no regression, but the snapshot protection is inactive until the migration runs.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/physicalBridge.ts:275-281`, `app/api/verify-package/route.ts:54-64`, `app/verify-package/[packageId]/page.tsx:90-98`, `lib/workPackages.ts:194-229`, `lib/workPackages.ts:176-191`, `components/documents/AddToPackageButton.tsx:30-43`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The verdict page states a fact the data cannot support — app/verify-package/[packageId]/page.tsx:95 renders `${staleCount} of ${sheetCount} sheets changed since this pack was printed` from a comparison that has no knowledge of any print. Any re-pin flips already-distributed paper back to 'PACK IS CURRENT'.

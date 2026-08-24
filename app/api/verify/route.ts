@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -33,15 +34,34 @@ export async function GET(req: NextRequest) {
 
   const { data: doc } = await sb
     .from("documents")
-    .select("id, document_number, title, name, rev, status, current_version_id, superseded_at")
+    .select("id, document_number, title, name, rev, status, current_version_id, superseded_at, legal_hold")
     .eq("id", docId)
     .maybeSingle();
   if (!doc) return NextResponse.json({ error: "Unknown document" }, { status: 404 });
 
   const d = doc as {
     id: string; document_number: string | null; title: string | null; name: string | null;
-    rev: string | null; status: string | null; current_version_id: string | null; superseded_at: string | null;
+    rev: string | null; status: string | null; current_version_id: string | null;
+    superseded_at: string | null; legal_hold: boolean | null;
   };
+
+  // An unreleased hold is a STOP-WORK signal — the drawing must not read as
+  // usable in the field even if it is the current revision (the cross-area
+  // field-verdict cluster). Legal hold and an open document_holds row both
+  // count. A lookup error must never flip a held document to green, so treat
+  // an errored hold read as "held" (fail safe for a stop-work signal).
+  let heldError = false;
+  let onHold = d.legal_hold === true;
+  if (!onHold) {
+    const { data: holdRows, error: holdErr } = await sb
+      .from("document_holds")
+      .select("id")
+      .eq("document_id", docId)
+      .is("released_at", null)
+      .limit(1);
+    if (holdErr) heldError = true;
+    else onHold = ((holdRows as unknown[]) ?? []).length > 0;
+  }
 
   interface PrintedVersion {
     revision_label: string | null;
@@ -86,12 +106,40 @@ export async function GET(req: NextRequest) {
     effectiveDate = c?.effective_date ?? null;
   }
 
-  const docRetired = d.status === "Superseded" || d.status === "Archived";
-  const isCurrent = !docRetired && (!versionId || versionId === d.current_version_id);
+  // Retirement is the SHARED not-current set (Superseded, Void, Archived) —
+  // an inline literal here is exactly how "Void" slipped through and verified
+  // green (DIST-2). "Draft" is not retired but is also not in force: a print
+  // from a Draft-status document must not read as current either.
+  const status = d.status ?? "";
+  const docRetired = NOT_CURRENT_STATUSES.has(status);
+  const isDraft = status === "Draft";
+  const isThisTheCurrentVersion = !versionId || versionId === d.current_version_id;
+
+  // The field verdict, most-severe first. `isCurrent` stays for back-compat
+  // (older clients read only that boolean) but is true ONLY for the plain
+  // in-force case.
+  let verdict:
+    | "current" | "not_yet_effective" | "held"
+    | "superseded" | "void" | "archived" | "draft" | "superseded_version";
+  if (onHold || heldError) verdict = "held";
+  else if (status === "Void") verdict = "void";
+  else if (status === "Archived") verdict = "archived";
+  else if (status === "Superseded") verdict = "superseded";
+  else if (isDraft) verdict = "draft";
+  // Any other member of the shared not-current set (future-proofing: a new
+  // retired status can never silently default to green) → generic not-current.
+  else if (docRetired) verdict = "superseded_version";
+  else if (!isThisTheCurrentVersion) verdict = "superseded_version";
+  else verdict = "current";
+
+  const inForceNow = verdict === "current";
   // A published rev with a FUTURE effective date is the latest issue but is
   // not yet in force — the field page must not flash an unqualified green.
   const notYetEffective =
-    isCurrent && !!effectiveDate && effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10);
+    inForceNow && !!effectiveDate && effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10);
+  if (notYetEffective) verdict = "not_yet_effective";
+
+  const isCurrent = verdict === "current";
 
   return NextResponse.json({
     docNumber: d.document_number || d.name || null,
@@ -102,7 +150,9 @@ export async function GET(req: NextRequest) {
     currentIssuedAt,
     effectiveDate,
     notYetEffective,
+    onHold: onHold || heldError,
     docStatus: d.status ?? null,
+    verdict,
     isCurrent,
     checkedAt: new Date().toISOString(),
   });

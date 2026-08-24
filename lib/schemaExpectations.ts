@@ -111,6 +111,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "transmittals", migration: "20260717_transmittals.sql" },
   { table: "units", migration: "20260606_operational_entity_graph.sql" },
   { table: "work_package_documents", migration: "20260825_work_packages_acks.sql" },
+  { table: "work_package_prints", migration: "20261028_work_package_prints.sql" },
   { table: "work_packages", migration: "20260825_work_packages_acks.sql" },
 ];
 

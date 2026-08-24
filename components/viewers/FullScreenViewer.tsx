@@ -124,6 +124,12 @@ interface FullScreenViewerProps {
   title: string;
   docNumber: string;
   rev: string;
+  /** The id of the version whose bytes `url` serves. When it is an OLDER
+   *  revision (from version history) this differs from
+   *  document.currentVersionId, and the download stamp/filename/QR/audit must
+   *  describe THIS version, not the document's current one (REV-1). Omit when
+   *  showing the current version. */
+  viewingVersionId?: string;
   document?: DocumentRecord;
   userRole?: string | null;
   currentUserId?: string;
@@ -144,10 +150,15 @@ interface FullScreenViewerProps {
 }
 
 export default function FullScreenViewer({
-  isOpen, onClose, url, title, docNumber, rev, document: docRecord,
+  isOpen, onClose, url, title, docNumber, rev, viewingVersionId, document: docRecord,
   userRole, currentUserId, currentUserEmail, onCheckout,
   orgId, customColumns, initialPageStates, onPageStatesChange, onCommit,
 }: FullScreenViewerProps) {
+  // Whether the bytes on screen ARE the document's current version. A copy
+  // taken while viewing an older revision must never be treated as the
+  // controlled master, and its stamp/QR/audit must name the old rev (REV-1).
+  const viewingIsCurrent = !viewingVersionId || viewingVersionId === docRecord?.currentVersionId;
+  const servedVersionId = viewingVersionId ?? docRecord?.currentVersionId ?? undefined;
   const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
     || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
   const router = useRouter();
@@ -831,7 +842,7 @@ export default function FullScreenViewer({
 
   // ─── Download / Print (original document, optionally stamped) ─────────
   const controlState = docRecord && currentUserId
-    ? determineControlState(docRecord, currentUserId) : "uncontrolled";
+    ? determineControlState(docRecord, currentUserId, viewingIsCurrent) : "uncontrolled";
   const isControlled = controlState === "controlled";
 
   const runDocAction = async (type: "download" | "print") => {
@@ -840,7 +851,7 @@ export default function FullScreenViewer({
     try {
       const ctx = { doc: docRecord, fileUrl: resolvedUrl ?? url, userId: currentUserId,
         userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null,
-        versionId: docRecord.currentVersionId ?? undefined };
+        versionId: servedVersionId, versionRev: rev || null, versionIsCurrent: viewingIsCurrent };
       if (type === "download") await downloadDocumentPdf(ctx);
       else await printDocumentPdf(ctx);
       setPending(null);
@@ -961,7 +972,7 @@ export default function FullScreenViewer({
     // batching and makes the decision tree easier to debug.
     const liveState: "controlled" | "uncontrolled" =
       docRecord && currentUserId
-        ? determineControlState(docRecord, currentUserId)
+        ? determineControlState(docRecord, currentUserId, viewingIsCurrent)
         : "uncontrolled";
     const stampNow = liveState !== "controlled";
     console.warn("[FullScreenViewer] downloadWithMarkup", {
@@ -1012,8 +1023,8 @@ export default function FullScreenViewer({
           expiresAt,
           watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
           footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
-          verifyUrl: docRecord?.id && docRecord.currentVersionId && publicOrigin()
-            ? `${publicOrigin()}/verify/${docRecord.id}?v=${docRecord.currentVersionId}`
+          verifyUrl: docRecord?.id && servedVersionId && publicOrigin()
+            ? `${publicOrigin()}/verify/${docRecord.id}?v=${servedVersionId}`
             : undefined,
         });
         suffix = "_markup_UNCONTROLLED";
@@ -1033,14 +1044,15 @@ export default function FullScreenViewer({
       if (docRecord && currentUserId) {
         await logDownloadAudit({
           doc: docRecord,
-          versionId: docRecord.currentVersionId ?? undefined,
+          versionId: servedVersionId,
           userId: currentUserId,
           userEmail: currentUserEmail ?? null,
           state: liveState,
           expiresAt: stampNow ? expiresAt : null,
         });
         // Marking up is the most edit-like act in the viewer — record it so
-        // overlap advisories and provenance see the work.
+        // overlap advisories and provenance see the work. But marking up an
+        // OLD revision is a reference, not an edit base (REV-1 chain reaction).
         if (docRecord.orgId && docRecord.id) {
           void recordIntent({
             orgId: docRecord.orgId,
@@ -1048,9 +1060,9 @@ export default function FullScreenViewer({
             libraryId: docRecord.libraryId ?? null,
             userId: currentUserId,
             userName: currentUserEmail?.split("@")[0] ?? null,
-            kind: "edit",
+            kind: viewingIsCurrent ? "edit" : "reference",
             source: "download",
-            baseVersionId: docRecord.currentVersionId ?? null,
+            baseVersionId: servedVersionId ?? null,
           });
         }
       }
@@ -1075,7 +1087,7 @@ export default function FullScreenViewer({
       void downloadWithMarkup();
       return;
     }
-    const live = determineControlState(docRecord, currentUserId);
+    const live = determineControlState(docRecord, currentUserId, viewingIsCurrent);
     console.warn("[FullScreenViewer] live control state:", live);
     if (live === "controlled") {
       // User holds checkout → raw bake, no stamp, no modal

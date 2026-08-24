@@ -153,6 +153,11 @@ export default function VersionHistoryPanel({
       await downloadDocumentPdf({
         doc: docForDownload,
         versionId: v.id,
+        // Stamp/filename/QR must name THIS revision, not the document's
+        // current one (REV-1) — the panel downloads a specific historical
+        // version's bytes.
+        versionRev: v.revisionLabel ?? null,
+        versionIsCurrent: v.id === doc.currentVersionId,
         fileUrl: httpUrl,
         userId: currentUserId,
         userEmail: currentUserEmail ?? null,

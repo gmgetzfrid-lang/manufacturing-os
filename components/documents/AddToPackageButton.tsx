@@ -30,13 +30,15 @@ export default function AddToPackageButton({ doc, orgId, userId, userName }: {
   const addTo = async (packageId: string, name: string) => {
     if (!doc.id) return;
     try {
-      await addDocumentToPackage({
+      const outcome = await addDocumentToPackage({
         packageId, orgId,
         doc: { id: doc.id, rev: doc.rev ?? null, currentVersionId: doc.currentVersionId ?? null },
         actorName: userName ?? null,
       });
-      setAddedTo(name);
-      setTimeout(() => { setAddedTo(null); setOpen(false); }, 1400);
+      // Re-adding leaves the existing pin where it is (PKG-2) — say so rather
+      // than implying a fresh pin was taken.
+      setAddedTo(outcome === "already" ? `${name} (already in — pin unchanged)` : name);
+      setTimeout(() => { setAddedTo(null); setOpen(false); }, 1600);
     } catch (e) {
       await appAlert({ message: `Couldn't add to the package: ${(e as Error).message}`, tone: "danger" });
     }

@@ -32,7 +32,17 @@ Every path to a published revision, and which ones skip the guard.
 ## REV-1 · Downloading or printing an old revision stamps, names, QR-links and audits it as the CURRENT revision — and the checkout holder gets it raw, unstamped
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 2 — the field-verdict cluster).** Confirmed against current code. `lib/downloads.ts` was rebuilt to describe the SERVED version rather than the document's current rev, correct-by-construction:
+- `DownloadContext` gained `versionRev` (the served bytes' label) and `versionIsCurrent`. `defaultFilename`, `buildFooterNotice`, `buildVerifyUrl` and the audit/intent writes all take the served version; an old-revision copy is stamped "SUPERSEDED REVISION — Rev N … do not use for construction", filed as `_RevN`, QR-linked with `?v=<that version>`, and audited against it.
+- `determineControlState(doc, userId, versionIsCurrent)` now returns **uncontrolled for any non-current version even for the checkout holder** — so a superseded drawing can never walk to the field unstamped (Done-when 2).
+- The chain reaction is closed: a non-current pull records a `reference` intent, never an `edit` base, so a draft on superseded bytes no longer passes the stale-base contract.
+- All three callers pass the served version: `FullScreenViewer` gained a `viewingVersionId` prop (wired from `selectedVersion.id` in `documents/[libraryId]/page.tsx`); `VersionHistoryPanel.handleDownload` passes `versionRev`/`versionIsCurrent`; `MultiDocViewer` only ever shows current docs (verifier-confirmed) so needs none.
+- Done-when: (1) stamp/filename/QR/audit all describe the served version ✓; (2) a non-current version never takes the controlled branch ✓; (3) the QR on an old-revision print returns `isCurrent: false` — the served version id flows into `/api/verify`, which now also reports Void/Superseded/hold honestly (see `DIST-2`) ✓.
+- Files: `lib/downloads.ts`, `components/viewers/FullScreenViewer.tsx`, `components/documents/VersionHistoryPanel.tsx`, `app/(protected)/documents/[libraryId]/page.tsx`
+- Tests: `lib/__tests__/downloadsRevLabel.test.ts` — holder gets controlled current / uncontrolled old; footer names the served rev and says SUPERSEDED; QR encodes the served version id.
+
 - **Verification:** CONFIRMED
 - **Locations:** `components/viewers/FullScreenViewer.tsx:833-845`, `components/viewers/FullScreenViewer.tsx:1036`, `components/viewers/MultiDocViewer.tsx:689-691`, `lib/downloads.ts:30-37`, `lib/downloads.ts:71-76`, `lib/downloads.ts:80-88`, `lib/downloads.ts:95-102`, `lib/downloads.ts:245-252`, `app/api/verify/route.ts:90`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every limb holds: the viewer renders old bytes against the current DocumentRecord, so filename, footer, QR ?v= and the download_audits row all say Rev 5, and a checkout holder takes the Rev 2 bytes completely unstamped. Partial mitigation the finding did not credit: VersionHistoryPanel's OWN download button (lines 129-165) clones the doc with `checkedOutBy: undefined` to force the uncontrolled stamp and passes the correct `versionId: v.id` — but it still stamps `doc.rev`, so even that path labels Rev 2 bytes as Rev 5.

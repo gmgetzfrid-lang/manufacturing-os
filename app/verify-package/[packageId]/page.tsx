@@ -7,7 +7,7 @@
 // printing; the list shows exactly which ones.
 
 import React, { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
 
 interface SheetRow {
@@ -22,6 +22,8 @@ interface VerifyPackageResult {
   name: string;
   packageStatus: string | null;
   closed: boolean;
+  printedAt?: string | null;
+  snapshotMissing?: boolean;
   sheetCount: number;
   staleCount: number;
   allFresh: boolean;
@@ -31,6 +33,8 @@ interface VerifyPackageResult {
 
 export default function VerifyPackagePage() {
   const params = useParams<{ packageId: string }>();
+  const search = useSearchParams();
+  const printId = search.get("print");
   const [result, setResult] = useState<VerifyPackageResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +43,11 @@ export default function VerifyPackagePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/verify-package?p=${encodeURIComponent(params.packageId)}`);
+      // Forward the print id from the QR so verification compares against the
+      // recorded print snapshot, not the live pins (PKG-2).
+      const qs = new URLSearchParams({ p: params.packageId });
+      if (printId) qs.set("print", printId);
+      const res = await fetch(`/api/verify-package?${qs.toString()}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error || "Could not verify this code");
@@ -51,7 +59,7 @@ export default function VerifyPackagePage() {
     } finally {
       setLoading(false);
     }
-  }, [params.packageId]);
+  }, [params.packageId, printId]);
 
   useEffect(() => { void check(); }, [check]);
 
@@ -82,18 +90,23 @@ export default function VerifyPackagePage() {
           </div>
         ) : result && (
           <>
-            {result.allFresh ? (
+            {result.snapshotMissing ? (
+              <ShieldQuestion className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+            ) : result.allFresh ? (
               <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : (
               <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
             <h1 className="text-3xl font-black text-white leading-tight mb-1">
-              {result.allFresh ? "PACK IS CURRENT" : "PACK IS STALE"}
+              {result.snapshotMissing ? "CAN'T VERIFY THIS PACK" : result.allFresh ? "PACK IS CURRENT" : "PACK IS STALE"}
             </h1>
             <p className="text-white/90 text-sm font-bold mb-6">
-              {result.allFresh
+              {result.snapshotMissing
+                ? "The print record for this pack could not be found — do not assume it is current. Contact Document Control."
+                : result.allFresh
                 ? "Every sheet in this pack is still the current revision."
                 : `${result.staleCount} of ${result.sheetCount} sheet${result.sheetCount === 1 ? "" : "s"} changed since this pack was printed — get the new sheets before starting work.`}
+              {result.printedAt ? ` Printed ${new Date(result.printedAt).toLocaleDateString()}.` : ""}
               {result.closed ? " (This package has been closed.)" : ""}
             </p>
 

@@ -19,6 +19,16 @@ export type ControlState = "controlled" | "uncontrolled";
 export type DownloadContext = {
   doc: DocumentRecord;
   versionId?: string;
+  /** Revision label of the BYTES being served (e.g. "2"). When the copy is of
+   *  an older revision this differs from doc.rev (the current label), and the
+   *  stamp/filename/QR must describe THIS, not the document's current rev
+   *  (REV-1). Falls back to doc.rev only when the caller serves the current
+   *  version and does not pass it. */
+  versionRev?: string | null;
+  /** True when the served bytes ARE the document's current version. False for
+   *  a copy taken from version history. A non-current copy is never a
+   *  controlled (unstamped) master, regardless of who holds the checkout. */
+  versionIsCurrent?: boolean;
   fileUrl: string;            // resolved presigned URL or blob URL of the source PDF
   filename?: string;
   userId: string;
@@ -27,11 +37,25 @@ export type DownloadContext = {
   expiresInHours?: number;    // default 24
 };
 
-export function determineControlState(doc: DocumentRecord, userId: string): ControlState {
+/** The revision label to stamp/name a copy with: the served version's label
+ *  when known, else the document's current label. */
+function servedRev(ctx: { doc: DocumentRecord; versionRev?: string | null }): string | null {
+  return ctx.versionRev ?? ctx.doc.rev ?? null;
+}
+
+export function determineControlState(
+  doc: DocumentRecord,
+  userId: string,
+  versionIsCurrent = true,
+): ControlState {
   // A controlled COPY is only available when the requester is the active
-  // checkout holder. Everyone else gets a stamped uncontrolled copy.
+  // checkout holder AND the bytes are the current controlled master. A copy
+  // of an OLD revision is never controlled, even for the checkout holder —
+  // otherwise a superseded drawing walks to the field with no UNCONTROLLED
+  // mark at all (REV-1).
   // NOTE: this is the COPY rule (download/print/markup). For the on-screen
   // viewer badge, use viewerStatusBadge instead — see below.
+  if (!versionIsCurrent) return "uncontrolled";
   if (doc.checkedOutBy && doc.checkedOutBy === userId) return "controlled";
   return "uncontrolled";
 }
@@ -68,20 +92,28 @@ export function viewerStatusBadge(
   }
 }
 
-function defaultFilename(doc: DocumentRecord, suffix: string): string {
+function defaultFilename(ctx: DownloadContext, suffix: string): string {
   const stem =
-    (doc.documentNumber || doc.title || doc.name || "document").replace(/[^\w.\-]+/g, "_");
-  const rev = doc.rev ? `_Rev${doc.rev}` : "";
+    (ctx.doc.documentNumber || ctx.doc.title || ctx.doc.name || "document").replace(/[^\w.\-]+/g, "_");
+  const label = servedRev(ctx);
+  const rev = label ? `_Rev${label}` : "";
   return `${stem}${rev}${suffix}.pdf`;
 }
 
 /** The stamped footer notice: rev-at-issue + (when someone else is mid-change)
- *  an active-change warning, so a stale print on a desk announces itself. */
-export function buildFooterNotice(doc: DocumentRecord, userId: string): string {
+ *  an active-change warning, so a stale print on a desk announces itself. The
+ *  rev printed is the SERVED version's (REV-1), and a copy of an older
+ *  revision says so outright. */
+export function buildFooterNotice(ctx: DownloadContext): string {
   const parts: string[] = [];
-  parts.push(`Rev ${doc.rev ?? "?"} at time of issue — verify current revision before use.`);
-  if (doc.checkedOutBy && doc.checkedOutBy !== userId) {
-    const who = doc.checkedOutByName || "another user";
+  const label = servedRev(ctx);
+  if (ctx.versionIsCurrent === false) {
+    parts.push(`SUPERSEDED REVISION — Rev ${label ?? "?"}. This is NOT the current revision; do not use for construction. Scan to verify.`);
+  } else {
+    parts.push(`Rev ${label ?? "?"} at time of issue — verify current revision before use.`);
+  }
+  if (ctx.doc.checkedOutBy && ctx.doc.checkedOutBy !== ctx.userId) {
+    const who = ctx.doc.checkedOutByName || "another user";
     parts.push(`ACTIVE CHANGE IN PROGRESS: checked out by ${who} at time of issue.`);
   }
   return parts.join(" ");
@@ -108,13 +140,19 @@ function captureDownloadIntent(
   source: "download" | "print",
 ): void {
   if (!ctx.doc.id || !ctx.doc.orgId) return;
+  // A pull of an OLD revision is a REFERENCE, never an edit base — otherwise
+  // a revision drafted on top of superseded bytes would resolve its expected
+  // base to that old version and pass the stale-base contract cleanly (REV-1
+  // chain reaction). Only a current-version pull by the checkout holder is an
+  // edit base.
+  const isEdit = ctx.versionIsCurrent !== false && ctx.doc.checkedOutBy === ctx.userId;
   void recordIntent({
     orgId: ctx.doc.orgId,
     documentId: ctx.doc.id,
     libraryId: ctx.doc.libraryId ?? null,
     userId: ctx.userId,
     userName: ctx.userLabel ?? ctx.userEmail ?? null,
-    kind: ctx.doc.checkedOutBy === ctx.userId ? "edit" : "reference",
+    kind: isEdit ? "edit" : "reference",
     source,
     baseVersionId: ctx.versionId ?? ctx.doc.currentVersionId ?? null,
   });
@@ -216,25 +254,25 @@ async function assertAckGate(ctx: DownloadContext): Promise<void> {
 
 export async function downloadDocumentPdf(ctx: DownloadContext): Promise<ControlState> {
   await assertAckGate(ctx);
-  const state = determineControlState(ctx.doc, ctx.userId);
+  const state = determineControlState(ctx.doc, ctx.userId, ctx.versionIsCurrent);
   const expiresAt = new Date(Date.now() + (ctx.expiresInHours ?? 24) * 3600 * 1000);
 
   if (state === "controlled") {
     // Pass-through download of the original file
     const res = await fetch(ctx.fileUrl);
     const blob = await res.blob();
-    triggerBlobDownload(blob, ctx.filename ?? defaultFilename(ctx.doc, ""));
+    triggerBlobDownload(blob, ctx.filename ?? defaultFilename(ctx, ""));
   } else {
     await downloadStampedPdf({
       url: ctx.fileUrl,
-      filename: ctx.filename ?? defaultFilename(ctx.doc, "_UNCONTROLLED"),
+      filename: ctx.filename ?? defaultFilename(ctx, "_UNCONTROLLED"),
       options: {
         userLabel: ctx.userLabel ?? undefined,
         email: ctx.userEmail ?? undefined,
         timestamp: new Date(),
         expiresAt,
         watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-        footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
+        footerNotice: buildFooterNotice(ctx),
         verifyUrl: buildVerifyUrl(ctx),
       },
     });
@@ -260,7 +298,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
  */
 export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlState> {
   await assertAckGate(ctx);
-  const state = determineControlState(ctx.doc, ctx.userId);
+  const state = determineControlState(ctx.doc, ctx.userId, ctx.versionIsCurrent);
   const expiresAt = new Date(Date.now() + (ctx.expiresInHours ?? 24) * 3600 * 1000);
 
   let blob: Blob;
@@ -274,7 +312,7 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
       timestamp: new Date(),
       expiresAt,
       watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-      footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
+      footerNotice: buildFooterNotice(ctx),
       verifyUrl: buildVerifyUrl(ctx),
     });
   }

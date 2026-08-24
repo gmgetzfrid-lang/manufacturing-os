@@ -3029,6 +3029,7 @@ export default function LibraryExplorerPage() {
           title={selectedDoc.title || "Document"}
           docNumber={selectedDoc.documentNumber || ""}
           rev={selectedVersion.revisionLabel || ""}
+          viewingVersionId={selectedVersion.id}
           document={selectedDoc}
           userRole={activeRole}
           currentUserId={uid || undefined}

@@ -85,6 +85,7 @@ export const ORG_SCOPED_TABLES = [
   // Field distribution (work packages, acknowledged hand-offs)
   "work_packages",
   "work_package_documents",
+  "work_package_prints",
   "distribution_acks",
 
   // Access + cost tracking

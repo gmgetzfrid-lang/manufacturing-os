@@ -10,7 +10,11 @@
 
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { CheckCircle2, XCircle, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, ShieldQuestion, OctagonAlert, RefreshCw } from "lucide-react";
+
+type Verdict =
+  | "current" | "not_yet_effective" | "held"
+  | "superseded" | "void" | "archived" | "draft" | "superseded_version";
 
 interface VerifyResult {
   docNumber: string | null;
@@ -21,9 +25,49 @@ interface VerifyResult {
   currentIssuedAt: string | null;
   effectiveDate: string | null;
   notYetEffective: boolean;
+  onHold?: boolean;
   docStatus: string | null;
+  verdict?: Verdict;
   isCurrent: boolean;
   checkedAt: string;
+}
+
+/** Map the verdict to its full-screen presentation. Falls back to the legacy
+ *  isCurrent/notYetEffective booleans if an older API build omits `verdict`. */
+function present(r: VerifyResult): {
+  bg: string; icon: "ok" | "stop" | "x" | "q"; headline: string; blurb: string; ok: boolean;
+} {
+  const v: Verdict =
+    r.verdict ?? (r.notYetEffective ? "not_yet_effective" : r.isCurrent ? "current" : "superseded_version");
+  const currentRev = r.currentRev ?? "?";
+  const printedRev = r.printedRev ?? "?";
+  switch (v) {
+    case "current":
+      return { bg: "bg-emerald-600", icon: "ok", ok: true, headline: "CURRENT",
+        blurb: "This print matches the current revision." };
+    case "not_yet_effective":
+      return { bg: "bg-amber-500", icon: "q", ok: false, headline: "NOT YET IN EFFECT",
+        blurb: `This is the latest revision, but it comes into force ${r.effectiveDate ? new Date(r.effectiveDate).toLocaleDateString() : "later"} — until then, keep working to the prior in-force revision.` };
+    case "held":
+      return { bg: "bg-red-700", icon: "stop", ok: false, headline: "ON HOLD — STOP WORK",
+        blurb: "This document is under an active hold. Do not perform any work from it. Contact Document Control." };
+    case "void":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "VOID — DO NOT USE",
+        blurb: "This document has been voided. It is not a valid drawing. Destroy this print." };
+    case "archived":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "ARCHIVED — DO NOT USE",
+        blurb: "This document has been archived and is no longer maintained." };
+    case "superseded":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "SUPERSEDED — DO NOT USE",
+        blurb: "This document has been superseded. Get the current revision from Document Control." };
+    case "draft":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "DRAFT — NOT ISSUED",
+        blurb: "This is an unissued draft, not a controlled revision. Do not use for construction." };
+    case "superseded_version":
+    default:
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "DO NOT USE",
+        blurb: `This print is Rev ${printedRev} — the current revision is Rev ${currentRev}.` };
+  }
 }
 
 export default function VerifyPage() {
@@ -60,9 +104,11 @@ export default function VerifyPage() {
   const fmt = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
+  const view = result ? present(result) : null;
+
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-slate-900" : result?.notYetEffective ? "bg-amber-500" : result?.isCurrent ? "bg-emerald-600" : "bg-red-600"
+      loading || error ? "bg-slate-900" : view ? view.bg : "bg-slate-900"
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
@@ -85,27 +131,23 @@ export default function VerifyPage() {
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
           </div>
-        ) : result && (
+        ) : result && view && (
           <>
             {/* THE VERDICT — readable at arm's length in a plant. */}
-            {result.notYetEffective ? (
-              <ShieldQuestion className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
-            ) : result.isCurrent ? (
+            {view.icon === "ok" ? (
               <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+            ) : view.icon === "stop" ? (
+              <OctagonAlert className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+            ) : view.icon === "q" ? (
+              <ShieldQuestion className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : (
               <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
             <h1 className="text-3xl font-black text-white leading-tight mb-1">
-              {result.notYetEffective ? "NOT YET IN EFFECT" : result.isCurrent ? "CURRENT" : "DO NOT USE"}
+              {view.headline}
             </h1>
             <p className="text-white/90 text-sm font-bold mb-6">
-              {result.notYetEffective
-                ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString() : "later"} — until then, keep working to the prior in-force revision.`
-                : result.isCurrent
-                ? "This print matches the current revision."
-                : result.docStatus === "Superseded" || result.docStatus === "Archived"
-                  ? `This document has been ${result.docStatus?.toLowerCase()}.`
-                  : `This print is Rev ${result.printedRev ?? "?"} — the current revision is Rev ${result.currentRev ?? "?"}.`}
+              {view.blurb}
             </p>
 
             {/* The facts card */}
@@ -118,7 +160,7 @@ export default function VerifyPage() {
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">This print</div>
-                  <div className={`text-lg font-black ${result.isCurrent ? "text-emerald-600" : "text-red-600"}`}>
+                  <div className={`text-lg font-black ${view.ok ? "text-emerald-600" : "text-red-600"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                   <div className="text-[10px] text-slate-400">issued {fmt(result.printedAt)}</div>
@@ -129,7 +171,7 @@ export default function VerifyPage() {
                   <div className="text-[10px] text-slate-400">issued {fmt(result.currentIssuedAt)}</div>
                 </div>
               </div>
-              {!result.isCurrent && (
+              {!view.ok && (
                 <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 leading-relaxed">
                   Get the current revision from Document Control before performing any work
                   from this drawing. Mark this print &ldquo;SUPERSEDED&rdquo; or destroy it.

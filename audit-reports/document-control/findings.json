@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "OPEN": 143,
-      "RESOLVED": 4
+      "OPEN": 140,
+      "RESOLVED": 7
     }
   },
   "status_vocabulary": [
@@ -148,7 +148,7 @@
       "id": "DIST-2",
       "title": "The QR verify endpoint — the only recall channel that reaches a printed copy — reports a VOIDED drawing as current",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -308,7 +308,7 @@
       "id": "PKG-2",
       "title": "The cover-sheet QR verifies the LIVE database pin, not the paper — so 'Refresh pins', or simply re-adding a drawing, re-arms an already-printed stale pack to GREEN",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -389,7 +389,7 @@
       "id": "REV-1",
       "title": "Downloading or printing an old revision stamps, names, QR-links and audits it as the CURRENT revision — and the checkout holder gets it raw, unstamped",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

@@ -63,7 +63,14 @@ lib/revisions.ts:1414-1537 read end to end; grep for `nudgeStaleHolders|staleCop
 ## DIST-2 · The QR verify endpoint — the only recall channel that reaches a printed copy — reports a VOIDED drawing as current
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 2 — the field-verdict cluster).** Confirmed: `/api/verify` derived `docRetired` from the inline literal `"Superseded" || "Archived"`, so Void and Draft verified green. Rewritten to derive retirement from the shared `NOT_CURRENT_STATUSES` set (`lib/aiBoundary.ts` — Superseded/Void/Archived), handle Draft as not-in-force, and additionally check for an **active hold** (legal_hold flag OR an unreleased `document_holds` row) — a stop-work signal that must beat even a current version. The route now returns a typed `verdict` (`current` / `not_yet_effective` / `held` / `void` / `archived` / `superseded` / `draft` / `superseded_version`); `isCurrent` stays for back-compat but is true only for the plain in-force case. A hold-lookup error fails **safe to `held`**, never green. The verify page renders a distinct full-screen verdict per case (red "VOID — DO NOT USE", red "ON HOLD — STOP WORK", etc.) instead of the old green/red boolean.
+- Done-when: (1) `docRetired` from the shared set + Draft handled ✓; (2) the page renders a distinct verdict for retired/void/held ✓; (3) a test pins the verdict for every `DocumentStatus` and for holds so a new status can't default to green ✓.
+- Files: `app/api/verify/route.ts`, `app/verify/[docId]/page.tsx`
+- Tests: `lib/__tests__/verifyRouteVerdict.test.ts` — Issued→current, Void→void, Superseded, Archived, Draft, active hold→held (overrides current), legal_hold→held, hold-error→held-fail-safe.
+- **What this brought to light:** this endpoint is shared with the REV-1 QR half and with the public-surfaces field-verdict findings (`VFY-1`, `PHYS-1`); the hold-awareness added here also closes the "held document verifies green" limb of that cluster at the shared endpoint. `lib/staleCopies.ts:76` skipping Void docs (the in-app recall half) is noted there as a separate follow-up.
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:89-90`, `app/verify/[docId]/page.tsx:62-65`, `lib/aiBoundary.ts:25`, `lib/staleCopies.ts:76`, `lib/downloads.ts:60-65`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. "Void" is a first-class status set from MetadataEditor.tsx:9 without minting a new version, so current_version_id still equals the QR's `v` (stamped as `?v=${doc.currentVersionId}` at lib/downloads.ts:100, lib/docPack.ts:105, app/api/share/file/route.ts:115). isCurrent evaluates true and app/verify/[docId]/page.tsx:64 paints `bg-emerald-600` with the headline "CURRENT". No guard elsewhere in the route or page compensates; the page trusts the API's isCurrent verbatim.

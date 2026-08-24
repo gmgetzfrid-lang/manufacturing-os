@@ -25,6 +25,13 @@ export async function GET(req: NextRequest) {
   if (!UUID_RE.test(pkgId)) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
+  // The immutable print id, when the QR carries one (PKG-2). Its recorded
+  // per-sheet versions are compared against current, so the verdict reflects
+  // WHAT WAS PRINTED — a later pin refresh cannot flip this paper to green.
+  const printId = req.nextUrl.searchParams.get("print") ?? "";
+  if (printId && !UUID_RE.test(printId)) {
+    return NextResponse.json({ error: "Invalid code" }, { status: 400 });
+  }
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
@@ -35,13 +42,41 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
   if (!pkg) return NextResponse.json({ error: "Unknown package" }, { status: 404 });
 
-  const { data: members } = await sb
-    .from("work_package_documents")
-    .select("document_id, pinned_version_id, pinned_rev_label")
-    .eq("package_id", pkgId);
-  const rows = (members ?? []) as Array<{
-    document_id: string; pinned_version_id: string | null; pinned_rev_label: string | null;
-  }>;
+  // Prefer the print snapshot when the QR carries one. Each recorded sheet
+  // fixes the version that was on the paper; we compare THAT to current.
+  type Row = { document_id: string; pinned_version_id: string | null; pinned_rev_label: string | null };
+  let rows: Row[];
+  let printedAt: string | null = null;
+  let snapshotMissing = false;
+
+  if (printId) {
+    const { data: print } = await sb
+      .from("work_package_prints")
+      .select("id, package_id, printed_at, sheets")
+      .eq("id", printId)
+      .eq("package_id", pkgId)
+      .maybeSingle();
+    if (print) {
+      printedAt = (print.printed_at as string | null) ?? null;
+      const sheets = Array.isArray(print.sheets) ? print.sheets : [];
+      rows = (sheets as Array<Record<string, unknown>>).map((s) => ({
+        document_id: String(s.documentId ?? ""),
+        pinned_version_id: (s.versionId as string | null) ?? null,
+        pinned_rev_label: (s.revLabel as string | null) ?? null,
+      })).filter((r) => r.document_id);
+    } else {
+      // The QR names a print we can't find — never fall back to the live pins
+      // and paint green; say the snapshot is unavailable.
+      rows = [];
+      snapshotMissing = true;
+    }
+  } else {
+    const { data: members } = await sb
+      .from("work_package_documents")
+      .select("document_id, pinned_version_id, pinned_rev_label")
+      .eq("package_id", pkgId);
+    rows = (members ?? []) as Row[];
+  }
 
   const docIds = rows.map((r) => r.document_id);
   const { data: docs } = docIds.length
@@ -68,9 +103,12 @@ export async function GET(req: NextRequest) {
     name: (pkg.name as string) ?? "Work package",
     packageStatus: (pkg.status as string) ?? null,
     closed: !!pkg.closed_at,
+    printedAt,
+    snapshotMissing,
     sheetCount: sheets.length,
     staleCount,
-    allFresh: sheets.length > 0 && staleCount === 0,
+    // A missing snapshot is never "all fresh" — it is an unverifiable pack.
+    allFresh: !snapshotMissing && sheets.length > 0 && staleCount === 0,
     sheets,
     checkedAt: new Date().toISOString(),
   });

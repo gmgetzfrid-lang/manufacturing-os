@@ -172,13 +172,27 @@ export async function createWorkPackage(input: {
 }
 
 /** Add one document to an open package, pinned at its current revision.
- *  Idempotent: (package, document) is unique — re-adding refreshes the pin. */
+ *  Returns "added" for a new member, or "already" if the document was already
+ *  in the package — in which case the pin is LEFT WHERE IT IS. Silently
+ *  re-pinning an existing member (the old upsert behaviour) would move the
+ *  pin out from under any pack already printed and verified against it
+ *  (PKG-2); moving a pin is `refreshWorkPackage`'s explicit job, not a
+ *  side effect of clicking "Add" again. */
 export async function addDocumentToPackage(input: {
   packageId: string; orgId: string;
   doc: { id: string; rev?: string | null; currentVersionId?: string | null };
   actorName?: string | null;
-}): Promise<void> {
-  const { error } = await supabase.from("work_package_documents").upsert({
+}): Promise<"added" | "already"> {
+  const { data: existing, error: lookupErr } = await supabase
+    .from("work_package_documents")
+    .select("id")
+    .eq("package_id", input.packageId)
+    .eq("document_id", input.doc.id)
+    .maybeSingle();
+  if (lookupErr) throw new Error(lookupErr.message);
+  if (existing) return "already";
+
+  const { error } = await supabase.from("work_package_documents").insert({
     package_id: input.packageId,
     org_id: input.orgId,
     document_id: input.doc.id,
@@ -186,8 +200,41 @@ export async function addDocumentToPackage(input: {
     pinned_rev_label: input.doc.rev ?? null,
     added_at: new Date().toISOString(),
     added_by: input.actorName ?? null,
-  }, { onConflict: "package_id,document_id" });
-  if (error) throw new Error(error.message);
+  });
+  // A concurrent add can still race us to the unique (package, document);
+  // treat that as "already", not an error.
+  if (error) {
+    if ((error as { code?: string }).code === "23505") return "already";
+    throw new Error(error.message);
+  }
+  return "added";
+}
+
+/** Record an immutable PRINT SNAPSHOT of a package: the exact version of every
+ *  sheet as printed (PKG-2). The cover QR encodes the returned print id, and
+ *  /api/verify-package compares these recorded versions against current — so a
+ *  later pin refresh can never flip already-distributed paper back to green.
+ *  Best-effort and deploy-safe: returns null if the table is not present yet
+ *  (pre-migration), so the print still succeeds and the QR falls back to the
+ *  legacy package-level check. */
+export async function recordPackagePrint(input: {
+  orgId: string; packageId: string;
+  printedBy?: string | null; printedByName?: string | null;
+  sheets: Array<{ documentId: string; versionId: string | null; revLabel: string | null; label: string }>;
+}): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.from("work_package_prints").insert({
+      org_id: input.orgId,
+      package_id: input.packageId,
+      printed_by: input.printedBy ?? null,
+      printed_by_name: input.printedByName ?? null,
+      sheets: input.sheets,
+    }).select("id").single();
+    if (error) return null;
+    return (data?.id as string) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Re-pin every member to the document's current revision ("refresh pack"). */

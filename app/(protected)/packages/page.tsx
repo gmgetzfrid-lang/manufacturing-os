@@ -23,7 +23,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import {
-  listWorkPackages, createWorkPackage, refreshWorkPackage,
+  listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
   setWorkPackageStatus, type WorkPackage,
 } from "@/lib/workPackages";
 
@@ -158,8 +158,25 @@ export default function PackagesPage() {
       const { buildPackageCover } = await import("@/lib/physicalBridge");
       const { buildAndDownloadDocPack } = await import("@/lib/docPack");
       const fresh = (await listWorkPackages(activeOrgId)).find((p) => p.id === pkg.id) ?? pkg;
+      // Record an immutable snapshot of exactly what we're about to print, so
+      // the cover QR verifies against THIS paper — not the live pins, which a
+      // later refresh could move (PKG-2). Best-effort: if the snapshot can't
+      // be written the print still proceeds with a legacy package-level QR.
+      const printId = await recordPackagePrint({
+        orgId: activeOrgId,
+        packageId: pkg.id,
+        printedBy: uid,
+        printedByName: userEmail?.split("@")[0] ?? null,
+        sheets: fresh.docs.map((d) => ({
+          documentId: d.documentId,
+          versionId: d.pinnedVersionId ?? null,
+          revLabel: d.currentRev ?? d.pinnedRevLabel ?? null,
+          label: d.docLabel,
+        })),
+      });
       const cover = await buildPackageCover({
         packageId: pkg.id,
+        printId,
         name: fresh.name,
         description: fresh.description,
         ownerName: fresh.ownerName,

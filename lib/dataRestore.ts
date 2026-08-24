@@ -298,7 +298,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "entity_mentions", "drawing_audit_logs",
   "document_favorites", "e_signatures", "transmittals",
   "document_intents", "revision_branches",
-  "work_packages", "work_package_documents", "distribution_acks",
+  "work_packages", "work_package_documents", "work_package_prints", "distribution_acks",
   "document_acknowledgments", "document_review_signoffs", "document_review_events",
   "document_disposition_events", "access_recertification_events",
   "asset_files",
