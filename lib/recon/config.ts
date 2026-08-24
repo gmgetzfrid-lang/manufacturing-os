@@ -143,10 +143,14 @@ export const DEFAULT_RECON_CONFIG: ReconConfig = {
   },
   frames: {
     // The ceiling the adaptive sampler can climb to when the camera moves
-    // fast. 6 was too low: a real capture swung at ~184px per kept frame, and
-    // even keeping every decoded frame at 6fps left ~110px hops. Decode is
-    // cheap (seconds per clip); matching only ever sees the kept frames.
-    sampleFps: 10,
+    // fast. This has been raised twice by real captures: 6fps left ~110px
+    // hops on a ~184px/frame swing, and 10fps still measured 191px hops on a
+    // handheld orbit — even keeping every sampled frame, the chain could not
+    // hold. Phone video is 30fps; sampling at native rate turns that same
+    // motion into ~64px hops and lets the window system discard the excess
+    // when the camera is calm. Decode is seconds per clip; matching only
+    // ever sees the kept frames.
+    sampleFps: 30,
     targetFps: 3.2,
     maxFramesPerClip: 100,
     workingLongEdge: 1280,

@@ -461,7 +461,9 @@ export default function ReconstructionStudio({
                       job.clipStats.length
                         ? `\nPer clip: ${job.clipStats
                             .map((c) => `${c.name} ${c.decodedFrames} decoded / ` +
-                              `${c.keptFrames} used / ${c.registeredFrames} placed`)
+                              `${c.keptFrames} used / ${c.registeredFrames} placed ` +
+                              `(dropped ${c.droppedBlurry} as blurred or redundant, ` +
+                              `${c.droppedStatic} as static)`)
                             .join("; ")}`
                         : "",
                       job.warnings.length

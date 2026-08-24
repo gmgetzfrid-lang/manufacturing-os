@@ -298,12 +298,27 @@ async function run(
     await pending;
     log("info", `${clip.name}: decode loop finished, ${clipKept.length} frames kept`);
 
-    // Blur floor, applied once the clip's own median is known.
+    // Blur floor, applied once the clip's own median is known. It prunes
+    // blur, but it must never prune the TIMELINE: on a real handheld orbit
+    // most frames carry motion blur, and the floor was discarding whole
+    // seconds of video — the chain of surviving frames then broke exactly
+    // there (a capture measured 33 of 182 frames surviving, 191px hops, and
+    // "no consistent geometry" at every gap). Each slice of time keeps its
+    // sharpest frame regardless: a blurry link continues a chain, a missing
+    // one ends it.
     if (sharpnessValues.length > 6) {
       const sorted = [...sharpnessValues].sort((a, b) => a - b);
       const median = sorted[Math.floor(sorted.length / 2)];
       const floor = median * cfg.frames.blurFloorRatio;
-      const survivors = clipKept.filter((f) => f.sharpness >= floor);
+      const slice = 1 / Math.max(0.5, cfg.frames.targetFps);
+      const bestInSlice = new Map<number, KeptFrame>();
+      for (const f of clipKept) {
+        const bucket = Math.floor(f.timestampS / slice);
+        const cur = bestInSlice.get(bucket);
+        if (!cur || f.sharpness > cur.sharpness) bestInSlice.set(bucket, f);
+      }
+      const keepAnyway = new Set(bestInSlice.values());
+      const survivors = clipKept.filter((f) => f.sharpness >= floor || keepAnyway.has(f));
       stats.droppedBlurry += clipKept.length - survivors.length;
       clipKept.length = 0;
       clipKept.push(...survivors);

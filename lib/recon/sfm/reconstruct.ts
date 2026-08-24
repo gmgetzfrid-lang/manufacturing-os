@@ -341,7 +341,7 @@ export async function reconstruct(
   /** Frames registered by composing a pair pose when PnP could not place them. */
   let compositionRescues = 0;
   /** Where composition bridges die, so a stall names its own cause. */
-  const composeStats = { bridges: 0, fewAnchors: 0, scaleVote: 0, strictGate: 0 };
+  const composeStats = { bridges: 0, fewAnchors: 0, scaleVote: 0, scaleFlat: 0, strictGate: 0 };
   const matchCounts: number[] = [];
 
   /**
@@ -640,7 +640,8 @@ export async function reconstruct(
     (composeStats.bridges
       ? `; of ${composeStats.bridges} composition bridges tried, ${composeStats.fewAnchors} ` +
         `had under 3 triangulated anchor points, ${composeStats.scaleVote} failed the scale ` +
-        `vote, ${composeStats.strictGate} failed reprojection after refinement`
+        `vote, ${composeStats.scaleFlat} could not measure the baseline at all (anchors too ` +
+        `distant), ${composeStats.strictGate} failed reprojection after refinement`
       : "") +
     chainNote;
 
@@ -973,9 +974,12 @@ export async function reconstruct(
     // and whose composed pose explains the observations wins. Trying only the
     // single strongest and giving up left whole chains stranded behind one
     // unluckily-placed frame.
+    // Any pair that earned verification carries enough support to try: a real
+    // capture stalled behind a 36-match pair while the bar sat at a flat 40.
+    const bridgeMin = Math.min(40, cfg.features.minPairInliers);
     const bridges = verified
       .filter((pair) => {
-        if (pair.degenerate || pair.matches.length < 40) return false;
+        if (pair.degenerate || pair.matches.length < bridgeMin) return false;
         return poses.has(pair.a) !== poses.has(pair.b);
       })
       .sort((x, y) => y.matches.length - x.matches.length)
@@ -1127,7 +1131,7 @@ export async function reconstruct(
     const inliersAt = (sc: number) =>
       sc > 0 ? scaleObs.reduce((n, o) => n + (errAt(sc, o) < basinLimit ? 1 : 0), 0) : 0;
     const offSupport = Math.max(inliersAt(bestS + ds), inliersAt(bestS - ds));
-    if (offSupport >= bestInliers * 0.85) { composeStats.scaleVote++; return false; }
+    if (offSupport >= bestInliers * 0.85) { composeStats.scaleFlat++; return false; }
 
     const Rf = mat3Mul(Rrel, anchorPose.R);
     const ta = mat3MulVec(Rrel, anchorPose.t);
