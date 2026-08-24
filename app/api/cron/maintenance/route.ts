@@ -155,6 +155,10 @@ async function handler(req: NextRequest) {
   try {
     const rebuilt = await rebuildAclIndexes(sb, Date.now());
     result.aclIndexRebuild = rebuilt;
+    // The rebuild never throws for a partial failure — it skips the affected
+    // org/node and reports it here, so a stale (possibly fail-open) index is
+    // never a silent success.
+    for (const msg of rebuilt.errors) result.errors.push(`acl-index-rebuild: ${msg}`);
   } catch (e) {
     result.errors.push(`acl-index-rebuild: ${(e as Error).message}`);
   }

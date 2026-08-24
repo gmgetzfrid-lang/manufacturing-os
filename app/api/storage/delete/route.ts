@@ -103,12 +103,16 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Could not verify hold status; deletion refused." }, { status: 503 });
   }
 
-  await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: path }));
-
-  // Chain of custody for what was destroyed. Best-effort — a deleted object is
-  // already gone, so never fail the response on the audit insert.
-  try {
-    await supabaseAdmin.from("audit_logs").insert({
+  // Chain of custody BEFORE destruction, and FAIL CLOSED on it — the same
+  // posture as the hold check above. Written after the delete, a DB hiccup in
+  // that gap would leave bytes destroyed with no custody record and a 200
+  // (postgrest-js resolves failures into { error } rather than throwing, so a
+  // try/catch alone would be dead code and the error invisible). Refusing the
+  // delete when the record cannot be written is recoverable; the reverse is
+  // not.
+  const { data: auditRow, error: auditErr } = await supabaseAdmin
+    .from("audit_logs")
+    .insert({
       action: "STORAGE_OBJECT_DELETE",
       resource_type: "storage_object",
       resource_id: documentId ?? path,
@@ -116,8 +120,28 @@ export async function DELETE(req: NextRequest) {
       user_id: user.id,
       user_email: user.email ?? null,
       details: { path, documentId, versionId },
-    });
-  } catch { /* never block the delete result on the audit insert */ }
+    })
+    .select("id")
+    .maybeSingle();
+  if (auditErr) {
+    console.error("storage/delete: audit insert failed; deletion refused", { path, orgId, error: auditErr.message });
+    return NextResponse.json({ error: "Could not record the deletion; nothing was deleted." }, { status: 503 });
+  }
+
+  try {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: path }));
+  } catch (e) {
+    // The object may still exist — mark the custody row so it never reads as
+    // a completed destruction. Best-effort: the failure response stands
+    // either way.
+    if (auditRow?.id) {
+      await supabaseAdmin
+        .from("audit_logs")
+        .update({ details: { path, documentId, versionId, failed: true, error: (e as Error).message } })
+        .eq("id", auditRow.id);
+    }
+    return NextResponse.json({ error: "Storage deletion failed; the object was not removed." }, { status: 502 });
+  }
 
   return NextResponse.json({ ok: true });
 }

@@ -141,6 +141,28 @@ export default function AdminUsersPage() {
     void fetchPendingRequests();
   }, [fetchPendingRequests]);
 
+  // Decline goes through a service-role route (the tightened RLS gives admins
+  // SELECT only on access_requests); the route re-checks controller authority
+  // against the org the stored request names. Declining frees the address to
+  // re-request later — the public door 409s while a request is pending.
+  const handleDeclineRequest = async (id: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not authenticated");
+      const res = await fetch('/api/admin/access-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ id, action: 'decline' }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Failed to decline request');
+      void fetchPendingRequests();
+    } catch (err) {
+      console.error('Decline request failed:', err);
+      setError(err instanceof Error ? err.message : 'Failed to decline request.');
+    }
+  };
+
   // Persist a member's additive role collection. Writes the full `roles` array
   // plus the headline `role` (highest-ranked) so the legacy single-role checks
   // and the database RLS policies stay correct. Optimistic, reverts on failure.
@@ -269,6 +291,9 @@ export default function AdminUsersPage() {
       setFormData({ firstName: '', lastName: '', email: '', password: '', role: 'Viewer' });
       setIsModalOpen(false);
       fetchMembers();
+      // create-user resolves the matching pending access request server-side —
+      // refresh the card so an accepted request leaves it immediately.
+      void fetchPendingRequests();
 
     } catch (err) {
       console.error("Create user failed:", err);
@@ -319,13 +344,18 @@ export default function AdminUsersPage() {
                   <p className="text-sm font-bold text-[var(--color-text)] truncate">{r.display_name}</p>
                   <p className="text-xs text-[var(--color-text-muted)] truncate">{r.email} · requested {new Date(r.created_at).toLocaleDateString()}</p>
                 </div>
-                <Button size="sm" variant="secondary" onClick={() => {
-                  const [first, ...rest] = (r.display_name || '').trim().split(/\s+/);
-                  setFormData((f) => ({ ...f, email: r.email, firstName: first ?? '', lastName: rest.join(' ') }));
-                  setIsModalOpen(true);
-                }}>
-                  <UserPlus className="w-3.5 h-3.5" /> Add
-                </Button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button size="sm" variant="secondary" onClick={() => {
+                    const [first, ...rest] = (r.display_name || '').trim().split(/\s+/);
+                    setFormData((f) => ({ ...f, email: r.email, firstName: first ?? '', lastName: rest.join(' ') }));
+                    setIsModalOpen(true);
+                  }}>
+                    <UserPlus className="w-3.5 h-3.5" /> Add
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => void handleDeclineRequest(r.id)}>
+                    Decline
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>

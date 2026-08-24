@@ -82,7 +82,19 @@ mutating local state — the silent-success shape is the same one described in
 **Resolution.** The route is now held to the `/api/admin/purge` bar. All four Done-when: (1) controller authority — the caller must be an Admin/DocCtrl of the key's org, read **additively** (union of `role` and `roles[]` ∩ `{Admin, DocCtrl}`) so a `['Manager','DocCtrl']` member is not wrongly refused by the headline-only read (`SURF-10`); (2) `assertSafeStorageKey(path)` runs before any prefix reasoning, and a non-org-prefixed key is refused outright (closing the aggravator where such keys skipped the check entirely); (3) the key is resolved to its document via `document_versions.file_url` and refused (`423`) if the document is under `legal_hold` or has an unreleased `document_holds` row — **fail closed** on any lookup error (`503`), the deliberate opposite of the download route's fail-open, because destruction is irreversible; (4) a successful delete writes a `STORAGE_OBJECT_DELETE` audit row. No migration needed — the DB hold triggers already exist.
 - Commit: `67e6bdd`
 - Files: `app/api/storage/delete/route.ts`
-- Tests: `lib/__tests__/storageDeleteRoute.test.ts` — 8 tests (Viewer refused; traversal key 400; non-org key 403; legal-hold 423; active-hold 423; unverifiable-hold 503 fail-closed; controller success + audit row; `['Manager','DocCtrl']` admitted). 7 fail against the pre-fix route.
+- Tests: `lib/__tests__/storageDeleteRoute.test.ts` — 9 tests (Viewer refused; traversal key 400; non-org key 403; legal-hold 423; active-hold 423; unverifiable-hold 503 fail-closed; controller success + audit row; `['Manager','DocCtrl']` admitted; audit-failure refusal). Most fail against the pre-fix route.
+- **Hardened (2026-08-24 adversarial-review round).** The first fix wrote the
+  audit row AFTER `r2.send` inside a try/catch that was provably dead code —
+  postgrest-js resolves both DB and network failures into `{ error }` without
+  throwing, and the route never read it. So a DB hiccup in that gap destroyed
+  bytes, returned 200, and left NO custody record and NO log line — the exact
+  silent-audit failure Done-when 4 exists to prevent. The custody write now
+  happens BEFORE destruction and fails closed (503, nothing deleted, error
+  logged) when the insert errors — the same posture as the hold check: a
+  refused delete is recoverable, destroyed-but-unrecorded bytes are not. If
+  the R2 delete itself then fails, the custody row is marked
+  `details.failed: true` best-effort so it never reads as a completed
+  destruction. A new test pins audit-failure → 503 + zero `r2.send`s.
 - Reproduced: the pre-fix route authorized on active membership alone, with no `assertSafeStorageKey`, no hold check, and no audit row — a Viewer could DELETE any `file_url` enumerated from `document_versions`.
 - Verified: each Done-when pinned by a test; suite 1419 green.
 - **Cross-area duplicates:** this resolution also satisfies `document-control/RET-2` and `intelligence/DACL-2` (same defect). **What this brought to light:** `lib/storage.ts:442` `deleteFile` is now the only caller shape and has **zero in-app callers** — a future component reviving the client delete path is the risk; a follow-up should remove it (noted, low priority).
@@ -244,6 +256,13 @@ itself is currently non-functional for a different reason (`DB-1`).
 - Commit: `b2907b9`
 - Files: `app/api/notifications/send-queued/route.ts`
 - Tests: `lib/__tests__/apiRouteAuth.test.ts` — 403 for a no-org account; a member's drain is org-scoped (every queue query carries `.in("org_id", …)`); the cron path stays unscoped. Two fail against the old route.
+- **Test strengthened (2026-08-24 adversarial-review round).** The scoping
+  test asserted only "≥ 1 org-scoped call" while the route reaches the queue
+  through THREE query chains on the configured path (unsuppress, reclaim,
+  candidates) — a later fourth, unscoped query could have drained
+  cross-tenant without failing it. It now pins the exact count of org-scoped
+  calls to the route's query-chain count and asserts each carries exactly the
+  caller's orgs.
 - Verified: Done-when 1 — the drain requires the cron secret or a session **plus** org membership. Done-when 2 — a session-authorized drain is scoped to the caller's own orgs. Suite 1429 green.
 - **Done-when 3 is split to `SURF-17`** under `DEC-31`: "a member cannot queue mail to an arbitrary address with arbitrary HTML" is the queue-INSERT lockdown, which requires (a) moving the transmittal external-email send server-side — `lib/transmittals.ts` is a browser module that calls `queueExternalEmail` directly — and (b) a migration tightening the `email_notifications` INSERT policy that risks silently breaking legitimate member notifications if `to_email` ever differs from a member's registered email (needs live verification, `DEC-30`). That is a focused, safety-sensitive change deserving its own session; the design is recorded on `SURF-17`.
 - **What this brought to light (adjacent, not in scope):** `email_notifications` has **no** SELECT or UPDATE policy for `authenticated`, so `queueEmail`'s 60-second burst-dedupe select (`lib/notifications.ts:66-75`) always sees zero rows (the dedupe never fires) and the `/admin/settings` dead-letter panel's count is always 0 and its requeue matches nothing — recorded as `SURF-18`. Also: the route comment claims a "Vercel/Supabase cron schedule" that `vercel.json` does not define — the maintenance cron's fetch loop is the only schedule.

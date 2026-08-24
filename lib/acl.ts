@@ -287,22 +287,67 @@ export function buildAclIndex(acl?: AccessControl, nowMs?: number): AclIndex | n
   return buildAclIndexFromRules(acl.rules, nowMs);
 }
 
-/** Merge a wizard-rebuilt library ACL with the drawer-added grants it does not
- *  manage (DB-5). The library wizard's form only produces ROLE-subject rules
- *  (view/upload/admin), so rebuilding `acl` from it alone silently drops the
- *  permission drawer's per-user / per-team / per-org grants. This keeps the
- *  wizard's role rules and re-adds the existing non-role rules, so a metadata
- *  edit never revokes a granular grant. */
+/** The library wizard's complete rule vocabulary: every save re-derives
+ *  allow-rules over these actions for role subjects (view/write/admin role
+ *  lists) and, when view access is "Everyone", one org-subject allow of
+ *  discover/read/download. The wizard OWNS that slice — its output on each
+ *  save is the full, current statement of it. */
+const WIZARD_ACTIONS = new Set<string>([
+  "discover", "read", "download",
+  "upload", "createFolder", "editMetadata", "write",
+  "admin", "managePermissions",
+]);
+
+/** True for a rule the wizard re-emits (and therefore owns): an ALLOW for a
+ *  role or org subject whose actions all fall inside the wizard vocabulary.
+ *  Denies of any subject, user/team rules, and allows carrying actions the
+ *  wizard cannot express (e.g. publish) are drawer-owned and must survive. */
+function isWizardOwnedRule(r: AccessRule | null | undefined): boolean {
+  if (!r || r.effect !== "allow") return false;
+  const t = r.subject?.type;
+  if (t !== "role" && t !== "org") return false;
+  const actions = Array.isArray(r.actions) ? r.actions : [];
+  return actions.length > 0 && actions.every((a) => WIZARD_ACTIONS.has(a as string));
+}
+
+/** Merge a wizard-rebuilt library ACL with the drawer-added grants the wizard
+ *  does not manage (DB-5). Rebuilding `acl` from the wizard form alone
+ *  silently drops the permission drawer's grants; preserving everything the
+ *  wizard didn't just emit re-applies the wizard's own PREVIOUS output, so a
+ *  restricting edit (Everyone → role list) would fail open by resurrecting
+ *  the old org-wide allow. The split is by ownership: rules the wizard
+ *  re-emits (isWizardOwnedRule) are replaced by this save's output; every
+ *  other rule — user/team grants, ALL deny rules, and role/org allows with
+ *  actions outside the wizard vocabulary (publish grants) — is preserved
+ *  verbatim, deduplicated. So a metadata edit never revokes a granular grant,
+ *  and a restricting edit actually restricts. */
 export function mergeWizardLibraryAcl(
   wizardAcl: AccessControl | null | undefined,
   existingRules: AccessRule[] | null | undefined,
 ): AccessControl | null {
-  const preserved = (existingRules ?? []).filter((r) => r?.subject?.type !== "role");
-  if (wizardAcl) {
-    return { ...wizardAcl, rules: [...(wizardAcl.rules ?? []), ...preserved] };
-  }
-  if (preserved.length) return { inherit: true, visibility: "normal", rules: preserved };
+  const preserved = (existingRules ?? []).filter((r) => r != null && !isWizardOwnedRule(r));
+  const combined = [...(wizardAcl?.rules ?? []), ...preserved];
+  // Dedupe by value — earlier buggy merges could have accumulated identical
+  // copies (the preserved half re-adding a rule the wizard also emitted).
+  const seen = new Set<string>();
+  const rules = combined.filter((r) => {
+    const key = JSON.stringify(sortValueForRule(r));
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (wizardAcl) return { ...wizardAcl, rules };
+  if (rules.length) return { inherit: true, visibility: "normal", rules };
   return null;
+}
+
+function sortValueForRule(v: unknown): unknown {
+  if (Array.isArray(v)) return [...v].map(sortValueForRule).sort();
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return Object.keys(o).sort().reduce<Record<string, unknown>>((acc, k) => { acc[k] = sortValueForRule(o[k]); return acc; }, {});
+  }
+  return v;
 }
 
 export function buildAclIndexFromChain(chain: Array<AccessControl | undefined>, nowMs?: number): AclIndex | null {

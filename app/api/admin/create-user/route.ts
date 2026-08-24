@@ -26,6 +26,24 @@ async function findAuthUsersByEmail(email: string): Promise<string[] | null> {
   return matches;
 }
 
+/** Close the loop on the pending-requests card (/admin/users): once this org
+ *  granted the address a membership, its pending access_requests rows are
+ *  resolved. Without this the card lists an accepted request forever AND the
+ *  public route 409s the person's every later request ("You already have a
+ *  pending request"), including a legitimate re-request after removal.
+ *  Best-effort by design — membership is already granted; a failure here only
+ *  leaves the card row visible — but logged so it is never invisible. Both
+ *  sides store emails normalized (lib/identity.ts / 20261018), so eq matches. */
+async function resolvePendingAccessRequests(orgId: string, email: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("access_requests")
+    .update({ status: "approved" })
+    .eq("org_id", orgId)
+    .eq("email", email)
+    .eq("status", "pending");
+  if (error) console.warn(`[create-user] couldn't resolve pending access request for ${email}: ${error.message}`);
+}
+
 /** The refusal every ambiguous-identity path lands on. Copies the pattern the
  *  projects member-picker already uses — select two, refuse on two — which was
  *  the only call site in the codebase defending against email collisions.
@@ -233,6 +251,8 @@ export async function POST(req: NextRequest) {
       updated_at: new Date().toISOString(),
     });
 
+    await resolvePendingAccessRequests(orgId, email);
+
     return NextResponse.json({ uid: userId, roles: merged, merged: true });
   }
 
@@ -300,6 +320,8 @@ export async function POST(req: NextRequest) {
     ...(createdNewUser ? { default_org_id: orgId } : {}),
     updated_at: new Date().toISOString(),
   });
+
+  await resolvePendingAccessRequests(orgId, email);
 
   return NextResponse.json({ uid: userId });
 }

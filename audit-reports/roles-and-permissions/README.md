@@ -68,6 +68,41 @@ feature builds. Check `verdict` and `depends_on` before starting a gap.
 [`99-fix-sequencing.md`](./99-fix-sequencing.md) are complete.** Ship loop green
 throughout: `tsc`, `eslint`, **1442 vitest**, full `next build`.
 
+### Adversarial review round — 2026-08-24 (every line changed this session)
+
+After the migration verification, a **57-agent review fleet** (one adversarial
+reviewer per logical cluster of the session's diff, then two independent
+skeptics per finding — one reproducing the failure, one hunting a guard
+elsewhere) swept all 57 files / ~3,000 lines changed this session. Outcome:
+**18 confirmed findings, 2 split verdicts (both verified real on manual
+re-check), 3 refuted; 2 clusters fully clean** (the share-egress routes and
+the capability-policy fix). Every confirmed and split finding is FIXED, with
+tests pinning each; details live as dated **"Hardened / Completed /
+corrected (2026-08-24 adversarial-review round)"** notes inside the affected
+findings' own records (`DB-4`, `DB-5`, `DB-3`, `DB-6`, `SURF-2`, `SURF-5`,
+`EGRESS-1`, `EGRESS-5`, `EGRESS-7` → RESOLVED, `LIFE-13`). The heaviest:
+
+- `lib/aclIndexRebuild.ts` could persist over-stripped (fail-open) indexes
+  from failed or 1000-row-truncated reads, and never rebuilt `document_sets`
+  at all — reads are now paginated + error-checked, orgs with failed reads
+  are skipped whole, write failures surface into the cron's `errors`, sets
+  are covered.
+- `mergeWizardLibraryAcl` split rules by subject type; the wizard's own
+  org-wide "Everyone" rule survived a restricting edit (fail-open) while
+  drawer role-denies/publish grants were stripped (fail-closed) — the merge
+  now splits by rule OWNERSHIP, and the page caches the merged ACL it
+  actually persisted.
+- `/api/storage/delete` wrote its custody row after destruction behind dead
+  catch — it now writes custody BEFORE `r2.send` and fails closed on it.
+- `document_shares.created_by` — the share's authority anchor — was
+  forgeable at INSERT and repointable at UPDATE:
+  **new migration `20261026_document_shares_anchor_integrity.sql`, PENDING
+  HAND-APPLY** (the only unapplied migration this round produced).
+- The `searchPathPin` lint censused re-created functions as dropped (fail
+  open); its parser is corrected with drift self-checks.
+
+Ship loop green after the round: `tsc`, `eslint`, full vitest, `next build`.
+
 **2026-08-24 — ALL SEVEN MIGRATIONS VERIFIED APPLIED IN THE LIVE DATABASE.**
 The operator pasted `supabase/APPLY_roles-and-permissions_2026-08-24.sql` (the
 combined, idempotent script covering `20261019`–`20261025`) into the Supabase

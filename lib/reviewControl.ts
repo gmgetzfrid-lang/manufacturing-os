@@ -1,9 +1,11 @@
 // lib/reviewControl.ts
 //
 // Review & approval BEFORE publish — the 2A -> 2B -> 2 lifecycle. In a library
-// whose change-control mode requires it, a non-minor, non-ticket rev-up opens an
-// in-review DRAFT that required reviewers must e-sign before it becomes the
-// controlled revision. The currently published rev stays live the whole time.
+// whose change-control mode requires it, a non-minor rev-up opens an in-review
+// DRAFT that required reviewers must e-sign before it becomes the controlled
+// revision — ticket origin included: DEC-23 removed the ticket waiver, so a
+// rev-up raised from a ticket goes through the same gate. The currently
+// published rev stays live the whole time.
 //
 // This module owns the POLICY (mode resolution + escape hatches), the reviewer
 // ROSTER (primaries + alternates), the SIGN-OFF integrity (each signature binds

@@ -66,10 +66,19 @@ export async function listShareLinks(documentId: string): Promise<DocumentShare[
 }
 
 export async function revokeShareLink(id: string, actorUserId: string): Promise<void> {
-  await supabase.from("document_shares").update({
+  // .select() back the touched row: under the per-verb policies (20261022)
+  // only the creator or an org controller matches the UPDATE, and RLS turns a
+  // non-match into a 0-row success — error === null while the public token
+  // keeps serving bytes. Zero rows here MUST throw, or the modal reports a
+  // revocation that never happened (EGRESS-7).
+  const { data, error } = await supabase.from("document_shares").update({
     revoked_at: new Date().toISOString(),
     revoked_by: actorUserId,
-  }).eq("id", id);
+  }).eq("id", id).select("id");
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("This link was not revoked — only its creator or a Document Control/Admin can revoke it.");
+  }
 }
 
 function rowToShare(r: Record<string, unknown>): DocumentShare {

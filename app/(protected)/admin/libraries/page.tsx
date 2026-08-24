@@ -136,8 +136,11 @@ export default function LibraryAdminPage() {
           });
         }
 
+        // Cache what was PERSISTED, not the wizard's raw form output — the
+        // next openEdit feeds this row back into the merge, and caching the
+        // unmerged ACL would clobber every drawer grant on the second save.
         setLibraries((prev) =>
-          prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, orgId: l.orgId ?? activeOrgId } as LibraryConfig) : l)
+          prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, acl: mergedAcl ?? undefined, orgId: l.orgId ?? activeOrgId } as LibraryConfig) : l)
         );
       } else {
         const { data: newLib, error } = await supabase
@@ -155,7 +158,7 @@ export default function LibraryAdminPage() {
           });
         }
 
-        setLibraries((prev) => [{ id: newLib.id, ...config, orgId: activeOrgId } as LibraryConfig, ...prev]);
+        setLibraries((prev) => [{ id: newLib.id, ...config, acl: mergedAcl ?? undefined, orgId: activeOrgId } as LibraryConfig, ...prev]);
       }
 
       setIsModalOpen(false);

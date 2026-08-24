@@ -248,16 +248,23 @@ describe("POST /api/notifications/send-queued", () => {
       method: "POST", headers: { authorization: "Bearer usertok" },
     }));
     expect(res.status).toBe(200);
-    // Every queue query this run made was org-scoped.
+    // EVERY queue query this run made was org-scoped — the configured path
+    // reaches the queue through three query chains before its id-keyed writes
+    // (unsuppress, reclaim, candidates; the count query belongs to the
+    // unconfigured branch), and each must carry the caller's org filter.
+    // Asserting the exact count catches a fourth, unscoped query being added
+    // later; ">= 1" would let it drain cross-tenant silently.
     const queueSelectsAndUpdates = mockState.calls.filter(
       (c) => c.table === "email_notifications" && (c.method === "select" || c.method === "update"),
     );
-    expect(queueSelectsAndUpdates.length).toBeGreaterThan(0);
+    expect(queueSelectsAndUpdates).toHaveLength(3);
     const orgScopedCalls = mockState.calls.filter(
-      (c) => c.table === "email_notifications" && c.method === "in" &&
-        (c.args[0] === "org_id") && Array.isArray(c.args[1]) && (c.args[1] as string[]).includes("o1"),
+      (c) => c.table === "email_notifications" && c.method === "in" && c.args[0] === "org_id",
     );
-    expect(orgScopedCalls.length).toBeGreaterThan(0);
+    expect(orgScopedCalls).toHaveLength(3);
+    for (const c of orgScopedCalls) {
+      expect(c.args[1]).toEqual(["o1"]); // the caller's orgs, nothing wider
+    }
   });
 
   it("cron secret drains every org (unscoped)", async () => {

@@ -955,14 +955,19 @@ export default function TicketDetailView() {
     state: 'idle' | 'loading' | 'loaded' | 'unavailable';
     doc?: { id: string; libraryId: string | null; rev: string | null; documentNumber: string | null; title: string | null };
   }>({ state: 'idle' });
+  const ticketOrgId = ticket?.orgId ?? null;
   useEffect(() => {
     let alive = true;
-    if (!sourceRefId) { setSourceDoc({ state: 'idle' }); return; }
+    if (!sourceRefId || !ticketOrgId) { setSourceDoc({ state: 'idle' }); return; }
     setSourceDoc((s) => (s.state === 'loaded' && s.doc?.id === sourceRefId ? s : { state: 'loading' }));
     supabase
       .from('documents')
       .select('id, library_id, rev, document_number, title')
       .eq('id', sourceRefId)
+      // Scoped to the TICKET's org, not just RLS: a viewer who belongs to two
+      // workspaces can otherwise resolve a same-id document from the other
+      // one and render it as this ticket's source.
+      .eq('org_id', ticketOrgId)
       .maybeSingle()
       .then(({ data }) => {
         if (!alive) return;
@@ -980,7 +985,7 @@ export default function TicketDetailView() {
         });
       });
     return () => { alive = false; };
-  }, [sourceRefId]);
+  }, [sourceRefId, ticketOrgId]);
 
   // --- 2. SAFE SCROLL ---
   useEffect(() => {

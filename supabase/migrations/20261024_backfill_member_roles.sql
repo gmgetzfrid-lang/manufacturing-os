@@ -16,11 +16,28 @@
 -- The 20260722 seeding UPDATE ran once at migration time and does not help
 -- orgs created afterward; this catches those.
 
+-- Two branches, because SET must never LOSE a role: an empty/NULL collection
+-- is seeded from the headline, but a populated collection that is merely
+-- missing its headline gets the headline APPENDED — `roles = ARRAY[role]`
+-- there would have discarded every additive role the member held.
+-- (2026-08-24 adversarial-review note: the version applied to the live DB on
+-- 2026-08-24 used a single replacing UPDATE; the live probe showed no
+-- populated-but-missing-headline rows existed, so no data was lost there.
+-- This corrected form is for every future/fresh deployment. Same end state
+-- for non-drifted rows; idempotent.)
+
 UPDATE org_members
    SET roles = ARRAY[role]
  WHERE role IS NOT NULL
    AND role <> ''
-   AND (roles IS NULL OR roles = '{}' OR NOT (role = ANY(roles)));
+   AND (roles IS NULL OR roles = '{}');
+
+UPDATE org_members
+   SET roles = roles || ARRAY[role]
+ WHERE role IS NOT NULL
+   AND role <> ''
+   AND roles <> '{}'
+   AND NOT (role = ANY(roles));
 
 -- Verification (expect zero rows): every active member's roles array carries
 -- its headline role.

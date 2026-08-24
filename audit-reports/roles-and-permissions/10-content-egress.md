@@ -48,6 +48,23 @@ They compound: `/d/[number]` and the orchestrator hand out document UUIDs;
 - Verified: Done-when 1 — creating a share now needs an ACL read decision on the document (INSERT policy). Done-when 2 — `document_id` cannot name an out-of-org document (org join, both app and DB). Done-when 3 — UPDATE/DELETE limited to creator or controller. Done-when 4 — `/api/share/file` re-checks the creator's current authority before serving. Suite 1429 green.
 - Migration: `supabase/migrations/20261022_document_shares_acl_scope.sql` — **applied & verified live 2026-08-24** (probe: all four per-verb `document_shares` policies present).
 - **What this brought to light:** (1) `revokeShareLink` (`lib/documentShares.ts:68-73`) updates by id with no authority scope — after the tightened UPDATE policy it becomes a silent 0-row no-op for a non-creator/non-controller, and `ShareLinkModal.tsx:77` swallows the error; recorded as new finding `EGRESS-7`. (2) `listShareLinks` selects `*` (incl. `token`) under the any-active-member SELECT policy, so a member who cannot read a document can still enumerate its live share tokens and pull `/api/share/file` — an intra-org bypass parallel to this one; recorded as `EGRESS-8`.
+- **Follow-up (2026-08-24 adversarial-review round).** The 57-agent review of
+  this fix found `20261022` left the share's AUTHORITY ANCHOR unprotected:
+  INSERT never bound `created_by` to `auth.uid()`, so any active member could
+  mint a share carrying a controller's uid via PostgREST — and
+  `shareStillAuthorized` then short-circuits on `isController` forever, with
+  every download audit-attributed to the impersonated controller; and UPDATE
+  had no `WITH CHECK`, so Postgres reused USING and a creator could REPOINT
+  their own share row at a document (or org) the INSERT rail would refuse.
+  Fixed in `supabase/migrations/20261026_document_shares_anchor_integrity.sql`:
+  INSERT binds `created_by = auth.uid()` (the `transmittals_insert` idiom);
+  UPDATE gets an explicit WITH CHECK; a BEFORE UPDATE trigger makes
+  `document_id`/`org_id`/`created_by` immutable — chosen over a WITH CHECK
+  re-running `node_visible()`, which would have blocked a creator revoking a
+  share on a document they since lost read access to (exactly the share that
+  most needs revoking). **Pending hand-apply (DEC-30)** — the app flow already
+  passes the session uid, so the code needs no change and the bind activates
+  cleanly.
 - **Verification:** CONFIRMED (same-org) / SUSPECTED (cross-org — the resolve path was not traced to a conclusion)
 - **Blast radius:** security / confidentiality
 - **Locations:**
@@ -291,6 +308,21 @@ unchanged.
 - Files: `app/api/auth/request-access/route.ts`, `app/(protected)/admin/users/page.tsx`, `lib/schemaExpectations.ts`, `supabase/migrations/20261023_access_requests_scope_and_limit.sql`
 - Tests: `lib/__tests__/requestAccessRoute.test.ts` — 429 gate before any org query or insert; an attempt recorded on a normal submission (both fail against the old route).
 - Verified: an Admin sees only their own org's requests (org-correlated policy + explicit `.eq(org_id)`); the public route is rate-limited; a submitted request appears to an Admin. Suite 1431 green.
+- **Completed (2026-08-24 adversarial-review round).** The first card had no
+  way to RESOLVE a request: "Add" only prefilled the create-user modal,
+  nothing anywhere moved `access_requests.status` off `pending` (the
+  tightened RLS gives admins SELECT only), and the public door 409s while a
+  pending row exists — so an accepted request sat on the card forever and a
+  removed member could never legitimately re-request. Closed at three
+  points: `/api/admin/create-user` now marks the matching org+email pending
+  rows `approved` after granting the membership (service role, best-effort,
+  logged on failure); the card refreshes after a successful create; and a
+  new Decline action (`/api/admin/access-requests`, service role) lets a
+  controller of the org THE STORED REQUEST NAMES — never the body — mark a
+  pending row `declined`, freeing the address to re-request. Tests:
+  `lib/__tests__/accessRequestDecline.test.ts` (401 / non-controller 403 /
+  additive DocCtrl admitted / 404 unknown id / declines only the named
+  pending row).
 - Migration: `supabase/migrations/20261023_access_requests_scope_and_limit.sql` — **applied & verified live 2026-08-24** (probe: `org_id` column + scoped admin SELECT present, anonymous-insert policy gone).
 - **What this brought to light:** `20260713_branding_admin_writes.sql:15` checks `role = 'Admin'` with **no** roles-array clause, unlike the additive form used here and in `20260817` — a member holding Admin only as a secondary role is refused there. Recorded under the additive-roles family (`ADD-*`); this fix used the additive form throughout.
 - **Verification:** CONFIRMED
@@ -381,7 +413,23 @@ succeeds.
 ## EGRESS-7 · Revoking a share is a silent no-op for a non-creator once the UPDATE policy tightens
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, adversarial-review round).** `revokeShareLink` now
+`.select("id")`s the touched row back and THROWS on zero rows with a message
+naming who can revoke ("only its creator or a Document Control/Admin");
+`ShareLinkModal.revoke` already catches and renders thrown errors, so the
+false "revoked" state is gone — the person sees exactly why nothing happened
+and who to ask. Done-when met: the write is selected back, zero rows is a
+visible error, the modal shows it. The button is still rendered for
+non-authorized members (an honest refusal rather than a hidden control);
+hiding it is cosmetic and would need controller state the modal doesn't hold.
+- Files: `lib/documentShares.ts` (`revokeShareLink`), no modal change needed
+- **What this brought to light:** the same review found the share's
+  `created_by` anchor was forgeable at INSERT and repointable at UPDATE —
+  fixed at the database in `20261026_document_shares_anchor_integrity.sql`
+  (see the EGRESS-1 record's follow-up note).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** security / availability
 - **Locations:**

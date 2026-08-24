@@ -25,8 +25,8 @@
       "LOW": 4
     },
     "by_status": {
-      "OPEN": 114,
-      "RESOLVED": 15,
+      "OPEN": 113,
+      "RESOLVED": 16,
       "REFUTED": 3
     }
   },
@@ -2388,7 +2388,7 @@
       "id": "EGRESS-7",
       "title": "Revoking a share is a silent no-op for a non-creator once the UPDATE policy tightens",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "security / availability",

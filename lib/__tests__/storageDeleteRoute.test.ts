@@ -143,4 +143,17 @@ describe("DELETE /api/storage/delete (SURF-2)", () => {
     expect(res.status).toBe(200);
     expect(state.r2sends).toBe(1);
   });
+
+  it("refuses the delete when the audit row cannot be written — custody before destruction", async () => {
+    // The custody record is written BEFORE r2 destruction and the route fails
+    // closed on it: bytes destroyed with no audit row is the unrecoverable
+    // ordering. (postgrest resolves failures into { error } — the route must
+    // CHECK it, not rely on a catch.)
+    state.tables.org_members = { data: { role: "Admin", roles: [] } };
+    state.tables.document_versions = { data: null };
+    state.tables.audit_logs = { error: { message: "insert failed" } };
+    const res = await del(KEY);
+    expect(res.status).toBe(503);
+    expect(state.r2sends).toBe(0); // nothing was destroyed
+  });
 });

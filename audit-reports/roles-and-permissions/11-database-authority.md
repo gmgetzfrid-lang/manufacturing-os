@@ -174,6 +174,16 @@ almost anywhere else in this audit; see
 - Verified: Done-when 1 — the backfill guarantees every row's `roles` contains its `role`. Done-when 2 — signup seeds it; restore placeholders are `status:'inactive'` and filtered by every additive check's `status='active'` predicate (per the independent verifier), so they are not load-bearing. Done-when 3 — the `COALESCE` idiom is documented as misleading in the backfill header; it is left in place because removing it is a broader SQL change deferred with the additive-conversion work.
 - Migration: `supabase/migrations/20261024_backfill_member_roles.sql` — **applied & verified live 2026-08-24** (probe: zero members whose `roles[]` misses their headline `role`).
 - **What this brought to light:** `DB-1`'s BLOCKED activation depends on this backfill having run — recorded as step 2 of `DB-1`'s unblocking sequence.
+- **Replay form corrected (2026-08-24 adversarial-review round).** The
+  applied UPDATE's `SET roles = ARRAY[role]` also fired on a POPULATED
+  collection that merely missed its headline role — replacing, not
+  appending, and silently dropping every additive role on such a drifted
+  row. The live probe showed no drifted rows existed when it ran, so nothing
+  was lost in production — but the file stays in the replayable set for
+  fresh deployments, so it now splits the statement: empty/NULL collections
+  are seeded, populated-but-missing-headline collections get the headline
+  APPENDED (`roles || ARRAY[role]`). Same end state for non-drifted rows;
+  the applied-version note is in the file.
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / access-control
 - **Locations:**
@@ -232,6 +242,25 @@ additive-roles work in this audit.** See
 - Reproduced: `PermissionDrawer.tsx:284` writes `.eq("id", nodeId)` (the edited node only); no trigger propagates; folders/documents index once at creation from the then-current chain.
 - Verified: granting then revoking at a library, then checking a nested document after one rebuild cycle, shows the revocation applied (the diff-guard test encodes the stale-document case); an expired publish rule stops authorizing after one cycle (the expired-drop test); the rebuild is idempotent (diff-guard skips unchanged nodes). **This narrows the stale-grant window from *forever* to *one cron cycle* — it is NOT a full fix**: the index still carries no expiry, so the raw evaluator remains the source of truth between cycles (as `DEC-10` states). A trigger-derived column is the durable answer, deferred per `DEC-10` until the deny guard (`DB-2`) has been live and quiet.
 - **What this brought to light:** the rebuild's expiry filter is exactly the `CHAIN-4` hazard note — a naive rebuild that called the unmodified `buildAclIndexFromRules` would have re-imported expired rules into the index. The builder change fixes that at the source, so any future caller can opt into expiry-correct indexing by passing `nowMs`. Also duplicate of `OWN-20` within this area — resolved once here.
+- **Hardened (2026-08-24 adversarial-review round).** The 57-agent review
+  found the first walk unsafe against PARTIAL DATA, which for a rebuild that
+  REPLACES indexes is fail-open: (1) a failed table read coalesced to an
+  empty list and the walk kept going — a collections timeout meant every
+  document's index was rewritten without its folder chain's allow AND deny
+  rules, and the diff guard happily persisted it; (2) no pagination, so
+  PostgREST's 1000-row cap silently truncated big orgs the same way (the repo
+  already codes around this in `lib/dataExport.ts`); (3) write failures only
+  skipped a counter — a stale, possibly expired index stayed persisted with
+  zero operational signal; (4) `document_sets` — the fourth ACL-indexed node
+  type, RLS-gated directly on its own `acl_index` by
+  `document_sets_acl_select` (20260813) — was never rebuilt, so a time-boxed
+  grant on a drawing set never expired at the RLS layer. All four fixed: every
+  read is paginated and error-checked (an org with any failed read is skipped
+  whole and reported), a node with a dangling `library_id`/`path_ids` ancestor
+  is skipped-and-reported rather than rebuilt ruleless, write failures land in
+  `RebuildCounts.errors` which the cron folds into its `errors` list, and the
+  walk gained a library→set pass. Tests pin each: skip-on-read-failure,
+  dangling-ancestor skip, write-error surfacing, and the set rebuild.
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**
@@ -286,6 +315,27 @@ and a test covers "grant at library, revoke at library, check a nested document.
 - Reproduced: the pre-fix `dbConfig` wrote `acl: config.acl ?? null` with **no `acl_index`**, so a wizard-saved library had `acl_index = NULL` and was invisible to `canPublishViaIndex` / `node_visible` / `user_can_publish_on_library` while the raw evaluator honoured `acl`.
 - Verified: a wizard save now writes a consistent `acl` + `acl_index`; a drawer grant survives a subsequent wizard metadata edit (the merge test); suite 1442 green.
 - **What this brought to light:** the folder-creation path (`documents/[libraryId]/page.tsx:600-605`) already writes both columns correctly (`buildAclIndexFromChain`), and the drawer writes both — so the wizard was the only diverging writer. The deeper structural point (raw `acl` chain for app-side read/discover vs `acl_index` for RLS) is what `DB-4`'s nightly rebuild keeps reconciled going forward.
+- **Hardened (2026-08-24 adversarial-review round).** The first merge split
+  rules by SUBJECT TYPE ("preserve non-role") and that heuristic was wrong in
+  both directions. Fail-open: the wizard itself authors a NON-role rule — the
+  org-subject "Everyone" allow (`LibraryWizard.tsx:275`) — so an
+  Everyone→restricted edit re-imported the old org-wide allow from the
+  existing rules and the restriction never took effect (and every repeat
+  "Everyone" save appended a duplicate copy). Fail-closed: the DRAWER can
+  author role-subject rules the wizard cannot re-express — a role deny, a
+  role publish grant (the very grant OWN-9 added DraftingSupervisor to the
+  pickers for) — and "drop all role rules" stripped them on any metadata
+  edit. The merge now splits by OWNERSHIP instead: a rule the wizard re-emits
+  (an ALLOW for a role/org subject whose actions all fall inside the wizard's
+  action vocabulary) is replaced by this save's output; everything else —
+  user/team rules, ALL denies, role/org allows carrying `publish` or other
+  non-wizard actions — is preserved verbatim, deduplicated by value. A third
+  hole closed with it: the page cached the UNMERGED wizard ACL in local
+  state, so the second edit of the same library in one session merged against
+  role-only rules and clobbered every drawer grant after all — it now caches
+  what was persisted. New tests pin all three: Everyone→restricted actually
+  restricts, repeat saves don't duplicate, role denies and role publish
+  grants survive.
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**
@@ -333,6 +383,24 @@ user's next rev-up.
 - Commit: `2af2ebe`
 - Files: `supabase/migrations/20261020_pin_search_path.sql`, `supabase/migrations/20261019_publish_revision_drop_dead_param.sql`, `supabase/REMEDIATION_APPLY_ALL.sql`, `lib/__tests__/searchPathPin.test.ts`
 - Tests: `lib/__tests__/searchPathPin.test.ts::"every live definer function is pinned at creation or by 20261020_pin_search_path.sql"` (allowlist parsed from the migration itself so they cannot drift) and `::"the ALTER migration's legacy publish_revision entries stay defensive, not load-bearing"`.
+- **Lint parser corrected (2026-08-24 adversarial-review round).** The
+  census had three parser bugs that made the lint fail OPEN: it processed
+  every CREATE in a file before every DROP, inverting SQL's textual order for
+  the standard `DROP … ; CREATE …` re-creation pattern (so re-created LIVE
+  functions were censused as dropped and skipped — `mfg_storage_estimate`
+  among them); `--` comments were matched as real statements (a rollback
+  comment killed `user_can_publish_on_library` from the census); and the
+  argument capture stopped at the first `)` including one inside an arg-list
+  comment, so `publish_revision`'s 11 parameters censused as 5 and the
+  allowlist pairing was broken by construction. The census now strips
+  comments, applies CREATE/DROP events in textual order per file, captures
+  paren-nested argument lists, counts arity on top-level commas only, and
+  accepts tagged dollar quotes. Two self-checks added: every 20261020
+  signature must pair with a censused key (drift is now loud), and
+  `publish_revision/11` must census live-and-pinned through its own
+  drop-then-recreate. All functions the corrected census newly sees are
+  pinned — consistent with the live probe — so the lint stays green while
+  actually watching them.
 - Reproduced: independent scripted census (final definition per `(name, arity)` over `schema.sql` + all migrations) confirmed every function in the table SECURITY DEFINER and unpinned at its final definition.
 - Verified: Done-when 1 — all live definer functions pinned at creation or via the ALTER migration (census script returns zero). Done-when 2 — the lint test enforces it for new functions. **The live `enforce_document_publish_guard` is the `20260822_review_completion_guard.sql:21` definition** (4th of 4; that migration also re-binds the trigger) — recorded here so the next agent does not re-derive it.
 - Migration: `supabase/migrations/20261020_pin_search_path.sql` — **applied & verified live 2026-08-24** (probe: zero `SECURITY DEFINER` functions in `public` without a pinned `search_path`).

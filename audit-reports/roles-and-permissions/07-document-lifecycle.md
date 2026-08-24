@@ -768,6 +768,13 @@ but nothing composes them. **Do not merge the two systems.**
 - Tests: `lib/__tests__/sourceDocRef.test.ts` — 7 tests pinning each producer shape verbatim, the no-id null case, and the drift rules (`same`/`drifted`/`unknown`, whitespace- and case-insensitive).
 - Reproduced: grep of the whole 2000-line ticket page returned zero `source_document` references while all three producers write it (`CheckInPanel.tsx:262`, `requests/new/page.tsx:291`, `transitionIn.ts:322`) — link in the data, absent from the product, exactly as filed.
 - Verified: Done-when 1 — the card links to the controlled document when the register row resolves. Done-when 2 — drift between the captured rev and `documents.rev` renders the amber badge; a ticket that captured no rev (the transitionIn shape) shows the register rev with no drift claim. tsc/eslint clean, suite 1407 green.
+- **Hardened (2026-08-24 adversarial-review round).** The backlink lookup
+  fetched the document by id alone, leaning on RLS — but a viewer who belongs
+  to TWO workspaces resolves a same-id document from the other one, and the
+  card would render it as this ticket's source with a false drift verdict.
+  The query is now additionally scoped `.eq('org_id', <ticket's org>)`, so a
+  cross-org id renders the captured reference as plain text (the
+  `unavailable` branch), exactly like a document the viewer cannot see.
 - **What this brought to light:** the three producers write three DIFFERENT shapes — recorded as new finding `LIFE-15` below. Also `metadata.source_document.path` has zero consumers anywhere (dead weight in the blob), and `lib/impact.ts:117` filters tickets on `metadata->source_document->>id`, which is unconstrained member-writable metadata — a forged id would surface an unrelated ticket in a document's Impact panel; the new card at least makes a forgery user-visible on the ticket itself.
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / ux
