@@ -92,8 +92,23 @@ naive exemption would have waived), and `supersedeDocument` gets the app-side
 equivalent. Only DECLARED drawings are gated (unclassified legacy data must
 not hard-fail; the client still prompts), and the gate no-ops on a
 pre-20261012 database. Ship loop green: `tsc`, `eslint`, **1503 vitest**,
-full `next build`. **One migration to hand-apply:**
-`20261031_dc_phase5_moc_gate.sql`.
+full `next build`. Migration `20261031_dc_phase5_moc_gate.sql`
+**applied & verified live 2026-08-24** (both probes true).
+
+**Phase 6 — the destructive, irreversible deletes — is complete.** All
+app-side, no migration: `RET-1` (the space-saver ignored legal holds — the
+hold guarded row DELETEs while the shed deleted R2 bytes → candidates exclude
+held parents and commit re-checks, both fail closed, so a hold placed between
+produce and commit still protects the bytes), `RET-2` (marked resolved — the
+cross-area `SURF-2` fix already closed every limb), `XEDGE-4` (a retention
+policy with no prefix purged the customer's ENTIRE bucket by age → the purge
+refuses an empty prefix, deletes only this app's `manufacturing-os-export-…zip`
+archives, reports scanned/deleted into diagnostics, and both destination
+routes refuse the retention-without-prefix pair), `XEDGE-13` (the orphan
+sweep's unordered pagination could silently miss a reference and delete a
+live file → stable `.order("id")` paging plus an exact-count cross-check that
+aborts fail-closed). Ship loop green: `tsc`, `eslint`, **1513 vitest**, full
+`next build`.
 
 | # | Report | n | Note |
 |---|---|---|---|
