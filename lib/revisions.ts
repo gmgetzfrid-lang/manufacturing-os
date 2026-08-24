@@ -42,7 +42,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 
-// ─── Publish contract errors ─────────────────────────────────────────────
+// ─── Publish contract errors ─────────────────────────────────────────
 //
 // A stale base is NOT an error string — it's a structured event the UI turns
 // into the conflict screen (diff / message / publish-as-branch). Nothing was
@@ -994,7 +994,7 @@ export async function listVersions(documentId: string): Promise<DocumentVersion[
   return (data ?? []).map(rowToVersion);
 }
 
-// ─── REVISION LABEL CORRECTION ────────────────────────────────────────────
+// ─── REVISION LABEL CORRECTION ────────────────────────────────────────
 // Fixing a mislabel after the fact ("uploaded as Rev 0, the stamp actually
 // reads Rev 38") is a controlled correction, not a rewrite: it needs the same
 // authority as publishing in the library (or effective ownership of the doc),
@@ -1118,7 +1118,7 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
   return { oldLabel, newLabel: check.label, syncedCurrent };
 }
 
-// ─── REVERT ───────────────────────────────────────────────────────────────
+// ─── REVERT ─────────────────────────────────────────────────────────────
 // Rolling back to a previous version is never a silent flip of
 // current_version_id. We create a brand-new version row that COPIES the file
 // payload of the chosen old version, sets reverted_from_version_id, and goes
@@ -1309,7 +1309,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   return rowToVersion(insertedRow);
 }
 
-// ─── ARCHIVE / UNARCHIVE ──────────────────────────────────────────────────
+// ─── ARCHIVE / UNARCHIVE ──────────────────────────────────────────────
 
 export type ArchiveInput = {
   doc: DocumentRecord;
@@ -1383,7 +1383,7 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
   });
 }
 
-// ─── SUPERSEDE DOCUMENT ───────────────────────────────────────────────────
+// ─── SUPERSEDE DOCUMENT ───────────────────────────────────────────────
 // One whole document is replaced by zero or more *different* documents.
 // (Rev-Up is for a new revision of the same document; this is for retiring
 // or splitting a drawing.)
@@ -1416,6 +1416,26 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (!reason.trim()) throw new Error("Supersession reason is required");
+
+  // DCK-1: superseding a drawing-class document changes which sheet is the
+  // controlled copy — the same PSM MOC requirement as a non-minor revision.
+  // Rev-up and revert are gated inside publish_revision at the database;
+  // supersede flips documents.status directly, so the gate lives here.
+  // Unresolvable class (pre-migration env) does not block — the DB rail model.
+  try {
+    const { effectiveDocClassForDocument } = await import("@/lib/docClass");
+    const cls = await effectiveDocClassForDocument({
+      id: doc.id, collectionId: doc.collectionId ?? null, libraryId,
+    });
+    if (cls === "drawing" && (mocReference?.trim().length ?? 0) < 3) {
+      throw new Error(
+        "This is a drawing-class document — PSM requires the MOC reference to supersede it (OSHA 1910.119(l)).",
+      );
+    }
+  } catch (e) {
+    if ((e as Error).message.includes("MOC reference")) throw e;
+    /* class unresolvable — do not block */
+  }
 
   // Retiring a document is a canonical-state change too: same per-library publish
   // authority + lock/hold guard, and an override reason if someone else is
@@ -1536,7 +1556,7 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
 }
 
-// ─── BACKFILL HISTORICAL VERSION ─────────────────────────────────────────
+// ─── BACKFILL HISTORICAL VERSION ─────────────────────────────────────
 //
 // `backfillVersion` is for adding a HISTORICAL revision to a document
 // after the fact. Use case: existing app users have been uploading
