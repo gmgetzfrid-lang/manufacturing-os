@@ -342,6 +342,8 @@ export async function reconstruct(
   let compositionRescues = 0;
   /** Where composition bridges die, so a stall names its own cause. */
   const composeStats = { bridges: 0, fewAnchors: 0, scaleVote: 0, scaleFlat: 0, strictGate: 0 };
+  /** Frames registered by re-running PnP against the globally refined model. */
+  let lateRescues = 0;
   const matchCounts: number[] = [];
 
   /**
@@ -643,6 +645,7 @@ export async function reconstruct(
         `vote, ${composeStats.scaleFlat} could not measure the baseline at all (anchors too ` +
         `distant), ${composeStats.strictGate} failed reprojection after refinement`
       : "") +
+    `${lateRescues ? `; ${lateRescues} frames placed on a second pass after global refinement` : ""}` +
     chainNote;
 
   if (verified.length === 0) {
@@ -1387,7 +1390,8 @@ export async function reconstruct(
 
   // Name WHERE the chain broke, in capture order — the difference between
   // "reconstruction failed" and knowing which second of video to look at.
-  {
+  // Called again after the post-refinement pass, which can close breaks.
+  const noteChain = () => {
     const byClip = new Map<string, FrameMeta[]>();
     for (const f of frames) {
       const arr = byClip.get(f.clipId) ?? [];
@@ -1426,7 +1430,8 @@ export async function reconstruct(
       );
     }
     chainNote = notes.length ? `; ${notes.join("; ")}` : "";
-  }
+  };
+  noteChain();
 
   if (poses.size < 3) {
     const bestConditioned = verified.reduce((m, p) => Math.max(m, p.wellConditioned), 0);
@@ -1447,8 +1452,48 @@ export async function reconstruct(
 
   // ── 5. Global refinement ────────────────────────────────────────────────
   report(0.88, `Refining ${poses.size} cameras`);
-  const finalBa = runBundle(null);
+  let finalBa = runBundle(null);
   triangulatePending();
+
+  // ── 5b. Second-chance registration ──────────────────────────────────────
+  // Growth judged every frame against the structure as it existed mid-build.
+  // The refinement above just moved every camera and point to their best
+  // joint positions, so a frame that failed PnP against the rough model can
+  // succeed outright against the polished one — same solver, same gates.
+  for (let pass = 0; pass < 3; pass++) {
+    let added = 0;
+    for (const frame of frames) {
+      if (poses.has(frame.index)) continue;
+      const corr: PnpCorrespondence[] = [];
+      for (const ti of tracksByFrame.get(frame.index) ?? []) {
+        const track = tracks[ti];
+        if (!track.xyz) continue;
+        const kp = track.views.get(frame.index);
+        if (kp === undefined) continue;
+        const o = observationOf(frame.index, kp);
+        if (!o) continue;
+        corr.push({ X: track.xyz, x: o.x, y: o.y });
+      }
+      if (corr.length < RELAXED_MIN_SUPPORT) continue;
+      const solved = pnpRansac(corr, cfg.sfm.ransacThresholdPx / focal, {
+        seed: 0x3d1c + frame.index,
+        minInliers: RELAXED_MIN_SUPPORT,
+        focal,
+      });
+      if (!solved) continue;
+      poses.set(frame.index, solved.pose);
+      lateRescues++;
+      added++;
+    }
+    if (added === 0) break;
+    triangulatePending();
+  }
+  if (lateRescues > 0) {
+    report(0.92, `Refining ${poses.size} cameras`);
+    finalBa = runBundle(null);
+    triangulatePending();
+    noteChain();
+  }
 
   // ── 6. Filter and package ───────────────────────────────────────────────
   const points: SfmResult["points"] = [];

@@ -667,6 +667,11 @@ function ResultPanel({
         <Metric label="One connected space" value={r.unified ? "yes" : `no — ${r.componentCount} pieces`} />
       </div>
 
+      {/* A success has as much to say as a failure: how many frames made it,
+          where the chain thinned, what got dropped. Quality problems are
+          diagnosed from exactly these numbers. */}
+      <SuccessReportCopy scene={scene} />
+
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
@@ -717,6 +722,34 @@ function ResultPanel({
         </div>
       )}
     </div>
+  );
+}
+
+function SuccessReportCopy({ scene }: { scene: SceneData }) {
+  const [copied, setCopied] = useState(false);
+  const r = scene.report;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const text = [
+          `Reconstruction ${r.unified ? "complete" : "finished with problems"}.`,
+          `${r.clipsRegistered} of ${r.clipsTotal} videos merged; ${r.framesRegistered} of ` +
+            `${r.framesUsed} frames placed (${r.framesDecoded} decoded); ` +
+            `${r.sparsePoints.toLocaleString()} sparse and ${r.densePoints.toLocaleString()} dense points; ` +
+            `${r.reprojectionRmsePx}px reprojection error; ` +
+            `${r.unified ? "one connected space" : `${r.componentCount} disconnected pieces`}.`,
+          `What the run measured — ${r.diagnostics}`,
+        ].join("\n");
+        void navigator.clipboard?.writeText(text).then(
+          () => setCopied(true),
+          () => setCopied(false),
+        );
+      }}
+      className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+    >
+      {copied ? "Copied" : "Copy full diagnostic report"}
+    </button>
   );
 }
 
