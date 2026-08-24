@@ -956,7 +956,12 @@ export async function reconstruct(
   focal = initialFocal;
   triangulatePending();
 
-  const failed = new Set<number>();
+  // PnP with a fixed per-frame seed is deterministic: the same support set
+  // fails the same way every time. So a failure is keyed to the support count
+  // it failed at, and the frame is retried only once its support has GROWN —
+  // blanket clearing meant every composition rescue re-ran the same hopeless
+  // candidates, one wasted step each, and the step budget died of it.
+  const failed = new Map<number, number>();
   /** Bridges that failed composition, keyed to the model size they failed at. */
   const bridgeFailedAt = new Map<string, number>();
   let sinceBa = 0;
@@ -1231,18 +1236,23 @@ export async function reconstruct(
     return true;
   };
 
-  for (let step = 0; step < totalFrames * 2; step++) {
+  // The budget is a safety net against a cycle nobody foresaw, not a working
+  // limit — composition's bridge blacklist and the grown-support retry rule
+  // bound the real work. At 2× frames it WAS the working limit: a long orbit
+  // died mid-growth with rescues still succeeding.
+  for (let step = 0; step < totalFrames * 8 + 200; step++) {
     checkAbort();
     if (poses.size >= totalFrames) break;
 
     // Which unregistered frame sees the most already-triangulated points?
     let best: { frame: number; count: number } | null = null;
     for (const frame of frames) {
-      if (poses.has(frame.index) || failed.has(frame.index)) continue;
+      if (poses.has(frame.index)) continue;
       let count = 0;
       for (const ti of tracksByFrame.get(frame.index) ?? []) {
         if (tracks[ti].xyz) count++;
       }
+      if ((failed.get(frame.index) ?? -1) >= count) continue;
       if (!best || count > best.count) best = { frame: frame.index, count };
     }
 
@@ -1257,7 +1267,8 @@ export async function reconstruct(
     if (!best || best.count < minSupport) {
       if (minSupport > RELAXED_MIN_SUPPORT) {
         minSupport = Math.max(RELAXED_MIN_SUPPORT, Math.floor(minSupport / 2));
-        // Frames rejected under the stricter bar deserve another look.
+        // PnP's inlier bar follows minSupport, so relaxing it genuinely changes
+        // the outcome for frames that failed under the stricter one.
         failed.clear();
         continue;
       }
@@ -1268,10 +1279,7 @@ export async function reconstruct(
       // fixes rotation and direction outright, leaving one scalar, the
       // baseline length, which a handful of known points settles. Register
       // one such frame by composition and let ordinary growth resume from it.
-      if (registerByComposition()) {
-        failed.clear();
-        continue;
-      }
+      if (registerByComposition()) continue;
       break;
     }
 
@@ -1307,7 +1315,7 @@ export async function reconstruct(
     });
 
     if (!solved) {
-      failed.add(frameIndex);
+      failed.set(frameIndex, best.count);
       continue;
     }
 
