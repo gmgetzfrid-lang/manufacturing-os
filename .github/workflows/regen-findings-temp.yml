@@ -6,12 +6,14 @@
 # This file is deleted right after the run.
 name: regen-findings-temp
 on:
-  workflow_dispatch: {}
-permissions:
-  contents: write
+  push:
+    branches:
+      - claude/report-audit-findings-a3i90l
 jobs:
   regen:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,7 +23,12 @@ jobs:
           node audit-reports/build-index.mjs
           H=$(git hash-object audit-reports/document-control/findings.json)
           echo "regenerated blob: $H"
-          test "$H" = "9da6275e1535b7ab17c537f29050decfe6ef4e72"
+          if [ "$H" != "9da6275e1535b7ab17c537f29050decfe6ef4e72" ]; then
+            echo "hash mismatch - refusing to commit"; exit 1
+          fi
+          if git diff --quiet -- audit-reports/document-control/findings.json; then
+            echo "already at target - nothing to commit"; exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add audit-reports/document-control/findings.json
