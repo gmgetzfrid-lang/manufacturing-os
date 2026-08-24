@@ -200,3 +200,28 @@ create policy org_members_write on org_members
     is_org_admin_or_manager(org_id)
     and (not (role = 'Admin' or roles && array['Admin']::text[]) or is_org_admin(org_id))
   );
+
+-- ── DB-6: keep search_path pins intact across re-runs of this script ─────────
+-- The CREATE OR REPLACE statements above reset proconfig, which would strip
+-- the `SET search_path = public` pins applied by
+-- migrations/20261020_pin_search_path.sql. Re-pin everything this script may
+-- have just re-created (idempotent; missing signatures are skipped).
+do $$
+declare
+  sig text;
+  sigs text[] := array[
+    'doc_is_visible(uuid)',
+    'my_project_ids()',
+    'is_org_controller(uuid)',
+    'can_manage_node(jsonb, uuid)',
+    'documents_guard_access_change()',
+    'is_org_admin(uuid)',
+    'is_org_admin_or_manager(uuid)'
+  ];
+begin
+  foreach sig in array sigs loop
+    if to_regprocedure(sig) is not null then
+      execute format('alter function %s set search_path = public', sig);
+    end if;
+  end loop;
+end $$;

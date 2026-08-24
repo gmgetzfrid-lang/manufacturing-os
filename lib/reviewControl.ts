@@ -49,15 +49,18 @@ export async function effectiveReviewControlForDocument(doc: {
   return resolveEffectiveReviewControl(doc.reviewControl ?? null, folder, (lib as ControlCols)?.review_control ?? null);
 }
 
-/** The mode that actually applies to THIS rev-up, after the two escape hatches:
- *  a Minor/Correction change and a rev that came from a drafting ticket always
- *  skip the gate (they don't need — or already had — review). */
+/** The mode that actually applies to THIS rev-up, after the one escape hatch:
+ *  a Minor/Correction change skips the gate.
+ *
+ *  Ticket origin NEVER waives review (DEC-23). Ticket approval is not the
+ *  document's reviewer roster, is not bound to the file's content hash, and
+ *  produces no e-signature on the version — so `related_ticket_id` is written
+ *  for provenance only and must never satisfy a document sign-off. */
 export function effectiveModeForRevUp(input: {
-  control: ReviewControl; changeType?: string | null; relatedTicketId?: string | null;
+  control: ReviewControl; changeType?: string | null;
 }): ReviewControlMode {
   if (input.control.mode === "none") return "none";
   if (input.changeType === "Minor" || input.changeType === "Correction") return "none";
-  if (input.relatedTicketId) return "none";
   return input.control.mode; // 'require' or 'publisher_choice'
 }
 

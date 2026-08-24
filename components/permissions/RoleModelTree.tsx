@@ -15,7 +15,7 @@ import { ChevronRight, Users, KeyRound, GitBranch, AlertTriangle, ShieldCheck } 
 import { supabase } from "@/lib/supabase";
 
 interface Member { uid: string; name: string; role: string; roles: string[]; status: string }
-interface Lib { id: string; name: string; ownerName: string | null; ownerTeamId: string | null; publishGrants: string[] }
+interface Lib { id: string; name: string; ownerUserId: string | null; ownerName: string | null; ownerTeamId: string | null; publishGrants: string[] }
 interface TeamRow { id: string; name: string; supervisorName: string | null }
 
 const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; summary: string; perms: Array<[string, string[]]> }> }> = [
@@ -33,7 +33,7 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
         ["Documents & publishing", ["Same as Admin: publish anywhere, force past locks and holds, force-unlock, delete, ACL drawer, metadata, library config"]],
         ["Reviews & compliance", ["Same as Admin: rosters, retention, legal holds, recerts, purge/shed"]],
         ["Requests (tickets)", ["Direct approval of own requests (skips engineer review)", "NOT a management role in the ticket engine — no assign/force-close"]],
-        ["Administration", ["Users (create; not grant Admin), permissions, settings, request forms, data export", "No billing, no branding, no restore"]],
+        ["Administration", ["Permissions, settings, request forms, data export", "No user management (/admin/users is Admin/Manager-gated — the sidebar link DocCtrl sees is a known gap), no billing, no branding, no restore"]],
       ]},
     ],
   },
@@ -76,7 +76,7 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
       { role: "Requester", summary: "Originates and accepts work.", perms: [
         ["Requests (tickets)", ["Create requests", "Review the returned draft: approve toward IFC, request revision, close"]],
       ]},
-      { role: "Accounting / Safety / HR / Maintenance / Operations", summary: "Request-only roles. NOTE: not currently assignable in /admin/users (known gap).", perms: [
+      { role: "Accounting / Safety / HR / Maintenance / Operations", summary: "Request-only roles.", perms: [
         ["Requests (tickets)", ["Create requests; requester powers on their own tickets"]],
       ]},
     ],
@@ -86,8 +86,8 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
     blurb: "Read-mostly roles.",
     roles: [
       { role: "Viewer", summary: "Default when membership is missing. Reduced sidebar (Home, Documents, Requests, Scratchpad).", perms: [["Everywhere", ["Read/browse per library visibility; no workflow actions, no publishing"]]] },
-      { role: "Contractor", summary: "Same reduced sidebar as Viewer, plus can create requests. Not assignable in /admin/users today (gap).", perms: [["Requests", ["Create requests"]]] },
-      { role: "Auditor", summary: "Intended for audit review — but /admin/audit does NOT admit Auditor (gap: gated to Admin/Manager/Supervisor/DocCtrl).", perms: [["Everywhere", ["Read-only; excluded from document editing"]]] },
+      { role: "Contractor", summary: "Same reduced sidebar as Viewer, plus can create requests.", perms: [["Requests", ["Create requests"]]] },
+      { role: "Auditor", summary: "Audit review: read-only, excluded from document editing, admitted to /admin/audit.", perms: [["Everywhere", ["Read-only; excluded from document editing", "/admin/audit access alongside Admin/Manager/Supervisor/DocCtrl"]]] },
     ],
   },
 ];
@@ -98,7 +98,7 @@ const SITUATIONAL: Array<{ title: string; body: string[] }> = [
     "Powers: publish/revert on that document, manage its review roster, acks, retention & origin sections, request deletion. Granted by the ownership chain — the person's base role doesn't matter.",
   ]},
   { title: "Granted publisher (per-library permission drawer)", body: [
-    "A library's ACL can grant 'publish' (or full 'admin') to specific users, teams, or roles. Grants are evaluated deny-first; expiry dates honored.",
+    "A library's ACL can grant 'publish' (or full 'admin') to specific users, teams, or roles. Grants are evaluated deny-first. Expiry dates are honored only where the raw rules are evaluated — the publish check (app and database) reads the acl_index snapshot, which carries no expiry, so an expired publish grant keeps working until that node's permissions are re-saved (see Known gaps).",
     "Powers: publish revisions in that one library, override another user's checkout lock (with a required reason — never a hold), and void stale review/ack rows during publish.",
   ]},
   { title: "Review signer (roster row)", body: [
@@ -114,9 +114,11 @@ const SITUATIONAL: Array<{ title: string; body: string[] }> = [
 // removed; holds/force-release/analytics DB- or policy-gated; all 19 roles
 // assignable; Auditor admitted to the audit log). What remains, honestly:
 const GAPS: string[] = [
-  "Additive extra roles (roles[]) are honored by the capability policy and the newer DB helpers, but a few older checks still read only the headline role.",
+  "Additive extra roles (roles[]) are honored by the capability policy and the newer DB helpers, but the publish guard (app + database), most RLS predicates, and the admin-page gates still read only the headline (highest-ranked) role — e.g. a Manager holding a secondary DocCtrl role has no publish authority anywhere.",
+  "Rule expiry dates are enforced by the raw-rule evaluator but not by the acl_index snapshot the publish path and the database read — an expired grant keeps authorizing until the node's permissions are re-saved.",
   "A deny-read rule on a 'normal'-visibility node is app-enforced; to make hiding database-hard, set the node private/hidden with explicit grants (the designed model).",
-  "Manager can administer users but the Admin sidebar section is shown only to Admin/DocCtrl — reachable by URL.",
+  "Manager can administer users but the Admin sidebar section is shown only to Admin/DocCtrl — reachable by URL. Conversely, DocCtrl sees the Users link and /admin/users denies them.",
+  "Owners are notified when an access recertification is due, but only Admin/DocCtrl can open the recertification flow — the owner path is a known gap.",
 ];
 
 function Fold({ label, count, children, tone }: { label: React.ReactNode; count?: number; children: React.ReactNode; tone?: "warn" }) {
@@ -142,7 +144,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
       try {
         const [m, l, t] = await Promise.all([
           supabase.from("org_members").select("uid, display_name, email, role, roles, status").eq("org_id", orgId).eq("status", "active"),
-          supabase.from("libraries").select("id, name, owner_name, owner_team_id, acl_index").eq("org_id", orgId),
+          supabase.from("libraries").select("id, name, owner_user_id, owner_name, owner_team_id, acl_index").eq("org_id", orgId),
           supabase.from("teams").select("id, name, supervisor_user_id").eq("org_id", orgId),
         ]);
         const rows = (m.data ?? []) as Array<Record<string, unknown>>;
@@ -155,15 +157,28 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
           id: String(r.id), name: String(r.name),
           supervisorName: r.supervisor_user_id ? (supName.get(String(r.supervisor_user_id)) ?? "member") : null,
         })));
+        const teamNameById = new Map((((t.data ?? []) as Array<Record<string, unknown>>)).map((r) => [String(r.id), String(r.name)]));
         setLibs((((l.data ?? []) as Array<Record<string, unknown>>)).map((r) => {
-          const idx = (r.acl_index as { allow?: { users?: Record<string, string[]>; roles?: Record<string, string[]> } } | null) ?? null;
+          const idx = (r.acl_index as { allow?: { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]> } } | null) ?? null;
           const grants = [
             ...(idx?.allow?.users?.publish ?? []).map((u) => supName.get(u) ?? "user grant"),
             ...(idx?.allow?.users?.admin ?? []).map((u) => `${supName.get(u) ?? "user"} (admin)`),
             ...(idx?.allow?.roles?.publish ?? []).map((x) => `role: ${x}`),
             ...(idx?.allow?.roles?.admin ?? []).map((x) => `role: ${x} (admin)`),
+            // Team grants are live authority (canPublishViaIndex + the DB
+            // function both honor allow.teams) — listing users and roles but
+            // not teams hid real publishers from the one place they're listed.
+            ...(idx?.allow?.teams?.publish ?? []).map((x) => `team: ${teamNameById.get(x) ?? "team"}`),
+            ...(idx?.allow?.teams?.admin ?? []).map((x) => `team: ${teamNameById.get(x) ?? "team"} (admin)`),
           ];
-          return { id: String(r.id), name: String(r.name), ownerName: (r.owner_name as string | null) ?? null, ownerTeamId: (r.owner_team_id as string | null) ?? null, publishGrants: grants };
+          const ownerUserId = (r.owner_user_id as string | null) ?? null;
+          // Owner EXISTENCE comes from owner_user_id; owner_name is a
+          // write-once snapshot that drifts (DEL-8). Resolve the display name
+          // live from the membership rows loaded above.
+          const ownerName = ownerUserId
+            ? (supName.get(ownerUserId) || (r.owner_name as string | null) || "assigned member")
+            : null;
+          return { id: String(r.id), name: String(r.name), ownerUserId, ownerName, ownerTeamId: (r.owner_team_id as string | null) ?? null, publishGrants: grants };
         }));
       } catch { /* tree still renders the static model */ }
     })();
@@ -229,7 +244,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
             const team = teamName(l.ownerTeamId);
             return (
               <div key={l.id} className="text-[11px] text-[var(--color-text)] px-1">
-                <b>{l.name}</b> — owner: {l.ownerName || (team ? `team ${team.name}${team.supervisorName ? ` (supervisor ${team.supervisorName})` : ""}` : <span className="italic text-[var(--color-text-faint)]">none → falls to Admin/DocCtrl</span>)}
+                <b>{l.name}</b> — owner: {l.ownerUserId ? l.ownerName : (team ? `team ${team.name}${team.supervisorName ? ` (supervisor ${team.supervisorName})` : ""}` : <span className="italic text-[var(--color-text-faint)]">none → falls to Admin/DocCtrl</span>)}
                 {l.publishGrants.length > 0 && <> · publish grants: {l.publishGrants.join(", ")}</>}
               </div>
             );

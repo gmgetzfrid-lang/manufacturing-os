@@ -538,7 +538,6 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       p_version: versionPayload,
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
-      p_actor_role: actorRole ?? null,
       p_force: input.force === true,
       p_override_lock: lockedByOther,
       p_as_branch: input.asBranch === true,
@@ -1196,7 +1195,6 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       p_version: revertPayload,
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
-      p_actor_role: actorRole ?? null,
       p_force: input.force === true,
       p_override_lock: lockedByOther,
       p_as_branch: false,
@@ -1604,6 +1602,18 @@ export async function backfillVersion(input: BackfillInput): Promise<DocumentVer
   if (!doc.id) throw new Error("Document is missing an id");
   if (!revisionLabel.trim()) throw new Error("Revision label is required");
   if (!changeLog.trim()) throw new Error("Change narrative is required");
+
+  // Injecting rows into a controlled document's revision history — with
+  // caller-chosen released_at, approved_by_name and file_hash — is
+  // publish-shaped authority. Same authority population as publish, revert
+  // and label correction: per-library control, or effective ownership of
+  // this document. Checked before anything is hashed or uploaded.
+  const principal: Principal = { uid: actorUserId, role: (actorRole ?? "Viewer") as Role, orgId };
+  let authorized = await resolveCanControlLibrary(libraryId, principal);
+  if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
+  if (!authorized) {
+    throw new Error("You don't have authority to backfill revisions here. Ask an Admin or Doc Control to grant publish authority on this library.");
+  }
 
   // Hash + upload to a revision-scoped path. Suffix marks the file as
   // a backfilled historical version so it doesn't collide with a

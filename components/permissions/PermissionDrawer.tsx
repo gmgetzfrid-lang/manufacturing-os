@@ -56,6 +56,7 @@ const ROLES: Role[] = [
   "Requester",
   "Drafter",
   "Supervisor",
+  "DraftingSupervisor",
   "Engineer-1",
   "Engineer-2",
   "Engineer-3",

@@ -4,7 +4,7 @@ import type {
   Role,
   NodeVisibility,
 } from "@/types/schema";
-import { evaluateAclChain, canBlindDrill } from "@/lib/acl";
+import { evaluateAclChain } from "@/lib/acl";
 
 export interface Principal {
   uid: string;
@@ -131,32 +131,7 @@ export function canDiscover(params: {
   return decision.isDiscoverable();
 }
 
-export function canBlindDrillAccess(params: {
-  principal: Principal;
-  aclChain?: (AccessControl | undefined)[];
-}): boolean {
-  const { principal, aclChain = [] } = params;
-  const decision = evaluateAclChain(aclChain, {
-    uid: principal.uid,
-    role: principal.role,
-    orgId: principal.orgId,
-    teamIds: principal.teamIds,
-    isActiveMember: principal.isActiveMember,
-  });
-
-  return canBlindDrill(decision);
-}
-
-export function filterDiscoverable<T extends { acl?: AccessControl; visibility?: NodeVisibility }>(
-  items: T[],
-  principal: Principal,
-  aclChainForItem: (item: T) => (AccessControl | undefined)[]
-): T[] {
-  return items.filter((item) =>
-    canDiscover({
-      principal,
-      visibility: item.visibility ?? "normal",
-      aclChain: aclChainForItem(item),
-    })
-  );
-}
+// canBlindDrillAccess and filterDiscoverable were removed under DEC-11: both
+// were exported with zero callers, pure, and trivially restorable from git.
+// The blind-drill capability itself lives on in lib/acl.ts (canBlindDrill)
+// and is exercised through canDiscover above.

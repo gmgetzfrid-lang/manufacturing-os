@@ -38,8 +38,12 @@ describe("effectiveModeForRevUp — escape hatches", () => {
   it("skips the gate for a Correction", () => {
     expect(effectiveModeForRevUp({ control: C({ mode: "require" }), changeType: "Correction" })).toBe("none");
   });
-  it("skips the gate when the rev came from a drafting ticket", () => {
-    expect(effectiveModeForRevUp({ control: C({ mode: "require" }), changeType: "Major", relatedTicketId: "t1" })).toBe("none");
+  it("never waives the gate because the rev came from a drafting ticket (DEC-23)", () => {
+    // Pre-DEC-23, this exact input hit the `relatedTicketId` waiver and returned
+    // "none" — silently skipping required reviewer sign-off on every
+    // ticket-originated revision. Ticket approval is not the document's roster.
+    const ticketOriginated = { control: C({ mode: "require" }), changeType: "Major", relatedTicketId: "t1" };
+    expect(effectiveModeForRevUp(ticketOriginated)).toBe("require");
   });
   it("stays 'none' when the library isn't gated", () => {
     expect(effectiveModeForRevUp({ control: { mode: "none" }, changeType: "Major" })).toBe("none");

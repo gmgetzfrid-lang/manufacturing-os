@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
@@ -19,6 +20,7 @@ import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
+import { parseSourceDocument, revDrift } from '@/lib/sourceDocRef';
 import { publicOrigin } from '@/lib/publicOrigin';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
@@ -941,6 +943,45 @@ export default function TicketDetailView() {
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [ticketId, router, activeOrgId, uid]);
 
+  // The ticket's source-document backlink (metadata.source_document), plus a
+  // live read of that document's CURRENT revision so the drafter can see when
+  // the base has advanced since the request was raised. RLS decides access:
+  // maybeSingle() returns no row for a document the viewer cannot see, and the
+  // card then renders the captured reference as plain text — never an error,
+  // and never a freshness claim it cannot back.
+  const sourceRef = useMemo(() => parseSourceDocument(ticket?.metadata), [ticket?.metadata]);
+  const sourceRefId = sourceRef?.id ?? null;
+  const [sourceDoc, setSourceDoc] = useState<{
+    state: 'idle' | 'loading' | 'loaded' | 'unavailable';
+    doc?: { id: string; libraryId: string | null; rev: string | null; documentNumber: string | null; title: string | null };
+  }>({ state: 'idle' });
+  useEffect(() => {
+    let alive = true;
+    if (!sourceRefId) { setSourceDoc({ state: 'idle' }); return; }
+    setSourceDoc((s) => (s.state === 'loaded' && s.doc?.id === sourceRefId ? s : { state: 'loading' }));
+    supabase
+      .from('documents')
+      .select('id, library_id, rev, document_number, title')
+      .eq('id', sourceRefId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!alive) return;
+        if (!data) { setSourceDoc({ state: 'unavailable' }); return; }
+        const d = data as Record<string, unknown>;
+        setSourceDoc({
+          state: 'loaded',
+          doc: {
+            id: d.id as string,
+            libraryId: (d.library_id as string | null) ?? null,
+            rev: (d.rev as string | null) ?? null,
+            documentNumber: (d.document_number as string | null) ?? null,
+            title: (d.title as string | null) ?? null,
+          },
+        });
+      });
+    return () => { alive = false; };
+  }, [sourceRefId]);
+
   // --- 2. SAFE SCROLL ---
   useEffect(() => {
     if (chatContainerRef.current && activeTab === 'discussion') {
@@ -1792,6 +1833,60 @@ export default function TicketDetailView() {
 
              <div className="p-4 bg-slate-50/50 border-b border-[var(--color-border)] order-1">
                <h3 className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Incoming Assets (Source)</h3>
+               {sourceRef && (
+                 <div className="mb-3 bg-[var(--color-surface)] p-3 rounded-lg border border-[var(--color-border)] shadow-sm">
+                   <div className="flex items-center justify-between gap-3 flex-wrap">
+                     <div className="flex items-center space-x-3 overflow-hidden">
+                       <div className="p-1.5 bg-blue-50 rounded text-blue-600"><FileText className="w-4 h-4" /></div>
+                       <div className="min-w-0">
+                         <p className="text-xs font-bold text-[var(--color-text)] truncate">
+                           {sourceRef.documentNumber || sourceDoc.doc?.documentNumber || 'Controlled document'}
+                           {(sourceRef.title || sourceDoc.doc?.title) && (
+                             <span className="font-normal text-[var(--color-text-muted)]"> — {sourceRef.title || sourceDoc.doc?.title}</span>
+                           )}
+                         </p>
+                         <p className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+                           {sourceRef.rev ? `Raised against Rev ${sourceRef.rev}` : 'Source revision not recorded on this request'}
+                         </p>
+                       </div>
+                     </div>
+                     <div className="flex items-center gap-2 shrink-0">
+                       {sourceDoc.state === 'loaded' && (() => {
+                         const drift = revDrift(sourceRef.rev, sourceDoc.doc?.rev ?? null);
+                         if (drift === 'drifted') {
+                           return (
+                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                               <AlertTriangle className="w-3 h-3" /> Rev advanced — register now at Rev {sourceDoc.doc?.rev}
+                             </span>
+                           );
+                         }
+                         if (drift === 'same') {
+                           return (
+                             <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
+                               Current (Rev {sourceDoc.doc?.rev})
+                             </span>
+                           );
+                         }
+                         return sourceDoc.doc?.rev ? (
+                           <span className="text-[10px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1">
+                             Register: Rev {sourceDoc.doc.rev}
+                           </span>
+                         ) : null;
+                       })()}
+                       {sourceDoc.state === 'loaded' && sourceDoc.doc?.libraryId ? (
+                         <Link
+                           href={`/documents/${sourceDoc.doc.libraryId}?doc=${sourceDoc.doc.id}`}
+                           className="text-[10px] font-bold text-blue-600 hover:text-blue-800 border border-blue-200 bg-blue-50 rounded-md px-2 py-1"
+                         >
+                           Open in register
+                         </Link>
+                       ) : sourceDoc.state === 'unavailable' ? (
+                         <span className="text-[10px] text-[var(--color-text-faint)] italic">Document not accessible to you</span>
+                       ) : null}
+                     </div>
+                   </div>
+                 </div>
+               )}
                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                  {sourceFiles.length === 0 ? <p className="text-xs text-[var(--color-text-faint)] italic pl-2">No source files provided.</p> : sourceFiles.map((file, idx) => (
                    <div key={idx} className="flex items-center justify-between bg-[var(--color-surface)] p-2.5 rounded-lg border border-[var(--color-border)] shadow-sm hover:border-[var(--color-border-strong)]">
