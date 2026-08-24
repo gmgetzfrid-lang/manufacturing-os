@@ -52,8 +52,8 @@ Draft and held drawings as green → verdict now derives from the shared
 not-current set and checks active holds, fail-safe), `PKG-2` (the pack QR
 verified the live pin so a desk refresh re-armed field paper to green → an
 immutable print snapshot the QR verifies against). Ship loop green: `tsc`,
-`eslint`, **1486 vitest**, full `next build`. **One migration to hand-apply:**
-`20261028_work_package_prints.sql` (the print snapshot table).
+`eslint`, **1486 vitest**, full `next build`. Migration `20261028_work_package_prints.sql` (the print
+snapshot table) **applied & verified live 2026-08-24** (2-point probe true).
 
 | # | Report | n | Note |
 |---|---|---|---|

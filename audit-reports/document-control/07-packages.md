@@ -78,7 +78,7 @@ app/api/storage/upload-url/route.ts:33-53 — `const orgMatch = path.match(/^org
 - Done-when: (1) printing writes an immutable print record (print id + per-doc version id + printed_at) and the cover QR encodes the print id ✓; (2) verify compares the scanned print's recorded versions against current ✓; (3) re-adding a pinned document no-ops the pin ✓.
 - Files: `supabase/migrations/20261028_work_package_prints.sql`, `lib/workPackages.ts`, `lib/physicalBridge.ts`, `app/api/verify-package/route.ts`, `app/verify-package/[packageId]/page.tsx`, `app/(protected)/packages/page.tsx`, `components/documents/AddToPackageButton.tsx`, plus export/restore coverage (`lib/exportTables.ts`, `lib/dataRestore.ts`, `lib/schemaExpectations.ts`).
 - Tests: `lib/__tests__/verifyPackageSnapshot.test.ts` — a snapshot at v1 reads STALE even after the live pin is refreshed to v2; a snapshot at current reads CURRENT; an unknown print never reads green; the legacy no-print QR still uses live pins.
-- **Pending hand-apply (DEC-30):** `20261028` creates the print table. Until applied, `recordPackagePrint` no-ops and the QR falls back to the legacy package-level check (the pre-fix behaviour) — no regression, but the snapshot protection is inactive until the migration runs.
+- **Applied & verified live 2026-08-24:** `20261028` — probe confirmed the table exists with no UPDATE/DELETE policy (immutable). The snapshot protection is active: every pack printed from now on carries a print-id QR.
 
 - **Verification:** CONFIRMED
 - **Locations:** `lib/physicalBridge.ts:275-281`, `app/api/verify-package/route.ts:54-64`, `app/verify-package/[packageId]/page.tsx:90-98`, `lib/workPackages.ts:194-229`, `lib/workPackages.ts:176-191`, `components/documents/AddToPackageButton.tsx:30-43`
