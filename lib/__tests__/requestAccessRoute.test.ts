@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-type QueuedResult = { data?: unknown; error?: unknown };
+type QueuedResult = { data?: unknown; error?: unknown; count?: number };
 
 const mockState = vi.hoisted(() => ({
   queues: {} as Record<string, QueuedResult[]>,
@@ -30,7 +30,7 @@ function makeChain(table: string) {
       if (prop === "then") {
         const r = nextResult(table);
         return (resolve: (v: unknown) => void) =>
-          resolve({ data: r.data ?? null, error: r.error ?? null });
+          resolve({ data: r.data ?? null, error: r.error ?? null, count: r.count ?? null });
       }
       return (...args: unknown[]) => {
         mockState.calls.push({ table, method: prop, args });
@@ -100,5 +100,32 @@ describe("POST /api/auth/request-access — fail-closed duplicate check", () => 
     expect(ilikeCall!.args).toEqual(["email", "greg@corp.com"]);
     const insert = accessInserts()[0];
     expect((insert.args[0] as { email: string }).email).toBe("greg@corp.com");
+  });
+
+  // EGRESS-5 / DEC-19: the public door is rate-limited on the shared signup bucket.
+  it("429s when the per-IP window is exhausted, before touching orgs or inserting", async () => {
+    mockState.queues.signup_attempts = [{ count: 8 }];
+    const req = new NextRequest("http://localhost/api/auth/request-access", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": "9.9.9.9" },
+      body: JSON.stringify(BODY),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(429);
+    expect(mockState.calls.filter((c) => c.table === "orgs")).toHaveLength(0);
+    expect(accessInserts()).toHaveLength(0);
+  });
+
+  it("records an attempt against the window on a normal submission", async () => {
+    mockState.queues.signup_attempts = [{ count: 0 }];
+    mockState.queues.access_requests = [{ data: [] }, { data: null, error: null }];
+    const req = new NextRequest("http://localhost/api/auth/request-access", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": "9.9.9.9" },
+      body: JSON.stringify(BODY),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mockState.calls.filter((c) => c.table === "signup_attempts" && c.method === "insert")).not.toHaveLength(0);
   });
 });

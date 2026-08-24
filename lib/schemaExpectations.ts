@@ -123,4 +123,5 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "checkout_sessions", column: "outcome", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Check-in outcome register (field verification, MOC trail)" },
   { table: "documents", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Document classes — PSM MOC gate + drafting routing for drawings" },
   { table: "libraries", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Library-level document class declaration" },
+  { table: "access_requests", column: "org_id", migration: "20261023_access_requests_scope_and_limit.sql", feature: "Org-scoped access requests (admin pending list, per-org isolation)" },
 ];

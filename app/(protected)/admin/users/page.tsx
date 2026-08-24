@@ -14,6 +14,7 @@ import {
   Building2,
   Plus,
   X,
+  Inbox,
 } from 'lucide-react';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { logAuditAction } from '@/lib/audit';
@@ -71,6 +72,11 @@ export default function AdminUsersPage() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState<string>('');
+  // Pending access requests for THIS org (EGRESS-5 / DEC-19). The SELECT policy
+  // is Admin-only, so the card renders only for Admins — a Manager would see a
+  // permanently empty list.
+  const isAdmin = activeRole === 'Admin';
+  const [pendingRequests, setPendingRequests] = useState<Array<{ id: string; display_name: string; email: string; created_at: string }>>([]);
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
@@ -118,6 +124,22 @@ export default function AdminUsersPage() {
   useEffect(() => {
     fetchMembers();
   }, [fetchMembers]);
+
+  const fetchPendingRequests = useCallback(async () => {
+    if (!activeOrgId || !isAdmin) { setPendingRequests([]); return; }
+    // Org-scoped by RLS (access_requests_admin_select) AND explicitly here.
+    const { data } = await supabase
+      .from('access_requests')
+      .select('id, display_name, email, created_at')
+      .eq('org_id', activeOrgId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    setPendingRequests((data ?? []) as Array<{ id: string; display_name: string; email: string; created_at: string }>);
+  }, [activeOrgId, isAdmin]);
+
+  useEffect(() => {
+    void fetchPendingRequests();
+  }, [fetchPendingRequests]);
 
   // Persist a member's additive role collection. Writes the full `roles` array
   // plus the headline `role` (highest-ranked) so the legacy single-role checks
@@ -280,6 +302,35 @@ export default function AdminUsersPage() {
           </Button>
         }
       />
+
+      {/* Pending access requests (Admin-only; EGRESS-5 / DEC-19) */}
+      {isAdmin && pendingRequests.length > 0 && (
+        <div className="mb-5 bg-[var(--color-surface)] rounded-2xl border border-amber-300/60 shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2 bg-amber-50/50">
+            <Inbox className="w-4 h-4 text-amber-600" />
+            <span className="text-sm font-bold text-[var(--color-text)]">Pending access requests</span>
+            <span className="text-xs font-bold text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">{pendingRequests.length}</span>
+            <span className="text-xs text-[var(--color-text-muted)] ml-1">people who asked to join this workspace</span>
+          </div>
+          <ul className="divide-y divide-[var(--color-border)]">
+            {pendingRequests.map((r) => (
+              <li key={r.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-[var(--color-text)] truncate">{r.display_name}</p>
+                  <p className="text-xs text-[var(--color-text-muted)] truncate">{r.email} · requested {new Date(r.created_at).toLocaleDateString()}</p>
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => {
+                  const [first, ...rest] = (r.display_name || '').trim().split(/\s+/);
+                  setFormData((f) => ({ ...f, email: r.email, firstName: first ?? '', lastName: rest.join(' ') }));
+                  setIsModalOpen(true);
+                }}>
+                  <UserPlus className="w-3.5 h-3.5" /> Add
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Main Content */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">

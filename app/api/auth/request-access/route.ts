@@ -2,15 +2,59 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 
+// This public, unauthenticated endpoint was the one door in the auth pair with
+// no rate limit — its neighbour /api/auth/signup carries the full
+// signup_attempts throttle. Unthrottled, it is an org-name existence oracle
+// (404 vs 200) and a request-spam vector. Mirror the signup pattern exactly,
+// sharing the same per-IP bucket (EGRESS-5 / DEC-19).
+const REQUEST_ACCESS_MAX_PER_HOUR = 8;
+
+function clientIp(req: NextRequest): string {
+  const fwd = req.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0].trim();
+  return req.headers.get("x-real-ip")?.trim() || "unknown";
+}
+
+async function requestAccessRateLimited(ip: string): Promise<boolean> {
+  if (ip === "unknown") return false; // don't punish everyone if IP is missing
+  const since = new Date(Date.now() - 3600_000).toISOString();
+  const { count, error } = await supabaseAdmin
+    .from("signup_attempts")
+    .select("id", { count: "exact", head: true })
+    .eq("ip", ip)
+    .gte("created_at", since);
+  if (error) return false; // table absent / transient — fail open
+  return (count ?? 0) >= REQUEST_ACCESS_MAX_PER_HOUR;
+}
+
+async function recordAttempt(ip: string, email: string | null, outcome: string): Promise<void> {
+  await supabaseAdmin.from("signup_attempts").insert({ ip, email, outcome })
+    .then(() => undefined, () => undefined);
+}
+
 export async function POST(req: NextRequest) {
+  const ip = clientIp(req);
   try {
+    if (await requestAccessRateLimited(ip)) {
+      return NextResponse.json(
+        { error: "Too many access requests from this network. Please wait a while and try again." },
+        { status: 429 },
+      );
+    }
+
     const { displayName, email: rawEmail, orgName } = await req.json();
 
     if (!displayName || !rawEmail || !orgName) {
+      await recordAttempt(ip, null, "error");
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
     }
     // One canonical casing for identity (IDENT-3).
     const email = normalizeEmail(String(rawEmail));
+
+    // Consume one attempt from the per-IP window BEFORE the org lookup, so
+    // repeated 404 org-name probing and 409 duplicate probing both count
+    // against the limit rather than being free.
+    await recordAttempt(ip, email, "request-access");
 
     // 1. Find the organization (case-insensitive)
     const { data: org } = await supabaseAdmin
