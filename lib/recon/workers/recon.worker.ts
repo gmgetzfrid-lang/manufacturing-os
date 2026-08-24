@@ -808,7 +808,10 @@ function hintFor(message: string): string {
     return "If these are iPhone clips, set Camera → Formats → Most Compatible and re-record, " +
       "or convert them to H.264 MP4 first.";
   }
-  if (m.includes("parallax") || m.includes("rotat")) {
+  // Bare "rotat" matched the diagnostics phrase "planar or rotation-only" and
+  // told a user who had walked through a space to stop panning from one spot.
+  if (m.includes("enough parallax") || m.includes("only rotated") ||
+      m.includes("panning from one spot")) {
     return "Walk through the space rather than panning from one spot — reconstruction needs the " +
       "camera to move sideways, not just turn.";
   }

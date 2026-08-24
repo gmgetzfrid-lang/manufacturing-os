@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { mat3Mul, mat3Transpose, rodrigues } from "../linalg";
-import { pnpDlt, pnpRansac, refinePose, type PnpCorrespondence } from "../pnp";
+import { pnpDlt, pnpRansac, refinePose, type PnpCorrespondence, solveRelativeScale } from "../pnp";
 import type { Pose } from "../twoView";
 
 function makeRng(seed: number) {
@@ -150,4 +150,63 @@ describe("pnpRansac", () => {
     // 0.001 normalised jitter at f=900 is well under a pixel.
     expect(result!.meanErrorPx).toBeLessThan(2);
   });
+});
+
+describe("solveRelativeScale", () => {
+  const R_IDENT = new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+
+  function makeRng(seed: number) {
+    let s = seed >>> 0;
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  }
+
+  /** Camera R at origin; camera F displaced by s·b with identity rotation. */
+  function observationsAt(sTrue: number, b: [number, number, number], n: number, seed = 3) {
+    const rng = makeRng(seed);
+    const obs: Array<{ A: [number, number, number]; x: number; y: number }> = [];
+    for (let i = 0; i < n; i++) {
+      const X: [number, number, number] = [
+        (rng() - 0.5) * 4, (rng() - 0.5) * 3, 2 + rng() * 6,
+      ];
+      // A = R_rel·X_camR = X here; the observed projection is of A + sTrue·b.
+      const fx = (X[0] + sTrue * b[0]) / (X[2] + sTrue * b[2]);
+      const fy = (X[1] + sTrue * b[1]) / (X[2] + sTrue * b[2]);
+      obs.push({ A: X, x: fx, y: fy });
+    }
+    return obs;
+  }
+
+  it("recovers the scale exactly from clean observations", () => {
+    const b: [number, number, number] = [0.8, 0.1, -0.6];
+    const res = solveRelativeScale(observationsAt(2.4, b, 12), b);
+    expect(res).not.toBeNull();
+    expect(res!.s).toBeCloseTo(2.4, 6);
+    expect(res!.support).toBeGreaterThan(16);
+  });
+
+  it("needs only a handful of points, which is the whole reason it exists", () => {
+    const b: [number, number, number] = [1, 0, 0];
+    const res = solveRelativeScale(observationsAt(0.7, b, 3), b);
+    expect(res).not.toBeNull();
+    expect(res!.s).toBeCloseTo(0.7, 6);
+  });
+
+  it("shrugs off a wrong point via the median", () => {
+    const b: [number, number, number] = [0.6, -0.2, 0.1];
+    const obs = observationsAt(1.5, b, 10, 9);
+    obs[0] = { A: [5, 5, 20], x: -0.4, y: 0.3 }; // nonsense
+    const res = solveRelativeScale(obs, b);
+    expect(res).not.toBeNull();
+    expect(res!.s).toBeCloseTo(1.5, 3);
+  });
+
+  it("declines rather than guesses when there is nothing to solve from", () => {
+    expect(solveRelativeScale([], [1, 0, 0])).toBeNull();
+    const degenerate = [{ A: [0, 0, 4] as [number, number, number], x: 0, y: 0 }];
+    // One point straight ahead with baseline along the axis: both equations
+    // have near-zero coefficients, so no scale is observable.
+    expect(solveRelativeScale(degenerate, [0, 0, 1])).toBeNull();
+  });
+
+  void R_IDENT;
 });

@@ -310,3 +310,50 @@ export function pnpRansac(
     meanErrorPx: bestCount ? (errSum / bestCount) * focal : Infinity,
   };
 }
+
+/**
+ * The one unknown left when a camera's pose comes from a verified pair.
+ *
+ * A two-view pose is exact up to the length of its baseline. Composing it onto
+ * a registered camera therefore fixes rotation and direction completely and
+ * leaves a single scalar s: the point in the new camera is A + s·b, with
+ * A = R_rel·(camera-frame point) and b the unit baseline. Each observed
+ * projection (x, y) of a known world point gives two linear equations in s:
+ *
+ *   x = (A_x + s·b_x) / (A_z + s·b_z)   →   s·(b_x − x·b_z) = x·A_z − A_x
+ *
+ * so a HANDFUL of already-triangulated points settles it — which is exactly
+ * the situation on a chain-like capture, where a frame shares hundreds of
+ * matches with its neighbour but sees too few triangulated points for PnP.
+ * The median across equations resists the odd wrong point.
+ */
+export function solveRelativeScale(
+  observations: Array<{ A: [number, number, number]; x: number; y: number }>,
+  b: [number, number, number],
+): { s: number; support: number } | null {
+  const candidates: number[] = [];
+  for (const o of observations) {
+    const pairs: Array<[number, number]> = [
+      [b[0] - o.x * b[2], o.x * o.A[2] - o.A[0]],
+      [b[1] - o.y * b[2], o.y * o.A[2] - o.A[1]],
+    ];
+    for (const [c, d] of pairs) {
+      if (Math.abs(c) > 1e-9) candidates.push(d / c);
+    }
+  }
+  // One unknown: three agreeing equations is already an over-determined solve.
+  // A baseline along an image axis silently voids half the equations (their
+  // coefficient is b_y − y·b_z = 0), so demanding four would reject perfectly
+  // solvable sideways motion with three points.
+  if (candidates.length < 3) return null;
+
+  candidates.sort((a, z) => a - z);
+  const s = candidates[Math.floor(candidates.length / 2)];
+  if (!Number.isFinite(s)) return null;
+
+  // Agreement around the median is the confidence measure: equations from
+  // correct points cluster tightly, wrong points scatter.
+  const tolerance = Math.max(1e-6, Math.abs(s) * 0.1);
+  const support = candidates.filter((c) => Math.abs(c - s) <= tolerance).length;
+  return { s, support };
+}

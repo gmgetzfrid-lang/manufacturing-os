@@ -33,7 +33,9 @@ import {
 } from "../gpu/matcher";
 import type { FrameFeatures, SfmResult } from "../types";
 import { bundleAdjust, type BundleObservation } from "../math/bundle";
-import { pnpRansac } from "../math/pnp";
+import { mat3Mul, mat3MulVec, mat3Transpose } from "../math/linalg";
+import { pnpRansac, solveRelativeScale } from "../math/pnp";
+import { guidedMatches } from "./guidedMatch";
 import { motionConsistent } from "./motionFilter";
 import {
   maxTriangulationAngleDeg, ransacEssential, ransacHomography, reprojectionError,
@@ -84,40 +86,6 @@ interface VerifiedPairInternal {
   degenerate: boolean;
 }
 
-class UnionFind {
-  private parent = new Map<number, number>();
-
-  find(x: number): number {
-    if (!this.parent.has(x)) {
-      this.parent.set(x, x);
-      return x;
-    }
-    // Walk to the root, then flatten the path so later lookups are O(1).
-    let root = x;
-    for (;;) {
-      const parent = this.parent.get(root) ?? root;
-      if (parent === root) break;
-      root = parent;
-    }
-    let cursor = x;
-    while (cursor !== root) {
-      const next = this.parent.get(cursor) ?? root;
-      this.parent.set(cursor, root);
-      cursor = next;
-    }
-    return root;
-  }
-
-  union(a: number, b: number): void {
-    const ra = this.find(a);
-    const rb = this.find(b);
-    if (ra !== rb) this.parent.set(ra, rb);
-  }
-
-  keys(): IterableIterator<number> {
-    return this.parent.keys();
-  }
-}
 
 /** Pack (frame, keypoint) into one integer key for the union-find. */
 const KEY_STRIDE = 1 << 16;
@@ -363,6 +331,10 @@ export async function reconstruct(
   // things: too few raw matches is a features-and-overlap problem, too few
   // inliers after RANSAC is a geometry problem.
   const reject = { noFeatures: 0, fewMatches: 0, noModel: 0, fewInliers: 0 };
+  /** Pairs whose support was recovered by re-matching along epipolar lines. */
+  let guidedRescues = 0;
+  /** Frames registered by composing a pair pose when PnP could not place them. */
+  let compositionRescues = 0;
   const matchCounts: number[] = [];
 
   /**
@@ -457,10 +429,34 @@ export async function reconstruct(
     // it substituted were wrong. It earns its place only where the alternative
     // is no reconstruction at all.
     const eCount = geo ? geo.inlierCount : 0;
-    const essentialUsable = geo !== null && eCount >= minInliers;
+
+    // Epipolar rescue for the self-similar scene. A capture measured 98% of
+    // its candidates dying as AMBIGUOUS — the environment looked like itself
+    // everywhere, so the global ratio test rightly refused to choose — while
+    // its adjacent frames still matched well enough for RANSAC to recover E.
+    // With E in hand, each feature can only match along one line in the other
+    // image, and on one line the true match is usually unique even in a hall
+    // of mirrors. So: verify on the unambiguous survivors, then re-match
+    // everything under the epipolar constraint, ratio-testing only within the
+    // band. Gated to starved pairs so a healthy capture's path is untouched.
+    let guided: MatchPair[] | null = null;
+    if (geo && eCount >= 10 && matches.length < 120) {
+      const fa2 = featureByIndex.get(pair.a)!;
+      const fb2 = featureByIndex.get(pair.b)!;
+      const g = guidedMatches(fa2, fb2, geo.E, focal, cx, cy, {
+        bandPx: 2.5, maxDistance: 110, ratio: 0.85,
+      });
+      if (g.length > eCount) {
+        guided = g;
+        if (eCount < minInliers && g.length >= minInliers) guidedRescues++;
+      }
+    }
+
+    const kept0 = guided ? guided.length : eCount;
+    const essentialUsable = geo !== null && kept0 >= minInliers;
 
     let inlierFlags: boolean[] | undefined = geo?.inliers;
-    let kept = eCount;
+    let kept = kept0;
     let degenerate = false;
 
     if (!essentialUsable && allowHomography) {
@@ -488,8 +484,12 @@ export async function reconstruct(
     }
 
     const inlierMatches: Array<[number, number]> = [];
-    for (let k = 0; k < matches.length; k++) {
-      if (inlierFlags[k]) inlierMatches.push([matches[k].queryIndex, matches[k].trainIndex]);
+    if (guided && !degenerate) {
+      for (const m of guided) inlierMatches.push([m.queryIndex, m.trainIndex]);
+    } else {
+      for (let k = 0; k < matches.length; k++) {
+        if (inlierFlags[k]) inlierMatches.push([matches[k].queryIndex, matches[k].trainIndex]);
+      }
     }
     return {
       a: pair.a, b: pair.b, source: pair.source as VerifiedPairInternal["source"],
@@ -513,7 +513,11 @@ export async function reconstruct(
   for (let i = 0; i < proposed.length; i++) {
     checkAbort();
     const pair = proposed[i];
-    const ok = await verifyPair(pair, i, strictMatches, strictInliers, true);
+    // Attempting is cheap and accepting is what the threshold protects, so a
+    // pair may TRY from 12 matches — LO-RANSAC plus the epipolar rescue decide
+    // whether it earns the full support bar. A real capture had 233 pairs
+    // rejected unexamined at ~21 matches each.
+    const ok = await verifyPair(pair, i, Math.min(12, strictMatches), strictInliers, true);
     if (ok) {
       verified.push(ok);
       if (ok.crossClip) crossClipPairs++;
@@ -603,7 +607,9 @@ export async function reconstruct(
     `mutual check, ${pct(matchStats.kept)}% kept; rejected ` +
     `${reject.fewMatches} pairs for too few matches, ${reject.fewInliers} for too few ` +
     `inliers after RANSAC, ${reject.noModel} with no consistent model, ` +
-    `${reject.noFeatures} for having no features`;
+    `${reject.noFeatures} for having no features` +
+    `${guidedRescues ? `; ${guidedRescues} pairs rescued by epipolar re-matching` : ""}` +
+    `${compositionRescues ? `; ${compositionRescues} frames placed by pose composition` : ""}`;
 
   if (verified.length === 0) {
     throw new Error(
@@ -618,39 +624,77 @@ export async function reconstruct(
   report(0.48, `${verified.length} verified pairs · ${crossClipPairs} link different clips`);
 
   // ── 2. Build tracks ─────────────────────────────────────────────────────
-  const uf = new UnionFind();
-  for (const pair of verified) {
-    for (const [ka, kb] of pair.matches) {
-      uf.union(packKey(pair.a, ka), packKey(pair.b, kb));
+  //
+  // Conflict-AWARE union, not blind union followed by deletion. The old order
+  // was: merge every match transitively, then throw away any track that ended
+  // up claiming two keypoints in one image. One wrong match between two real
+  // tracks merged them into a "conflict" and destroyed both — and on
+  // self-similar texture, where a few wrong matches are inevitable, the
+  // transitive merging shredded nearly everything: an orbit capture produced
+  // 331 verified pairs and only 197 surviving points. So refuse the merge that
+  // would create the contradiction and drop that one edge; the two tracks it
+  // tried to weld stay alive. COLMAP builds its correspondence graph the same
+  // way. Strong pairs are processed first so well-supported tracks form before
+  // weak edges get the chance to be refused.
+  const parent = new Map<number, number>();
+  const memberOf = new Map<number, Map<number, number>>();
+  const findRoot = (key: number): number => {
+    let root = key;
+    while (parent.get(root) !== undefined && parent.get(root) !== root) {
+      root = parent.get(root)!;
     }
-  }
+    // Path compression.
+    let walk = key;
+    while (walk !== root) {
+      const next = parent.get(walk)!;
+      parent.set(walk, root);
+      walk = next;
+    }
+    return root;
+  };
+  const ensure = (key: number) => {
+    if (!parent.has(key)) {
+      parent.set(key, key);
+      memberOf.set(key, new Map([[unpackFrame(key), unpackKp(key)]]));
+    }
+  };
+  const tryUnion = (a: number, b: number): void => {
+    ensure(a);
+    ensure(b);
+    let ra = findRoot(a);
+    let rb = findRoot(b);
+    if (ra === rb) return;
+    let ma = memberOf.get(ra)!;
+    let mb = memberOf.get(rb)!;
+    if (mb.size > ma.size) {
+      [ra, rb] = [rb, ra];
+      [ma, mb] = [mb, ma];
+    }
+    // Would the merged track claim two keypoints in one image? Then this edge
+    // is a wrong match between two real points — refuse it, keep both tracks.
+    for (const [frame, kp] of mb) {
+      const held = ma.get(frame);
+      if (held !== undefined && held !== kp) return;
+    }
+    for (const [frame, kp] of mb) ma.set(frame, kp);
+    parent.set(rb, ra);
+    memberOf.delete(rb);
+  };
 
-  const grouped = new Map<number, number[]>();
-  for (const key of uf.keys()) {
-    const root = uf.find(key);
-    const list = grouped.get(root);
-    if (list) list.push(key);
-    else grouped.set(root, [key]);
+  const byStrength = [...verified].sort((x, y) => y.matches.length - x.matches.length);
+  for (const pair of byStrength) {
+    for (const [ka, kb] of pair.matches) {
+      tryUnion(packKey(pair.a, ka), packKey(pair.b, kb));
+    }
   }
 
   const tracks: Track[] = [];
   // trackIndex lookup by (frame, keypoint)
   const trackOf = new Map<number, number>();
-  for (const members of grouped.values()) {
-    if (members.length < 2) continue;
-    const views = new Map<number, number>();
-    let conflicted = false;
-    for (const key of members) {
-      const frame = unpackFrame(key);
-      if (views.has(frame)) {
-        // The same physical point cannot be two keypoints in one image; a track
-        // that claims otherwise was merged through a bad match.
-        conflicted = true;
-        break;
-      }
-      views.set(frame, unpackKp(key));
-    }
-    if (conflicted || views.size < 2) continue;
+  for (const [root, views] of memberOf) {
+    if (parent.get(root) !== root) continue;
+    if (views.size < 2) continue;
+    const members = [...views].map(([frame, kp]) => packKey(frame, kp));
 
     const first = members[0];
     const fFrame = unpackFrame(first);
@@ -883,6 +927,116 @@ export async function reconstruct(
   let sinceBa = 0;
   let minSupport = cfg.sfm.minPnpInliers;
 
+  const registerByComposition = (): boolean => {
+    // Every verified pair joining an unregistered frame to a registered one is
+    // a candidate, strongest first — the first one whose scale can be pinned
+    // and whose composed pose explains the observations wins. Trying only the
+    // single strongest and giving up left whole chains stranded behind one
+    // unluckily-placed frame.
+    const bridges = verified
+      .filter((pair) => {
+        if (pair.degenerate || pair.matches.length < 40) return false;
+        return poses.has(pair.a) !== poses.has(pair.b);
+      })
+      .sort((x, y) => y.matches.length - x.matches.length)
+      .slice(0, 24);
+
+    for (const bridge of bridges) {
+      if (composeFrom(bridge)) return true;
+    }
+    return false;
+  };
+
+  const composeFrom = (bestPair: VerifiedPairInternal): boolean => {
+    const aIn = poses.has(bestPair.a);
+    const candidate = aIn ? bestPair.b : bestPair.a;
+    const anchorFrame = aIn ? bestPair.a : bestPair.b;
+    const anchorPose = poses.get(anchorFrame)!;
+    // The pair's pose maps a → b. Orient it so it maps anchor → candidate.
+    let Rrel = bestPair.pose.R;
+    let trel = bestPair.pose.t;
+    if (anchorFrame === bestPair.b) {
+      const Rt = mat3Transpose(Rrel);
+      const t2 = mat3MulVec(Rt, [-trel[0], -trel[1], -trel[2]]);
+      Rrel = Rt;
+      trel = [t2[0], t2[1], t2[2]];
+    }
+    const tn = Math.hypot(trel[0], trel[1], trel[2]);
+    if (tn < 1e-9) return false;
+    const b: [number, number, number] = [trel[0] / tn, trel[1] / tn, trel[2] / tn];
+
+    // Scale anchors come through the PAIR's own matches: an anchor-side
+    // keypoint that belongs to a triangulated track gives a known world point,
+    // and the match says where the candidate observes it. Deliberately NOT
+    // restricted to tracks that already contain the candidate — a chain break
+    // means the track graph never linked the candidate to anything, and that
+    // is precisely the situation this rescue exists for.
+    const toWorld = (x: [number, number, number]) => {
+      const Xa = mat3MulVec(anchorPose.R, x);
+      const Ar = mat3MulVec(Rrel, [
+        Xa[0] + anchorPose.t[0], Xa[1] + anchorPose.t[1], Xa[2] + anchorPose.t[2],
+      ]);
+      return [Ar[0], Ar[1], Ar[2]] as [number, number, number];
+    };
+    const scaleObs: Array<{ A: [number, number, number]; x: number; y: number }> = [];
+    const seenTracks = new Set<number>();
+    for (const [ka, kb] of bestPair.matches) {
+      const anchorKp = anchorFrame === bestPair.a ? ka : kb;
+      const candidateKp = anchorFrame === bestPair.a ? kb : ka;
+      const ti = trackOf.get(packKey(anchorFrame, anchorKp));
+      if (ti === undefined || seenTracks.has(ti)) continue;
+      const track = tracks[ti];
+      if (!track.xyz) continue;
+      const o = observationOf(candidate, candidateKp);
+      if (!o) continue;
+      seenTracks.add(ti);
+      scaleObs.push({ A: toWorld(track.xyz), x: o.x, y: o.y });
+    }
+    // Tracks the candidate is already part of contribute too.
+    for (const ti of tracksByFrame.get(candidate) ?? []) {
+      if (seenTracks.has(ti)) continue;
+      const track = tracks[ti];
+      if (!track.xyz) continue;
+      const kp = track.views.get(candidate);
+      if (kp === undefined) continue;
+      const o = observationOf(candidate, kp);
+      if (!o) continue;
+      seenTracks.add(ti);
+      scaleObs.push({ A: toWorld(track.xyz), x: o.x, y: o.y });
+    }
+    const solved = solveRelativeScale(scaleObs, b);
+    // A solid bloc of equations must agree, or the scale is a coin flip.
+    if (!solved || solved.support < 4 || solved.s <= 0) return false;
+
+    const Rf = mat3Mul(Rrel, anchorPose.R);
+    const ta = mat3MulVec(Rrel, anchorPose.t);
+    const pose: Pose = {
+      R: Rf,
+      t: [
+        ta[0] + solved.s * b[0],
+        ta[1] + solved.s * b[1],
+        ta[2] + solved.s * b[2],
+      ],
+    };
+
+    // The composed pose must actually explain what the frame sees.
+    let err = 0;
+    for (const so of scaleObs) {
+      const z = so.A[2] + solved.s * b[2];
+      if (z <= 1e-6) return false;
+      const px = (so.A[0] + solved.s * b[0]) / z;
+      const py = (so.A[1] + solved.s * b[1]) / z;
+      err += Math.hypot(px - so.x, py - so.y) * focal;
+    }
+    if (err / scaleObs.length > cfg.sfm.maxReprojectionErrorPx) return false;
+
+    poses.set(candidate, pose);
+    compositionRescues++;
+    triangulatePending();
+    sinceBa++;
+    return true;
+  };
+
   for (let step = 0; step < totalFrames * 2; step++) {
     checkAbort();
     if (poses.size >= totalFrames) break;
@@ -910,6 +1064,17 @@ export async function reconstruct(
       if (minSupport > RELAXED_MIN_SUPPORT) {
         minSupport = Math.max(RELAXED_MIN_SUPPORT, Math.floor(minSupport / 2));
         // Frames rejected under the stricter bar deserve another look.
+        failed.clear();
+        continue;
+      }
+      // PnP has run out of frames it can place, but a chain-like capture — a
+      // walk, an orbit — routinely strands frames that share HUNDREDS of
+      // verified matches with a placed neighbour while seeing only a few
+      // triangulated points. Their pose is not actually in doubt: the pair
+      // fixes rotation and direction outright, leaving one scalar, the
+      // baseline length, which a handful of known points settles. Register
+      // one such frame by composition and let ordinary growth resume from it.
+      if (registerByComposition()) {
         failed.clear();
         continue;
       }
