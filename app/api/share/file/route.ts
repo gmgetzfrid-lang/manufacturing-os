@@ -22,6 +22,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { PDFDocument } from "pdf-lib";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { shareStillAuthorized } from "@/lib/shareAuthorization";
 
 export const maxDuration = 60;
 
@@ -50,12 +51,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "expired" }, { status: 410 });
   }
 
+  // Join document to the share's org — a cross-org share (EGRESS-1) yields no
+  // document and 404s before any byte is fetched.
   const { data: doc } = await sb
     .from("documents")
     .select("id, document_number, title, name, rev, current_version_id")
     .eq("id", share.document_id as string)
+    .eq("org_id", share.org_id as string)
     .maybeSingle();
   if (!doc) return NextResponse.json({ error: "notfound" }, { status: 404 });
+
+  // Serve only on the creator's CURRENT authority (EGRESS-1 Done-when 4): if
+  // they left the org or lost read access to this document, the link is dead.
+  if (!(await shareStillAuthorized(share.org_id as string, share.created_by as string | null, doc.id as string))) {
+    return NextResponse.json({ error: "revoked" }, { status: 410 });
+  }
 
   // Resolve the current PUBLISHED version's file (never an in-review draft) —
   // same resolution order as /api/share/resolve.

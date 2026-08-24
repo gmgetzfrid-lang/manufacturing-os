@@ -221,4 +221,58 @@ describe("POST /api/notifications/send-queued", () => {
     // terminal 'suppressed' status here. No update() may touch the queue.
     expect(mockState.calls.filter((c) => c.table === "email_notifications" && c.method === "update")).toHaveLength(0);
   });
+
+  // SURF-5: a session caller must be an org member, and drains only their orgs.
+  it("403s a signed-in account that belongs to no org (SURF-5)", async () => {
+    process.env.CRON_SECRET = "shh";
+    process.env.RESEND_API_KEY = "re_test";
+    mockState.user = { id: "u1", email: "u1@example.com" };
+    mockState.tables["org_members"] = { data: [] };
+    const { POST } = await load();
+    const res = await POST(new Request("http://test/api/notifications/send-queued", {
+      method: "POST", headers: { authorization: "Bearer usertok" },
+    }));
+    expect(res.status).toBe(403);
+    // It must not have touched the queue at all.
+    expect(mockState.calls.filter((c) => c.table === "email_notifications")).toHaveLength(0);
+  });
+
+  it("scopes a member's drain to their own orgs (SURF-5)", async () => {
+    process.env.CRON_SECRET = "shh";
+    process.env.RESEND_API_KEY = "re_test";
+    mockState.user = { id: "u1", email: "u1@example.com" };
+    mockState.tables["org_members"] = { data: [{ org_id: "o1" }] };
+    mockState.tables["email_notifications"] = { data: [] }; // nothing to send
+    const { POST } = await load();
+    const res = await POST(new Request("http://test/api/notifications/send-queued", {
+      method: "POST", headers: { authorization: "Bearer usertok" },
+    }));
+    expect(res.status).toBe(200);
+    // Every queue query this run made was org-scoped.
+    const queueSelectsAndUpdates = mockState.calls.filter(
+      (c) => c.table === "email_notifications" && (c.method === "select" || c.method === "update"),
+    );
+    expect(queueSelectsAndUpdates.length).toBeGreaterThan(0);
+    const orgScopedCalls = mockState.calls.filter(
+      (c) => c.table === "email_notifications" && c.method === "in" &&
+        (c.args[0] === "org_id") && Array.isArray(c.args[1]) && (c.args[1] as string[]).includes("o1"),
+    );
+    expect(orgScopedCalls.length).toBeGreaterThan(0);
+  });
+
+  it("cron secret drains every org (unscoped)", async () => {
+    process.env.CRON_SECRET = "shh";
+    process.env.RESEND_API_KEY = "re_test";
+    mockState.tables["email_notifications"] = { data: [] };
+    const { POST } = await load();
+    const res = await POST(new Request("http://test/api/notifications/send-queued", {
+      method: "POST", headers: { authorization: "Bearer shh" },
+    }));
+    expect(res.status).toBe(200);
+    // No org_id scoping applied on the cron path.
+    const orgScoped = mockState.calls.filter(
+      (c) => c.table === "email_notifications" && c.method === "in" && c.args[0] === "org_id",
+    );
+    expect(orgScoped).toHaveLength(0);
+  });
 });

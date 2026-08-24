@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { shareStillAuthorized } from "@/lib/shareAuthorization";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -40,12 +41,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "expired" }, { status: 410 });
   }
 
+  // Join document to the share's org. A share row's document_id was never
+  // constrained to its org_id (EGRESS-1), so a member of org A could name org
+  // B's document UUID; without this join the resolve leaked B's metadata. A
+  // cross-org share now yields no document and 404s.
   const { data: doc } = await sb
     .from("documents")
     .select("id, document_number, title, name, rev, current_version_id")
     .eq("id", share.document_id as string)
+    .eq("org_id", share.org_id as string)
     .maybeSingle();
   if (!doc) return NextResponse.json({ error: "notfound" }, { status: 404 });
+
+  // The share serves on the CREATOR's authority: if they have since lost read
+  // access to this document, or left the org, the link stops resolving — even
+  // for metadata. (EGRESS-1 Done-when 4.)
+  if (!(await shareStillAuthorized(share.org_id as string, share.created_by as string | null, doc.id as string))) {
+    return NextResponse.json({ error: "revoked" }, { status: 410 });
+  }
 
   const { data: org } = await sb.from("orgs").select("name").eq("id", share.org_id as string).maybeSingle();
 

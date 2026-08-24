@@ -44,19 +44,30 @@ export async function POST(req: Request) {
   }
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // Authorize: this route uses the service-role key and drains the whole
-  // queue, so it must not be world-callable. Accept either the shared
-  // CRON_SECRET (internal cron + server-to-server callers) or a valid user
-  // session (the in-app browser kick fired right after queueing an email).
+  // Authorize: this route uses the service-role key and drains the queue, so
+  // it must not be world-callable. Accept either the shared CRON_SECRET
+  // (internal cron drains EVERY org) or a valid user session — but a session
+  // caller drains ONLY their own orgs' queue. Previously any signed-up account
+  // (member of no org) passed `authorized = !!user` and drained every tenant's
+  // mail, re-sending suppressed backlogs across the platform (SURF-5). The
+  // per-org scope is applied to every queue query below via `scopeOrgIds`.
   const authHeader = req.headers.get("authorization") || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  let authorized = cronSecret !== "" && token === cronSecret;
-  if (!authorized && token) {
+  const isCron = cronSecret !== "" && token === cronSecret;
+  let scopeOrgIds: string[] | null = null; // null = unscoped (cron only)
+  if (!isCron) {
+    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { data: { user } } = await supabase.auth.getUser(token);
-    authorized = !!user;
-  }
-  if (!authorized) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { data: memberships } = await supabase
+      .from("org_members")
+      .select("org_id")
+      .eq("uid", user.id)
+      .eq("status", "active");
+    scopeOrgIds = ((memberships ?? []) as Array<{ org_id: string }>).map((m) => m.org_id);
+    if (scopeOrgIds.length === 0) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const resendKey = process.env.RESEND_API_KEY;
@@ -68,10 +79,12 @@ export async function POST(req: Request) {
   // which permanently destroyed every email queued before configuration —
   // deferral costs nothing since nothing retries without a drain call.)
   if (!resendKey) {
-    const { count } = await supabase
+    let countQ = supabase
       .from("email_notifications")
       .select("id", { count: "exact", head: true })
       .in("status", ["queued", "failed"]);
+    if (scopeOrgIds) countQ = countQ.in("org_id", scopeOrgIds);
+    const { count } = await countQ;
     return NextResponse.json({
       processed: 0,
       sent: 0,
@@ -87,29 +100,39 @@ export async function POST(req: Request) {
   // rows are the backlog the operator expected to send. Only the last 7 days —
   // older notifications are stale enough that a surprise blast hurts more
   // than the silence did.
-  await supabase
-    .from("email_notifications")
-    .update({ status: "queued", attempt_count: 0, error_message: null })
-    .eq("status", "suppressed")
-    .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  {
+    let unsuppress = supabase
+      .from("email_notifications")
+      .update({ status: "queued", attempt_count: 0, error_message: null })
+      .eq("status", "suppressed")
+      .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+    if (scopeOrgIds) unsuppress = unsuppress.in("org_id", scopeOrgIds);
+    await unsuppress;
+  }
 
   // Reclaim orphans: rows stranded in 'sending' by a previous run that crashed
   // between claiming and completing. 15 min is far longer than any real send,
   // so this never steals a row another run is actively processing.
-  await supabase
-    .from("email_notifications")
-    .update({ status: "queued" })
-    .eq("status", "sending")
-    .lt("last_attempted_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
+  {
+    let reclaim = supabase
+      .from("email_notifications")
+      .update({ status: "queued" })
+      .eq("status", "sending")
+      .lt("last_attempted_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
+    if (scopeOrgIds) reclaim = reclaim.in("org_id", scopeOrgIds);
+    await reclaim;
+  }
 
   // Find candidate work.
-  const { data: candidates, error: claimErr } = await supabase
+  let candidateQ = supabase
     .from("email_notifications")
     .select("*")
     .in("status", ["queued", "failed"])
     .lt("attempt_count", MAX_ATTEMPTS)
     .order("created_at", { ascending: true })
     .limit(MAX_BATCH);
+  if (scopeOrgIds) candidateQ = candidateQ.in("org_id", scopeOrgIds);
+  const { data: candidates, error: claimErr } = await candidateQ;
 
   if (claimErr) return NextResponse.json({ error: claimErr.message }, { status: 500 });
   if (!candidates || candidates.length === 0) return NextResponse.json({ processed: 0 });
