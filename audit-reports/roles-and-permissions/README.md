@@ -64,9 +64,26 @@ feature builds. Check `verdict` and `depends_on` before starting a gap.
 
 ## Resolution status — session started 2026-08-24
 
-**Phases 0 and 1 of [`99-fix-sequencing.md`](./99-fix-sequencing.md) are
-complete.** Ship loop green throughout: `tsc`, `eslint`, **1431 vitest**, full
-`next build`.
+**Phases 0, 1 and the safe parts of Phase 2 of
+[`99-fix-sequencing.md`](./99-fix-sequencing.md) are complete.** Ship loop green
+throughout: `tsc`, `eslint`, **1442 vitest**, full `next build`.
+
+### Phase 2 — database honesty (the trap phase)
+
+| Item | Outcome |
+|---|---|
+| `DB-3` / `DEC-1` step 1 | **RESOLVED** — signup seeds `roles:['Admin']`; backfill migration for existing rows. Prerequisite for all additive conversion |
+| `DB-5` | **RESOLVED** — wizard writes `acl_index` and **merges** drawer grants (no over-revocation) |
+| `DB-4` / `OWN-7` / `DEC-10` | **RESOLVED** — expiry-aware index builder + diff-guarded nightly rebuild; window narrowed to one cron cycle, not closed |
+| `DB-1` (CRITICAL) | **BLOCKED** (`DEC-30`) — the two-worlds finding; activates a dormant enforcement rail against unobservable production state. World-determining query + full fix design recorded |
+| `DB-2` (CRITICAL) | **BLOCKED** (`DEC-30`) — one-word fix that turns on a never-executed RESTRICTIVE guard; the required pre-ship activation inventory cannot be run here. Query + design recorded |
+| `DEC-1` steps 2–3 | **Deferred** — the SQL rank function + `org_members` trigger "touches every membership row"; depends on `DB-3`'s backfill being applied first, and is safest shipped as its own change |
+
+**Why the two CRITICALs are BLOCKED, not fixed:** both enable dormant
+guards/enforcement against production data this session cannot observe. Per the
+user's paramount "do not regress" constraint and `DEC-30`, that is the correct
+outcome — each carries its unblocking query and complete fix design. A `BLOCKED`
+finding is a result, not a gap.
 
 ### Phase 1 — the unauthenticated & cross-tenant doors (highest severity)
 

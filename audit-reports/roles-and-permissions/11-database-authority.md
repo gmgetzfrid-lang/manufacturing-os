@@ -23,7 +23,28 @@ the application, and where they are broken outright.
 ## DB-1 · `org_configurations.value` does not exist — the capability layer is inert and the holds policies raise
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** BLOCKED
+
+**Blocker (DEC-30).** This is the canonical two-worlds finding, and it cannot be safely resolved from the repository. The *fix* is unambiguous — correct `value` → `data` in `20260901_db_hard_enforcement.sql:44` (and the app-side twin in `lib/capabilityPolicy.ts:174,231`, `WF-1`) — but **shipping it activates the capability layer**, and which behaviour that produces depends on production state this session cannot observe:
+- **If `20260901` is applied**, the fix turns a live outage (every hold insert/release raising `42703`) into working holds — a strict improvement.
+- **If it is not applied**, the fix *installs* the ACL-deny rail and the policy-aware force-release guard for the first time, and the capability layer begins enforcing. That interacts with `WF-23` (the SQL defaults deny every `ticket.*` capability) and `DB-3` (the `roles`-empty backfill, whose migration is also hand-applied and may not have run) — so activating it against un-backfilled data could deny the founding Admin `checkout.force_release`.
+
+Under the user's paramount "do not regress" constraint and `DEC-30`, enabling a dormant enforcement rail against unobservable production state is exactly the move to avoid. **Unblocking steps, in order:**
+1. Determine which world you are in (does the deployed function raise?):
+   ```sql
+   -- Does org_configurations have a `value` column? (expect: no)
+   SELECT column_name FROM information_schema.columns
+   WHERE table_name = 'org_configurations' AND column_name IN ('value','data');
+   -- Is the 20260901 function deployed? (inspect its body for the bad column)
+   SELECT pg_get_functiondef('org_capability_allows(uuid,text,uuid)'::regprocedure);
+   ```
+2. Confirm `DB-3`'s backfill (`20261024_backfill_member_roles.sql`) is applied first — otherwise activation evaluates additive checks against empty `roles`.
+3. Read `WF-23`, `WF-10`, `WF-11` — the capability defaults and cache — before flipping the column, and do **not** follow this with a `tickets` policy that calls `org_capability_allows` in the same change.
+4. Then ship the `value`→`data` fix in both layers as one change, plus Done-when 4's smoke test (a CI check that no `SECURITY DEFINER` body references a non-existent column — it would fail against the *current* unfixed SQL, so it lands **with** the fix, not before).
+
+**Design (for when unblocked).** New migration redefining `org_capability_allows` / `enforce_checkout_release_guard` with `data` in place of `value`; `lib/capabilityPolicy.ts` reading/writing `data`; a smoke test executing (or statically scanning) each `SECURITY DEFINER` helper. **The app and SQL halves must land together** or the two layers disagree about which column is real.
+
+*(Left BLOCKED, not OPEN, because the halt is a real production-state unknown per `DEC-30`, not an unfinished analysis.)*
 - **Verification:** CONFIRMED (in code) / SUSPECTED (deployed state may differ)
 - **Blast radius:** availability / access-control
 - **Locations:**
@@ -79,7 +100,24 @@ change or the two layers will disagree about which column is real.**
 ## DB-2 · `acl_index_denies` queries `team_members.user_id`; the column is `uid`
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** BLOCKED
+
+**Blocker (DEC-30).** The code fix is one word (`tm.user_id` → `tm.uid`, and the uuid-vs-text cast the independent verifier noted), but the sequencing file is emphatic that **the fix turns `documents_deny_write_guard` on for the first time** — every explicit `write`/`editMetadata` deny that has been silently ignored since the guard shipped starts enforcing at once, against indexes that `DB-4` says may be stale. Done-when 4 requires the inventory of what will newly activate to be run **before** the fix ships, and `DEC-30` says: if you cannot run it, this is `BLOCKED` with that query as the unblocking step — "do not enable a dormant guard against unknown data." This session has no live database, so it is BLOCKED.
+
+**Unblocking steps, in order:**
+1. Run the activation inventory and record the result:
+   ```sql
+   SELECT count(*) FROM documents WHERE acl_index->'deny' IS NOT NULL;
+   -- and, to see WHAT will start blocking:
+   SELECT id, org_id, acl_index->'deny' AS deny FROM documents
+   WHERE acl_index->'deny' IS NOT NULL LIMIT 100;
+   ```
+2. Land `DB-4`/`DEC-10`'s rebuild first (now shipped — `lib/aclIndexRebuild.ts`) and let one cron cycle run, so the denies that activate are **current**, not stale.
+3. Then apply the `tm.user_id` → `tm.uid` fix (a new migration redefining `acl_index_denies`), plus Done-when 4's smoke test.
+
+**Design (for when unblocked).** New migration redefining `acl_index_denies` with `tm.uid` and a `::text`/`::uuid`-consistent comparison; the `ViewAsSimulator.tsx:59` client twin is a separate finding (`OWN-10`). Done-when: a non-controller updates a document carrying an `acl_index` and succeeds; a document whose `acl_index` denies `write` to the user's team rejects with a **policy denial, not a SQL error**; a controller is unaffected.
+
+*(BLOCKED per `DEC-30`, not OPEN: the halt is the required-before-shipping production inventory this session cannot observe.)*
 - **Verification:** CONFIRMED (defect) / SUSPECTED (runtime blast radius)
 - **Blast radius:** availability / access-control
 - **Locations:**
@@ -133,7 +171,16 @@ almost anywhere else in this audit; see
 ## DB-3 · `COALESCE(roles, ARRAY[role])` is a no-op — a new org's sole Admin fails every additive check
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** Signup now seeds `roles: ["Admin"]` on the founding member row (`app/api/auth/signup/route.ts`) — it previously set only the singular `role`, leaving `roles` at its `'{}'` default so every additive check evaluated the founding Admin against an empty array. The backfill migration `20261024_backfill_member_roles.sql` sets `roles = ARRAY[role]` for every existing row missing its headline role (idempotent, with a zero-rows verification query). This is the prerequisite the sequencing file names for **any** singular→array conversion (`DEC-1`, `DEC-2`, `OWN-3`).
+- Commit: `8dc4543`
+- Files: `app/api/auth/signup/route.ts`, `supabase/migrations/20261024_backfill_member_roles.sql`
+- Tests: `lib/__tests__/signupRoute.test.ts::"seeds roles: ['Admin'] on the founding member row"` — a full happy-path signup asserting the `org_members` insert carries `roles: ["Admin"]`.
+- Reproduced: the pre-fix signup insert set `role: "Admin"` with no `roles` key; `roles TEXT[] NOT NULL DEFAULT '{}'` means the row lands with `roles = '{}'`.
+- Verified: Done-when 1 — the backfill guarantees every row's `roles` contains its `role`. Done-when 2 — signup seeds it; restore placeholders are `status:'inactive'` and filtered by every additive check's `status='active'` predicate (per the independent verifier), so they are not load-bearing. Done-when 3 — the `COALESCE` idiom is documented as misleading in the backfill header; it is left in place because removing it is a broader SQL change deferred with the additive-conversion work.
+- Pending migration: `supabase/migrations/20261024_backfill_member_roles.sql` (apply before any additive conversion, and before `DB-1`'s activation).
+- **What this brought to light:** `DB-1`'s BLOCKED activation depends on this backfill having run — recorded as step 2 of `DB-1`'s unblocking sequence.
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / access-control
 - **Locations:**
@@ -178,7 +225,20 @@ additive-roles work in this audit.** See
 ## DB-4 · `acl_index` has no propagation — revoking at a library leaves every descendant granting
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+> **`DEC-10` scope:** this narrows the stale-grant window to one cron cycle; it
+> does not close it. The index still carries no expiry, so the raw evaluator
+> remains the source of truth between cycles. A trigger-derived column is the
+> durable answer, deferred per `DEC-10` until the deny guard (`DB-2`) is live.
+
+**Resolution.** Per `DEC-10`, a nightly rebuild now recomputes every node's `acl_index` from its ACL plus the resolved ancestor chain, org by org, in `/api/cron/maintenance`. The chain is resolved faithfully from the same merge the construction path uses (`buildAclIndexFromChain`), walking `libraries → collections (via collections.path_ids) → documents`, and **dropping expired rules** (the `OWN-7` half — the builder gained an optional `nowMs` that filters `isRuleActive`; absent, it is byte-identical to before, so no existing call site changes). The rebuild is **diff-guarded**: it only writes a node whose recomputed index differs from the stored one, so it is a no-op for already-correct data and idempotent — which bounds the blast radius of an access-control mutation over every node in every org to genuinely stale/expired indexes.
+- Commit: `8dc4543`
+- Files: `lib/acl.ts` (expiry-aware builder), `lib/aclIndexRebuild.ts` (the walk), `app/api/cron/maintenance/route.ts` (wired as step 4b)
+- Tests: `lib/__tests__/aclIndexRebuild.test.ts` — expiry filtering, backward-compat when no clock is passed, expiry threading through a chain, the diff-guard (rewrites a stale document, skips a correct one), and the expired-grant drop.
+- Reproduced: `PermissionDrawer.tsx:284` writes `.eq("id", nodeId)` (the edited node only); no trigger propagates; folders/documents index once at creation from the then-current chain.
+- Verified: granting then revoking at a library, then checking a nested document after one rebuild cycle, shows the revocation applied (the diff-guard test encodes the stale-document case); an expired publish rule stops authorizing after one cycle (the expired-drop test); the rebuild is idempotent (diff-guard skips unchanged nodes). **This narrows the stale-grant window from *forever* to *one cron cycle* — it is NOT a full fix**: the index still carries no expiry, so the raw evaluator remains the source of truth between cycles (as `DEC-10` states). A trigger-derived column is the durable answer, deferred per `DEC-10` until the deny guard (`DB-2`) has been live and quiet.
+- **What this brought to light:** the rebuild's expiry filter is exactly the `CHAIN-4` hazard note — a naive rebuild that called the unmodified `buildAclIndexFromRules` would have re-imported expired rules into the index. The builder change fixes that at the source, so any future caller can opt into expiry-correct indexing by passing `nowMs`. Also duplicate of `OWN-20` within this area — resolved once here.
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**
@@ -224,7 +284,15 @@ and a test covers "grant at library, revoke at library, check a nested document.
 ## DB-5 · Three writers of `acl` and `acl_index`, with three different semantics
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** The library wizard save path (`app/(protected)/admin/libraries/page.tsx`) now writes `acl_index` alongside `acl` (via `buildAclIndex`), so the raw-ACL and index-based layers no longer diverge for a wizard-created or -edited library. Critically — to avoid trading the finding's under-revocation for over-revocation (the independent verifier's "real fork") — the save **merges** rather than clobbers: `mergeWizardLibraryAcl` keeps the wizard's role-subject rules and **re-adds the permission drawer's granular user/team/org grants**, which the wizard form does not manage. So a metadata-only edit through the wizard no longer silently drops a drawer-added publish grant, and both columns derive from one consistent merged ACL.
+- Commit: (this Phase 2 record; code in `8dc4543` + the merge follow-up)
+- Files: `app/(protected)/admin/libraries/page.tsx`, `lib/acl.ts` (`mergeWizardLibraryAcl`)
+- Tests: `lib/__tests__/mergeWizardAcl.test.ts` — the merge keeps wizard role rules and preserves drawer user/team grants, drops the old role rule (wizard owns role access), handles the no-wizard-ACL case, and the derived `acl_index` names the preserved user grant.
+- Reproduced: the pre-fix `dbConfig` wrote `acl: config.acl ?? null` with **no `acl_index`**, so a wizard-saved library had `acl_index = NULL` and was invisible to `canPublishViaIndex` / `node_visible` / `user_can_publish_on_library` while the raw evaluator honoured `acl`.
+- Verified: a wizard save now writes a consistent `acl` + `acl_index`; a drawer grant survives a subsequent wizard metadata edit (the merge test); suite 1442 green.
+- **What this brought to light:** the folder-creation path (`documents/[libraryId]/page.tsx:600-605`) already writes both columns correctly (`buildAclIndexFromChain`), and the drawer writes both — so the wizard was the only diverging writer. The deeper structural point (raw `acl` chain for app-side read/discover vs `acl_index` for RLS) is what `DB-4`'s nightly rebuild keeps reconciled going forward.
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**

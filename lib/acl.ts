@@ -287,6 +287,24 @@ export function buildAclIndex(acl?: AccessControl, nowMs?: number): AclIndex | n
   return buildAclIndexFromRules(acl.rules, nowMs);
 }
 
+/** Merge a wizard-rebuilt library ACL with the drawer-added grants it does not
+ *  manage (DB-5). The library wizard's form only produces ROLE-subject rules
+ *  (view/upload/admin), so rebuilding `acl` from it alone silently drops the
+ *  permission drawer's per-user / per-team / per-org grants. This keeps the
+ *  wizard's role rules and re-adds the existing non-role rules, so a metadata
+ *  edit never revokes a granular grant. */
+export function mergeWizardLibraryAcl(
+  wizardAcl: AccessControl | null | undefined,
+  existingRules: AccessRule[] | null | undefined,
+): AccessControl | null {
+  const preserved = (existingRules ?? []).filter((r) => r?.subject?.type !== "role");
+  if (wizardAcl) {
+    return { ...wizardAcl, rules: [...(wizardAcl.rules ?? []), ...preserved] };
+  }
+  if (preserved.length) return { inherit: true, visibility: "normal", rules: preserved };
+  return null;
+}
+
 export function buildAclIndexFromChain(chain: Array<AccessControl | undefined>, nowMs?: number): AclIndex | null {
   if (!chain.some(Boolean)) return null;
 

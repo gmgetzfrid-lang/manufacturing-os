@@ -7,10 +7,10 @@ import { useRole } from "@/components/providers/RoleContext";
 import { Settings } from "lucide-react";
 import LibraryWizard from "./LibraryWizard";
 import DeleteSafetyModal from "./DeleteSafetyModal";
-import { LibraryConfig } from "@/types/schema";
+import { LibraryConfig, type AccessControl } from "@/types/schema";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { setOwner as assignLibraryOwner } from "@/lib/ownership";
-import { buildAclIndex } from "@/lib/acl";
+import { buildAclIndex, mergeWizardLibraryAcl } from "@/lib/acl";
 
 export default function LibraryAdminPage() {
   const router = useRouter();
@@ -102,19 +102,21 @@ export default function LibraryAdminPage() {
       }
 
       const now = new Date().toISOString();
+      // DB-5: the wizard rebuilds `acl` from its own form state, which only
+      // manages ROLE-based view/upload/admin access. On an edit, preserve the
+      // permission drawer's granular USER/TEAM/ORG grants — rebuilding from the
+      // form alone would silently drop them. Then derive `acl_index` from the
+      // merged ACL and write BOTH columns, so the raw evaluator and the
+      // index-based (DB) evaluators never disagree.
+      const mergedAcl: AccessControl | null = mergeWizardLibraryAcl(config.acl, editingLib?.acl?.rules);
       const dbConfig = {
         name: config.name, type: config.type, description: config.description,
         custom_columns: config.customColumns ?? [],
         write_access: config.writeAccess ?? [], admin_access: config.adminAccess ?? [],
         read_access: config.readAccess ?? "ALL", visible_to: config.visibleTo ?? [],
         folder_security: config.folderSecurity, default_new_visibility: config.defaultNewVisibility,
-        default_new_acl: config.defaultNewAcl ?? null, acl: config.acl ?? null,
-        // Write the derived index alongside the ACL (DB-5). The index-based
-        // evaluators (canPublishViaIndex, the DB node_visible /
-        // user_can_publish_on_library) read acl_index; a library saved with
-        // acl but a NULL acl_index is invisible to all of them while the raw
-        // evaluator honours it — the two layers disagree.
-        acl_index: buildAclIndex(config.acl ?? undefined),
+        default_new_acl: config.defaultNewAcl ?? null, acl: mergedAcl,
+        acl_index: buildAclIndex(mergedAcl ?? undefined),
       };
 
       if (editingLib) {
