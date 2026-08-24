@@ -335,6 +335,8 @@ export async function reconstruct(
   let guidedRescues = 0;
   /** Frames registered by composing a pair pose when PnP could not place them. */
   let compositionRescues = 0;
+  /** Where composition bridges die, so a stall names its own cause. */
+  const composeStats = { bridges: 0, fewAnchors: 0, scaleVote: 0, strictGate: 0 };
   const matchCounts: number[] = [];
 
   /**
@@ -591,7 +593,7 @@ export async function reconstruct(
     ? adjacentMatchCounts[Math.floor(adjacentMatchCounts.length / 2)] : 0;
   const pct = (n: number) =>
     matchStats.candidates > 0 ? Math.round((n / matchStats.candidates) * 100) : 0;
-  const diagnostics =
+  const diagnosticsBase =
     `${frames.length} frames, median ${medianFeatures} features each; ` +
     `${proposed.length} pairs proposed, ${verified.length} verified` +
     `${relaxed ? " (after a lenient retry)" : ""}` +
@@ -607,13 +609,22 @@ export async function reconstruct(
     `mutual check, ${pct(matchStats.kept)}% kept; rejected ` +
     `${reject.fewMatches} pairs for too few matches, ${reject.fewInliers} for too few ` +
     `inliers after RANSAC, ${reject.noModel} with no consistent model, ` +
-    `${reject.noFeatures} for having no features` +
+    `${reject.noFeatures} for having no features`;
+  // The rescue counters keep counting through registration, long after this
+  // point — a snapshot taken here would report them as zero forever.
+  const diagnostics = () =>
+    diagnosticsBase +
     `${guidedRescues ? `; ${guidedRescues} pairs rescued by epipolar re-matching` : ""}` +
-    `${compositionRescues ? `; ${compositionRescues} frames placed by pose composition` : ""}`;
+    `${compositionRescues ? `; ${compositionRescues} frames placed by pose composition` : ""}` +
+    (composeStats.bridges
+      ? `; of ${composeStats.bridges} composition bridges tried, ${composeStats.fewAnchors} ` +
+        `had under 3 triangulated anchor points, ${composeStats.scaleVote} failed the scale ` +
+        `vote, ${composeStats.strictGate} failed reprojection after refinement`
+      : "");
 
   if (verified.length === 0) {
     throw new Error(
-      `No image pairs could be verified. ${diagnostics}. ` +
+      `No image pairs could be verified. ${diagnostics()}. ` +
       (medianMatches < strictMatches
         ? "Matches are the bottleneck: the frames are not sharing enough recognisable " +
           "detail, which is blur, darkness, or moving too fast between frames."
@@ -771,7 +782,7 @@ export async function reconstruct(
     const bestInliers = verified.reduce((m, p) => Math.max(m, p.matches.length), 0);
     throw new Error(
       `No image pair had enough parallax to start a reconstruction. ` +
-      `${diagnostics}. The best pair had ${bestInliers} matches, of which ` +
+      `${diagnostics()}. The best pair had ${bestInliers} matches, of which ` +
       `${bestConditioned} triangulated at a usable angle, against the ` +
       `${SEED_TIERS[SEED_TIERS.length - 1].wellConditioned} needed. This is what ` +
       `filming from one spot looks like — walk through the space instead of ` +
@@ -948,6 +959,7 @@ export async function reconstruct(
   };
 
   const composeFrom = (bestPair: VerifiedPairInternal): boolean => {
+    composeStats.bridges++;
     const aIn = poses.has(bestPair.a);
     const candidate = aIn ? bestPair.b : bestPair.a;
     const anchorFrame = aIn ? bestPair.a : bestPair.b;
@@ -1006,7 +1018,7 @@ export async function reconstruct(
       seenTracks.add(ti);
       scaleObs.push({ X: track.xyz, A: toWorld(track.xyz), x: o.x, y: o.y });
     }
-    if (scaleObs.length < 3) return false;
+    if (scaleObs.length < 3) { composeStats.fewAnchors++; return false; }
 
     // The scale is one unknown, but the anchors pinning it are triangulated
     // points of uneven quality — a single systematically bad track drags any
@@ -1028,7 +1040,7 @@ export async function reconstruct(
     }
     const fallback = solveRelativeScale(scaleObs, b);
     if (fallback && fallback.s > 0) hypotheses.push(fallback.s);
-    if (hypotheses.length === 0) return false;
+    if (hypotheses.length === 0) { composeStats.scaleVote++; return false; }
 
     const errAt = (sc: number, o: { A: [number, number, number]; x: number; y: number }) => {
       const z = o.A[2] + sc * b[2];
@@ -1062,7 +1074,7 @@ export async function reconstruct(
         bestErr = mean;
       }
     }
-    if (bestInliers < 3) return false;
+    if (bestInliers < 3) { composeStats.scaleVote++; return false; }
 
     const Rf = mat3Mul(Rrel, anchorPose.R);
     const ta = mat3MulVec(Rrel, anchorPose.t);
@@ -1088,7 +1100,10 @@ export async function reconstruct(
       ) * focal;
       if (e < limit) strictInliers++;
     }
-    if (strictInliers < Math.max(3, Math.ceil(scaleObs.length * 0.5))) return false;
+    if (strictInliers < Math.max(3, Math.ceil(scaleObs.length * 0.5))) {
+      composeStats.strictGate++;
+      return false;
+    }
 
     poses.set(candidate, pose);
     compositionRescues++;
@@ -1243,7 +1258,7 @@ export async function reconstruct(
     const bestConditioned = verified.reduce((m, p) => Math.max(m, p.wellConditioned), 0);
     throw new Error(
       `None of the ${attempts} starting ${attempts === 1 ? "pair" : "pairs"} tried could ` +
-      `be grown into a reconstruction. ${diagnostics}; ${seedCandidates.length} pairs were ` +
+      `be grown into a reconstruction. ${diagnostics()}; ${seedCandidates.length} pairs were ` +
       `usable as a starting point (best had ${bestConditioned} well-triangulated points, ` +
       `threshold ${seedTier.wellConditioned}), ${tracks.length.toLocaleString()} feature ` +
       `tracks survived, and registration reached ${poses.size} ` +
@@ -1299,7 +1314,7 @@ export async function reconstruct(
     failedFrames: frames.map((f) => f.index).filter((i) => !registered.has(i)),
     components,
     crossClipPairs,
-    diagnostics,
+    diagnostics: diagnostics(),
   };
 }
 
