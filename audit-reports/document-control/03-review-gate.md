@@ -1,3 +1,5 @@
+> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T16:30:00Z
+
 # 03 · The review gate & e-signatures
 
 **13 findings** — 2 CRITICAL · 4 HIGH · 7 MEDIUM.
