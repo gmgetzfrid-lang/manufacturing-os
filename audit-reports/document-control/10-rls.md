@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T15:30:00Z
-
 # 10 · RLS & persistence — table by table
 
 **14 findings** — 2 CRITICAL · 6 HIGH · 6 MEDIUM.
@@ -32,7 +30,15 @@ A policy census across the document-control schema.
 ## DRLS-1 · The 20260828/20260830 own-row hardening on acknowledgments and review sign-offs is void — a permissive `*_member_all` policy from 20260819 was never dropped
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 3 — the permissive-RLS cluster).** Confirmed by reading the migrations: the 20260819 DO-loop creates `document_acknowledgments_member_all` / `document_review_signoffs_member_all` (the `t || '_member_all'` LONG name), while 20260828/20260830 drop only the SHORT `doc_ack_member_all` / `doc_review_signoff_member_all` names — so the permissive `FOR ALL` policies survive and OR away every own-row restriction. `20261029` drops both long names. The 20260828 migration already installs the full per-op set (`doc_ack_select`/`insert`/`update`/`delete` and the sign-off equivalents), so after the drop those own-row policies are the sole governance — no read or write path is lost, only the forgery path.
+- Done-when: (1) both `_member_all` policies dropped, leaving only the 20260828/20260830 per-op four ✓; (2) a `pg_policies` verification query is in the migration (verification (a) — expects zero `%member_all%` rows) ✓; (3) a member forging another's ack/sign-off is now blocked by the own-row `USING`/`WITH CHECK` — the runtime refusal test needs the live DB, noted below; (4) the dynamic-name hazard is pinned by a test that fails if any later migration re-creates a `member_all` policy on these tables ✓.
+- Files: `supabase/migrations/20261029_dc_phase3_permissive_rls.sql`
+- Tests: `lib/__tests__/phase3RlsMigration.test.ts` — the drops are present, and no post-20260819 migration re-introduces a `member_all` policy on either table.
+- **Pending hand-apply (DEC-30):** `20261029`. Until applied, the leftover permissive policies remain and the own-row hardening stays void. The verification queries print the surviving policy set.
+- **What this brought to light:** this invalidated the premise of `SURF-13` (which analysed the 20260828 policy as if it were the only one) and defeats the DB review-completion guard at the row level; both are now unblocked. `document_disposition_events`, `document_review_events`, `asset_files`, `access_recertification_events` got the same loop-created policy — tracked separately in this report; `document_review_events` and `asset_files` were already re-dropped by 20260812, so only the disposition/recert tables may still carry it (a follow-up).
+
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260819_orphan_tables_backfill.sql:221-238`, `supabase/migrations/20260828_integrity_hardening.sql:250-254`, `supabase/migrations/20260828_integrity_hardening.sql:211-215`, `supabase/migrations/20260830_publisher_row_management.sql:33-71`, `supabase/migrations/20260817_read_understood.sql:84-88`, `supabase/migrations/20260818_review_before_publish.sql:91-95`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the naming collision is the whole mechanism: `grep -rn member_all supabase/` shows the only DROPs in existence are for the doc_ack_/doc_review_signoff_ names, so the 20260819 generated-name policies survive untouched to this day. RLS permissive policies OR together, so `document_acknowledgments_member_all FOR ALL TO authenticated USING(active member) WITH CHECK(active member)` grants exactly the UPDATE and DELETE that doc_ack_update/doc_ack_delete and doc_review_signoff_update/doc_review_signoff_delete (20260828:264-281, 20260830:33-71) were written to deny. Any active member — Viewer included — can PATCH another engineer's acknowledgment row or DELETE review sign-offs. CRITICAL is correct.

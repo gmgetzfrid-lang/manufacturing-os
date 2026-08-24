@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "OPEN": 140,
-      "RESOLVED": 7
+      "OPEN": 137,
+      "RESOLVED": 10
     }
   },
   "status_vocabulary": [
@@ -69,7 +69,7 @@
       "id": "DCK-2",
       "title": "checkout_sessions RLS is FOR ALL with USING only, and the release guard is a BEFORE UPDATE trigger — so DELETE bypasses it entirely and non-status edits to another user's session are unguarded",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -95,7 +95,7 @@
       "id": "DCK-3",
       "title": "documents RLS is FOR ALL with USING only — any active org member can seize or clear another user's checkout lock by writing documents.checked_out_by directly",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -201,7 +201,7 @@
       "id": "DRLS-1",
       "title": "The 20260828/20260830 own-row hardening on acknowledgments and review sign-offs is void — a permissive `*_member_all` policy from 20260819 was never dropped",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

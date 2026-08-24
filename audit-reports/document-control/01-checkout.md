@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T15:30:00Z
-
 # 01 · Checkout, check-in & the lock
 
 **14 findings** — 3 CRITICAL · 7 HIGH · 4 MEDIUM.
@@ -68,7 +66,15 @@ lib/checkinOutcomes.ts:295-299 is the other one, and it is a pure function with 
 ## DCK-2 · checkout_sessions RLS is FOR ALL with USING only, and the release guard is a BEFORE UPDATE trigger — so DELETE bypasses it entirely and non-status edits to another user's session are unguarded
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 3 — the permissive-RLS cluster).** Confirmed: `checkout_sessions_org_access` is `FOR ALL USING(org)` and the only rail is a BEFORE UPDATE trigger keyed on a status change, so DELETE and non-status edits slipped through. Fixed with a `BEFORE UPDATE OR DELETE` trigger `trg_checkout_session_guard` (`20261029`) that complements the existing status rail: **DELETE** of another user's session requires `checkout.force_release`; a change to **outcome / outcome_note / outcome_ref / user_id** on another user's session requires it too. The permissive policy is deliberately LEFT in place because the app performs legitimate cross-user writes it must keep allowing — linking every co-holder's active session to a shared episode (`episode_id`) and the status writes the release rail already governs; the guard restricts only the authority columns, so those benign writes are untouched.
+- Done-when: (1) DELETE of another's session is controller-only ✓; (2) the release path has exactly one gated route — DELETE now hits the guard, closing the bypass ✓; (3) outcome columns are writable only by the session's own user (or a force_release holder / service role) ✓.
+- Files: `supabase/migrations/20261029_dc_phase3_permissive_rls.sql`
+- Tests: `lib/__tests__/phase3RlsMigration.test.ts` (migration presence/shape). The runtime refusal test needs the live DB.
+- **Pending hand-apply (DEC-30):** `20261029`.
+- **What this brought to light:** the guard uses `auth.uid() IS NULL` to trust service-role/cron writes, matching the existing release rail's pattern — a consistent "trusted backend, gated user" seam across all checkout triggers.
+
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1093-1095`, `supabase/migrations/20260831_capability_policy_and_rails.sql:80-102`, `supabase/migrations/20260901_db_hard_enforcement.sql:109-121`, `supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql:39-45`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: `grep -rn checkout_sessions supabase/ --include=*.sql | grep -iE 'policy|trigger|delete|grant|revoke'` returns exactly one policy and one BEFORE UPDATE trigger — no DELETE policy, no RESTRICTIVE overlay, no REVOKE. DELETE therefore never reaches the guard, and non-status UPDATEs (expires_at, user_id, purpose) on another member's row pass the `NEW.status IS DISTINCT FROM OLD.status` predicate untouched; reconcileDocumentCheckoutState then clears the lock unconditionally once the rows are gone.
@@ -105,7 +111,15 @@ CREATE POLICY "checkout_sessions_org_access" ON checkout_sessions FOR ALL
 ## DCK-3 · documents RLS is FOR ALL with USING only — any active org member can seize or clear another user's checkout lock by writing documents.checked_out_by directly
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 3 — the permissive-RLS cluster).** Confirmed: `documents_org_access` is `FOR ALL USING(org)` and no trigger guards the lock columns, so any member could PATCH `checked_out_by` / `current_lock_id` and seize or clear another's lock, past the checkout_sessions rail. Fixed with a BEFORE UPDATE trigger `trg_document_lock_guard` (`20261029`): a change to `checked_out_by` or `current_lock_id` is allowed only when the doc is currently FREE (`OLD.checked_out_by IS NULL` — a claim), the caller IS the current holder (`OLD.checked_out_by = auth.uid()` — transfer to an heir or clear on last-out), or the caller holds `checkout.force_release`. This exactly matches the legitimate transitions `lib/checkoutEpisodes.ts` performs (its CAS filters are `checked_out_by IS NULL OR = self`, and the heir transfer runs as the departing holder), and `forceReleaseDocument` — already gated to capability holders by the pre-existing session release rail — passes the same capability check here.
+- Done-when: (1) a change to `checked_out_by` / `current_lock_id` by anyone but the current holder / a force_release holder / the service role is rejected ✓; (2) the legitimate CAS claim on a null holder, the heir transfer, and clear-on-last-out are all permitted ✓.
+- Files: `supabase/migrations/20261029_dc_phase3_permissive_rls.sql`
+- Tests: `lib/__tests__/phase3RlsMigration.test.ts` (migration shape). Runtime refusal needs the live DB.
+- **Pending hand-apply (DEC-30):** `20261029`.
+- **What this brought to light:** the lock authority now has ONE gated write path shared by the session rail and the documents guard, both keyed on `checkout.force_release`, so a controller delegation grant governs every route to another user's lock at once. Cosmetic columns (`checked_out_by_name`, `active_collaborators`) are intentionally unguarded — they carry no authority and follow the holder change.
+
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1067-1069`, `supabase/schema.sql:152-158`, `supabase/migrations/20260901_db_hard_enforcement.sql:152-163`, `supabase/migrations/20260831_capability_policy_and_rails.sql:99-102`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. I enumerated every trigger/policy on `documents` (`grep -n 'ON documents' supabase/migrations/*.sql supabase/schema.sql`): documents_guard_access fires only on visibility/acl/acl_index changes, trg_document_publish_guard only when current_version_id or status advances, trg_documents_move_guard on moves, trg_documents_legal_hold_delete on delete. Nothing guards checked_out_by / checked_out_by_name / current_lock_id, so any active member — including a Viewer — can write them, and doing so also satisfies publish_revision's lock branch.

@@ -55,6 +55,20 @@ immutable print snapshot the QR verifies against). Ship loop green: `tsc`,
 `eslint`, **1486 vitest**, full `next build`. Migration `20261028_work_package_prints.sql` (the print
 snapshot table) **applied & verified live 2026-08-24** (2-point probe true).
 
+**Phase 3 — the permissive-RLS cluster — is complete.** The sequencing file
+warns that per-table RLS fixes are decorative until this lands: three CRITICALs
+closed. `DRLS-1` (the own-row hardening on acknowledgments and review sign-offs
+was VOID because a 20260819 loop-generated `*_member_all` policy was never
+dropped → dropped it, leaving the 20260828 per-op set to govern). `DCK-2`
+(checkout_sessions DELETE and outcome edits on another's session were unguarded
+→ a BEFORE UPDATE OR DELETE trigger, controller-only). `DCK-3` (any member could
+seize another's lock by PATCHing `documents.checked_out_by` → a BEFORE UPDATE
+guard permitting only claim / holder-transfer / force-release). Fixed with
+trigger guards, not policy tightening, so the app's legitimate cross-user writes
+(shared-episode links, heir transfer) keep working. Ship loop green: `tsc`,
+`eslint`, **1490 vitest**, full `next build`. **One migration to hand-apply:**
+`20261029_dc_phase3_permissive_rls.sql`.
+
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |
