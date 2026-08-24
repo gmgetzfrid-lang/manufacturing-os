@@ -208,7 +208,13 @@ export type WorkerResponse =
   | { type: "log"; level: "info" | "warn" | "error"; message: string }
   | { type: "stage-complete"; stage: StageId; ms: number }
   | { type: "clip-stats"; stats: ClipStats[] }
-  | { type: "done"; scene: SceneData }
+  | {
+      type: "done";
+      scene: SceneData;
+      /** COLMAP-format dataset (zip): poses + images + sparse points, the
+       *  hand-off format every high-detail splat trainer consumes. */
+      colmapZip?: ArrayBuffer;
+    }
   | { type: "failed"; error: string; hint: string; warnings: ReconWarning[] };
 
 export const CLIP_COLORS = [

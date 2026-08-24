@@ -695,6 +695,24 @@ function ResultPanel({
         >
           <Download className="h-4 w-4" /> Download file
         </button>
+        {job.colmapZip && (
+          <button
+            type="button"
+            onClick={() => {
+              const blob = new Blob([job.colmapZip!], { type: "application/zip" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${scene.label.replace(/\.[^.]+$/, "") || "capture"}-cameras.zip`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            title="Camera positions, frames and sparse points in the standard photogrammetry (COLMAP) layout — usable by any high-detail training tool."
+          >
+            <Download className="h-4 w-4" /> Camera data (COLMAP)
+          </button>
+        )}
         <button
           type="button"
           onClick={onRestart}

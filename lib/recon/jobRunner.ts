@@ -18,6 +18,8 @@ export interface JobState {
   clipStats: ClipStats[];
   logs: Array<{ level: "info" | "warn" | "error"; message: string; at: number }>;
   scene: SceneData | null;
+  /** COLMAP-format dataset zip from the last successful run, for high-detail training. */
+  colmapZip: ArrayBuffer | null;
   error: string | null;
   hint: string | null;
   warnings: ReconWarning[];
@@ -37,6 +39,7 @@ export function initialJobState(): JobState {
     clipStats: [],
     logs: [],
     scene: null,
+    colmapZip: null,
     error: null,
     hint: null,
     warnings: [],
@@ -111,6 +114,7 @@ export class ReconstructionJob {
             ...prev,
             status: "done",
             scene: msg.scene,
+            colmapZip: msg.colmapZip ?? null,
             warnings: msg.scene.report.warnings,
             elapsedMs: msg.scene.report.elapsedMs,
             currentStage: null,

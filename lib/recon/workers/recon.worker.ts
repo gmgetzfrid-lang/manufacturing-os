@@ -25,6 +25,10 @@ import { reconstruct, type FrameMeta } from "../sfm/reconstruct";
 import { describeMotion, judgeMotion, nextWindowSize } from "../captureHealth";
 import { FrameStore, clearStaleFrames } from "../store";
 import {
+  buildZip, camerasTxt, imagesTxt, points3dTxt,
+  type ColmapCameraSpec, type ColmapImageSpec, type ZipEntry,
+} from "../colmapExport";
+import {
   CLIP_ROLE_LABELS, type ClipStats, type FrameFeatures, type ReconReport,
   type ReconWarning, type StageId, type WorkerResponse,
 } from "../types";
@@ -881,6 +885,75 @@ async function run(
     report,
   });
 
+  // COLMAP-format dataset: the registered cameras, their frames as JPEG, and
+  // the sparse cloud. This is the hand-off every high-detail (Gaussian splat)
+  // trainer consumes — including the one this app is growing — and it must be
+  // built BEFORE the store is cleared, because it re-reads the colour planes.
+  let colmapZip: ArrayBuffer | null = null;
+  try {
+    progress("scene", 1, "Packaging camera data");
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const camIds = new Map<string, number>();
+    const camSpecs: ColmapCameraSpec[] = [];
+    const imgSpecs: ColmapImageSpec[] = [];
+    const entries: ZipEntry[] = [];
+    for (const k of kept) {
+      const pose = sfm.poses.get(k.meta.index);
+      if (!pose) continue;
+      // Poses and principal point are in WORKING resolution; the stored
+      // colour plane may differ, and the intrinsics must describe the pixels
+      // actually shipped — scale them to the colour resolution.
+      const scale = k.colorWidth / k.meta.width;
+      const key = `${k.colorWidth}x${k.colorHeight}`;
+      let camId = camIds.get(key);
+      if (camId === undefined) {
+        camId = camIds.size + 1;
+        camIds.set(key, camId);
+        camSpecs.push({
+          id: camId,
+          width: k.colorWidth,
+          height: k.colorHeight,
+          fx: sfm.focal * scale,
+          fy: sfm.focal * scale,
+          cx: sfm.principal[0] * scale,
+          cy: sfm.principal[1] * scale,
+        });
+      }
+      const name = `${String(k.meta.index).padStart(6, "0")}.jpg`;
+      imgSpecs.push({ id: k.meta.index + 1, pose, cameraId: camId, name });
+
+      const rgb = await store.readRgb(k.meta.index, k.grayBytes, k.rgbBytes);
+      const canvas = new OffscreenCanvas(k.colorWidth, k.colorHeight);
+      const ctx2d = canvas.getContext("2d")!;
+      const imgData = ctx2d.createImageData(k.colorWidth, k.colorHeight);
+      for (let i = 0, j = 0; i < rgb.length; i += 3, j += 4) {
+        imgData.data[j] = rgb[i];
+        imgData.data[j + 1] = rgb[i + 1];
+        imgData.data[j + 2] = rgb[i + 2];
+        imgData.data[j + 3] = 255;
+      }
+      ctx2d.putImageData(imgData, 0, 0);
+      const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 });
+      entries.push({ path: `images/${name}`, data: new Uint8Array(await blob.arrayBuffer()) });
+    }
+    entries.push({ path: "sparse/0/cameras.txt", data: enc(camerasTxt(camSpecs)) });
+    entries.push({ path: "sparse/0/images.txt", data: enc(imagesTxt(imgSpecs)) });
+    entries.push({
+      path: "sparse/0/points3D.txt",
+      data: enc(points3dTxt(sfm.points.map((p) => ({ xyz: p.xyz, rgb: p.rgb })))),
+    });
+    const zipped = buildZip(entries);
+    const out = new ArrayBuffer(zipped.byteLength);
+    new Uint8Array(out).set(zipped);
+    colmapZip = out;
+  } catch (err) {
+    warn(
+      "colmap-export",
+      `Camera-data export failed (the 3D scene itself is unaffected): ` +
+      `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   stageMs.scene = Math.round(performance.now() - t0);
   scene.report.stageMs = stageMs;
   scene.report.elapsedMs = Math.round(performance.now() - started);
@@ -888,7 +961,7 @@ async function run(
   progress("scene", 1, "Done");
 
   await store.clear();
-  post({ type: "done", scene });
+  post({ type: "done", scene, ...(colmapZip ? { colmapZip } : {}) });
 }
 
 // `onFrame` from the decoder is synchronous, so async work it triggers is
