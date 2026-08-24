@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "OPEN": 135,
-      "RESOLVED": 12
+      "RESOLVED": 17,
+      "OPEN": 130
     }
   },
   "status_vocabulary": [
@@ -41,7 +41,7 @@
       "id": "DCK-1",
       "title": "The PSM MOC gate for drawing revisions is enforced only in browser JavaScript — no lib mutator, RPC, constraint, or trigger requires it, and revert/supersede have no gate at all",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1306,7 +1306,7 @@
       "id": "RET-1",
       "title": "A legal hold does not stop the space-saver: the shed permanently deletes the R2 binaries of held records",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1333,7 +1333,7 @@
       "id": "RET-2",
       "title": "/api/storage/delete lets any active member destroy any object in their org — no role check, no safe-key gate, no records-management check, and zero callers",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1907,7 +1907,7 @@
       "id": "XEDGE-4",
       "title": "The export retention purge lists and deletes the customer's ENTIRE bucket when no prefix is set — it deletes by age, not by whether the object is one of ours",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3634,7 +3634,7 @@
       "id": "XEDGE-13",
       "title": "The storage orphan sweep paginates the reference scan with no ORDER BY, then permanently deletes every object it did not see referenced",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
