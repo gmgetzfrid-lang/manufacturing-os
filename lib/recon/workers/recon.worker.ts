@@ -72,6 +72,28 @@ interface KeptFrame {
   sharpness: number;
 }
 
+/**
+ * Decode may keep this many times the frame budget, so the final selection
+ * can THIN the clip evenly across its duration instead of truncating its
+ * tail — stopping at frame N meant a long clip's far side never existed.
+ */
+const FLUSH_HEADROOM = 3;
+
+/** Spread `target` frames evenly across the clip's duration, keeping each
+ *  time-slot's sharpest. */
+function thinByTime(frames: KeptFrame[], target: number): KeptFrame[] {
+  if (frames.length <= target) return [...frames];
+  const t0 = frames[0].timestampS;
+  const span = Math.max(1e-6, frames[frames.length - 1].timestampS - t0);
+  const best = new Map<number, KeptFrame>();
+  for (const f of frames) {
+    const slot = Math.min(target - 1, Math.floor(((f.timestampS - t0) / span) * target));
+    const cur = best.get(slot);
+    if (!cur || f.sharpness > cur.sharpness) best.set(slot, f);
+  }
+  return [...best.values()].sort((a, b) => a.timestampS - b.timestampS);
+}
+
 async function run(
   clipInputs: Array<{ id: string; name: string; file: File }>,
   quality: QualityPreset,
@@ -203,66 +225,75 @@ async function run(
     const clipKept: KeptFrame[] = [];
 
     const flushWindow = async () => {
-      if (window.length === 0) return;
-      let best = window[0];
-      for (const f of window) if (f.sharp > best.sharp) best = f;
-      const dropped = window.length - 1;
-      stats.droppedBlurry += dropped;
-      window = [];
+      // The decoder outruns this async flush: by the time one flush's feature
+      // extraction finishes, more frames have piled into the buffer, and
+      // selecting ONE frame from whatever accumulated silently multiplied the
+      // window by the backlog — a 30fps capture kept 42 of 361 frames with
+      // the window nominally at 1. Drain the backlog in window-sized chunks
+      // so the window means what it says regardless of timing. Flush keeps up
+      // to FLUSH_HEADROOM times the frame budget; the even-time thinning
+      // after decode picks the final set, so a long clip loses density, not
+      // its tail.
+      while (window.length > 0) {
+        const chunk = window.splice(0, Math.max(1, currentWindow));
+        let best = chunk[0];
+        for (const f of chunk) if (f.sharp > best.sharp) best = f;
+        stats.droppedBlurry += chunk.length - 1;
 
-      if (globalIndex >= cfg.limits.maxTotalFrames) return;
-      if (clipKept.length >= cfg.frames.maxFramesPerClip) return;
+        if (globalIndex >= cfg.limits.maxTotalFrames * FLUSH_HEADROOM) continue;
+        if (clipKept.length >= cfg.frames.maxFramesPerClip * FLUSH_HEADROOM) continue;
 
-      const features = extractFeatures(
-        cv, globalIndex, best.gray, best.width, best.height,
-        {
-          maxFeatures: cfg.features.maxPerFrame,
-          scaleFactor: cfg.features.scaleFactor,
-          levels: cfg.features.levels,
-          fastThreshold: cfg.features.fastThreshold,
-        },
-      );
+        const features = extractFeatures(
+          cv, globalIndex, best.gray, best.width, best.height,
+          {
+            maxFeatures: cfg.features.maxPerFrame,
+            scaleFactor: cfg.features.scaleFactor,
+            levels: cfg.features.levels,
+            fastThreshold: cfg.features.fastThreshold,
+          },
+        );
 
-      // Motion gate: a frame where the camera barely moved adds matching cost
-      // and no parallax.
-      if (previous) {
-        const moved = medianDisplacement(previous, features);
-        // How far the image actually travels between kept frames is the single
-        // most diagnostic number about a capture. Too small and there is no
-        // parallax to triangulate from; too large and consecutive frames stop
-        // sharing enough to match at all. Recorded either way, and fed back
-        // into the sampling rate.
-        if (Number.isFinite(moved)) motionSamples.push(moved);
-        const hopBudget = cfg.frames.maxHopFraction * Math.max(best.width, best.height);
-        currentWindow = nextWindowSize(currentWindow, baseWindow, moved, hopBudget);
-        if (Number.isFinite(moved) && moved < cfg.frames.minMotionPx) {
-          stats.droppedStatic++;
-          return;
+        // Motion gate: a frame where the camera barely moved adds matching
+        // cost and no parallax.
+        if (previous) {
+          const moved = medianDisplacement(previous, features);
+          // How far the image actually travels between kept frames is the
+          // single most diagnostic number about a capture. Too small and
+          // there is no parallax to triangulate from; too large and
+          // consecutive frames stop sharing enough to match at all. Recorded
+          // either way, and fed back into the sampling rate.
+          if (Number.isFinite(moved)) motionSamples.push(moved);
+          const hopBudget = cfg.frames.maxHopFraction * Math.max(best.width, best.height);
+          currentWindow = nextWindowSize(currentWindow, baseWindow, moved, hopBudget);
+          if (Number.isFinite(moved) && moved < cfg.frames.minMotionPx) {
+            stats.droppedStatic++;
+            continue;
+          }
         }
-      }
 
-      await store.write(globalIndex, best.gray, best.rgb);
-      const record: KeptFrame = {
-        meta: {
-          index: globalIndex,
-          clipId: clip.id,
-          clipIndex,
-          orderInClip: orderInClip++,
-          width: best.width,
-          height: best.height,
-        },
-        features,
-        timestampS: best.timestampS,
-        grayBytes: best.gray.byteLength,
-        rgbBytes: best.rgb.byteLength,
-        colorWidth: best.colorWidth,
-        colorHeight: best.colorHeight,
-        sharpness: best.sharp,
-      };
-      clipKept.push(record);
-      sharpnessValues.push(best.sharp);
-      previous = features;
-      globalIndex++;
+        await store.write(globalIndex, best.gray, best.rgb);
+        const record: KeptFrame = {
+          meta: {
+            index: globalIndex,
+            clipId: clip.id,
+            clipIndex,
+            orderInClip: orderInClip++,
+            width: best.width,
+            height: best.height,
+          },
+          features,
+          timestampS: best.timestampS,
+          grayBytes: best.gray.byteLength,
+          rgbBytes: best.rgb.byteLength,
+          colorWidth: best.colorWidth,
+          colorHeight: best.colorHeight,
+          sharpness: best.sharp,
+        };
+        clipKept.push(record);
+        sharpnessValues.push(best.sharp);
+        previous = features;
+        globalIndex++;
+      }
     };
 
     await decodeVideo(
@@ -324,6 +355,18 @@ async function run(
       clipKept.push(...survivors);
     }
 
+    // Enforce the frame budget by thinning evenly across the clip's duration.
+    if (clipKept.length > cfg.frames.maxFramesPerClip) {
+      const thinned = thinByTime(clipKept, cfg.frames.maxFramesPerClip);
+      stats.droppedBlurry += clipKept.length - thinned.length;
+      clipKept.length = 0;
+      clipKept.push(...thinned);
+    }
+    // The floor and the thinning both leave gaps in the flush-time ordering,
+    // and everything downstream that asks "are these frames adjacent?" reads
+    // orderInClip — renumber so it means position in the SURVIVING sequence.
+    clipKept.forEach((f, i) => { f.meta.orderInClip = i; });
+
     stats.keptFrames = clipKept.length;
     kept.push(...clipKept);
     clipStats.push(stats);
@@ -336,6 +379,32 @@ async function run(
         `too blurry, or filmed from a standing position without moving.`,
       );
     }
+  }
+
+  // The TOTAL frame budget, thinned proportionally per clip for the same
+  // reason as the per-clip one: a capture of many clips must lose density
+  // everywhere, not lose its later clips.
+  if (kept.length > cfg.limits.maxTotalFrames) {
+    const total = kept.length;
+    const perClip = new Map<string, KeptFrame[]>();
+    for (const f of kept) {
+      const arr = perClip.get(f.meta.clipId) ?? [];
+      arr.push(f);
+      perClip.set(f.meta.clipId, arr);
+    }
+    kept.length = 0;
+    for (const [clipId, arr] of perClip) {
+      const share = Math.max(8, Math.floor((cfg.limits.maxTotalFrames * arr.length) / total));
+      const thinned = thinByTime(arr, share);
+      thinned.forEach((f, i) => { f.meta.orderInClip = i; });
+      kept.push(...thinned);
+      const stat = clipStats.find((c) => c.id === clipId);
+      if (stat) {
+        stat.droppedBlurry += arr.length - thinned.length;
+        stat.keptFrames = thinned.length;
+      }
+    }
+    kept.sort((a, b) => a.meta.index - b.meta.index);
   }
 
   stageMs.decode = Math.round(performance.now() - t0);
