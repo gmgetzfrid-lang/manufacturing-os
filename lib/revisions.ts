@@ -1118,7 +1118,7 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
   return { oldLabel, newLabel: check.label, syncedCurrent };
 }
 
-// ─── REVERT ───────────────────────────────────────────────────────────────
+// ─── REVERT ─────────────────────────────────────────────────────────────
 // Rolling back to a previous version is never a silent flip of
 // current_version_id. We create a brand-new version row that COPIES the file
 // payload of the chosen old version, sets reverted_from_version_id, and goes
@@ -1309,7 +1309,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   return rowToVersion(insertedRow);
 }
 
-// ─── ARCHIVE / UNARCHIVE ──────────────────────────────────────────────
+// ─── ARCHIVE / UNARCHIVE ──────────────────────────────────────────────────
 
 export type ArchiveInput = {
   doc: DocumentRecord;
@@ -1383,7 +1383,7 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
   });
 }
 
-// ─── SUPERSEDE DOCUMENT ───────────────────────────────────────────────────
+// ─── SUPERSEDE DOCUMENT ─────────────────────────────────────────────────
 // One whole document is replaced by zero or more *different* documents.
 // (Rev-Up is for a new revision of the same document; this is for retiring
 // or splitting a drawing.)
@@ -1556,7 +1556,7 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
 }
 
-// ─── BACKFILL HISTORICAL VERSION ─────────────────────────────────────
+// ─── BACKFILL HISTORICAL VERSION ─────────────────────────────────────────
 //
 // `backfillVersion` is for adding a HISTORICAL revision to a document
 // after the fact. Use case: existing app users have been uploading
