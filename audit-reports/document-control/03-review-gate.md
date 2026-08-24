@@ -39,7 +39,7 @@ Required signers, invalidation on change, and whether the gate fails open.
 - The guard rewrite restates `SECURITY DEFINER SET search_path = public` (CREATE OR REPLACE would otherwise drop the 20261020 pin) and is otherwise byte-identical to the live 20260822 body.
 - Files: `supabase/migrations/20261030_dc_phase4_review_gate.sql`, `lib/reviewControl.ts`
 - Tests: `lib/__tests__/reviewSignoffIntegrity.test.ts` — a signed row with no signature never satisfies the gate; migration-shape pins on the INSERT policy and guard join.
-- **Pending hand-apply (DEC-30):** `20261030`.
+- **Applied & verified live 2026-08-24:** `20261030` (3-point probe all true; the reconciliation query is re-asserted in the next phase's verification block).
 - **What this brought to light:** `v_primary_reqs` counts ALL primary rows regardless of status, so a voided primary still inflates the requirement — conservative (fail-closed) and consistent with pre-fix behaviour, left as-is. The 20260819 policy loop would re-create the `member_all` policies if ever replayed after `20261029` — `20261030` re-drops both defensively so ordering is harmless.
 
 - **Verification:** CONFIRMED
@@ -81,7 +81,7 @@ Required signers, invalidation on change, and whether the gate fails open.
 - Service-role writes (`auth.uid() IS NULL` — cron scan, restore) early-return, matching the publish guard's pattern.
 - Files: `supabase/migrations/20261030_dc_phase4_review_gate.sql`, `lib/reviewControl.ts`
 - Tests: `lib/__tests__/reviewSignoffIntegrity.test.ts` — the write is pinned to the signer's own row; zero rows throws; an update error surfaces; trigger-shape pins.
-- **Pending hand-apply (DEC-30):** `20261030`.
+- **Applied & verified live 2026-08-24:** `20261030` (3-point probe all true; the reconciliation query is re-asserted in the next phase's verification block).
 
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260830_publisher_row_management.sql:34-50`, `lib/reviewControl.ts:287-303`, `components/documents/ReviewGateSection.tsx:131-135`, `components/documents/ReviewGateSection.tsx:191-203`
