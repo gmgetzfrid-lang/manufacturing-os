@@ -253,8 +253,19 @@ function addToBucket(
   if (!list.includes(subject.id as never)) list.push(subject.id as never);
 }
 
-export function buildAclIndexFromRules(rules: AccessRule[] | undefined): AclIndex | null {
-  const list = Array.isArray(rules) ? rules : [];
+/** Build the flat allow/deny index from a rule list.
+ *
+ *  When `nowMs` is supplied, rules whose `expiresAt` has passed are dropped —
+ *  so an expired grant does not bake into the index and keep authorizing
+ *  forever (OWN-7). When it is OMITTED, no expiry filter runs and the output
+ *  is byte-identical to before this parameter existed, so every existing call
+ *  site is unchanged. The expiry-aware form is used by the nightly rebuild
+ *  (DEC-10). Note the index still carries no expiry field, so the raw
+ *  evaluator remains the source of truth for expiry between rebuilds — this
+ *  narrows the stale-grant window, it does not remove it. */
+export function buildAclIndexFromRules(rules: AccessRule[] | undefined, nowMs?: number): AclIndex | null {
+  const list0 = Array.isArray(rules) ? rules : [];
+  const list = nowMs == null ? list0 : list0.filter((r) => isRuleActive(r, nowMs));
   if (list.length === 0) return null;
 
   const allow = emptyBucket();
@@ -271,12 +282,12 @@ export function buildAclIndexFromRules(rules: AccessRule[] | undefined): AclInde
   return { allow, deny };
 }
 
-export function buildAclIndex(acl?: AccessControl): AclIndex | null {
+export function buildAclIndex(acl?: AccessControl, nowMs?: number): AclIndex | null {
   if (!acl || !Array.isArray(acl.rules) || acl.rules.length === 0) return null;
-  return buildAclIndexFromRules(acl.rules);
+  return buildAclIndexFromRules(acl.rules, nowMs);
 }
 
-export function buildAclIndexFromChain(chain: Array<AccessControl | undefined>): AclIndex | null {
+export function buildAclIndexFromChain(chain: Array<AccessControl | undefined>, nowMs?: number): AclIndex | null {
   if (!chain.some(Boolean)) return null;
 
   let mergedRules: AccessRule[] = [];
@@ -295,5 +306,5 @@ export function buildAclIndexFromChain(chain: Array<AccessControl | undefined>):
     inherit = nodeInherit;
   }
 
-  return buildAclIndexFromRules(mergedRules);
+  return buildAclIndexFromRules(mergedRules, nowMs);
 }

@@ -156,6 +156,12 @@ export async function POST(req: NextRequest) {
       email,
       display_name: displayName,
       role: "Admin",
+      // Seed the additive roles array too (DB-3 / DEC-1 step 1). `roles` is
+      // NOT NULL DEFAULT '{}', so leaving it unset makes every additive check
+      // (org_capability_allows, acl_index_denies) evaluate the founding Admin
+      // against an EMPTY array and deny them. It must contain at least the
+      // headline role.
+      roles: ["Admin"],
       status: "active",
       created_by: userId,
       created_at: new Date().toISOString(),

@@ -36,6 +36,7 @@ import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
+import { rebuildAclIndexes, type RebuildCounts } from "@/lib/aclIndexRebuild";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -72,6 +73,7 @@ async function handler(req: NextRequest) {
     knowledgeIngest?: { docs: number; pages: number; completed: number };
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
     embedDrain?: { libraries: number; embedded: number };
+    aclIndexRebuild?: RebuildCounts;
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -143,6 +145,18 @@ async function handler(req: NextRequest) {
     result.staleEscalations = await escalateStaleCheckouts(sb);
   } catch (e) {
     result.errors.push(`stale-escalation: ${(e as Error).message}`);
+  }
+
+  // 4b. Rebuild acl_index from each node's ACL + ancestor chain, dropping
+  //     expired rules (DB-4 / OWN-7 / DEC-10). Idempotent and diff-guarded:
+  //     it only writes a node whose recomputed index differs from the stored
+  //     one, so it is a no-op for already-correct data. This narrows the
+  //     stale-grant window to one cron cycle; it is not a full fix.
+  try {
+    const rebuilt = await rebuildAclIndexes(sb, Date.now());
+    result.aclIndexRebuild = rebuilt;
+  } catch (e) {
+    result.errors.push(`acl-index-rebuild: ${(e as Error).message}`);
   }
 
   // 6. COMPLIANCE CLOCKS — review cycles, read-&-understood nags, pre-publish

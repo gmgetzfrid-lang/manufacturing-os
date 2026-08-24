@@ -10,6 +10,7 @@ import DeleteSafetyModal from "./DeleteSafetyModal";
 import { LibraryConfig } from "@/types/schema";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { setOwner as assignLibraryOwner } from "@/lib/ownership";
+import { buildAclIndex } from "@/lib/acl";
 
 export default function LibraryAdminPage() {
   const router = useRouter();
@@ -108,6 +109,12 @@ export default function LibraryAdminPage() {
         read_access: config.readAccess ?? "ALL", visible_to: config.visibleTo ?? [],
         folder_security: config.folderSecurity, default_new_visibility: config.defaultNewVisibility,
         default_new_acl: config.defaultNewAcl ?? null, acl: config.acl ?? null,
+        // Write the derived index alongside the ACL (DB-5). The index-based
+        // evaluators (canPublishViaIndex, the DB node_visible /
+        // user_can_publish_on_library) read acl_index; a library saved with
+        // acl but a NULL acl_index is invisible to all of them while the raw
+        // evaluator honours it — the two layers disagree.
+        acl_index: buildAclIndex(config.acl ?? undefined),
       };
 
       if (editingLib) {

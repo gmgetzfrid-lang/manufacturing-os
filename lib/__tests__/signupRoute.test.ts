@@ -115,4 +115,20 @@ describe("POST /api/auth/signup — duplicate-email refusals", () => {
     expect(res.status).toBe(400);
     expect(String((await res.json()).error)).toContain("Password");
   });
+
+  // DB-3 / DEC-1 step 1: the founding Admin must be seeded with a roles array
+  // containing its headline role, or every additive check denies them.
+  it("seeds roles: ['Admin'] on the founding member row", async () => {
+    mockState.queues.users = [{ data: [] }];
+    mockState.createUserResult = { data: { user: { id: "uid-new" } }, error: null };
+    mockState.queues.orgs = [{ data: null }, { data: { id: "org-new" } }]; // dup pre-check, then insert
+    mockState.queues.org_members = [{ data: null, error: null }];
+    const res = await POST(makeRequest(BODY));
+    expect(res.status).toBe(200);
+    const memberInsert = mockState.calls.find((c) => c.table === "org_members" && c.method === "insert");
+    expect(memberInsert).toBeDefined();
+    const row = memberInsert!.args[0] as { role: string; roles: string[] };
+    expect(row.role).toBe("Admin");
+    expect(row.roles).toEqual(["Admin"]);
+  });
 });
