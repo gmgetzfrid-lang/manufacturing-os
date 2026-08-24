@@ -1,3 +1,5 @@
+> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T15:30:00Z
+
 # 10 · RLS & persistence — table by table
 
 **14 findings** — 2 CRITICAL · 6 HIGH · 6 MEDIUM.

@@ -1,3 +1,5 @@
+> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T15:30:00Z
+
 # 01 · Checkout, check-in & the lock
 
 **14 findings** — 3 CRITICAL · 7 HIGH · 4 MEDIUM.
