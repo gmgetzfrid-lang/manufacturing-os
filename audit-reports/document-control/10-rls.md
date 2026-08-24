@@ -72,7 +72,7 @@ A policy census across the document-control schema.
   Anything else `RAISE`s. `EXECUTE` is `REVOKE`d from `PUBLIC`/`anon` and `GRANT`ed only to `authenticated`. `search_path` is pinned in the same `CREATE OR REPLACE` (it is in the DB-6 pin set). `bump_share_access` — the same definer+PUBLIC shape flagged in the finding — gets the same grant lockdown.
 - Done-when: (1) validates active membership of the owning org and that `p_version`/`p_prev` share a document ✓; (2) EXECUTE revoked from PUBLIC/anon, granted only to authenticated ✓; (3) a test calls it as a non-owner/other-org and asserts refusal — encoded as SQL guards; the live REVOKE + the created_by/membership checks make a non-owner call `RAISE` ✓; (4) the single legitimate caller still succeeds (it passes its own freshly-created orphan as the drafter) ✓.
 - Files: `supabase/migrations/20261027_dc_phase1_unguarded_doors.sql`
-- **Pending hand-apply (DEC-30):** `20261027` — this migration authorizes and locks the RPC at the database; until applied, the PUBLIC definer RPC remains reachable. The legitimate caller is unchanged and keeps working before and after.
+- **Applied & verified live 2026-08-24:** `20261027` — the probe confirmed the RPC is no longer PUBLIC and is executable only by `authenticated`. The legitimate caller is unchanged and keeps working.
 - **What this brought to light:** the finding's own "chain reaction" note — a RESTRICTIVE UPDATE/INSERT overlay on `document_versions` (`EGRESS-6`/`DRLS-3`) is pointless while a PUBLIC definer RPC deletes rows past every policy — is now unblocked: with the RPC authorized, the per-column write guards on `document_versions` can be added without this bypass undercutting them.
 
 - **Verification:** CONFIRMED

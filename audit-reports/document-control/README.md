@@ -37,9 +37,10 @@ fixed audit attribution), `DRLS-2` (PUBLIC unauthenticated delete RPC →
 authorized to the caller's own orphan and revoked from PUBLIC). Ship loop green:
 `tsc`, `eslint`, **1468 vitest** (10 new), full `next build`.
 
-**One migration needs hand-applying** (`20261027_dc_phase1_unguarded_doors.sql`)
-— it authorizes `revup_rollback_orphan` and installs the transmittal write rail.
-`XEDGE-1` and `PKG-1` are pure app-side and already live on the branch.
+**Migration `20261027_dc_phase1_unguarded_doors.sql` applied & verified live
+2026-08-24** (3-point probe all true) — it authorizes `revup_rollback_orphan`
+and installs the transmittal write rail. `XEDGE-1` and `PKG-1` are pure app-side
+and live on the branch.
 
 | # | Report | n | Note |
 |---|---|---|---|
