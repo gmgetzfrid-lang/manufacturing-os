@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T18:00:00Z
-
 # 01 · Checkout, check-in & the lock
 
 **14 findings** — 3 CRITICAL · 7 HIGH · 4 MEDIUM.
@@ -32,7 +30,19 @@ Whether the lock is a control or a convention.
 ## DCK-1 · The PSM MOC gate for drawing revisions is enforced only in browser JavaScript — no lib mutator, RPC, constraint, or trigger requires it, and revert/supersede have no gate at all
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 5).** Confirmed, then enforced where the write happens (`20261031_dc_phase5_moc_gate.sql` re-creates `publish_revision`, byte-identical to the live 20261019 definition except one inserted block):
+- **The gate (done-when 1):** a `content` publish of a document whose effective `doc_class` — resolved document → folder → library inside the RPC — is `'drawing'` requires a real `moc_reference` (≥3 chars). This binds every rev-up AND every revert (both go through `publish_revision`), including a direct RPC call by any member.
+- **Server-side exemption (done-when 2):** Minor/Correction stays the documented escape hatch, but the decision runs in the RPC against the declared `change_type`. A client that lies about change type now records a false declaration on the version row (audit-visible) instead of bypassing an unchecked gate.
+- **Revert is never minor-like (done-when 3, first half):** `revertToVersion` hardcodes `change_type: 'Correction'` (`lib/revisions.ts:1173`) — a naive exemption would have waived every revert. The gate treats `reverted_from_version_id IS NOT NULL` as a real change, always. The revert modal already collects an MOC reference; its placeholder now says it is required for drawings.
+- **Supersede (done-when 3, second half):** `supersedeDocument` flips `documents.status` directly with no version payload, so its gate is app-side — it resolves the effective class via `effectiveDocClassForDocument` and refuses a drawing-class supersession without an MOC reference (class-unresolvable environments do not block).
+- **Deliberate scope limits, recorded:** only a DECLARED drawing is gated at the DB — the client keeps prompting for unclassified documents, but hard-failing every legacy org's publishes (most rows predate `20261012`'s `doc_class` columns) would be a DEC-30 two-worlds regression. On a pre-20261012 database the class lookup catches `undefined_column` and no-ops rather than 42703-ing every content publish.
+- Files: `supabase/migrations/20261031_dc_phase5_moc_gate.sql`, `lib/revisions.ts` (`supersedeDocument`), `components/documents/RevertConfirmModal.tsx`
+- Tests: `lib/__tests__/mocGateMigration.test.ts` — the gate, the cascade, revert-never-minor, pre-migration tolerance, and the search_path pin.
+- **Pending hand-apply (DEC-30):** `20261031`.
+- **What this brought to light:** the verifier's note that `publish_revision` gates only on membership (never per-library publish authority) remains true and is NOT this finding — the publish-authority check lives in the `enforce_document_publish_guard` trigger, which the RPC's promote fires with the caller's `auth.uid()`, so authority IS enforced transactionally at promote time; a branch publish (never promoted) is the residual soft spot, tracked under the RG/REV family.
+
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/RevUpModal.tsx:214-219`, `components/documents/RevUpModal.tsx:261-266`, `lib/checkinOutcomes.ts:291-302`, `supabase/migrations/20260828_integrity_hardening.sql:142-165`, `lib/revisions.ts:1147-1180`, `lib/revisions.ts:1416-1462`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Fully confirmed, and the bypass is broader than the finding claims: publish_revision is SECURITY DEFINER and gates only on active org membership (20260828:76-83 `IF NOT v_is_member THEN RAISE EXCEPTION`), never on library publish authority — so any active member, not just an authorized publisher, can RPC a drawing-class revision into existence with moc_reference NULL. CRITICAL stands.

@@ -83,6 +83,18 @@ pins the write and surfaces zero-row refusals). Ship loop green: `tsc`,
 `20261030_dc_phase4_review_gate.sql` **applied & verified live 2026-08-24**
 (3-point probe all true).
 
+**Phase 5 — the PSM MOC gate (`DCK-1`) — is complete.** The MOC requirement
+for drawing-class revisions lived only in browser JavaScript; it is now
+enforced inside `publish_revision` (drawing-class content publishes require a
+real `moc_reference`; the Minor/Correction exemption is decided server-side; a
+REVERT is never minor-like — `revertToVersion` hardcodes 'Correction', which a
+naive exemption would have waived), and `supersedeDocument` gets the app-side
+equivalent. Only DECLARED drawings are gated (unclassified legacy data must
+not hard-fail; the client still prompts), and the gate no-ops on a
+pre-20261012 database. Ship loop green: `tsc`, `eslint`, **1503 vitest**,
+full `next build`. **One migration to hand-apply:**
+`20261031_dc_phase5_moc_gate.sql`.
+
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |

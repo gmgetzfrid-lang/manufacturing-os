@@ -1417,6 +1417,26 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   if (!doc.id) throw new Error("Document is missing an id");
   if (!reason.trim()) throw new Error("Supersession reason is required");
 
+  // DCK-1: superseding a drawing-class document changes which sheet is the
+  // controlled copy — the same PSM MOC requirement as a non-minor revision.
+  // Rev-up and revert are gated inside publish_revision at the database;
+  // supersede flips documents.status directly, so the gate lives here.
+  // Unresolvable class (pre-migration env) does not block — the DB rail model.
+  try {
+    const { effectiveDocClassForDocument } = await import("@/lib/docClass");
+    const cls = await effectiveDocClassForDocument({
+      id: doc.id, collectionId: doc.collectionId ?? null, libraryId,
+    });
+    if (cls === "drawing" && (mocReference?.trim().length ?? 0) < 3) {
+      throw new Error(
+        "This is a drawing-class document — PSM requires the MOC reference to supersede it (OSHA 1910.119(l)).",
+      );
+    }
+  } catch (e) {
+    if ((e as Error).message.includes("MOC reference")) throw e;
+    /* class unresolvable — do not block */
+  }
+
   // Retiring a document is a canonical-state change too: same per-library publish
   // authority + lock/hold guard, and an override reason if someone else is
   // actively editing it.

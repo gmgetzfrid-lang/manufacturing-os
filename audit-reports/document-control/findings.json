@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "OPEN": 135,
-      "RESOLVED": 12
+      "RESOLVED": 13,
+      "OPEN": 134
     }
   },
   "status_vocabulary": [
@@ -41,7 +41,7 @@
       "id": "DCK-1",
       "title": "The PSM MOC gate for drawing revisions is enforced only in browser JavaScript — no lib mutator, RPC, constraint, or trigger requires it, and revert/supersede have no gate at all",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
