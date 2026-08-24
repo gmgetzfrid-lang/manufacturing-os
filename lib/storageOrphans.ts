@@ -88,17 +88,41 @@ export async function collectReferencedKeys(sb: SupabaseClient): Promise<Set<str
   ];
 
   for (const [label, table, select, extract] of sources) {
-    // Page through — .range in 1000-row windows so big tables don't truncate.
+    // Page through — .range in 1000-row windows so big tables don't truncate,
+    // ORDERED BY id so windows are STABLE (XEDGE-13): without an ORDER BY,
+    // Postgres gives no row order across separate LIMIT/OFFSET queries, so a
+    // concurrent update or plan switch could make a row vanish between pages
+    // — and a reference silently missed here is an object permanently deleted
+    // as an "orphan". The per-table count cross-check below turns any
+    // remaining drift into a loud abort instead of an incomplete set that
+    // masquerades as complete.
     let from = 0;
+    let paged = 0;
     for (;;) {
-      const { data, error } = await sb.from(table).select(select).range(from, from + 999);
+      const { data, error } = await sb
+        .from(table)
+        .select(select)
+        .order("id", { ascending: true })
+        .range(from, from + 999);
       if (error) {
         throw new Error(`reference scan failed at ${label}: ${error.message} — aborting (fail-closed)`);
       }
       const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
       extract(rows);
+      paged += rows.length;
       if (rows.length < 1000) break;
       from += 1000;
+    }
+    const { count, error: countErr } = await sb
+      .from(table)
+      .select("id", { head: true, count: "exact" });
+    if (countErr) {
+      throw new Error(`reference count failed at ${label}: ${countErr.message} — aborting (fail-closed)`);
+    }
+    if (count != null && count !== paged) {
+      throw new Error(
+        `reference scan at ${label} paged ${paged} rows but the table counts ${count} — the reference set may be incomplete; aborting (fail-closed)`,
+      );
     }
   }
   return keys;

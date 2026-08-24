@@ -254,14 +254,21 @@ export async function buildAndDeliverExport(params: {
         });
         step("s3:done");
 
-        // Enforce retention if configured
+        // Enforce retention if configured. The purge's outcome — including a
+        // refusal (no prefix) — lands in diagnostics, so a purge that did
+        // nothing is visible, never a silent "succeeded" (XEDGE-4).
         if (dest.retention_days && dest.retention_days > 0) {
           step("s3:retention", `purge older than ${dest.retention_days}d`);
-          await s3PurgeOlderThan({
-            dest,
-            prefix: dest.prefix || "",
-            keepDays: dest.retention_days,
-          }).catch((e) => step("s3:retention:err", (e as Error).message));
+          try {
+            const purge = await s3PurgeOlderThan({
+              dest,
+              prefix: dest.prefix || "",
+              keepDays: dest.retention_days,
+            });
+            step("s3:retention:done", `scanned ${purge.scanned}, deleted ${purge.deleted} app archive(s)`);
+          } catch (e) {
+            step("s3:retention:err", (e as Error).message);
+          }
         }
 
         return {
@@ -371,29 +378,50 @@ async function s3Put(params: {
   }
 }
 
-async function s3PurgeOlderThan(params: {
+/** Matches only the archives THIS APP writes (see the filename built in
+ *  deliverExport): retention must never touch anything else living in the
+ *  customer's bucket. */
+export const EXPORT_ARCHIVE_RE = /(^|\/)manufacturing-os-export-[\w.\-]+\.zip$/;
+
+export async function s3PurgeOlderThan(params: {
   dest: ExportDestination;
   prefix: string;
   keepDays: number;
-}): Promise<void> {
+}): Promise<{ deleted: number; scanned: number }> {
+  // XEDGE-4: with no prefix, ListObjectsV2 enumerates the WHOLE bucket and an
+  // age-only test would delete the customer's own unrelated objects — a
+  // shared corporate bucket's entire history, permanently, while the run
+  // records "succeeded". Retention without a prefix is refused outright, and
+  // the age test alone is never sufficient: only keys matching the archive
+  // name pattern this app writes are ever deletion candidates.
+  const prefix = params.prefix.replace(/^\/+|\/+$/g, "");
+  if (!prefix) {
+    throw new Error(
+      "Retention purge refused: this destination has no prefix, so the purge would scan the whole bucket. Set a prefix on the destination to enable retention.",
+    );
+  }
   const client = buildS3ClientFromDestination(params.dest);
   const cutoff = new Date(Date.now() - params.keepDays * 24 * 60 * 60 * 1000);
   let token: string | undefined;
+  let scanned = 0;
   const toDelete: { Key: string }[] = [];
   do {
     const out = await client.send(new ListObjectsV2Command({
       Bucket: params.dest.bucket || "",
-      Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+$/g, "") + "/" : undefined,
+      Prefix: prefix + "/",
       ContinuationToken: token,
     }));
     for (const obj of out.Contents ?? []) {
-      if (obj.Key && obj.LastModified && obj.LastModified < cutoff) {
+      scanned += 1;
+      if (obj.Key && obj.LastModified && obj.LastModified < cutoff
+          && EXPORT_ARCHIVE_RE.test(obj.Key)) {
         toDelete.push({ Key: obj.Key });
       }
     }
     token = out.IsTruncated ? out.NextContinuationToken : undefined;
   } while (token);
 
+  const deleted = toDelete.length;
   // S3 DeleteObjects supports max 1000 keys per call
   while (toDelete.length > 0) {
     const batch = toDelete.splice(0, 1000);
@@ -402,6 +430,7 @@ async function s3PurgeOlderThan(params: {
       Delete: { Objects: batch },
     }));
   }
+  return { deleted, scanned };
 }
 
 // ─── Connection test ────────────────────────────────────────────
