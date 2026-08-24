@@ -110,6 +110,26 @@ live file → stable `.order("id")` paging plus an exact-count cross-check that
 aborts fail-closed). Ship loop green: `tsc`, `eslint`, **1513 vitest**, full
 `next build`.
 
+**Phase 7 — packs, pins & acknowledgment integrity — first block complete.**
+One CRITICAL and two HIGH/CRITICAL closed: `PKG-4` (the field pack merged
+Draft/Superseded/Void and on-hold sheets stamped like in-force revisions → a
+pure gate, `filterPackDocs`, refuses non-Issued/Locked and actively-held
+sheets with the reason recorded, fails CLOSED on an errored hold read, and
+the "all current, all stamped" toast is now true by construction), `DIST-3`
+(anyone could stamp another person's distribution acknowledgment → the
+acknowledged_at transition is trigger-bound to the named recipient and
+records `acknowledged_by`; rows can't be born acknowledged; the app pins the
+write to the caller's own pending row and surfaces zero-row refusals), and
+`PKG-5` (the pins behind the PUBLIC pack verdict were any-member-writable
+with a cross-org INSERT hole → INSERT binds package+document to the row org,
+UPDATE/DELETE need the package owner or Admin/DocCtrl, a pin must name a
+version of its own document, and /api/verify-package filters everything by
+the package's org). Ship loop green: `tsc`, `eslint`, **1536 vitest** (23
+new), full `next build`. Migration
+`20261032_dc_phase7_ack_and_pin_integrity.sql` **awaiting hand-apply**.
+Remaining in Phase 7: `PKG-3`, `REV-2`, `DIST-1` remainder + XEDGE
+extensions (deferred behind an in-flight push of `lib/revisions.ts`).
+
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |

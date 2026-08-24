@@ -140,7 +140,17 @@ lib/storage.ts:211-215 — `const safeName = sanitizeFilename(filename); const b
 ## PKG-4 · buildAndDownloadDocPack applies NO status and NO hold filter — Draft, Superseded, Void and on-hold drawings are merged into the field bundle with nothing on the sheet saying so
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7).** Confirmed exactly as written — the pack builder never fetched `status`, never queried holds, and the asset hub toasted "all current, all stamped" over a bundle that could contain a Void sheet and one under an open hold. Fixed by refusing, not annotating:
+- `lib/docPack.ts` now fetches `status`, queries `document_holds … .is("released_at", null)` for the candidate ids, and routes everything through a new exported pure gate `filterPackDocs(allDocs, heldIds, holdReadFailed)`. Any sheet not Issued/Locked is refused with the status named in the reason ("superseded — not an in-force controlled revision"); any sheet under an active hold is refused with "under an active hold — work from this document should stop"; and an **errored hold read fails CLOSED** — every sheet is refused with "hold status could not be verified" rather than packing blind. A legacy row with no status at all still passes (pre-status data).
+- Done-when 2 asked for a hold *banner* on held sheets; refusal is the deliberately stricter choice — the hold's own wording is "work from this document should stop", which cannot coexist with putting the sheet in a field pack. The skip reason tells the crew exactly what was left out and why.
+- `app/(protected)/assets/[tag]/page.tsx` — the skip toast now lists each refused sheet with its reason (`P-101 (under an active hold …)`), and the "all current, all stamped" sentence only fires when `skipped.length === 0`, which after the gate means every included sheet **was** Issued/Locked and hold-free — the claim is now true by construction (done-when 3).
+- The same gate protects the work-package print path — `app/(protected)/packages/page.tsx` builds through the identical `buildAndDownloadDocPack`.
+- Done-when: (1) status fetched, non-Issued/Locked refused and recorded in `skipped` with the reason ✓; (2) active holds bind egress — held sheets refused (stricter than the banner asked for) ✓; (3) the success message cannot claim "all current" over a non-current or held sheet ✓.
+- Files: `lib/docPack.ts`, `app/(protected)/assets/[tag]/page.tsx`.
+- Tests: `lib/__tests__/docPackFilter.test.ts` — Issued/Locked pass; Draft/Superseded/Void/Archived each refused with the status in the reason; legacy empty-status passes; held sheet refused; hold-read failure refuses everything (fail closed); status refusal wins when both apply; label fallback order.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/docPack.ts:51-54`, `lib/docPack.ts:95-107`, `app/(protected)/assets/[tag]/page.tsx:51-58`, `app/(protected)/assets/[tag]/page.tsx:129-141`, `lib/holds.ts:246`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed at CRITICAL. The page even asserts the opposite of what it built — on a clean run it toasts `Pack ready — ${result.included} drawings, all current, all stamped.` for a bundle that may contain a Void sheet and a sheet under an open hold. (The cited lib/holds.ts:246 is a miscitation — that line is notification body text — but the absence of any hold query in docPack.ts is the real evidence and it holds. Partial mitigation: each sheet's own /verify QR reports docStatus, which covers Superseded/Archived but not Void and not holds.)
@@ -170,7 +180,19 @@ lib/docPack.ts:51-54 — `.select("id, org_id, document_number, title, name, rev
 ## PKG-5 · work_package_documents pins — the data the public field verdict is computed from — are writable and insertable by any active member, and the insert check never binds package_id to the caller's org
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7).** Confirmed both halves: the INSERT policy constrained only `org_id` (cross-org `package_id` injection into another org's public verdict), and UPDATE/DELETE were any-active-member with unconstrained values. Fixed in migration `20261032` plus app/API halves:
+- **INSERT** now additionally requires the referenced `work_packages` row AND the referenced `documents` row to be in the same org as the new row — a cross-org `package_id` can never be persisted (done-when 2).
+- **UPDATE and DELETE** are restricted to the package's owner (`work_packages.owner_user_id = auth.uid()`) or a controller (`role IN ('Admin','DocCtrl') OR roles && ARRAY['Admin','DocCtrl']`). DELETE gets the same bar because removing the one stale sheet flips a pack's public verdict to green just as effectively as re-pinning it. A Viewer session can no longer move a pin (done-when 1, 4). Repo-wide check: no app path DELETEs `work_package_documents`, so the tightened DELETE breaks nothing shipped.
+- **Trigger `trg_wpd_pin_guard`** (BEFORE UPDATE, service-role pass-through): row identity (`package_id`/`document_id`/`org_id`) is immutable, and a changed `pinned_version_id` must name a `document_versions` row of this row's own document in this org — an arbitrary pin value cannot fake freshness. This does the WITH CHECK column-freeze work the policy grammar can't.
+- **`/api/verify-package`** now reads the package's `org_id` and filters the print-snapshot lookup, the live-members fallback, AND the documents lookup by it — an injected or cross-org row never reaches the public verdict (done-when 3). Also picked up the DIST-2 lesson while in the file: `Void` joined `Superseded`/`Archived` in the sheet-level `retired` set.
+- Deliberate consequence, recorded in the migration and in `lib/workPackages.ts`: the `/packages` "Refresh pins" button remains visible to non-owners, but their refresh now fails with the lib's explicit zero-rows error ("the package owner or a document controller", not silence) instead of moving pins.
+- Done-when: (1) UPDATE owner/controller-scoped, identity frozen by trigger ✓; (2) INSERT binds package + document to the row org ✓; (3) verify-package joins on the package org and ignores mismatched rows ✓; (4) a Viewer cannot move a pin ✓.
+- Files: `supabase/migrations/20261032_dc_phase7_ack_and_pin_integrity.sql`, `app/api/verify-package/route.ts`, `lib/workPackages.ts`.
+- Tests: `lib/__tests__/phase7AckPinMigration.test.ts` (org-binding on INSERT, owner/controller on UPDATE+DELETE, pin-must-name-own-document trigger, identity immutability, search_path pins, service-role pass-throughs); `lib/__tests__/verifyPackageSnapshot.test.ts` continues to pin the snapshot-vs-live verdict logic.
+- ⚠ **Migration `20261032` awaiting hand-apply** — the DB half is not live until the user pastes it; the app halves are deploy-safe against the old policies (they only narrow expectations).
+
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260828_integrity_hardening.sql:285-292`, `supabase/migrations/20260825_work_packages_acks.sql:86-95`, `supabase/migrations/20260825_work_packages_acks.sql:70-79`, `app/api/verify-package/route.ts:38-52`, `app/(protected)/packages/page.tsx:33`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Both factual claims are true. Severity is one step too high: the app itself already grants every member exactly this power through an unguarded UI button — app/(protected)/packages/page.tsx:293-299 renders 'Refresh pins' for any viewer and lib/workPackages.ts:194-229 performs the same UPDATE — so the policy is consistent with the shipped design rather than a bypass of it. The genuinely un-mitigated part is the unbound `package_id` on INSERT (cross-org row injection into another org's pack) plus the ability to set an arbitrary pin value; HIGH.

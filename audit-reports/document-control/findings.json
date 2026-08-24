@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 17,
-      "OPEN": 130
+      "RESOLVED": 20,
+      "OPEN": 127
     }
   },
   "status_vocabulary": [
@@ -175,7 +175,7 @@
       "id": "DIST-3",
       "title": "distribution_acks UPDATE is any-active-member with no recipient predicate — one person can acknowledge for another; the 20260828 fix hardened the sibling table and skipped this one",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -362,7 +362,7 @@
       "id": "PKG-4",
       "title": "buildAndDownloadDocPack applies NO status and NO hold filter — Draft, Superseded, Void and on-hold drawings are merged into the field bundle with nothing on the sheet saying so",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1146,7 +1146,7 @@
       "id": "PKG-5",
       "title": "work_package_documents pins — the data the public field verdict is computed from — are writable and insertable by any active member, and the insert check never binds package_id to the caller's org",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

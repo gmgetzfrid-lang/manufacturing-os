@@ -182,14 +182,23 @@ export async function listMyPendingDistributionAcks(orgId: string, uid: string):
   });
 }
 
-/** One-click acknowledge (recipient side). */
-export async function acknowledge(ackId: string): Promise<void> {
-  const { error } = await supabase
+/** One-click acknowledge (recipient side). Pinned to the RECIPIENT's own row
+ *  (DIST-3): filtered by id alone, any member could stamp another person's
+ *  acknowledgment and forge the "N of M confirmed" register. The write is
+ *  checked — zero rows means the row wasn't yours (or was already stamped)
+ *  and must not read as success. */
+export async function acknowledge(ackId: string, recipientUserId: string): Promise<void> {
+  const { data, error } = await supabase
     .from("distribution_acks")
     .update({ acknowledged_at: new Date().toISOString() })
     .eq("id", ackId)
-    .is("acknowledged_at", null);
+    .eq("recipient_user_id", recipientUserId)
+    .is("acknowledged_at", null)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error("This acknowledgment isn't yours to sign (or it was already recorded).");
+  }
 }
 
 /**

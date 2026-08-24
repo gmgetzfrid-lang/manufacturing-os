@@ -23,6 +23,42 @@ export interface DocPackResult {
   skipped: Array<{ label: string; reason: string }>;
 }
 
+/** PKG-4: the field pack is the highest-consequence egress surface — a sheet
+ *  that is not an in-force controlled revision must never ride into it
+ *  looking like one. Draft/Superseded/Void/Archived are REFUSED with the
+ *  reason recorded in `skipped` (the crew sees what was left out and why),
+ *  and a sheet under an ACTIVE HOLD is refused too: holds already block
+ *  rev-up/revert/supersede as authoritative, so they bind egress the same
+ *  way — "work from this document should stop" cannot coexist with putting
+ *  it in a work pack. Fail CLOSED: an errored hold read excludes the sheet.
+ *  Pure, so the refusal rules are unit-tested without pdf-lib or a DB. */
+export function filterPackDocs(
+  allDocs: Array<Record<string, unknown>>,
+  heldIds: Set<string>,
+  holdReadFailed: boolean,
+): { docs: Array<Record<string, unknown>>; skipped: DocPackResult["skipped"] } {
+  const docs: Array<Record<string, unknown>> = [];
+  const skipped: DocPackResult["skipped"] = [];
+  for (const d of allDocs) {
+    const label = String(d.document_number || d.title || d.name || "Document");
+    const status = String(d.status ?? "");
+    if (status && status !== "Issued" && status !== "Locked") {
+      skipped.push({ label, reason: `${status.toLowerCase()} — not an in-force controlled revision` });
+      continue;
+    }
+    if (holdReadFailed) {
+      skipped.push({ label, reason: "hold status could not be verified" });
+      continue;
+    }
+    if (heldIds.has(String(d.id))) {
+      skipped.push({ label, reason: "under an active hold — work from this document should stop" });
+      continue;
+    }
+    docs.push(d);
+  }
+  return { docs, skipped };
+}
+
 async function resolveToHttpUrl(raw: string): Promise<string> {
   if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("blob:")) return raw;
   const { data: { session } } = await supabase.auth.getSession();
@@ -50,9 +86,19 @@ export async function buildAndDownloadDocPack(input: {
 }): Promise<DocPackResult> {
   const { data: docRows } = await supabase
     .from("documents")
-    .select("id, org_id, document_number, title, name, rev, library_id, current_version_id, checked_out_by, checked_out_by_name, checkout_note")
+    .select("id, org_id, document_number, title, name, rev, status, library_id, current_version_id, checked_out_by, checked_out_by_name, checkout_note")
     .in("id", input.documentIds);
-  const docs = (docRows as Array<Record<string, unknown>>) ?? [];
+  const allDocs = (docRows as Array<Record<string, unknown>>) ?? [];
+
+  const { data: holdRows, error: holdErr } = await supabase
+    .from("document_holds")
+    .select("document_id")
+    .in("document_id", input.documentIds)
+    .is("released_at", null);
+  const heldIds = new Set(
+    ((holdRows as Array<{ document_id: string }> | null) ?? []).map((h) => h.document_id),
+  );
+  const { docs, skipped } = filterPackDocs(allDocs, heldIds, !!holdErr);
 
   const versionIds = docs
     .map((d) => d.current_version_id as string | null)
@@ -70,7 +116,6 @@ export async function buildAndDownloadDocPack(input: {
     const coverPages = await merged.copyPages(input.cover, input.cover.getPageIndices());
     for (const p of coverPages) merged.addPage(p);
   }
-  const skipped: DocPackResult["skipped"] = [];
   let included = 0;
   let done = 0;
 
