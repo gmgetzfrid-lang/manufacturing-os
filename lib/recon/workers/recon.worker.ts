@@ -107,7 +107,21 @@ async function run(
       cores: navigator.hardwareConcurrency || 4,
       mobile,
     });
-    if (overrides) cfg = { ...cfg, ...overrides } as ReconConfig;
+    if (overrides) {
+      // Merge section-wise: `{sfm: {debugCompose: true}}` must adjust one
+      // field, not replace the whole sfm section with a one-key object and
+      // silently void every threshold in it.
+      const merged = { ...cfg } as Record<string, unknown>;
+      for (const [key, value] of Object.entries(overrides)) {
+        const current = (cfg as unknown as Record<string, unknown>)[key];
+        merged[key] =
+          value && typeof value === "object" && !Array.isArray(value) &&
+          current && typeof current === "object" && !Array.isArray(current)
+            ? { ...current, ...value }
+            : value;
+      }
+      cfg = merged as unknown as ReconConfig;
+    }
     if (gpu.isFallback) {
       warn(
         "software-gpu",
