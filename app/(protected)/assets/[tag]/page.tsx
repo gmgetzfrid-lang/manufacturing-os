@@ -135,10 +135,14 @@ export default function AssetHubPage() {
                         userEmail,
                         onProgress: (done, total) => setPackProgress([done, total]),
                       });
+                      // "all current" is now an earned claim: docPack refuses
+                      // Draft/Superseded/Void/held sheets, so zero skips means
+                      // every included sheet really was an in-force, hold-free
+                      // controlled revision (PKG-4).
                       setPackNote(
                         result.skipped.length === 0
                           ? `Pack ready — ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`
-                          : `Pack ready — ${result.included} included, ${result.skipped.length} skipped (${result.skipped.map((s) => s.label).join(", ")}).`,
+                          : `Pack ready — ${result.included} included; ${result.skipped.length} left out: ${result.skipped.map((s) => `${s.label} (${s.reason})`).join(", ")}.`,
                       );
                     } catch (e) {
                       setPackNote(`Pack failed: ${(e as Error).message}`);

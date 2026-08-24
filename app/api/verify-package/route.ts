@@ -37,10 +37,11 @@ export async function GET(req: NextRequest) {
 
   const { data: pkg } = await sb
     .from("work_packages")
-    .select("id, name, status, closed_at")
+    .select("id, org_id, name, status, closed_at")
     .eq("id", pkgId)
     .maybeSingle();
   if (!pkg) return NextResponse.json({ error: "Unknown package" }, { status: 404 });
+  const pkgOrgId = (pkg.org_id as string) ?? "";
 
   // Prefer the print snapshot when the QR carries one. Each recorded sheet
   // fixes the version that was on the paper; we compare THAT to current.
@@ -55,6 +56,7 @@ export async function GET(req: NextRequest) {
       .select("id, package_id, printed_at, sheets")
       .eq("id", printId)
       .eq("package_id", pkgId)
+      .eq("org_id", pkgOrgId)
       .maybeSingle();
     if (print) {
       printedAt = (print.printed_at as string | null) ?? null;
@@ -74,13 +76,14 @@ export async function GET(req: NextRequest) {
     const { data: members } = await sb
       .from("work_package_documents")
       .select("document_id, pinned_version_id, pinned_rev_label")
-      .eq("package_id", pkgId);
+      .eq("package_id", pkgId)
+      .eq("org_id", pkgOrgId);
     rows = (members ?? []) as Row[];
   }
 
   const docIds = rows.map((r) => r.document_id);
   const { data: docs } = docIds.length
-    ? await sb.from("documents").select("id, document_number, title, name, rev, current_version_id, status").in("id", docIds)
+    ? await sb.from("documents").select("id, document_number, title, name, rev, current_version_id, status").in("id", docIds).eq("org_id", pkgOrgId)
     : { data: [] };
   const byId = new Map(
     ((docs ?? []) as Array<Record<string, unknown>>).map((d) => [String(d.id), d]),
@@ -88,7 +91,9 @@ export async function GET(req: NextRequest) {
 
   const sheets = rows.map((r) => {
     const d = byId.get(r.document_id);
-    const retired = d?.status === "Superseded" || d?.status === "Archived";
+    // The shared not-current set (Superseded/Void/Archived — the DIST-2
+    // lesson: an inline two-status literal is how Void verified green).
+    const retired = d?.status === "Superseded" || d?.status === "Archived" || d?.status === "Void";
     return {
       label: String(d?.document_number || d?.title || d?.name || "Document"),
       printedRev: r.pinned_rev_label,
