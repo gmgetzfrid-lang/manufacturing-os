@@ -1,6 +1,11 @@
 -- ============================================================================
 -- COMBINED APPLY SCRIPT — roles-and-permissions audit remediation (2026-08-24)
 -- ============================================================================
+-- ✅ STATUS: APPLIED & VERIFIED in the live database on 2026-08-24. A 7-point
+-- read-only probe (one check per constituent migration, including the folded-in
+-- 20261025 typo fixes) returned applied = true on every row. Kept for the
+-- record; harmless to re-run (idempotent), but no longer pending.
+-- ============================================================================
 -- The SIX safe migrations from this session, in dependency order, as one file.
 -- Every statement is idempotent (IF EXISTS / IF NOT EXISTS / CREATE OR REPLACE /
 -- guarded ALTER / WHERE-filtered UPDATE), so this is safe to RE-RUN.

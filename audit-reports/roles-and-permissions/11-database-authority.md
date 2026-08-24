@@ -12,11 +12,23 @@ the application, and where they are broken outright.
 > `Remediation` blocks is **illustrative, untested, and not a patch.** Line
 > numbers drift — **match on the quoted code.**
 >
-> **No live database was available.** These are unambiguous reads of policy and
-> function bodies, and the two phantom-column findings are read from the schema
-> of record. A staging reproduction should confirm them before any of it is
-> treated as certain — migrations here are applied by hand, so the deployed state
-> may carry drift the repository does not show.
+> **No live database was available** at audit time. These are unambiguous reads
+> of policy and function bodies, and the two phantom-column findings are read
+> from the schema of record. A staging reproduction should confirm them before
+> any of it is treated as certain — migrations here are applied by hand, so the
+> deployed state may carry drift the repository does not show.
+>
+> **Update 2026-08-24 — live verification.** The operator ran read-only probes
+> from the Supabase SQL editor. Confirmed live: `org_capability_allows`,
+> `acl_index_denies`, and the `documents_deny_write_guard` trigger all existed
+> (the "live bug" world — both CRITICALs were real production breakage, not
+> dormant), and **691 documents** carried a non-null `acl_index->'deny'`. After
+> the combined remediation script
+> (`supabase/APPLY_roles-and-permissions_2026-08-24.sql`, migrations
+> `20261019`–`20261025`) was pasted, a 7-point probe returned `applied = true`
+> for every fix — including `org_capability_allows` reading `data` and
+> `acl_index_denies` reading `tm.uid`. The database and the repository now
+> agree for everything in this report.
 
 ---
 
@@ -31,7 +43,7 @@ the application, and where they are broken outright.
 - Files: `lib/capabilityPolicy.ts`, `supabase/migrations/20261025_fix_capability_and_deny_column_typos.sql`
 - Tests: `lib/__tests__/capabilityPolicy.test.ts` (12, green); full suite 1442.
 - Verified: the migration's `org_capability_allows` is byte-identical to the `20260901` original except `value` → `data`; the app read/write use `data`; defaults preserve open behaviour for holds.
-- Pending migration: `supabase/migrations/20261025_fix_capability_and_deny_column_typos.sql` — **apply after `20261024`** (roles backfill). Also fixes `DB-2` in the same file. Done-when 4 (a smoke test executing each SECURITY DEFINER helper) is left for a live-DB run.
+- Migration: `supabase/migrations/20261025_fix_capability_and_deny_column_typos.sql` — **applied & verified live 2026-08-24** (probe confirmed `org_capability_allows` reads `data`). Also fixes `DB-2` in the same file. Done-when 4 (a smoke test executing each SECURITY DEFINER helper) is left for a live-DB run.
 - **World note (for the operator):** whether `20260901` is applied decides whether this fix takes effect immediately (holds repaired now) or sits ready until `20260901`'s policies are applied. Either way the fix is correct; the diagnostic that settles it is in the chat response.
 
 - **Verification:** CONFIRMED (in code) / SUSPECTED (deployed state may differ)
@@ -96,7 +108,7 @@ change or the two layers will disagree about which column is real.**
 - Commit: (this session) — `supabase/migrations/20261025_fix_capability_and_deny_column_typos.sql` (same file as `DB-1`)
 - Files: `supabase/migrations/20261025_fix_capability_and_deny_column_typos.sql`
 - Verified: the migration's `acl_index_denies` is byte-identical to the `20260901` original except `tm.user_id = p_uid::text` → `tm.uid = p_uid`; the client twin `ViewAsSimulator.tsx:59` is `OWN-10`, unchanged here.
-- Pending migration: `20261025_fix_capability_and_deny_column_typos.sql` — apply after `20261024`, ideally after one `DB-4` rebuild cycle.
+- Migration: `20261025_fix_capability_and_deny_column_typos.sql` — **applied & verified live 2026-08-24** (probe confirmed `acl_index_denies` reads `tm.uid`).
 - **World note:** if `20260901` is applied, `documents_deny_write_guard` exists and this fix makes it enforce correctly now; if not applied, the corrected function sits unused until `20260901`'s policies are applied — this migration installs no policy of its own.
 
 - **Verification:** CONFIRMED (defect) / SUSPECTED (runtime blast radius)
@@ -160,7 +172,7 @@ almost anywhere else in this audit; see
 - Tests: `lib/__tests__/signupRoute.test.ts::"seeds roles: ['Admin'] on the founding member row"` — a full happy-path signup asserting the `org_members` insert carries `roles: ["Admin"]`.
 - Reproduced: the pre-fix signup insert set `role: "Admin"` with no `roles` key; `roles TEXT[] NOT NULL DEFAULT '{}'` means the row lands with `roles = '{}'`.
 - Verified: Done-when 1 — the backfill guarantees every row's `roles` contains its `role`. Done-when 2 — signup seeds it; restore placeholders are `status:'inactive'` and filtered by every additive check's `status='active'` predicate (per the independent verifier), so they are not load-bearing. Done-when 3 — the `COALESCE` idiom is documented as misleading in the backfill header; it is left in place because removing it is a broader SQL change deferred with the additive-conversion work.
-- Pending migration: `supabase/migrations/20261024_backfill_member_roles.sql` (apply before any additive conversion, and before `DB-1`'s activation).
+- Migration: `supabase/migrations/20261024_backfill_member_roles.sql` — **applied & verified live 2026-08-24** (probe: zero members whose `roles[]` misses their headline `role`).
 - **What this brought to light:** `DB-1`'s BLOCKED activation depends on this backfill having run — recorded as step 2 of `DB-1`'s unblocking sequence.
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / access-control
@@ -323,7 +335,7 @@ user's next rev-up.
 - Tests: `lib/__tests__/searchPathPin.test.ts::"every live definer function is pinned at creation or by 20261020_pin_search_path.sql"` (allowlist parsed from the migration itself so they cannot drift) and `::"the ALTER migration's legacy publish_revision entries stay defensive, not load-bearing"`.
 - Reproduced: independent scripted census (final definition per `(name, arity)` over `schema.sql` + all migrations) confirmed every function in the table SECURITY DEFINER and unpinned at its final definition.
 - Verified: Done-when 1 — all live definer functions pinned at creation or via the ALTER migration (census script returns zero). Done-when 2 — the lint test enforces it for new functions. **The live `enforce_document_publish_guard` is the `20260822_review_completion_guard.sql:21` definition** (4th of 4; that migration also re-binds the trigger) — recorded here so the next agent does not re-derive it.
-- Pending migration: `supabase/migrations/20261020_pin_search_path.sql` (apply after `20261019`; both after deploying the code). The repository half is done; the deployed database is unpinned until this is run by hand.
+- Migration: `supabase/migrations/20261020_pin_search_path.sql` — **applied & verified live 2026-08-24** (probe: zero `SECURITY DEFINER` functions in `public` without a pinned `search_path`).
 
 > **Verifier corrections to the count reconciliation above (2026-08-24).** The
 > reconciliation fell into its own trap #1: `publish_revision(11)` is **not

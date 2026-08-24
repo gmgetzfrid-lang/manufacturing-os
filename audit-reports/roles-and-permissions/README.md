@@ -68,6 +68,16 @@ feature builds. Check `verdict` and `depends_on` before starting a gap.
 [`99-fix-sequencing.md`](./99-fix-sequencing.md) are complete.** Ship loop green
 throughout: `tsc`, `eslint`, **1442 vitest**, full `next build`.
 
+**2026-08-24 — ALL SEVEN MIGRATIONS VERIFIED APPLIED IN THE LIVE DATABASE.**
+The operator pasted `supabase/APPLY_roles-and-permissions_2026-08-24.sql` (the
+combined, idempotent script covering `20261019`–`20261025`) into the Supabase
+SQL editor, then ran a 7-point read-only probe (one row per fix: old
+`publish_revision` signature gone, every `SECURITY DEFINER` function pinned,
+owner indexes, `document_shares` per-verb policies, `access_requests` scope,
+roles backfill, `org_capability_allows`/`acl_index_denies` typo fixes). All
+seven returned `applied = true`. The "pending hand-applied migration" caveats
+below are therefore historical — code and database now agree for this area.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |
@@ -97,9 +107,11 @@ lockouts result — so both were completed. Migration `20261025` (apply after
 | `SURF-5` (HIGH) | **RESOLVED** Done-when 1–2 (cross-tenant drain); Done-when 3 (queue-insert lockdown) split to `SURF-17` |
 | `EGRESS-5` / `DEC-19` (HIGH) | **RESOLVED** — org-scoped policy, rate-limited public door, org_id drift fixed, pending-requests card on `/admin/users` |
 
-**Pending hand-applied migrations from Phase 1 (DEC-30), code deployed first:**
+**Hand-applied migrations from Phase 1 (DEC-30):**
 `20261022_document_shares_acl_scope.sql`,
-`20261023_access_requests_scope_and_limit.sql`.
+`20261023_access_requests_scope_and_limit.sql` — **applied & verified in the
+live database 2026-08-24** (see the verification note at the top of this
+section).
 
 **New findings raised in Phase 1:** `EGRESS-7` (silent revoke no-op after the
 UPDATE policy tightens), `EGRESS-8` (share tokens visible to non-readers),
@@ -120,13 +132,14 @@ new test files), full `next build`.
 | `LIFE-5` (partial) | Relabel found **already overtaken** by intervening code — quoted in-file; body stays OPEN |
 | `LIFE-13` | **RESOLVED** — ticket page renders the source-document backlink with live rev-drift check |
 | `CHAIN-4` | **RESOLVED** — self-documenting model corrected claim-by-claim; Known gaps grew 3 → 5 |
-| `DB-6` | **RESOLVED** (repo half) — `20261020_pin_search_path.sql` + lint test; **pending hand-applied migration** |
+| `DB-6` | **RESOLVED** — `20261020_pin_search_path.sql` + lint test; migration **applied & verified in the live database 2026-08-24** |
 | `DEC-11` removals | `p_actor_role` retired (`20261019`), dead exports removed, owner indexes added (`20261021`), Capability vocabulary marked picker-only |
 | `GAP-12` | **BUILT** — ownership columns/export on the console, wizard owner picker, menu renames |
 
-**Pending hand-applied migrations (DEC-30), in order, code deployed first:**
+**Hand-applied migrations (DEC-30), in order:**
 `20261019_publish_revision_drop_dead_param.sql` →
-`20261020_pin_search_path.sql` → `20261021_owner_lookup_indexes.sql`.
+`20261020_pin_search_path.sql` → `20261021_owner_lookup_indexes.sql` —
+**applied & verified in the live database 2026-08-24.**
 
 **New findings raised while working:** `LIFE-15` (source_document producer
 shapes), `OWN-22` (Save-As path births unowned libraries), `DB-8`
@@ -279,9 +292,14 @@ re-invented its own authority instead of registering a capability (`SURF-9`).
   CRITICAL and most HIGH claims were **re-verified by reading the cited code
   directly** before being written up. Claims that did not survive that check were
   dropped.
-- **No live database.** RLS findings are read from policy and function bodies.
-  They are unambiguous reads, but migrations here are applied by hand, so the
-  deployed state may carry drift the repository does not show. **A staging
+- **No live database** *(at audit time — partially lifted 2026-08-24: the
+  operator ran read-only probes from the Supabase SQL editor, confirming the
+  `documents_deny_write_guard` trigger and both broken functions existed live —
+  the "live bug" world — counting 691 deny-carrying documents, and verifying
+  all seven remediation migrations applied)*. RLS findings are read from policy
+  and function bodies. They are unambiguous reads, but migrations here are
+  applied by hand, so the deployed state may carry drift the repository does
+  not show. **A staging
   reproduction should confirm the CRITICAL findings before any of them is treated
   as certain** — see the note at the end of `99-fix-sequencing.md`.
 - **No browser.** UI findings are confirmed by comparing the arguments a

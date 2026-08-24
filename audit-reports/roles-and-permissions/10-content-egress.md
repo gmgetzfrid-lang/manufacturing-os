@@ -46,7 +46,7 @@ They compound: `/d/[number]` and the orchestrator hand out document UUIDs;
 - Tests: `lib/__tests__/shareAuthorization.test.ts` (fail-closed on null creator/principal/non-readable doc; controller shortcut), `lib/__tests__/shareResolveRoute.test.ts` (org-join asserted; cross-org → 404; lapsed-creator → 410). Both route tests fail against the pre-fix route.
 - Reproduced: the recon agent traced every link (create via browser RLS INSERT whose `WITH CHECK` pins only `org_id`; resolve/file lookups by `id` alone); confirmed a logged-out browser with the token receives org B's bytes.
 - Verified: Done-when 1 — creating a share now needs an ACL read decision on the document (INSERT policy). Done-when 2 — `document_id` cannot name an out-of-org document (org join, both app and DB). Done-when 3 — UPDATE/DELETE limited to creator or controller. Done-when 4 — `/api/share/file` re-checks the creator's current authority before serving. Suite 1429 green.
-- Pending migration: `supabase/migrations/20261022_document_shares_acl_scope.sql` (apply after deploying the code; the code closes the leak without it).
+- Migration: `supabase/migrations/20261022_document_shares_acl_scope.sql` — **applied & verified live 2026-08-24** (probe: all four per-verb `document_shares` policies present).
 - **What this brought to light:** (1) `revokeShareLink` (`lib/documentShares.ts:68-73`) updates by id with no authority scope — after the tightened UPDATE policy it becomes a silent 0-row no-op for a non-creator/non-controller, and `ShareLinkModal.tsx:77` swallows the error; recorded as new finding `EGRESS-7`. (2) `listShareLinks` selects `*` (incl. `token`) under the any-active-member SELECT policy, so a member who cannot read a document can still enumerate its live share tokens and pull `/api/share/file` — an intra-org bypass parallel to this one; recorded as `EGRESS-8`.
 - **Verification:** CONFIRMED (same-org) / SUSPECTED (cross-org — the resolve path was not traced to a conclusion)
 - **Blast radius:** security / confidentiality
@@ -291,7 +291,7 @@ unchanged.
 - Files: `app/api/auth/request-access/route.ts`, `app/(protected)/admin/users/page.tsx`, `lib/schemaExpectations.ts`, `supabase/migrations/20261023_access_requests_scope_and_limit.sql`
 - Tests: `lib/__tests__/requestAccessRoute.test.ts` — 429 gate before any org query or insert; an attempt recorded on a normal submission (both fail against the old route).
 - Verified: an Admin sees only their own org's requests (org-correlated policy + explicit `.eq(org_id)`); the public route is rate-limited; a submitted request appears to an Admin. Suite 1431 green.
-- Pending migration: `supabase/migrations/20261023_access_requests_scope_and_limit.sql` (code deployed first — the route already handles `org_id`).
+- Migration: `supabase/migrations/20261023_access_requests_scope_and_limit.sql` — **applied & verified live 2026-08-24** (probe: `org_id` column + scoped admin SELECT present, anonymous-insert policy gone).
 - **What this brought to light:** `20260713_branding_admin_writes.sql:15` checks `role = 'Admin'` with **no** roles-array clause, unlike the additive form used here and in `20260817` — a member holding Admin only as a secondary role is refused there. Recorded under the additive-roles family (`ADD-*`); this fix used the additive form throughout.
 - **Verification:** CONFIRMED
 - **Blast radius:** confidentiality / cross-tenant
