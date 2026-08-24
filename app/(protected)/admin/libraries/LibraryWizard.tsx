@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type { AccessRule, LibraryConfig, LibraryType, MetadataFieldDefinition, Role } from "@/types/schema";
 import { ALL_ROLES } from "@/types/schema";
+import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 
 interface LibraryWizardProps {
   orgId: string;
@@ -187,6 +188,20 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState<LibraryType>("Engineering");
+  // Accountable owner (GAP-12) — without this, libraries are born unowned and
+  // responsibility silently falls to Admin/DocCtrl.
+  const [owner, setOwnerSel] = useState<OrgUser | null>(null);
+  const [ownerQuery, setOwnerQuery] = useState("");
+  const [ownerHits, setOwnerHits] = useState<OrgUser[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const q = ownerQuery.trim();
+    void (async () => {
+      const hits = q ? await searchOrgUsers(orgId, q).catch(() => [] as OrgUser[]) : [];
+      if (alive) setOwnerHits(hits);
+    })();
+    return () => { alive = false; };
+  }, [ownerQuery, orgId]);
 
   // Step 2 — all fields (standard pre-populated + custom)
   const [columns, setColumns] = useState<MetadataFieldDefinition[]>([]);
@@ -209,6 +224,10 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         setName(initialData.name ?? "");
         setDescription(initialData.description ?? "");
         setType(initialData.type ?? "Engineering");
+        setOwnerSel(initialData.ownerUserId
+          ? { uid: initialData.ownerUserId, name: initialData.ownerName || "assigned member", email: "", role: "" }
+          : null);
+        setOwnerQuery("");
         setColumns(initialData.customColumns?.length ? initialData.customColumns : defaultColumns());
         setViewAccess(initialData.readAccess === "ALL" ? "all" : "restricted");
         setViewRoles(Array.isArray(initialData.readAccess) ? initialData.readAccess : []);
@@ -217,6 +236,8 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         setName("");
         setDescription("");
         setType("Engineering");
+        setOwnerSel(null);
+        setOwnerQuery("");
         setColumns(defaultColumns());
         setViewAccess("all");
         setViewRoles([]);
@@ -273,6 +294,8 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
       defaultNewVisibility: "normal",
       acl,
       defaultNewAcl: acl,
+      ownerUserId: owner?.uid ?? null,
+      ownerName: owner?.name ?? null,
     } as Omit<LibraryConfig, "id">);
   };
 
@@ -376,6 +399,52 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     rows={2}
                     className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-orange-500 focus:bg-[var(--color-surface)] outline-none resize-none transition-all placeholder:text-slate-300"
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-[var(--color-text)] mb-1.5">
+                    Accountable owner
+                    <span className="text-[var(--color-text-faint)] font-normal ml-2 text-xs">(optional — unowned libraries fall to Admin/DocCtrl)</span>
+                  </label>
+                  {owner ? (
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] text-sm font-bold text-[var(--color-text)]">
+                        {owner.name}
+                        <button
+                          type="button"
+                          onClick={() => setOwnerSel(null)}
+                          className="text-[var(--color-text-faint)] hover:text-red-500"
+                          aria-label="Clear owner"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </span>
+                      <span className="text-xs text-[var(--color-text-faint)]">receives review reminders and owns publish authority here</span>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <input
+                        value={ownerQuery}
+                        onChange={(e) => setOwnerQuery(e.target.value)}
+                        placeholder="Search members by name or email…"
+                        className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-orange-500 focus:bg-[var(--color-surface)] outline-none transition-all placeholder:text-slate-300"
+                      />
+                      {ownerHits.length > 0 && (
+                        <div className="absolute z-10 mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg overflow-hidden">
+                          {ownerHits.map((u) => (
+                            <button
+                              key={u.uid}
+                              type="button"
+                              onClick={() => { setOwnerSel(u); setOwnerQuery(""); setOwnerHits([]); }}
+                              className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-2)]"
+                            >
+                              <span className="font-bold text-[var(--color-text)]">{u.name}</span>
+                              {u.email && <span className="text-xs text-[var(--color-text-faint)] ml-2">{u.email}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

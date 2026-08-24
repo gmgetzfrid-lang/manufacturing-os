@@ -314,6 +314,11 @@ export interface LibraryConfig {
   visibility?: NodeVisibility;
   acl?: AccessControl;
 
+  /** Accountable owner (libraries.owner_user_id). Existence is decided by the
+   *  id — ownerName is a display convenience, never an existence check (DEL-8). */
+  ownerUserId?: string | null;
+  ownerName?: string | null;
+
   readAccess?: Role[] | "ALL";
   writeAccess?: Role[];
   adminAccess?: Role[];

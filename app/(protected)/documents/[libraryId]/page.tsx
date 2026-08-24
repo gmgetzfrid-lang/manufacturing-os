@@ -3328,9 +3328,9 @@ export default function LibraryExplorerPage() {
                   <button
                     onClick={() => { setActionsMenuOpen(false); setReviewPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Set a periodic-review cycle for every document in this library"
+                    title="Assign the accountable owner and set a periodic-review cycle for every document in this library"
                   >
-                    <CalendarClock className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Review cycle
+                    <CalendarClock className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Ownership &amp; review cycle
                   </button>
                 )}
                 {isController && (

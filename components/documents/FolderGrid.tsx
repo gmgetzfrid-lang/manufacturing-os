@@ -120,7 +120,7 @@ export default function FolderGrid({
           </button>
           {onReviewCycle && (
             <button onClick={() => { onReviewCycle(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
-              <CalendarClock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Review cycle
+              <CalendarClock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Ownership &amp; review cycle
             </button>
           )}
           {onAckPolicy && (

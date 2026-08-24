@@ -29,6 +29,54 @@ export function resolveEffectiveOwner(doc?: OwnerCols | null, folder?: OwnerCols
   return { userId: null, name: null, source: null };
 }
 
+/** Pure owner resolution for console/register rows: document > folder >
+ *  library > the library's owning team's supervisor. Branches ONLY on
+ *  owner_user_id / owner_team_id — never on owner_name, which is a write-once
+ *  snapshot that drifts (DEL-8). Returns no name on purpose: callers resolve
+ *  display names live from membership rows. */
+export function resolveOwnerForNode(
+  doc: OwnerCols | null | undefined,
+  folder: OwnerCols | null | undefined,
+  library: { owner_user_id?: string | null; owner_team_id?: string | null } | null | undefined,
+  teamSupervisorId?: string | null,
+): { userId: string | null; source: Level | "team" | null } {
+  if (doc?.owner_user_id) return { userId: doc.owner_user_id, source: "document" };
+  if (folder?.owner_user_id) return { userId: folder.owner_user_id, source: "collection" };
+  if (library?.owner_user_id) return { userId: library.owner_user_id, source: "library" };
+  if (library?.owner_team_id && teamSupervisorId) return { userId: teamSupervisorId, source: "team" };
+  return { userId: null, source: null };
+}
+
+export interface OwnershipRegisterRow {
+  nodeType: "library" | "folder" | "document";
+  name: string;
+  documentNumber?: string | null;
+  libraryName?: string | null;
+  ownerUserId: string | null;
+  ownerName: string | null; // live-resolved by the caller, never owner_name
+  source: Level | "team" | null;
+}
+
+function csvCell(v: string | null | undefined): string {
+  const s = v == null ? "" : String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** The ownership register as CSV — who is accountable for every library,
+ *  folder and controlled document, and where that authority comes from. */
+export function ownershipRegisterToCsv(rows: OwnershipRegisterRow[]): string {
+  const header = ["Type", "Name", "Document #", "Library", "Owner", "Owner source"];
+  const lines = rows.map((r) => [
+    r.nodeType,
+    r.name,
+    r.documentNumber ?? "",
+    r.libraryName ?? "",
+    r.ownerUserId ? (r.ownerName || "assigned member") : "— (falls to Admin/DocCtrl)",
+    r.source ?? "unowned",
+  ].map(csvCell).join(","));
+  return [header.map(csvCell).join(","), ...lines].join("\n");
+}
+
 /** Resolve a document's effective owner by loading its folder + library owner.
  *  Falls back to the supervisor of the library's owning TEAM (department) when no
  *  explicit owner is set at any level. */

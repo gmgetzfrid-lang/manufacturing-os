@@ -46,7 +46,20 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
     (async () => {
       const { data } = await supabase.from(table).select("review_policy, owner_user_id, owner_name").eq("id", id).maybeSingle();
       if (!alive) return;
-      if (data?.owner_user_id) setOwnerState({ uid: data.owner_user_id as string, name: (data.owner_name as string) || "owner", email: "", role: "" });
+      if (data?.owner_user_id) {
+        const ownerUid = data.owner_user_id as string;
+        // Resolve the display name LIVE — owner_name is a write-once snapshot
+        // that drifts when people are renamed (DEL-8); it stays a fallback only.
+        const { data: m } = await supabase
+          .from("org_members").select("display_name, email")
+          .eq("org_id", orgId).eq("uid", ownerUid).maybeSingle();
+        if (!alive) return;
+        setOwnerState({
+          uid: ownerUid,
+          name: (m?.display_name as string) || (m?.email as string) || (data.owner_name as string) || "owner",
+          email: (m?.email as string) || "", role: "",
+        });
+      }
       const p = (data?.review_policy as ReviewPolicy) ?? null;
       setExisting(p);
       if (p) {

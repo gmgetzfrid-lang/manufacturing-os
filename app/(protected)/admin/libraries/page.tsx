@@ -9,6 +9,7 @@ import LibraryWizard from "./LibraryWizard";
 import DeleteSafetyModal from "./DeleteSafetyModal";
 import { LibraryConfig } from "@/types/schema";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { setOwner as assignLibraryOwner } from "@/lib/ownership";
 
 export default function LibraryAdminPage() {
   const router = useRouter();
@@ -61,6 +62,7 @@ export default function LibraryAdminPage() {
           readAccess: r.read_access ?? "ALL", visibleTo: r.visible_to ?? [],
           folderSecurity: r.folder_security, defaultNewVisibility: r.default_new_visibility,
           defaultNewAcl: r.default_new_acl, acl: r.acl,
+          ownerUserId: r.owner_user_id ?? null, ownerName: r.owner_name ?? null,
         } as LibraryConfig));
         setLibraries(libs);
       } catch (err) {
@@ -115,6 +117,16 @@ export default function LibraryAdminPage() {
           .eq("id", editingLib.id!);
         if (error) throw error;
 
+        // Ownership goes through the single write path (audit row + owner
+        // notification), never a bare column write (GAP-12).
+        if ((config.ownerUserId ?? null) !== (editingLib.ownerUserId ?? null)) {
+          await assignLibraryOwner({
+            level: "library", id: editingLib.id!, orgId: activeOrgId,
+            userId: config.ownerUserId ?? null, name: config.ownerName ?? null,
+            actorId: uid,
+          });
+        }
+
         setLibraries((prev) =>
           prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, orgId: l.orgId ?? activeOrgId } as LibraryConfig) : l)
         );
@@ -125,6 +137,14 @@ export default function LibraryAdminPage() {
           .select("id")
           .single();
         if (error || !newLib) throw error ?? new Error("Failed to create library");
+
+        if (config.ownerUserId) {
+          await assignLibraryOwner({
+            level: "library", id: newLib.id as string, orgId: activeOrgId,
+            userId: config.ownerUserId, name: config.ownerName ?? null,
+            actorId: uid,
+          });
+        }
 
         setLibraries((prev) => [{ id: newLib.id, ...config, orgId: activeOrgId } as LibraryConfig, ...prev]);
       }
