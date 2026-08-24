@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "OPEN": 137,
-      "RESOLVED": 10
+      "OPEN": 135,
+      "RESOLVED": 12
     }
   },
   "status_vocabulary": [
@@ -449,7 +449,7 @@
       "id": "RG-1",
       "title": "Any active org member can forge review completion with a single INSERT of a pre-signed sign-off row",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -475,7 +475,7 @@
       "id": "RG-2",
       "title": "The publisher the gate exists to constrain can mark another reviewer's row signed, and the roster renders it as that reviewer's approval",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

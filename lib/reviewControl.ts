@@ -303,9 +303,22 @@ export async function recordReviewSignoff(input: {
     signatureImage: input.signatureImage ?? undefined,
   });
   const nowIso = new Date().toISOString();
-  await supabase.from("document_review_signoffs")
+  // Pin the write to the signer's OWN roster row and check the result (RG-2):
+  // filtered by id alone, a publisher could attach their signature to another
+  // reviewer's row and the roster would render it as that reviewer's approval;
+  // and a refused write (RLS, concurrent void) returned success with zero rows
+  // — the e-signature existed but the roster stayed pending forever.
+  const { data: signedRows, error: signErr } = await supabase.from("document_review_signoffs")
     .update({ status: "signed", signature_id: sig.id, signed_at: nowIso, updated_at: nowIso })
-    .eq("id", input.signoffId);
+    .eq("id", input.signoffId)
+    .eq("reviewer_user_id", input.signerUserId)
+    .select("id");
+  if (signErr) throw new Error(signErr.message);
+  if (!signedRows || signedRows.length === 0) {
+    throw new Error(
+      "Your signature was recorded but the roster row was not yours to sign — only the named reviewer can sign their own row. If your row was voided by a newer draft, review the new draft instead.",
+    );
+  }
 
   const { complete } = await reviewCompletionForDraft(input.documentId, input.versionId);
   const { data: docRow } = await supabase.from("documents").select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
@@ -364,11 +377,14 @@ export async function listDraftRoster(documentId: string, versionId?: string | n
 }
 
 /** Completion for a draft: required = number of PRIMARY reviewers; a signature
- *  from a primary OR an activated alternate counts. Complete when signed >= required. */
+ *  from a primary OR an activated alternate counts. Complete when signed >=
+ *  required. A row only counts as signed when it carries a bound e-signature
+ *  (RG-1) — a roster row born `status='signed'` with no signature_id is a
+ *  forgery shape, not an approval, and must never satisfy the gate. */
 export async function reviewCompletionForDraft(documentId: string, versionId: string): Promise<{ requiredPrimaries: number; signed: number; complete: boolean; roster: ReviewSignoffRow[] }> {
   const roster = await listDraftRoster(documentId, versionId);
   const requiredPrimaries = roster.filter((r) => r.slot === "primary").length;
-  const signed = roster.filter((r) => r.status === "signed").length;
+  const signed = roster.filter((r) => r.status === "signed" && r.signatureId != null).length;
   const complete = requiredPrimaries > 0 && signed >= requiredPrimaries;
   return { requiredPrimaries, signed, complete, roster };
 }

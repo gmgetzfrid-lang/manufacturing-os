@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T16:30:00Z
-
 # 03 · The review gate & e-signatures
 
 **13 findings** — 2 CRITICAL · 4 HIGH · 7 MEDIUM.
@@ -32,7 +30,18 @@ Required signers, invalidation on change, and whether the gate fails open.
 ## RG-1 · Any active org member can forge review completion with a single INSERT of a pre-signed sign-off row
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 4).** Confirmed, then closed at three layers (`20261030_dc_phase4_review_gate.sql` + app). A 3-agent recon pass first mapped EVERY writer of `document_review_signoffs` so no rail breaks a legitimate path — the only app INSERT is `openReviewRoster` (always `status='pending'`, never a signature; restore runs service-role and bypasses RLS).
+- **Rail 1:** `doc_review_signoff_insert` WITH CHECK now requires `status='pending' AND signature_id IS NULL AND signed_at IS NULL` — roster creation may not create approval (done-when 1).
+- **Rail 3:** the publish guard's completion count requires `signature_id IS NOT NULL` and joins `e_signatures` on signer = the row's own reviewer AND org match AND version match (tolerating a NULL version on the SIGNATURE side only — legacy rows predate the column being stamped; both ways to MINT a signed row now require a strict match, so the tolerant branch is unreachable for new forgeries). The app count (`reviewCompletionForDraft`) likewise counts only signature-backed rows (done-when 2). `signature_id` carries no FK, so the join validates existence + signer + org rather than trusting the UUID.
+- The reconciliation query (done-when 3) is the migration's verification (a): zero rows = every signed roster row is backed by its own reviewer's signature.
+- The guard rewrite restates `SECURITY DEFINER SET search_path = public` (CREATE OR REPLACE would otherwise drop the 20261020 pin) and is otherwise byte-identical to the live 20260822 body.
+- Files: `supabase/migrations/20261030_dc_phase4_review_gate.sql`, `lib/reviewControl.ts`
+- Tests: `lib/__tests__/reviewSignoffIntegrity.test.ts` — a signed row with no signature never satisfies the gate; migration-shape pins on the INSERT policy and guard join.
+- **Pending hand-apply (DEC-30):** `20261030`.
+- **What this brought to light:** `v_primary_reqs` counts ALL primary rows regardless of status, so a voided primary still inflates the requirement — conservative (fail-closed) and consistent with pre-fix behaviour, left as-is. The 20260819 policy loop would re-create the `member_all` policies if ever replayed after `20261029` — `20261030` re-drops both defensively so ordering is harmless.
+
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260828_integrity_hardening.sql:223-226`, `supabase/migrations/20260822_review_completion_guard.sql:46-57`, `lib/reviewControl.ts:363-369`, `lib/reviewControl.ts:661-665`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified — I looked for a later policy, a CHECK, or a trigger that would block it: the only files touching document_review_signoffs are 20260812/20260818/20260819/20260822/20260825/20260828/20260829/20260830, and none adds a status/self-row constraint on INSERT (20260830 rewrites only the UPDATE policy). A row with slot='alternate', status='signed' raises v_signed without raising v_primary_reqs, defeating both gates. The attacker cannot promote the version themselves (the publish guard's authority branch still applies to them), but they can make the gate report complete, and recordReviewSignoff's auto-finalize (reviewControl.ts:322-330) will then publish on the next genuine signature. CRITICAL is right.
@@ -62,7 +71,18 @@ Required signers, invalidation on change, and whether the gate fails open.
 ## RG-2 · The publisher the gate exists to constrain can mark another reviewer's row signed, and the roster renders it as that reviewer's approval
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 4).** Confirmed, then closed with a `BEFORE UPDATE` trigger (`trg_review_signoff_guard`, `20261030`) plus the app-side pin. A trigger rather than a WITH CHECK rewrite because the 20260830 policy's publisher branch must KEEP its legitimate bulk work — the recon pass enumerated every UPDATE path: sign (reviewer self), invalidate-on-resubmit and void-at-finalize (publisher/owner, cross-user), alternate activation (`activated` flip, manager or service-role scan), and the scan's `notified_at` stamps. The trigger touches none of those; it enforces:
+- **identity immutability** — `reviewer_user_id`, `slot`, `document_version_id`, `document_id`, `org_id` can never change (done-when 1's pin, stronger than pinning to OLD in WITH CHECK);
+- **the →signed transition is the reviewer's own act** — `OLD.reviewer_user_id = auth.uid()` AND the attached signature must exist in `e_signatures` with `signer_user_id = auth.uid()`, same org, same draft (done-when 2 — `e_signatures` is self-insert-only by RLS, so the signer column is trustworthy);
+- **a recorded approval is immutable** — a signed row's `signature_id`/`signed_at` cannot be altered, and no decided row returns to `pending`; the only exits from `signed` are `invalidated`/`void` (the publisher vocabulary).
+- **App half (done-when 3):** `recordReviewSignoff` now filters `.eq("reviewer_user_id", signerUserId)`, `.select("id")`s the result, and THROWS on zero rows — closing both the forging direction and the chain-reaction silent failure (signature written, roster stuck pending, reviewer nagged forever).
+- Service-role writes (`auth.uid() IS NULL` — cron scan, restore) early-return, matching the publish guard's pattern.
+- Files: `supabase/migrations/20261030_dc_phase4_review_gate.sql`, `lib/reviewControl.ts`
+- Tests: `lib/__tests__/reviewSignoffIntegrity.test.ts` — the write is pinned to the signer's own row; zero rows throws; an update error surfaces; trigger-shape pins.
+- **Pending hand-apply (DEC-30):** `20261030`.
+
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260830_publisher_row_management.sql:34-50`, `lib/reviewControl.ts:287-303`, `components/documents/ReviewGateSection.tsx:131-135`, `components/documents/ReviewGateSection.tsx:191-203`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the migration's own header (:26-27, 'Signing someone else's row is still impossible for everyone without that authority') concedes the point for those who have it. One refinement that strengthens rather than weakens the claim: e_signatures is genuinely self-insert only (20260720_e_signatures.sql:56-61 `WITH CHECK (signer_user_id = auth.uid() ...)`), so the publisher cannot mint a signature in the Piping Lead's name — but calling recordReviewSignoff (reviewControl.ts:287-303) with their OWN signerUserId and the Piping Lead's signoffId attaches the publisher's e-signature to the Lead's roster row, and the roster still renders it under the Lead's name. A bare PATCH with signature_id left NULL renders identically.

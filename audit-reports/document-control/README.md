@@ -70,6 +70,18 @@ trigger guards, not policy tightening, so the app's legitimate cross-user writes
 `20261029_dc_phase3_permissive_rls.sql` **applied & verified live 2026-08-24**
 (both guard probes true).
 
+**Phase 4 — the review gate (the product's central safety claim) — is
+complete.** Two CRITICALs closed, designed against a 3-agent recon map of every
+legitimate write path so no rail breaks roster creation, publisher bulk work,
+alternate activation, or the cron scan: `RG-1` (one INSERT of a pre-signed row
+forged review completion → INSERT may not create approval, and both completion
+counts require the reviewer's own bound e-signature) and `RG-2` (a publisher
+could mark another reviewer's row signed → a BEFORE UPDATE trigger makes row
+identity immutable and the →signed transition the reviewer's own act; the app
+pins the write and surfaces zero-row refusals). Ship loop green: `tsc`,
+`eslint`, **1498 vitest**, full `next build`. **One migration to hand-apply:**
+`20261030_dc_phase4_review_gate.sql`.
+
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |
