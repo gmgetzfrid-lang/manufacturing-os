@@ -62,9 +62,10 @@ They compound: `/d/[number]` and the orchestrator hand out document UUIDs;
   `document_id`/`org_id`/`created_by` immutable — chosen over a WITH CHECK
   re-running `node_visible()`, which would have blocked a creator revoking a
   share on a document they since lost read access to (exactly the share that
-  most needs revoking). **Pending hand-apply (DEC-30)** — the app flow already
-  passes the session uid, so the code needs no change and the bind activates
-  cleanly.
+  most needs revoking). **Applied & verified live 2026-08-24** — the
+  migration's three-point probe (insert binds created_by, update carries an
+  explicit WITH CHECK, anchor trigger installed) returned all true; the app
+  flow already passed the session uid, so the bind activated cleanly.
 - **Verification:** CONFIRMED (same-org) / SUSPECTED (cross-org — the resolve path was not traced to a conclusion)
 - **Blast radius:** security / confidentiality
 - **Locations:**
