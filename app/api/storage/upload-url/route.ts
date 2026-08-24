@@ -44,6 +44,39 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Authorize the KEY's MEANING, not just its org prefix (PKG-1). Every
+  // upload the app mints targets a FRESH, timestamped key, so a request to
+  // PUT a key that is already the stored bytes of a document version is never
+  // a legitimate upload — it is an in-place overwrite of an issued,
+  // hash-recorded, approved revision, which changes what every QR, doc pack
+  // and download serves while every database fact (rev, file_hash,
+  // approvals) stays untouched. Refuse to re-sign such a key; the immutable
+  // revision bytes can only be replaced by publishing a new version (a fresh
+  // key). Checked against both the rendered bytes (file_url) and the native
+  // source (source_file_key).
+  // Two exact-equality lookups rather than a PostgREST .or() raw string:
+  // assertSafeStorageKey permits commas and parentheses, which would break or
+  // inject an .or() filter expression.
+  for (const col of ["file_url", "source_file_key"] as const) {
+    const { data: clash, error: clashErr } = await supabaseAdmin
+      .from("document_versions")
+      .select("id")
+      .eq(col, path)
+      .limit(1)
+      .maybeSingle();
+    if (clashErr) {
+      // Fail closed — never sign a PUT we could not clear against the version
+      // ledger, because the write it authorizes is irreversible.
+      return NextResponse.json({ error: "Couldn't verify the target key; upload refused." }, { status: 503 });
+    }
+    if (clash) {
+      return NextResponse.json(
+        { error: "That file already belongs to a published revision and cannot be overwritten. Publish a new revision instead." },
+        { status: 409 },
+      );
+    }
+  }
+
   const command = new PutObjectCommand({
     Bucket: R2_BUCKET,
     Key: path,

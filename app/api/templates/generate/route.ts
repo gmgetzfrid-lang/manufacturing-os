@@ -34,6 +34,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { renderTemplate, TemplateRenderError } from "@/lib/docxRender";
 import { parseWorkbook } from "@/lib/xlsxData";
 import { fetchBytes } from "@/lib/r2Bytes";
+import { isSafeStorageKey } from "@/lib/storageKey";
 import {
   autoMapColumns, missingRequirements, renderFilename, uniqueFilenames,
   type Placeholder,
@@ -125,6 +126,25 @@ export async function POST(req: NextRequest) {
   if (body.action !== "render") {
     const sourceFileKey = String(body.sourceFileKey ?? "").trim();
     if (!sourceFileKey) return bad("Upload the data file first.");
+
+    // Authorize the KEY, not just the session (XEDGE-1). Without this the
+    // route would fetch and PARSE any object in the bucket by caller-supplied
+    // key, straight past document ACLs — the exact hole the sibling analyze
+    // route (app/api/templates/route.ts:84-100) guards against. The draft
+    // source is only ever an output-data/output-examples upload
+    // (uploadTemplateFile), and those folders carry no document ACL, so
+    // pinning the key to this org's own upload prefixes both closes the
+    // cross-tenant read and keeps every legitimate draft working.
+    if (!isSafeStorageKey(sourceFileKey)) {
+      return bad("That data file path isn't valid.", 400);
+    }
+    const allowedSourcePrefixes = [
+      `orgs/${orgId}/output-data/`,
+      `orgs/${orgId}/output-examples/`,
+    ];
+    if (!allowedSourcePrefixes.some((p) => sourceFileKey.startsWith(p))) {
+      return bad("That file isn't an output-data upload for this workspace.", 403);
+    }
 
     let sheetData;
     try {

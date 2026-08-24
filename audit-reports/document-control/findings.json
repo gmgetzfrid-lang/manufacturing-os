@@ -24,7 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "OPEN": 147
+      "OPEN": 143,
+      "RESOLVED": 4
     }
   },
   "status_vocabulary": [
@@ -228,7 +229,7 @@
       "id": "DRLS-2",
       "title": "`revup_rollback_orphan` is an unauthenticated, cross-tenant revision-delete RPC",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -253,7 +254,7 @@
       "id": "EGR-1",
       "title": "Transmittal portal signs the R2 key of ANY document version in the database from member-controlled JSONB — no org check, no ACL check",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -281,7 +282,7 @@
       "id": "PKG-1",
       "title": "Any active org member can overwrite the bytes of an ISSUED revision in place — the signed-PUT route authorizes the org prefix but never the key's meaning",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -500,7 +501,7 @@
       "id": "XEDGE-1",
       "title": "/api/templates/generate reads ANY object in the R2 bucket by caller-supplied key and returns its parsed cell contents — no org prefix check, no ACL check, no assertSafeStorageKey",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

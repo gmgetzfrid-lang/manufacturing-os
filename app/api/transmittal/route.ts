@@ -35,18 +35,26 @@ type Item = { documentId?: string; number?: string; title?: string | null; rev?:
 
 /** Resolve an item's file: the exact version if pinned, else the version
  *  whose revision label matches the AS-SENT rev (never silently the newest —
- *  the portal must hand out what the transmittal says it carries). */
-async function fileKeyForItem(item: Item): Promise<{ key: string; name: string } | null> {
+ *  the portal must hand out what the transmittal says it carries).
+ *
+ *  Both lookups are scoped to the TRANSMITTAL's org (EGR-1). `items` is
+ *  free-form JSONB written from the browser, so without this an issuer could
+ *  name any document version in any tenant and the service-role portal would
+ *  sign its bytes — the same forged-pointer hole lib/docFileServer.ts:26-28
+ *  guards ("the pointer columns are member-writable, so a forged cross-org
+ *  version id must never resolve"). A cross-org id now simply resolves no
+ *  file. */
+async function fileKeyForItem(item: Item, orgId: string): Promise<{ key: string; name: string } | null> {
   if (item.versionId) {
     const { data: v } = await supabaseAdmin
       .from("document_versions").select("file_url, revision_label")
-      .eq("id", item.versionId).maybeSingle();
+      .eq("id", item.versionId).eq("org_id", orgId).maybeSingle();
     if (v?.file_url) return { key: String(v.file_url), name: `${item.number ?? "document"}_Rev${v.revision_label ?? item.rev ?? ""}` };
   }
   if (item.documentId && item.rev) {
     const { data: v } = await supabaseAdmin
       .from("document_versions").select("file_url, created_at")
-      .eq("record_id", item.documentId).eq("revision_label", item.rev)
+      .eq("record_id", item.documentId).eq("revision_label", item.rev).eq("org_id", orgId)
       .order("created_at", { ascending: false }).limit(1);
     const hit = v?.[0];
     if (hit?.file_url) return { key: String(hit.file_url), name: `${item.number ?? "document"}_Rev${item.rev}` };
@@ -66,17 +74,21 @@ export async function GET(req: NextRequest) {
   if (fileDoc) {
     const item = items.find((i) => i.documentId === fileDoc);
     if (!item) return bad("That document is not on this transmittal.", 403);
-    const file = await fileKeyForItem(item);
+    const file = await fileKeyForItem(item, t.org_id as string);
     if (!file) return bad("The as-sent file for this document isn't available — contact the issuer.", 404);
     const url = await getSignedUrl(r2, new GetObjectCommand({
       Bucket: R2_BUCKET, Key: file.key,
       ResponseContentDisposition: `attachment; filename="${file.name.replace(/[^\w.\- ]+/g, "_")}"`,
     }), { expiresIn: 300 });
+    // Attribute the download to the issuing member (EGR-1): the portal serves
+    // on their authority, and user_id: null erased who was accountable for the
+    // egress.
     await supabaseAdmin.from("audit_logs").insert({
       action: "TRANSMITTAL_PORTAL_DOWNLOAD",
       resource_type: "transmittal", resource_id: String(t.id),
-      org_id: t.org_id, user_id: null, user_email: (t.recipient_email as string | null) ?? null,
-      details: { number: t.number, documentId: fileDoc, docNumber: item.number, rev: item.rev },
+      org_id: t.org_id, user_id: (t.created_by as string | null) ?? null,
+      user_email: (t.recipient_email as string | null) ?? null,
+      details: { number: t.number, documentId: fileDoc, docNumber: item.number, rev: item.rev, issuedBy: t.created_by ?? null },
     }).then(() => undefined, () => undefined);
     return NextResponse.json({ url });
   }

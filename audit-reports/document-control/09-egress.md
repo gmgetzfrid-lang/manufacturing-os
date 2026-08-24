@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T12:00:00Z
-
 # 09 · Content egress
 
 **8 findings** — 1 CRITICAL · 2 HIGH · 5 MEDIUM.
@@ -33,7 +31,18 @@ Every way bytes — or the knowledge that they exist — leave the system.
 ## EGR-1 · Transmittal portal signs the R2 key of ANY document version in the database from member-controlled JSONB — no org check, no ACL check
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 1).** Confirmed end to end: `fileKeyForItem` resolved a browser-written item's version by `id` or `record_id + revision_label` with no `org_id` filter, and the service-role portal signed the bytes — the same forged-cross-org-pointer hole `lib/docFileServer.ts:26-28` guards elsewhere. Closed in three layers:
+- **Read scope (closes the byte leak alone).** `fileKeyForItem(item, t.org_id)` now filters BOTH version lookups `.eq("org_id", t.org_id)`. A cross-org (or forged) item id resolves no file → 404, no signature.
+- **Durable write rail.** New trigger `trg_transmittals_guard` (`20261027`) rejects any INSERT/UPDATE whose `items` JSONB names a `documentId`/`versionId` outside the row's org — so a transmittal naming out-of-org documents can never be persisted, in draft or issued state.
+- **Server-minted token.** The same trigger mints `portal_token` on the issue transition, overriding any client value, so the creator cannot pre-choose or pre-know a token for a row they were not permitted to issue. (It mints only on the transition, never rotating an already-issued link.)
+- **Audit attribution.** The `TRANSMITTAL_PORTAL_DOWNLOAD` row now records `user_id: t.created_by` (was `null`), so the egress is attributable to the issuing member.
+- Done-when: (1) both lookups filter `.eq("org_id", t.org_id)` ✓; (2) the portal is no wider than the org — a forged/out-of-org item resolves nothing ✓ (full per-recipient acl_index evaluation is N/A: the recipient is anonymous, so authority rests on the issuer, enforced by the write rail); (3) items validated at write time by a DB trigger ✓; (4) `portal_token` generated server-side ✓; (5) audit records the issuing member ✓.
+- Files: `app/api/transmittal/route.ts`, `supabase/migrations/20261027_dc_phase1_unguarded_doors.sql`
+- Tests: `lib/__tests__/transmittalPortalRoute.test.ts` — in-org version signs + audit attributes to issuer; a version in another org → 404, no signature; a file not on the transmittal → 403.
+- **What this brought to light:** the same repo enforces the missing org check at `lib/docFileServer.ts:26-28` — the portal was the one egress path that skipped the house pattern. `EGR-2` (the `document_shares` cross-org variant) is the sibling and was already closed in the roles-and-permissions area (`EGRESS-1` + `20261022`/`20261026`).
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:39-55`, `app/api/transmittal/route.ts:66-82`, `lib/transmittals.ts:449`, `lib/transmittals.ts:453`, `lib/transmittals.ts:385-387`, `supabase/migrations/20260910_transmittal_portal.sql:40-51`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Survives, and the second resolution branch makes it easier than the summary claims: documentId + a guessable revision_label ('0','1','A') is enough, so the attacker never needs a version UUID. The portal GET also only rejects status='voided' (route.ts:61), so a self-created draft-then-issued transmittal the attacker never sends works fine, and the attacker knows its token because the client generated it. No org check exists at any layer of this path.

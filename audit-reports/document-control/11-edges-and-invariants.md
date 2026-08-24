@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T12:00:00Z
-
 # 11 · Edges, modalities & load-bearing invariants
 
 **14 findings** — 1 CRITICAL · 5 HIGH · 8 MEDIUM.
@@ -43,7 +41,14 @@ What twenty-three lenses did not look at — plus what is sound and must not bre
 ## XEDGE-1 · /api/templates/generate reads ANY object in the R2 bucket by caller-supplied key and returns its parsed cell contents — no org prefix check, no ACL check, no assertSafeStorageKey
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 1).** Reproduced against the current route: the draft branch took `sourceFileKey` straight off the JSON body (`generate/route.ts:126`) and handed it to `fetchBytes` (`:131`) with no validation — while the sibling analyze route (`app/api/templates/route.ts:88-100`) already guards the identical operation and its comment names this exact risk. The draft source is only ever an `output-data`/`output-examples` upload (`lib/outputTemplates.ts:117`, `uploadTemplateFile`), and those folders carry no document ACL, so the key is now `isSafeStorageKey`-checked and pinned to `orgs/${orgId}/output-data/` or `.../output-examples/` — a foreign or out-of-folder key is refused (400/403) before any bucket read. The other `fetchBytes` caller in the route (`:342`) uses the org-scoped template row's own key, not body input, and is safe.
+- Done-when: (1) `sourceFileKey` validated + prefix-pinned ✓; (2) a test posts a foreign-org key and asserts 403 with no bucket read ✓; (3) key restricted to output-data uploads, which carry no document ACL ✓.
+- Files: `app/api/templates/generate/route.ts`
+- Tests: `lib/__tests__/templatesGenerateKeyGuard.test.ts` — foreign-org key 403 (no fetch), in-org non-output-data key 403, legitimate output-data upload 200 with exactly that key fetched.
+- **What this brought to light:** the same body-controlled key is the input to `xlsx@0.18.5` (`XEDGE-12`), so pinning the prefix also narrows what that known-vulnerable parser can be aimed at — but does not patch it; `XEDGE-12` stays OPEN as its own dependency finding.
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/templates/generate/route.ts:126-156`, `lib/r2Bytes.ts:8-11`, `app/api/templates/route.ts:93-100`, `app/api/storage/download-url/route.ts:29-45`, `lib/knowledgeAccess.ts:31-46`
 - **Re-verified:** hardening pass — **SURVIVES**, verified directly. `sourceFileKey` comes off the JSON body (`generate/route.ts:126`) and reaches `fetchBytes` (`:131`), which is a bare `GetObjectCommand({Bucket: R2_BUCKET, Key: fileKey})` with no validation of any kind (`lib/r2Bytes.ts:8-11`). `grep -c 'assertSafeStorageKey\|orgs/'` on the route returns **0**, against ten `assertSafeStorageKey` call sites elsewhere. This finding came from the unverified critic; it is now verified and belongs with `DRLS-2`, `ORG-1`, `EGR-1` and `PKG-1`.

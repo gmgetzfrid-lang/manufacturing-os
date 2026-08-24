@@ -24,6 +24,23 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 **147 findings** — 18 CRITICAL, 53 HIGH, 64 MEDIUM, 12 LOW.
 
+### Progress — session 2026-08-24
+
+**Phase 1 of [`99-fix-sequencing.md`](./99-fix-sequencing.md) — the unguarded
+doors — is complete.** Four CRITICALs resolved, each reproduced against current
+code before fixing, with tests: `XEDGE-1` (templates/generate read of any bucket
+object → key pinned to the caller's output-data prefixes), `PKG-1` (in-place
+overwrite of an issued revision's bytes → upload-url refuses to re-sign a
+version's key, 409), `EGR-1` (transmittal portal signs any tenant's version
+bytes → read-path org scope + a write-time trigger rail + server-minted token +
+fixed audit attribution), `DRLS-2` (PUBLIC unauthenticated delete RPC →
+authorized to the caller's own orphan and revoked from PUBLIC). Ship loop green:
+`tsc`, `eslint`, **1468 vitest** (10 new), full `next build`.
+
+**One migration needs hand-applying** (`20261027_dc_phase1_unguarded_doors.sql`)
+— it authorizes `revup_rollback_orphan` and installs the transmittal write rail.
+`XEDGE-1` and `PKG-1` are pure app-side and already live on the branch.
+
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |

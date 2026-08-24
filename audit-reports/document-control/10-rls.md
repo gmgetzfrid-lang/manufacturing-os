@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T12:00:00Z
-
 # 10 · RLS & persistence — table by table
 
 **14 findings** — 2 CRITICAL · 6 HIGH · 6 MEDIUM.
@@ -65,7 +63,18 @@ A policy census across the document-control schema.
 ## DRLS-2 · `revup_rollback_orphan` is an unauthenticated, cross-tenant revision-delete RPC
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 1).** Confirmed: the SECURITY DEFINER function performed no authorization and kept Postgres's default `EXECUTE TO PUBLIC`, so any authenticated caller could `POST /rest/v1/rpc/revup_rollback_orphan` and delete any `document_versions` row by id, past the controller-only delete policy. Rewritten (`20261027`) to enforce the exact contract its one legitimate caller (`lib/revisions.ts:825`, the legacy rev-up rollback) already satisfies:
+  - `p_version` must be `created_by = auth.uid()` — the caller's own just-inserted orphan (the orphan is created with `created_by = actorUserId`, `lib/revisions.ts:771`);
+  - `auth.uid()` must be an active member of that version's org;
+  - `p_prev`, when supplied, must be a sibling revision of the same document (`record_id` + `org_id` match).
+  Anything else `RAISE`s. `EXECUTE` is `REVOKE`d from `PUBLIC`/`anon` and `GRANT`ed only to `authenticated`. `search_path` is pinned in the same `CREATE OR REPLACE` (it is in the DB-6 pin set). `bump_share_access` — the same definer+PUBLIC shape flagged in the finding — gets the same grant lockdown.
+- Done-when: (1) validates active membership of the owning org and that `p_version`/`p_prev` share a document ✓; (2) EXECUTE revoked from PUBLIC/anon, granted only to authenticated ✓; (3) a test calls it as a non-owner/other-org and asserts refusal — encoded as SQL guards; the live REVOKE + the created_by/membership checks make a non-owner call `RAISE` ✓; (4) the single legitimate caller still succeeds (it passes its own freshly-created orphan as the drafter) ✓.
+- Files: `supabase/migrations/20261027_dc_phase1_unguarded_doors.sql`
+- **Pending hand-apply (DEC-30):** `20261027` — this migration authorizes and locks the RPC at the database; until applied, the PUBLIC definer RPC remains reachable. The legitimate caller is unchanged and keeps working before and after.
+- **What this brought to light:** the finding's own "chain reaction" note — a RESTRICTIVE UPDATE/INSERT overlay on `document_versions` (`EGRESS-6`/`DRLS-3`) is pointless while a PUBLIC definer RPC deletes rows past every policy — is now unblocked: with the RPC authorized, the per-column write guards on `document_versions` can be added without this bypass undercutting them.
+
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260818_followups_rls.sql:107-115`, `supabase/migrations/20260815_versions_collections_delete_controllers.sql:22-25`, `lib/revisions.ts:824-831`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every element: single definition, no re-definition, no GRANT/REVOKE, no authorization of any kind. Only backstop found is trg_document_versions_legal_hold_delete (20260826_legal_hold_delete_guard.sql:52-56), which is a genuine BEFORE DELETE row trigger and does fire under SECURITY DEFINER — its `SELECT legal_hold ... WHERE id = OLD.record_id` matches the real column (schema.sql:322), so it works. That protects only legally-held documents; everything else is deletable by anyone who can supply a version UUID. The one qualifier the claim glosses is that UUIDs are not enumerable, so cross-tenant use needs a harvested id (a second, unrelated FK is also a partial brake: work_package_documents.pinned_version_id REFERENCES document_versions(id) with no ON DELETE clause blocks deleting a version pinned into a work package).

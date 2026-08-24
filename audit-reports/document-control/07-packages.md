@@ -1,5 +1,3 @@
-> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T12:00:00Z
-
 # 07 · Doc packs, work packages & the field bundle
 
 **14 findings** — 5 CRITICAL · 5 HIGH · 4 MEDIUM.
@@ -33,7 +31,14 @@ Frozen snapshot or live reference — and what that means when a revision moves.
 ## PKG-1 · Any active org member can overwrite the bytes of an ISSUED revision in place — the signed-PUT route authorizes the org prefix but never the key's meaning
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 1).** Confirmed: `POST /api/storage/upload-url` signed a PUT for any org-prefixed key with no check that the key was already a released version's bytes. The route now, after the org-membership gate, looks the requested key up against `document_versions.file_url` and `document_versions.source_file_key`; if it is already a version's stored bytes it refuses with **409** ("Publish a new revision instead"). Every legitimate upload the app mints targets a fresh, timestamped/uuid key (`lib/storage.ts` — `makeTicketAttachmentPath`, `uploadTemplateFile`, folder uploads, the version insert path in `lib/revisions.ts`), so nothing legitimate re-PUTs an existing version key — the check is a no-op for real uploads and a wall for an in-place overwrite. The ledger lookup **fails closed** (503) so a PUT is never signed against an unverifiable key. Two exact-equality lookups are used rather than a PostgREST `.or()` raw string, because `assertSafeStorageKey` permits commas and parentheses that would inject the filter.
+- Done-when: (1) upload-url refuses to sign a PUT for any key already referenced by a version row (409) ✓; (2) a member who could not publish cannot obtain a signed PUT for that revision's key ✓ (the key is a version's `file_url`, so it is refused regardless of role); (3) a test uploads to an issued revision's key and is refused ✓.
+- Files: `app/api/storage/upload-url/route.ts`
+- Tests: `lib/__tests__/uploadUrlRoute.test.ts` — fresh key signs; a version's `file_url` → 409, never signed; ledger error → 503, never signed; non-member → 403.
+- **What this brought to light:** this is the byte-level twin of roles-and-permissions `EGRESS-6` (no RESTRICTIVE UPDATE/INSERT guard on `document_versions`, letting a member *repoint* `file_url`). This closes *changing what the pointer points at*; `EGRESS-6` (repointing the pointer) remains its own finding. Also relevant to `PKG-2` (the verify QR trusts version identity, not bytes) — with overwrite closed, the file_hash recorded at publish is once again a meaningful integrity anchor.
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/upload-url/route.ts:20-55`, `lib/storage.ts:378-405`, `supabase/schema.sql:1071-1073`, `lib/docPack.ts:84-90`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed at CRITICAL. The route authorizes the org prefix and nothing else, so any active member — Viewer included — can overwrite the bytes behind an Issued, signed revision while every database fact (rev, file_hash, current_version_id, approvals) stays untouched.
