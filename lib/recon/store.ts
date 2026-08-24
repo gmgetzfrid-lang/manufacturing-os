@@ -76,24 +76,58 @@ export class FrameStore {
         const est = await navigator.storage.estimate();
         usage = `${Math.round((est.usage ?? 0) / 1e6)} of ${Math.round((est.quota ?? 0) / 1e6)}MB used`;
       } catch { /* estimate unavailable; the original error still stands */ }
+      const dirState = await this.describeDir();
       throw new Error(
-        `Browser storage failed while ${op} frame ${index} (${usage}): ${String(err)}`,
+        `Browser storage failed while ${op} frame ${index} (${usage}; ${dirState}): ${String(err)}`,
       );
+    }
+  }
+
+  /** Open a frame's file, re-acquiring the directory chain once if the first
+   *  attempt fails — a cached directory handle can go stale over the length of
+   *  a long reconstruction, and that must not read as "file deleted". */
+  private async fileOf(index: number): Promise<File> {
+    try {
+      const d = await this.dirHandle();
+      return await (await d.getFileHandle(`${index}.bin`)).getFile();
+    } catch (first) {
+      this.handle = null;
+      try {
+        const d = await this.dirHandle();
+        return await (await d.getFileHandle(`${index}.bin`)).getFile();
+      } catch {
+        throw first;
+      }
+    }
+  }
+
+  /** Whether the job's directory still exists and how much it holds — the
+   *  difference between "one file is missing" and "storage was wiped". */
+  private async describeDir(): Promise<string> {
+    try {
+      const base = await navigator.storage.getDirectory();
+      const recon = await base.getDirectoryHandle(ROOT_DIR);
+      const frames = await recon.getDirectoryHandle(FRAMES_DIR);
+      const job = await frames.getDirectoryHandle(this.jobId);
+      let n = 0;
+      // @ts-expect-error - async iteration over directory handles is not in lib.dom yet
+      for await (const _ of job.entries()) n++;
+      return `the job's directory still holds ${n} files`;
+    } catch (err) {
+      return `the job's directory itself is gone (${String(err)})`;
     }
   }
 
   async readGray(index: number, byteLength: number): Promise<Uint8Array> {
     return this.explain("reading", index, async () => {
-      const d = await this.dirHandle();
-      const file = await (await d.getFileHandle(`${index}.bin`)).getFile();
+      const file = await this.fileOf(index);
       return new Uint8Array(await file.slice(0, byteLength).arrayBuffer());
     });
   }
 
   async readRgb(index: number, grayBytes: number, rgbBytes: number): Promise<Uint8Array> {
     return this.explain("reading", index, async () => {
-      const d = await this.dirHandle();
-      const file = await (await d.getFileHandle(`${index}.bin`)).getFile();
+      const file = await this.fileOf(index);
       return new Uint8Array(await file.slice(grayBytes, grayBytes + rgbBytes).arrayBuffer());
     });
   }
