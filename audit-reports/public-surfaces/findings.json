@@ -240,9 +240,7 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/d/[number]/route.ts:5-7",
-        "app/d/[number]/route.ts:26-32",
-        "app/d/[number]/route.ts:34-46",
+        "app/d/[number]/route.ts:14-32",
         "lib/supabaseAdmin.ts:3-8",
         "app/api/verify/route.ts:4-10",
         "app/api/verify/route.ts:96-108",
@@ -379,10 +377,7 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/d/[number]/route.ts:26-46",
-        "app/d/[number]/route.ts:6-7",
-        "app/d/[number]/route.ts:34-36",
-        "app/d/[number]/route.ts:30"
+        "app/d/[number]/route.ts:14-32"
       ],
       "has_verifier_correction": true,
       "verified_by": "adversarial-independent",
@@ -1133,7 +1128,7 @@
         "public/sw.js:157-177",
         "public/sw.js:192-197",
         "public/sw.js:213-218",
-        "app/d/[number]/route.ts:38-46"
+        "app/d/[number]/route.ts:31"
       ],
       "has_verifier_correction": true,
       "verified_by": "adversarial-independent",

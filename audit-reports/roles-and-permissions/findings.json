@@ -16,18 +16,18 @@
     "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
   ],
   "totals": {
-    "findings": 128,
+    "findings": 132,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 18,
-      "HIGH": 44,
-      "MEDIUM": 63,
-      "LOW": 3
+      "HIGH": 45,
+      "MEDIUM": 65,
+      "LOW": 4
     },
     "by_status": {
-      "OPEN": 120,
-      "REFUTED": 3,
-      "RESOLVED": 5
+      "OPEN": 119,
+      "RESOLVED": 10,
+      "REFUTED": 3
     }
   },
   "status_vocabulary": [
@@ -167,7 +167,7 @@
       "id": "EGRESS-1",
       "title": "Any active member can publish any document to the public internet via a share link",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (same-org) / SUSPECTED (cross-org — the resolve path was not traced to a conclusion)",
       "blast_radius": "security / confidentiality",
@@ -197,7 +197,7 @@
       "id": "EGRESS-2",
       "title": "`/d/[number]` is an unauthenticated, cross-tenant document enumeration oracle",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "security / confidentiality / cross-tenant",
@@ -446,7 +446,7 @@
       "id": "SURF-2",
       "title": "`/api/storage/delete` — any active member can permanently destroy any file in the org, unaudited",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "data-integrity / safety / compliance",
@@ -1109,7 +1109,7 @@
       "id": "EGRESS-5",
       "title": "`access_requests` — cross-tenant read, and the requests go nowhere",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "confidentiality / cross-tenant",
@@ -1533,7 +1533,7 @@
       "id": "SURF-5",
       "title": "`/api/notifications/send-queued` — any authenticated user drains every tenant's mail queue; any member can queue arbitrary mail",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "security / cross-tenant",
@@ -1627,6 +1627,32 @@
       ],
       "refuted": false,
       "summary": "An Admin fabricates a backup JSON containing an esignatures row — \"Approved for Construction\", signer set to a different engineer, backdated signedat — and posts it to /api/admin/restore/apply-table. It lands. No auditlogs row records the import (only the single-shot /apply path writes one). The forged approval is indistinguishable from a real ceremony.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
+    },
+    {
+      "id": "SURF-17",
+      "title": "A member can queue mail to an arbitrary address with arbitrary HTML (split from `SURF-5`)",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security (phishing relay) / brand",
+      "related": [
+        "SURF-5"
+      ],
+      "locations": [
+        "supabase/migrations/20260605_rls_policies_new_tables.sql:121-124",
+        "lib/notifications.ts:124-147",
+        "lib/transmittals.ts:281"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
     },
@@ -2355,6 +2381,59 @@
       ],
       "refuted": false,
       "summary": "This is the table-level reason OWN-5 (the publishrevision branch path) and OWN-17 (backfillVersion, revision-label correction) work at all. Even with those two application paths fixed, the raw PostgREST route remains.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
+    },
+    {
+      "id": "EGRESS-7",
+      "title": "Revoking a share is a silent no-op for a non-creator once the UPDATE policy tightens",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / availability",
+      "related": [
+        "EGRESS-1",
+        "OWN-14"
+      ],
+      "locations": [
+        "lib/documentShares.ts:68-73",
+        "components/documents/ShareLinkModal.tsx:75-79",
+        "supabase/migrations/20261022_document_shares_acl_scope.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A DocCtrl revokes a colleague's over-broad share to a sensitive drawing. It is not their share and they are… actually a controller, so it works for them — but a Manager or the document's owner (non-controller) doing the same sees \"revoked\" and walks away while the token keeps serving.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/10-content-egress.md"
+    },
+    {
+      "id": "EGRESS-8",
+      "title": "`listShareLinks` exposes live tokens to members who cannot read the document",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / confidentiality",
+      "related": [
+        "EGRESS-1",
+        "SURF-2"
+      ],
+      "locations": [
+        "lib/documentShares.ts:59-66",
+        "supabase/migrations/20260623_document_shares.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": null,
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/10-content-egress.md"
     },
@@ -3745,6 +3824,33 @@
       "summary": "A drafter saves a linked drawing into a new library via Save-As; the library lands unowned, its review-cycle reminders route to Admin/DocCtrl, and nobody notices until the unowned count is questioned.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
+    },
+    {
+      "id": "SURF-18",
+      "title": "`email_notifications` has no SELECT/UPDATE policy, so dedupe and the dead-letter panel silently no-op",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "correctness / observability",
+      "related": [
+        "SURF-5",
+        "SURF-17"
+      ],
+      "locations": [
+        "supabase/migrations/20260605_rls_policies_new_tables.sql:121-124",
+        "lib/notifications.ts:66-75",
+        "app/(protected)/admin/settings/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": null,
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/09-non-document-surfaces.md"
     }
   ],
   "gaps_note": "Gaps are build specs for capabilities that do not exist. They are work, but they carry a verdict and a dependency chain rather than a severity — check `verdict` and `depends_on` before starting one. DECLINE and FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is false and the spec names what to do instead. Build order is in 99-fix-sequencing.md.",

@@ -36,7 +36,18 @@ They compound: `/d/[number]` and the orchestrator hand out document UUIDs;
 ## EGRESS-1 · Any active member can publish any document to the public internet via a share link
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** The cross-org case was traced to a conclusion first (per the sequencing file's instruction): it **was** exploitable end to end — neither `/api/share/resolve` nor `/api/share/file` re-joined `document_id` to `share.org_id`, so an org-A member naming org-B's document UUID had B's stamped PDF served on token possession alone. Fixed in two halves:
+- **Code (deploy-safe, closes the byte leak alone).** Both routes now join the documents lookup with `.eq("org_id", share.org_id)` (a cross-org share yields no document → 404), and re-check the creator's **current** authority via the new `lib/shareAuthorization.shareStillAuthorized` before serving — fail-closed, reusing `lib/knowledgeAccess` (`loadPrincipal` + `readableControlledDocIds`) so a share can never grant more than its creator holds today. If the sharer loses read access or leaves the org, the link stops serving (Done-when 4).
+- **Migration (durable DB rail).** `supabase/migrations/20261022_document_shares_acl_scope.sql` splits the `FOR ALL` policy per verb: SELECT unchanged; INSERT requires membership **and** that `document_id` is a document in the same org that the creator can read (`node_visible(d.visibility, d.acl_index, d.org_id)` — the caller-aware read decision — with the explicit `d.org_id = document_shares.org_id` term load-bearing, since `node_visible` returns true for normal visibility without an org check); UPDATE/DELETE limited to creator or `is_org_controller`.
+- Commit: `b2907b9`
+- Files: `app/api/share/resolve/route.ts`, `app/api/share/file/route.ts`, `lib/shareAuthorization.ts`, `supabase/migrations/20261022_document_shares_acl_scope.sql`
+- Tests: `lib/__tests__/shareAuthorization.test.ts` (fail-closed on null creator/principal/non-readable doc; controller shortcut), `lib/__tests__/shareResolveRoute.test.ts` (org-join asserted; cross-org → 404; lapsed-creator → 410). Both route tests fail against the pre-fix route.
+- Reproduced: the recon agent traced every link (create via browser RLS INSERT whose `WITH CHECK` pins only `org_id`; resolve/file lookups by `id` alone); confirmed a logged-out browser with the token receives org B's bytes.
+- Verified: Done-when 1 — creating a share now needs an ACL read decision on the document (INSERT policy). Done-when 2 — `document_id` cannot name an out-of-org document (org join, both app and DB). Done-when 3 — UPDATE/DELETE limited to creator or controller. Done-when 4 — `/api/share/file` re-checks the creator's current authority before serving. Suite 1429 green.
+- Pending migration: `supabase/migrations/20261022_document_shares_acl_scope.sql` (apply after deploying the code; the code closes the leak without it).
+- **What this brought to light:** (1) `revokeShareLink` (`lib/documentShares.ts:68-73`) updates by id with no authority scope — after the tightened UPDATE policy it becomes a silent 0-row no-op for a non-creator/non-controller, and `ShareLinkModal.tsx:77` swallows the error; recorded as new finding `EGRESS-7`. (2) `listShareLinks` selects `*` (incl. `token`) under the any-active-member SELECT policy, so a member who cannot read a document can still enumerate its live share tokens and pull `/api/share/file` — an intra-org bypass parallel to this one; recorded as `EGRESS-8`.
 - **Verification:** CONFIRMED (same-org) / SUSPECTED (cross-org — the resolve path was not traced to a conclusion)
 - **Blast radius:** security / confidentiality
 - **Locations:**
@@ -98,7 +109,15 @@ org. **Trace that before assuming it is contained.**
 ## EGRESS-2 · `/d/[number]` is an unauthenticated, cross-tenant document enumeration oracle
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** The route no longer resolves documents at all. It held a service-role client and queried `documents` with no org filter, so an unauthenticated GET was a platform-wide existence/UUID oracle. Because Supabase sessions live in localStorage (no cookie a server route can read — verified: no middleware, no `@supabase/ssr`), the route cannot authenticate a browser navigation. So resolution moved to the client: `/d/[number]` now does **zero database work** and redirects to `/documents?d=<number>`, where the protected documents page resolves the number **client-side** via `searchDocuments` under the caller's own RLS-scoped session — org-scoped and ACL-enforced by the database, exactly like every other document view. A signed-out caller is bounced to sign-in by the protected layout and learns nothing.
+- Commit: `67e6bdd`
+- Files: `app/d/[number]/route.ts`, `app/(protected)/documents/page.tsx`
+- Tests: `lib/__tests__/shortLinkRoute.test.ts` — the route always redirects to `/documents`, never emits a `/documents/{lib}?doc={id}` deep link (the old disclosure), and its source holds no admin client / no `documents` query.
+- Reproduced: the pre-fix route ran `supabaseAdmin.from("documents").ilike(...)` with no `org_id` filter and redirected to `/documents/{library_id}?doc={id}` on a substring hit — a two-char probe returned the most-recently-updated matching document platform-wide.
+- Verified: Done-when 1 — an unauthenticated `/d/<anything>` discloses nothing (no lookup; identical redirect for every input). Done-when 2 — an authenticated request resolves only documents the caller's RLS admits (own org, discoverable). Done-when 3 — a logged-in user scanning a printed QR still lands on the right document via client resolution. Suite green.
+- **What this brought to light:** the login flow (`app/page.tsx`) always lands on `/dashboard` with no `next` param, so a signed-out user's typed number is lost after sign-in — Done-when does not require resume, but stashing the number before the kick and honouring it post-login is a small follow-up (noted, not filed as a finding — it is a UX nicety, not a defect).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / confidentiality / cross-tenant
 - **Locations:**
@@ -261,7 +280,19 @@ unchanged.
 ## EGRESS-5 · `access_requests` — cross-tenant read, and the requests go nowhere
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** All four DEC-19 deliverables landed.
+- **Cross-tenant read.** `access_requests_admin_select` was an uncorrelated `EXISTS` — any Admin of any org read every org's requests. The new migration `20261023_access_requests_scope_and_limit.sql` org-correlates the SELECT policy (additive-roles aware: `role = 'Admin' OR roles && ARRAY['Admin']`).
+- **org_id drift resolved.** The live route already filtered and inserted `org_id`; the `20260819` backfill `CREATE TABLE` was the stale side. The migration `ADD COLUMN IF NOT EXISTS org_id` (idempotent), backfills legacy rows by org name (unmatched stay NULL = visible to no one, fail closed), and registers the probe in `lib/schemaExpectations.ts`.
+- **Unrate-limited public door.** `/api/auth/request-access` now mirrors the `signup_attempts` throttle exactly (8/IP/hour, fail-open, **shared** per-IP bucket), recording an attempt *before* the org lookup so the 404 org-name oracle and 409 duplicate probing both consume the window. The migration also drops the `WITH CHECK(true)` anonymous insert policy — the only writer is the service-role route — so a direct PostgREST insert can no longer bypass the rate limit.
+- **No surface → a surface.** `/admin/users` gains an Admin-only pending-requests card (rendered only for Admins, matching the SELECT policy — a Manager would see a permanently empty list), each row with an "Add" action that pre-fills the member form.
+- Commit: `44711ca`
+- Files: `app/api/auth/request-access/route.ts`, `app/(protected)/admin/users/page.tsx`, `lib/schemaExpectations.ts`, `supabase/migrations/20261023_access_requests_scope_and_limit.sql`
+- Tests: `lib/__tests__/requestAccessRoute.test.ts` — 429 gate before any org query or insert; an attempt recorded on a normal submission (both fail against the old route).
+- Verified: an Admin sees only their own org's requests (org-correlated policy + explicit `.eq(org_id)`); the public route is rate-limited; a submitted request appears to an Admin. Suite 1431 green.
+- Pending migration: `supabase/migrations/20261023_access_requests_scope_and_limit.sql` (code deployed first — the route already handles `org_id`).
+- **What this brought to light:** `20260713_branding_admin_writes.sql:15` checks `role = 'Admin'` with **no** roles-array clause, unlike the additive form used here and in `20260817` — a member holding Admin only as a secondary role is refused there. Recorded under the additive-roles family (`ADD-*`); this fix used the additive form throughout.
 - **Verification:** CONFIRMED
 - **Blast radius:** confidentiality / cross-tenant
 - **Locations:**
@@ -344,6 +375,45 @@ carrying real authority checks rather than in place of them.
 **Done when.** A member who could not publish a revision cannot insert or amend a
 `document_versions` row by any route, and every legitimate publish path still
 succeeds.
+
+---
+
+## EGRESS-7 · Revoking a share is a silent no-op for a non-creator once the UPDATE policy tightens
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** security / availability
+- **Locations:**
+  - `lib/documentShares.ts:68-73` — `revokeShareLink` updates `document_shares` by `id` with no `.select()`, so a refused write returns success with zero rows
+  - `components/documents/ShareLinkModal.tsx:75-79` — `revoke` awaits it and `refresh()`s; no rows-affected check
+  - `supabase/migrations/20261022_document_shares_acl_scope.sql` — the new UPDATE policy (creator or controller) that makes the no-op reachable
+- **Related:** `EGRESS-1`, `OWN-14`
+- *(Raised while resolving `EGRESS-1`, 2026-08-24. Checked only by this session — `author` grade until independently challenged.)*
+
+**Mechanism.** `EGRESS-1`'s migration correctly limits `document_shares` UPDATE to the creator or a controller. But `revokeShareLink` writes by `id` with no `.select()` — the exact silent-write-failure shape of `OWN-14`. After the policy lands, a member who is neither the share's creator nor a controller who clicks "Revoke" gets a 200 with zero rows changed; the modal refreshes and the share still shows as active, still serving. The link they believe they revoked is live.
+
+**Failure scenario.** A DocCtrl revokes a colleague's over-broad share to a sensitive drawing. It is not their share and they are… actually a controller, so it works for them — but a Manager or the document's owner (non-controller) doing the same sees "revoked" and walks away while the token keeps serving.
+
+**Done when.** `revokeShareLink` selects the affected row back and surfaces a visible error when zero rows change; the modal shows that error rather than a stale "active" state.
+
+---
+
+## EGRESS-8 · `listShareLinks` exposes live tokens to members who cannot read the document
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** security / confidentiality
+- **Locations:**
+  - `lib/documentShares.ts:59-66` — `listShareLinks` selects `*` (including `token`) by `document_id`
+  - `supabase/migrations/20260623_document_shares.sql` / `20261022_document_shares_acl_scope.sql` — the SELECT policy is any active member of the row's org, with no document-read decision
+- **Related:** `EGRESS-1`, `SURF-2`
+- *(Raised while resolving `EGRESS-1`, 2026-08-24. Checked only by this session — `author` grade until independently challenged.)*
+
+**Mechanism.** The `document_shares` SELECT policy gates on org membership, not on whether the member can read the shared document. `listShareLinks` returns every column including `token`. So a member who is denied read on a restricted drawing can still enumerate its live share tokens via PostgREST and fetch `/api/share/file?token=…` — an intra-org parallel to `EGRESS-1`'s cross-org leak. `EGRESS-1`'s creator-authority re-check on `/api/share/file` narrows this (the share serves on the *creator's* authority, not the enumerator's), but the token itself should not be visible to someone who cannot see the document.
+
+**Done when.** A member who cannot read a document cannot retrieve its share rows' tokens; the SELECT policy (or the query) applies a document-read decision, or tokens are omitted from the member-visible projection.
 
 ---
 

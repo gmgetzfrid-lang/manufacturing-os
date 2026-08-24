@@ -64,8 +64,22 @@ Token entropy, expiry, revocation, and whether a share respects a hold.
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `app/d/[number]/route.ts:26-46`, `app/d/[number]/route.ts:6-7`, `app/d/[number]/route.ts:34-36`, `app/d/[number]/route.ts:30`
+- **Locations:** `app/d/[number]/route.ts:14-32` *(the whole current handler)*
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the exact fallback the summary describes: when no candidate's normalized number matches, `?? rows[0]` silently returns the most recently updated substring hit from ANY tenant. The route's own header comment — 'this route only translates a number into a location; it reveals nothing' — is contradicted by the Location header, which carries a foreign library_id and document UUID to an unauthenticated caller.
+
+> **Cross-area update (2026-08-24) — this defect is RESOLVED under
+> `roles-and-permissions/EGRESS-2` (commit `67e6bdd`).** SHR-2 is the
+> public-surfaces name for the same `/d/[number]` oracle. The route no longer
+> holds a service-role client and does no database query at all — it forwards
+> to the protected `/documents` page, which resolves the number client-side
+> under the caller's RLS (org-scoped, ACL-enforced). Both failure modes are
+> gone: an unauthenticated caller gets an identical redirect for every input
+> (no disclosure), and the wrong-target substring fallback is replaced by an
+> exact-match-or-search resolution the caller could already perform. **The
+> prose and `Evidence` below quote the pre-fix route and no longer match the
+> code.** The public-surfaces owner should mark this `RESOLVED` with the
+> cross-reference on their next pass; left OPEN here only because this session
+> is scoped to the roles-and-permissions area (`DEC-32`).
 
 **Mechanism.** The route has no auth check of any kind and there is no middleware.ts anywhere in the repo (confirmed by `find -maxdepth 2 -name middleware.ts` returning nothing and next.config.ts containing no matcher). It queries with `supabaseAdmin` — the service-role client (lib/supabaseAdmin.ts) — so RLS is bypassed, and the query at lines 26-32 carries NO `.eq("org_id", ...)` filter. Every other search in the codebase scopes by org (lib/globalSearch.ts:171 `.eq("org_id", orgId)`, lib/projects.ts:203, app/(protected)/admin/codebook/page.tsx:473); this one does not. Two separate failure modes follow. First, disclosure: on a match the route returns a 302 whose Location is `/documents/<library_id>?doc=<document id>` (lines 44-46), so an anonymous caller reads a foreign org's library UUID and document UUID directly out of the response headers, before any auth wall. Those are exactly the UUIDs /api/verify accepts unauthenticated (verify/route.ts:26-30), whose header comment asserts they 'only appear ON a printed copy the org itself issued' — /d hands them to anyone who can guess a drawing number. Second, wrong-target: the exact normalized match is only preferred, not required — line 36 is `?? (rows ?? [])[0]`, so when no candidate normalizes equal, the route silently redirects to whichever *substring* match across all orgs was updated most recently. The sanitizer at line 30 strips `%` and `_` but not `*`, which PostgREST itself translates to `%` in ilike patterns — so `/d/2*0` becomes `document_number=ilike.%2%0%`, a global wildcard scan. There is no rate limiting anywhere in lib/ or app/api/ (grep for rateLimit/ratelimit/rate_limit finds only knowledge-embed code), so the number space is freely enumerable.
 

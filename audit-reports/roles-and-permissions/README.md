@@ -30,9 +30,10 @@ database functions underneath all of it.
 
 ## Findings
 
-**128 findings** — 18 CRITICAL, 44 HIGH, 63 MEDIUM, 3 LOW — plus **15 gap
+**132 findings** — 18 CRITICAL, 45 HIGH, 65 MEDIUM, 4 LOW — plus **15 gap
 specs**, of which 12 are buildable. *(Originally 124; the resolution session
-added `LIFE-15`, `OWN-22`, `DB-8` and `CHAIN-7`, all found while working their
+added `LIFE-15`, `OWN-22`, `DB-8`, `CHAIN-7` in Phase 0 and `EGRESS-7`,
+`EGRESS-8`, `SURF-17`, `SURF-18` in Phase 1, all found while working their
 neighbours.)*
 
 > **3 findings here carry `Status: REFUTED`** — `DRAFT-4`, `EGRESS-4`, `ROLE-6`. An independent pass disproved them; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue them as work.**
@@ -62,6 +63,31 @@ feature builds. Check `verdict` and `depends_on` before starting a gap.
 ---
 
 ## Resolution status — session started 2026-08-24
+
+**Phases 0 and 1 of [`99-fix-sequencing.md`](./99-fix-sequencing.md) are
+complete.** Ship loop green throughout: `tsc`, `eslint`, **1431 vitest**, full
+`next build`.
+
+### Phase 1 — the unauthenticated & cross-tenant doors (highest severity)
+
+| Item | Outcome |
+|---|---|
+| `EGRESS-2` (CRITICAL) | **RESOLVED** — `/d/[number]` no longer resolves documents; it forwards to the protected page, which resolves client-side under RLS |
+| `SURF-2` (CRITICAL) | **RESOLVED** — storage delete requires controller authority, safe key, fail-closed hold check, audit row (also closes `document-control/RET-2`, `intelligence/DACL-2`) |
+| `EGRESS-1` (CRITICAL) | **RESOLVED** — cross-org share leak confirmed then closed: org-join + creator-authority re-check in both routes, per-verb RLS migration |
+| `SURF-5` (HIGH) | **RESOLVED** Done-when 1–2 (cross-tenant drain); Done-when 3 (queue-insert lockdown) split to `SURF-17` |
+| `EGRESS-5` / `DEC-19` (HIGH) | **RESOLVED** — org-scoped policy, rate-limited public door, org_id drift fixed, pending-requests card on `/admin/users` |
+
+**Pending hand-applied migrations from Phase 1 (DEC-30), code deployed first:**
+`20261022_document_shares_acl_scope.sql`,
+`20261023_access_requests_scope_and_limit.sql`.
+
+**New findings raised in Phase 1:** `EGRESS-7` (silent revoke no-op after the
+UPDATE policy tightens), `EGRESS-8` (share tokens visible to non-readers),
+`SURF-17` (the split queue-insert lockdown), `SURF-18` (no SELECT/UPDATE policy
+on `email_notifications`).
+
+### Phase 0 — free & independent
 
 **Phase 0 of [`99-fix-sequencing.md`](./99-fix-sequencing.md) is complete.**
 Ship loop green throughout: `tsc`, `eslint`, **1407 vitest** (23 added across 5

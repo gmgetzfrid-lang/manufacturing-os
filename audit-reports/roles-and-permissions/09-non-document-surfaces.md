@@ -77,7 +77,15 @@ mutating local state — the silent-success shape is the same one described in
 ## SURF-2 · `/api/storage/delete` — any active member can permanently destroy any file in the org, unaudited
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** The route is now held to the `/api/admin/purge` bar. All four Done-when: (1) controller authority — the caller must be an Admin/DocCtrl of the key's org, read **additively** (union of `role` and `roles[]` ∩ `{Admin, DocCtrl}`) so a `['Manager','DocCtrl']` member is not wrongly refused by the headline-only read (`SURF-10`); (2) `assertSafeStorageKey(path)` runs before any prefix reasoning, and a non-org-prefixed key is refused outright (closing the aggravator where such keys skipped the check entirely); (3) the key is resolved to its document via `document_versions.file_url` and refused (`423`) if the document is under `legal_hold` or has an unreleased `document_holds` row — **fail closed** on any lookup error (`503`), the deliberate opposite of the download route's fail-open, because destruction is irreversible; (4) a successful delete writes a `STORAGE_OBJECT_DELETE` audit row. No migration needed — the DB hold triggers already exist.
+- Commit: `67e6bdd`
+- Files: `app/api/storage/delete/route.ts`
+- Tests: `lib/__tests__/storageDeleteRoute.test.ts` — 8 tests (Viewer refused; traversal key 400; non-org key 403; legal-hold 423; active-hold 423; unverifiable-hold 503 fail-closed; controller success + audit row; `['Manager','DocCtrl']` admitted). 7 fail against the pre-fix route.
+- Reproduced: the pre-fix route authorized on active membership alone, with no `assertSafeStorageKey`, no hold check, and no audit row — a Viewer could DELETE any `file_url` enumerated from `document_versions`.
+- Verified: each Done-when pinned by a test; suite 1419 green.
+- **Cross-area duplicates:** this resolution also satisfies `document-control/RET-2` and `intelligence/DACL-2` (same defect). **What this brought to light:** `lib/storage.ts:442` `deleteFile` is now the only caller shape and has **zero in-app callers** — a future component reviving the client delete path is the risk; a follow-up should remove it (noted, low priority).
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / safety / compliance
 - **Locations:**
@@ -224,7 +232,21 @@ itself is currently non-functional for a different reason (`DB-1`).
 ## SURF-5 · `/api/notifications/send-queued` — any authenticated user drains every tenant's mail queue; any member can queue arbitrary mail
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+> **Scope note (DEC-31).** Done-when 1–2 (the cross-tenant drain — the severe
+> half) are resolved here. Done-when 3 (the arbitrary-recipient queue-insert
+> lockdown) is split to the new finding `SURF-17`, because it requires moving
+> the transmittal external-send server-side plus a migration with data-loss
+> risk needing live verification.
+
+**Resolution (Piece A — the cross-tenant drain).** The route authorized any signed-up account (member of no org) via `authorized = !!user`, then drained and re-sent **every** tenant's queue with no org filter. Now: the cron secret drains all orgs (unchanged), but a session caller must be an active member of **some** org and drains **only their own orgs'** rows — the `scopeOrgIds` filter is applied to all four unscoped queue queries (the not-configured deferral count, the 7-day suppressed-row resurrection, the stranded-`sending` reclaim, and the candidate select). A session caller belonging to no org gets `403`. This preserves exactly what `WF-19` needs: a session caller (the browser kick after queueing) drains only their own org's rows, which include the just-queued mail.
+- Commit: `b2907b9`
+- Files: `app/api/notifications/send-queued/route.ts`
+- Tests: `lib/__tests__/apiRouteAuth.test.ts` — 403 for a no-org account; a member's drain is org-scoped (every queue query carries `.in("org_id", …)`); the cron path stays unscoped. Two fail against the old route.
+- Verified: Done-when 1 — the drain requires the cron secret or a session **plus** org membership. Done-when 2 — a session-authorized drain is scoped to the caller's own orgs. Suite 1429 green.
+- **Done-when 3 is split to `SURF-17`** under `DEC-31`: "a member cannot queue mail to an arbitrary address with arbitrary HTML" is the queue-INSERT lockdown, which requires (a) moving the transmittal external-email send server-side — `lib/transmittals.ts` is a browser module that calls `queueExternalEmail` directly — and (b) a migration tightening the `email_notifications` INSERT policy that risks silently breaking legitimate member notifications if `to_email` ever differs from a member's registered email (needs live verification, `DEC-30`). That is a focused, safety-sensitive change deserving its own session; the design is recorded on `SURF-17`.
+- **What this brought to light (adjacent, not in scope):** `email_notifications` has **no** SELECT or UPDATE policy for `authenticated`, so `queueEmail`'s 60-second burst-dedupe select (`lib/notifications.ts:66-75`) always sees zero rows (the dedupe never fires) and the `/admin/settings` dead-letter panel's count is always 0 and its requeue matches nothing — recorded as `SURF-18`. Also: the route comment claims a "Vercel/Supabase cron schedule" that `vercel.json` does not define — the maintenance cron's fetch loop is the only schedule.
 - **Verification:** CONFIRMED
 - **Blast radius:** security / cross-tenant
 - **Locations:**
@@ -644,6 +666,59 @@ them.**
 2. `my_team_ids()` excludes non-active members.
 3. `/api/admin/create-user` and the page that calls it agree on who may use it,
    and the route writes an audit row.
+
+---
+
+## SURF-17 · A member can queue mail to an arbitrary address with arbitrary HTML (split from `SURF-5`)
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** security (phishing relay) / brand
+- **Locations:**
+  - `supabase/migrations/20260605_rls_policies_new_tables.sql:121-124` — the `email_notifications` INSERT policy: any active member may insert arbitrary `to_email` / `subject` / `body_html`
+  - `lib/notifications.ts:124-147` — `queueExternalEmail`, a **browser-client** insert of an external recipient + full HTML
+  - `lib/transmittals.ts:281` — its only caller (a client module)
+- **Related:** `SURF-5`
+- *(Split from `SURF-5` under `DEC-31`, 2026-08-24. `SURF-5` closed Done-when 1–2 (the cross-tenant drain); this is its Done-when 3.)*
+
+**Mechanism.** After `SURF-5`'s Piece A, a member can still queue a forged email — arbitrary `to_email`, attacker-chosen `body_html` — into their **own** org's queue and trigger the (now org-scoped) drain, which sends it from `RESEND_FROM_EMAIL`. A functioning phishing relay with the org's branding, within one org.
+
+**Why it was split.** Closing this requires two coupled changes that are safety-sensitive and cannot be verified from the repository:
+1. **Move the transmittal external-send server-side.** `queueExternalEmail` is called from `lib/transmittals.ts` (a browser module). Locking the INSERT policy breaks it unless the send moves to a new session-authed route (e.g. `/api/transmittal/send-email`) that loads the transmittal by id server-side, renders subject/body from the DB row (recipient + body un-forgeable), and inserts via the service role. This touches the controlled-distribution flow — a safety-critical path.
+2. **Tighten the INSERT policy.** A member→member-only policy (recipient must be an active member) closes the external relay without the risky email-equality check. The stronger email-match form (`lower(r.email) = lower(to_email)`) risks silently dropping legitimate member notifications if `to_email` ever differs from a member's registered email — which cannot be confirmed without live data (`DEC-30`).
+
+**Remediation (illustrative).** New migration: `DROP` the open INSERT policy; `CREATE` one requiring the caller be an active member of the row's org AND (`metadata->>'external' IS NOT 'true'`) so external sends must go server-side; the transmittal route inserts via `supabaseAdmin`. Confirm with the inventory query whether any `queueEmail` path sets `to_email` to anything other than the recipient's `org_members.email` before considering the stricter email-match.
+
+**Inventory query (DEC-30, run before the stricter policy):**
+```sql
+SELECT en.id, en.to_email, m.email AS registered
+FROM email_notifications en
+LEFT JOIN org_members m ON m.org_id = en.org_id AND m.uid = en.to_user_id
+WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
+  AND lower(en.to_email) <> lower(coalesce(m.email, ''));
+```
+
+**Done when.** A member cannot queue mail to an address that is not a fellow active member's registered address, or with HTML they authored, except through a server route that renders the body from trusted state.
+
+---
+
+## SURF-18 · `email_notifications` has no SELECT/UPDATE policy, so dedupe and the dead-letter panel silently no-op
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** correctness / observability
+- **Locations:**
+  - `supabase/migrations/20260605_rls_policies_new_tables.sql:121-124` — the only `email_notifications` policy is INSERT
+  - `lib/notifications.ts:66-75` — `queueEmail`'s 60-second burst-dedupe SELECT (always empty under RLS)
+  - `app/(protected)/admin/settings/page.tsx` — the dead-letter panel count (always 0) and requeue update (matches nothing)
+- **Related:** `SURF-5`, `SURF-17`
+- *(Raised while resolving `SURF-5`, 2026-08-24. `author` grade until independently challenged.)*
+
+**Mechanism.** With no SELECT or UPDATE policy for `authenticated`, every client read/update of `email_notifications` returns zero rows. So the documented burst-dedupe (`dispatch.ts:105-106`) never fires — duplicate emails are only prevented by the server-side claim, not the client dedupe — and the `/admin/settings` dead-letter panel shows an empty failed-queue and its "requeue failed" button silently matches nothing.
+
+**Done when.** A carefully-scoped SELECT/UPDATE policy (or a server route) lets an org's admins see and requeue their own failed rows, and `queueEmail`'s dedupe sees its own recent rows — without re-opening the cross-tenant read `SURF-5` closed.
 
 ---
 

@@ -124,8 +124,18 @@ assets/[tag]/page.tsx:56 `.neq("status", "Archived")`; assets/[tag]/page.tsx:139
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `app/d/[number]/route.ts:5-7`, `app/d/[number]/route.ts:26-32`, `app/d/[number]/route.ts:34-46`, `lib/supabaseAdmin.ts:3-8`, `app/api/verify/route.ts:4-10`, `app/api/verify/route.ts:96-108`, `components/documents/RelatedPanel.tsx:111-113`
+- **Locations:** `app/d/[number]/route.ts:14-32`, `lib/supabaseAdmin.ts:3-8`, `app/api/verify/route.ts:4-10`, `app/api/verify/route.ts:96-108`, `components/documents/RelatedPanel.tsx:111-113`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and slightly worse than described: the `?? (rows ?? [])[0]` fallback at :36 means even a non-matching 2-character substring returns some real document's UUID, and app/api/verify/route.ts:34-38/:96-108 then returns number, title, current rev and status for any UUID with no org scoping. HIGH stands.
+
+> **Cross-area update (2026-08-24).** The `/d/[number]` half of this — the
+> service-role, cross-tenant document-number→UUID oracle — was **closed** under
+> `roles-and-permissions/EGRESS-2` (commit `67e6bdd`): the route no longer holds
+> a service-role client or queries `documents`; it forwards to the protected
+> page, which resolves client-side under the caller's RLS. The prose below
+> quotes the *old* route (pre-fix) and its line numbers no longer resolve. **The
+> remaining half is unfixed and owned here:** `/api/verify` returns document
+> metadata for any UUID with no org scoping (`verify/route.ts:96-108`). PHYS-4
+> stays OPEN for that; the leaked-UUID entry point it depended on is gone.
 
 **Mechanism.** The route runs `supabaseAdmin.from("documents").select("id, library_id, document_number, updated_at").ilike("document_number", \`%${raw...}%\`)` (26-32) with no `org_id` filter and no session check. supabaseAdmin is the SERVICE ROLE client (supabaseAdmin.ts:3-8), which bypasses RLS entirely. The route is at app/d/ — outside the (protected) route group — and there is no middleware.ts anywhere in the repo. It then redirects to `/documents/${match.library_id}?doc=${match.id}` (44-46). The redirect Location header is returned to an unauthenticated caller, so `curl -sI https://host/d/2002-D-10001` yields the document UUID and library UUID of whichever tenant owns that number. The header comment claims "it reveals nothing" (5-7) — it reveals two UUIDs plus the existence of the number. /api/verify justifies being unauthenticated on precisely the opposite assumption: "Both IDs are unguessable UUIDs that only appear ON a printed copy the org itself issued" (verify/route.ts:4-10). Feed the leaked doc UUID to `/api/verify?doc=<uuid>` with no `v` and it returns document_number, title, current rev, issue date, effective date and status (96-108) for a document in an org the caller has no relationship with. Drawing numbers are systematic (`2002-D-10001`), so the space is enumerable, and RelatedPanel.tsx:111-113 publishes the pattern as a copyable short link.
 
