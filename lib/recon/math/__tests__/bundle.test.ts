@@ -148,7 +148,8 @@ describe("bundleAdjust", () => {
     expect(result.finalRmsePx).toBeLessThan(result.initialRmsePx);
   });
 
-  it("recovers an unknown focal length", () => {
+  // Seconds of Gauss-Newton alone; past the default 5s when the machine is busy.
+  it("recovers an unknown focal length", { timeout: 60_000 }, () => {
     const rng = makeRng(303);
     const { poses, points } = buildScene(rng, 10, 150);
     const observations = buildObservations(poses, points, FOCAL, rng, 0);

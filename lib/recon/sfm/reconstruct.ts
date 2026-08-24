@@ -34,7 +34,7 @@ import {
 import type { FrameFeatures, SfmResult } from "../types";
 import { bundleAdjust, type BundleObservation } from "../math/bundle";
 import { mat3Mul, mat3MulVec, mat3Transpose } from "../math/linalg";
-import { pnpRansac, solveRelativeScale } from "../math/pnp";
+import { pnpRansac, refinePose, solveRelativeScale, type PnpCorrespondence } from "../math/pnp";
 import { guidedMatches } from "./guidedMatch";
 import { motionConsistent } from "./motionFilter";
 import {
@@ -978,7 +978,9 @@ export async function reconstruct(
       ]);
       return [Ar[0], Ar[1], Ar[2]] as [number, number, number];
     };
-    const scaleObs: Array<{ A: [number, number, number]; x: number; y: number }> = [];
+    const scaleObs: Array<{
+      X: [number, number, number]; A: [number, number, number]; x: number; y: number;
+    }> = [];
     const seenTracks = new Set<number>();
     for (const [ka, kb] of bestPair.matches) {
       const anchorKp = anchorFrame === bestPair.a ? ka : kb;
@@ -990,7 +992,7 @@ export async function reconstruct(
       const o = observationOf(candidate, candidateKp);
       if (!o) continue;
       seenTracks.add(ti);
-      scaleObs.push({ A: toWorld(track.xyz), x: o.x, y: o.y });
+      scaleObs.push({ X: track.xyz, A: toWorld(track.xyz), x: o.x, y: o.y });
     }
     // Tracks the candidate is already part of contribute too.
     for (const ti of tracksByFrame.get(candidate) ?? []) {
@@ -1002,33 +1004,91 @@ export async function reconstruct(
       const o = observationOf(candidate, kp);
       if (!o) continue;
       seenTracks.add(ti);
-      scaleObs.push({ A: toWorld(track.xyz), x: o.x, y: o.y });
+      scaleObs.push({ X: track.xyz, A: toWorld(track.xyz), x: o.x, y: o.y });
     }
-    const solved = solveRelativeScale(scaleObs, b);
-    // A solid bloc of equations must agree, or the scale is a coin flip.
-    if (!solved || solved.support < 4 || solved.s <= 0) return false;
+    if (scaleObs.length < 3) return false;
+
+    // The scale is one unknown, but the anchors pinning it are triangulated
+    // points of uneven quality — a single systematically bad track drags any
+    // averaged estimate (a junction measured its median at nearly twice the
+    // true scale while ONE equation held the right answer). So treat each
+    // equation's solution as a hypothesis and let reprojection vote: the true
+    // scale reprojects most of the anchors, a corrupted one reprojects itself.
+    const hypotheses: number[] = [];
+    for (const o of scaleObs) {
+      for (const [c, d] of [
+        [b[0] - o.x * b[2], o.x * o.A[2] - o.A[0]],
+        [b[1] - o.y * b[2], o.y * o.A[2] - o.A[1]],
+      ] as Array<[number, number]>) {
+        if (Math.abs(c) > 1e-9) {
+          const h = d / c;
+          if (Number.isFinite(h) && h > 0) hypotheses.push(h);
+        }
+      }
+    }
+    const fallback = solveRelativeScale(scaleObs, b);
+    if (fallback && fallback.s > 0) hypotheses.push(fallback.s);
+    if (hypotheses.length === 0) return false;
+
+    const errAt = (sc: number, o: { A: [number, number, number]; x: number; y: number }) => {
+      const z = o.A[2] + sc * b[2];
+      if (z <= 1e-6) return Infinity;
+      return Math.hypot(
+        (o.A[0] + sc * b[0]) / z - o.x,
+        (o.A[1] + sc * b[1]) / z - o.y,
+      ) * focal;
+    };
+    // The composed rotation is only RANSAC-grade: half a degree of error is
+    // several pixels at this focal, so judging the scale vote at the strict
+    // reprojection gate rejects bridges whose scale is actually fine. Vote at
+    // a loose gate just to land in the right basin, refine the full 6-DOF pose
+    // from there, and only THEN apply the strict gate.
+    const limit = cfg.sfm.maxReprojectionErrorPx;
+    const basinLimit = limit * 3;
+    let bestS = 0;
+    let bestInliers = 0;
+    let bestErr = Infinity;
+    for (const h of hypotheses) {
+      let inliers = 0;
+      let total = 0;
+      for (const o of scaleObs) {
+        const e = errAt(h, o);
+        if (e < basinLimit) { inliers++; total += e; }
+      }
+      const mean = inliers > 0 ? total / inliers : Infinity;
+      if (inliers > bestInliers || (inliers === bestInliers && mean < bestErr)) {
+        bestS = h;
+        bestInliers = inliers;
+        bestErr = mean;
+      }
+    }
+    if (bestInliers < 3) return false;
 
     const Rf = mat3Mul(Rrel, anchorPose.R);
     const ta = mat3MulVec(Rrel, anchorPose.t);
-    const pose: Pose = {
+    const composed: Pose = {
       R: Rf,
       t: [
-        ta[0] + solved.s * b[0],
-        ta[1] + solved.s * b[1],
-        ta[2] + solved.s * b[2],
+        ta[0] + bestS * b[0],
+        ta[1] + bestS * b[1],
+        ta[2] + bestS * b[2],
       ],
     };
 
-    // The composed pose must actually explain what the frame sees.
-    let err = 0;
-    for (const so of scaleObs) {
-      const z = so.A[2] + solved.s * b[2];
-      if (z <= 1e-6) return false;
-      const px = (so.A[0] + solved.s * b[0]) / z;
-      const py = (so.A[1] + solved.s * b[1]) / z;
-      err += Math.hypot(px - so.x, py - so.y) * focal;
+    const corr: PnpCorrespondence[] = scaleObs.map((o) => ({ X: o.X, x: o.x, y: o.y }));
+    const pose = refinePose(composed, corr);
+    let strictInliers = 0;
+    for (const c of corr) {
+      const p = mat3MulVec(pose.R, c.X);
+      const z = p[2] + pose.t[2];
+      if (z <= 1e-9) continue;
+      const e = Math.hypot(
+        (p[0] + pose.t[0]) / z - c.x,
+        (p[1] + pose.t[1]) / z - c.y,
+      ) * focal;
+      if (e < limit) strictInliers++;
     }
-    if (err / scaleObs.length > cfg.sfm.maxReprojectionErrorPx) return false;
+    if (strictInliers < Math.max(3, Math.ceil(scaleObs.length * 0.5))) return false;
 
     poses.set(candidate, pose);
     compositionRescues++;

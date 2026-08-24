@@ -86,7 +86,9 @@ function successRate(inlierRatio: number, trials = 8, ranked = false) {
   return ok / trials;
 }
 
-describe("verification at the inlier ratios real footage actually has", () => {
+// Each rate is a Monte-Carlo loop over full RANSAC budgets — a few seconds
+// alone, but far past the default 5s timeout when the machine is busy.
+describe("verification at the inlier ratios real footage actually has", { timeout: 180_000 }, () => {
   it("succeeds on clean data, as synthetic test footage always did", () => {
     expect(successRate(0.9)).toBe(1);
   });
