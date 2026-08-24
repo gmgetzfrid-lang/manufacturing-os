@@ -363,8 +363,13 @@ async function run(
   for (let i = 0; i < colorBudget; i++) {
     const k = kept[Math.floor((i * kept.length) / colorBudget)];
     if (colorCache.has(k.meta.index)) continue;
-    const rgb = await store.readRgb(k.meta.index, k.grayBytes, k.rgbBytes);
-    colorCache.set(k.meta.index, { rgb, w: k.colorWidth, h: k.colorHeight });
+    try {
+      const rgb = await store.readRgb(k.meta.index, k.grayBytes, k.rgbBytes);
+      colorCache.set(k.meta.index, { rgb, w: k.colorWidth, h: k.colorHeight });
+    } catch {
+      // Colour is cosmetic — a frame that cannot be read back just leaves its
+      // points grey rather than stopping the reconstruction.
+    }
   }
 
   const sfm = await reconstruct(frameMetas, featureList, sampleColor, {
@@ -497,12 +502,32 @@ async function run(
     const dh = Math.max(8, Math.round(first.meta.height * denseScale));
 
     // Downscale a stored frame to the densification resolution.
+    let viewReadFailures = 0;
+    let firstViewReadError: string | null = null;
     const loadDenseView = async (frameIndex: number): Promise<DenseView | null> => {
       const k = byIndex.get(frameIndex);
       const pose = sfm.poses.get(frameIndex);
       if (!k || !pose) return null;
-      const gray = await store.readGray(frameIndex, k.grayBytes);
-      const rgb = await store.readRgb(frameIndex, k.grayBytes, k.rgbBytes);
+      let gray: Uint8Array;
+      let rgb: Uint8Array;
+      try {
+        gray = await store.readGray(frameIndex, k.grayBytes);
+        rgb = await store.readRgb(frameIndex, k.grayBytes, k.rgbBytes);
+      } catch (err) {
+        // One vanished frame must not kill a reconstruction that already
+        // succeeded — skip the view, say so, and only give up if storage
+        // turns out to be broadly unreadable.
+        viewReadFailures++;
+        if (!firstViewReadError) {
+          firstViewReadError = err instanceof Error ? err.message : String(err);
+          warn(
+            "storage-read",
+            `Some stored frames could not be read back during densification and their ` +
+            `views were skipped. First failure: ${firstViewReadError}`,
+          );
+        }
+        return null;
+      }
 
       const outGray = new Uint8Array(dw * dh);
       const outRgb = new Uint8Array(dw * dh * 3);
@@ -662,6 +687,14 @@ async function run(
       );
     }
 
+    if (sweptOk === 0 && viewReadFailures > 0) {
+      throw new Error(
+        `Densification could not read the stored frames back: ${viewReadFailures} view ` +
+        `reads failed and none succeeded. The reconstruction itself worked (` +
+        `${sfm.registeredFrames.length} cameras), but the browser lost the decoded ` +
+        `frames it needed for the detail pass. First failure: ${firstViewReadError}`,
+      );
+    }
     densePoints = fuser.result(cfg.dense.minConsistentViews);
     log("info", `Dense reconstruction: ${densePoints.count.toLocaleString()} points from ${sweptOk} views`);
   }

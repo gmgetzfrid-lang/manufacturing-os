@@ -50,28 +50,52 @@ export class FrameStore {
   }
 
   async write(index: number, gray: Uint8Array, rgb: Uint8Array): Promise<void> {
-    const d = await this.dirHandle();
-    const file = await d.getFileHandle(`${index}.bin`, { create: true });
-    const writable = await file.createWritable();
+    return this.explain("storing", index, async () => {
+      const d = await this.dirHandle();
+      const file = await d.getFileHandle(`${index}.bin`, { create: true });
+      const writable = await file.createWritable();
+      try {
+        // The DOM typings insist on ArrayBuffer-backed views; these always are.
+        await writable.write(gray as unknown as BufferSource);
+        await writable.write(rgb as unknown as BufferSource);
+      } finally {
+        await writable.close();
+      }
+    });
+  }
+
+  /** Rethrow a storage failure with the context a bug report needs: which
+   *  frame, which operation, and how full the origin's storage was — a bare
+   *  "file not found" from deep in a 25-minute run points at nothing. */
+  private async explain<T>(op: string, index: number, work: () => Promise<T>): Promise<T> {
     try {
-      // The DOM typings insist on ArrayBuffer-backed views; these always are.
-      await writable.write(gray as unknown as BufferSource);
-      await writable.write(rgb as unknown as BufferSource);
-    } finally {
-      await writable.close();
+      return await work();
+    } catch (err) {
+      let usage = "unknown";
+      try {
+        const est = await navigator.storage.estimate();
+        usage = `${Math.round((est.usage ?? 0) / 1e6)} of ${Math.round((est.quota ?? 0) / 1e6)}MB used`;
+      } catch { /* estimate unavailable; the original error still stands */ }
+      throw new Error(
+        `Browser storage failed while ${op} frame ${index} (${usage}): ${String(err)}`,
+      );
     }
   }
 
   async readGray(index: number, byteLength: number): Promise<Uint8Array> {
-    const d = await this.dirHandle();
-    const file = await (await d.getFileHandle(`${index}.bin`)).getFile();
-    return new Uint8Array(await file.slice(0, byteLength).arrayBuffer());
+    return this.explain("reading", index, async () => {
+      const d = await this.dirHandle();
+      const file = await (await d.getFileHandle(`${index}.bin`)).getFile();
+      return new Uint8Array(await file.slice(0, byteLength).arrayBuffer());
+    });
   }
 
   async readRgb(index: number, grayBytes: number, rgbBytes: number): Promise<Uint8Array> {
-    const d = await this.dirHandle();
-    const file = await (await d.getFileHandle(`${index}.bin`)).getFile();
-    return new Uint8Array(await file.slice(grayBytes, grayBytes + rgbBytes).arrayBuffer());
+    return this.explain("reading", index, async () => {
+      const d = await this.dirHandle();
+      const file = await (await d.getFileHandle(`${index}.bin`)).getFile();
+      return new Uint8Array(await file.slice(grayBytes, grayBytes + rgbBytes).arrayBuffer());
+    });
   }
 
   async clear(): Promise<void> {
