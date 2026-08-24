@@ -105,6 +105,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 
+  // XEDGE-4: retention deletes by age under the destination's prefix. With no
+  // prefix the purge would scan the customer's whole bucket, so the pair is
+  // refused at write time (the runner ALSO refuses at purge time — this makes
+  // the constraint visible when the destination is configured, not at 5 AM).
+  if (body.retention_days && Number(body.retention_days) > 0 && !String(body.prefix ?? "").trim()) {
+    return NextResponse.json(
+      { error: "Retention requires a prefix: the purge only ever deletes this app's export archives under the destination's own prefix. Set a Prefix (e.g. \"backups/manufacturing-os\") or clear Retention." },
+      { status: 400 },
+    );
+  }
+
   const nextRunAt = computeNextRunAt({
     schedule_kind: body.schedule_kind || "manual",
     schedule_hour_utc: body.schedule_hour_utc,

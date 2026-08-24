@@ -54,6 +54,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   ];
   for (const f of fields) if (f in body) updates[f] = body[f];
 
+  // XEDGE-4: validate the RESULTING (prefix, retention_days) pair — a patch
+  // that adds retention to a prefix-less destination, or clears the prefix on
+  // a retained one, would arm a purge that scans the whole bucket.
+  if ("retention_days" in body || "prefix" in body) {
+    const { data: current } = await auth.admin
+      .from("export_destinations")
+      .select("prefix, retention_days")
+      .eq("id", id).eq("org_id", orgId)
+      .maybeSingle();
+    const nextPrefix = String(("prefix" in body ? body.prefix : current?.prefix) ?? "").trim();
+    const nextRetention = Number(("retention_days" in body ? body.retention_days : current?.retention_days) ?? 0);
+    if (nextRetention > 0 && !nextPrefix) {
+      return NextResponse.json(
+        { error: "Retention requires a prefix: the purge only ever deletes this app's export archives under the destination's own prefix. Set a Prefix or clear Retention." },
+        { status: 400 },
+      );
+    }
+  }
+
   // Re-encrypt creds only if provided
   try {
     if (body.access_key_id !== undefined && body.access_key_id !== null && body.access_key_id !== "") {

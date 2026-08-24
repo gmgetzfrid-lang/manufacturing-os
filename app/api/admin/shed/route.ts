@@ -60,7 +60,23 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
     .order("created_at", { ascending: false })
     .order("id", { ascending: true }) // deterministic tiebreaker for identical created_at
     .limit(8000);
-  return ((data as ShedCandidateRow[] | null) ?? []).filter((r) => r.record_id);
+  const rows = ((data as ShedCandidateRow[] | null) ?? []).filter((r) => r.record_id);
+
+  // RET-1: a version whose parent document is under LEGAL HOLD is never a shed
+  // candidate. The hold triggers guard row DELETEs only — the shed deletes R2
+  // bytes, which they never see — so the hold must be honored here. Fail
+  // CLOSED: if the hold read errors, offer no candidates rather than shedding
+  // possibly-held evidence.
+  const { data: held, error: heldErr } = await sb
+    .from("documents")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("legal_hold", true);
+  if (heldErr) {
+    throw new Error(`Couldn't verify legal holds (${heldErr.message}); refusing to select candidates.`);
+  }
+  const heldIds = new Set(((held as Array<{ id: string }> | null) ?? []).map((d) => d.id));
+  return heldIds.size === 0 ? rows : rows.filter((r) => !heldIds.has(r.record_id as string));
 }
 
 export async function GET(req: NextRequest) {
@@ -70,7 +86,12 @@ export async function GET(req: NextRequest) {
   const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
-  const rows = await fetchCandidates(actor.admin, orgId);
+  let rows: ShedCandidateRow[];
+  try {
+    rows = await fetchCandidates(actor.admin, orgId);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 503 });
+  }
   const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
 
   return NextResponse.json({
@@ -102,7 +123,12 @@ export async function POST(req: NextRequest) {
 
   const keep = clampKeep(body.keep);
   const targetBytes = clampTarget(body.targetBytes);
-  const rows = await fetchCandidates(sb, orgId);
+  let rows: ShedCandidateRow[];
+  try {
+    rows = await fetchCandidates(sb, orgId);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 503 });
+  }
   const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
   if (sel.totalCount === 0) {
     return NextResponse.json({ error: "Nothing eligible to shed in this window." }, { status: 400 });

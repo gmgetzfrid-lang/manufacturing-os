@@ -57,12 +57,47 @@ export async function POST(req: NextRequest) {
   // safe and cleans up whatever a previous partial failure left billing.
   const { data: rows } = await sb
     .from("document_versions")
-    .select("id, file_url, archived_at")
+    .select("id, file_url, archived_at, record_id")
     .eq("org_id", orgId)
     .eq("archive_id", archiveId);
-  const versions = ((rows as Array<{ id: string; file_url: string | null; archived_at: string | null }> | null) ?? []).filter((v) => v.file_url);
+  let versions = ((rows as Array<{ id: string; file_url: string | null; archived_at: string | null; record_id: string | null }> | null) ?? []).filter((v) => v.file_url);
   if (versions.length === 0) {
     return NextResponse.json({ ok: true, reclaimed: 0, keysDeleted: 0, errors: [], note: "Nothing linked to this archive (already discarded?)." });
+  }
+
+  // RET-1: re-check LEGAL HOLD at the destructive step. Produce excludes held
+  // documents, but a hold placed between produce and commit must still protect
+  // the bytes — the offline zip in an admin's folder is not custody for
+  // evidence under hold. Held versions are left linked, unstamped and
+  // undeleted; they surface in the note so the admin knows why the reclaim
+  // came up short. Fail CLOSED on the hold read: destruction waits.
+  let heldSkipped = 0;
+  {
+    const parentIds = Array.from(new Set(versions.map((v) => v.record_id).filter(Boolean))) as string[];
+    const { data: heldDocs, error: heldErr } = await sb
+      .from("documents")
+      .select("id")
+      .in("id", parentIds)
+      .eq("legal_hold", true);
+    if (heldErr) {
+      return NextResponse.json(
+        { error: `Couldn't verify legal holds (${heldErr.message}); nothing was freed.` },
+        { status: 503 },
+      );
+    }
+    const heldIds = new Set(((heldDocs as Array<{ id: string }> | null) ?? []).map((d) => d.id));
+    if (heldIds.size > 0) {
+      const before = versions.length;
+      versions = versions.filter((v) => !v.record_id || !heldIds.has(v.record_id));
+      heldSkipped = before - versions.length;
+      if (versions.length === 0) {
+        return NextResponse.json({
+          ok: true, reclaimed: 0, keysDeleted: 0, errors: [],
+          heldSkipped,
+          note: `All ${heldSkipped} linked revision(s) belong to documents now under LEGAL HOLD — nothing was freed.`,
+        });
+      }
+    }
   }
   const unstamped = versions.filter((v) => !v.archived_at);
 
@@ -119,5 +154,11 @@ export async function POST(req: NextRequest) {
     });
   } catch { /* best-effort */ }
 
-  return NextResponse.json({ ok: true, archiveId, reclaimed, keysDeleted: deletedKeys, errors });
+  return NextResponse.json({
+    ok: true, archiveId, reclaimed, keysDeleted: deletedKeys, errors,
+    heldSkipped,
+    ...(heldSkipped > 0
+      ? { note: `${heldSkipped} revision(s) under LEGAL HOLD were left untouched.` }
+      : {}),
+  });
 }
