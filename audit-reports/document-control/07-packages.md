@@ -191,7 +191,7 @@ lib/docPack.ts:51-54 — `.select("id, org_id, document_number, title, name, rev
 - Done-when: (1) UPDATE owner/controller-scoped, identity frozen by trigger ✓; (2) INSERT binds package + document to the row org ✓; (3) verify-package joins on the package org and ignores mismatched rows ✓; (4) a Viewer cannot move a pin ✓.
 - Files: `supabase/migrations/20261032_dc_phase7_ack_and_pin_integrity.sql`, `app/api/verify-package/route.ts`, `lib/workPackages.ts`.
 - Tests: `lib/__tests__/phase7AckPinMigration.test.ts` (org-binding on INSERT, owner/controller on UPDATE+DELETE, pin-must-name-own-document trigger, identity immutability, search_path pins, service-role pass-throughs); `lib/__tests__/verifyPackageSnapshot.test.ts` continues to pin the snapshot-vs-live verdict logic.
-- ⚠ **Migration `20261032` awaiting hand-apply** — the DB half is not live until the user pastes it; the app halves are deploy-safe against the old policies (they only narrow expectations).
+- **Applied & verified live 2026-08-24:** `20261032` — 4-point probe all true (ack guard installed; ack INSERT forbids rows born acknowledged; pack-pin INSERT org-bound; pack-pin guard installed). A Viewer session can no longer move, inject, or delete a pin.
 
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260828_integrity_hardening.sql:285-292`, `supabase/migrations/20260825_work_packages_acks.sql:86-95`, `supabase/migrations/20260825_work_packages_acks.sql:70-79`, `app/api/verify-package/route.ts:38-52`, `app/(protected)/packages/page.tsx:33`

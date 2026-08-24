@@ -126,7 +126,8 @@ UPDATE/DELETE need the package owner or Admin/DocCtrl, a pin must name a
 version of its own document, and /api/verify-package filters everything by
 the package's org). Ship loop green: `tsc`, `eslint`, **1536 vitest** (23
 new), full `next build`. Migration
-`20261032_dc_phase7_ack_and_pin_integrity.sql` **awaiting hand-apply**.
+`20261032_dc_phase7_ack_and_pin_integrity.sql` **applied & verified live
+2026-08-24** (4-point probe all true).
 Remaining in Phase 7: `PKG-3`, `REV-2`, `DIST-1` remainder + XEDGE
 extensions (deferred behind an in-flight push of `lib/revisions.ts`).
 

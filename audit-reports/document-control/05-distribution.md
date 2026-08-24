@@ -108,7 +108,7 @@ app/api/verify/route.ts:89 quoted verbatim; app/verify/[docId]/page.tsx:64 the c
 - Done-when: (1) acknowledged_at transitions require the recipient — enforced by trigger rather than policy-split, with the reasoning above ✓; (2) acknowledge() takes the uid and pins the client write ✓; (3) `acknowledged_by` records who stamped ✓.
 - Files: `supabase/migrations/20261032_dc_phase7_ack_and_pin_integrity.sql`, `lib/distributionAcks.ts`, `components/documents/DistributionAcks.tsx`.
 - Tests: `lib/__tests__/distributionAckPin.test.ts` (update pinned to own still-pending row; zero rows throws; DB error surfaces); `lib/__tests__/phase7AckPinMigration.test.ts` (INSERT forbids born-acknowledged rows, identity immutability, recipient-only stamp, acknowledged_by recording, search_path pin, service-role pass).
-- ⚠ **Migration `20261032` awaiting hand-apply** — until pasted, the DB hole is open; the app half already refuses to forge from the shipped UI.
+- **Applied & verified live 2026-08-24:** `20261032` — 4-point probe all true (ack guard installed; ack INSERT forbids rows born acknowledged; pack-pin INSERT org-bound; pack-pin guard installed). The forgery door is closed at the database.
 
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260825_work_packages_acks.sql:131-139`, `lib/distributionAcks.ts:186-193`, `supabase/migrations/20260828_integrity_hardening.sql:248-281`, `lib/distributionAcks.ts:57-73`
