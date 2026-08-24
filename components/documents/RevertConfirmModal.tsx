@@ -100,7 +100,7 @@ export default function RevertConfirmModal({
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
               className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
-              placeholder="MOC-2026-0142 (optional)"
+              placeholder="MOC-2026-0142 (required for drawing-class documents)"
             />
           </div>
 
