@@ -171,11 +171,15 @@ export async function loadCapabilityPolicy(
   try {
     const { data } = await (client ?? supabase)
       .from("org_configurations")
-      .select("value")
+      .select("data")
       .eq("org_id", orgId)
       .eq("key", "capability_policy")
       .maybeSingle();
-    const raw = (data?.value as Record<string, unknown> | null) ?? {};
+    // The column is `data` — reading `value` (which does not exist) errored on
+    // every call, so the catch below returned {} and the entire capability
+    // layer was inert (DB-1). Both this read and the SQL org_capability_allows
+    // must use `data`, or the two layers disagree about which column is real.
+    const raw = (data?.data as Record<string, unknown> | null) ?? {};
     // Two stored shapes: canonical {caps, grants}, and the legacy flat
     // {capId: roles[]} from before per-person grants existed.
     const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;
@@ -228,7 +232,7 @@ export async function saveCapabilityPolicy(input: {
   const { error } = await supabase
     .from("org_configurations")
     .upsert(
-      { org_id: input.orgId, key: "capability_policy", value: input.policy, updated_at: new Date().toISOString() },
+      { org_id: input.orgId, key: "capability_policy", data: input.policy, updated_at: new Date().toISOString() },
       { onConflict: "org_id,key" },
     );
   if (error) throw new Error(error.message);
