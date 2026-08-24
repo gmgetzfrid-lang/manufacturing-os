@@ -26,8 +26,7 @@
     },
     "by_status": {
       "OPEN": 114,
-      "BLOCKED": 2,
-      "RESOLVED": 13,
+      "RESOLVED": 15,
       "REFUTED": 3
     }
   },
@@ -77,7 +76,7 @@
       "id": "DB-1",
       "title": "`org_configurations.value` does not exist — the capability layer is inert and the holds policies raise",
       "severity": "CRITICAL",
-      "status": "BLOCKED",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (in code) / SUSPECTED (deployed state may differ)",
       "blast_radius": "availability / access-control",
@@ -108,7 +107,7 @@
       "id": "DB-2",
       "title": "`acl_index_denies` queries `team_members.user_id`; the column is `uid`",
       "severity": "CRITICAL",
-      "status": "BLOCKED",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (defect) / SUSPECTED (runtime blast radius)",
       "blast_radius": "availability / access-control",

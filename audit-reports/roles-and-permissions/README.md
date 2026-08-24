@@ -75,15 +75,17 @@ throughout: `tsc`, `eslint`, **1442 vitest**, full `next build`.
 | `DB-3` / `DEC-1` step 1 | **RESOLVED** — signup seeds `roles:['Admin']`; backfill migration for existing rows. Prerequisite for all additive conversion |
 | `DB-5` | **RESOLVED** — wizard writes `acl_index` and **merges** drawer grants (no over-revocation) |
 | `DB-4` / `OWN-7` / `DEC-10` | **RESOLVED** — expiry-aware index builder + diff-guarded nightly rebuild; window narrowed to one cron cycle, not closed |
-| `DB-1` (CRITICAL) | **BLOCKED** (`DEC-30`) — the two-worlds finding; activates a dormant enforcement rail against unobservable production state. World-determining query + full fix design recorded |
-| `DB-2` (CRITICAL) | **BLOCKED** (`DEC-30`) — one-word fix that turns on a never-executed RESTRICTIVE guard; the required pre-ship activation inventory cannot be run here. Query + design recorded |
+| `DB-1` (CRITICAL) | **RESOLVED** — after the operator ran the inventory. Phantom `value` column → `data` in both the app (`lib/capabilityPolicy.ts`) and the SQL (`org_capability_allows`); defaults + the roles backfill preserve behaviour (no lockout). Migration `20261025` |
+| `DB-2` (CRITICAL) | **RESOLVED** — `acl_index_denies` reads `team_members.uid` (was the phantom `user_id`). Inventory: 691 deny docs, no new lockouts. Migration `20261025` |
 | `DEC-1` steps 2–3 | **Deferred** — the SQL rank function + `org_members` trigger "touches every membership row"; depends on `DB-3`'s backfill being applied first, and is safest shipped as its own change |
 
-**Why the two CRITICALs are BLOCKED, not fixed:** both enable dormant
-guards/enforcement against production data this session cannot observe. Per the
-user's paramount "do not regress" constraint and `DEC-30`, that is the correct
-outcome — each carries its unblocking query and complete fix design. A `BLOCKED`
-finding is a result, not a gap.
+**Note on DB-1/DB-2:** these were initially held as `BLOCKED` per `DEC-30`
+because they can activate dormant enforcement against production state I could
+not observe. Once the operator ran the inventory query (691 deny documents),
+the analysis showed the fixes preserve behaviour — shipped defaults keep holds
+open, the roles backfill keeps Admin force-release working, and no new document
+lockouts result — so both were completed. Migration `20261025` (apply after
+`20261024`).
 
 ### Phase 1 — the unauthenticated & cross-tenant doors (highest severity)
 
