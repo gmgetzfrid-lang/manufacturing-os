@@ -32,7 +32,15 @@ The destructive paths, and what re-checks state before destroying.
 ## RET-1 · A legal hold does not stop the space-saver: the shed permanently deletes the R2 binaries of held records
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 6 — the destructive deletes).** Confirmed: the hold was enforced only against row DELETEs (BEFORE DELETE triggers), which the shed never performs — it deletes R2 bytes. The hold is now honored at both shed steps:
+- **Candidates (done-when 1):** `fetchCandidates` reads the org's `legal_hold = true` documents and excludes every version whose parent is held, before eligibility/selection. **Fail closed:** if the hold read errors, no candidates are offered (503) rather than shedding possibly-held evidence.
+- **Commit (done-when 2):** the destructive step re-reads the linked versions' parent documents — a hold placed BETWEEN produce and commit still protects the bytes. Held versions are left linked, unstamped and undeleted; the response reports `heldSkipped` and says why the reclaim came up short. Fail closed on the hold read (503, nothing freed).
+- Done-when 3: `lib/__tests__/shedLegalHold.test.ts` — candidates exclude a held document's revisions (an unheld sibling still offered); candidates fail closed on a hold-read error; commit skips a version held after produce (no stamp, no R2 delete) while freeing the unheld one; commit frees nothing when everything is held; commit fails closed on a hold-read error.
+- Files: `app/api/admin/shed/route.ts`, `app/api/admin/shed/commit/route.ts`
+- **What this brought to light:** the verifier's HIGH framing stands — produce still captures held bytes into the offline zip (that is its job, and the zip predates the hold check at commit); what is closed is the DESTRUCTION path. The version rows, checksums and the archive catalog survive throughout.
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/shed/route.ts:47-64`, `lib/shed.ts:56-67`, `app/api/admin/shed/commit/route.ts:58-110`, `supabase/migrations/20260826_legal_hold_delete_guard.sql:29-56`, `lib/retention.ts:9-10`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The claim is right on every mechanical point — the hold is invisible to the shed. I propose HIGH rather than CRITICAL: the two-step design captures the bytes into a produced ZIP before commit (commit refuses when the catalog note is still "producing…", route.ts:41-51), only superseded revisions beyond keep-N are eligible, and the version rows plus checksums survive. So this is a hold bypass that moves held evidence out of live storage into an admin's offline file, not unconditional destruction of it. The report's own 'Verifier correction' note already concedes this framing while leaving the severity at CRITICAL.
@@ -62,7 +70,10 @@ app/api/admin/shed/route.ts:52-54 `.from("document_versions").select("id, file_u
 ## RET-2 · /api/storage/delete lets any active member destroy any object in their org — no role check, no safe-key gate, no records-management check, and zero callers
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24 — cross-area closure, fixed as roles-and-permissions `SURF-2` and hardened again in that area's adversarial-review round).** Every limb of this finding is closed in `app/api/storage/delete/route.ts`: the caller must be an Admin/DocCtrl of the key's org (read additively); `assertSafeStorageKey` runs before any prefix reasoning and non-org-prefixed keys are refused; the key resolves to its document and a legal hold or unreleased `document_holds` row refuses with 423, **fail closed** (503) on any lookup error; and a `STORAGE_OBJECT_DELETE` audit row is written BEFORE destruction, with the route refusing when the custody record cannot be written. Tests: `lib/__tests__/storageDeleteRoute.test.ts` (9 cases). See `../roles-and-permissions/09-non-document-surfaces.md` (`SURF-2`) for the full record.
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/delete/route.ts:6-45`, `lib/storage.ts:442-450`, `lib/storageKey.ts:1-16`, `lib/storageKey.ts:40-52`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on all four sub-claims including the absence ones. Note the storage-key gate matters here more than anywhere: lib/storageKey.ts:6-12 documents precisely this authorize-the-first-orgs-prefix-then-act-verbatim pattern as the reason the validator exists, and this is the one route that skips it. HIGH is appropriate — an unused surface that lets a Viewer permanently destroy the bytes of a legal-hold-protected current revision while the DB row keeps reporting the document as Issued.
