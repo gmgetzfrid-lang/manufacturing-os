@@ -1146,8 +1146,14 @@ export async function reconstruct(
     const needed = basin.length >= 4
       ? Math.max(4, Math.ceil(basin.length * 0.6))
       : basin.length;
-    if (typeof globalThis !== "undefined" && (globalThis as Record<string, unknown>).__COMPOSE_DEBUG) {
-      console.log(`[compose] ${anchorFrame}->${candidate} obs=${scaleObs.length} s=${bestS.toFixed(3)} basin=${basin.length} strict=${strict.length} need=${needed}`);
+    if (cfg.sfm.debugCompose) {
+      const errs = basin.map((c) => reprojPx(pose, c)).sort((x, y) => x - y);
+      const med = errs.length ? errs[errs.length >> 1] : Infinity;
+      console.log(
+        `[compose] ${anchorFrame}->${candidate} matches=${bestPair.matches.length} ` +
+        `obs=${scaleObs.length} s=${bestS.toFixed(3)} basin=${basin.length} ` +
+        `strict=${strict.length}/${needed} medPx=${med.toFixed(1)}`,
+      );
     }
     if (strict.length < needed) {
       composeStats.strictGate++;

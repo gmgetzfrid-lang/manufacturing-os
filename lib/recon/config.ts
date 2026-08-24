@@ -83,6 +83,8 @@ export interface ReconConfig {
     globalBaIterations: number;
     /** Minimum 2D-3D correspondences to register a frame by PnP. */
     minPnpInliers: number;
+    /** Log every composition bridge attempt to the console (development only). */
+    debugCompose?: boolean;
   };
 
   /** Densification. */
