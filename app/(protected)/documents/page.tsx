@@ -89,6 +89,36 @@ export default function DocumentsHomePage() {
     return () => { alive = false; };
   }, [activeOrgId]);
 
+  // Short-link resolution (EGRESS-2). `/d/<number>` redirects here with `?d=`;
+  // we resolve the drawing number CLIENT-SIDE under the caller's own session,
+  // so org scope and the document ACL are enforced by RLS — never by a
+  // service-role oracle. An exact normalized match deep-links into the viewer;
+  // anything else falls back to a pre-filled search, disclosing nothing beyond
+  // what this user could already search for.
+  useEffect(() => {
+    if (!activeOrgId || typeof window === "undefined") return;
+    const raw = new URLSearchParams(window.location.search).get("d");
+    if (!raw) return;
+    const norm = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    let alive = true;
+    void (async () => {
+      let hit: DocumentRow | undefined;
+      try {
+        const rows = await searchDocuments({ orgId: activeOrgId, query: raw, limit: 25 });
+        hit = rows.find((r) => (r.document_number ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "") === norm);
+      } catch { /* fall through to search */ }
+      if (!alive) return;
+      if (hit) {
+        router.replace(`/documents/${hit.library_id}?doc=${hit.id}`);
+      } else {
+        // No exact match the caller can see — pre-fill search, drop the ?d=.
+        setSearch(raw);
+        router.replace("/documents");
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId, router]);
+
   const saveLibraryAppearance = async (libId: string, v: CustomizeValue) => {
     const existing = libraries.find((l) => l._id === libId)?.pageConfig ?? {};
     const height = v.headerHeight === "auto" ? undefined : v.headerHeight;
