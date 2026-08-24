@@ -1,3 +1,5 @@
+> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T12:00:00Z
+
 # 11 · Edges, modalities & load-bearing invariants
 
 **14 findings** — 1 CRITICAL · 5 HIGH · 8 MEDIUM.

@@ -1,3 +1,5 @@
+> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T12:00:00Z
+
 # 09 · Content egress
 
 **8 findings** — 1 CRITICAL · 2 HIGH · 5 MEDIUM.

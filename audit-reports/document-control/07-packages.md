@@ -1,3 +1,5 @@
+> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T12:00:00Z
+
 # 07 · Doc packs, work packages & the field bundle
 
 **14 findings** — 5 CRITICAL · 5 HIGH · 4 MEDIUM.
