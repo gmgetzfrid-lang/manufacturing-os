@@ -28,7 +28,8 @@
 -- Service-role writes bypass the policies but NOT the trigger — no
 -- service-role path repoints shares.
 --
--- ⚠ APPLIED BY HAND (DEC-30). Idempotent; safe to re-run.
+-- ✅ APPLIED & VERIFIED in the live database on 2026-08-24 (the three-point
+-- probe below returned all true). Idempotent; harmless to re-run.
 
 BEGIN;
 

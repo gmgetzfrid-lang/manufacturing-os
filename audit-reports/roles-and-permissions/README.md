@@ -96,8 +96,8 @@ findings' own records (`DB-4`, `DB-5`, `DB-3`, `DB-6`, `SURF-2`, `SURF-5`,
   catch — it now writes custody BEFORE `r2.send` and fails closed on it.
 - `document_shares.created_by` — the share's authority anchor — was
   forgeable at INSERT and repointable at UPDATE:
-  **new migration `20261026_document_shares_anchor_integrity.sql`, PENDING
-  HAND-APPLY** (the only unapplied migration this round produced).
+  **new migration `20261026_document_shares_anchor_integrity.sql`, applied &
+  verified live 2026-08-24** (three-point probe all true).
 - The `searchPathPin` lint censused re-created functions as dropped (fail
   open); its parser is corrected with drift self-checks.
 
