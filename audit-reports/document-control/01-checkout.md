@@ -72,7 +72,7 @@ lib/checkinOutcomes.ts:295-299 is the other one, and it is a pure function with 
 - Done-when: (1) DELETE of another's session is controller-only ✓; (2) the release path has exactly one gated route — DELETE now hits the guard, closing the bypass ✓; (3) outcome columns are writable only by the session's own user (or a force_release holder / service role) ✓.
 - Files: `supabase/migrations/20261029_dc_phase3_permissive_rls.sql`
 - Tests: `lib/__tests__/phase3RlsMigration.test.ts` (migration presence/shape). The runtime refusal test needs the live DB.
-- **Pending hand-apply (DEC-30):** `20261029`.
+- **Applied & verified live 2026-08-24:** `20261029` (both guard probes true).
 - **What this brought to light:** the guard uses `auth.uid() IS NULL` to trust service-role/cron writes, matching the existing release rail's pattern — a consistent "trusted backend, gated user" seam across all checkout triggers.
 
 - **Verification:** CONFIRMED
@@ -117,7 +117,7 @@ CREATE POLICY "checkout_sessions_org_access" ON checkout_sessions FOR ALL
 - Done-when: (1) a change to `checked_out_by` / `current_lock_id` by anyone but the current holder / a force_release holder / the service role is rejected ✓; (2) the legitimate CAS claim on a null holder, the heir transfer, and clear-on-last-out are all permitted ✓.
 - Files: `supabase/migrations/20261029_dc_phase3_permissive_rls.sql`
 - Tests: `lib/__tests__/phase3RlsMigration.test.ts` (migration shape). Runtime refusal needs the live DB.
-- **Pending hand-apply (DEC-30):** `20261029`.
+- **Applied & verified live 2026-08-24:** `20261029` (both guard probes true).
 - **What this brought to light:** the lock authority now has ONE gated write path shared by the session rail and the documents guard, both keyed on `checkout.force_release`, so a controller delegation grant governs every route to another user's lock at once. Cosmetic columns (`checked_out_by_name`, `active_collaborators`) are intentionally unguarded — they carry no authority and follow the holder change.
 
 - **Verification:** CONFIRMED

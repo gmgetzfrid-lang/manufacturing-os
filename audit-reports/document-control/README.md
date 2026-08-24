@@ -66,8 +66,9 @@ seize another's lock by PATCHing `documents.checked_out_by` → a BEFORE UPDATE
 guard permitting only claim / holder-transfer / force-release). Fixed with
 trigger guards, not policy tightening, so the app's legitimate cross-user writes
 (shared-episode links, heir transfer) keep working. Ship loop green: `tsc`,
-`eslint`, **1490 vitest**, full `next build`. **One migration to hand-apply:**
-`20261029_dc_phase3_permissive_rls.sql`.
+`eslint`, **1490 vitest**, full `next build`. Migration
+`20261029_dc_phase3_permissive_rls.sql` **applied & verified live 2026-08-24**
+(both guard probes true).
 
 | # | Report | n | Note |
 |---|---|---|---|
