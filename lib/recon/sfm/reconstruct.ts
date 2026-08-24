@@ -331,6 +331,11 @@ export async function reconstruct(
   // things: too few raw matches is a features-and-overlap problem, too few
   // inliers after RANSAC is a geometry problem.
   const reject = { noFeatures: 0, fewMatches: 0, noModel: 0, fewInliers: 0 };
+  /** Last outcome per pair, so a failure can name exactly where a chain broke. */
+  const pairOutcome = new Map<string, string>();
+  const pairKey = (a: number, b: number) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+  /** Where the winning attempt's chain broke; set after growth, for diagnostics. */
+  let chainNote = "";
   /** Pairs whose support was recovered by re-matching along epipolar lines. */
   let guidedRescues = 0;
   /** Frames registered by composing a pair pose when PnP could not place them. */
@@ -362,6 +367,7 @@ export async function reconstruct(
     const fb = featureByIndex.get(pair.b);
     if (!fa || !fb || fa.count < 20 || fb.count < 20) {
       if (count) reject.noFeatures++;
+      pairOutcome.set(pairKey(pair.a, pair.b), "a frame had almost no features");
       return null;
     }
 
@@ -379,6 +385,7 @@ export async function reconstruct(
     }
     if (matches.length < minMatches) {
       if (count) reject.fewMatches++;
+      pairOutcome.set(pairKey(pair.a, pair.b), `only ${matches.length} raw matches`);
       return null;
     }
 
@@ -478,10 +485,18 @@ export async function reconstruct(
 
     if (!inlierFlags) {
       if (count) reject.noModel++;
+      pairOutcome.set(
+        pairKey(pair.a, pair.b),
+        `no consistent geometry among ${matches.length} matches`,
+      );
       return null;
     }
     if (kept < minInliers) {
       if (count) reject.fewInliers++;
+      pairOutcome.set(
+        pairKey(pair.a, pair.b),
+        `only ${kept} of ${matches.length} matches were geometrically consistent`,
+      );
       return null;
     }
 
@@ -493,6 +508,12 @@ export async function reconstruct(
         if (inlierFlags[k]) inlierMatches.push([matches[k].queryIndex, matches[k].trainIndex]);
       }
     }
+    pairOutcome.set(
+      pairKey(pair.a, pair.b),
+      `the pair verified with ${inlierMatches.length} consistent matches` +
+      `${degenerate ? " but was planar or rotation-only" : ""}, yet neither PnP nor ` +
+      "composition could place the next frame",
+    );
     return {
       a: pair.a, b: pair.b, source: pair.source as VerifiedPairInternal["source"],
       crossClip: clipOf.get(pair.a) !== clipOf.get(pair.b),
@@ -620,7 +641,8 @@ export async function reconstruct(
       ? `; of ${composeStats.bridges} composition bridges tried, ${composeStats.fewAnchors} ` +
         `had under 3 triangulated anchor points, ${composeStats.scaleVote} failed the scale ` +
         `vote, ${composeStats.strictGate} failed reprojection after refinement`
-      : "");
+      : "") +
+    chainNote;
 
   if (verified.length === 0) {
     throw new Error(
@@ -1280,6 +1302,49 @@ export async function reconstruct(
   poses = bestPoses;
   focal = bestFocal;
   gaugeFrame = bestGauge;
+
+  // Name WHERE the chain broke, in capture order — the difference between
+  // "reconstruction failed" and knowing which second of video to look at.
+  {
+    const byClip = new Map<string, FrameMeta[]>();
+    for (const f of frames) {
+      const arr = byClip.get(f.clipId) ?? [];
+      arr.push(f);
+      byClip.set(f.clipId, arr);
+    }
+    const notes: string[] = [];
+    for (const [clipId, arr] of byClip) {
+      arr.sort((x, y) => x.orderInClip - y.orderInClip);
+      const runs: Array<[number, number]> = [];
+      for (let i = 0; i < arr.length; i++) {
+        if (!poses.has(arr[i].index)) continue;
+        if (runs.length && runs[runs.length - 1][1] === i - 1) runs[runs.length - 1][1] = i;
+        else runs.push([i, i]);
+      }
+      if (!runs.length) continue;
+      const runStr = runs
+        .map(([s, e]) => (s === e ? `${s + 1}` : `${s + 1}–${e + 1}`))
+        .join(", ");
+      const breaks: string[] = [];
+      for (const [s, e] of runs) {
+        for (const [f, g] of [[s - 1, s], [e, e + 1]] as const) {
+          if (f < 0 || g >= arr.length) continue;
+          if (poses.has(arr[f].index) && poses.has(arr[g].index)) continue;
+          const why = pairOutcome.get(pairKey(arr[f].index, arr[g].index)) ??
+            "the pair was never even proposed";
+          breaks.push(`${f + 1}→${g + 1} (${why})`);
+        }
+      }
+      notes.push(
+        `${clipId}: placed kept frames ${runStr} of ${arr.length}` +
+        (breaks.length
+          ? `; the chain broke at ${breaks.slice(0, 6).join(", ")}` +
+            (breaks.length > 6 ? `, and ${breaks.length - 6} more` : "")
+          : ""),
+      );
+    }
+    chainNote = notes.length ? `; ${notes.join("; ")}` : "";
+  }
 
   if (poses.size < 3) {
     const bestConditioned = verified.reduce((m, p) => Math.max(m, p.wellConditioned), 0);
