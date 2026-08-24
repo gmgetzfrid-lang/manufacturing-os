@@ -1,5 +1,7 @@
 # 10 · Content egress — every door content can leave through
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 The document ACL is enforced at the database as a `RESTRICTIVE` policy, which is
 genuinely good. This report is about the paths that never reach it.
 

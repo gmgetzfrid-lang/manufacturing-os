@@ -1,5 +1,7 @@
 # 06 · Request workflow & the capability policy layer
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 The 12-status drafting state machine, who may drive each transition, and the
 capability policy that is supposed to make it configurable.
 

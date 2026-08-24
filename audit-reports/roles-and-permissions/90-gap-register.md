@@ -1,5 +1,7 @@
 # 90 · Gap register — build specs
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 **15 capabilities the system needs and does not have.** Six were stated
 requirements from the system's owner; the rest were found during the audit —
 things the code reaches for and cannot do.

@@ -1,5 +1,7 @@
 # 11 · Database authority functions
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 The SQL layer is where authority is actually enforced. This report covers the
 helper functions and policies themselves: what they read, where they contradict
 the application, and where they are broken outright.

@@ -1,5 +1,7 @@
 # 05 · Ownership & publish authority
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 The axis the first pass missed entirely. Library, folder and document ownership
 is a **fifth, independent authority path** — it is not a role, it is not a
 capability, it is not an ACL rule, and it grants the right to publish and

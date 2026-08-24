@@ -1,5 +1,7 @@
 # 09 · Non-document authority surfaces
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 Everything outside the document library and the drafting workflow: membership,
 admin pages, projects, teams, holds, retention, signatures, restore, cron and
 notifications.

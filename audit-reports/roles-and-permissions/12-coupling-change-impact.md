@@ -1,5 +1,7 @@
 # 12 · Coupling & change impact
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 What a change to the role model actually touches, which changes are safe, and
 which look safe and are not.
 

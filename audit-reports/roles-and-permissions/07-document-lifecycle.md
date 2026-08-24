@@ -1,5 +1,7 @@
 # 07 · Document lifecycle & cross-subsystem hand-offs
 
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+
 Every seam where a document originates work in another subsystem, and every
 seam where that work is supposed to come back. Checkout → markup → check-in →
 drafting request → draft → approval → **revision**.
