@@ -40,7 +40,7 @@ Whether the lock is a control or a convention.
 - **Deliberate scope limits, recorded:** only a DECLARED drawing is gated at the DB — the client keeps prompting for unclassified documents, but hard-failing every legacy org's publishes (most rows predate `20261012`'s `doc_class` columns) would be a DEC-30 two-worlds regression. On a pre-20261012 database the class lookup catches `undefined_column` and no-ops rather than 42703-ing every content publish.
 - Files: `supabase/migrations/20261031_dc_phase5_moc_gate.sql`, `lib/revisions.ts` (`supersedeDocument`), `components/documents/RevertConfirmModal.tsx`
 - Tests: `lib/__tests__/mocGateMigration.test.ts` — the gate, the cascade, revert-never-minor, pre-migration tolerance, and the search_path pin.
-- **Pending hand-apply (DEC-30):** `20261031`.
+- **Applied & verified live 2026-08-24:** `20261031` (probe: the gate text present in the live function, search_path still pinned; the Phase-4 reconciliation re-assert returned clean).
 - **What this brought to light:** the verifier's note that `publish_revision` gates only on membership (never per-library publish authority) remains true and is NOT this finding — the publish-authority check lives in the `enforce_document_publish_guard` trigger, which the RPC's promote fires with the caller's `auth.uid()`, so authority IS enforced transactionally at promote time; a branch publish (never promoted) is the residual soft spot, tracked under the RG/REV family.
 
 - **Verification:** CONFIRMED

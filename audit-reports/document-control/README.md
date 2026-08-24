@@ -92,8 +92,8 @@ naive exemption would have waived), and `supersedeDocument` gets the app-side
 equivalent. Only DECLARED drawings are gated (unclassified legacy data must
 not hard-fail; the client still prompts), and the gate no-ops on a
 pre-20261012 database. Ship loop green: `tsc`, `eslint`, **1503 vitest**,
-full `next build`. **One migration to hand-apply:**
-`20261031_dc_phase5_moc_gate.sql`.
+full `next build`. Migration `20261031_dc_phase5_moc_gate.sql`
+**applied & verified live 2026-08-24** (both probes true).
 
 | # | Report | n | Note |
 |---|---|---|---|
