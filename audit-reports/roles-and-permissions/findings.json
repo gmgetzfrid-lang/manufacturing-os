@@ -16,16 +16,18 @@
     "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
   ],
   "totals": {
-    "findings": 124,
+    "findings": 128,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 18,
       "HIGH": 44,
-      "MEDIUM": 62
+      "MEDIUM": 63,
+      "LOW": 3
     },
     "by_status": {
-      "OPEN": 121,
-      "REFUTED": 3
+      "OPEN": 120,
+      "REFUTED": 3,
+      "RESOLVED": 5
     }
   },
   "status_vocabulary": [
@@ -1898,7 +1900,7 @@
       "id": "CHAIN-4",
       "title": "The app's own answer to \"do I have dead roles?\" is stale",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "ux / trust",
@@ -2011,7 +2013,7 @@
       "id": "DB-6",
       "title": "Twenty `SECURITY DEFINER` functions do not set `search_path`, while their neighbours do",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "security",
@@ -2049,6 +2051,31 @@
       ],
       "refuted": false,
       "summary": "The net effect, stated precisely:",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/11-database-authority.md"
+    },
+    {
+      "id": "DB-8",
+      "title": "`REMEDIATION_APPLY_ALL.sql` is a second source of truth that a re-run restores over later hardening",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "security / integrity-of-record",
+      "related": [
+        "DB-6"
+      ],
+      "locations": [
+        "supabase/REMEDIATION_APPLY_ALL.sql:1-8",
+        "supabase/migrations/20261020_pin_search_path.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Phase 2 lands DEC-1's additive fixes in a migration. Months later an operator re-runs REMEDIATIONAPPLYALL.sql after a restore, reverting isorgcontroller to the frozen copy — and the publish path quietly loses whatever the migration added, with no error and no record.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/11-database-authority.md"
     },
@@ -2335,7 +2362,7 @@
       "id": "LIFE-2",
       "title": "`related_ticket_id` is a review-gate waiver that no code path writes — a loaded gun",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "safety",
@@ -2549,7 +2576,7 @@
       "id": "LIFE-13",
       "title": "The document→ticket link is one-way — the ticket page never shows its source document",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "correctness / ux",
@@ -2607,7 +2634,7 @@
       "id": "OWN-9",
       "title": "`DraftingSupervisor` — the role the per-library publish feature was built for — cannot be selected as an ACL subject",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "availability / ux",
@@ -2886,8 +2913,7 @@
       "related": [],
       "locations": [
         "lib/revisions.ts:541",
-        "lib/permissions.ts:134-148",
-        "lib/permissions.ts:150-161",
+        "lib/permissions.ts:134",
         "lib/ownership.ts:130",
         "lib/ownership.ts:19,25",
         "lib/revisions.ts:541,1199"
@@ -3638,6 +3664,87 @@
       "summary": "A DraftingSupervisor's sidebar badge shows 14 items. They open each one and see \"View Only — No Actions Available.\" The badge never clears because it is derived from role + status, not from getActions. Users learn to ignore the badge — which then hides the real work.",
       "area": "roles-and-permissions",
       "report": "audit-reports/roles-and-permissions/06-request-workflow.md"
+    },
+    {
+      "id": "CHAIN-7",
+      "title": "The sidebar shows DocCtrl an admin Users link that the page then denies",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "ux / trust",
+      "related": [
+        "CHAIN-4",
+        "SURF-9"
+      ],
+      "locations": [
+        "components/navigation/Sidebar.tsx:209",
+        "app/(protected)/admin/users/page.tsx:258-260"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A DocCtrl reads the tree, sees the Users link, clicks it to onboard a drafter, is denied, and concludes their permissions are broken — support ticket, or worse, a workaround through a shared Admin login.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/12-coupling-change-impact.md"
+    },
+    {
+      "id": "LIFE-15",
+      "title": "Three producers of `metadata.source_document` write three different shapes",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "correctness",
+      "related": [
+        "LIFE-13",
+        "LIFE-4"
+      ],
+      "locations": [
+        "components/documents/CheckInPanel.tsx:262",
+        "app/(protected)/requests/new/page.tsx:291-297",
+        "lib/transitionIn.ts:322",
+        "lib/sourceDocRef.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A future surface (e.g. the drafting queue) renders \"source: {documentnumber} Rev {rev}\" — and shows blank for every ticket created from transitionIn (no such keys) and \"Rev \" for tickets whose params were empty strings, with no error anywhere.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/07-document-lifecycle.md"
+    },
+    {
+      "id": "OWN-22",
+      "title": "The \"Save As\" library-creation path still births unowned libraries",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": "ux / accountability",
+      "related": [
+        "GAP-12",
+        "DEL-8"
+      ],
+      "locations": [
+        "lib/libraryCollections.ts:120-147",
+        "components/documents/DocumentLinkPicker.tsx:76",
+        "app/(protected)/admin/libraries/LibraryWizard.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A drafter saves a linked drawing into a new library via Save-As; the library lands unowned, its review-cycle reminders route to Admin/DocCtrl, and nobody notices until the unowned count is questioned.",
+      "area": "roles-and-permissions",
+      "report": "audit-reports/roles-and-permissions/05-ownership-publish.md"
     }
   ],
   "gaps_note": "Gaps are build specs for capabilities that do not exist. They are work, but they carry a verdict and a dependency chain rather than a severity — check `verdict` and `depends_on` before starting one. DECLINE and FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is false and the spec names what to do instead. Build order is in 99-fix-sequencing.md.",

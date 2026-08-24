@@ -266,7 +266,26 @@ user's next rev-up.
 ## DB-6 · Twenty `SECURITY DEFINER` functions do not set `search_path`, while their neighbours do
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** `supabase/migrations/20261020_pin_search_path.sql` pins `search_path = public` (the house style — 20260724, 20260810, 20260824 et al.) on every remaining unpinned `SECURITY DEFINER` function via **ALTER FUNCTION, not re-CREATE** — ALTER pins whichever body is actually deployed without touching it, which is the only safe move when four historical bodies of `enforce_document_publish_guard` exist and applied state is unobservable (`DEC-30`). Every entry is guarded with `to_regprocedure(sig) IS NOT NULL`, so the script is idempotent and tolerant of partially-applied databases; a verification query at the end lists anything still unpinned. Two legacy `publish_revision` signatures are included defensively. `publish_revision` itself is pinned at creation by `20261019_publish_revision_drop_dead_param.sql` (the DEC-11 signature change). A lint test now replays the whole migration set and fails when any function's final definition is SECURITY DEFINER, unpinned, and not covered by the ALTER migration — the "Done when" guard for new functions; negative-tested by removing an entry and watching it name the function. `supabase/REMEDIATION_APPLY_ALL.sql` (advertised "safe to RE-RUN") re-creates 7 of these functions and would have silently stripped the pins on re-run — a pin-restoring DO block is appended to it, and the deeper hazard is recorded as `DB-8`.
+- Commit: `2af2ebe`
+- Files: `supabase/migrations/20261020_pin_search_path.sql`, `supabase/migrations/20261019_publish_revision_drop_dead_param.sql`, `supabase/REMEDIATION_APPLY_ALL.sql`, `lib/__tests__/searchPathPin.test.ts`
+- Tests: `lib/__tests__/searchPathPin.test.ts::"every live definer function is pinned at creation or by 20261020_pin_search_path.sql"` (allowlist parsed from the migration itself so they cannot drift) and `::"the ALTER migration's legacy publish_revision entries stay defensive, not load-bearing"`.
+- Reproduced: independent scripted census (final definition per `(name, arity)` over `schema.sql` + all migrations) confirmed every function in the table SECURITY DEFINER and unpinned at its final definition.
+- Verified: Done-when 1 — all live definer functions pinned at creation or via the ALTER migration (census script returns zero). Done-when 2 — the lint test enforces it for new functions. **The live `enforce_document_publish_guard` is the `20260822_review_completion_guard.sql:21` definition** (4th of 4; that migration also re-binds the trigger) — recorded here so the next agent does not re-derive it.
+- Pending migration: `supabase/migrations/20261020_pin_search_path.sql` (apply after `20261019`; both after deploying the code). The repository half is done; the deployed database is unpinned until this is run by hand.
+
+> **Verifier corrections to the count reconciliation above (2026-08-24).** The
+> reconciliation fell into its own trap #1: `publish_revision(11)` is **not
+> live** — `20260828_integrity_hardening.sql:37` DROPs that exact 11-arg
+> signature before creating its replacement, and the replacement has **arity
+> 12** (`p_override_lock` is the 12th parameter), not 13. So the settled
+> census is **55 distinct `(name, arity)`, 39 SECURITY DEFINER, 18 unpinned
+> live** after the DEC-11 signature change (19 before it) — plus the two
+> dead-in-repo-but-maybe-deployed legacy signatures the migration covers
+> defensively. The substance of the finding is unchanged; the "both are live"
+> sentence is what fails.
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:** every one of these is `SECURITY DEFINER` with no `SET search_path`:
@@ -413,6 +432,47 @@ the first fix was meant to help.**
 3. The widening inventory was run and recorded:
    `SELECT uid, role, roles FROM org_members WHERE roles && ARRAY['Admin','DocCtrl'] AND role NOT IN ('Admin','DocCtrl')`.
 4. `ROLE_RANK` is byte-identical to its current value.
+
+---
+
+## DB-8 · `REMEDIATION_APPLY_ALL.sql` is a second source of truth that a re-run restores over later hardening
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** security / integrity-of-record
+- **Locations:**
+  - `supabase/REMEDIATION_APPLY_ALL.sql:1-8` — *"safe to RE-RUN (every statement is CREATE OR REPLACE …)"*
+  - `:54,69,92,126,147,170,178` — re-creates `doc_is_visible`, `my_project_ids`, `is_org_controller`, `can_manage_node`, `documents_guard_access_change`, `is_org_admin`, `is_org_admin_or_manager` from copies frozen at the time the script was written
+  - `supabase/migrations/20261020_pin_search_path.sql` — the pins a re-run would strip (mitigated: a re-pin DO block is now appended to the script)
+- **Related:** `DB-6`
+- *(Found while resolving `DB-6`, 2026-08-24. Checked only by this session — treat per the `author` grade until independently challenged.)*
+
+**Mechanism.** The script duplicates the bodies of seven authority-bearing
+functions outside the migration sequence. `CREATE OR REPLACE` resets a
+function's `proconfig` **and its body** — so any later migration that hardens
+one of these seven (a pin, a membership check, an additive-roles fix) is
+silently reverted the next time someone runs the "safe" script. It is not safe;
+it is safe *as of the day it was frozen*. The `search_path` half is mitigated
+(the appended block re-pins), but a body divergence would not be. Spot-check:
+`is_org_admin_or_manager` is currently equivalent in both sources (both read
+`roles &&` additively), so the hazard is **prospective, not yet realized** —
+DB-6's pins were the first concrete thing a re-run would have undone, and
+Phase 2's additive-role migrations are the next.
+
+**Failure scenario.** Phase 2 lands `DEC-1`'s additive fixes in a migration.
+Months later an operator re-runs `REMEDIATION_APPLY_ALL.sql` after a restore,
+reverting `is_org_controller` to the frozen copy — and the publish path quietly
+loses whatever the migration added, with no error and no record.
+
+**Remediation (illustrative).** Either regenerate the script mechanically from
+the migration set (so it cannot fork), or replace the seven function bodies with
+a header instruction to apply migrations `NNNN+` instead, keeping only the
+table/policy DDL that is genuinely idempotent.
+
+**Done when.** Re-running the script on a fully-migrated database leaves every
+function byte-identical to its final migration definition, or the script no
+longer defines functions at all.
 
 ---
 

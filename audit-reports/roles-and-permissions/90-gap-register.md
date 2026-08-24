@@ -33,7 +33,7 @@ the specific wrong turn an implementing agent would otherwise take.
 | [GAP-9](#gap-9) | Field-verification currency | **BUILD_NARROW** | S | `LIFE-10` |
 | [GAP-10](#gap-10) | A first-class hand-off record | **DECLINE** | — | — |
 | [GAP-11](#gap-11) | Document declares downstream approval requirements | **FOLD_INTO_FINDING** | — | `LIFE-5`, `LIFE-12` |
-| [GAP-12](#gap-12) | Library ownership admin surface | **BUILD** | S | — |
+| [GAP-12](#gap-12) | Library ownership admin surface | **BUILD → BUILT** `98a65d5` | S | — |
 | [GAP-13](#gap-13) | Triage rejection taxonomy | **BUILD_NARROW** | S | — |
 | [GAP-14](#gap-14) | "Profiles" instead of role stacking | **FOLD_INTO_FINDING** | — | `WF-1`, `GAP-1`, `GAP-3` |
 | [GAP-15](#gap-15) | Ownership carries read access | **BUILD** | S | `DEC-7` |
@@ -664,7 +664,42 @@ Fix those three and the stated need is met.
 <a id="gap-12"></a>
 ## GAP-12 · Library ownership has an admin surface
 
-**Verdict: BUILD** · Effort: **S**
+**Verdict: BUILD** · Effort: **S** · **Status: BUILT (2026-08-24)**
+
+> **Build record.** Commit `98a65d5`. All four acceptance criteria hold:
+> 1. **One screen and one export** — the permissions console (retitled
+>    "Content permissions & ownership") shows effective owner + owner-source
+>    on every library, folder and document row, live-resolved from
+>    `owner_user_id` via the new pure `resolveOwnerForNode` (document > folder
+>    > library > team supervisor), and an "Export ownership CSV" button whose
+>    handler runs its own untruncated query (cap 4000, mirroring
+>    `docControlRegister`) — deliberately NOT the lazily-loaded on-screen tree,
+>    which truncates at 200 docs/folder.
+> 2. **Unowned countable** — an amber "N unowned" chip counts libraries and
+>    folders whose resolution is null (a folder under an owned/team-owned
+>    library correctly does not count).
+> 3. **Creation prompts for an owner** — `LibraryWizard` step 1 gains an
+>    "Accountable owner" member search; saves route through
+>    `lib/ownership.setOwner` so the `OWNER_ASSIGNED` audit row and owner
+>    notification come from the single write path.
+> 4. **Reachable from something named after ownership** — the "Review cycle"
+>    menu items (library actions menu + folder context menu) are now
+>    "Ownership & review cycle" with an honest tooltip.
+>
+> Do-nots respected: no new page; no `owner_name` branching anywhere (the
+> DEL-8 rider also live-resolves the ReviewPolicyModal owner chip).
+> Tests: `lib/__tests__/ownership.test.ts` — 9 pins including the DEL-8
+> regression class (owner id set, name null → still owned) and the
+> no-supervisor team rung (→ unowned, never a phantom).
+>
+> **What the build brought to light:** a SECOND library-creation path —
+> `createLibrary` in `lib/libraryCollections.ts` (the Save-As flow) — still
+> births unowned libraries; recorded as `OWN-22`. The document-control
+> register still prints snapshot owner names for explicit owners
+> (`docControlRegister.ts:154-158`) — the full DEL-8 fix should live-resolve
+> there too when DEL-8 is worked. `resolveEffectiveOwner`'s returned `name`
+> field is itself the trap; consider renaming it `snapshotName` in DEL-8's
+> scope.
 
 ### Scope
 

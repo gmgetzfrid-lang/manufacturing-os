@@ -30,8 +30,10 @@ database functions underneath all of it.
 
 ## Findings
 
-**124 findings** — 18 CRITICAL, 44 HIGH, 62 MEDIUM — plus **15 gap specs**, of
-which 12 are buildable.
+**128 findings** — 18 CRITICAL, 44 HIGH, 63 MEDIUM, 3 LOW — plus **15 gap
+specs**, of which 12 are buildable. *(Originally 124; the resolution session
+added `LIFE-15`, `OWN-22`, `DB-8` and `CHAIN-7`, all found while working their
+neighbours.)*
 
 > **3 findings here carry `Status: REFUTED`** — `DRAFT-4`, `EGRESS-4`, `ROLE-6`. An independent pass disproved them; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue them as work.**
 
@@ -56,6 +58,42 @@ feature builds. Check `verdict` and `depends_on` before starting a gap.
 | 12 | [Coupling & change impact](./12-coupling-change-impact.md) | 6 | What a change reaches; what looks safe and is not |
 | 90 | [**Gap register**](./90-gap-register.md) | 15 specs | Capabilities that do not exist. Verdict, scope, design, `Do not` traps |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Phases, traps, and pairs that must ship together |
+
+---
+
+## Resolution status — session started 2026-08-24
+
+**Phase 0 of [`99-fix-sequencing.md`](./99-fix-sequencing.md) is complete.**
+Ship loop green throughout: `tsc`, `eslint`, **1407 vitest** (23 added across 5
+new test files), full `next build`.
+
+| Item | Outcome |
+|---|---|
+| `LIFE-2` / `DEC-23` | **RESOLVED** — review-gate waiver deleted; test pins that a ticket id never waives review |
+| `OWN-9` | **RESOLVED** — both pickers offer `DraftingSupervisor`; census test pins picker coverage of `ALL_ROLES` |
+| `OWN-17` (partial) | `backfillVersion` authority gate landed; DB half waits on `EGRESS-6` (Phase 3) |
+| `LIFE-5` (partial) | Relabel found **already overtaken** by intervening code — quoted in-file; body stays OPEN |
+| `LIFE-13` | **RESOLVED** — ticket page renders the source-document backlink with live rev-drift check |
+| `CHAIN-4` | **RESOLVED** — self-documenting model corrected claim-by-claim; Known gaps grew 3 → 5 |
+| `DB-6` | **RESOLVED** (repo half) — `20261020_pin_search_path.sql` + lint test; **pending hand-applied migration** |
+| `DEC-11` removals | `p_actor_role` retired (`20261019`), dead exports removed, owner indexes added (`20261021`), Capability vocabulary marked picker-only |
+| `GAP-12` | **BUILT** — ownership columns/export on the console, wizard owner picker, menu renames |
+
+**Pending hand-applied migrations (DEC-30), in order, code deployed first:**
+`20261019_publish_revision_drop_dead_param.sql` →
+`20261020_pin_search_path.sql` → `20261021_owner_lookup_indexes.sql`.
+
+**New findings raised while working:** `LIFE-15` (source_document producer
+shapes), `OWN-22` (Save-As path births unowned libraries), `DB-8`
+(`REMEDIATION_APPLY_ALL.sql` second source of truth), `CHAIN-7` (DocCtrl
+users-link vs page gate).
+
+**Notes for the next phases, discovered en route:** the DEC-10 nightly
+`acl_index` rebuild MUST filter `isRuleActive` or it re-imports expired rules
+(`buildAclIndexFromRules` carries none — see `CHAIN-4`'s resolution); `OWN-6`'s
+enforcement half may already be fixed in current code — re-verify before
+re-fixing; the live `enforce_document_publish_guard` is the
+`20260822_review_completion_guard.sql:21` definition.
 
 ---
 

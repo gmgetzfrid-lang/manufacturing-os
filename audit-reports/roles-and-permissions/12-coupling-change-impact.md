@@ -189,7 +189,21 @@ better.
 ## CHAIN-4 · The app's own answer to "do I have dead roles?" is stale
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** Every stale claim in `RoleModelTree` and `PermissionsExplorer` now either matches enforced behaviour or sits under "Known gaps" — the finding's Done-when, applied claim by claim after re-verifying each against current code (three of the audit's five had been joined by NEW stale claims that intervening work created; all were corrected):
+- *"expiry dates honored"* → corrected: honored only by the raw-rule evaluator; the publish path (app + DB) reads the `acl_index` snapshot which carries no expiry. Added as its own Known-gaps entry.
+- *"a few older checks still read only the headline role"* → replaced with the honest statement: the publish guard (app + database), most RLS predicates and the admin-page gates are headline-only — e.g. Manager + secondary DocCtrl has no publish authority anywhere.
+- Access recertification *"If library owner"* (PermissionsExplorer) → the entry point is `{isController && …}` (`documents/[libraryId]/page.tsx:3374`); the row is now `yy----------` with a ⚠ warn naming the owner-path gap (`DEL-6`), and the same gap is listed in the tree's Known gaps.
+- `ownerName || team` render → owner existence now comes from `owner_user_id` (selected at last), name resolved live from membership rows — the `DEL-8`/DEC-11 rule, so a renamed or name-less owner no longer displays as the team.
+- `publishGrants` missing `allow.teams` → team grants (live authority: `canPublishViaIndex` and the DB function both honor them) now listed with team names.
+- Stale claims the audit did not have: `:79` staff roles + `:89` Contractor "not assignable in /admin/users" (all 19 roles are in `ROLE_OPTIONS` now), `:90` "/admin/audit does NOT admit Auditor" (it does — `ADMIN_ROLES` includes Auditor with a comment saying why), and the DocCtrl blurb claiming user management (`/admin/users` is `['Admin','Manager']`-gated; DocCtrl is denied). All corrected; the DocCtrl sidebar-link inconsistency is recorded as new finding `CHAIN-7`.
+- Commit: `2af2ebe`
+- Files: `components/permissions/RoleModelTree.tsx`, `components/permissions/PermissionsExplorer.tsx`
+- Tests: documentation-and-display change — verified by claim-by-claim read-through against the enforcing code (each anchor above); the two display-data fixes ride the existing render paths. Neither component is renderable in the node test env (live Supabase import); the enforced behaviours the text now describes are pinned by the neighbouring suites (`permissions.publish.test.ts`, `acl.test.ts`).
+- Reproduced: every corrected claim was reproduced against current code before editing — including confirming `buildAclIndexFromRules` (`lib/acl.ts:256-272`) carries no expiry filter while `isRuleActive` (`:81,:97`) enforces it for raw rules.
+- Verified: components kept (per the finding's ⚠ — the self-documenting model is an asset); claims re-derived from code; Known gaps grew from 3 to 5 honest entries.
+- **What this brought to light:** (1) **DEC-10 hazard for Phase 2:** the planned nightly `acl_index` rebuild is justified partly as "drops expired rules", but `buildAclIndexFromRules` has no expiry filter — a naive rebuild that calls it re-imports expired rules into the index; the rebuild must filter `isRuleActive(rule, now)` first. (2) `OWN-6`'s enforcement half may already be fixed in current code (`canPublishViaIndex` honors teams, the DB function honors teams, the library page threads `teamIds`) — the OWN-6/OWN-10 resolver should re-verify before re-fixing. (3) The Sidebar/users-page inconsistency became `CHAIN-7`.
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / trust
 - **Locations:**
@@ -309,6 +323,38 @@ defect.
 **Done when.** Nothing — this is reference material. It carries an ID so it can
 be cited from a `Resolution` block, and so an agent that finds it wrong can mark
 it `INVALID` with evidence rather than silently working around it.
+
+---
+
+## CHAIN-7 · The sidebar shows DocCtrl an admin Users link that the page then denies
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** ux / trust
+- **Locations:**
+  - `components/navigation/Sidebar.tsx:209` — `const isAdmin = activeRole === 'Admin' || activeRole === 'DocCtrl';`, driving the admin section at `:252`
+  - `app/(protected)/admin/users/page.tsx:258-260` — `if (!['Admin', 'Manager'].includes(activeRole)) return <div…>Access Denied. Admins Only.</div>`
+- **Related:** `CHAIN-4`, `SURF-9`
+- *(Found while resolving `CHAIN-4`, 2026-08-24. Checked only by this session — treat per the `author` grade until independently challenged.)*
+
+**Mechanism.** The sidebar's admin section is gated Admin-or-DocCtrl; the Users
+page inside it is gated Admin-or-Manager. DocCtrl sees a live-looking Users
+link and gets "Access Denied" on click — the decorative-control failure the
+permissions console was built to remove, and the inverse of the documented
+Manager-by-URL gap (which `RoleModelTree`'s Known gaps already lists; both
+directions are now listed there per `CHAIN-4`'s fix).
+
+**Failure scenario.** A DocCtrl reads the tree, sees the Users link, clicks it
+to onboard a drafter, is denied, and concludes their permissions are broken —
+support ticket, or worse, a workaround through a shared Admin login.
+
+**Remediation (illustrative).** Decide which gate is right (per `DEC-17`'s
+posture this is an inconsistency, not a hole — the API behind the page is what
+matters) and align the two: either the sidebar link renders for
+Admin/Manager, or the page admits DocCtrl to a read-only roster.
+
+**Done when.** The set of people shown the link equals the set the page admits.
 
 ---
 

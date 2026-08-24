@@ -117,7 +117,15 @@ guard and the MOC gate in one move.
 ## LIFE-2 · `related_ticket_id` is a review-gate waiver that no code path writes — a loaded gun
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** The waiver branch is deleted outright per `DEC-23`: `effectiveModeForRevUp` no longer accepts a `relatedTicketId` at all — the field is gone from its input type, so re-arming the waiver now requires a deliberate signature change rather than one stray property. The docblock (which asserted the false rationale *"they don't need — or already had — review"*) now states the DEC-23 rule: ticket approval is not the document's roster, is not hash-bound, produces no e-signature, and never satisfies a document sign-off. The column stays, for provenance only, exactly as DEC-23 directs.
+- Commit: `2af2ebe`
+- Files: `lib/reviewControl.ts`, `lib/__tests__/reviewControl.test.ts`
+- Tests: `lib/__tests__/reviewControl.test.ts::"never waives the gate because the rev came from a drafting ticket (DEC-23)"` — feeds the exact pre-DEC-23 waiver input (`{control: require, changeType: "Major", relatedTicketId: "t1"}`) and pins `"require"`. Failed against the waiver (returned `"none"`), passes after.
+- Reproduced: repo-wide search of `related_ticket|relatedTicketId` confirmed the audit's census still exact — the waiver at `reviewControl.ts:60`, zero writers (schema column now at `supabase/schema.sql:347`, readers at `lib/revisions.ts:958`, `documents/[libraryId]/page.tsx:1893`, `types/schema.ts:774`), both gate callers omitting the field (`RevUpModal.tsx:210`, `setRevUp.ts:83`), and the old test at `:42` asserting the waiver as correct.
+- Verified: Done-when 1 — no production call can waive review on a ticket id (the parameter no longer exists; tsc enforces it). Done-when 2 — no ticket approval satisfies any sign-off (the only bridge is deleted). Done-when 3 — the test encodes the surviving rule. Full suite 1407 green.
+- **What this brought to light:** the Minor/Correction escape hatch is now the *only* waiver, and it is driven by a remembered per-user change-type default — `RevUpModal` already renders an amber "replacement-in-kind, no MOC required" notice for that case, which is the right shape. Also: `intelligence/WIRE-9` and `drafting-flow/PROJ-11` describe this same waiver — both are satisfied by this deletion (their "both callers pass relatedTicketId" remediation option was the *other* branch of the fork; DEC-23 chose deletion).
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:**
@@ -312,6 +320,20 @@ multi-sheet request still cannot be fully represented; see `GAP-3`.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+
+> **Phase 0 partial — already overtaken (2026-08-24).** The "free, independent
+> part" (relabel the RevUpModal MOC input, which said *optional* for a field
+> the gate makes mandatory) no longer reproduces: intervening work rebuilt the
+> modal so the mandatory case renders its own above-the-fold field labelled
+> `"MOC Reference (required — drawing class)"` (or `"required — class
+> unverified"`), submit is blocked at `RevUpModal.tsx:261-263` when required
+> and empty, and the *"Optional ticket # from change platform"* hint now
+> renders only inside `{!mocRequired && (…)}` (`RevUpModal.tsx:738-741`) —
+> where it is true. The Minor/Correction exemption is also stated visibly
+> (`:708-713`). No relabel needed; verified by direct read, quoted here so the
+> next agent does not re-fix it. **The body of this finding — MOC captured at
+> check-in and never carried to publish, the laundering scenario, Done-when
+> 1–3 — remains OPEN** and lands with the `LIFE-1`/`GAP-6` hand-back work.
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / compliance
 - **Locations:**
@@ -738,7 +760,15 @@ but nothing composes them. **Do not merge the two systems.**
 ## LIFE-13 · The document→ticket link is one-way — the ticket page never shows its source document
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** The ticket page now renders a Source Document card at the top of "Incoming Assets": document number, title, "Raised against Rev N", a live read of the register's CURRENT revision with an amber "Rev advanced — register now at Rev M" badge on drift, and an "Open in register" deep link (`/documents/{libraryId}?doc={id}`, the same shape `lib/revisions.ts` uses). A new pure helper `lib/sourceDocRef.ts` normalizes all three producer shapes (`document_number` vs `number`, `""` vs absent fields) and a `revDrift` rule that returns `unknown` — never a freshness or drift claim — when either side is missing. RLS decides access: the current-rev read uses `maybeSingle()`, and a document the viewer cannot see renders the captured reference as plain text with "not accessible to you" — no error, no false claim.
+- Commit: `2af2ebe`
+- Files: `lib/sourceDocRef.ts`, `lib/__tests__/sourceDocRef.test.ts`, `app/(protected)/requests/[id]/page.tsx`
+- Tests: `lib/__tests__/sourceDocRef.test.ts` — 7 tests pinning each producer shape verbatim, the no-id null case, and the drift rules (`same`/`drifted`/`unknown`, whitespace- and case-insensitive).
+- Reproduced: grep of the whole 2000-line ticket page returned zero `source_document` references while all three producers write it (`CheckInPanel.tsx:262`, `requests/new/page.tsx:291`, `transitionIn.ts:322`) — link in the data, absent from the product, exactly as filed.
+- Verified: Done-when 1 — the card links to the controlled document when the register row resolves. Done-when 2 — drift between the captured rev and `documents.rev` renders the amber badge; a ticket that captured no rev (the transitionIn shape) shows the register rev with no drift claim. tsc/eslint clean, suite 1407 green.
+- **What this brought to light:** the three producers write three DIFFERENT shapes — recorded as new finding `LIFE-15` below. Also `metadata.source_document.path` has zero consumers anywhere (dead weight in the blob), and `lib/impact.ts:117` filters tickets on `metadata->source_document->>id`, which is unconstrained member-writable metadata — a forged id would surface an unrelated ticket in a document's Impact panel; the new card at least makes a forgery user-visible on the ticket itself.
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / ux
 - **Locations:**
@@ -830,6 +860,45 @@ recovery, and neither reconciles the orphaned tickets.
    instance, links to the existing ticket rather than creating a second.
 2. No path leaves a committed ticket with a NULL `outcome` on its originating
    session.
+
+---
+
+## LIFE-15 · Three producers of `metadata.source_document` write three different shapes
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** correctness
+- **Locations:**
+  - `components/documents/CheckInPanel.tsx:262` — writes `{id, document_number, title, rev, path: null}`
+  - `app/(protected)/requests/new/page.tsx:291-297` — writes `{id, document_number, title, rev, path}` where every field except `id` may be `""` (each comes from `searchParams.get(...) ?? ''`)
+  - `lib/transitionIn.ts:322` — writes `{id, number, title}` — the key is `number`, not `document_number`, and there is no `rev` and no `path`
+  - `lib/sourceDocRef.ts` — the read-side normalizer added by `LIFE-13`'s fix, which tolerates all three
+- **Related:** `LIFE-13`, `LIFE-4`
+- *(Found while resolving `LIFE-13`, 2026-08-24. Checked only by this session — treat per the `author` grade until independently challenged.)*
+
+**Mechanism.** The same logical record is written under three shapes with no
+shared writer. Any consumer that reads one shape strictly silently loses the
+others — `intelligence/19-wiring.md:263` already records the inverse case
+(consumers reading `source_document.number` get `undefined` for form/check-in
+tickets). `LIFE-13`'s fix normalizes on read, which protects the ticket page
+only; `lib/impact.ts` and the workflow-action intent bridge read only `.id` and
+are unaffected, but the next consumer to want the rev or number walks into it.
+The `path` field has **zero consumers anywhere** and `requests/new` writes empty
+strings for absent params, polluting the stored blob.
+
+**Failure scenario.** A future surface (e.g. the drafting queue) renders
+"source: {document_number} Rev {rev}" — and shows blank for every ticket created
+from `transitionIn` (no such keys) and "Rev " for tickets whose params were
+empty strings, with no error anywhere.
+
+**Remediation (illustrative).** A single `buildSourceDocumentRef()` writer-side
+helper next to `parseSourceDocument`, used by all three producers: canonical
+keys, `null` over `""`, drop `path`. The stored history stays as-is; the parser
+keeps tolerating old rows.
+
+**Done when.** All producers write one canonical shape, `parseSourceDocument`
+still accepts historical rows, and a test pins both.
 
 ---
 

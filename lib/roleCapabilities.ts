@@ -13,6 +13,12 @@
 // Capabilities are intentionally coarse and are derived from the role gates
 // that already exist in the app today (requests portal, admin pages, routing).
 // Adding finer capabilities later is purely additive here.
+//
+// ⚠ PICKER-ONLY (DEC-11). This `Capability` vocabulary is the role picker's
+// DESCRIPTIVE layer — nothing evaluates it to authorize an action. Authority
+// lives in the capability policy (lib/capabilityPolicy.ts), the content ACL
+// (lib/acl.ts), and the role gates in routes/RLS. Do not wire an enforcement
+// decision to these strings.
 
 import type { Role } from "@/types/schema";
 import { ALL_ROLES } from "@/types/schema";

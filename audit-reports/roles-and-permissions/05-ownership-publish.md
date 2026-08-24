@@ -541,7 +541,15 @@ pins both cases across the TypeScript and SQL paths.
 ## OWN-9 · `DraftingSupervisor` — the role the per-library publish feature was built for — cannot be selected as an ACL subject
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution.** `DraftingSupervisor` added to `PermissionDrawer.ROLES` (after `Supervisor`) and to `ROLE_HIERARCHY`'s Engineering group (beside `Drafter` — the group the finding's own chain-reaction sentence implies: "grant publish to all Engineering today silently excludes drafting supervision"). Verified no code reads either array's length or ordering (both are render/select-only). The evaluator side needed nothing — `lib/__tests__/permissions.publish.test.ts:26-29` already pins that a `{type:'role', id:'DraftingSupervisor'}` rule authorizes a publish end to end; the gap was purely that no picker could emit the rule.
+- Commit: `2af2ebe`
+- Files: `components/permissions/PermissionDrawer.tsx`, `components/permissions/RoleTreeSelector.tsx`, `lib/__tests__/rolePickerCensus.test.ts`
+- Tests: `lib/__tests__/rolePickerCensus.test.ts` — two census tests pinning that BOTH pickers offer exactly `ALL_ROLES` (19 roles, no duplicates), extracted from the components' source since their import graph reaches the live Supabase client. Both failed before the fix (18 vs 19), both pass after — and any future role added to the model without picker coverage fails CI.
+- Reproduced: counted both arrays against the 19-role union in `types/schema.ts` — 18 entries each, `DraftingSupervisor` absent from both, exactly as filed.
+- Verified: Done-when — the role is selectable in the single-rule picker and the bulk selector; a rule naming it authorizes publish per the pre-existing evaluator tests. Suite 1407 green.
+- **What this brought to light:** the census-test pattern generalizes — the same one-missing-entry drift can happen to any of the pickers' sibling arrays (`SUBJECT_TYPES`, the explorer's `ROLES` column list). The census test now guards the two role rosters; the explorer's 12-column matrix remains hand-maintained (see `CHAIN-4`'s resolution for its corrections).
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / ux
 - **Locations:**
@@ -887,6 +895,23 @@ consolidation as separate, human-approved work.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+
+> **Phase 0 partial landed (2026-08-24, commit `2af2ebe`).** The free,
+> independent half is done: `backfillVersion` now runs the same authority
+> population as publish/revert/label-correction (per-library control via
+> `resolveCanControlLibrary`, else `isEffectiveOwnerOfDocument`) **before any
+> byte is hashed or uploaded** — it previously had no check of any kind while
+> inserting rows with caller-chosen `released_at`, `approved_by_name` and
+> `file_hash`. Pinned by `lib/__tests__/backfillAuthority.test.ts` (3 tests:
+> refusal-before-upload for an unauthorized caller — which FAILED against the
+> ungated code — plus the library-control and effective-owner allow paths).
+> **What remains OPEN is the database half**: `document_versions_org_access
+> FOR ALL` still lets any active member write `revision_label` /
+> `document_versions` rows via PostgREST, so the second Done-when clause ("a
+> revision label cannot be rewritten by a member who could not have published
+> it") waits on the `EGRESS-6` RESTRICTIVE overlay (Phase 3, last), which must
+> also allow `finalizeReviewedRevision`'s post-promote relabel under the
+> finalizer's `auth.uid()`.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / safety
 - **Locations:**
@@ -1001,6 +1026,29 @@ trusting the stored index.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+
+> **Phase 0 dispositions landed (2026-08-24, commit `2af2ebe` + follow-up).**
+> Per `DEC-11`: `p_actor_role` removed from both `publish_revision` call sites
+> and retired from the SQL signature
+> (`supabase/migrations/20261019_publish_revision_drop_dead_param.sql` — the
+> old signatures are DROPped explicitly because Postgres keys functions by
+> signature; apply after deploying the code). `canBlindDrillAccess` and
+> `filterDiscoverable` removed from `lib/permissions.ts` (zero callers,
+> restorable from git; a comment marks the removal). The missing owner indexes
+> added: `supabase/migrations/20261021_owner_lookup_indexes.sql`
+> (`libraries_owner_idx`, `collections_owner_idx`, same partial-index shape as
+> `documents_owner_idx`). The `Capability` vocabulary in
+> `lib/roleCapabilities.ts` marked **PICKER-ONLY** in its header per DEC-11.
+> Remaining rows (`org_has_active_subscription` wiring → DEC-18/Phase 6, the
+> `revision_branches` authority gap, `NEW`/`PENDING_ENG_INITIAL`/`CANCELED` →
+> DEC-14/Phase 4, ticket dormant flags, `owner_name` cache posture → DEL-8)
+> stay OPEN here and land with their phases.
+> One rpc-shape note for the record: after the signature change, the client's
+> v1-shape retry (folding `p_override_lock` into `p_force`) can fire during a
+> transient PGRST202 schema-cache blip; the SQL enforces `p_force AND
+> v_is_controller`, so for a non-controller the fold fails CLOSED
+> (`locked_by_other`) — an availability edge during cache reloads, not an
+> escalation.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** hardening pass — **SURVIVES**. `canBlindDrillAccess` (`permissions.ts:134-145`) has **0 callers** anywhere in `app/`, `lib/` or `components/`.
@@ -1015,8 +1063,8 @@ trusting the stored index.
 |---|---|---|
 | `p_actor_role` | `20260823_publish_contract.sql:131`, `20260828_integrity_hardening.sql:46` | Declared in both signatures, **never referenced in either body**. The client dutifully sends it (`lib/revisions.ts:541`, `:1199`). Decoration on a security-relevant RPC. |
 | `org_has_active_subscription()` | `20260713_document_publish_guard.sql:96-106` | Self-documented as *"NOT wired to any blocking policy yet."* Zero references. |
-| `canBlindDrillAccess` | `lib/permissions.ts:134-148` | Exported, zero callers. |
-| `filterDiscoverable` | `lib/permissions.ts:150-161` | Exported, zero callers. |
+| `canBlindDrillAccess` | `lib/permissions.ts:134` *(removed 2026-08-24 — a comment at that spot records the DEC-11 removal)* | Exported, zero callers. |
+| `filterDiscoverable` | `lib/permissions.ts:134` *(removed 2026-08-24, same note)* | Exported, zero callers. |
 | `owner_name` columns | `20260630_document_ownership.sql:10,12,14` | Written once by `lib/ownership.ts:130`, read only for display. Never refreshed → drifts when a person is renamed. `owner_team_id` has **no** name column at all. |
 | Owner indexes | `20260630_document_ownership.sql:17` | Index exists on `documents(org_id, owner_user_id)` only. `libraries.owner_user_id` and `collections.owner_user_id` are unindexed. |
 | `EffectiveOwner.source === "collection"` | `lib/ownership.ts:19,25` | Produced but never branched on by any consumer. |
@@ -1035,6 +1083,36 @@ trusting the stored index.
   `EffectiveOwner.source === "collection"` (made live by `DEL-7`).
 
 Every removal is recoverable from git; every retention has a recorded reason.
+
+---
+
+## OWN-22 · The "Save As" library-creation path still births unowned libraries
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** ux / accountability
+- **Locations:**
+  - `lib/libraryCollections.ts:120-147` — `createLibrary`, writes no owner columns
+  - `components/documents/DocumentLinkPicker.tsx:76` — its caller (the "Save As" flow)
+  - `app/(protected)/admin/libraries/LibraryWizard.tsx` — the wizard path, which now DOES prompt (GAP-12)
+- **Related:** `GAP-12`, `DEL-8`
+- *(Found while building `GAP-12`, 2026-08-24. Checked only by this session — treat per the `author` grade until independently challenged.)*
+
+**Mechanism.** `GAP-12` closed the "libraries are born unowned" gap for the
+wizard — its acceptance criterion covered only "creating a library" through the
+admin surface. A second creation path exists: `createLibrary` in
+`lib/libraryCollections.ts`, reached from `DocumentLinkPicker`'s Save-As flow,
+and it writes no `owner_user_id`. Unowned births continue from this door, now
+visible as such in the console's unowned count.
+
+**Failure scenario.** A drafter saves a linked drawing into a new library via
+Save-As; the library lands unowned, its review-cycle reminders route to
+Admin/DocCtrl, and nobody notices until the unowned count is questioned.
+
+**Done when.** Either `createLibrary` accepts and writes an optional owner (with
+`setOwner` semantics — audit row + notification), or the Save-As flow visibly
+states the library will be unowned until assigned in the console.
 
 ---
 
