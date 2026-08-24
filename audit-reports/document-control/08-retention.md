@@ -1,3 +1,5 @@
+> **CLAIMED** claude/report-audit-findings-a3i90l 2026-08-24T20:00:00Z
+
 # 08 · Retention, legal hold, archive & restore
 
 **14 findings** — 1 CRITICAL · 7 HIGH · 6 MEDIUM.
