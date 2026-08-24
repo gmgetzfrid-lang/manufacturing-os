@@ -150,7 +150,15 @@ app/api/admin/restore/apply-table/route.ts:38-43 `if (!table || !IMPORTABLE.has(
 ## XEDGE-4 · The export retention purge lists and deletes the customer's ENTIRE bucket when no prefix is set — it deletes by age, not by whether the object is one of ours
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 6 — the destructive deletes).** Reproduced (critic finding, per DEC-29): `Prefix: undefined` on an empty prefix enumerated the whole bucket and the only per-object test was age. Closed at three layers:
+- **The purge itself:** `s3PurgeOlderThan` REFUSES an empty (or slashes-only) prefix before any bucket call, and deletion candidates must ALSO match `EXPORT_ARCHIVE_RE` — the `manufacturing-os-export-…zip` name this app writes — so nothing else living in a shared corporate bucket is ever a candidate, whatever its age (done-when 1 + 2).
+- **Visibility:** the purge returns `{scanned, deleted}` and the runner writes `s3:retention:done — scanned N, deleted M app archive(s)` (or the refusal message) into `export_runs.diagnostics`, so a purge that did nothing is visible, never a silent `succeeded` (done-when 3's reporting half; the "more than ever written" abort is deliberately NOT implemented — the name-pattern gate makes the failure class impossible by construction, which is stronger than a heuristic count comparison).
+- **Write-time validation:** both the destination CREATE and PATCH routes refuse a `(retention_days > 0, empty prefix)` pair — validated against the RESULTING row on PATCH, so retention can't be added to a prefix-less destination nor the prefix cleared on a retained one.
+- Done-when 4: `lib/__tests__/destructiveDeletes.test.ts` — empty and slashes-only prefixes throw with ZERO bucket calls; the archive pattern matches only this app's zips and never a customer's `vendor-drawings-2019.zip` / `P-101-RevD.pdf`.
+- Files: `lib/exportRunner.ts`, `app/api/data-export/destinations/route.ts`, `app/api/data-export/destinations/[id]/route.ts`
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportRunner.ts:257-265`, `lib/exportRunner.ts:374-405`, `app/api/data-export/destinations/route.ts:122,134`
 - **Re-verified:** hardening pass — **SURVIVES**. `Prefix: params.prefix ? … : undefined` (`exportRunner.ts:386`) makes an empty prefix enumerate the whole bucket, and the only per-object test is `obj.LastModified < cutoff`. The purge is wrapped in `.catch()`, so the run still records `succeeded`.
@@ -416,7 +424,14 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 ## XEDGE-13 · The storage orphan sweep paginates the reference scan with no ORDER BY, then permanently deletes every object it did not see referenced
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 6 — the destructive deletes).** Reproduced (critic finding): `.range()` windows with no `.order()` have no stable row order across pages. Fixed in `collectReferencedKeys`:
+- every paged reference query now carries `.order("id", { ascending: true })` (all 11 source tables verified to have a UUID `id` primary key — done-when 1);
+- after paging each table, a `head:true, count:'exact'` query cross-checks the paged row total; a disagreement ABORTS the scan fail-closed with "the reference set may be incomplete" (done-when 2), and because both `scanOrphans` and `deleteOrphans` run through `collectReferencedKeys`, the delete path inherits the refusal (done-when 3). A busy table inserting rows mid-scan can trip the abort — that bias is deliberate for an unrecoverable delete: the admin re-runs in a quiet moment.
+- Tests: `lib/__tests__/destructiveDeletes.test.ts` — the paged scan applies a stable order and passes on agreeing counts; a count mismatch rejects fail-closed.
+- Files: `lib/storageOrphans.ts`
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageOrphans.ts:90-104`, `lib/storageOrphans.ts:118-150`, `lib/storageOrphans.ts:154-180`, `app/api/admin/orphans/route.ts:27,47`
 - **Re-verified:** hardening pass — **SURVIVES**. `.range(from, from + 999)` with **no `.order()`** (`storageOrphans.ts:94`). Postgres gives no stable row order across windows without an ORDER BY, so a reference can be skipped and its object permanently deleted.
