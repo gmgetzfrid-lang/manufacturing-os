@@ -14,6 +14,51 @@ import type { OpenCv } from "../opencv";
 import { withScope } from "../opencv";
 import type { FrameFeatures } from "../types";
 
+/**
+ * Pick `target` keypoints spread across the frame instead of the `target`
+ * strongest.
+ *
+ * ORB's own cap keeps the corners with the highest response, and on a frame
+ * full of strong repeating texture those cluster wherever the texture is
+ * loudest — a real capture hit the 2,400-feature cap with a median of 20
+ * matches per pair, because the features all sat on the same few surfaces
+ * looking identical to each other. Round-robin over grid cells (each cell's
+ * candidates sorted by response) keeps the best of every REGION: coverage
+ * first, strength second. ORB-SLAM does the same job with a quadtree.
+ */
+export function distributeByGrid(
+  points: Array<{ x: number; y: number; response: number }>,
+  width: number,
+  height: number,
+  target: number,
+): number[] {
+  if (points.length <= target) return points.map((_, i) => i);
+
+  const cols = Math.max(1, Math.round(width / 64));
+  const rows = Math.max(1, Math.round(height / 64));
+  const cells: number[][] = Array.from({ length: cols * rows }, () => []);
+  for (let i = 0; i < points.length; i++) {
+    const cx = Math.min(cols - 1, Math.max(0, Math.floor((points[i].x / width) * cols)));
+    const cy = Math.min(rows - 1, Math.max(0, Math.floor((points[i].y / height) * rows)));
+    cells[cy * cols + cx].push(i);
+  }
+  for (const cell of cells) cell.sort((a, b) => points[b].response - points[a].response);
+
+  const picked: number[] = [];
+  for (let round = 0; picked.length < target; round++) {
+    let took = false;
+    for (const cell of cells) {
+      if (round < cell.length) {
+        picked.push(cell[round]);
+        took = true;
+        if (picked.length >= target) break;
+      }
+    }
+    if (!took) break;
+  }
+  return picked;
+}
+
 export interface ExtractOptions {
   maxFeatures: number;
   scaleFactor: number;
@@ -207,7 +252,10 @@ export function extractFeatures(
 
       const orb = track(
         new cv.ORB(
-          options.maxFeatures,
+          // Over-detect, then rebalance across the frame below. Asking for the
+          // cap directly hands back the strongest corners wherever they
+          // cluster; asking for more and choosing by region keeps coverage.
+          Math.round(options.maxFeatures * 2.5),
           options.scaleFactor,
           options.levels,
           31,   // edgeThreshold
@@ -229,23 +277,34 @@ export function extractFeatures(
       }
       if (count >= wanted) break;
     }
-    const kp = new Float32Array(count * 2);
-    for (let i = 0; i < count; i++) {
+    const detected = count;
+    const raw: Array<{ x: number; y: number; response: number }> = new Array(detected);
+    for (let i = 0; i < detected; i++) {
       const k = keypoints.get(i);
-      kp[i * 2] = k.pt.x;
-      kp[i * 2 + 1] = k.pt.y;
+      raw[i] = { x: k.pt.x, y: k.pt.y, response: k.response };
     }
+    const chosen = distributeByGrid(raw, width, height, options.maxFeatures);
+    const kept = chosen.length;
 
+    const kp = new Float32Array(kept * 2);
     // descriptors.data is a view into WASM memory; copy before anything frees it.
     const descriptorBytes = descriptors.cols || 32;
-    const desc = new Uint8Array(count * descriptorBytes);
-    if (count > 0 && descriptors.rows === count) {
-      desc.set(descriptors.data.subarray(0, count * descriptorBytes));
+    const desc = new Uint8Array(kept * descriptorBytes);
+    if (detected > 0 && descriptors.rows === detected) {
+      for (let out = 0; out < kept; out++) {
+        const src = chosen[out];
+        kp[out * 2] = raw[src].x;
+        kp[out * 2 + 1] = raw[src].y;
+        desc.set(
+          descriptors.data.subarray(src * descriptorBytes, (src + 1) * descriptorBytes),
+          out * descriptorBytes,
+        );
+      }
     }
 
     return {
       frameIndex,
-      count,
+      count: kept,
       keypoints: kp,
       descriptors: desc,
       descriptorBytes,

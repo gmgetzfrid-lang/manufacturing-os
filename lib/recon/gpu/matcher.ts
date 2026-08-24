@@ -212,6 +212,24 @@ export async function matchDescriptorsGpu(
   return { index: new Uint32Array(idxRaw), distance: new Uint32Array(distRaw) };
 }
 
+/**
+ * Where candidate matches die, accumulated across calls.
+ *
+ * A capture that produces thousands of features and twenty matches per pair is
+ * losing them somewhere specific, and each gate means something different: the
+ * distance cap means descriptors changed too much between frames (blur,
+ * exposure), the ratio test means the scene looks like itself everywhere
+ * (repeated texture), the mutual check means one-sided coincidences. Guessing
+ * between those wasted three rounds of a real diagnosis.
+ */
+export interface MatchStageStats {
+  candidates: number;
+  overDistance: number;
+  failedRatio: number;
+  failedMutual: number;
+  kept: number;
+}
+
 export interface MatchPair {
   queryIndex: number;
   trainIndex: number;
@@ -237,10 +255,11 @@ export interface MatchPair {
 export async function matchMutual(
   a: DescriptorSet,
   b: DescriptorSet,
-  options: { ratio?: number; maxDistance?: number } = {},
+  options: { ratio?: number; maxDistance?: number; stats?: MatchStageStats } = {},
 ): Promise<MatchPair[]> {
   const ratio = options.ratio ?? 0.78;
   const maxDistance = options.maxDistance ?? 96;
+  const stats = options.stats;
 
   const [ab, ba] = await Promise.all([
     matchDescriptorsGpu(a, b),
@@ -253,10 +272,15 @@ export async function matchMutual(
     if (j === 0xffffffff || j >= b.count) continue;
     const best = ab.distance[i * 2];
     const second = ab.distance[i * 2 + 1];
-    if (best > maxDistance) continue;
+    if (stats) stats.candidates++;
+    if (best > maxDistance) { if (stats) stats.overDistance++; continue; }
     // A second-best of "infinity" means there was only one candidate; accept it.
-    if (second !== 0xffffffff && best > ratio * second) continue;
-    if (ba.index[j] !== i) continue;
+    if (second !== 0xffffffff && best > ratio * second) {
+      if (stats) stats.failedRatio++;
+      continue;
+    }
+    if (ba.index[j] !== i) { if (stats) stats.failedMutual++; continue; }
+    if (stats) stats.kept++;
     out.push({ queryIndex: i, trainIndex: j, distance: best, second });
   }
   return out;
@@ -266,10 +290,11 @@ export async function matchMutual(
 export function matchMutualCpu(
   a: DescriptorSet,
   b: DescriptorSet,
-  options: { ratio?: number; maxDistance?: number } = {},
+  options: { ratio?: number; maxDistance?: number; stats?: MatchStageStats } = {},
 ): MatchPair[] {
   const ratio = options.ratio ?? 0.78;
   const maxDistance = options.maxDistance ?? 96;
+  const stats = options.stats;
   const aw = toWords(a);
   const bw = toWords(b);
 
@@ -305,9 +330,14 @@ export function matchMutualCpu(
   for (let i = 0; i < a.count; i++) {
     const j = ab.idx[i];
     if (j < 0) continue;
-    if (ab.d1[i] > maxDistance) continue;
-    if (ab.d2[i] !== 0x7fffffff && ab.d1[i] > ratio * ab.d2[i]) continue;
-    if (ba.idx[j] !== i) continue;
+    if (stats) stats.candidates++;
+    if (ab.d1[i] > maxDistance) { if (stats) stats.overDistance++; continue; }
+    if (ab.d2[i] !== 0x7fffffff && ab.d1[i] > ratio * ab.d2[i]) {
+      if (stats) stats.failedRatio++;
+      continue;
+    }
+    if (ba.idx[j] !== i) { if (stats) stats.failedMutual++; continue; }
+    if (stats) stats.kept++;
     out.push({
       queryIndex: i, trainIndex: j, distance: ab.d1[i], second: ab.d2[i],
     });

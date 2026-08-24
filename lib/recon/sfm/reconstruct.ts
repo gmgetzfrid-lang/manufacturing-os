@@ -27,7 +27,10 @@
 // than presenting a broken scene as a room.
 
 import { DEFAULT_RECON_CONFIG, type ReconConfig } from "../config";
-import { matchMutual, matchMutualCpu, type DescriptorSet, type MatchPair } from "../gpu/matcher";
+import {
+  matchMutual, matchMutualCpu,
+  type DescriptorSet, type MatchPair, type MatchStageStats,
+} from "../gpu/matcher";
 import type { FrameFeatures, SfmResult } from "../types";
 import { bundleAdjust, type BundleObservation } from "../math/bundle";
 import { pnpRansac } from "../math/pnp";
@@ -314,7 +317,11 @@ export async function reconstruct(
   report(0.02, `${proposed.length} image pairs to check`);
 
   const clipOf = new Map<number, string>();
-  for (const f of frames) clipOf.set(f.index, f.clipId);
+  const orderOf = new Map<number, number>();
+  for (const f of frames) {
+    clipOf.set(f.index, f.clipId);
+    orderOf.set(f.index, f.orderInClip);
+  }
 
   const verified: VerifiedPairInternal[] = [];
   let crossClipPairs = 0;
@@ -324,18 +331,31 @@ export async function reconstruct(
     data: f.descriptors, count: f.count,
   });
 
-  const matchPair = async (a: number, b: number, ratio: number): Promise<MatchPair[]> => {
+  // Where candidate matches die, across the strict pass only — mixing the
+  // lenient retry in would blur what the numbers mean.
+  const matchStats: MatchStageStats = {
+    candidates: 0, overDistance: 0, failedRatio: 0, failedMutual: 0, kept: 0,
+  };
+  /** Raw match counts for ADJACENT same-clip pairs — the capture's backbone. */
+  const adjacentMatchCounts: number[] = [];
+
+  const matchPair = async (
+    a: number, b: number, ratio: number,
+    maxDistance?: number, stats?: MatchStageStats,
+  ): Promise<MatchPair[]> => {
     const fa = featureByIndex.get(a);
     const fb = featureByIndex.get(b);
     if (!fa || !fb || fa.count < 20 || fb.count < 20) return [];
     if (useGpu) {
       try {
-        return await matchMutual(descriptorSet(fa), descriptorSet(fb), { ratio });
+        return await matchMutual(descriptorSet(fa), descriptorSet(fb), {
+          ratio, maxDistance, stats,
+        });
       } catch {
         useGpu = false;
       }
     }
-    return matchMutualCpu(descriptorSet(fa), descriptorSet(fb), { ratio });
+    return matchMutualCpu(descriptorSet(fa), descriptorSet(fb), { ratio, maxDistance, stats });
   };
 
   // Where pairs die, so a failure can name its own cause instead of blaming the
@@ -362,6 +382,7 @@ export async function reconstruct(
     count: boolean,
     ratio = cfg.features.matchRatio,
     allowHomography = false,
+    maxDistance?: number,
   ): Promise<VerifiedPairInternal | null> => {
     const fa = featureByIndex.get(pair.a);
     const fb = featureByIndex.get(pair.b);
@@ -370,8 +391,18 @@ export async function reconstruct(
       return null;
     }
 
-    const matches = await matchPair(pair.a, pair.b, ratio);
-    if (count) matchCounts.push(matches.length);
+    const matches = await matchPair(
+      pair.a, pair.b, ratio, maxDistance, count ? matchStats : undefined,
+    );
+    if (count) {
+      matchCounts.push(matches.length);
+      const oa = orderOf.get(pair.a);
+      const ob = orderOf.get(pair.b);
+      if (clipOf.get(pair.a) === clipOf.get(pair.b) &&
+          oa !== undefined && ob !== undefined && Math.abs(oa - ob) === 1) {
+        adjacentMatchCounts.push(matches.length);
+      }
+    }
     if (matches.length < minMatches) {
       if (count) reject.fewMatches++;
       return null;
@@ -529,7 +560,7 @@ export async function reconstruct(
       // will still fit something, and what it fits is wrong. Confined to this
       // retry it cannot touch a capture that is already working, because the
       // retry only runs when the strict pass has already failed badly.
-      const ok = await verifyPair(pair, i, gentleMatches, gentleInliers, false, 0.86, true);
+      const ok = await verifyPair(pair, i, gentleMatches, gentleInliers, false, 0.86, true, 110);
       if (ok) {
         verified.push(ok);
         if (ok.crossClip) crossClipPairs++;
@@ -551,13 +582,26 @@ export async function reconstruct(
     ? featureCounts[Math.floor(featureCounts.length / 2)] : 0;
   /** Everything a failure needs to say to be diagnosable rather than a guess. */
   const degenerateCount = verified.filter((v) => v.degenerate).length;
+  adjacentMatchCounts.sort((a, b) => a - b);
+  const adjacentMedian = adjacentMatchCounts.length
+    ? adjacentMatchCounts[Math.floor(adjacentMatchCounts.length / 2)] : 0;
+  const pct = (n: number) =>
+    matchStats.candidates > 0 ? Math.round((n / matchStats.candidates) * 100) : 0;
   const diagnostics =
     `${frames.length} frames, median ${medianFeatures} features each; ` +
     `${proposed.length} pairs proposed, ${verified.length} verified` +
     `${relaxed ? " (after a lenient retry)" : ""}` +
     `${degenerateCount ? `, of which ${degenerateCount} were planar or rotation-only` : ""}; ` +
-    `median ${medianMatches} raw matches per pair; rejected ` +
-    `${reject.fewMatches} for too few matches, ${reject.fewInliers} for too few ` +
+    `median ${medianMatches} raw matches per pair` +
+    `${adjacentMatchCounts.length
+      ? ` (${adjacentMedian} between ADJACENT frames, which overlap most)`
+      : ""}; ` +
+    `of ${matchStats.candidates.toLocaleString()} candidate matches, ` +
+    `${pct(matchStats.overDistance)}% died at the distance cap (descriptors changed too ` +
+    `much — blur or exposure), ${pct(matchStats.failedRatio)}% were ambiguous (the scene ` +
+    `looks like itself — repeated texture), ${pct(matchStats.failedMutual)}% failed the ` +
+    `mutual check, ${pct(matchStats.kept)}% kept; rejected ` +
+    `${reject.fewMatches} pairs for too few matches, ${reject.fewInliers} for too few ` +
     `inliers after RANSAC, ${reject.noModel} with no consistent model, ` +
     `${reject.noFeatures} for having no features`;
 
