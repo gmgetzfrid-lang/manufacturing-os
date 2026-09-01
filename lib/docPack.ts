@@ -59,6 +59,42 @@ export function filterPackDocs(
   return { docs, skipped };
 }
 
+export interface PackAssessment {
+  /** In-force, hold-free sheets — safe to snapshot, list on a cover, print. */
+  packable: Array<{ id: string; label: string; rev: string | null; currentVersionId: string | null }>;
+  skipped: DocPackResult["skipped"];
+}
+
+/** PKG-4's gate, runnable BEFORE any print side-effect. A caller that
+ *  records an immutable print snapshot or builds a cover sheet must know
+ *  which sheets will actually ride into the pack FIRST — otherwise the
+ *  snapshot and the QR verdict describe paper the crew never received. */
+export async function assessPackDocs(documentIds: string[]): Promise<PackAssessment> {
+  const { data: docRows } = await supabase
+    .from("documents")
+    .select("id, document_number, title, name, rev, status, current_version_id")
+    .in("id", documentIds);
+  const allDocs = (docRows as Array<Record<string, unknown>>) ?? [];
+  const { data: holdRows, error: holdErr } = await supabase
+    .from("document_holds")
+    .select("document_id")
+    .in("document_id", documentIds)
+    .is("released_at", null);
+  const heldIds = new Set(
+    ((holdRows as Array<{ document_id: string }> | null) ?? []).map((h) => h.document_id),
+  );
+  const { docs, skipped } = filterPackDocs(allDocs, heldIds, !!holdErr);
+  return {
+    packable: docs.map((d) => ({
+      id: String(d.id),
+      label: String(d.document_number || d.title || d.name || "Document"),
+      rev: (d.rev as string | null) ?? null,
+      currentVersionId: (d.current_version_id as string | null) ?? null,
+    })),
+    skipped,
+  };
+}
+
 async function resolveToHttpUrl(raw: string): Promise<string> {
   if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("blob:")) return raw;
   const { data: { session } } = await supabase.auth.getSession();

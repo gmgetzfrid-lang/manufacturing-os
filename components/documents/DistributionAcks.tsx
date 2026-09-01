@@ -14,6 +14,7 @@ import {
   BellRing, Loader2, UserPlus, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/components/providers/ToastProvider";
 import {
   listAcksForVersion, getMyPendingAck, requestAcks, acknowledge,
   renudgeUnacked, type DistributionAck,
@@ -46,6 +47,7 @@ export default function DistributionAcks({
   const [busy, setBusy] = useState(false);
   const [acking, setAcking] = useState(false);
   const [reminded, setReminded] = useState(false);
+  const { showToast } = useToast();
 
   const load = useCallback(async () => {
     if (!currentVersionId) return;
@@ -104,8 +106,13 @@ export default function DistributionAcks({
     setAcking(true);
     try {
       await acknowledge(myPending.id, currentUserId);
-      await load();
+    } catch (e) {
+      // acknowledge() throws on zero rows (already stamped in another tab, or
+      // not this user's row). Say why the click didn't record — the reload in
+      // finally reconciles the bar either way, so a benign race self-heals.
+      showToast({ type: "error", title: "Confirmation not recorded", message: (e as Error).message });
     } finally {
+      await load();
       setAcking(false);
     }
   };

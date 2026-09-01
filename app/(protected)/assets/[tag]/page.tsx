@@ -124,7 +124,10 @@ export default function AssetHubPage() {
                   onClick={async () => {
                     setPacking(true);
                     setPackNote(null);
-                    setPackProgress([0, docs.length]);
+                    // No pre-seeded total: the pack gate may refuse sheets, so
+                    // the denominator comes from the builder's first progress
+                    // callback (the GATED count), never this page's raw count.
+                    setPackProgress(null);
                     try {
                       const { buildAndDownloadDocPack } = await import("@/lib/docPack");
                       const result = await buildAndDownloadDocPack({
@@ -135,10 +138,10 @@ export default function AssetHubPage() {
                         userEmail,
                         onProgress: (done, total) => setPackProgress([done, total]),
                       });
-                      // "all current" is now an earned claim: docPack refuses
+                      // "all current" is an earned claim: docPack refuses
                       // Draft/Superseded/Void/held sheets, so zero skips means
-                      // every included sheet really was an in-force, hold-free
-                      // controlled revision (PKG-4).
+                      // every included sheet was Issued/Locked (or pre-status
+                      // legacy data) and hold-free (PKG-4).
                       setPackNote(
                         result.skipped.length === 0
                           ? `Pack ready — ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`

@@ -128,8 +128,25 @@ the package's org). Ship loop green: `tsc`, `eslint`, **1536 vitest** (23
 new), full `next build`. Migration
 `20261032_dc_phase7_ack_and_pin_integrity.sql` **applied & verified live
 2026-08-24** (4-point probe all true).
+
+**Phase 7b — adversarial self-audit of 7a, everything confirmed fixed.** A
+29-agent audit (5 dimension finders over the full 7a diff, two independent
+skeptics per finding) confirmed 9 findings; every one was fixed the same
+session: the tightened pin policy broke non-owner "Print pack" (refresh now
+conditional on owner/DocCtrl; prints proceed from current revisions with
+pins untouched and the toast says so); the print snapshot and cover listed
+sheets the PKG-4 gate then refused (new `assessPackDocs` gate runs BEFORE
+any side-effect, so snapshot = cover = paper; an all-refused pack aborts
+recording nothing); `acknowledged_by` was rewritable outside a transition
+and the pin guard skipped INSERTs (both patched in migration `20261033`);
+the recipient's confirm button swallowed the new zero-rows throw (caught,
+toasted, reconciled); the pack-progress denominator jumped mid-run (gated
+count now authoritative); and the migration-shape tests were
+mutation-defeated by unbounded regexes (re-scoped per statement and
+re-proved by mutation — both audit mutations now fail the suite).
+Migration `20261033_dc_phase7b_guard_patches.sql` **awaiting hand-apply**.
 Remaining in Phase 7: `PKG-3`, `REV-2`, `DIST-1` remainder + XEDGE
-extensions (deferred behind an in-flight push of `lib/revisions.ts`).
+extensions.
 
 | # | Report | n | Note |
 |---|---|---|---|

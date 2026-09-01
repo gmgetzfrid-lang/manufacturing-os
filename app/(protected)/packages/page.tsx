@@ -30,7 +30,7 @@ import {
 interface DocPick { id: string; label: string; rev: string | null }
 
 export default function PackagesPage() {
-  const { activeOrgId, uid, userEmail } = useRole();
+  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const { showToast } = useToast();
   // Scan landing: the QR on a printed cover sheet lands here with ?pkg= —
   // highlight that package so the verdict is instant.
@@ -147,32 +147,55 @@ export default function PackagesPage() {
   };
 
   // Print the pack: cover sheet (contents + scan-before-starting QR) +
-  // every drawing at its CURRENT revision, stamped. Pins auto-refresh to
-  // match what was printed — the paper and the database agree by
-  // construction, no separate "remember to refresh" step.
+  // every PRINTABLE drawing at its CURRENT revision, stamped. The PKG-4 gate
+  // runs FIRST, before any side-effect, so the immutable snapshot and the
+  // cover list only sheets that actually ride into the paper. Pins refresh
+  // only when the caller may move them (owner / Document Control — PKG-5);
+  // for anyone else the print proceeds from current revisions, pins untouched.
   const handlePrintPack = async (pkg: WorkPackage) => {
     if (!activeOrgId || !uid) return;
     setPrinting(pkg.id);
     try {
-      await refreshWorkPackage(pkg.id);
       const { buildPackageCover } = await import("@/lib/physicalBridge");
-      const { buildAndDownloadDocPack } = await import("@/lib/docPack");
+      const { buildAndDownloadDocPack, assessPackDocs } = await import("@/lib/docPack");
+      // Gate first: which sheets CAN be printed? Nothing is recorded or
+      // refreshed for a pack that would produce no paper.
+      const assessment = await assessPackDocs(pkg.docs.map((d) => d.documentId));
+      if (assessment.packable.length === 0) {
+        const first = assessment.skipped[0];
+        showToast({
+          type: "error",
+          title: "Nothing printable in this pack",
+          message: first ? `${first.label}: ${first.reason}` : "This package has no sheets.",
+        });
+        return;
+      }
+      const canMovePins = pkg.ownerUserId === uid || hasAnyRole(["Admin", "DocCtrl"]);
+      if (canMovePins) await refreshWorkPackage(pkg.id);
       const fresh = (await listWorkPackages(activeOrgId)).find((p) => p.id === pkg.id) ?? pkg;
+      const packableById = new Map(assessment.packable.map((s) => [s.id, s]));
+      const printDocs = fresh.docs.filter((d) => packableById.has(d.documentId));
       // Record an immutable snapshot of exactly what we're about to print, so
       // the cover QR verifies against THIS paper — not the live pins, which a
-      // later refresh could move (PKG-2). Best-effort: if the snapshot can't
-      // be written the print still proceeds with a legacy package-level QR.
+      // later refresh could move (PKG-2). The recorded version is each sheet's
+      // CURRENT revision — what docPack actually prints — so a non-owner's
+      // print (pins untouched) is still described truthfully. Best-effort: if
+      // the snapshot can't be written the print still proceeds with a legacy
+      // package-level QR.
       const printId = await recordPackagePrint({
         orgId: activeOrgId,
         packageId: pkg.id,
         printedBy: uid,
         printedByName: userEmail?.split("@")[0] ?? null,
-        sheets: fresh.docs.map((d) => ({
-          documentId: d.documentId,
-          versionId: d.pinnedVersionId ?? null,
-          revLabel: d.currentRev ?? d.pinnedRevLabel ?? null,
-          label: d.docLabel,
-        })),
+        sheets: printDocs.map((d) => {
+          const s = packableById.get(d.documentId);
+          return {
+            documentId: d.documentId,
+            versionId: s?.currentVersionId ?? d.pinnedVersionId ?? null,
+            revLabel: s?.rev ?? d.currentRev ?? d.pinnedRevLabel ?? null,
+            label: d.docLabel,
+          };
+        }),
       });
       const cover = await buildPackageCover({
         packageId: pkg.id,
@@ -181,23 +204,32 @@ export default function PackagesPage() {
         description: fresh.description,
         ownerName: fresh.ownerName,
         printedByName: userEmail?.split("@")[0] ?? null,
-        docs: fresh.docs.map((d) => ({ label: d.docLabel, rev: d.currentRev ?? d.pinnedRevLabel })),
+        docs: printDocs.map((d) => ({
+          label: d.docLabel,
+          rev: packableById.get(d.documentId)?.rev ?? d.currentRev ?? d.pinnedRevLabel,
+        })),
       });
       const result = await buildAndDownloadDocPack({
         orgId: activeOrgId,
         packLabel: fresh.name,
-        documentIds: fresh.docs.map((d) => d.documentId),
+        documentIds: printDocs.map((d) => d.documentId),
         userId: uid,
         userEmail,
         cover,
       });
       await load();
+      // Refusals from the gate plus anything the builder itself had to drop
+      // (missing file, fetch failure) — the crew sees the full left-out list.
+      const leftOut = [...assessment.skipped, ...result.skipped];
       showToast({
-        type: "success",
-        title: "Pack printed & pins refreshed",
-        message: result.skipped.length === 0
-          ? `${result.included} drawings, cover sheet with live-status QR on top.`
-          : `${result.included} included; skipped: ${result.skipped.map((s) => s.label).join(", ")}.`,
+        type: leftOut.length > 0 ? "warning" : "success",
+        title: canMovePins ? "Pack printed & pins refreshed" : "Pack printed — pins unchanged",
+        message:
+          `${result.included} drawing${result.included === 1 ? "" : "s"}, cover sheet with live-status QR on top.` +
+          (leftOut.length > 0
+            ? ` Left out: ${leftOut.map((s) => `${s.label} (${s.reason})`).join(", ")}.`
+            : "") +
+          (canMovePins ? "" : " Moving pins needs the package owner or Document Control."),
       });
     } catch (e) {
       showToast({ type: "error", title: "Couldn't print the pack", message: (e as Error).message });
