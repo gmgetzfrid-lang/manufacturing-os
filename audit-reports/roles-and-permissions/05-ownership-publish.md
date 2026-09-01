@@ -89,7 +89,15 @@ reach the database guard.
 ## OWN-1 · `libraries` has no restrictive RLS — any member can make themselves the library owner
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, roles-and-permissions Phase 3).** Confirmed — `libraries` had exactly one policy (`FOR ALL USING (org membership)`, no WITH CHECK, no trigger): any member could take ownership of any library, rewrite its ACL, or delete it. Per Trap 2, `OWN-14` shipped FIRST (a write-path recon mapped **21 static + 9 dynamic-table writers**; seventeen were silent). Rails in migration `20261036`:
+- **`trg_library_sensitive_columns`** (BEFORE UPDATE, service-role pass): changing any of the 17 SENSITIVE columns — ownership (`owner_user_id/name/team`), access (`acl`, `acl_index`, `write/admin/read_access`, `visible_to`, `folder_security`, `default_new_*`), compliance policy (`review_control`, `review_policy`, `retention_policy`, `ack_policy`, `recert_policy`) — requires a controller, the library's CURRENT owner, or an ACL manage-grant (`can_manage_node`). Cosmetic columns (names, descriptions, custom columns, column widths, layouts) stay member-writable, so the seventeen shipped convenience writers keep working — the guard-vs-policy split is exactly what the write-path map bought.
+- **`libraries_delete_controllers`** — RESTRICTIVE, DELETE is controllers-only (both app delete sites already check errors).
+- Done-when: (1) non-controller/non-owner cannot change owner/acl/review_control via PostgREST — trigger-refused, pinned by test ✓; (2) every app call site fails loudly (OWN-14) or keeps working (cosmetic set) ✓; (3) DELETE controllers-only ✓.
+- The migration's verification block also proves all 17 guarded columns exist (plpgsql binds late — a missing one would break every library update) and carries the DEC-30 inventory queries (non-controller library owners; owned-document count).
+- Tests: `lib/__tests__/rpPhase3Migration.test.ts` — every sensitive column asserted by name in the guard body; the three authority arms; RESTRICTIVE delete shape.
+- ⚠ **Migration `20261036` awaiting hand-apply.**
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
@@ -161,7 +169,12 @@ only controllers.
 ## OWN-2 · `documents.owner_user_id` is not covered by the access-change guard
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, roles-and-permissions Phase 3, with DEC-6).** Confirmed — `documents_guard_access_change` guarded `visibility`/`acl`/`acl_index` but not the owner columns, and the effective owner carries PUBLISH authority (`user_is_effective_owner` in the publish guard), so a self-assigned owner was a self-granted publisher. Migration `20261036` re-creates the guard (original block byte-carried) adding: a change to `owner_user_id`/`owner_name` requires a controller, an ACL manage-grant, or the document's CURRENT owner. Per DEC-6's acceptance: a Viewer's direct PATCH to self is refused; the current owner reassigns through the Inspector (owner arm); a controller always can; and FIRST assignment on an unowned, default-open document stays open — the deliberate, recorded scope note: on unrestricted libraries any member may still make the initial assignment (matching the existing guard's default-open escape hatch and keeping `ReviewSection`'s "Assign owner" working), but a TAKEOVER of an owned document is always refused.
+- Done-when: (1) refusal for non-controller/non-owner/non-granted ✓; (2) the intended reassignment flow works and the decision is written down (this record + the migration comment) ✓; (3) tests cover refusal arms and the claim escape ✓ (shape pins; the live probe is in the migration's verification).
+- Tests: `lib/__tests__/rpPhase3Migration.test.ts`.
+- ⚠ **Migration `20261036` awaiting hand-apply** — until pasted, `setOwner`'s new zero-row throw has nothing DB-side to refuse a takeover; the app half alone does not close the PostgREST path.
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
@@ -274,7 +287,16 @@ publish guard is not an old check, it is *the* check.
 ## OWN-4 · External intake auto-supersede publishes controlled revisions with zero authority, hold, or review checks
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, roles-and-permissions Phase 3).** Confirmed — the intake route runs service-role end to end, so every publish rail (holds, the per-library authority guard, checkout locks, review) was structurally bypassed on the `allow_auto_supersede` fast path, and the route stamped `review_state: 'approved'` on uploads no one reviewed. Fixed in `app/api/intake/upload/route.ts`; any failed gate DEMOTES the upload to the existing pending-review path (the file is still wanted — only the instant promote is withheld), with the reason in the team notification, the audit row, and the uploader's response:
+1. **Holds always block the promote** — `legal_hold` and active `document_holds` are checked, and an errored hold read fails CLOSED to review (done-when 1).
+2. **A live checkout blocks the instant promote.**
+3. **The trusted link acts under its CREATOR's authority, evaluated at promote time** — the link creator must still be a controller or hold `user_can_publish_on_library` on the target library. This is the deliberate, documented reading of done-when 2: the per-link `allow_auto_supersede` setting is sanctioned by a person, and that person's live publish authority is the authority evaluation; if they lost it, the shortcut dies with it.
+4. **No fabricated review** — an auto-published external upload now carries `review_state: NULL` (issued-without-review), never `'approved'`.
+- Done-when: (1) ✓; (2) ✓ via the creator-authority rule, recorded here; (3) **partial** — consulting the library owner before a project names their library as intake target is an intake-creation UX flow, tracked with the projects-tab area's intake findings rather than this route.
+- Files: `app/api/intake/upload/route.ts`.
+- Tests: `lib/__tests__/rpPhase3Migration.test.ts` (source pins: hold check + fail-closed wording, checkout gate, creator-authority RPC, approved-stamp removal).
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / data-integrity
 - **Locations:**
@@ -337,7 +359,16 @@ silently confers publish authority into a document library.
 ## OWN-5 · `publish_revision` trusts a client-supplied actor, and its branch path bypasses the guard entirely
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, roles-and-permissions Phase 3).** Confirmed with the recon corrections (the `p_actor_role` half was already removed by `20261019`; the live `20261034` body never references `auth.uid()`, and its branch path skips exactly the authority/base/review evaluations while keeping holds, the lock check, MOC and the revert gate). Migration `20261036` re-creates `publish_revision` (all Phase 5/7c gates byte-carried) with:
+- **Session-derived actor**: a signed-in caller's `p_actor` must equal `auth.uid()` (NULL = derived); a mismatch raises — attribution, membership, controller status, and the lock comparison all follow the session. Only a service-role call (`auth.uid() IS NULL`) may name its actor, and must.
+- **The branch path carries the promote's authority bar**: controller OR `user_can_publish_on_library` OR `user_is_effective_owner` — the same primitives `trg_document_publish_guard` applies to promotes (which never fires for branches, since they write no `documents` row).
+- **EXECUTE revoked from PUBLIC**, granted to `authenticated` + `service_role`.
+- **The v1 fallback retry is RETIRED** (app half, with DEC-11): `callPublishRevisionRpc` no longer downgrades to the v1 signature by folding `p_override_lock` into `p_force` — the silent upgrade of a noted checkout-override into a hold-bypassing controller force. A genuinely missing RPC now surfaces as the deployment error it is.
+- Done-when: (1) actor from `auth.uid()`, `p_actor` honored only service-role ✓; (2) branch under the same authority evaluation ✓; (3) `p_override_lock` cannot advantage an unauthorized caller — the promote path's trigger and the branch path's new bar both refuse them regardless of the flag, and the v1 upgrade that converted it into `p_force` is gone ✓; (4) forged-actor, unauthorized-branch and override shapes pinned by test ✓.
+- Tests: `lib/__tests__/rpPhase3Migration.test.ts` (actor block, branch gate, REVOKE/GRANT, carried gates, v1-retry removal).
+- ⚠ **Migration `20261036` awaiting hand-apply.**
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
@@ -778,7 +809,15 @@ across six call sites.
 ## OWN-14 · Silent-write-failure is a codebase-wide pattern, not a single bug
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, roles-and-permissions Phase 3 — the prerequisite).** Confirmed: all six named sites still swallowed refusals (recon re-verified each), and five of them wrote successful-looking audit rows after the refused write. Every one is now CHECKED — `{ error }` read, `.select("id")` appended, zero rows throws with a message naming what was NOT changed, and the audit/notify side-effects moved behind success:
+- `lib/ownership.ts` `setOwner` (the SINGLE funnel for every ownership write at every level) and `setLibraryOwnerTeam` — no more phantom `OWNER_ASSIGNED` rows or congratulations to owners who were never assigned.
+- `lib/reviewControl.ts` `setReviewControlPolicy`; `lib/checkoutEpisodes.ts` `forceReleaseDocument` (BOTH halves — the session close and the documents lock clear; a refused force-release now says the lock survived).
+- `lib/retention.ts` `placeLegalHold` / `releaseLegalHold` — every batch checked, the returned count is what actually held, and a partial refusal throws BEFORE the `hold_placed` log and notifications ("Legal hold was only applied to 50 of 60…").
+- Trap-2 companions (the other sensitive-column writers the new `20261036` rails will refuse for unauthorized callers): `setReviewPolicy`, `setRetentionPolicy`, `setAckPolicy`, `setRecertPolicy`, `recertifyAccess` — all checked. UI callers without a catch (`ReviewSection.assignOwner`, `ReviewPolicyModal.save/remove`) now catch and surface via `appAlert`.
+- Files: `lib/ownership.ts`, `lib/reviewControl.ts`, `lib/checkoutEpisodes.ts`, `lib/retention.ts`, `lib/reviewCycles.ts`, `lib/acknowledgments.ts`, `lib/accessRecert.ts`, `components/documents/ReviewSection.tsx`, `components/documents/ReviewPolicyModal.tsx`.
+- Tests: `lib/__tests__/checkedWrites.test.ts` — refused setOwner throws with NO audit row and NO owner notification; DB error surfaces; landed write audits; refused team assignment; partial legal hold throws with the true count and logs nothing; landed hold returns the real count.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**

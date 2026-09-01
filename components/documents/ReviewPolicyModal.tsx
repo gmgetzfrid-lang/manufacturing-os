@@ -11,6 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setReviewPolicy, describeInterval } from "@/lib/reviewCycles";
 import { setOwner } from "@/lib/ownership";
+import { appAlert } from "@/components/providers/DialogProvider";
 import type { ReviewPolicy } from "@/types/schema";
 
 export default function ReviewPolicyModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
@@ -106,11 +107,15 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
       };
       await setReviewPolicy({ level, id, orgId, policy, userId: uid, userName });
       onSaved?.(); onClose();
+    } catch (e) {
+      // OWN-14: refused writes now throw — surface them, never a silent close.
+      await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally { setBusy(false); }
   };
   const remove = async () => {
     setBusy(true);
     try { await setReviewPolicy({ level, id, orgId, policy: null, userId: uid, userName }); onSaved?.(); onClose(); }
+    catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
     finally { setBusy(false); }
   };
 

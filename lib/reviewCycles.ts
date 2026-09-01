@@ -177,7 +177,16 @@ export async function setReviewPolicy(input: {
   userName?: string | null;
 }): Promise<void> {
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  await supabase.from(table).update({ review_policy: input.policy }).eq("id", input.id);
+  // OWN-14: checked write — a refused save must not read as success.
+  const { data: polRows, error: polErr } = await supabase
+    .from(table)
+    .update({ review_policy: input.policy })
+    .eq("id", input.id)
+    .select("id");
+  if (polErr) throw new Error(polErr.message);
+  if (!polRows || polRows.length === 0) {
+    throw new Error(`Review policy was NOT saved — you don't have authority over this ${input.level}.`);
+  }
 
   if (input.level === "document") {
     await recomputeDocument(input.id);

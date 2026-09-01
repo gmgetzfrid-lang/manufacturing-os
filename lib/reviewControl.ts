@@ -146,7 +146,18 @@ export async function setReviewControlPolicy(input: {
   actorId?: string | null; actorName?: string | null;
 }): Promise<void> {
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  await supabase.from(table).update({ review_control: input.control }).eq("id", input.id);
+  // OWN-14: checked write — a policy/guard refusal is zero rows with no
+  // error, and the old form then audit-logged a policy change that never
+  // happened.
+  const { data, error } = await supabase
+    .from(table)
+    .update({ review_control: input.control })
+    .eq("id", input.id)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error(`Change-control policy was NOT saved — you don't have authority over this ${input.level}.`);
+  }
   await logAuditAction({
     action: input.control ? "REVIEW_CONTROL_SET" : "REVIEW_CONTROL_CLEARED",
     resourceType: input.level, resourceId: input.id, orgId: input.orgId, userId: input.actorId ?? "",

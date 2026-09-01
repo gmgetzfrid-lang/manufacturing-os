@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   const { data: link } = await supabaseAdmin
     .from("project_intake_links")
-    .select("id, org_id, project_id, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids")
+    .select("id, org_id, project_id, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids, created_by")
     .eq("token", token)
     .maybeSingle();
   if (!link) return bad("notfound", 404);
@@ -251,7 +251,7 @@ export async function POST(req: NextRequest) {
       return bad("This link may only submit revisions to its own or assigned documents.", 403);
     }
     const { data: d } = await supabaseAdmin
-      .from("documents").select("id, document_number, title, name, rev, current_version_id, pending_version_id")
+      .from("documents").select("id, document_number, title, name, rev, current_version_id, pending_version_id, library_id, checked_out_by, legal_hold")
       .eq("id", docId).maybeSingle();
     if (!d) return bad("Document not found.", 404);
     if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored)) {
@@ -299,7 +299,61 @@ export async function POST(req: NextRequest) {
   // Auto-supersede is a trusted-link shortcut for LINK-AUTHORED documents
   // only; an assigned org-authored controlled drawing ALWAYS goes through
   // review, whatever the link's trust level.
-  const autoNow = !!docId && !!link.allow_auto_supersede && linkAuthored;
+  //
+  // OWN-4: this route runs SERVICE-ROLE, so every publish rail (holds, the
+  // per-library authority guard, checkout locks) is bypassed at the DB — the
+  // checks must live here, and any failure DEMOTES the upload to the pending-
+  // review path rather than refusing it (the file is still wanted; only the
+  // instant promote is withheld).
+  let autoNow = !!docId && !!link.allow_auto_supersede && linkAuthored;
+  let autoWithheld: string | null = null;
+  if (autoNow && targetDoc) {
+    // 1. A hold ALWAYS blocks a promote — and an errored hold read fails
+    //    closed to the review path, never to an instant publish.
+    try {
+      if (targetDoc.legal_hold) {
+        autoNow = false; autoWithheld = "the document is under legal hold";
+      } else {
+        const { data: holds, error: holdErr } = await supabaseAdmin
+          .from("document_holds").select("id").eq("document_id", docId).is("released_at", null).limit(1);
+        if (holdErr || (holds?.length ?? 0) > 0) {
+          autoNow = false;
+          autoWithheld = holdErr ? "the hold status could not be verified" : "the document has an active hold";
+        }
+      }
+    } catch {
+      autoNow = false; autoWithheld = "the hold status could not be verified";
+    }
+    // 2. A live checkout blocks the instant promote (someone is mid-change).
+    if (autoNow && targetDoc.checked_out_by) {
+      autoNow = false; autoWithheld = "the document is checked out";
+    }
+    // 3. The trusted link acts under its CREATOR's authority, evaluated NOW:
+    //    the person who sanctioned auto-publish must still hold publish
+    //    authority (or be a controller) on this library at promote time.
+    if (autoNow) {
+      try {
+        const creator = (link.created_by as string | null) ?? null;
+        let creatorMay = false;
+        if (creator) {
+          const { data: m } = await supabaseAdmin
+            .from("org_members").select("role").eq("org_id", orgId).eq("uid", creator).eq("status", "active").maybeSingle();
+          creatorMay = m?.role === "Admin" || m?.role === "DocCtrl";
+          if (!creatorMay) {
+            const { data: can } = await supabaseAdmin
+              .rpc("user_can_publish_on_library", { p_library: targetDoc.library_id, p_uid: creator, p_org: orgId });
+            creatorMay = can === true;
+          }
+        }
+        if (!creatorMay) {
+          autoNow = false;
+          autoWithheld = "the link's creator no longer holds publish authority on this library";
+        }
+      } catch {
+        autoNow = false; autoWithheld = "publish authority could not be verified";
+      }
+    }
+  }
   const { data: ver, error: verErr } = await supabaseAdmin
     .from("document_versions")
     .insert({
@@ -309,7 +363,10 @@ export async function POST(req: NextRequest) {
       change_log: changeNote ?? `Submitted by ${company} via project intake`,
       created_by_name: company, created_at: nowIso,
       released_at: autoNow ? nowIso : null,
-      review_state: autoNow ? "approved" : "in_review",
+      // OWN-4: an auto-published external upload was never REVIEWED — writing
+      // review_state 'approved' fabricated a review that did not happen. NULL
+      // is the honest issued-without-review shape.
+      review_state: autoNow ? null : "in_review",
       provenance: "external",
       intake_link_id: link.id,
       supersedes_version_id: autoNow ? ((targetDoc?.current_version_id as string | null) ?? null) : null,
@@ -345,7 +402,8 @@ export async function POST(req: NextRequest) {
     : `Intake submission awaiting review: ${label} (${company})`;
   const intakeBody = autoNow
     ? `${company} published a new revision through their trusted intake link. It is now current.`
-    : `${company} submitted ${docId ? `Rev ${revLabel}` : "a new document"} on the project — review and approve it from the project's Intake tab.`;
+    : `${company} submitted ${docId ? `Rev ${revLabel}` : "a new document"} on the project — review and approve it from the project's Intake tab.` +
+      (autoWithheld ? ` (Auto-publish was withheld: ${autoWithheld}.)` : "");
   await supabaseAdmin.from("notifications").insert(targets.map((uid) => ({
     org_id: orgId, user_id: uid,
     kind: autoNow ? "doc_superseded" : "review_requested",
@@ -388,7 +446,7 @@ export async function POST(req: NextRequest) {
     action: autoNow ? "INTAKE_AUTO_SUPERSEDE" : "INTAKE_SUBMISSION",
     resource_type: "document", resource_id: documentId,
     org_id: orgId, user_id: null, user_email: link.contact_email ?? null,
-    details: { company, projectId, versionId, revLabel: revLabel || "A", fileName: safeName, size: file.size },
+    details: { company, projectId, versionId, revLabel: revLabel || "A", fileName: safeName, size: file.size, autoWithheld },
   }).then(() => undefined, () => undefined);
   await supabaseAdmin.rpc("bump_intake_use", { p_link: link.id }).then(() => undefined, () => undefined);
 
@@ -400,5 +458,8 @@ export async function POST(req: NextRequest) {
     message: autoNow
       ? `Rev ${revLabel || "A"} of ${label} is now the current revision.`
       : `Submitted — ${label} is with the project team for review. You'll see it marked approved here once accepted.`,
+    // The external party sees the demotion too — their "trusted" upload
+    // landing in review instead of publishing is otherwise inexplicable.
+    ...(autoWithheld ? { note: `Automatic publication was withheld (${autoWithheld}); the project team will review it.` } : {}),
   });
 }

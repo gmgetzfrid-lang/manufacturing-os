@@ -96,7 +96,16 @@ export async function setRetentionPolicy(input: {
   level: Level; id: string; orgId: string; policy: RetentionPolicy | null; actorId?: string | null; actorName?: string | null;
 }): Promise<void> {
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  await supabase.from(table).update({ retention_policy: input.policy }).eq("id", input.id);
+  // OWN-14: checked write — a refused policy save must not be logged as set.
+  const { data: polRows, error: polErr } = await supabase
+    .from(table)
+    .update({ retention_policy: input.policy })
+    .eq("id", input.id)
+    .select("id");
+  if (polErr) throw new Error(polErr.message);
+  if (!polRows || polRows.length === 0) {
+    throw new Error(`Retention policy was NOT saved — you don't have authority over this ${input.level}.`);
+  }
   await logEvent(input.orgId, { scopeType: input.level, scopeId: input.id, documentId: input.level === "document" ? input.id : null, action: "retention_set", detail: input.policy ?? undefined, actorId: input.actorId, actorName: input.actorName });
 
   if (input.level === "document") { await recomputeRetention(input.id); return; }
@@ -123,12 +132,23 @@ export async function placeLegalHold(input: {
   const nowIso = new Date().toISOString();
   const patch = { legal_hold: true, legal_hold_matter: input.matter, legal_hold_reason: input.reason ?? null, legal_hold_by: input.actorId ?? null, legal_hold_at: nowIso };
   const ids = await scopeDocumentIds(input.scope, input.id);
+  // OWN-14: every batch is CHECKED, and the count returned is what actually
+  // held. The old form returned ids.length and notified regardless — a
+  // refused write produced a "N documents held" toast, a hold_placed log
+  // row, and zero actual protection.
+  let held = 0;
   for (let i = 0; i < ids.length; i += 50) {
-    await supabase.from("documents").update(patch).in("id", ids.slice(i, i + 50));
+    const batch = ids.slice(i, i + 50);
+    const { data, error } = await supabase.from("documents").update(patch).in("id", batch).select("id");
+    if (error) throw new Error(`Legal hold failed after ${held} of ${ids.length} documents: ${error.message}`);
+    held += data?.length ?? 0;
+  }
+  if (held < ids.length) {
+    throw new Error(`Legal hold was only applied to ${held} of ${ids.length} documents — the rest were refused. Nothing has been logged as held; verify authority and retry.`);
   }
   await logEvent(input.orgId, { scopeType: input.scope, scopeId: input.id, documentId: input.scope === "document" ? input.id : null, action: "hold_placed", matter: input.matter, reason: input.reason, actorId: input.actorId, actorName: input.actorName });
   await notifyHold(input.orgId, ids, "legal_hold_placed", input.matter, input.actorId, input.actorName);
-  return ids.length;
+  return held;
 }
 
 export async function releaseLegalHold(input: {
@@ -136,12 +156,20 @@ export async function releaseLegalHold(input: {
 }): Promise<number> {
   const patch = { legal_hold: false, legal_hold_matter: null, legal_hold_reason: null, legal_hold_by: null, legal_hold_at: null };
   const ids = await scopeDocumentIds(input.scope, input.id);
+  // OWN-14: checked, with the real released count (see placeLegalHold).
+  let released = 0;
   for (let i = 0; i < ids.length; i += 50) {
-    await supabase.from("documents").update(patch).in("id", ids.slice(i, i + 50));
+    const batch = ids.slice(i, i + 50);
+    const { data, error } = await supabase.from("documents").update(patch).in("id", batch).select("id");
+    if (error) throw new Error(`Hold release failed after ${released} of ${ids.length} documents: ${error.message}`);
+    released += data?.length ?? 0;
+  }
+  if (released < ids.length) {
+    throw new Error(`The hold was only released on ${released} of ${ids.length} documents — the rest were refused. Nothing has been logged as released; verify authority and retry.`);
   }
   await logEvent(input.orgId, { scopeType: input.scope, scopeId: input.id, documentId: input.scope === "document" ? input.id : null, action: "hold_released", reason: input.reason, actorId: input.actorId, actorName: input.actorName });
   await notifyHold(input.orgId, ids, "legal_hold_released", input.reason ?? "", input.actorId, input.actorName);
-  return ids.length;
+  return released;
 }
 
 // ── Disposition ──────────────────────────────────────────────────────────────

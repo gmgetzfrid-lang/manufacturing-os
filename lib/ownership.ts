@@ -111,7 +111,18 @@ export async function effectiveOwnerForDocument(doc: {
 export async function setLibraryOwnerTeam(input: {
   libraryId: string; orgId?: string | null; teamId: string | null; actorId: string; actorName?: string | null;
 }): Promise<void> {
-  await supabase.from("libraries").update({ owner_team_id: input.teamId }).eq("id", input.libraryId);
+  // OWN-14: checked write — an RLS refusal returns 200 with zero rows, and
+  // the old unchecked form then wrote a successful-looking audit entry for
+  // an assignment that never happened.
+  const { data, error } = await supabase
+    .from("libraries")
+    .update({ owner_team_id: input.teamId })
+    .eq("id", input.libraryId)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error("Owning team was NOT changed — you don't have authority over this library (or it no longer exists).");
+  }
   await logAuditAction({
     action: input.teamId ? "OWNER_TEAM_ASSIGNED" : "OWNER_TEAM_CLEARED",
     resourceType: "library", resourceId: input.libraryId,
@@ -175,7 +186,19 @@ export async function setOwner(input: {
   actorId: string; actorName?: string | null;
 }): Promise<void> {
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  await supabase.from(table).update({ owner_user_id: input.userId, owner_name: input.name }).eq("id", input.id);
+  // OWN-14: this is the SINGLE funnel for every ownership write at every
+  // level — the exact site where a guard/policy refusal must fail loudly,
+  // never write a phantom OWNER_ASSIGNED audit row, and never congratulate
+  // a new owner who was not actually assigned.
+  const { data, error } = await supabase
+    .from(table)
+    .update({ owner_user_id: input.userId, owner_name: input.name })
+    .eq("id", input.id)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error(`Owner was NOT changed — you don't have authority to reassign this ${input.level} (or it no longer exists).`);
+  }
 
   await logAuditAction({
     action: input.userId ? "OWNER_ASSIGNED" : "OWNER_CLEARED",

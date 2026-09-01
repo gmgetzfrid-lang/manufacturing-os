@@ -13,6 +13,7 @@ import {
   resolveEffectivePolicy, describeInterval, markReviewed, setReviewPolicy,
 } from "@/lib/reviewCycles";
 import { setOwner, effectiveOwnerForDocument, type EffectiveOwner } from "@/lib/ownership";
+import { appAlert } from "@/components/providers/DialogProvider";
 import ReviewPill from "@/components/documents/ReviewPill";
 import { User2 } from "lucide-react";
 import type { DocumentRecord, ReviewPolicy } from "@/types/schema";
@@ -86,6 +87,9 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
       await setOwner({ level: "document", id: doc.id, orgId, userId: u?.uid ?? null, name: u?.name ?? null, actorId: uid ?? "", actorName: userName });
       setOwnerPicking(false); setOwnerQuery(""); setOwnerHits([]);
       await load(); onChanged?.();
+    } catch (e) {
+      // OWN-14: setOwner now throws on a refused write — say so.
+      await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally { setBusy(false); }
   };
 

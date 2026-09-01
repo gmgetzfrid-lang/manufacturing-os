@@ -87,24 +87,17 @@ function isMissingPublishRpc(err: { code?: string; message?: string } | null): b
     (msg.includes("does not exist") || msg.includes("could not find") || msg.includes("schema cache"));
 }
 /**
- * Call publish_revision, tolerating a pre-20260828 database: the v2 function
- * adds p_override_lock; if the deployed function doesn't know that argument
- * yet, retry with the v1 signature (folding the override into p_force, the
- * old — imperfect but working — semantics) so publishing never breaks while
- * the migration is pending.
+ * Call publish_revision. OWN-5 / DEC-11: the v1-signature retry is RETIRED —
+ * it silently upgraded a checkout-override (p_override_lock, note required,
+ * holder notified) into a controller force (p_force, bypasses lock AND hold)
+ * whenever the deployed function looked old. The v2+ signature has been the
+ * applied, probe-verified reality since 20260828; a genuinely missing RPC is
+ * a deployment error to surface, not to paper over with weaker semantics.
  */
 async function callPublishRevisionRpc(args: Record<string, unknown>): Promise<{
   data: unknown; error: { code?: string; message?: string } | null;
 }> {
-  const first = await supabase.rpc("publish_revision", args);
-  if (first.error && isMissingPublishRpc(first.error) && "p_override_lock" in args) {
-    const { p_override_lock, ...v1 } = args;
-    v1.p_force = args.p_force === true || p_override_lock === true;
-    const second = await supabase.rpc("publish_revision", v1);
-    // Only report "RPC missing entirely" if the v1 shape is missing too.
-    return second;
-  }
-  return first;
+  return supabase.rpc("publish_revision", args);
 }
 
 

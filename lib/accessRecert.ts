@@ -83,7 +83,16 @@ export async function setRecertPolicy(input: {
   const next = input.policy?.enabled && input.policy.intervalMonths
     ? computeNextRecertDate(new Date().toISOString(), input.policy.intervalMonths)
     : null;
-  await supabase.from("libraries").update({ recert_policy: input.policy, next_recertification_date: next, recert_notified_at: null }).eq("id", input.libraryId);
+  // OWN-14: checked write — a refused save must not produce a policy_set event.
+  const { data: polRows, error: polErr } = await supabase
+    .from("libraries")
+    .update({ recert_policy: input.policy, next_recertification_date: next, recert_notified_at: null })
+    .eq("id", input.libraryId)
+    .select("id");
+  if (polErr) throw new Error(polErr.message);
+  if (!polRows || polRows.length === 0) {
+    throw new Error("Recertification policy was NOT saved — you don't have authority over this library.");
+  }
   await supabase.from("access_recertification_events").insert({
     org_id: input.orgId, library_id: input.libraryId, action: "policy_set",
     next_recertification_date: next, note: null, performed_by: input.actorId ?? null, performed_by_name: input.actorName ?? null,
@@ -103,7 +112,16 @@ export async function recertifyAccess(input: {
   const now = new Date().toISOString();
   const nextDate = policy?.enabled && policy.intervalMonths ? computeNextRecertDate(now, policy.intervalMonths) : null;
 
-  await supabase.from("libraries").update({ last_recertified_at: now, last_recertified_by: input.actorId ?? null, next_recertification_date: nextDate, recert_notified_at: null }).eq("id", input.libraryId);
+  // OWN-14: checked — a refused attestation must not snapshot as recertified.
+  const { data: certRows, error: certErr } = await supabase
+    .from("libraries")
+    .update({ last_recertified_at: now, last_recertified_by: input.actorId ?? null, next_recertification_date: nextDate, recert_notified_at: null })
+    .eq("id", input.libraryId)
+    .select("id");
+  if (certErr) throw new Error(certErr.message);
+  if (!certRows || certRows.length === 0) {
+    throw new Error("Recertification was NOT recorded — you don't have authority over this library.");
+  }
   await supabase.from("access_recertification_events").insert({
     org_id: input.orgId, library_id: input.libraryId, action: "recertified",
     grants_snapshot: grants, grant_count: grants.length, note: input.note ?? null,

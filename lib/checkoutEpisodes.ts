@@ -613,7 +613,10 @@ export async function forceReleaseDocument(input: {
   // message alone is only visible if they happen to be online).
   const affected = await fetchActiveSessions(input.documentId);
 
-  await supabase
+  // OWN-14: both halves of a force-release are CHECKED. A guard refusal on
+  // either write used to be silent — the UI then told everyone the lock was
+  // released while the session and the lock survived.
+  const { error: sessErr } = await supabase
     .from("checkout_sessions")
     .update({
       status: "checked_in",
@@ -623,11 +626,15 @@ export async function forceReleaseDocument(input: {
       released_reason: input.reason ?? `Force released by ${input.actorName}`,
     })
     .eq("document_id", input.documentId)
-    .eq("status", "active");
+    .eq("status", "active")
+    .select("id");
+  if (sessErr) throw new Error(`Force release failed on the session: ${sessErr.message}`);
+  // (Zero session rows is legitimate here — the lock can exist without an
+  // active session row; the document write below is the authoritative half.)
 
   const episode = await getActiveEpisode(input.documentId);
 
-  await supabase
+  const { data: docRows, error: docErr } = await supabase
     .from("documents")
     .update({
       checked_out_by: null,
@@ -637,7 +644,12 @@ export async function forceReleaseDocument(input: {
       current_lock_id: null,
       active_collaborators: [],
     })
-    .eq("id", input.documentId);
+    .eq("id", input.documentId)
+    .select("id");
+  if (docErr) throw new Error(`Force release failed: ${docErr.message}`);
+  if (!docRows || docRows.length === 0) {
+    throw new Error("Force release was refused — the lock was NOT cleared (releasing another user's checkout needs controller authority).");
+  }
 
   if (episode) {
     await closeEpisode({

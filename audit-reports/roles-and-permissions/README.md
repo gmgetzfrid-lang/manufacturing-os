@@ -113,6 +113,18 @@ roles backfill, `org_capability_allows`/`acl_index_denies` typo fixes). All
 seven returned `applied = true`. The "pending hand-applied migration" caveats
 below are therefore historical — code and database now agree for this area.
 
+### Phase 3 — close the publish path (session 2026-08-24, continued)
+
+| Item | Outcome |
+|---|---|
+| `OWN-14` (HIGH, Trap-2 prerequisite) | **RESOLVED** — all six named silent-write sites (plus five Trap-2 companions and two catch-less UI callers) now fail loudly; audit rows and notifications write only after a landed write; legal-hold counts are real |
+| `OWN-1` (CRITICAL) | **RESOLVED** — 17-column sensitive-column guard on `libraries` (controller / current owner / manage-grant), cosmetic columns left member-writable per the 30-writer recon map; DELETE controllers-only RESTRICTIVE — migration `20261036` |
+| `OWN-2` / `DEC-6` (CRITICAL) | **RESOLVED** — the documents access-change guard now covers `owner_user_id`/`owner_name`: takeover refused, current owner may reassign, first-claim on unowned default-open docs preserved — migration `20261036` |
+| `OWN-5` (CRITICAL) | **RESOLVED** — `publish_revision` derives its actor from `auth.uid()` (forged `p_actor` refused), the branch path carries the promote's authority bar, EXECUTE revoked from PUBLIC; the v1 retry that upgraded a checkout-override into a controller force is retired — migration `20261036` |
+| `OWN-4` (CRITICAL) | **RESOLVED** — intake auto-supersede now fails closed on holds, blocks on checkout, runs under the link CREATOR's live publish authority, and never stamps an unreviewed upload `approved`; failures demote to the pending-review path with the reason surfaced |
+
+Remaining in Phase 3: `GAP-15`/`DEC-7` (the ownership branch in `node_visible` — read-visibility, lands separately) and `EGRESS-6` (the `document_versions` write overlay — last, on top of real authority checks). Ship loop green: `tsc`, `eslint`, **1602 vitest** (18 new), full `next build`. Migration `20261036_rp_phase3_publish_path.sql` **awaiting hand-apply** (verification + DEC-30 inventory queries included).
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

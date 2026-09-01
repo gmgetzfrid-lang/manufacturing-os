@@ -517,7 +517,16 @@ export async function setAckPolicy(input: {
   actorId?: string | null; actorName?: string | null;
 }): Promise<void> {
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  await supabase.from(table).update({ ack_policy: input.policy }).eq("id", input.id);
+  // OWN-14: checked write — a refused save must not be audit-logged as set.
+  const { data: polRows, error: polErr } = await supabase
+    .from(table)
+    .update({ ack_policy: input.policy })
+    .eq("id", input.id)
+    .select("id");
+  if (polErr) throw new Error(polErr.message);
+  if (!polRows || polRows.length === 0) {
+    throw new Error(`Read-&-understood policy was NOT saved — you don't have authority over this ${input.level}.`);
+  }
   await logAuditAction({
     action: input.policy ? "ACK_POLICY_SET" : "ACK_POLICY_CLEARED", resourceType: input.level, resourceId: input.id,
     orgId: input.orgId, userId: input.actorId ?? "", details: { policy: input.policy },
