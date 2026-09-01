@@ -123,7 +123,7 @@ below are therefore historical — code and database now agree for this area.
 | `OWN-5` (CRITICAL) | **RESOLVED** — `publish_revision` derives its actor from `auth.uid()` (forged `p_actor` refused), the branch path carries the promote's authority bar, EXECUTE revoked from PUBLIC; the v1 retry that upgraded a checkout-override into a controller force is retired — migration `20261036` |
 | `OWN-4` (CRITICAL) | **RESOLVED** — intake auto-supersede now fails closed on holds, blocks on checkout, runs under the link CREATOR's live publish authority, and never stamps an unreviewed upload `approved`; failures demote to the pending-review path with the reason surfaced |
 
-Remaining in Phase 3: `GAP-15`/`DEC-7` (the ownership branch in `node_visible` — read-visibility, lands separately) and `EGRESS-6` (the `document_versions` write overlay — last, on top of real authority checks). Ship loop green: `tsc`, `eslint`, **1602 vitest** (18 new), full `next build`. Migration `20261036_rp_phase3_publish_path.sql` **awaiting hand-apply** (verification + DEC-30 inventory queries included).
+Remaining in Phase 3: `GAP-15`/`DEC-7` (the ownership branch in `node_visible` — read-visibility, lands separately) and `EGRESS-6` (the `document_versions` write overlay — last, on top of real authority checks). Ship loop green: `tsc`, `eslint`, **1602 vitest** (18 new), full `next build`. Migration `20261036_rp_phase3_publish_path.sql` **applied & verified live 2026-08-24** (6-point probe all true; inventory all zero).
 
 ### Phase 2 — database honesty (the trap phase)
 

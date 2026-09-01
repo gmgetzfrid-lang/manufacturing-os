@@ -97,7 +97,7 @@ reach the database guard.
 - Done-when: (1) non-controller/non-owner cannot change owner/acl/review_control via PostgREST — trigger-refused, pinned by test ✓; (2) every app call site fails loudly (OWN-14) or keeps working (cosmetic set) ✓; (3) DELETE controllers-only ✓.
 - The migration's verification block also proves all 17 guarded columns exist (plpgsql binds late — a missing one would break every library update) and carries the DEC-30 inventory queries (non-controller library owners; owned-document count).
 - Tests: `lib/__tests__/rpPhase3Migration.test.ts` — every sensitive column asserted by name in the guard body; the three authority arms; RESTRICTIVE delete shape.
-- ⚠ **Migration `20261036` awaiting hand-apply.**
+- **Applied & verified live 2026-08-24:** `20261036` — probe true; DEC-30 inventory all ZERO (no non-controller owners, no owned documents, no unreconciled branches — the rails enforce against a blank slate).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
@@ -174,7 +174,7 @@ only controllers.
 **Resolution (2026-08-24, roles-and-permissions Phase 3, with DEC-6).** Confirmed — `documents_guard_access_change` guarded `visibility`/`acl`/`acl_index` but not the owner columns, and the effective owner carries PUBLISH authority (`user_is_effective_owner` in the publish guard), so a self-assigned owner was a self-granted publisher. Migration `20261036` re-creates the guard (original block byte-carried) adding: a change to `owner_user_id`/`owner_name` requires a controller, an ACL manage-grant, or the document's CURRENT owner. Per DEC-6's acceptance: a Viewer's direct PATCH to self is refused; the current owner reassigns through the Inspector (owner arm); a controller always can; and FIRST assignment on an unowned, default-open document stays open — the deliberate, recorded scope note: on unrestricted libraries any member may still make the initial assignment (matching the existing guard's default-open escape hatch and keeping `ReviewSection`'s "Assign owner" working), but a TAKEOVER of an owned document is always refused.
 - Done-when: (1) refusal for non-controller/non-owner/non-granted ✓; (2) the intended reassignment flow works and the decision is written down (this record + the migration comment) ✓; (3) tests cover refusal arms and the claim escape ✓ (shape pins; the live probe is in the migration's verification).
 - Tests: `lib/__tests__/rpPhase3Migration.test.ts`.
-- ⚠ **Migration `20261036` awaiting hand-apply** — until pasted, `setOwner`'s new zero-row throw has nothing DB-side to refuse a takeover; the app half alone does not close the PostgREST path.
+- **Applied & verified live 2026-08-24:** `20261036` — probe true (documents guard covers ownership; all 17 guarded library columns exist).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
@@ -368,7 +368,7 @@ silently confers publish authority into a document library.
 - **The v1 fallback retry is RETIRED** (app half, with DEC-11): `callPublishRevisionRpc` no longer downgrades to the v1 signature by folding `p_override_lock` into `p_force` — the silent upgrade of a noted checkout-override into a hold-bypassing controller force. A genuinely missing RPC now surfaces as the deployment error it is.
 - Done-when: (1) actor from `auth.uid()`, `p_actor` honored only service-role ✓; (2) branch under the same authority evaluation ✓; (3) `p_override_lock` cannot advantage an unauthorized caller — the promote path's trigger and the branch path's new bar both refuse them regardless of the flag, and the v1 upgrade that converted it into `p_force` is gone ✓; (4) forged-actor, unauthorized-branch and override shapes pinned by test ✓.
 - Tests: `lib/__tests__/rpPhase3Migration.test.ts` (actor block, branch gate, REVOKE/GRANT, carried gates, v1-retry removal).
-- ⚠ **Migration `20261036` awaiting hand-apply.**
+- **Applied & verified live 2026-08-24:** `20261036` — probe true; DEC-30 inventory all ZERO (no non-controller owners, no owned documents, no unreconciled branches — the rails enforce against a blank slate).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
