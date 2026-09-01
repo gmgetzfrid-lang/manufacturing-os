@@ -144,7 +144,9 @@ toasted, reconciled); the pack-progress denominator jumped mid-run (gated
 count now authoritative); and the migration-shape tests were
 mutation-defeated by unbounded regexes (re-scoped per statement and
 re-proved by mutation — both audit mutations now fail the suite).
-Migration `20261033_dc_phase7b_guard_patches.sql` **awaiting hand-apply**.
+Migration `20261033_dc_phase7b_guard_patches.sql` **applied & verified live
+2026-08-24** (4-point probe all true: ack guard owns acknowledged_by; pin
+guard fires on INSERT and UPDATE; search_path pinned on both).
 Remaining in Phase 7: `PKG-3`, `REV-2`, `DIST-1` remainder + XEDGE
 extensions.
 
