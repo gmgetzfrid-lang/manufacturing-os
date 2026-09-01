@@ -83,7 +83,7 @@ FullScreenViewer.tsx:841-843 — `const ctx = { doc: docRecord, fileUrl: resolve
 - Done-when: (1) server-side refusal (RPC gate) ✓; (2) panel neither offers revert on those rows nor labels an in-review draft "Superseded" ✓; (3) test asserts reverting to an in-review draft fails ✓ (pure-guard tests + migration pins; `current_version_id` untouched because the refusal throws before any write).
 - Files: `lib/documentGuards.ts`, `lib/revisions.ts`, `components/documents/VersionHistoryPanel.tsx`, `supabase/migrations/20261034_dc_phase7c_revert_target_gate.sql`.
 - Tests: `lib/__tests__/revertTargetGuard.test.ts` (in_review/rejected/future-state/branch refused with reasons; issued and approved pass); `lib/__tests__/revertTargetMigration.test.ts` (belongs-to-document check, draft/branch refusal, undefined_column tolerance, MOC gate + stale-base check carried forward, search_path pin).
-- ⚠ **Migration `20261034` awaiting hand-apply** — until pasted, the RPC accepts a direct revert of a draft; the shipped UI and lib already refuse.
+- **Applied & verified live 2026-08-24:** `20261034` — 3-point probe all true (revert-target gate present; MOC gate survived the re-create; search_path pinned). A direct RPC call can no longer restore a draft or a branch.
 - **What this brought to light:** `resolveBranch` only writes a resolution note — revert was the ONLY promotion path for branch content and is now gated, so branch content currently has NO path to current. That is the safe direction, but the branches area should decide what a real merge/promotion flow looks like. REV-3 (the `-revert-<epoch>` label reaching every footer) remains open and untouched by this fix.
 
 - **Verification:** CONFIRMED

@@ -164,9 +164,11 @@ retirement + rev-up recall of the download-audit population, retired copies
 now TOP of the stale list marked "destroy this copy", and supersede revokes
 outstanding share links with the count on the audit record). Ship loop
 green: `tsc`, `eslint`, **1560 vitest** (18 new), full `next build`.
-Migration `20261034_dc_phase7c_revert_target_gate.sql` **awaiting
-hand-apply**. Remaining in the area: the HIGH/MEDIUM backlog (REV-3 label
-hygiene, PKG-6 print-ordering, DIST-4/10/11/12/13, XEDGE extensions).
+Migration `20261034_dc_phase7c_revert_target_gate.sql` **applied &
+verified live 2026-08-24** (3-point probe all true). **Every CRITICAL in
+this area (18 of 18) is now RESOLVED.** Remaining: the HIGH/MEDIUM backlog
+(REV-3 label hygiene, PKG-6 print-ordering, DIST-4/10/11/12/13, XEDGE
+extensions).
 
 | # | Report | n | Note |
 |---|---|---|---|
