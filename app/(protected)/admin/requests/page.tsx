@@ -27,7 +27,7 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
     enabled: true,
     options: [
       { label: "ISO (Isometric)", value: "ISO" },
-      { label: "RFI (Info Request)", value: "RFI" },
+      { label: "RFI (Info Request)", value: "RFI", closeWithoutReview: true },
       { label: "MOC (Change Mgmt)", value: "MOC" },
       { label: "As-Built", value: "ASBUILT" },
       { label: "Inspection", value: "INSPECTION" }
@@ -126,7 +126,7 @@ export default function DraftingConfigPage() {
     sectionKey: FormSectionKey,
     idx: number,
     field: keyof SelectOption,
-    value: string | number
+    value: string | number | boolean
   ) => {
     if (!settings) return;
     const newOptions = [...settings[sectionKey].options];
@@ -181,19 +181,31 @@ export default function DraftingConfigPage() {
             onAddOption={() => addOption('requestTypes')}
             onRemoveOption={(i) => removeOption('requestTypes', i)}
             renderOption={(opt, i) => (
-              <div className="flex gap-2 w-full">
-                <input 
+              <div className="flex gap-2 w-full items-center">
+                <input
                   value={opt.label}
                   onChange={(e) => updateOption('requestTypes', i, 'label', e.target.value)}
                   className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
                   placeholder="Display Label"
                 />
-                <input 
+                <input
                   value={opt.value}
                   onChange={(e) => updateOption('requestTypes', i, 'value', e.target.value)}
                   className="w-24 sm:w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
                   placeholder="Value (ID)"
                 />
+                <label
+                  className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] whitespace-nowrap cursor-pointer select-none"
+                  title="Tickets of this type can be closed by the requester without the draft/review/IFC cycle (like an RFI answered in discussion). If no type is checked, RFI keeps this by default."
+                >
+                  <input
+                    type="checkbox"
+                    checked={opt.closeWithoutReview === true}
+                    onChange={(e) => updateOption('requestTypes', i, 'closeWithoutReview', e.target.checked)}
+                    className="rounded border-[var(--color-border)]"
+                  />
+                  Close w/o review
+                </label>
               </div>
             )}
           />

@@ -59,6 +59,30 @@ describe("computeTransition — core behaviors", () => {
     expect(recipients).toEqual(["u-eng"]);
   });
 
+  it("WF-22: request_eng_review WITHOUT an engineer does not advance the status", () => {
+    const t = mk();
+    const { updates, newStatus } = computeTransition(t, {
+      actionType: "request_eng_review", actionLabel: "Flag for Engineering Review",
+      comment: "check the nozzle loads", actor, now: NOW,
+    });
+    // An engineerless request used to reach PENDING_ENG_TEAM where the
+    // org-wide fallback governed — now the ticket stays put.
+    expect(newStatus).toBe(t.status);
+    expect(updates.status).toBeUndefined();
+    expect(updates.assigned_engineer_id).toBeUndefined();
+  });
+
+  it("WF-22: request_final_engineer_approval WITHOUT an engineer does not advance the status", () => {
+    const t = mk({ status: "PENDING_REVIEW", assignedDrafterId: "u-draft" });
+    const { updates, newStatus } = computeTransition(t, {
+      actionType: "request_final_engineer_approval", actionLabel: "Send for Engineer Final Approval",
+      comment: "please sign off", actor: { uid: "u-req", email: "r@x.com", role: "Viewer" }, now: NOW,
+    });
+    expect(newStatus).toBe("PENDING_REVIEW");
+    expect(updates.status).toBeUndefined();
+    expect(updates.assigned_engineer_id).toBeUndefined();
+  });
+
   it("self_assign: actor becomes the drafter", () => {
     const { updates, newStatus } = computeTransition(mk(), {
       actionType: "self_assign", actionLabel: "Pick Up Ticket",

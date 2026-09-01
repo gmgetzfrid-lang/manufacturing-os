@@ -5,10 +5,11 @@
 // policy actually rewires authority; (3) critical capabilities can never
 // lose Admin; (4) role-token matching (Engineer tiers, "*") is correct.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { WorkflowEngine } from "@/lib/workflow";
 import {
-  defaultCapabilityPolicy, policyAllows, roleTokenMatches, validateCapabilityPolicy,
+  defaultCapabilityPolicy, loadCapabilityPolicy, policyAllows, roleTokenMatches,
+  validateCapabilityPolicy, __resetCapabilityPolicyCache,
   type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import type { Ticket, Role } from "@/types/schema";
@@ -134,5 +135,42 @@ describe("capability policy — rails and matching", () => {
   it("defaults cover every registered capability", () => {
     const d = defaultCapabilityPolicy();
     expect(Object.values(d).every((v) => Array.isArray(v))).toBe(true);
+  });
+});
+
+describe("loadCapabilityPolicy — read errors fail closed WITHOUT caching (WF-1 done-when 2)", () => {
+  beforeEach(() => __resetCapabilityPolicyCache());
+
+  // The signature only needs `.from(...)` chaining down to maybeSingle().
+  const clientReturning = (result: { data: unknown; error: unknown }) => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({ maybeSingle: async () => result }),
+        }),
+      }),
+    }),
+  }) as never;
+
+  it("an errored read returns defaults for THIS call but a later good read sees the stored policy", async () => {
+    const stored = { data: { data: { caps: { "ticket.assign": ["Admin"] } } }, error: null };
+    const errored = { data: null, error: { message: "boom" } };
+
+    const first = await loadCapabilityPolicy("org-x", clientReturning(errored));
+    expect(first).toEqual({});
+
+    // Had the error been cached, this would return {} for the TTL and the
+    // org's stored narrowing would vanish for a minute after any hiccup.
+    const second = await loadCapabilityPolicy("org-x", clientReturning(stored));
+    expect(second.caps?.["ticket.assign"]).toEqual(["Admin"]);
+  });
+
+  it("a SUCCESSFUL read is cached (the error path is the only non-caching one)", async () => {
+    const stored = { data: { data: { caps: { "ticket.assign": ["Admin"] } } }, error: null };
+    const errored = { data: null, error: { message: "boom" } };
+
+    await loadCapabilityPolicy("org-y", clientReturning(stored));
+    const cached = await loadCapabilityPolicy("org-y", clientReturning(errored));
+    expect(cached.caps?.["ticket.assign"]).toEqual(["Admin"]);
   });
 });

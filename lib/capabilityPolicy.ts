@@ -169,12 +169,17 @@ export async function loadCapabilityPolicy(
   const hit = cache.get(orgId);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.policy;
   try {
-    const { data } = await (client ?? supabase)
+    const { data, error } = await (client ?? supabase)
       .from("org_configurations")
       .select("data")
       .eq("org_id", orgId)
       .eq("key", "capability_policy")
       .maybeSingle();
+    // A read ERROR is not "no policy stored": returning defaults is correct
+    // for one call, but caching them for the TTL would let an org's stored
+    // narrowing vanish for a minute after any transient failure (WF-1
+    // done-when 2). Fail closed to defaults WITHOUT caching.
+    if (error) return {};
     // The column is `data` — reading `value` (which does not exist) errored on
     // every call, so the catch below returned {} and the entire capability
     // layer was inert (DB-1). Both this read and the SQL org_capability_allows

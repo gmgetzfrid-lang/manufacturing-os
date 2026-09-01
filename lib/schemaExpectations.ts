@@ -84,6 +84,10 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "notification_preferences", migration: "20260529_phase_b_notifications.sql" },
   { table: "notifications", migration: "20260621_in_app_notifications.sql" },
   { table: "org_ai_instructions", migration: "20260806_intelligence_layer.sql" },
+  // The capability policy + drafting config live here. schema.sql supplies it
+  // (not a migration) — listed so /api/admin/schema-health catches the class
+  // of drift that made the whole capability layer inert (WF-1/DB-1).
+  { table: "org_configurations", migration: "schema.sql (base schema)" },
   { table: "output_generations", migration: "20260923_output_templates.sql" },
   { table: "output_templates", migration: "20260923_output_templates.sql" },
   { table: "plants", migration: "20260606_operational_entity_graph.sql" },

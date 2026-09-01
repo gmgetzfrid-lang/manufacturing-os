@@ -1182,6 +1182,11 @@ export interface SelectOption {
   label: string;
   value: string | number;
   color?: string; // For badges
+  /** Request-type options only: tickets of this type may be closed by the
+   *  requester without the draft→review→IFC cycle (e.g. an RFI that was
+   *  answered in discussion). Enforced by the workflow engine and the
+   *  ticket-insert trigger, not just the form. */
+  closeWithoutReview?: boolean;
 }
 
 export interface FormFieldConfig {

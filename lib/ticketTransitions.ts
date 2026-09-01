@@ -177,8 +177,11 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.status = "PENDING_ASSIGNMENT";
       break;
     case "request_eng_review":
-      updates.status = "PENDING_ENG_TEAM";
+      // WF-22: the status may only advance WITH its engineer — an
+      // engineerless request used to reach PENDING_ENG_TEAM where the
+      // org-wide eng_review fallback governed.
       if (input.engineer) {
+        updates.status = "PENDING_ENG_TEAM";
         updates.assigned_engineer_id = input.engineer.id;
         updates.assigned_engineer_name = input.engineer.name;
         updates.assigned_engineer_email = input.engineer.email;
@@ -234,8 +237,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "request_final_engineer_approval":
-      updates.status = "PENDING_FINAL_APPROVAL";
+      // WF-22: same rule — no engineer, no status change.
       if (input.engineer) {
+        updates.status = "PENDING_FINAL_APPROVAL";
         updates.assigned_engineer_id = input.engineer.id;
         updates.assigned_engineer_name = input.engineer.name;
         updates.assigned_engineer_email = input.engineer.email;

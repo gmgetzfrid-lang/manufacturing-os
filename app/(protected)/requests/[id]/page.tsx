@@ -803,15 +803,39 @@ const FileViewerModal = ({
 export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
-  const { activeRole, userEmail, activeOrgId, uid } = useRole();
+  const { activeRole, roles, userEmail, activeOrgId, uid } = useRole();
   // The org's capability policy — so the buttons drawn here match what the
   // workflow-action route will actually allow (it re-derives with the same
   // policy). Undefined until loaded → defaults, which mirror historic rules.
   const [capPolicy, setCapPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  // Separation-of-duties binds at >= 3 active members, and close-without-review
+  // is a property of the configured request type — both fetched here so the
+  // buttons match the workflow-action route's evaluation of the same context.
+  const [activeMemberCount, setActiveMemberCount] = useState(0);
+  const [closeWithoutReviewTypes, setCloseWithoutReviewTypes] = useState<string[]>(['RFI']);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
     void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setCapPolicy(p); }).catch(() => {});
+    void supabase
+      .from('org_members')
+      .select('uid', { count: 'exact', head: true })
+      .eq('org_id', activeOrgId)
+      .eq('status', 'active')
+      .then(({ count }) => { if (alive && typeof count === 'number') setActiveMemberCount(count); });
+    void supabase
+      .from('org_configurations')
+      .select('data')
+      .eq('org_id', activeOrgId)
+      .eq('key', 'drafting')
+      .maybeSingle()
+      .then(({ data: cfgRow }) => {
+        if (!alive) return;
+        const opts = ((cfgRow?.data as { requestTypes?: { options?: Array<{ value?: string; closeWithoutReview?: boolean }> } } | null)
+          ?.requestTypes?.options) ?? [];
+        const flagged = opts.filter((o) => o.closeWithoutReview === true).map((o) => String(o.value ?? '')).filter(Boolean);
+        if (flagged.length > 0) setCloseWithoutReviewTypes(flagged);
+      });
     return () => { alive = false; };
   }, [activeOrgId]);
   const { showToast } = useToast();
@@ -1073,6 +1097,12 @@ export default function TicketDetailView() {
 
   const initiateWorkflowAction = async (action: WorkflowAction) => {
     if (!ticket) return;
+    if (action.disabledReason) {
+      // Separation-of-duties: the server refuses this with the same message,
+      // so stop it here with the explanation instead of a round-trip 403.
+      await appAlert({ message: action.disabledReason, tone: "danger" });
+      return;
+    }
     if (action.requiresFile) {
       const hasFiles = ticket.attachments && ticket.attachments.length > 0;
       if (!hasFiles) { await appAlert({ message: "Compliance Check Failed: You must upload at least one file before proceeding.", tone: "danger" }); return; }
@@ -1393,7 +1423,11 @@ export default function TicketDetailView() {
     );
   }
 
-  const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy);
+  const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
+    userRoles: roles,
+    activeMemberCount,
+    closeWithoutReviewTypes,
+  });
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
   
   // LOGIC: DRAFTS SORTING & VERSIONING
@@ -1440,7 +1474,7 @@ export default function TicketDetailView() {
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
         onApprove={(() => {
-          const action = availableActions.find(a => a.action === 'approve_draft_ifc');
+          const action = availableActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
         })()}
       />
@@ -1485,6 +1519,7 @@ export default function TicketDetailView() {
           onClose={() => { setShowEngineerPicker(false); setPendingAction(null); }}
           orgId={activeOrgId}
           currentEngineerId={pendingAction.action === 'reassign_engineer' ? ticket?.assignedEngineerId ?? undefined : undefined}
+          independentOf={[ticket?.requesterId, ticket?.assignedDrafterId, uid]}
           title={
             pendingAction.action === 'request_final_engineer_approval' ? 'Send for Engineer Final Approval' :
             pendingAction.action === 'reassign_engineer' ? 'Reassign Engineer Reviewer' :
@@ -1651,18 +1686,33 @@ export default function TicketDetailView() {
                <div className="flex items-center px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-faint)] italic"><ShieldAlert className="w-4 h-4 mr-2" /> View Only - No Actions Available</div>
             ) : (
               availableActions.map((action, idx) => (
-                <button 
-                  key={idx} 
-                  onClick={() => initiateWorkflowAction(action)} 
-                  disabled={!!actionLoading} 
+                action.disabledReason ? (
+                  // Separation-of-duties: the action stays VISIBLE but disabled,
+                  // with the reason spelled out — a vanished button reads as a bug.
+                  <div key={idx} className="flex flex-col items-start gap-0.5 max-w-xs">
+                    <button
+                      disabled
+                      title={action.disabledReason}
+                      className="px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm flex items-center bg-[var(--color-surface-2)] border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-faint)] cursor-not-allowed"
+                    >
+                      <ShieldAlert className="w-4 h-4 mr-2" />
+                      {action.label}
+                    </button>
+                    <p className="text-[10px] leading-tight text-[var(--color-text-faint)] px-1">{action.disabledReason}</p>
+                  </div>
+                ) : (
+                <button
+                  key={idx}
+                  onClick={() => initiateWorkflowAction(action)}
+                  disabled={!!actionLoading}
                   className={`
                     px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center relative overflow-hidden group disabled:opacity-50 disabled:cursor-not-allowed
-                    ${action.variant === 'success' ? 'bg-green-600 text-white hover:bg-green-700' : 
-                      action.variant === 'destructive' ? 'bg-red-600 text-white hover:bg-red-700' : 
-                      action.variant === 'outline' ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:border-slate-400 hover:bg-[var(--color-surface-2)]' : 
-                      action.variant === 'warning' ? 'bg-amber-500 text-white hover:bg-amber-600' : 
+                    ${action.variant === 'success' ? 'bg-green-600 text-white hover:bg-green-700' :
+                      action.variant === 'destructive' ? 'bg-red-600 text-white hover:bg-red-700' :
+                      action.variant === 'outline' ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:border-slate-400 hover:bg-[var(--color-surface-2)]' :
+                      action.variant === 'warning' ? 'bg-amber-500 text-white hover:bg-amber-600' :
                       'bg-slate-900 text-white hover:bg-slate-800'}
-                    
+
                   `}
                 >
                   {actionLoading === action.action ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : action.action === 'save_progress' ? <Save className="w-4 h-4 mr-2" /> : action.action === 'submit_draft' ? <Send className="w-4 h-4 mr-2" /> : action.action === 'assign' ? <UserPlus className="w-4 h-4 mr-2" /> : action.action === 'submit_final' ? <FileCheck className="w-4 h-4 mr-2" /> : null}
@@ -1671,6 +1721,7 @@ export default function TicketDetailView() {
                     <span className="absolute top-0 right-0 w-3 h-3 bg-orange-500 rounded-full border-2 border-white translate-x-1 -translate-y-1"></span>
                   )}
                 </button>
+                )
               ))
             )}
           </div>

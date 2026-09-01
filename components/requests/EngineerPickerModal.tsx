@@ -46,6 +46,11 @@ interface EngineerPickerModalProps {
   commentPlaceholder?: string;
   /** Pre-selected engineer (e.g. for reassignment — exclude this one). */
   currentEngineerId?: string;
+  /** WF-14/GAP-2: uids the reviewer slot must be INDEPENDENT of — the
+   *  ticket's requester, its assigned drafter, and the acting user. Applied
+   *  when the org has 3+ active members (the modal checks the count); the
+   *  server refuses the same picks, this just doesn't offer dead ends. */
+  independentOf?: Array<string | null | undefined>;
   onSubmit: (params: {
     engineerId: string;
     engineerName: string;
@@ -59,9 +64,11 @@ export default function EngineerPickerModal({
   requireComment = true, commentLabel = "Comment *",
   commentPlaceholder = "What do you need them to review?",
   currentEngineerId,
+  independentOf,
   onSubmit,
 }: EngineerPickerModalProps) {
   const [engineers, setEngineers] = useState<EngineerOption[]>([]);
+  const [sodActive, setSodActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string>("");
   const [comment, setComment] = useState("");
@@ -82,6 +89,8 @@ export default function EngineerPickerModal({
           .select("uid, email, role, roles")
           .eq("org_id", orgId)
           .eq("status", "active");
+        const activeCount = ((allMembers as Array<Record<string, unknown>>) ?? []).length;
+        if (alive) setSodActive(activeCount >= 3);
         const members = ((allMembers as Array<Record<string, unknown>>) ?? []).filter((m) => {
           const held: string[] = Array.isArray(m.roles) && (m.roles as string[]).length > 0
             ? (m.roles as string[])
@@ -131,7 +140,14 @@ export default function EngineerPickerModal({
 
   if (!isOpen) return null;
 
-  const filtered = engineers.filter((e) => e.uid !== currentEngineerId);
+  // WF-14/GAP-2: independence of the reviewer slot — in orgs of 3+ the
+  // requester, the assigned drafter and the acting user are excluded (the
+  // server refuses them anyway; offering them is offering a dead end).
+  const excluded = new Set(
+    (sodActive ? (independentOf ?? []) : []).filter((u): u is string => !!u),
+  );
+  const filtered = engineers.filter((e) => e.uid !== currentEngineerId && !excluded.has(e.uid));
+  const excludedCount = engineers.filter((e) => e.uid !== currentEngineerId && excluded.has(e.uid)).length;
 
   const submit = async () => {
     setError(null);
@@ -179,8 +195,23 @@ export default function EngineerPickerModal({
                 </div>
               ) : filtered.length === 0 ? (
                 <div className="p-4 text-sm text-[var(--color-text-muted)] text-center">
-                  <p className="font-bold text-[var(--color-text)]">No active engineers in this workspace.</p>
-                  <p className="mt-1 text-xs">This step needs someone holding an Engineer role. Ask an Admin to invite one or add the Engineer role to an existing member.</p>
+                  {excludedCount > 0 ? (
+                    <>
+                      {/* WF-14: the only engineers are the people this review
+                          must be independent of — say so, don't offer them. */}
+                      <p className="font-bold text-[var(--color-text)]">Needs a second person.</p>
+                      <p className="mt-1 text-xs">
+                        The engineering sign-off must be independent of this ticket&apos;s requester,
+                        its drafter, and you — and {excludedCount === 1 ? "the only engineer here is one of those people" : "every engineer here is one of those people"}.
+                        Ask an Admin to add the Engineer role to another member.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-bold text-[var(--color-text)]">No active engineers in this workspace.</p>
+                      <p className="mt-1 text-xs">This step needs someone holding an Engineer role. Ask an Admin to invite one or add the Engineer role to an existing member.</p>
+                    </>
+                  )}
                   <a href="/admin/users" className="inline-block mt-2 text-xs font-black text-[var(--color-accent)] hover:underline">Open user management →</a>
                 </div>
               ) : (

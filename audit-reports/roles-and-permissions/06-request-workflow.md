@@ -1,6 +1,7 @@
 # 06 · Request workflow & the capability policy layer
 
 > **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
+> **Phase 4 worked 2026-09-01** — 12 of 24 resolved (WF-1..8, WF-14, WF-15, WF-22, WF-23); all 4 CRITICALs in this file closed. Migration `20261038` pending operator paste.
 
 The 12-status drafting state machine, who may drive each transition, and the
 capability policy that is supposed to make it configurable.
@@ -22,7 +23,10 @@ capability policy that is supposed to make it configurable.
 ## WF-1 · The capability policy reads and writes a column that does not exist
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (core 2026-08-24 with `DB-1`; tail closed 2026-09-01, Phase 4).** The column fix (both layers read/write `data`) shipped with `DB-1` in `20261025` — **applied & verified live 2026-08-24** — which satisfied done-when 1 and 3. The two remaining done-when items closed in Phase 4: (2) `loadCapabilityPolicy` now destructures the PostgREST `error` and, on a read error, returns defaults for THAT CALL ONLY without caching — a transient failure can no longer make an org's stored narrowing vanish for the TTL (pinned by two tests: an errored read is not cached; a successful read is); (4) `org_configurations` is listed in `lib/schemaExpectations.ts` (supplied by the base `schema.sql`), so `/api/admin/schema-health` catches this class of drift.
+- Files: `lib/capabilityPolicy.ts` (+`20261025` earlier), `lib/schemaExpectations.ts`; tests `lib/__tests__/capabilityPolicy.test.ts` ("read errors fail closed WITHOUT caching").
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / availability
 - **Locations:**
@@ -78,7 +82,13 @@ which are currently masked. Read those three before shipping this.
 ## WF-2 · `tickets` RLS is `FOR ALL USING (org membership)` — any member can PATCH any ticket's status
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4).** Guarded by trigger rather than policy replacement, exactly because of the chain-reaction warning: the legitimate client writers (priority, comments, attachments, watchers, unread_by, history APPENDS — full write-path census in the Phase 4 recon) keep working untouched while the workflow-owned columns become service-role-only. `trg_ticket_update_guard` (BEFORE UPDATE, `20261038`) raises on any client change to `org_id`, `ticket_id`, `status`, `requester_id/role/name/email`, `assigned_drafter_id/name`, `assigned_engineer_id/name/email`, `engineer_review_requested_at`, `engineer_approved_at`, `engineer_review_reason`, `deliverable_rev`, `draft_iteration`, `revision_count`, `closed_at`, `archived_at`, `archive_id`, `created_at` — naming the offending column(s); service-role writes (`auth.uid() IS NULL` — the workflow-action route and admin routes) pass. The history log may only GROW (`jsonb_array_length` non-decreasing) — append stays legal for the two census'd client appenders, deletion is refused. DELETE gains a RESTRICTIVE controllers-only policy (`tickets_delete_controllers`; no app path deletes tickets, so nothing regresses). `post_ticket_comment` (SECURITY DEFINER, runs with the caller's `auth.uid()`) touches only unguarded columns — verified against its `20260726` body.
+- Done-when: (1) ✓ guarded columns move only through the service routes; (2) ✓ every census'd client write touches no guarded column, and the shape test asserts the guard does NOT cover `priority`/`comments`/`attachments`/`watchers`/`unread_by`/`last_modified`/`metadata`; (3) the raw-PATCH refusal cannot be integration-tested here (no live DB in CI) — the trigger DDL and its column list are pinned by `lib/__tests__/rpPhase4Migration.test.ts`, and the migration's verification block proves both triggers installed live.
+- **Residual (recorded):** a client can still rewrite `history`/`comments`/`attachments` CONTENT at equal-or-greater length (WF-9's move-behind-routes covers that half and stays OPEN); `unread_by`/`watchers` remain free client columns by design.
+- Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`; tests `lib/__tests__/rpPhase4Migration.test.ts`.
+- Migration: `20261038_rp_phase4_ticket_workflow_rails.sql` — **printed for operator paste; pending apply** (6-point verification + 3-line inventory ride the file; this line flips to "applied & verified live" when the probe booleans come back).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
@@ -129,7 +139,11 @@ clock, and the document-intent bridge.
 ## WF-3 · "Approve with Minor Correction" is a complete bypass of the engineer sign-off gate
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4, shipped together with WF-14 per the pairing rule).** The minor-correction offer moved INSIDE the direct-approve else-branch of the `PENDING_REVIEW` requester fork (`lib/workflow.ts`): a requester for whom `requiresEngineerApproval` holds — and who is not engineering-qualified (now judged against the FULL role collection, WF-7) — gets exactly one forward path, "Send for Engineer Final Approval". The fast path survives everywhere direct approval was already legitimate: engineer-tier requesters, direct approvers, management, and the assigned engineer at `PENDING_FINAL_APPROVAL` (still `requiresComment`). The server enforces the same engine output, so the route refuses the bypass identically.
+- Done-when: (1) ✓ no one-action path to `PENDING_IFC` for an unqualified requester (engine test); (2) ✓ minor-correction still offered to direct-approve holders (test); (3) ✓ `lib/__tests__/workflow.test.ts` flipped — it now asserts the CLOSED behavior (the Viewer-tier fast path absent, the engineer route present) instead of pinning the vulnerability.
+- Files: `lib/workflow.ts`; tests `lib/__tests__/workflow.test.ts` ("minor-correction fast approve exists ONLY for actors who could approve directly").
 - **Verification:** CONFIRMED — traced end to end, and **frozen by a passing test**
 - **Blast radius:** safety
 - **Locations:**
@@ -193,7 +207,11 @@ bypass as correct behaviour.
 ## WF-4 · Complete single-person end-to-end loops — no second human anywhere
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4 — built per `GAP-2` on the `DEC-12` shape, reconciled with `DEC-37`).** Separation of duties derives from ACTIVE MEMBER COUNT, never a toggle: the independence predicates bind at ≥ 3 active members; below that the single-person loop stays fully legal (a two-person shop has nobody else to route to). Independence is a property of the SLOT, not the person (DEC-37): one deliverable's producer cannot be its checker, and multi-hat people are otherwise unaffected. The three predicates, each evaluated in `getActions` AND re-checked in the route: (a) the assigned drafter is not the requester — `self_assign` on your own request renders DISABLED with "needs a second person" (never hidden — a vanished button reads as a bug), the route refuses `assignment.id === ticket.requesterId`; (b) the approver is not the assigned drafter — `producerIsChecker` puts a `disabledReason` on `approve_draft_ifc`, `approve_minor_correction` (both branches), `engineer_approve_final`, and the `FINAL_DRAFT` `close_ticket`, and the route returns the same message as a 403; revision/feedback paths stay open (independence blocks approval, not feedback); (c) the assigned engineer is not the requester, the drafter, or the caller — WF-14's picker + route exclusions. Loop A (Manager self-assign→self-approve), Loop B (Drafter via WF-3), and Loop C (WF-8 substitution) are each cut at ≥ 3 members by (a)+(b), WF-3's closure, and WF-8's scoping respectively.
+- Done-when: (1) ✓ all three predicates exist; (2) ✓ engine and route both enforce (engine tests + route shape pins); (3) ✓ orgs below 3 active members behave exactly as before (passthrough test), and legacy callers that pass no context get prior behavior unchanged.
+- Files: `lib/workflow.ts` (`separationOfDutiesActive`, `WorkflowContext`, `disabledReason`), `app/api/tickets/workflow-action/route.ts` (member count + refusals), `app/(protected)/requests/[id]/page.tsx` (context + disabled rendering), `components/requests/EngineerPickerModal.tsx` (`independentOf` exclusions + explanatory empty state); tests `lib/__tests__/workflow.test.ts` (GAP-2/DEC-12 describe), `lib/__tests__/rpPhase4Migration.test.ts` (route pins).
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / process
 - **Locations:**
@@ -249,7 +267,12 @@ appears exactly when it becomes possible to honour. Build spec: `GAP-2`.
 ## WF-5 · `requester_role` is stamped by the client at INSERT and is the sole input to the engineer gate
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4).** An insert-time trigger, exactly as the chain-reaction note prescribes (the three client insert paths keep working unmodified): `trg_ticket_insert_integrity` (BEFORE INSERT, `20261038`) forces, for any authenticated client insert, `requester_id := auth.uid()`, `requester_email` := the member's `org_members.email` (when present), and `requester_role` := the stamped value ONLY if it is a role the caller actually HOLDS (headline or additive — multi-role members legitimately file under any of their roles), otherwise their headline role. `status` is forced to `PENDING_ASSIGNMENT` — a client cannot spawn a ticket mid-workflow — and every mid-workflow field (assigned drafter/engineer trio, `engineer_approved_at`, `closed_at`, `archived_at`, `archive_id`) is nulled at birth. Non-members are refused outright. Service-role inserts (`auth.uid() IS NULL`) pass untouched. The SESS-1 interaction (a placeholder "Viewer" stamped during membership resolution) is narrowed to the safe direction: "Viewer" not-in-collection is overwritten with the real headline; a held "Viewer" stamps as before, and "Viewer" fails toward MORE review, never less. Also carries WF-15's insert half (see that record).
+- Done-when: (1) ✓ `requester_role` + `requester_id` (+ email) reflect the authenticated caller's actual membership; (2) ✓ client-created tickets exist only in `PENDING_ASSIGNMENT`; (3) ✓ service-role creation paths pass through unchanged.
+- Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`; tests `lib/__tests__/rpPhase4Migration.test.ts` (WF-5 describe: identity force, held-role rule, status force, birth-nulls).
+- Migration: `20261038` — **printed for operator paste; pending apply** (verification probes ride the file). Cross-reference: also closes [`drafting-flow/AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3)'s substrate — record it there when that area is worked.
 - **Verification:** CONFIRMED
 - **Blast radius:** security / safety
 - **Locations:**
@@ -303,7 +326,11 @@ insert-time trigger.
 ## WF-6 · Server re-derivation is incomplete — `requiresFile` is never enforced
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4).** The route now refuses `submit_final` with a 400 ("Issuing the final IFC package requires the deliverable file") when `action.requiresFile` is set and `body.finalAttachment?.url` is absent — sitting with the `requiresComment`/`requiresEngineerPick` checks, before `computeTransition`. `submit_draft` keeps its state-derived gate (safe by construction, as the verifier noted). A ticket can no longer present as "Final package issued" with no Final attachment via direct POST.
+- Done-when: ✓ refused server-side; ✓ the direct-POST case is covered by the route shape pin in `lib/__tests__/rpPhase4Migration.test.ts` (no route-handler harness exists in this repo — the pin asserts the refusal sits before the transition; noted as the test's form).
+- Files: `app/api/tickets/workflow-action/route.ts`. Residual (already carried by the finding): `redlineAttachment`/`finalAttachment` shape validation remains open under WF-9's move-behind-routes work.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / compliance
 - **Locations:**
@@ -340,7 +367,11 @@ attachment exists, and a test covers the direct-POST case.
 ## WF-7 · Three incompatible role resolutions; the "View as" simulator reports authority the app does not grant
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4 — applied AFTER WF-8's scoping, per this finding's own ordering warning, so the collection widening rides on ticket-scoped capabilities instead of org-wide ones).** `getActions` gained a `WorkflowContext.userRoles` and threads the ADDITIVE collection into every `policyAllows` call (`roleCollection`), and `isEng` is collection-aware — a member's ticket authority is now identical whether a role is their headline or an additive one. The route resolves `callerRoles` from `org_members.roles` (fallback `[role]`) and passes them; the ticket page passes `useRole()`'s `roles`. This is the same resolution the simulator, holds, SQL, and the attention feed already used — the workflow was the odd one out and is now aligned. Absent context (legacy callers) reproduces headline-only behavior, so nothing widens silently.
+- Done-when: ✓ headline vs additive parity (engine tests: additive Drafter self-assigns, additive DraftingSupervisor assigns, additive Engineer satisfies the engineer gate); the simulator, ticket page, and route now evaluate the same collection. (WF-24's management-definition alignment for the ATTENTION FEED remains its own OPEN finding.)
+- Files: `lib/workflow.ts`, `app/api/tickets/workflow-action/route.ts`, `app/(protected)/requests/[id]/page.tsx`; tests `lib/__tests__/workflow.test.ts` (WF-7 describe), `lib/__tests__/rpPhase4Migration.test.ts` (route pin).
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / ux
 - **Locations:**
@@ -385,7 +416,11 @@ the attention badge for the same person.
 ## WF-8 · Role-based capabilities are org-wide — they are never scoped to the ticket
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4 — done FIRST in the phase, as the prerequisite for WF-7).** The two substitute-identity capabilities are now ticket-scoped in `getActions`: `canActAsRequester = isRequesterIdentity || (!ticket.requesterId && allows('ticket.requester_review'))` and `canActAsDrafter = isDrafterIdentity || (!ticket.assignedDrafterId && allows('ticket.draft_work'))` — the role substitutes ONLY where the slot is empty (orphaned/unassigned tickets), never on a ticket that has its own requester or drafter. A Requester-role member can no longer approve/reopen an arbitrary colleague's ticket; a Drafter can no longer `submit_final` over another drafter's IFC package. Identity rights and the management override are unchanged; queue-claim on unassigned work is unchanged.
+- Done-when: (1) ✓ `ticket.requester_review` no longer reaches another person's `PENDING_REVIEW` (test: Requester-role stranger gets `[]`); (2) ✓ `ticket.draft_work` no longer covers someone else's assigned ticket (test: `PENDING_IFC` stranger-drafter gets `[]`); (3) ✓ unassigned-queue behavior unchanged (tests: empty-slot substitution works).
+- Files: `lib/workflow.ts`; tests `lib/__tests__/workflow.test.ts` (WF-8 describe).
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / safety
 - **Locations:**
@@ -694,7 +729,11 @@ makes the hardcoded engineer gate a real capability. Full spec: `GAP-1`.
 ## WF-14 · No separation of duties on engineer picks — the requester can nominate themselves as their own reviewer
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4, shipped together with WF-3 per the pairing rule).** The exclusions ride the DEC-12 threshold (≥ 3 active members — a 2-person shop keeps working; below 3 nothing changes). Route: a picked engineer who is the ticket's requester, its assigned drafter, or the caller is refused with a distinct "needs a second person" message per case (403). The DraftingSupervisor+Engineer-3 scenario is closed twice over: WF-7 makes `isEng` collection-aware (they now approve directly rather than being forced down the picker), and had they still gone through the picker, the caller-exclusion refuses the self-pick. Mirror rule on `assignment.id`: the assignee must hold `ticket.draft_work` under the org's policy (role collection consulted), and at 3+ the requester cannot be assigned to draft their own request. `EngineerPickerModal` gained `independentOf` — the ticket page passes `[requesterId, assignedDrafterId, caller]` — filtering those uids at ≥ 3 active members, with an explanatory empty state ("Needs a second person…") when the exclusions empty the list, plus an excluded-count note otherwise.
+- Done-when: (1) ✓ requester/drafter/caller cannot be picked (route refusals, shape-pinned); (2) ✓ picker excludes them with the explanatory empty state; (3) ✓ mirror rule + `ticket.draft_work` check on `assignment.id`.
+- Files: `app/api/tickets/workflow-action/route.ts`, `components/requests/EngineerPickerModal.tsx`, `app/(protected)/requests/[id]/page.tsx`; tests `lib/__tests__/rpPhase4Migration.test.ts` (route pins).
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:**
@@ -735,7 +774,12 @@ closed. **Fix them together or the `WF-3` remediation is a no-op.**
 ## WF-15 · `RequestType` is an open `string`, unvalidated, and gates a terminal transition
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4 — the narrower fix the chain-reaction note prescribes, NOT a type union).** Two halves. (1) Insert validation: `trg_ticket_insert_integrity` (`20261038`) refuses a client-created ticket whose `request_type` is outside the org's configured list ∪ {`Revision`, `ASBUILT`, `RFI`} — the union keeps the three programmatic creators working; orgs with no configured list keep free vocabulary; service inserts pass. (2) The close-without-review behavior is now a PROPERTY OF THE CONFIGURED TYPE: `SelectOption.closeWithoutReview` (checkbox per request-type option in /admin/requests, RFI checked in the shipped defaults), read by the route and the ticket page into `WorkflowContext.closeWithoutReviewTypes`; the engine offers `close_rfi` only for types in that list (default `['RFI']` — historical behavior — and a configured list REPLACES the default, so an org can both grant it to other types and revoke it from RFI). The `DRAFTING → CLOSED` edge additionally sits behind WF-8's drafter scoping now, so "any Drafter in the org" no longer reaches it on someone else's ticket. Prerequisite for `GAP-1` recorded as satisfied.
+- Done-when: ✓ creation outside the configured list refused at the DB (shape-pinned; live probe rides `20261038`); ✓ close-without-review driven by config, not the magic string (engine tests: FIELDQ configured → offered; RFI unconfigured → not offered).
+- Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`, `lib/workflow.ts`, `app/api/tickets/workflow-action/route.ts`, `app/(protected)/requests/[id]/page.tsx`, `app/(protected)/admin/requests/page.tsx`, `types/schema.ts`; tests `lib/__tests__/workflow.test.ts` (WF-15 describe), `lib/__tests__/rpPhase4Migration.test.ts`.
+- Migration: `20261038` — **printed for operator paste; pending apply**.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / process
 - **Locations:**
@@ -1053,7 +1097,11 @@ revision label, and a ticket back under review does not verify as current.
 ## WF-22 · `assign` with a missing assignment is a silent no-op that still writes an audit row
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4).** Two layers. Route: `assign` without `body.assignment?.id` is refused with a 400 ("Assigning requires picking a drafter") before any write — no transition, no history row, no `TICKET_ASSIGN` audit row, no green success. Engine: `computeTransition`'s `request_eng_review` and `request_final_engineer_approval` cases now set `updates.status` only WITH their engineer — an engineerless request no longer reaches `PENDING_ENG_TEAM`/`PENDING_FINAL_APPROVAL` (where the org-wide fallback would have governed); the route's `requiresEngineerPick` check already refuses those requests, so the engine guard is defense in depth for any future caller. (`self_assign` was verified safe by the independent pass and is untouched.)
+- Done-when: ✓ input-requiring transitions are refused when the input is missing, rather than no-op'ing into a success audit row.
+- Files: `app/api/tickets/workflow-action/route.ts`, `lib/ticketTransitions.ts`; tests `lib/__tests__/ticketTransitions.test.ts` (two WF-22 cases), `lib/__tests__/rpPhase4Migration.test.ts` (route pin).
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / compliance
 - **Locations:**
@@ -1083,7 +1131,12 @@ missing, rather than producing an empty transition and a success audit row.
 ## WF-23 · SQL and TypeScript disagree on capability defaults — every `ticket.*` capability defaults to DENY in Postgres
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 4 — landed IN THE SAME migration as WF-2's rails, honoring the sequencing rule "WF-2 only after WF-23").** `org_capability_allows` re-created (`20261038`) with the fallback CASE covering ALL 17 capabilities from `CAPABILITY_DEFS`, token-for-token (MGMT trios, `DraftingSupervisor` on assign, `Engineer` tiers, `"*"` holds, `Admin/DocCtrl` force-release and archive view), `ELSE '[]'` still denying unknowns; body otherwise byte-equivalent in semantics to `20261025` (reads `data`, roles collection, Engineer token, grants, `SECURITY DEFINER SET search_path = public` restated). The "verified by a test rather than by inspection" done-when is met literally: `rpPhase4Migration.test.ts` PARSES the `WHEN '<cap>' THEN '[...]'::jsonb` pairs out of the migration and compares them `toEqual` against the live `CAPABILITY_DEFS` import — a divergence in either direction (missing id, extra id, differing tokens) fails the suite.
+- Done-when: ✓ SQL fallback and TS `DEFAULTS` agree for every `CapabilityId`, enforced by the census test on every run.
+- Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`; tests `lib/__tests__/rpPhase4Migration.test.ts` (WF-23 describe).
+- Migration: `20261038` — **printed for operator paste; pending apply** (probe: prosrc contains the full capability set).
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
 - **Locations:**

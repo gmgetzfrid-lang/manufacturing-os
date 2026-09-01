@@ -143,6 +143,28 @@ verify). `OWN-17` **RESOLVED** (the overlay is its DB half). Ship loop green:
 verified live 2026-08-24** (7-point probe all true; inventory zero). Phase 3
 is COMPLETE; next is Phase 4 — the workflow.
 
+### Phase 4 — the workflow (session 2026-09-01)
+
+Worked in the sequencing file's exact order (WF-8 before WF-7; WF-3+WF-14
+together; WF-23 in the same migration as WF-2's rails):
+
+| Item | Outcome |
+|---|---|
+| `WF-8` (HIGH, prerequisite) | **RESOLVED** — `ticket.requester_review`/`ticket.draft_work` substitute ONLY into an empty slot (no requester / no assigned drafter); org-wide blanket substitution is gone |
+| `WF-7` (HIGH) | **RESOLVED** — the additive role collection threads through `getActions` and the route; headline vs additive parity, `isEng` collection-aware |
+| `WF-3` (CRITICAL) + `WF-14` (HIGH) | **RESOLVED together** — minor-correction moved inside the direct-approve branch (no one-click bypass of the engineer gate); picked engineer may not be requester/drafter/caller at 3+ members; assignee must hold `ticket.draft_work`; picker excludes with an explanatory empty state; the vulnerability-pinning test now asserts closure |
+| `WF-5` (CRITICAL) | **RESOLVED** — insert trigger forces `requester_id`/`requester_email` to the caller, `requester_role` to a HELD role, status to `PENDING_ASSIGNMENT`, mid-workflow fields nulled at birth — migration `20261038` |
+| `GAP-2` / `DEC-12` (+`DEC-37`) | **RESOLVED** — separation of duties derived from active member count (binds at ≥ 3): drafter ≠ requester, checker ≠ producer, engineer ∉ {requester, drafter, caller}; blocked actions render DISABLED with "needs a second person" and the route refuses with the same words; closes `WF-4` (CRITICAL) |
+| `WF-2` (CRITICAL) | **RESOLVED** — `trg_ticket_update_guard`: 22 workflow-owned columns service-role-only, history log grow-only, DELETE controllers-only RESTRICTIVE; all census'd legit client writes untouched — migration `20261038` |
+| `WF-23` (MEDIUM, ordered before WF-2's rails) | **RESOLVED** — `org_capability_allows` fallback CASE rebuilt to mirror all 17 `CAPABILITY_DEFS`; a census test PARSES the SQL and compares token-for-token against the TS source |
+| `WF-6`, `WF-22` (HIGH, MEDIUM) | **RESOLVED** — `submit_final` requires the deliverable file server-side; `assign` without an assignee is a 400 (no phantom `TICKET_ASSIGN` audit rows); engineerless review requests no longer advance status |
+| `WF-15` (MEDIUM) | **RESOLVED** — `request_type` validated at insert against the org's configured list ∪ {Revision, ASBUILT, RFI}; close-without-review is a per-type config flag (admin checkbox), not a magic string |
+| `WF-1` tail (HIGH) | **RESOLVED** — policy read errors no longer cache defaults for the TTL; `org_configurations` added to `schemaExpectations` |
+
+Ship loop green: `tsc`, `eslint`, **1657 vitest** (39 new), full `next build`.
+Migration `20261038_rp_phase4_ticket_workflow_rails.sql` — **pending operator
+paste** (6-point verification + 3-line inventory ride the file).
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

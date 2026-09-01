@@ -9,6 +9,35 @@ export interface WorkflowAction {
   requiresComment?: boolean;
   requiresEngineerPick?: boolean;   // UI Guard: open the engineer-picker modal first
   description?: string;
+  /** GAP-2/DEC-12: set when separation-of-duties blocks this action for THIS
+   *  actor. The action renders DISABLED with this explanation (a missing
+   *  button is indistinguishable from a bug), and the server route refuses
+   *  it with the same message. */
+  disabledReason?: string;
+}
+
+/** Optional evaluation context for getActions (WF-7, GAP-2, WF-15).
+ *  Everything is optional and absent values reproduce prior behavior, so
+ *  existing callers stay correct while the route and the ticket page pass
+ *  the full picture. */
+export interface WorkflowContext {
+  /** WF-7: the member's FULL additive role collection. Authority must be
+   *  identical whether a role is the headline or an additive one. */
+  userRoles?: Role[];
+  /** GAP-2/DEC-12: the org's active member count. The independence
+   *  predicates enforce at >= 3; below that the single-person loop is
+   *  legitimate (a two-person shop has nobody else to route to). */
+  activeMemberCount?: number;
+  /** WF-15: request types allowed to close from DRAFTING without review —
+   *  a property of the CONFIGURED type, not a hardcoded string. Defaults to
+   *  ['RFI'] (the historical behavior). */
+  closeWithoutReviewTypes?: string[];
+}
+
+/** DEC-12 threshold: independence appears exactly when it becomes possible
+ *  to honour. */
+export function separationOfDutiesActive(activeMemberCount?: number): boolean {
+  return (activeMemberCount ?? 0) >= 3;
 }
 
 // ─── ROLE HELPERS ────────────────────────────────────────────────────────
@@ -58,21 +87,40 @@ export const WorkflowEngine = {
   // which reproduce the historical hardcoded behavior exactly. The
   // workflow-action API route always passes the org's real policy, so the
   // server is the enforcement point.
-  getActions: (ticket: Ticket, userRole: Role, userId?: string, policy?: CapabilityPolicy): WorkflowAction[] => {
+  getActions: (ticket: Ticket, userRole: Role, userId?: string, policy?: CapabilityPolicy, ctx?: WorkflowContext): WorkflowAction[] => {
     const actions: WorkflowAction[] = [];
 
     // Role authority + any live per-person delegation for this user.
-    const allows = (cap: Parameters<typeof policyAllows>[1]) => policyAllows(policy, cap, userRole, null, userId);
-    const isEng = isEngineerRole(userRole);
+    // WF-7: the ADDITIVE collection is threaded through — a member's ticket
+    // authority is identical whether a role is their headline or an additive
+    // one (the headline is max-rank, so consulting it alone SUBTRACTED
+    // authority from multi-role people).
+    const roleCollection = ctx?.userRoles && ctx.userRoles.length > 0 ? ctx.userRoles : null;
+    const allows = (cap: Parameters<typeof policyAllows>[1]) => policyAllows(policy, cap, userRole, roleCollection, userId);
+    const isEng = isEngineerRole(userRole) || (roleCollection ?? []).some((r) => isEngineerRole(r));
     const isManagement = allows('ticket.manage');
 
     const isRequesterIdentity = !!userId && ticket.requesterId === userId;
     const isDrafterIdentity = !!userId && ticket.assignedDrafterId === userId;
     const isAssignedEngineerIdentity = !!userId && ticket.assignedEngineerId === userId;
 
-    // Identity rights are never policy-configurable: your own ticket stays yours.
-    const canActAsRequester = isRequesterIdentity || allows('ticket.requester_review');
-    const canActAsDrafter = isDrafterIdentity || allows('ticket.draft_work');
+    // Identity rights are never policy-configurable: your own ticket stays
+    // yours. WF-8: the role CAPABILITIES, by contrast, are ticket-scoped —
+    // `ticket.requester_review` substitutes for a requester only where there
+    // is no requester to act, and `ticket.draft_work` covers unassigned
+    // queue work only. Org-wide blanket substitution (any Requester approving
+    // any colleague's ticket; any Drafter replacing another drafter's IFC
+    // package) was the single widest hole in the workflow.
+    const canActAsRequester = isRequesterIdentity
+      || (!ticket.requesterId && allows('ticket.requester_review'));
+    const canActAsDrafter = isDrafterIdentity
+      || (!ticket.assignedDrafterId && allows('ticket.draft_work'));
+
+    // GAP-2/DEC-12 (+DEC-37): independence is a property of the SLOT — one
+    // deliverable's producer cannot be its checker. Active at >= 3 members.
+    const sod = separationOfDutiesActive(ctx?.activeMemberCount);
+    const producerIsChecker = sod && isDrafterIdentity;
+    const SOD_REASON = "Needs a second person: the assigned drafter cannot approve their own deliverable (independent approval, orgs of 3+).";
 
     // Does the original requester's role require an engineer in the loop?
     const needsEngineerApproval = requiresEngineerApproval(ticket.requesterRole);
@@ -154,10 +202,14 @@ export const WorkflowEngine = {
           });
         }
         if (allows('ticket.self_assign')) {
+          // GAP-2/DEC-12: the assigned drafter may not be the requester in
+          // orgs of 3+ — rendered disabled, never hidden.
+          const selfIsRequester = sod && isRequesterIdentity;
           actions.push({
             label: 'Pick Up Ticket',
             action: 'self_assign',
-            variant: 'outline'
+            variant: 'outline',
+            ...(selfIsRequester ? { disabledReason: "Needs a second person: you can't draft your own request (independent drafting, orgs of 3+)." } : {}),
           });
         }
         break;
@@ -182,7 +234,11 @@ export const WorkflowEngine = {
             });
           }
 
-          if (ticket.requestType === 'RFI') {
+          // WF-15: close-without-review is a property of the CONFIGURED
+          // request type (defaulting to the historical RFI), never a magic
+          // string any creator can stamp for a one-click close.
+          const closeTypes = ctx?.closeWithoutReviewTypes ?? ['RFI'];
+          if (closeTypes.includes(ticket.requestType)) {
             actions.push({
               label: 'Answer & Close RFI',
               action: 'close_rfi',
@@ -200,6 +256,9 @@ export const WorkflowEngine = {
           if (needsEngineerApproval && !isEng) {
             // Viewer-tier requesters can't sign off on engineering work.
             // Their "approve" is actually "send for engineer final approval".
+            // WF-3: and their "minor correction" must be too — the old
+            // unconditional fast path here was a one-click bypass of the
+            // entire engineer sign-off gate for every requester tier.
             actions.push({
               label: 'Send for Engineer Final Approval',
               action: 'request_final_engineer_approval',
@@ -213,19 +272,20 @@ export const WorkflowEngine = {
               label: 'Approve (Issue for Construction)',
               action: 'approve_draft_ifc',
               variant: 'success',
-              description: 'Accepts the draft. Drafter will be notified to issue IFC.'
+              description: 'Accepts the draft. Drafter will be notified to issue IFC.',
+              ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+            });
+            // The "fix this typo and it's approved" fast path — for actors
+            // who could approve directly anyway (WF-3 done-when 2).
+            actions.push({
+              label: 'Approve with Minor Correction',
+              action: 'approve_minor_correction',
+              variant: 'secondary',
+              requiresComment: true,
+              description: 'Approve as-is except for a small fix (typo, mislabel). Your note goes to the drafter to fold into the issued file — no new review round.',
+              ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             });
           }
-          // The "fix this typo and it's approved" fast path: approve NOW with
-          // the small correction noted — no extra full review cycle for a
-          // mislabel. Available to every requester tier by design.
-          actions.push({
-            label: 'Approve with Minor Correction',
-            action: 'approve_minor_correction',
-            variant: 'secondary',
-            requiresComment: true,
-            description: 'Approve as-is except for a small fix (typo, mislabel). Your note goes to the drafter to fold into the issued file — no new review round.'
-          });
           actions.push({
             label: 'Request Revision',
             action: 'request_revision',
@@ -238,14 +298,16 @@ export const WorkflowEngine = {
             label: 'Approve (Issue for Construction)',
             action: 'approve_draft_ifc',
             variant: 'success',
-            description: 'Accepts the draft. Drafter will be notified to issue IFC.'
+            description: 'Accepts the draft. Drafter will be notified to issue IFC.',
+            ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
           });
           actions.push({
             label: 'Approve with Minor Correction',
             action: 'approve_minor_correction',
             variant: 'secondary',
             requiresComment: true,
-            description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.'
+            description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
+            ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
           });
           actions.push({
             label: 'Request Revision',
@@ -270,14 +332,16 @@ export const WorkflowEngine = {
               label: 'Approve as Engineer (Issue for Construction)',
               action: 'engineer_approve_final',
               variant: 'success',
-              description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.'
+              description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
+              ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             });
             actions.push({
               label: 'Approve with Minor Correction',
               action: 'approve_minor_correction',
               variant: 'success',
               requiresComment: true,
-              description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.'
+              description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
+              ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             });
             actions.push({
               label: 'Request Revision (Send Back to Drafter)',
@@ -318,7 +382,10 @@ export const WorkflowEngine = {
       // --- CLOSURE (acknowledgment by requester) ---
       case 'FINAL_DRAFT':
          if (canActAsRequester || allows('ticket.direct_approve') || isManagement) {
-             actions.push({ label: 'Acknowledge & Close', action: 'close_ticket', variant: 'success' });
+             actions.push({
+               label: 'Acknowledge & Close', action: 'close_ticket', variant: 'success',
+               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+             });
              actions.push({ label: 'Reject Final (Re-Open)', action: 'reject_final', variant: 'destructive', requiresComment: true });
          }
          break;

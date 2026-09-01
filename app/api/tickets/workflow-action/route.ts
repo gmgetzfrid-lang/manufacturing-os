@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { WorkflowEngine } from "@/lib/workflow";
-import { loadCapabilityPolicy } from "@/lib/capabilityPolicy";
+import { loadCapabilityPolicy, policyAllows } from "@/lib/capabilityPolicy";
 import {
   computeTransition,
   classifyTransitionNotification,
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   // Active membership in the ticket's org + the caller's role.
   const { data: member } = await supabaseAdmin
     .from("org_members")
-    .select("role, email, display_name")
+    .select("role, roles, email, display_name")
     .eq("org_id", ticket.orgId)
     .eq("uid", caller.id)
     .eq("status", "active")
@@ -87,13 +87,45 @@ export async function POST(req: NextRequest) {
   }
   const callerRole = (member.role as Role) ?? "Viewer";
   const callerEmail = (member.email as string | null) || caller.email || "Unknown";
+  // WF-7: authority is evaluated against the FULL additive collection —
+  // the headline alone SUBTRACTED authority from multi-role people.
+  const callerRoles: Role[] = Array.isArray(member.roles) && (member.roles as Role[]).length > 0
+    ? (member.roles as Role[])
+    : [callerRole];
+
+  // GAP-2/DEC-12: the independence predicates bind at >= 3 active members.
+  const { count: activeMemberCount } = await supabaseAdmin
+    .from("org_members")
+    .select("uid", { count: "exact", head: true })
+    .eq("org_id", ticket.orgId)
+    .eq("status", "active");
+  const sodActive = (activeMemberCount ?? 0) >= 3;
+
+  // WF-15: close-without-review is a property of the CONFIGURED type.
+  let closeWithoutReviewTypes: string[] = ["RFI"];
+  try {
+    const { data: cfgRow } = await supabaseAdmin
+      .from("org_configurations")
+      .select("data")
+      .eq("org_id", ticket.orgId)
+      .eq("key", "drafting")
+      .maybeSingle();
+    const opts = ((cfgRow?.data as { requestTypes?: { options?: Array<{ value?: string; closeWithoutReview?: boolean }> } } | null)
+      ?.requestTypes?.options) ?? [];
+    const flagged = opts.filter((o) => o.closeWithoutReview === true).map((o) => String(o.value ?? "")).filter(Boolean);
+    if (flagged.length > 0) closeWithoutReviewTypes = flagged;
+  } catch { /* default stands */ }
 
   // THE enforcement: the action must be one the state machine offers this
   // caller at the ticket's current status — evaluated with the ORG'S OWN
   // capability policy, so admin-configured authority is enforced here, not
   // just drawn in the UI.
   const capPolicy = await loadCapabilityPolicy(ticket.orgId, supabaseAdmin);
-  const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy);
+  const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, {
+    userRoles: callerRoles,
+    activeMemberCount: activeMemberCount ?? 0,
+    closeWithoutReviewTypes,
+  });
   const action = allowed.find((a) => a.action === body.actionType);
   if (!action) {
     return NextResponse.json(
@@ -101,11 +133,28 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
+  // GAP-2: a separation-of-duties block is rendered disabled in the UI and
+  // REFUSED here — the reason travels with it.
+  if (action.disabledReason) {
+    return NextResponse.json({ error: action.disabledReason }, { status: 403 });
+  }
   if (action.requiresComment && !body.comment?.trim()) {
     return NextResponse.json({ error: "This action requires a comment" }, { status: 400 });
   }
   if (action.requiresEngineerPick && !body.engineer?.id) {
     return NextResponse.json({ error: "This action requires picking an engineer" }, { status: 400 });
+  }
+  // WF-6: the file precondition is enforced HERE, not only in the browser —
+  // a direct POST could previously mint a "Final package issued" ticket with
+  // no deliverable at all.
+  if (action.requiresFile && action.action === "submit_final" && !body.finalAttachment?.url) {
+    return NextResponse.json({ error: "Issuing the final IFC package requires the deliverable file" }, { status: 400 });
+  }
+  // WF-22: a transition that requires an input is refused when it is missing —
+  // an assignment-less "assign" used to no-op while still writing a success
+  // audit row.
+  if (action.action === "assign" && !body.assignment?.id) {
+    return NextResponse.json({ error: "Assigning requires picking a drafter" }, { status: 400 });
   }
 
   // Referenced people must be active members of the same org — and a picked
@@ -121,12 +170,43 @@ export async function POST(req: NextRequest) {
     if (!refMember) {
       return NextResponse.json({ error: "Referenced user is not an active member of this workspace" }, { status: 400 });
     }
+    const held: string[] = Array.isArray(refMember.roles) && refMember.roles.length > 0
+      ? (refMember.roles as string[])
+      : [String(refMember.role ?? "")];
     if (ref === body.engineer?.id) {
-      const held: string[] = Array.isArray(refMember.roles) && refMember.roles.length > 0
-        ? (refMember.roles as string[])
-        : [String(refMember.role ?? "")];
       if (!held.some((r) => r.includes("Engineer"))) {
         return NextResponse.json({ error: "The selected reviewer does not hold an Engineer role" }, { status: 400 });
+      }
+      // WF-14 (+DEC-12, +DEC-37): the reviewer slot is INDEPENDENT of the
+      // deliverable's producer and its beneficiary. In orgs of 3+ the picked
+      // engineer may not be the requester, the assigned drafter, or the
+      // caller — otherwise "two-stage engineering sign-off" can be one
+      // person wearing every hat on the same ticket. Below 3 members the
+      // single-person loop stays legal (DEC-12).
+      if (sodActive) {
+        if (ref === ticket.requesterId) {
+          return NextResponse.json({ error: "Needs a second person: the requester can't be the engineer who reviews their own request (orgs of 3+)." }, { status: 403 });
+        }
+        if (ref === ticket.assignedDrafterId) {
+          return NextResponse.json({ error: "Needs a second person: the drafter can't be the engineer who reviews their own deliverable (orgs of 3+)." }, { status: 403 });
+        }
+        if (ref === caller.id) {
+          return NextResponse.json({ error: "Needs a second person: you can't pick yourself as the reviewing engineer (orgs of 3+)." }, { status: 403 });
+        }
+      }
+    }
+    if (ref === body.assignment?.id) {
+      // WF-14 done-when 3: the assignee must actually hold drafting
+      // authority under the org's policy — membership alone was the only
+      // check before.
+      const mayDraft = policyAllows(capPolicy, "ticket.draft_work",
+        (held[0] ?? "Viewer") as Role, held as Role[], ref);
+      if (!mayDraft) {
+        return NextResponse.json({ error: "The selected drafter does not hold drafting authority (ticket.draft_work)" }, { status: 400 });
+      }
+      // GAP-2/DEC-12: the assigned drafter may not be the requester (3+).
+      if (sodActive && ref === ticket.requesterId) {
+        return NextResponse.json({ error: "Needs a second person: the requester can't draft their own request (orgs of 3+)." }, { status: 403 });
       }
     }
   }
