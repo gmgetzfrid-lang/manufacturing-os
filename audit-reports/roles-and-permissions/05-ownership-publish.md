@@ -1,3 +1,5 @@
+> **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T23:55Z — fixing Phase 3 (publish path)
+
 # 05 · Ownership & publish authority
 
 > **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
