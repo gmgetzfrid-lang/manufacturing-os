@@ -1586,6 +1586,13 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
     }),
   ).catch(() => { /* non-blocking */ });
 
+  // DIST-4: a retired document's pending confirmations no longer bind —
+  // close them all, or the cron nags people to confirm a drawing that no
+  // longer exists.
+  void import("@/lib/distributionAcks").then(({ closeStaleAcksForDocument }) =>
+    closeStaleAcksForDocument(doc.id!, null),
+  ).catch(() => { /* non-blocking */ });
+
   // DIST-1: retirement is the loudest recall event in document control — it
   // must reach every copy holder automatically, not only package owners and
   // the checkout holder via a controller finding the inspector button.

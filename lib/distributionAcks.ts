@@ -147,6 +147,50 @@ export async function requestAcks(input: {
   });
 }
 
+/** DIST-4: close out obligations that no longer bind. Called on publish
+ *  (`currentVersionId` = the new current — PENDING acks on every other
+ *  version close) and on retirement (`null` — every pending ack closes; the
+ *  document itself is gone, DIST-1's recall says so). Acknowledged rows are
+ *  completed history and are never touched. Stamps the 20261035
+ *  `superseded_at` column; quietly no-ops on an older database — the read
+ *  paths below also currency-scope in JS, so an unstamped orphan is inert
+ *  either way. */
+export async function closeStaleAcksForDocument(
+  documentId: string,
+  currentVersionId: string | null,
+): Promise<number> {
+  if (ackSchemaMissing) return 0;
+  try {
+    let q = supabase
+      .from("distribution_acks")
+      .update({ superseded_at: new Date().toISOString() })
+      .eq("document_id", documentId)
+      .is("acknowledged_at", null)
+      .is("superseded_at", null);
+    if (currentVersionId) q = q.neq("version_id", currentVersionId);
+    const { data, error } = await q.select("id");
+    if (error) return 0; // pre-20261035 column, or RLS — best-effort
+    return data?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** The DIST-4 currency rule, shared by every obligation reader: a pending
+ *  ack binds only while its version IS the document's current version and
+ *  the document is alive. (The confirm bar is version-scoped already; a
+ *  reader that ignores currency resurrects immortal, un-dischargeable
+ *  obligations.) */
+function ackStillBinds(
+  row: { version_id?: unknown },
+  doc: { current_version_id?: unknown; status?: unknown } | undefined,
+): boolean {
+  if (!doc) return false;
+  const status = String(doc.status ?? "");
+  if (status === "Superseded" || status === "Void" || status === "Archived") return false;
+  return String(row.version_id ?? "") === String(doc.current_version_id ?? "");
+}
+
 /** Distribution confirmations pending on THIS user — for the inbox / My
  *  Desk, so a missed bell doesn't bury the request forever. */
 export async function listMyPendingDistributionAcks(orgId: string, uid: string): Promise<Array<{
@@ -156,7 +200,7 @@ export async function listMyPendingDistributionAcks(orgId: string, uid: string):
   if (!uid) return [];
   const { data } = await supabase
     .from("distribution_acks")
-    .select("id, document_id, rev_label, requested_at, requested_by_name")
+    .select("id, document_id, version_id, rev_label, requested_at, requested_by_name")
     .eq("org_id", orgId)
     .eq("recipient_user_id", uid)
     .is("acknowledged_at", null)
@@ -166,9 +210,12 @@ export async function listMyPendingDistributionAcks(orgId: string, uid: string):
   if (!rows.length) return [];
   const docIds = [...new Set(rows.map((r) => r.document_id as string))];
   const { data: docs } = await supabase
-    .from("documents").select("id, library_id, document_number, title, name").in("id", docIds);
+    .from("documents").select("id, library_id, document_number, title, name, current_version_id, status").in("id", docIds);
   const byId = new Map(((docs ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
-  return rows.map((r) => {
+  // DIST-4: only CURRENT-version obligations surface — a Rev-4 row after
+  // Rev 5 issues used to sit in the inbox forever, linking to a page where
+  // the confirm bar (correctly version-scoped) could never render.
+  return rows.filter((r) => ackStillBinds(r, byId.get(r.document_id as string))).map((r) => {
     const d = byId.get(r.document_id as string);
     return {
       ackId: r.id as string,
@@ -252,13 +299,19 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   // one summary, not N pings.
   const docIds = [...new Set(rows.map((r) => r.document_id as string))];
   const { data: docRows } = await supabase
-    .from("documents").select("id, library_id, document_number, title, name").in("id", docIds);
+    .from("documents").select("id, library_id, document_number, title, name, current_version_id, status").in("id", docIds);
   const docs = new Map(((docRows ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
+
+  // DIST-4: the cron nags only obligations that still bind. A pending ack on
+  // a non-current version (or a retired document) used to be re-nagged every
+  // 3 days FOREVER while being structurally un-dischargeable — the recipient's
+  // confirm bar is version-scoped and could never render for it.
+  const binding = rows.filter((r) => ackStillBinds(r, docs.get(r.document_id as string)));
 
   let n = 0;
   const sends: Array<() => Promise<void>> = [];
   const escalations = new Map<string, { requesterId: string; docId: string; names: string[] }>();
-  for (const r of rows) {
+  for (const r of binding) {
     const docId = r.document_id as string;
     const doc = docs.get(docId);
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";

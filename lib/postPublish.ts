@@ -112,6 +112,12 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
         .maybeSingle();
       const currentVersionId = (docRow?.current_version_id as string | null) ?? null;
       if (!currentVersionId) return;
+      // DIST-4: obligations on the OUTGOING revision no longer bind — close
+      // them so the inbox, the cron, the register and the inspector agree.
+      // (Whoever must confirm the NEW revision gets a fresh request.)
+      void import("@/lib/distributionAcks").then(({ closeStaleAcksForDocument }) =>
+        closeStaleAcksForDocument(input.documentId, currentVersionId),
+      ).catch(() => { /* best-effort */ });
       const { getDocumentRecall, nudgeStaleHolders } = await import("@/lib/staleCopies");
       const holders = await getDocumentRecall(input.documentId, currentVersionId);
       await nudgeStaleHolders({

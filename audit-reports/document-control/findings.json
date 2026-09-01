@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 26,
-      "OPEN": 121
+      "RESOLVED": 27,
+      "OPEN": 120
     }
   },
   "status_vocabulary": [
@@ -607,7 +607,7 @@
       "id": "DIST-4",
       "title": "A superseding revision never closes outstanding distribution acks, and the recipient is structurally unable to discharge them",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

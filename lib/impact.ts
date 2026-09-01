@@ -183,13 +183,24 @@ export async function getDocumentImpact(
 
   // 8. Outstanding distribution confirmations (people who haven't confirmed
   //    they hold the current revision — they'll all need the new one).
+  //    DIST-4: scoped to the CURRENT version — an orphan ack on a prior
+  //    revision is not an impact of changing this one.
   try {
-    const { count } = await supabase
-      .from("distribution_acks")
-      .select("id", { count: "exact", head: true })
-      .eq("document_id", documentId)
-      .is("acknowledged_at", null);
-    out.pendingDistributionAcks = count ?? 0;
+    const { data: docRow } = await supabase
+      .from("documents")
+      .select("current_version_id")
+      .eq("id", documentId)
+      .maybeSingle();
+    const currentVersionId = (docRow?.current_version_id as string | null) ?? null;
+    if (currentVersionId) {
+      const { count } = await supabase
+        .from("distribution_acks")
+        .select("id", { count: "exact", head: true })
+        .eq("document_id", documentId)
+        .eq("version_id", currentVersionId)
+        .is("acknowledged_at", null);
+      out.pendingDistributionAcks = count ?? 0;
+    }
   } catch { /* pre-migration */ }
 
   return out;

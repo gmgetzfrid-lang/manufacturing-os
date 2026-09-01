@@ -153,7 +153,17 @@ app/api/verify/route.ts:89 quoted verbatim; app/verify/[docId]/page.tsx:64 the c
 ## DIST-4 · A superseding revision never closes outstanding distribution acks, and the recipient is structurally unable to discharge them
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7e).** Confirmed — the confirm bar was version-scoped while every obligation reader was not, so a Rev-4 row after Rev 5 issued was immortal and un-dischargeable. Fixed on both sides of the ledger:
+- **Close-out on the write paths.** New `closeStaleAcksForDocument(documentId, currentVersionId | null)` in `lib/distributionAcks.ts` stamps `superseded_at` (migration `20261035`) on PENDING rows that stopped binding: publish closes every other version's pending rows (`runPostPublishSideEffects`), retirement closes them all (`supersedeDocument`, alongside the DIST-1 recall). Acknowledged rows are completed history and are never touched. The permissive UPDATE policy + the 20261032/33 trigger let any member stamp this column while identity, `acknowledged_at` and `acknowledged_by` stay guarded.
+- **Currency scope on every reader** (belt over the stamp, so a pre-migration database is correct too): `listMyPendingDistributionAcks` (inbox/My Desk), `scanDistributionAcks` (the cron — no more 3-day nags and 10-day escalations for a revision that no longer exists), `loadDocControlRegister` (the auditor-facing "unconfirmed" pill no longer permanently inflated), and `getDocumentImpact` all skip rows whose version is not the document's current version or whose document is retired — the shared `ackStillBinds` rule.
+- **Backfill.** `20261035` also closes every EXISTING orphan in one pass, with the verification query proving zero remain.
+- Done-when: (1) revUp/supersede close prior-version acks with a superseded mark ✓ (Void note: no `voidDocument` lifecycle function exists — same scope note as DIST-1; the readers' currency scope covers voided docs regardless); (2) inbox, cron, register and impact all scope to `current_version_id` ✓; (3) a stale-revision ack is closed FOR the recipient — nothing to clear ✓.
+- Files: `lib/distributionAcks.ts`, `lib/postPublish.ts`, `lib/revisions.ts`, `lib/docControlRegister.ts`, `lib/impact.ts`, `supabase/migrations/20261035_dc_phase7e_ack_currency.sql`.
+- Tests: `lib/__tests__/distAckCurrency.test.ts` — non-current-version ack dropped from the inbox while the current one stays; retired-doc ack dropped even at its final version; close-out filters pinned (pending-only, un-closed-only, `neq` current on publish, no `neq` on retirement); pre-migration no-op.
+- ⚠ **Migration `20261035` awaiting hand-apply** — the readers are already correct without it; the paste adds the durable close-out mark and clears the existing orphans.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/distributionAcks.ts:152-183`, `lib/distributionAcks.ts:76-97`, `lib/distributionAcks.ts:202-304`, `lib/revisions.ts:1414-1537`, `lib/docControlRegister.ts:117`, `components/documents/InspectorPanel.tsx:194-204`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed and the loop is genuinely closed against the recipient: app/(protected)/inbox/page.tsx:422 renders only a Link to `/documents/${a.libraryId}?doc=${a.documentId}` (no inline confirm button), which opens the doc at Rev 5, where getMyPendingAck(Rev5) returns null so the confirm bar never renders. lib/docControlRegister.ts:117 counts every unacknowledged row regardless of version, so the register's "N unconfirmed" pill is permanently inflated, and scanDistributionAcks (lib/distributionAcks.ts:202-216) has no currency filter either, so the cron nags the orphan rows forever.

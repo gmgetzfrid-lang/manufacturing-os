@@ -182,8 +182,20 @@ gate → content assembly → snapshot/cover of exactly the included sheets →
 download → pins last and only for printed documents — a build failure
 leaves every pin untouched and records nothing, proven by an event-order
 test. Ship loop green: `tsc`, `eslint`, **1569 vitest** (9 new), full
-`next build`. No migration. Remaining: DIST-4/10/11/12/13, XEDGE
-extensions and the MEDIUM backlog.
+`next build`. No migration.
+
+**Phase 7e — distribution-ack currency (`DIST-4`).** A pending ack was
+keyed to a version and nothing closed it on rev-up or retirement, while
+the confirm bar (correctly version-scoped) could never render for it —
+immortal inbox rows, a cron nagging forever, a permanently inflated
+register pill. Publish and supersede now stamp `superseded_at` on
+out-of-currency pending rows (migration `20261035`, which also backfills
+every existing orphan), and all four readers — inbox, cron, register,
+revision impact — scope to the document's current version via a shared
+rule, so a pre-migration database reads correctly too. Ship loop green:
+`tsc`, `eslint`, **1574 vitest** (5 new), full `next build`. Migration
+`20261035_dc_phase7e_ack_currency.sql` **awaiting hand-apply**.
+Remaining: DIST-10/11/12/13, XEDGE extensions and the MEDIUM backlog.
 
 | # | Report | n | Note |
 |---|---|---|---|

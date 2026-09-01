@@ -114,10 +114,16 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     // Outstanding DISTRIBUTION confirmations ("I have this revision") — the
     // other ack system; the register is the auditor artifact and must carry
     // the answer this feature exists to produce.
-    supabase.from("distribution_acks").select("document_id").eq("org_id", orgId).is("acknowledged_at", null),
+    supabase.from("distribution_acks").select("document_id, version_id").eq("org_id", orgId).is("acknowledged_at", null),
   ]);
+  // DIST-4: count only obligations that still bind — a pending ack on a
+  // NON-CURRENT version is an orphan (the recipient's confirm bar is
+  // version-scoped and can never clear it), and counting it inflated the
+  // auditor-facing "unconfirmed" pill permanently.
+  const currentVersionByDoc = new Map(docs.map((d) => [String(d.id), (d.current_version_id as string | null) ?? ""]));
   const distAckOutstanding = new Map<string, number>();
-  for (const r of (((distAckRes as { data?: Array<{ document_id: string }> })?.data) ?? [])) {
+  for (const r of (((distAckRes as { data?: Array<{ document_id: string; version_id: string | null }> })?.data) ?? [])) {
+    if (String(r.version_id ?? "") !== currentVersionByDoc.get(r.document_id)) continue;
     distAckOutstanding.set(r.document_id, (distAckOutstanding.get(r.document_id) ?? 0) + 1);
   }
   const libMap = new Map((libs ?? []).map((l) => [(l as OwnerCols).id, l as OwnerCols]));
