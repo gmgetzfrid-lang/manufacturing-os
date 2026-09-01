@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 20,
-      "OPEN": 127
+      "RESOLVED": 23,
+      "OPEN": 124
     }
   },
   "status_vocabulary": [
@@ -121,7 +121,7 @@
       "id": "DIST-1",
       "title": "Retiring a document performs no distribution recall of any kind — and simultaneously silences the holder's own stale-copy list",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -336,7 +336,7 @@
       "id": "PKG-3",
       "title": "Two document-creation paths mint DETERMINISTIC R2 keys from the raw filename, so two different documents silently share one object and a pack serves the wrong drawing under the right title block",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -420,7 +420,7 @@
       "id": "REV-2",
       "title": "Revert accepts an in-review draft or an unreconciled branch as its target — unreviewed bytes become the controlled copy, and the DB review gate cannot see it",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

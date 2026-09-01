@@ -99,6 +99,34 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
     actorName: input.actorName,
   });
 
+  // DIST-1: notifySuperseded reaches live intent holders and followers — but
+  // the people who provably HOLD a copy are in download_audits, a population
+  // the fan-out never touched. The one recall channel used to be a human
+  // finding the inspector's button; it now fires on every publish.
+  void (async () => {
+    try {
+      const { data: docRow } = await supabase
+        .from("documents")
+        .select("current_version_id")
+        .eq("id", input.documentId)
+        .maybeSingle();
+      const currentVersionId = (docRow?.current_version_id as string | null) ?? null;
+      if (!currentVersionId) return;
+      const { getDocumentRecall, nudgeStaleHolders } = await import("@/lib/staleCopies");
+      const holders = await getDocumentRecall(input.documentId, currentVersionId);
+      await nudgeStaleHolders({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        libraryId: input.libraryId,
+        docLabel: input.docLabel,
+        currentRev: input.newRev,
+        holders,
+        actorUserId: input.actorUserId,
+        actorName: input.actorName,
+      });
+    } catch { /* best-effort */ }
+  })();
+
   void import("@/lib/workPackages").then(({ notifyPackagesOfRevUp }) =>
     notifyPackagesOfRevUp({
       orgId: input.orgId,

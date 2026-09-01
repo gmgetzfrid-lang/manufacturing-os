@@ -202,6 +202,21 @@ export async function resolveFileUrl(value: string, expiresIn = 3600): Promise<s
   }
 }
 
+/** PKG-3: a per-upload UNIQUE storage name. makeLibraryStoragePath is a pure
+ *  function of (org, library, folder, filename), and a PUT to an existing R2
+ *  key overwrites it — so two same-named uploads into one folder silently
+ *  collapsed to one object while both document rows survived, and the older
+ *  document served the newer drawing's bytes under its own title block.
+ *  Every document-creation path must salt the name exactly like the four
+ *  revision paths always have: `stem__rev<label>__<millis>.ext`. */
+export function uniqueUploadName(filename: string, revLabel?: string | null): string {
+  const name = filename || "drawing.pdf";
+  const safeRev = (revLabel ?? "0").trim().replace(/[^\w.\-]+/g, "_") || "0";
+  const stem = name.replace(/\.[^.]+$/, "");
+  const ext = name.includes(".") ? name.split(".").pop() || "pdf" : "pdf";
+  return `${stem}__rev${safeRev}__${Date.now()}.${ext}`;
+}
+
 export function makeLibraryStoragePath(params: {
   orgId: string;
   libraryId: string;

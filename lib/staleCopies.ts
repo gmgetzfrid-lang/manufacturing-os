@@ -26,6 +26,10 @@ export interface StaleCopy {
   downloadedRev: string | null;
   downloadedAt: string;
   currentRev: string | null;
+  /** Set when the DOCUMENT itself is retired (Superseded/Void/Archived) —
+   *  the most urgent case: there is no current revision to re-download,
+   *  every copy is dead paper (DIST-1). */
+  retiredStatus: string | null;
 }
 
 /** The current user's outdated copies: latest download per document where
@@ -73,14 +77,23 @@ export async function listMyStaleCopies(
     for (const d of (docs as Array<Record<string, unknown>>) ?? []) {
       const mine = latest.get(String(d.id));
       if (!mine) continue;
-      if (d.status === "Archived" || d.status === "Superseded" || d.status === "Void") continue;
-      const current = (d.current_version_id as string | null) ?? null;
-      if (!current || current === mine.versionId) continue; // still current — fine
-      // Skip DELIBERATE historical pulls: if the downloaded rev was already
-      // superseded BEFORE the download happened (e.g. from Version History),
-      // the user knew it was old — flagging it is pure noise.
-      const supAt = supersededAtByVersion.get(mine.versionId);
-      if (supAt && supAt < mine.at) continue;
+      // DIST-1: a RETIRED document is the case this feature exists for — it
+      // used to be filtered out here, which silenced exactly the holders of
+      // the most dangerous copies in circulation. Every copy of a retired
+      // doc is stale (even the final revision: there is nothing current to
+      // hold), so the "still current" and deliberate-historical-pull skips
+      // below apply only to living documents.
+      const retired =
+        d.status === "Archived" || d.status === "Superseded" || d.status === "Void";
+      if (!retired) {
+        const current = (d.current_version_id as string | null) ?? null;
+        if (!current || current === mine.versionId) continue; // still current — fine
+        // Skip DELIBERATE historical pulls: if the downloaded rev was already
+        // superseded BEFORE the download happened (e.g. from Version History),
+        // the user knew it was old — flagging it is pure noise.
+        const supAt = supersededAtByVersion.get(mine.versionId);
+        if (supAt && supAt < mine.at) continue;
+      }
 
       // Label of the rev they downloaded (best-effort).
       out.push({
@@ -90,6 +103,7 @@ export async function listMyStaleCopies(
         downloadedRev: null, // filled below in one batch
         downloadedAt: mine.at,
         currentRev: (d.rev as string | null) ?? null,
+        retiredStatus: retired ? String(d.status) : null,
       });
     }
     if (out.length === 0) return [];
@@ -106,7 +120,10 @@ export async function listMyStaleCopies(
     for (const o of out) {
       o.downloadedRev = labelByVersion.get(latest.get(o.documentId)!.versionId) ?? null;
     }
-    return out.sort((a, b) => Date.parse(b.downloadedAt) - Date.parse(a.downloadedAt));
+    // Retired-document copies first — dead paper beats stale paper.
+    return out.sort((a, b) =>
+      Number(!!b.retiredStatus) - Number(!!a.retiredStatus) ||
+      Date.parse(b.downloadedAt) - Date.parse(a.downloadedAt));
   } catch {
     return [];
   }
@@ -176,6 +193,56 @@ export async function getDocumentRecall(
       .sort((a, b) => Number(a.hasCurrent) - Number(b.hasCurrent) || Date.parse(b.lastDownloadedAt) - Date.parse(a.lastDownloadedAt));
   } catch {
     return [];
+  }
+}
+
+/** RETIREMENT recall (DIST-1): when a document is Superseded/Voided, EVERY
+ *  copy in circulation is dead paper — including the final revision, so the
+ *  hasCurrent split is meaningless. Tells everyone who pulled ANY version in
+ *  the recall window. Best-effort; returns how many people were told. */
+export async function recallRetiredDocument(input: {
+  orgId: string;
+  documentId: string;
+  libraryId?: string | null;
+  docLabel: string;
+  newStatus: string;                 // "Superseded" | "Void" | "Archived"
+  replacementNote?: string | null;   // e.g. "Replaced by P-101A, P-101B"
+  actorUserId: string;
+  actorName?: string | null;
+}): Promise<number> {
+  try {
+    const since = new Date(Date.now() - RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+    const { data } = await supabase
+      .from("download_audits")
+      .select("user_id")
+      .eq("document_id", input.documentId)
+      .gt("created_at", since)
+      .limit(400);
+    const holders = [...new Set(
+      (((data as Array<{ user_id: string | null }> | null) ?? []))
+        .map((r) => r.user_id)
+        .filter((u): u is string => !!u && u !== input.actorUserId),
+    )];
+    if (holders.length === 0) return 0;
+    await emit({
+      orgId: input.orgId,
+      category: "status",
+      kind: "doc_superseded",
+      title: `${input.docLabel} is now ${input.newStatus} — your copy is dead paper`,
+      body:
+        `This document was retired (${input.newStatus.toLowerCase()}); there is no current revision to work from. ` +
+        `Stop any work based on your copy and destroy old prints.` +
+        (input.replacementNote ? ` ${input.replacementNote}` : ""),
+      link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName ?? undefined,
+      audience: { involved: holders },
+      metadata: { recall: true, retirement: true, newStatus: input.newStatus },
+    });
+    return holders.length;
+  } catch {
+    return 0;
   }
 }
 

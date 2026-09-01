@@ -281,6 +281,15 @@ export default function VersionHistoryPanel({
                       >
                         <ShieldAlert className="w-3 h-3" /> Branch
                       </span>
+                    ) : v.reviewState != null && v.reviewState !== "approved" ? (
+                      // REV-2: a draft that was never issued is NOT "Superseded" —
+                      // that badge is a false document-control statement.
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded"
+                        title="An unreviewed draft — it has never been the controlled copy and cannot be reverted to."
+                      >
+                        <ShieldAlert className="w-3 h-3" /> {v.reviewState === "in_review" ? "In review" : "Draft (not issued)"}
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
                         <ShieldAlert className="w-3 h-3" /> Superseded
@@ -371,8 +380,13 @@ export default function VersionHistoryPanel({
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                   )}
-                  {/* Revert button — superseded versions only, admin/DocCtrl only */}
-                  {canRevert && !isCurrent && onRevertVersion && (
+                  {/* Revert button — previously-ISSUED revisions only (REV-2):
+                      an in-review/rejected draft or an unreconciled branch has
+                      never passed the gate; revertToVersion and the RPC refuse
+                      them too, this just doesn't offer the dead end. Shown to
+                      any authorized publisher (canRevert = canPublishEff). */}
+                  {canRevert && !isCurrent && onRevertVersion && !v.isBranch
+                    && (v.reviewState == null || v.reviewState === "approved") && (
                     <button
                       onClick={() => onRevertVersion(v)}
                       title="Revert document to this revision"

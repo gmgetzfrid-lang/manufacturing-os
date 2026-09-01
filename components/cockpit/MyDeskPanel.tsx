@@ -207,11 +207,20 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">My copies that went stale</div>
             {staleCopies.slice(0, 5).map((s) => (
               <Link key={s.documentId} href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-amber-50 group">
-                <FileDown className="w-3 h-3 text-amber-500 shrink-0" />
+                <FileDown className={`w-3 h-3 shrink-0 ${s.retiredStatus ? "text-red-500" : "text-amber-500"}`} />
                 <span className="text-xs text-[var(--color-text)] group-hover:text-amber-800 truncate flex-1">{s.docLabel}</span>
-                <span className="text-[10px] font-bold text-amber-700 shrink-0">
-                  you have Rev {s.downloadedRev ?? "?"} → now Rev {s.currentRev ?? "?"}
-                </span>
+                {/* DIST-1: a copy of a RETIRED document is dead paper — there is
+                    no current rev to re-pull, which is worse than stale, not
+                    exempt from the list. */}
+                {s.retiredStatus ? (
+                  <span className="text-[10px] font-black text-red-700 shrink-0">
+                    {s.retiredStatus.toUpperCase()} — destroy your Rev {s.downloadedRev ?? "?"} copy
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold text-amber-700 shrink-0">
+                    you have Rev {s.downloadedRev ?? "?"} → now Rev {s.currentRev ?? "?"}
+                  </span>
+                )}
               </Link>
             ))}
             {staleCopies.length > 5 && (

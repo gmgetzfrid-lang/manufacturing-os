@@ -147,8 +147,26 @@ re-proved by mutation — both audit mutations now fail the suite).
 Migration `20261033_dc_phase7b_guard_patches.sql` **applied & verified live
 2026-08-24** (4-point probe all true: ack guard owns acknowledged_by; pin
 guard fires on INSERT and UPDATE; search_path pinned on both).
-Remaining in Phase 7: `PKG-3`, `REV-2`, `DIST-1` remainder + XEDGE
-extensions.
+
+**Phase 7c — the last three sequenced CRITICALs.** `PKG-3` (two
+document-creation paths minted deterministic R2 keys from the raw filename,
+silently collapsing same-named uploads onto one object → shared pure
+`uniqueUploadName` salt wired into both, matching the four always-salted
+revision paths), `REV-2` (revert accepted an in-review draft or an
+unreconciled branch as its target — the one path that made unreviewed bytes
+the controlled copy invisibly to the DB review gate → refused at three
+layers: pure `assertRevertableTarget`, the panel stops offering those rows
+and stops mislabeling drafts "Superseded", and `publish_revision` itself
+gates the target in migration `20261034`, which also requires the target to
+be a revision of the same document), and `DIST-1` (retirement reached no
+copy holder while silencing their own stale-copy list → automatic
+retirement + rev-up recall of the download-audit population, retired copies
+now TOP of the stale list marked "destroy this copy", and supersede revokes
+outstanding share links with the count on the audit record). Ship loop
+green: `tsc`, `eslint`, **1560 vitest** (18 new), full `next build`.
+Migration `20261034_dc_phase7c_revert_target_gate.sql` **awaiting
+hand-apply**. Remaining in the area: the HIGH/MEDIUM backlog (REV-3 label
+hygiene, PKG-6 print-ordering, DIST-4/10/11/12/13, XEDGE extensions).
 
 | # | Report | n | Note |
 |---|---|---|---|

@@ -120,7 +120,7 @@ import {
   type FolderPlan,
   type PathedFile,
 } from "@/lib/folderUpload";
-import { makeLibraryStoragePath, uploadToPath } from "@/lib/storage";
+import { makeLibraryStoragePath, uniqueUploadName, uploadToPath } from "@/lib/storage";
 import type {
   AccessControl,
   CheckoutSession,
@@ -2406,11 +2406,15 @@ export default function LibraryExplorerPage() {
         const { item, docNumber } = entry;
         const file = item.file;
         const subPath = pathByFile.get(file) ?? [];
+        // PKG-3: salted per-upload name — the raw filename made the key a pure
+        // function of (org, library, folder, name), so a second same-named
+        // upload silently overwrote the first document's bytes while the
+        // auto-rename (`P-101` → `P-101-2`) hid the collision.
         const storagePath = makeLibraryStoragePath({
           orgId: activeOrgId,
           libraryId,
           folderPath: [...folderPath, ...subPath],
-          filename: file.name,
+          filename: uniqueUploadName(file.name, item.rev.trim() || "0"),
         });
         const uploadResult = await uploadToPath(file, storagePath, {
           contentType: file.type || undefined,

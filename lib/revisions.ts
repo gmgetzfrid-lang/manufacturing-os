@@ -19,12 +19,13 @@
 //      PSM-style audit reconstruction.
 
 import { supabase } from "@/lib/supabase";
-import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
+import { uploadToPath, makeLibraryStoragePath, uniqueUploadName } from "@/lib/storage";
 import { logRevisionEvent, logAuditAction } from "@/lib/audit";
 import {
   fetchPublishGuardState,
   evaluatePublishGuard,
   resolveCanControlLibrary,
+  assertRevertableTarget,
   DocumentMutationBlockedError,
   type PublishGuardState,
 } from "@/lib/documentGuards";
@@ -353,11 +354,13 @@ export async function createDocumentWithFile(input: {
   const documentId = docRow.id as string;
 
   const fileHash = await sha256Hex(input.file);
+  // PKG-3: salted per-upload name — a deterministic `Rev0_<name>` key let two
+  // same-named documents share (and silently overwrite) one storage object.
   const storagePath = makeLibraryStoragePath({
     orgId: input.orgId,
     libraryId: input.libraryId,
     folderPath: input.folderPath,
-    filename: `Rev0_${input.file.name || "drawing.pdf"}`,
+    filename: uniqueUploadName(input.file.name, "0"),
   });
   const uploadResult = await uploadToPath(input.file, storagePath, { contentType: input.file.type });
 
@@ -1148,6 +1151,12 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   if (!targetVersion.id) throw new Error("Target version is missing an id");
   if (!reason.trim()) throw new Error("Revert reason is required");
 
+  // REV-2: only a previously-issued revision can be restored — an in-review/
+  // rejected draft or an unreconciled branch must never become the controlled
+  // copy through revert (the DB review gate can't see it: the fresh revert
+  // row has no roster). The RPC enforces the same rule (20261034).
+  assertRevertableTarget(targetVersion);
+
   // Same invariants as a rev-up: only an authorized publisher for this library
   // (or the doc's effective owner), and either own/clear lock or an override
   // reason for a foreign checkout.
@@ -1499,6 +1508,20 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
     await supabase.from("document_supersessions").insert(rows);
   }
 
+  // DIST-1: a public share link must stop serving a retired drawing. Revoke
+  // what this actor may revoke (RLS can leave another creator's links to a
+  // controller — the count on the audit record keeps that honest).
+  let revokedShareLinks = 0;
+  try {
+    const { data: revokedRows } = await supabase
+      .from("document_shares")
+      .update({ revoked_at: now, revoked_by: actorUserId })
+      .eq("document_id", doc.id)
+      .is("revoked_at", null)
+      .select("id");
+    revokedShareLinks = revokedRows?.length ?? 0;
+  } catch { /* best-effort */ }
+
   await logRevisionEvent({
     orgId,
     documentId: doc.id,
@@ -1513,6 +1536,7 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       replacementDocNumbers,
       resolvedReplacementIds: resolved,
       unresolvedDocNumbers: unresolved,
+      revokedShareLinks,
     },
   });
 
@@ -1549,6 +1573,21 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       orgId, documentId: doc.id!,
       docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
       newStatus: "Superseded",
+      actorUserId, actorName: actorEmail || actorUserId,
+    }),
+  ).catch(() => { /* non-blocking */ });
+
+  // DIST-1: retirement is the loudest recall event in document control — it
+  // must reach every copy holder automatically, not only package owners and
+  // the checkout holder via a controller finding the inspector button.
+  void import("@/lib/staleCopies").then(({ recallRetiredDocument }) =>
+    recallRetiredDocument({
+      orgId, documentId: doc.id!, libraryId,
+      docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
+      newStatus: "Superseded",
+      replacementNote: replacementDocNumbers.length > 0
+        ? `Replaced by ${replacementDocNumbers.join(", ")}.`
+        : null,
       actorUserId, actorName: actorEmail || actorUserId,
     }),
   ).catch(() => { /* non-blocking */ });

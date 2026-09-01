@@ -109,7 +109,16 @@ lib/physicalBridge.ts:275 — `const qr = await qrPng(doc, \`${origin()}/verify-
 ## PKG-3 · Two document-creation paths mint DETERMINISTIC R2 keys from the raw filename, so two different documents silently share one object and a pack serves the wrong drawing under the right title block
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7c).** Confirmed exactly as written: `makeLibraryStoragePath` is a pure function of (org, library, folder, filename), a PUT overwrites, and the two unsalted callers — the bulk library upload (`filename: file.name`) and `createDocumentWithFile` (`Rev0_${name}`) — collapsed same-named uploads onto one object while the doc-number auto-rename (`P-101` → `P-101-2`) hid the collision. Fixed by salting exactly like the four revision paths always have:
+- New pure `uniqueUploadName(filename, revLabel)` in `lib/storage.ts` produces `stem__rev<label>__<millis>.ext` (rev sanitized, extension preserved, missing names defaulted) — one implementation instead of a fifth inline copy of the pattern.
+- Both callers wired: `app/(protected)/documents/[libraryId]/page.tsx` (bulk upload, uses the staged item's rev) and `lib/revisions.ts` `createDocumentWithFile` (rev 0).
+- Done-when: (1) every storage key carries a per-upload unique component, including both previously-unsalted paths ✓; (2) the distinctness rule is pinned by test — as a pure-function test on the shared helper plus the call-site wiring, rather than a live two-upload integration test (no storage emulator in this environment; the helper IS the key-distinctness mechanism) ✓/≈.
+- Files: `lib/storage.ts`, `app/(protected)/documents/[libraryId]/page.tsx`, `lib/revisions.ts`.
+- Tests: `lib/__tests__/uniqueUploadName.test.ts` — two same-named uploads get distinct names; stem/rev/extension preserved; hostile rev labels sanitized; missing name/extension defaults.
+- **What this brought to light:** existing documents created through these paths before the fix still share keys pairwise if their names collided — the fix stops NEW collisions but does not de-duplicate history. A collision census (group `document_versions.file_url` by value, flag >1 distinct `record_id`) is a candidate maintenance task for the retention/storage area.
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:2409-2413`, `lib/revisions.ts:355-361`, `lib/storage.ts:205-216`, `app/(protected)/documents/[libraryId]/page.tsx:2390-2401`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the finding is precise about which two paths are affected — the contrast with the four salted callers is what makes it a defect rather than a design. Two same-named files in one folder collapse to one object while both document rows keep pointing at it, so the older document serves the newer drawing's bytes under its own title block.

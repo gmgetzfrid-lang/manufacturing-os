@@ -150,6 +150,32 @@ export function evaluatePublishGuard(
   return { ok: true };
 }
 
+/** REV-2: the revert TARGET must be a previously-ISSUED revision. An
+ *  in-review or rejected draft has never passed the review gate, and an
+ *  unreconciled branch was explicitly parked — reverting one would promote
+ *  unreviewed bytes to the controlled copy through the one path the DB
+ *  review-completion guard cannot see (the fresh revert row has no roster).
+ *  Refuses anything that is neither issued (null review_state) nor approved,
+ *  so a future draft state cannot slip through. Pure, so the rule is
+ *  unit-testable; revertToVersion calls it and publish_revision (20261034)
+ *  enforces the same rule inside the RPC for direct callers. */
+export function assertRevertableTarget(target: {
+  revisionLabel?: string | null;
+  reviewState?: string | null;
+  isBranch?: boolean | null;
+}): void {
+  if (target.isBranch) {
+    throw new Error(
+      `Rev ${target.revisionLabel ?? "?"} is an unreconciled branch — branch content is promoted through review, never by revert.`,
+    );
+  }
+  if (target.reviewState != null && target.reviewState !== "approved") {
+    throw new Error(
+      `Rev ${target.revisionLabel ?? "?"} is an unreviewed draft (${target.reviewState.replace("_", " ")}) — only previously-issued revisions can be reverted to.`,
+    );
+  }
+}
+
 export class DocumentMutationBlockedError extends Error {
   code: PublishBlockCode;
   constructor(decision: GuardDecision) {
