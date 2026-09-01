@@ -86,7 +86,7 @@ export default function DistributionAcks({
     if (!currentVersionId || checked.size === 0) return;
     setBusy(true);
     try {
-      await requestAcks({
+      const { requested, reminded } = await requestAcks({
         orgId, documentId, libraryId, docLabel,
         versionId: currentVersionId, revLabel: currentRev,
         recipients: members.filter((m) => checked.has(m.uid)).map((m) => ({ uid: m.uid, email: m.email })),
@@ -96,6 +96,17 @@ export default function DistributionAcks({
       setShowPicker(false);
       setChecked(new Set());
       await load();
+      showToast({
+        type: "success",
+        title: "Confirmations requested",
+        message:
+          `${requested} new request${requested === 1 ? "" : "s"} sent` +
+          (reminded > 0 ? `; ${reminded} already-asked ${reminded === 1 ? "person" : "people"} reminded (their overdue clock is untouched).` : "."),
+      });
+    } catch (e) {
+      // DIST-12: a rejected write must never look like success behind a
+      // stopped spinner.
+      showToast({ type: "error", title: "Couldn't request confirmations", message: (e as Error).message });
     } finally {
       setBusy(false);
     }
@@ -125,6 +136,8 @@ export default function DistributionAcks({
         acks, actorUserId: currentUserId, actorName: currentUserName || "Document Control",
       });
       setReminded(true);
+    } catch (e) {
+      showToast({ type: "error", title: "Reminder not sent", message: (e as Error).message });
     } finally {
       setBusy(false);
     }
@@ -261,6 +274,17 @@ export default function DistributionAcks({
                         />
                         <span className="font-bold text-[var(--color-text)]">{m.email?.split("@")[0] ?? m.uid.slice(0, 8)}</span>
                         {m.role && <span className="text-[9px] text-[var(--color-text-faint)] uppercase">{m.role}</span>}
+                        {/* DIST-12: re-selecting someone already asked REMINDS
+                            them — their overdue clock is never reset. */}
+                        {(() => {
+                          const a = acks.find((x) => x.recipientUserId === m.uid);
+                          if (!a) return null;
+                          return a.acknowledgedAt
+                            ? <span className="ml-auto text-[9px] font-bold text-emerald-600">confirmed ✓</span>
+                            : <span className="ml-auto text-[9px] font-bold text-amber-600">
+                                asked {new Date(a.requestedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })} — will remind
+                              </span>;
+                        })()}
                       </label>
                     ))}
                   </div>

@@ -15,9 +15,16 @@
 
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
+import { logRevisionEvent } from "@/lib/audit";
 
-/** How far back a download is considered "a copy someone may still hold". */
+/** How far back a download is considered "a copy someone may still hold".
+ *  PERSONAL list: 60 days — beyond that, self-service noise outweighs value.
+ *  PER-DOCUMENT recall: 365 days — the controller deciding who to recall
+ *  must see the print that has lived in a field binder for months; a
+ *  61-day-old print is exactly the one most likely to be stale (DIST-11). */
 const RECALL_WINDOW_DAYS = 60;
+const DOC_RECALL_WINDOW_DAYS = 365;
+const DOC_RECALL_ROW_CAP = 1000;
 
 export interface StaleCopy {
   documentId: string;
@@ -138,14 +145,16 @@ export interface RecallHolder {
 }
 
 /** Distribution recall for one document: everyone who pulled a copy in the
- *  window, split into "has the current rev" vs "holding an outdated one". */
+ *  window, split into "has the current rev" vs "holding an outdated one".
+ *  `capped` is the DIST-11 honesty flag: when the row cap was hit, holders
+ *  may be MISSING and the UI must say so instead of asserting completeness. */
 export async function getDocumentRecall(
   documentId: string,
   currentVersionId: string | null,
-): Promise<RecallHolder[]> {
-  if (!currentVersionId) return [];
+): Promise<{ holders: RecallHolder[]; capped: boolean }> {
+  if (!currentVersionId) return { holders: [], capped: false };
   try {
-    const since = new Date(Date.now() - RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+    const since = new Date(Date.now() - DOC_RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
     const { data } = await supabase
       .from("download_audits")
       .select("user_id, user_email, version_id, created_at")
@@ -153,9 +162,10 @@ export async function getDocumentRecall(
       .gt("created_at", since)
       .not("version_id", "is", null)
       .order("created_at", { ascending: false })
-      .limit(400);
+      .limit(DOC_RECALL_ROW_CAP);
     const rows = (data as Array<{ user_id: string; user_email: string | null; version_id: string; created_at: string }>) ?? [];
-    if (rows.length === 0) return [];
+    const capped = rows.length >= DOC_RECALL_ROW_CAP;
+    if (rows.length === 0) return { holders: [], capped };
 
     const byUser = new Map<string, RecallHolder & { latestVersionId: string }>();
     for (const r of rows) {
@@ -188,11 +198,14 @@ export async function getDocumentRecall(
     for (const h of holders) h.lastDownloadedRev = labelByVersion.get(h.latestVersionId) ?? null;
 
     // Outdated holders first, then by recency.
-    return holders
-      .map(({ latestVersionId: _ignored, ...h }) => h)
-      .sort((a, b) => Number(a.hasCurrent) - Number(b.hasCurrent) || Date.parse(b.lastDownloadedAt) - Date.parse(a.lastDownloadedAt));
+    return {
+      holders: holders
+        .map(({ latestVersionId: _ignored, ...h }) => h)
+        .sort((a, b) => Number(a.hasCurrent) - Number(b.hasCurrent) || Date.parse(b.lastDownloadedAt) - Date.parse(a.lastDownloadedAt)),
+      capped,
+    };
   } catch {
-    return [];
+    return { holders: [], capped: false };
   }
 }
 
@@ -211,13 +224,13 @@ export async function recallRetiredDocument(input: {
   actorName?: string | null;
 }): Promise<number> {
   try {
-    const since = new Date(Date.now() - RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+    const since = new Date(Date.now() - DOC_RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
     const { data } = await supabase
       .from("download_audits")
       .select("user_id")
       .eq("document_id", input.documentId)
       .gt("created_at", since)
-      .limit(400);
+      .limit(DOC_RECALL_ROW_CAP);
     const holders = [...new Set(
       (((data as Array<{ user_id: string | null }> | null) ?? []))
         .map((r) => r.user_id)
@@ -226,7 +239,7 @@ export async function recallRetiredDocument(input: {
     if (holders.length === 0) return 0;
     await emit({
       orgId: input.orgId,
-      category: "status",
+      category: "recall",
       kind: "doc_superseded",
       title: `${input.docLabel} is now ${input.newStatus} — your copy is dead paper`,
       body:
@@ -240,6 +253,21 @@ export async function recallRetiredDocument(input: {
       audience: { involved: holders },
       metadata: { recall: true, retirement: true, newStatus: input.newStatus },
     });
+    // DIST-10: the recall goes on the document's audit trail — an incident
+    // investigation must be able to answer "when was it recalled, who was on
+    // the list" from the record, not from cleared bell notifications.
+    try {
+      await logRevisionEvent({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        versionId: "",
+        userId: input.actorUserId,
+        userEmail: input.actorName ?? "",
+        userRole: "",
+        type: "DISTRIBUTION_RECALL",
+        details: { retirement: true, newStatus: input.newStatus, recipientCount: holders.length, recipients: holders },
+      });
+    } catch { /* the recall itself already went out */ }
     return holders.length;
   } catch {
     return 0;
@@ -253,15 +281,19 @@ export async function nudgeStaleHolders(input: {
   libraryId?: string | null;
   docLabel: string;
   currentRev: string | null;
+  /** The current version at recall time — recorded on the audit row. */
+  currentVersionId?: string | null;
   holders: RecallHolder[];
   actorUserId: string;
   actorName?: string | null;
+  /** Recorded on the audit row: a controller's click vs the publish fan-out. */
+  source?: "manual" | "auto";
 }): Promise<number> {
   const outdated = input.holders.filter((h) => !h.hasCurrent);
   if (outdated.length === 0) return 0;
   await emit({
     orgId: input.orgId,
-    category: "status",
+    category: "recall",
     kind: "doc_superseded",
     title: `Your copy of ${input.docLabel} is out of date`,
     body: `The current revision is Rev ${input.currentRev ?? "?"}. You downloaded an older one — re-download before doing any work from it, and destroy old prints.`,
@@ -272,5 +304,23 @@ export async function nudgeStaleHolders(input: {
     audience: { involved: outdated.map((h) => h.userId) },
     metadata: { recall: true },
   });
+  // DIST-10: durable record — actor, version, recipient list, timestamp.
+  try {
+    await logRevisionEvent({
+      orgId: input.orgId,
+      documentId: input.documentId,
+      versionId: input.currentVersionId ?? "",
+      userId: input.actorUserId,
+      userEmail: input.actorName ?? "",
+      userRole: "",
+      type: "DISTRIBUTION_RECALL",
+      details: {
+        source: input.source ?? "manual",
+        currentRev: input.currentRev,
+        recipientCount: outdated.length,
+        recipients: outdated.map((h) => ({ userId: h.userId, email: h.userEmail, heldRev: h.lastDownloadedRev })),
+      },
+    });
+  } catch { /* the recall itself already went out */ }
   return outdated.length;
 }

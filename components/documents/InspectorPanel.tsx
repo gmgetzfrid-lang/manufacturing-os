@@ -179,7 +179,7 @@ export default function InspectorPanel({
       } catch { if (alive) setActiveHoldCount(0); }
       try {
         const { getDocumentRecall } = await import("@/lib/staleCopies");
-        const holders = await getDocumentRecall(selectedDoc.id, selectedDoc.currentVersionId ?? null);
+        const { holders } = await getDocumentRecall(selectedDoc.id, selectedDoc.currentVersionId ?? null);
         if (alive) setStaleHolderCount(holders.filter((h) => !h.hasCurrent).length);
       } catch { if (alive) setStaleHolderCount(0); }
       try {

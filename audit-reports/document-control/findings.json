@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 27,
-      "OPEN": 120
+      "RESOLVED": 32,
+      "OPEN": 115
     }
   },
   "status_vocabulary": [
@@ -2177,7 +2177,7 @@
       "id": "DIST-10",
       "title": "A recall leaves no record: no audit row, no recall entity, no acknowledgment — \"Recall sent to N people\" is component state that evaporates on reopen",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2203,7 +2203,7 @@
       "id": "DIST-11",
       "title": "Distribution recall silently truncates at 400 download rows / 60 days, in a component whose sibling pill honestly flags its own cap",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2230,7 +2230,7 @@
       "id": "DIST-12",
       "title": "Re-requesting confirmations resets every recipient's overdue clock, and the request/acknowledge/remind handlers swallow their errors",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2256,7 +2256,7 @@
       "id": "DIST-13",
       "title": "The stale-copy recall email is classified as a ticket status change and is dropped for anyone who turned those emails off",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3686,7 +3686,7 @@
       "id": "DIST-14",
       "title": "bump_share_access and revup_rollback_orphan are SECURITY DEFINER with no SET search_path, against the documented house pattern",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

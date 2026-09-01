@@ -196,7 +196,25 @@ rule, so a pre-migration database reads correctly too. Ship loop green:
 `tsc`, `eslint`, **1574 vitest** (5 new), full `next build`. Migration
 `20261035_dc_phase7e_ack_currency.sql` **applied & verified live
 2026-08-24** (column exists; zero orphaned pending acks remain).
-Remaining: DIST-10/11/12/13, XEDGE extensions and the MEDIUM backlog.
+
+**Phase 7f — recall integrity, the whole cluster.** Five findings closed,
+no migration: `DIST-10` (a recall left no record → it now writes a
+`DISTRIBUTION_RECALL` audit event with the exact recipient list, opens one
+confirmable ack row per outdated holder as the close-out, and the panel
+renders "Recall outstanding since — N of M confirmed" from the database),
+`DIST-11` (silent truncation → a `capped` flag rendered like the honest
+transmittal pill, window 60→365 days and cap 400→1000 for the per-document
+view, both justified in code), `DIST-12` (re-requesting reset every
+overdue clock and handlers swallowed errors → requestAcks splits new vs
+already-asked, reminds without touching `requested_at` — ON CONFLICT DO
+NOTHING so even races can't rewrite it — the picker labels who will be
+reminded, and every handler surfaces failures), `DIST-13` (the recall
+email rode the ticket-status toggle → a first-class non-suppressible
+`recall` category, and the settings row now says what it actually mutes),
+and `DIST-14` (verified already closed live by the 20261020 pin set +
+20261027 re-create; the searchPathPin census is the standing check). Ship
+loop green: `tsc`, `eslint`, **1584 vitest** (10 new), full `next build`.
+Remaining: XEDGE extensions and the MEDIUM backlog.
 
 | # | Report | n | Note |
 |---|---|---|---|

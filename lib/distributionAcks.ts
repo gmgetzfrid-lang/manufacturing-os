@@ -97,7 +97,15 @@ export async function getMyPendingAck(
 }
 
 /** Request acknowledgment of the current revision from a set of members.
- *  Upsert per (version, recipient): re-requesting refreshes, never dupes. */
+ *
+ *  DIST-12: an existing row's requested_at is EVIDENCE — it anchors the
+ *  cron's nag cutoff and the 10-day escalation to the requester. The old
+ *  blanket upsert rewrote it to now() for every re-selected recipient, so
+ *  "reminding" someone erased the proof they had gone quiet. Now: NEW
+ *  recipients get a row + the request; recipients with an outstanding row
+ *  get a REMINDER and their clock is left alone (ON CONFLICT DO NOTHING
+ *  makes even a race unable to rewrite it); already-confirmed recipients
+ *  are untouched. */
 export async function requestAcks(input: {
   orgId: string;
   documentId: string;
@@ -108,43 +116,85 @@ export async function requestAcks(input: {
   recipients: Array<{ uid: string; email?: string | null }>;
   actorUserId: string;
   actorName: string;
-}): Promise<void> {
+  /** false = create/keep the rows silently (the recall path sends its own
+   *  notification); defaults to notifying. */
+  notify?: boolean;
+}): Promise<{ requested: number; reminded: number }> {
   const now = new Date().toISOString();
-  const rows = input.recipients.map((r) => ({
-    org_id: input.orgId,
-    document_id: input.documentId,
-    version_id: input.versionId,
-    rev_label: input.revLabel,
-    recipient_user_id: r.uid,
-    recipient_email: r.email ?? null,
-    requested_by: input.actorUserId,
-    requested_by_name: input.actorName,
-    requested_at: now,
-  }));
-  const { error } = await supabase
-    .from("distribution_acks")
-    .upsert(rows, { onConflict: "version_id,recipient_user_id", ignoreDuplicates: false });
-  if (error) {
-    if (isMissingAckSchema(error)) {
-      ackSchemaMissing = true;
-      throw new Error("Acknowledged distribution needs the 20260825 migration applied first.");
+  const uids = input.recipients.map((r) => r.uid);
+  let existing = new Map<string, { acknowledged: boolean }>();
+  try {
+    const { data } = await supabase
+      .from("distribution_acks")
+      .select("recipient_user_id, acknowledged_at")
+      .eq("version_id", input.versionId)
+      .in("recipient_user_id", uids);
+    existing = new Map(
+      (((data as Array<{ recipient_user_id: string; acknowledged_at: string | null }>) ?? []))
+        .map((r) => [r.recipient_user_id, { acknowledged: !!r.acknowledged_at }]),
+    );
+  } catch { /* read miss → treat all as new; DO NOTHING below stays safe */ }
+  const fresh = input.recipients.filter((r) => !existing.has(r.uid));
+  const pendingExisting = input.recipients.filter((r) => {
+    const e = existing.get(r.uid);
+    return !!e && !e.acknowledged;
+  });
+
+  if (fresh.length > 0) {
+    const rows = fresh.map((r) => ({
+      org_id: input.orgId,
+      document_id: input.documentId,
+      version_id: input.versionId,
+      rev_label: input.revLabel,
+      recipient_user_id: r.uid,
+      recipient_email: r.email ?? null,
+      requested_by: input.actorUserId,
+      requested_by_name: input.actorName,
+      requested_at: now,
+    }));
+    const { error } = await supabase
+      .from("distribution_acks")
+      .upsert(rows, { onConflict: "version_id,recipient_user_id", ignoreDuplicates: true });
+    if (error) {
+      if (isMissingAckSchema(error)) {
+        ackSchemaMissing = true;
+        throw new Error("Acknowledged distribution needs the 20260825 migration applied first.");
+      }
+      throw new Error(error.message);
     }
-    throw new Error(error.message);
   }
 
-  await emit({
-    orgId: input.orgId,
-    category: "assignment",
-    kind: "doc_superseded",
-    title: `Please confirm: ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
-    body: `${input.actorName} needs your confirmation that you have the current revision. Open the document and tap "I have this revision" — takes two seconds, goes on the distribution record.`,
-    link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
-    resource: { type: "document", id: input.documentId },
-    actorUserId: input.actorUserId,
-    actorName: input.actorName,
-    audience: { involved: input.recipients.map((r) => r.uid) },
-    metadata: { ackRequest: true, versionId: input.versionId },
-  });
+  if (input.notify !== false && fresh.length > 0) {
+    await emit({
+      orgId: input.orgId,
+      category: "assignment",
+      kind: "doc_superseded",
+      title: `Please confirm: ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
+      body: `${input.actorName} needs your confirmation that you have the current revision. Open the document and tap "I have this revision" — takes two seconds, goes on the distribution record.`,
+      link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      audience: { involved: fresh.map((r) => r.uid) },
+      metadata: { ackRequest: true, versionId: input.versionId },
+    });
+  }
+  if (input.notify !== false && pendingExisting.length > 0) {
+    await emit({
+      orgId: input.orgId,
+      category: "assignment",
+      kind: "doc_superseded",
+      title: `Reminder: confirm ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
+      body: `Still waiting on your confirmation that you have the current revision — open the document and tap "I have this revision".`,
+      link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      audience: { involved: pendingExisting.map((r) => r.uid) },
+      metadata: { ackRequest: true, versionId: input.versionId },
+    });
+  }
+  return { requested: fresh.length, reminded: pendingExisting.length };
 }
 
 /** DIST-4: close out obligations that no longer bind. Called on publish

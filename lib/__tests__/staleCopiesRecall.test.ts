@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const state = vi.hoisted(() => ({
   tables: {} as Record<string, Array<Record<string, unknown>>>,
   emits: [] as Array<Record<string, unknown>>,
+  audits: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -33,12 +34,16 @@ vi.mock("@/lib/supabase", () => {
 vi.mock("@/lib/notify/dispatch", () => ({
   emit: vi.fn(async (payload: Record<string, unknown>) => { state.emits.push(payload); }),
 }));
+vi.mock("@/lib/audit", () => ({
+  logRevisionEvent: vi.fn(async (params: Record<string, unknown>) => { state.audits.push(params); }),
+}));
 
-import { listMyStaleCopies, recallRetiredDocument } from "@/lib/staleCopies";
+import { listMyStaleCopies, recallRetiredDocument, getDocumentRecall, nudgeStaleHolders } from "@/lib/staleCopies";
 
 beforeEach(() => {
   state.tables = {};
   state.emits = [];
+  state.audits = [];
 });
 
 const download = (docId: string, versionId: string) => ({
@@ -111,5 +116,69 @@ describe("recallRetiredDocument (DIST-1)", () => {
     });
     expect(n).toBe(0);
     expect(state.emits).toHaveLength(0);
+    expect(state.audits).toHaveLength(0);
+  });
+
+  it("puts the retirement recall on the audit trail (DIST-10)", async () => {
+    state.tables.download_audits = [{ user_id: "u1" }];
+    await recallRetiredDocument({
+      orgId: "org1", documentId: "d1", docLabel: "P-101",
+      newStatus: "Superseded", actorUserId: "actor",
+    });
+    expect(state.audits).toHaveLength(1);
+    expect(state.audits[0].type).toBe("DISTRIBUTION_RECALL");
+    expect((state.audits[0].details as Record<string, unknown>).retirement).toBe(true);
+  });
+});
+
+describe("nudgeStaleHolders audit record (DIST-10)", () => {
+  const holder = (userId: string, hasCurrent: boolean) => ({
+    userId, userEmail: `${userId}@x.co`, lastDownloadedRev: "3",
+    lastDownloadedAt: "2026-08-01T00:00:00Z", hasCurrent,
+  });
+
+  it("records actor, version, source, and the exact recipient list", async () => {
+    const n = await nudgeStaleHolders({
+      orgId: "org1", documentId: "d1", docLabel: "P-101", currentRev: "5",
+      currentVersionId: "v5", holders: [holder("u1", false), holder("u2", true)],
+      actorUserId: "ctrl", actorName: "doccontrol", source: "manual",
+    });
+    expect(n).toBe(1);
+    expect(state.audits).toHaveLength(1);
+    const a = state.audits[0];
+    expect(a.type).toBe("DISTRIBUTION_RECALL");
+    expect(a.versionId).toBe("v5");
+    const details = a.details as { source: string; recipients: Array<{ userId: string }> };
+    expect(details.source).toBe("manual");
+    expect(details.recipients.map((r) => r.userId)).toEqual(["u1"]);
+  });
+
+  it("writes no audit row when nobody is outdated", async () => {
+    const n = await nudgeStaleHolders({
+      orgId: "org1", documentId: "d1", docLabel: "P-101", currentRev: "5",
+      holders: [holder("u1", true)], actorUserId: "ctrl",
+    });
+    expect(n).toBe(0);
+    expect(state.audits).toHaveLength(0);
+    expect(state.emits).toHaveLength(0);
+  });
+});
+
+describe("getDocumentRecall capped flag (DIST-11)", () => {
+  it("flags a truncated list instead of asserting completeness", async () => {
+    state.tables.download_audits = Array.from({ length: 1000 }, (_, i) => ({
+      user_id: `u${i}`, user_email: null, version_id: "v1", created_at: "2026-08-01T00:00:00Z",
+    }));
+    state.tables.document_versions = [{ id: "v1", revision_label: "3" }];
+    const { capped, holders } = await getDocumentRecall("d1", "v2");
+    expect(capped).toBe(true);
+    expect(holders.length).toBe(1000);
+  });
+
+  it("stays un-capped for a small list", async () => {
+    state.tables.download_audits = [{ user_id: "u1", user_email: null, version_id: "v1", created_at: "2026-08-01T00:00:00Z" }];
+    state.tables.document_versions = [{ id: "v1", revision_label: "3" }];
+    const { capped } = await getDocumentRecall("d1", "v2");
+    expect(capped).toBe(false);
   });
 });

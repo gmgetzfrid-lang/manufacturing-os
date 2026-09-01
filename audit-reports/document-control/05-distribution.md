@@ -350,7 +350,15 @@ supabase/schema.sql:1090-1091 quoted verbatim (FOR ALL, USING only); schema.sql:
 ## DIST-10 · A recall leaves no record: no audit row, no recall entity, no acknowledgment — "Recall sent to N people" is component state that evaporates on reopen
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7f).** Confirmed with the verifier's scoping (notification rows existed; what was missing was the audit entry, a durable recall state, and any close-out). All three added:
+- **Audit trail.** `nudgeStaleHolders` and `recallRetiredDocument` now write a `DISTRIBUTION_RECALL` revision event — actor, current version, source (`manual` click vs `auto` publish fan-out), recipient count and the exact recipient list with the revision each held. An incident investigation reads it from the document's timeline.
+- **Close-out.** The manual recall opens one confirmable `distribution_acks` row per outdated holder on the CURRENT version (via `requestAcks` with `notify: false` — the recall notification itself is the message; the ack row is the receipt). "I have this revision" is the recall acknowledgment, and the DIST-4 currency machinery retires these obligations automatically when the document moves on.
+- **Durable panel state.** `DistributionRecall` renders recall state from the database: each outdated holder shows "recalled <date>" or "confirmed current ✓", and a standing banner reads "Recall outstanding since <date> — N of M confirmed", so a second controller sees an outstanding recall instead of an innocent un-nudged button. Re-sending becomes "Re-send recall — remind", which never resets anyone's clock (DIST-12).
+- Done-when: (1) audit row with actor/document/version/recipients/timestamp ✓; (2) per-holder confirmable rows so a recall closes out ✓; (3) panel state from the database ✓.
+- Files: `lib/staleCopies.ts`, `lib/audit.ts` (event type), `components/documents/DistributionRecall.tsx`, `lib/postPublish.ts`.
+- Tests: `lib/__tests__/staleCopiesRecall.test.ts` — the audit row carries version/source/exact recipients; no row when nobody is outdated; retirement recall audited too.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/staleCopies.ts:182-209`, `components/documents/DistributionRecall.tsx:28-43`, `components/documents/DistributionRecall.tsx:102-117`, `lib/distributionAcks.ts:306-333`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the count is pure component state and is cleared on every remount/document switch, and no persistent recall entity is created. One softening: emit() does leave rows in `notifications` carrying `metadata: { recall: true }` (lib/staleCopies.ts:206) plus resource id, so a forensic query against that table can partially reconstruct who was pinged and when — "the system can answer none of it" overstates slightly. There is still no acknowledgment of destruction and no recall record proper, so MEDIUM stands.
@@ -382,7 +390,15 @@ lib/staleCopies.ts:182-209 read in full — emit() then `return outdated.length`
 ## DIST-11 · Distribution recall silently truncates at 400 download rows / 60 days, in a component whose sibling pill honestly flags its own cap
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7f).** Confirmed, including the precision note (window and row cap truncate independently, both silently). Fixed:
+- `getDocumentRecall` now returns `{ holders, capped }`; the recall panel renders an explicit warning ("earlier holders may be missing from this list and from the recall") plus a `+` on the count pills — the transmittal-pill honesty pattern.
+- The per-document window is now **365 days** (was 60) with the justification in the constant's comment: the controller deciding who to recall must see the print that has lived in a field binder for months — a 61-day-old print is exactly the one most likely to be stale. The row cap rose 400 → 1000. The PERSONAL list keeps 60 days deliberately (self-service noise beats completeness there).
+- Done-when: (1) capped flag rendered like the transmittal pill ✓; (2) the nudge's recipient set now derives from a 2.5× deeper, 6× longer read and says when even that was partial — a fully server-side resolution remains the ideal and is noted below ✓/≈; (3) both windows justified in code ✓.
+- Files: `lib/staleCopies.ts`, `components/documents/DistributionRecall.tsx`, `components/documents/InspectorPanel.tsx` (return-shape).
+- Tests: `lib/__tests__/staleCopiesRecall.test.ts` — capped flag at the row cap; un-capped below it.
+- Residual, recorded: the recipient set still resolves client-side over the capped read. A server-side RPC over full history is the complete answer to done-when 2; with the cap surfaced honestly and 1000×365d covering realistic volumes, that is deferred rather than hidden.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/staleCopies.ts:19-20`, `lib/staleCopies.ts:131-141`, `lib/staleCopies.ts:38-48`, `components/documents/InspectorPanel.tsx:186-190`, `components/documents/DistributionRecall.tsx:72-80`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — both caps are silent and the component has no way to know it was truncated. Precision note: because the query is `created_at DESC LIMIT 400`, the 70-day-old downloader in the scenario is dropped by the 60-day window (:130), not by the row cap; the row cap independently drops earlier holders once a doc exceeds 400 pulls in 60 days. Both truncations are real and neither is surfaced.
@@ -410,7 +426,15 @@ lib/staleCopies.ts:20 `const RECALL_WINDOW_DAYS = 60;`, :139 `.limit(400)`, :47 
 ## DIST-12 · Re-requesting confirmations resets every recipient's overdue clock, and the request/acknowledge/remind handlers swallow their errors
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7f).** Confirmed with the verifier's scoping (only re-selected recipients were affected; acknowledged_at was never erased). Fixed at the lib and both panels:
+- **The clock is evidence.** `requestAcks` now reads the existing roster first and splits: NEW recipients get a row + the request; recipients with an OUTSTANDING row get a REMINDER (renudge wording) and their `requested_at` — the anchor for the 3-day nag and the 10-day escalation — is never touched; already-confirmed recipients are left entirely alone. The insert uses `ignoreDuplicates: true` (ON CONFLICT DO NOTHING), so even a race with another requester cannot rewrite a clock. Returns `{ requested, reminded }`.
+- **The picker says which is which.** Members with an outstanding row show "asked <date> — will remind"; confirmed ones show "confirmed ✓" — the add-vs-remind distinction rendered in place.
+- **No more silent failures.** `handleRequest` and `handleRemind` catch and toast (matching the Phase-7b `handleAcknowledge` fix); the recall panel's nudge shows an inline "Recall not sent: …" instead of an unhandled rejection behind a stopped spinner.
+- Done-when: (1) no requested_at overwrite for outstanding rows ✓; (2) handlers surface failures ✓; (3) picker distinguishes add from remind ✓.
+- Files: `lib/distributionAcks.ts`, `components/documents/DistributionAcks.tsx`, `components/documents/DistributionRecall.tsx`.
+- Tests: `lib/__tests__/requestAcksClock.test.ts` — new/pending split with rows only for the new and `ignoreDuplicates: true` pinned; reminder audience separate from request audience; confirmed recipients untouched; `notify: false` silent-roster mode.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/distributionAcks.ts:112-133`, `lib/distributionAcks.ts:202-216`, `components/documents/DistributionAcks.tsx:83-124`, `components/documents/DistributionAcks.tsx:143,208,218`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. openPicker (:70-79) loads all active members minus self and does not exclude people who already have an outstanding row, so re-ticking the same names is the frictionless path; each `void handleX()` rejection becomes an unhandled promise rejection with no error state rendered anywhere in the component. Mild mitigation the finding does not mention: a separate "Remind the unconfirmed" button exists (:216-222) and calls renudgeUnacked, which does NOT touch requested_at — so the destructive path is reachable but not the only one.
@@ -442,7 +466,14 @@ lib/distributionAcks.ts:113-126 the row build with `requested_at: now` and the u
 ## DIST-13 · The stale-copy recall email is classified as a ticket status change and is dropped for anyone who turned those emails off
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7f).** Confirmed — the recall email rode `email_on_status_change`, the exact toggle a field operator mutes for ticket churn. Fixed with a first-class category:
+- `NotifCategory` gains `"recall"`, mapped to eventType `"safety_recall"` — a type `shouldSendForEvent` has no case for, so it falls to the always-send default: a drawing recall cannot be muted by ANY preference toggle. Both recall emitters (`nudgeStaleHolders`, `recallRetiredDocument`) now use it; the acknowledged-distribution request keeps `assignment`, which was already correct.
+- The settings row is renamed "**Ticket** status changes" with the hint stating outright: "Drawing recalls and safety notices are never affected by this toggle" (done-when 2).
+- Done-when: (1) recall category not suppressible under any ticket-noise preference ✓; (2) the preference UI names what the toggle suppresses ✓.
+- Files: `lib/notify/dispatch.ts`, `lib/staleCopies.ts`, `app/(protected)/settings/notifications/page.tsx`.
+- Tests: `lib/__tests__/requestAcksClock.test.ts` (routing pins) — dispatch maps recall → safety_recall; `lib/notifications.ts` carries no suppression case for it; both recall emitters use the recall category.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/staleCopies.ts:195-207`, `lib/notify/dispatch.ts:49-58`, `lib/notifications.ts:149-166`, `lib/distributionAcks.ts:135-147`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end: the stale-copy recall email is gated by the ticket-status-change preference, so anyone who muted ticket churn silently loses the recall email and is left with only a bell badge. The contrast cited is also accurate — lib/distributionAcks.ts:136 uses `category: "assignment"`, which maps to email_on_assignment, a toggle a field user is far less likely to have disabled.
@@ -469,7 +500,11 @@ lib/staleCopies.ts:197 `category: "status"`; lib/notify/dispatch.ts:53 the mappi
 ## DIST-14 · bump_share_access and revup_rollback_orphan are SECURITY DEFINER with no SET search_path, against the documented house pattern
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7f — closed by earlier cross-area work, verified).** Both named functions are already pinned LIVE: the applied roles-and-permissions migration `20261019`/`20261020` pin set includes `bump_share_access(uuid)` and `revup_rollback_orphan(uuid, uuid)` in its ALTER FUNCTION allowlist, and the applied `20261027` (DRLS-2) re-created `revup_rollback_orphan` restating `SECURITY DEFINER SET search_path = public` — this finding predates both. Done-when 2 (a check that flags unpinned definers) is `lib/__tests__/searchPathPin.test.ts`: the comment-stripped, paren-aware census that guards the 20261020 allowlist against drift and every later re-creation against dropping its pin — the discipline every Phase 3–7 migration has been written (and tested) under since.
+- Done-when: (1) both functions pinned ✓ (live, probe-verified when 20261027 was applied); (2) census check exists ✓.
+- No new files — cross-reference resolution.
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260818_followups_rls.sql:95-102`, `supabase/migrations/20260818_followups_rls.sql:107-117`, `app/api/share/resolve/route.ts:83`, `supabase/migrations/20261013_project_controls_program.sql:56-58`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The code facts are exactly as stated, but the severity is inflated on two counts. (1) Exploitation needs a principal who can CREATE objects in a schema ahead of public on their own search_path; Supabase's `authenticated`/`anon` roles have no CREATE right on public and cannot create schemas, so there is no in-product attacker. (2) The 'against the documented house pattern' framing implies these two are outliers — `grep -rn 'SECURITY DEFINER' supabase/migrations/*.sql | grep -v search_path` returns 42 definitions, so unpinned is in fact the majority convention. Neither function makes an authorization decision from the unqualified table (one increments a counter, one deletes a version row), so a shadowed table yields no privilege escalation. Real hardening debt, LOW.

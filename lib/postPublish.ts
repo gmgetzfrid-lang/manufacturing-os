@@ -119,16 +119,18 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
         closeStaleAcksForDocument(input.documentId, currentVersionId),
       ).catch(() => { /* best-effort */ });
       const { getDocumentRecall, nudgeStaleHolders } = await import("@/lib/staleCopies");
-      const holders = await getDocumentRecall(input.documentId, currentVersionId);
+      const { holders } = await getDocumentRecall(input.documentId, currentVersionId);
       await nudgeStaleHolders({
         orgId: input.orgId,
         documentId: input.documentId,
         libraryId: input.libraryId,
         docLabel: input.docLabel,
         currentRev: input.newRev,
+        currentVersionId,
         holders,
         actorUserId: input.actorUserId,
         actorName: input.actorName,
+        source: "auto",
       });
     } catch { /* best-effort */ }
   })();

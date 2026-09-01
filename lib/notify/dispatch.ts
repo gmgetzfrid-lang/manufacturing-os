@@ -18,7 +18,7 @@ import {
   type ResourceType,
 } from "./recipients";
 export type NotifChannel = "inapp" | "email";
-export type NotifCategory = "mention" | "assignment" | "status" | "watched" | "sla" | "system";
+export type NotifCategory = "mention" | "assignment" | "status" | "watched" | "sla" | "system" | "recall";
 
 export interface EmitInput {
   orgId: string;
@@ -54,6 +54,11 @@ function categoryToEventType(c: NotifCategory): string {
     case "status": return "ticket_status_changed";
     case "watched": return "watcher_activity";
     case "sla": return "sla_warning";
+    // DIST-13: a drawing recall is a SAFETY message, not ticket churn — it
+    // must never ride a toggle someone muted for noise. "safety_recall" is
+    // unknown to shouldSendForEvent's switch, so it falls to the default and
+    // is always emailed.
+    case "recall": return "safety_recall";
     default: return "system";
   }
 }
