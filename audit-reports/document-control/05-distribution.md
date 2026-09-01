@@ -162,7 +162,7 @@ app/api/verify/route.ts:89 quoted verbatim; app/verify/[docId]/page.tsx:64 the c
 - Done-when: (1) revUp/supersede close prior-version acks with a superseded mark ✓ (Void note: no `voidDocument` lifecycle function exists — same scope note as DIST-1; the readers' currency scope covers voided docs regardless); (2) inbox, cron, register and impact all scope to `current_version_id` ✓; (3) a stale-revision ack is closed FOR the recipient — nothing to clear ✓.
 - Files: `lib/distributionAcks.ts`, `lib/postPublish.ts`, `lib/revisions.ts`, `lib/docControlRegister.ts`, `lib/impact.ts`, `supabase/migrations/20261035_dc_phase7e_ack_currency.sql`.
 - Tests: `lib/__tests__/distAckCurrency.test.ts` — non-current-version ack dropped from the inbox while the current one stays; retired-doc ack dropped even at its final version; close-out filters pinned (pending-only, un-closed-only, `neq` current on publish, no `neq` on retirement); pre-migration no-op.
-- ⚠ **Migration `20261035` awaiting hand-apply** — the readers are already correct without it; the paste adds the durable close-out mark and clears the existing orphans.
+- **Applied & verified live 2026-08-24:** `20261035` — column exists, and the backfill left **zero** orphaned pending acks (probe returned 0). Every immortal obligation is closed.
 
 - **Verification:** CONFIRMED
 - **Locations:** `lib/distributionAcks.ts:152-183`, `lib/distributionAcks.ts:76-97`, `lib/distributionAcks.ts:202-304`, `lib/revisions.ts:1414-1537`, `lib/docControlRegister.ts:117`, `components/documents/InspectorPanel.tsx:194-204`

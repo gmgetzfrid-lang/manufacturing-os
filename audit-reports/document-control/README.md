@@ -194,7 +194,8 @@ every existing orphan), and all four readers — inbox, cron, register,
 revision impact — scope to the document's current version via a shared
 rule, so a pre-migration database reads correctly too. Ship loop green:
 `tsc`, `eslint`, **1574 vitest** (5 new), full `next build`. Migration
-`20261035_dc_phase7e_ack_currency.sql` **awaiting hand-apply**.
+`20261035_dc_phase7e_ack_currency.sql` **applied & verified live
+2026-08-24** (column exists; zero orphaned pending acks remain).
 Remaining: DIST-10/11/12/13, XEDGE extensions and the MEDIUM backlog.
 
 | # | Report | n | Note |
