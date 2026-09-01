@@ -24,10 +24,18 @@ export function canWithAclChain(params: {
   action: PermissionAction;
   aclChain?: (AccessControl | undefined)[];
   defaultAllow?: boolean;
+  /** GAP-15/DEC-7: the node's effective owner — ownership carries read
+   *  access, matching the DB's node_visible ownership branch. Only the
+   *  read/discover-shaped checks should pass this; write-shaped authority
+   *  keeps its own rules. */
+  effectiveOwnerUserId?: string | null;
 }): boolean {
   const { principal, action, aclChain = [], defaultAllow = true } = params;
 
   if (isControllerRole(principal.role)) return true;
+  if (params.effectiveOwnerUserId && principal.uid
+      && params.effectiveOwnerUserId === principal.uid
+      && (action === "read" || action === "discover")) return true;
 
   const decision = evaluateAclChain(aclChain, {
     uid: principal.uid,
@@ -109,10 +117,17 @@ export function canDiscover(params: {
   principal: Principal;
   aclChain?: (AccessControl | undefined)[];
   visibility?: NodeVisibility;
+  /** GAP-15/DEC-7: the node's EFFECTIVE owner (document → folder → library
+   *  cascade, resolved by the caller from the data it has). Ownership carries
+   *  read access — the DB's node_visible now grants the owner SELECT, and
+   *  this mirror must not re-hide rows the database deliberately returned. */
+  effectiveOwnerUserId?: string | null;
 }): boolean {
   const { principal, aclChain = [], visibility = "normal" } = params;
 
   if (isControllerRole(principal.role)) return true;
+  if (params.effectiveOwnerUserId && principal.uid
+      && params.effectiveOwnerUserId === principal.uid) return true;
 
   const decision = evaluateAclChain(aclChain, {
     uid: principal.uid,

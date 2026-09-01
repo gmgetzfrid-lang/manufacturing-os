@@ -125,6 +125,23 @@ below are therefore historical — code and database now agree for this area.
 
 Remaining in Phase 3: `GAP-15`/`DEC-7` (the ownership branch in `node_visible` — read-visibility, lands separately) and `EGRESS-6` (the `document_versions` write overlay — last, on top of real authority checks). Ship loop green: `tsc`, `eslint`, **1602 vitest** (18 new), full `next build`. Migration `20261036_rp_phase3_publish_path.sql` **applied & verified live 2026-08-24** (6-point probe all true; inventory all zero).
 
+**Phase 3b — the last two (session 2026-08-24, continued).** `GAP-15`/`DEC-7`
+**RESOLVED** — ownership carries read access: a 6-arg `node_visible` with the
+owner-cascade branch (after the controller short-circuit, per the decision),
+`doc_is_visible` forwarding the cascade, the three calling policies re-created,
+and every client mirror (canDiscover/canWithAclChain, the explorer's two
+filters, the storage download route) given the same branch so DB-granted rows
+are never re-hidden. `EGRESS-6` **RESOLVED** — the missing document_versions
+INSERT/UPDATE integrity overlay, designed from a 26-writer map: publisher-grade
+arms for anything released, an authorship arm for a member's own unreleased
+draft and a document's first version, and a narrow reject-only arm for external
+intake drafts; every silent writer was made loud FIRST (finalize's three bare
+awaits, applyEffectiveDate, label correction, intake reject, provenance
+verify). `OWN-17` **RESOLVED** (the overlay is its DB half). Ship loop green:
+`tsc`, `eslint`, **1618 vitest** (16 new), full `next build`. Migration
+`20261037_rp_phase3b_read_ownership_and_version_integrity.sql` **awaiting
+hand-apply**. Phase 3 is COMPLETE; next is Phase 4 — the workflow.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

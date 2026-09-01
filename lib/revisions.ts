@@ -1085,11 +1085,17 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
   }
 
   const oldLabel = (target.revision_label as string) ?? "";
-  const { error: upErr } = await supabase
+  // OWN-17/EGRESS-6: a zero-row refusal (the shape an RLS denial takes) must
+  // not read as a corrected label.
+  const { data: corrected, error: upErr } = await supabase
     .from("document_versions")
     .update({ revision_label: check.label })
-    .eq("id", versionId);
+    .eq("id", versionId)
+    .select("id");
   if (upErr) throw new Error(upErr.message);
+  if (!corrected || corrected.length === 0) {
+    throw new Error("The label was NOT corrected — you don't have authority over this revision.");
+  }
 
   // Keep the parent document's label in step when the corrected rev is current.
   let syncedCurrent = false;

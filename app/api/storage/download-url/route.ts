@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       if (docId) {
         const { data: doc } = await supabaseAdmin
           .from("documents")
-          .select("visibility, acl, acl_index, org_id")
+          .select("visibility, acl, acl_index, org_id, owner_user_id, collection_id, library_id")
           .eq("id", docId)
           .maybeSingle();
         const visibility = (doc?.visibility as NodeVisibility | undefined) ?? "normal";
@@ -85,7 +85,19 @@ export async function GET(req: NextRequest) {
             visibility,
           });
           if (!allowed) {
-            return NextResponse.json({ error: "Not authorized for this document" }, { status: 403 });
+            // GAP-15/DEC-7: ownership carries read access — the effective
+            // owner (document → folder → library → team-supervisor cascade,
+            // resolved by the same DB function the publish guard uses) may
+            // pull the bytes of their own private-library documents.
+            const { data: isOwner } = await supabaseAdmin.rpc("user_is_effective_owner", {
+              p_doc_owner: (doc.owner_user_id as string | null) ?? null,
+              p_collection: (doc.collection_id as string | null) ?? null,
+              p_library: (doc.library_id as string | null) ?? null,
+              p_uid: user.id,
+            });
+            if (isOwner !== true) {
+              return NextResponse.json({ error: "Not authorized for this document" }, { status: 403 });
+            }
           }
         }
         // Explicit DOWNLOAD deny rules bind here too — URL issuance is the

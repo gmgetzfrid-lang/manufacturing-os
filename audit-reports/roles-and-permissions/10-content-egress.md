@@ -379,7 +379,17 @@ unbounded direct anonymous inserts. `/api/auth/signup` is rate-limited via
 ## EGRESS-6 · `document_versions` has no RESTRICTIVE UPDATE or INSERT guard
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, roles-and-permissions Phase 3b).** Confirmed — SELECT and DELETE had overlays, INSERT/UPDATE had none: the single permissive org policy (no WITH CHECK) admitted any member to insert a version row against any document or rewrite `revision_label` / `file_url` / `approved_by_name` / `released_at` on any row. Landed after OWN-5 per the finding's own sequencing note, on a **26-writer map** (9 INSERT paths, 17 UPDATE paths, each classified by client, actor class, and error handling). Migration `20261037`:
+- **`user_can_publish_doc(doc, org)`** — one SECURITY DEFINER helper carrying the publish guard's exact three arms (controller / `user_can_publish_on_library` / `user_is_effective_owner`).
+- **INSERT overlay** (RESTRICTIVE): publisher-grade for anything; otherwise the AUTHOR's own row only when it is an unreleased `in_review` draft (submit-for-review) or the document's FIRST version (the creation flows: upload-and-link, bulk upload, split/merge targets — kept working deliberately, they are creation, not publication). A released-looking row against a document with history now requires publish authority — the exact hole.
+- **UPDATE overlay** (RESTRICTIVE): publisher-grade; OR the author amending their OWN still-in-review draft, which the WITH CHECK forbids from ever leaving review or gaining `released_at` through this arm; OR the narrow external-intake arm — an `in_review` external submission may be marked `rejected` (project triage keeps working) but can never be released without publish authority.
+- **Loud writers FIRST** (Trap 2, the map's ranked risk list): `finalizeReviewedRevision`'s three bare awaits are checked (a refused relabel now names the exact inconsistent state instead of nobody knowing it exists); `applyEffectiveDate` checked; `correctRevisionLabel` and the intake reject refuse zero rows; the Doc Control provenance-verify button surfaces refusal. Service-role paths (intake, restore, shed) and the SECURITY DEFINER RPCs are unaffected by design.
+- Done-when: a member who could not publish cannot insert or amend a version row by any route (drafts and first-versions excepted by recorded design — they cannot masquerade as issued content), and every mapped legitimate path still succeeds ✓.
+- Files: `supabase/migrations/20261037_rp_phase3b_read_ownership_and_version_integrity.sql`, `lib/reviewControl.ts`, `lib/effectiveDate.ts`, `lib/revisions.ts`, `components/documents/DocControlQueue.tsx`, `components/projects/IntakePanel.tsx`.
+- Tests: `lib/__tests__/rpPhase3bMigration.test.ts` — overlay arms pinned (author arm cannot leave review; external arm rejects but never releases; first-version NOT EXISTS), helper's three authorities, loud-writer source pins.
+- ⚠ **Migration `20261037` awaiting hand-apply** (with a DEC-30 inventory: authorless non-external in-review drafts — expect 0).
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**

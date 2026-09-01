@@ -1731,9 +1731,14 @@ export default function LibraryExplorerPage() {
         principal,
         visibility: f.visibility ?? "normal",
         aclChain: buildFolderChain(f),
+        // GAP-15: ownership carries read access — the folder's own owner or
+        // the library's owner must not be re-hidden client-side after the DB
+        // deliberately returned the row. (The team-supervisor rung resolves
+        // DB-side only; direct owners cover the acceptance case.)
+        effectiveOwnerUserId: f.ownerUserId ?? library?.ownerUserId ?? null,
       })
     );
-  }, [visibleFolders, principal, buildFolderChain]);
+  }, [visibleFolders, principal, buildFolderChain, library?.ownerUserId]);
 
   // useDeferredValue lets typing in the search box stay responsive on
   // large libraries — React keeps the input snappy and re-runs the
@@ -1747,6 +1752,9 @@ export default function LibraryExplorerPage() {
         action: "read",
         aclChain: buildDocChain(docRecord),
         defaultAllow: true,
+        // GAP-15: ownership carries read access — never re-hide a row the
+        // DB's ownership branch deliberately returned.
+        effectiveOwnerUserId: docRecord.ownerUserId ?? library?.ownerUserId ?? null,
       });
       if (!canRead) return false;
       if (!q) return true;
@@ -1770,7 +1778,7 @@ export default function LibraryExplorerPage() {
       }
       return false;
     });
-  }, [documents, principal, deferredSearch, buildDocChain]);
+  }, [documents, principal, deferredSearch, buildDocChain, library?.ownerUserId]);
 
   const sortedDocs = useMemo(() => {
     return [...filteredDocs].sort((a, b) => {

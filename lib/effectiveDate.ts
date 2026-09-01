@@ -43,11 +43,16 @@ export function daysUntilEffective(effectiveDate?: string | null): number | null
 export async function applyEffectiveDate(input: { documentId: string; versionId: string; effectiveDate: string | null }): Promise<void> {
   const eff = input.effectiveDate ? input.effectiveDate.slice(0, 10) : null;
   const suppress = !eff || eff <= todayISO();
-  await supabase.from("document_versions").update({ effective_date: eff }).eq("id", input.versionId);
-  await supabase.from("documents").update({
+  // OWN-14: checked — both call sites treat this as best-effort, but a
+  // refusal must at least THROW so their catch is a decision, not a default.
+  const { error: verErr } = await supabase.from("document_versions")
+    .update({ effective_date: eff }).eq("id", input.versionId).select("id");
+  if (verErr) throw new Error(verErr.message);
+  const { error: docErr } = await supabase.from("documents").update({
     effective_date: eff,
     effective_notified_at: suppress ? new Date().toISOString() : null,
-  }).eq("id", input.documentId);
+  }).eq("id", input.documentId).select("id");
+  if (docErr) throw new Error(docErr.message);
 }
 
 /** Daily scan: announce revisions whose future effective date has arrived. Fires

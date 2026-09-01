@@ -18,6 +18,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { GitBranch, Flag, KeyRound, Check, Loader2, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { listOpenBranchesForOrg, resolveBranch, type RevisionBranch } from "@/lib/branches";
 
 const STALE_DAYS = 14;
@@ -213,15 +214,23 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
   const handleVerify = async (rev: UnverifiedRev) => {
     setBusyId(rev.id);
     try {
-      await supabase
+      // EGRESS-6/OWN-14: checked — a refused verification must not vanish
+      // from the queue until reload as if it were accepted.
+      const { data, error } = await supabase
         .from("document_versions")
         .update({
           provenance: "declared",
           provenance_verified_at: new Date().toISOString(),
           provenance_verified_by: currentUser.email?.split("@")[0] || currentUser.uid,
         })
-        .eq("id", rev.id);
+        .eq("id", rev.id)
+        .select("id");
+      if (error || !data || data.length === 0) {
+        throw new Error(error?.message ?? "Verification was refused — provenance verification is a Document Control act.");
+      }
       await load();
+    } catch (e) {
+      await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally {
       setBusyId(null);
     }

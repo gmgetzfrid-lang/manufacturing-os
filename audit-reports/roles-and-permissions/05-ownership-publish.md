@@ -935,7 +935,11 @@ consolidation as separate, human-approved work.
 ## OWN-17 · Revision-label correction and historical backfill are gated in the client only
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, roles-and-permissions Phase 3b — completing the Phase 0 partial).** The app half landed in Phase 0 (`backfillVersion` runs the publish-authority population before any write). The DB half is now the EGRESS-6 overlay (`20261037`): `backfillVersion`'s INSERT (caller-chosen `released_at`, `approved_by_name`, `file_hash`) needs the publisher-grade arm, and `correctRevisionLabel`'s UPDATE of a released row is admitted only by the same arm — a member who could not have published a revision can no longer rewrite its label at the database, whatever the client says. `correctRevisionLabel` also now refuses a zero-row denial instead of reporting success.
+- Done-when: backfill refuses without publish authority ✓ (app + DB); a revision label cannot be rewritten by a member who could not have published it ✓ (DB overlay).
+- ⚠ Rides **migration `20261037`** (awaiting hand-apply).
 
 > **Phase 0 partial landed (2026-08-24, commit `2af2ebe`).** The free,
 > independent half is done: `backfillVersion` now runs the same authority

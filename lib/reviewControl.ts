@@ -473,11 +473,27 @@ export async function finalizeReviewedRevision(input: {
   // Bookkeeping after the point of no return: relabel the approved draft,
   // retire the prior rev, and close out sign-off rows that were still pending
   // (e.g. a standby alternate) so the scan/inbox never chase a published draft.
-  await supabase.from("document_versions")
+  // EGRESS-6/OWN-14: these were bare awaits — a refusal here leaves the
+  // document promoted while the version row still reads '2A · in review',
+  // with nothing surfaced anywhere. Checked now: a failure names exactly the
+  // inconsistent state it leaves so someone fixes it, instead of nobody
+  // knowing it exists.
+  const { data: relabeled, error: relabelErr } = await supabase.from("document_versions")
     .update({ review_state: "approved", revision_label: baseRev, released_at: nowIso, supersedes_version_id: previousVersionId, updated_at: nowIso })
-    .eq("id", pendingId);
+    .eq("id", pendingId)
+    .select("id");
+  if (relabelErr || !relabeled || relabeled.length === 0) {
+    throw new Error(
+      `The document was promoted, but the approved draft could not be relabeled to Rev ${baseRev}` +
+      ` (${relabelErr?.message ?? "the write was refused"}). Version history is inconsistent — a document controller should correct the revision label.`,
+    );
+  }
   if (previousVersionId) {
-    await supabase.from("document_versions").update({ superseded_at: nowIso }).eq("id", previousVersionId);
+    const { error: supErr } = await supabase.from("document_versions")
+      .update({ superseded_at: nowIso }).eq("id", previousVersionId).select("id");
+    if (supErr) {
+      throw new Error(`The new revision is published, but the prior revision could not be marked superseded: ${supErr.message}`);
+    }
   }
   {
     const { error: voidErr } = await supabase.from("document_review_signoffs")

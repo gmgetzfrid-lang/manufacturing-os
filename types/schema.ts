@@ -398,6 +398,8 @@ export interface LibraryCollection {
   visibility?: NodeVisibility;
   acl?: AccessControl;
   aclIndex?: AclIndex;
+  /** GAP-15: the folder's own delegated owner — ownership carries read access. */
+  ownerUserId?: string | null;
 
   columnOverrides?: LibraryCustomColumn[];
 

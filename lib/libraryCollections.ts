@@ -30,6 +30,7 @@ function fromDb(row: Record<string, unknown>): LibraryCollection {
     visibility: (row.visibility as NodeVisibility) ?? "normal",
     acl: (row.acl as AccessControl) ?? undefined,
     aclIndex: (row.acl_index as AclIndex) ?? undefined,
+    ownerUserId: (row.owner_user_id as string | null) ?? null,
     columnOverrides: (row.column_overrides as LibraryCustomColumn[]) ?? undefined,
     description: (row.description as string | null) ?? undefined,
     color: (row.color as string | null) ?? undefined,

@@ -249,11 +249,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     if (!(await appConfirm({ message: `Reject ${p.label} Rev ${p.revLabel ?? ""}? The company will see it as not accepted.`, tone: "danger" }))) return;
     setBusy(p.docId); setMsg(null);
     try {
-      // Mark the version first — if the DB refuses (pre-migration CHECK),
-      // we stop BEFORE clearing pending, so nothing half-completes.
-      const { error: vErr } = await supabase.from("document_versions")
-        .update({ review_state: "rejected" }).eq("id", p.pendingVersionId);
+      // Mark the version first — if the DB refuses (pre-migration CHECK, or
+      // the EGRESS-6 overlay), we stop BEFORE clearing pending, so nothing
+      // half-completes. Zero rows is a refusal too.
+      const { data: vRows, error: vErr } = await supabase.from("document_versions")
+        .update({ review_state: "rejected" }).eq("id", p.pendingVersionId).select("id");
       if (vErr) throw new Error(`Couldn't reject: ${vErr.message}`);
+      if (!vRows || vRows.length === 0) throw new Error("Couldn't reject: the write was refused.");
       const { error: dErr } = await supabase.from("documents")
         .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId);
       if (dErr) throw new Error(`Couldn't clear the pending revision: ${dErr.message}`);
