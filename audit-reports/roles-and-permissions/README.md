@@ -139,8 +139,9 @@ intake drafts; every silent writer was made loud FIRST (finalize's three bare
 awaits, applyEffectiveDate, label correction, intake reject, provenance
 verify). `OWN-17` **RESOLVED** (the overlay is its DB half). Ship loop green:
 `tsc`, `eslint`, **1618 vitest** (16 new), full `next build`. Migration
-`20261037_rp_phase3b_read_ownership_and_version_integrity.sql` **awaiting
-hand-apply**. Phase 3 is COMPLETE; next is Phase 4 — the workflow.
+`20261037_rp_phase3b_read_ownership_and_version_integrity.sql` **applied &
+verified live 2026-08-24** (7-point probe all true; inventory zero). Phase 3
+is COMPLETE; next is Phase 4 — the workflow.
 
 ### Phase 2 — database honesty (the trap phase)
 

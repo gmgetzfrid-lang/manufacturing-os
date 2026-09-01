@@ -389,7 +389,7 @@ unbounded direct anonymous inserts. `/api/auth/signup` is rate-limited via
 - Done-when: a member who could not publish cannot insert or amend a version row by any route (drafts and first-versions excepted by recorded design — they cannot masquerade as issued content), and every mapped legitimate path still succeeds ✓.
 - Files: `supabase/migrations/20261037_rp_phase3b_read_ownership_and_version_integrity.sql`, `lib/reviewControl.ts`, `lib/effectiveDate.ts`, `lib/revisions.ts`, `components/documents/DocControlQueue.tsx`, `components/projects/IntakePanel.tsx`.
 - Tests: `lib/__tests__/rpPhase3bMigration.test.ts` — overlay arms pinned (author arm cannot leave review; external arm rejects but never releases; first-version NOT EXISTS), helper's three authorities, loud-writer source pins.
-- ⚠ **Migration `20261037` awaiting hand-apply** (with a DEC-30 inventory: authorless non-external in-review drafts — expect 0).
+- **Applied & verified live 2026-08-24:** `20261037` — 7-point probe all true; inventory ZERO authorless non-external in-review drafts. The integrity overlay is live against a clean slate.
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
