@@ -237,7 +237,19 @@ supabase/migrations/20260828_integrity_hardening.sql:286-292 — `CREATE POLICY 
 ## PKG-6 · 'Print pack' refreshes every pin BEFORE building the PDF, so a failed or partial build leaves the database asserting a print that never left the browser
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7d).** Confirmed — and the Phase-7b rework had narrowed but not closed it (the snapshot and refresh still preceded the build). The pipeline is now ordered so state can only ever assert paper that exists:
+1. **Gate** (`assessPackDocs`, PKG-4) — an all-refused pack aborts having written nothing.
+2. **Content assembly** — every fetch/stamp/merge, the entire failure zone, runs with NO state written.
+3. **Snapshot + cover** — `buildAndDownloadDocPack` gained a `buildCoverAfter(includedSheets)` hook, called only once the content pack is fully assembled, with the list of sheets ACTUALLY in the PDF; `handlePrintPack` records the immutable print snapshot and builds the cover there, so both describe exactly the paper (a fetch-failed sheet can no longer appear in the snapshot or the cover's contents list). The cover is prepended to the finished pack.
+4. **Download.**
+5. **Pins last** — an `afterDownload(includedSheets)` hook runs after the download is triggered; the owner/controller refresh moves pins ONLY for the included documents (`refreshWorkPackage` gained `onlyDocumentIds`). A refresh failure here is reported as a warning, never as a failed print — the paper is already correct and correctly snapshotted, and an unmoved pin just keeps an honest STALE badge.
+- Done-when: (1) PDF assembled first, pins re-pinned only for included documents, only after the download ✓; (2) a build failure leaves every pin untouched (and records no snapshot) ✓; (3) the toast lists skipped sheets and states their pins were not moved ✓.
+- Files: `lib/docPack.ts`, `lib/workPackages.ts`, `app/(protected)/packages/page.tsx`.
+- Tests: `lib/__tests__/docPackOrdering.test.ts` — the event order IS the assertion (cover → prepend → save → download → pins); a fetch-failed sheet is absent from both hooks' sheet lists; a total build failure calls neither hook.
+- Residual, recorded: `recordPackagePrint` stays best-effort (snapshot write failure → legacy package-QR print, pins still only move after download), and a crash between snapshot and download can leave a print row for paper never produced — a snapshot row with no paper is harmless (the QR on nonexistent paper is never scanned), unlike the reverse, which this fix eliminates.
+
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/packages/page.tsx:153-190`, `lib/workPackages.ts:194-229`, `lib/docPack.ts:77-140`, `lib/docPack.ts:142-148`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The comment above the handler states the intended invariant — 'the paper and the database agree by construction' — which is exactly what the ordering breaks: on a failed or partial build the pins assert a print that never left the browser, and the public cover QR (PKG-2) then reads GREEN for whatever paper is actually in the field.

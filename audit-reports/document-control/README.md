@@ -177,9 +177,13 @@ legacy machine-suffix revs strip back before advancing) and `REV-4` (the
 viewer badge read green "Controlled · Rev N" over an OLD revision's bytes —
 the guard parameter existed but was never passed → FullScreenViewer now
 passes its served-version currency, so old bytes read amber "Old revision —
-not current"). Ship loop green: `tsc`, `eslint`, **1566 vitest** (6 new),
-full `next build`. No migration. Remaining: PKG-6 print-ordering,
-DIST-4/10/11/12/13, XEDGE extensions and the MEDIUM backlog.
+not current"). And `PKG-6` (print-pack ordering): the pipeline is now
+gate → content assembly → snapshot/cover of exactly the included sheets →
+download → pins last and only for printed documents — a build failure
+leaves every pin untouched and records nothing, proven by an event-order
+test. Ship loop green: `tsc`, `eslint`, **1569 vitest** (9 new), full
+`next build`. No migration. Remaining: DIST-4/10/11/12/13, XEDGE
+extensions and the MEDIUM backlog.
 
 | # | Report | n | Note |
 |---|---|---|---|

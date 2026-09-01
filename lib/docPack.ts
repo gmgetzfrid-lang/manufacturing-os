@@ -23,6 +23,13 @@ export interface DocPackResult {
   skipped: Array<{ label: string; reason: string }>;
 }
 
+/** A sheet that actually made it into the merged PDF. */
+export interface PackSheetRef {
+  documentId: string;
+  versionId: string | null;
+  label: string;
+}
+
 /** PKG-4: the field pack is the highest-consequence egress surface — a sheet
  *  that is not an in-force controlled revision must never ride into it
  *  looking like one. Draft/Superseded/Void/Archived are REFUSED with the
@@ -115,9 +122,17 @@ export async function buildAndDownloadDocPack(input: {
   documentIds: string[];
   userId: string;
   userEmail?: string | null;
-  /** Optional cover document (e.g. a work-package cover sheet) prepended
-   *  to the merged pack. */
-  cover?: PDFDocument;
+  /** PKG-6: builds the cover AFTER the content pack has fully assembled, so
+   *  it (and anything recorded inside it, like an immutable print snapshot)
+   *  describes exactly the sheets that are in the PDF — never one that
+   *  failed to fetch. The returned document is PREPENDED. A throw here
+   *  aborts the print with nothing downloaded and no pins moved. */
+  buildCoverAfter?: (included: PackSheetRef[]) => Promise<PDFDocument | null>;
+  /** PKG-6: runs after the download has been triggered — the place for
+   *  state that must only ever assert an EXISTING print (pin refresh).
+   *  Must not throw: the paper is already in the user's hands, so the
+   *  caller reports its own failures as warnings, not as a failed print. */
+  afterDownload?: (included: PackSheetRef[]) => Promise<void>;
   onProgress?: (done: number, total: number) => void;
 }): Promise<DocPackResult> {
   const { data: docRows } = await supabase
@@ -148,12 +163,9 @@ export async function buildAndDownloadDocPack(input: {
   );
 
   const merged = await PDFDocument.create();
-  if (input.cover) {
-    const coverPages = await merged.copyPages(input.cover, input.cover.getPageIndices());
-    for (const p of coverPages) merged.addPage(p);
-  }
   let included = 0;
   let done = 0;
+  const includedSheets: PackSheetRef[] = [];
 
   for (const d of docs) {
     const label = String(d.document_number || d.title || d.name || "Document");
@@ -190,6 +202,7 @@ export async function buildAndDownloadDocPack(input: {
       const pages = await merged.copyPages(single, single.getPageIndices());
       for (const p of pages) merged.addPage(p);
       included += 1;
+      includedSheets.push({ documentId: String(d.id), versionId, label });
 
       // Same tracking as an individual pull: audit + reference intent.
       void supabase.from("download_audits").insert({
@@ -228,6 +241,18 @@ export async function buildAndDownloadDocPack(input: {
     );
   }
 
+  // Cover LAST (PKG-6): only now is it known exactly which sheets the paper
+  // will hold, so the cover's contents list — and any print snapshot the
+  // caller records while building it — cannot describe a sheet that isn't
+  // in the PDF.
+  if (input.buildCoverAfter) {
+    const cover = await input.buildCoverAfter([...includedSheets]);
+    if (cover) {
+      const coverPages = await merged.copyPages(cover, cover.getPageIndices());
+      coverPages.forEach((p, i) => merged.insertPage(i, p));
+    }
+  }
+
   const bytes = await merged.save();
   const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
@@ -239,6 +264,10 @@ export async function buildAndDownloadDocPack(input: {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+
+  // Pins (or any other state that asserts a print) move only AFTER the
+  // download is on its way — a failed build leaves them untouched (PKG-6).
+  if (input.afterDownload) await input.afterDownload([...includedSheets]);
 
   return { included, skipped };
 }

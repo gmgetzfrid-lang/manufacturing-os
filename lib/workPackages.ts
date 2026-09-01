@@ -237,13 +237,23 @@ export async function recordPackagePrint(input: {
   }
 }
 
-/** Re-pin every member to the document's current revision ("refresh pack"). */
-export async function refreshWorkPackage(packageId: string): Promise<void> {
+/** Re-pin members to their document's current revision ("refresh pack").
+ *  `onlyDocumentIds` narrows the refresh to specific sheets — the print path
+ *  uses it so pins move ONLY for documents actually in the printed PDF
+ *  (PKG-6); omit it for the whole-pack "Refresh pins" button. */
+export async function refreshWorkPackage(
+  packageId: string,
+  opts?: { onlyDocumentIds?: string[] },
+): Promise<void> {
   const { data: members } = await supabase
     .from("work_package_documents")
     .select("id, document_id")
     .eq("package_id", packageId);
-  const rows = (members as Array<{ id: string; document_id: string }>) ?? [];
+  let rows = (members as Array<{ id: string; document_id: string }>) ?? [];
+  if (opts?.onlyDocumentIds) {
+    const only = new Set(opts.onlyDocumentIds);
+    rows = rows.filter((r) => only.has(r.document_id));
+  }
   if (rows.length === 0) return;
   const { data: docs } = await supabase
     .from("documents")

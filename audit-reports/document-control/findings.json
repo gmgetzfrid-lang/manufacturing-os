@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 25,
-      "OPEN": 122
+      "RESOLVED": 26,
+      "OPEN": 121
     }
   },
   "status_vocabulary": [
@@ -1173,7 +1173,7 @@
       "id": "PKG-6",
       "title": "'Print pack' refreshes every pin BEFORE building the PDF, so a failed or partial build leaves the database asserting a print that never left the browser",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
