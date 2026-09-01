@@ -117,7 +117,13 @@ VersionHistoryPanel.tsx:370 — `{canRevert && !isCurrent && onRevertVersion && 
 ## REV-3 · Revert writes `<label>-revert-<epoch-millis>` into `documents.rev` — the controlled revision identifier becomes a machine string that reaches every print footer, filename, register row and title block
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7d).** Confirmed — the repo-wide grep still returned exactly one construction site, and nothing downstream stripped it. Fixed at the source: a revert now produces a FORWARD revision label from the document's own scheme (`suggestNextRevisionLabel(doc.rev)` — the same helper the rev-up modal pre-fills with), because a revert IS a new revision restoring older content; the revert itself was already on the record via `reverted_from_version_id` (the panel's purple "Revert" pill) and the `REVERT to Rev X: <reason>` change log. A current rev still carrying the legacy machine suffix from a pre-fix revert is stripped back to its base label before advancing, so `3-revert-1755…` reverts forward to `4`, not to `3-revert-1755…993`. A label collision surfaces as the existing `DuplicateLabelError`, same as any publish.
+- Done-when: (1) forward label a drafter recognises, revert recorded in `reverted_from_version_id` + narrative ✓; (2) `documents.rev` after a revert is a valid title-block/transmittal identifier ✓; (3) test asserts the reverted label matches the library's scheme ✓.
+- Files: `lib/revisions.ts`.
+- Tests: `lib/__tests__/revertLabelHygiene.test.ts` — scheme advancement (numeric/prefixed/alpha), the machine-string construction is gone from the source, legacy-suffix stripping.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/revisions.ts:1169`, `lib/revisions.ts:1171-1184`, `lib/revisions.ts:1265-1272`, `supabase/migrations/20260828_integrity_hardening.sql:186-193`, `lib/downloads.ts:71-76,80-88`, `lib/docControlRegister.ts:96`, `components/documents/VersionHistoryPanel.tsx:263`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Grep for "revert-" across all .ts/.tsx/.sql returns exactly one hit — the construction site. No formatter, no display strip, no migration normalizes it, so the epoch-millis string is the controlled revision identifier everywhere. The only remedy is the manual, audited label-correct button, which is after-the-fact.
@@ -149,7 +155,13 @@ lib/revisions.ts:1169 — `const revertedLabel = \`${targetVersion.revisionLabel
 ## REV-4 · The viewer shows a green "Controlled · Rev N" badge while displaying an old/superseded revision — the parameter that exists to prevent this is never passed by either caller
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-08-24, document-control Phase 7d).** Confirmed, with the verifier's scoping (the finding rests entirely on FullScreenViewer; MultiDocViewer only ever renders current DocumentRecords, so its default is correct and it was left alone). The REV-1 fix had already given FullScreenViewer the missing version identity — a `viewingVersionId` prop (passed by the Version History open path) and a computed `viewingIsCurrent` — but the badge call still didn't use it: the exact "parameter that exists to prevent this is never passed" shape, one hop later. `viewerStatusBadge(...)` now receives `viewingIsCurrent`, so an old revision on screen reads amber "Old revision — not current" instead of green "Controlled · Rev N".
+- Done-when: (1) badge receives `false` whenever the bytes on screen are not current — FullScreenViewer wired; MultiDocViewer needs nothing (never shows non-current bytes) ✓; (2) FullScreenViewer knows the served version's id (`viewingVersionId`, from the REV-1 fix) ✓; (3) test asserts a non-current view is `caution`, never `controlled`, plus a source pin that the component actually passes the flag ✓.
+- Files: `components/viewers/FullScreenViewer.tsx`.
+- Tests: `lib/__tests__/revertLabelHygiene.test.ts` (REV-4 block) — non-current → caution regardless of status; current Issued → controlled; FullScreenViewer passes `viewingIsCurrent`.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/downloads.ts:41-53`, `components/viewers/FullScreenViewer.tsx:1184`, `components/viewers/MultiDocViewer.tsx:668`, `components/documents/VersionHistoryPanel.tsx:336`, `app/(protected)/documents/[libraryId]/page.tsx:3024-3032,4238-4241`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The purpose-built guard parameter is dead code — confirmed by repo-wide search, not inference. Mitigation worth noting but not disqualifying: the header two lines above (:1176) simultaneously prints the true `Rev {rev}` of the version being viewed, so the screen contradicts itself rather than being uniformly wrong.

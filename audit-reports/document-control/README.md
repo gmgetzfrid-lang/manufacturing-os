@@ -166,9 +166,20 @@ outstanding share links with the count on the audit record). Ship loop
 green: `tsc`, `eslint`, **1560 vitest** (18 new), full `next build`.
 Migration `20261034_dc_phase7c_revert_target_gate.sql` **applied &
 verified live 2026-08-24** (3-point probe all true). **Every CRITICAL in
-this area (18 of 18) is now RESOLVED.** Remaining: the HIGH/MEDIUM backlog
-(REV-3 label hygiene, PKG-6 print-ordering, DIST-4/10/11/12/13, XEDGE
-extensions).
+this area (18 of 18) is now RESOLVED.**
+
+**Phase 7d — revision-identifier honesty (first HIGHs).** `REV-3` (a revert
+wrote `<label>-revert-<epoch-millis>` into `documents.rev`, putting a
+machine string on every print footer, filename and register row → a revert
+now advances the document's own revision scheme like any publish, with the
+revert on the record via `reverted_from_version_id` and the change log;
+legacy machine-suffix revs strip back before advancing) and `REV-4` (the
+viewer badge read green "Controlled · Rev N" over an OLD revision's bytes —
+the guard parameter existed but was never passed → FullScreenViewer now
+passes its served-version currency, so old bytes read amber "Old revision —
+not current"). Ship loop green: `tsc`, `eslint`, **1566 vitest** (6 new),
+full `next build`. No migration. Remaining: PKG-6 print-ordering,
+DIST-4/10/11/12/13, XEDGE extensions and the MEDIUM backlog.
 
 | # | Report | n | Note |
 |---|---|---|---|

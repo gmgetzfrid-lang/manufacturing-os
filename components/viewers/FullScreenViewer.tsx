@@ -1193,7 +1193,9 @@ export default function FullScreenViewer({
             </div>
           )}
           {docRecord && (() => {
-            const vb = viewerStatusBadge({ status: docRecord.status, rev: docRecord.rev ?? rev });
+            // REV-4: the badge must describe the bytes ON SCREEN — an old
+            // revision opened from Version History is never "Controlled".
+            const vb = viewerStatusBadge({ status: docRecord.status, rev: docRecord.rev ?? rev }, viewingIsCurrent);
             const tone: Record<ViewBadgeTone, string> = {
               controlled: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
               caution: "bg-amber-500/10 text-amber-400 border-amber-500/30",

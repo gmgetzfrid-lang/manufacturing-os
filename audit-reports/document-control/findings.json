@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 23,
-      "OPEN": 124
+      "RESOLVED": 25,
+      "OPEN": 122
     }
   },
   "status_vocabulary": [
@@ -1496,7 +1496,7 @@
       "id": "REV-3",
       "title": "Revert writes `<label>-revert-<epoch-millis>` into `documents.rev` — the controlled revision identifier becomes a machine string that reaches every print footer, filename, register row and title block",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1525,7 +1525,7 @@
       "id": "REV-4",
       "title": "The viewer shows a green \"Controlled · Rev N\" badge while displaying an old/superseded revision — the parameter that exists to prevent this is never passed by either caller",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

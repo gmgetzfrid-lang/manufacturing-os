@@ -1174,7 +1174,16 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   // do NOT copy the file in storage — the new row points to the same bytes the
   // older row points to. file_hash carries forward so integrity verification
   // still works. If you want a literal file copy later, we can add that.
-  const revertedLabel = `${targetVersion.revisionLabel}-revert-${Date.now()}`;
+  //
+  // REV-3: a revert is a NEW forward revision that restores older content —
+  // its label advances the document's own scheme like any other publish. The
+  // old `<label>-revert-<epoch-millis>` machine string became the controlled
+  // revision identifier on every print footer, filename, register row and
+  // title-block comparison; the revert itself is already on the record via
+  // reverted_from_version_id and the change log. (A current rev carrying the
+  // legacy machine suffix is first stripped back to its base label.)
+  const baseRev = (doc.rev ?? targetVersion.revisionLabel ?? "0").replace(/-revert-\d+$/, "");
+  const revertedLabel = suggestNextRevisionLabel(baseRev);
 
   const revertPayload = {
     revision_label: revertedLabel,
