@@ -45,7 +45,14 @@ chain.**
 ## DEL-1 · An owner cannot delegate anything — the permission drawer is hard-wired to Admin/DocCtrl at every call site
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 6 — the `GAP-3` build).** All three drawer instantiations that matter for owners now receive a computed authority: the library page's document/folder drawer takes `isController || drawerDelegationAuthority` (effective owner of the node — document → folder → library owner — or a `managePermissions`/`admin` allow on its chain via `canWithAclChain`) and the library drawer takes `isController || libraryDelegationAuthority` (the library's owner); the admin permissions page stays controller-only by design (it is the org-wide console). Non-controllers get `delegationOnly`: allow-only rules, delegable actions only (no `admin`/`managePermissions`), expiry required, with an inline explanation and refusal messages. The database agrees (`20261044`): the documents access-change guard's ACL arm admits the effective owner and refuses any non-controller write that mints new admin/managePermissions allows; folder updates admit the owner and manage-grant holders. Ownership reassignment is no longer the only way to delegate — it stays a transfer, delegation is a bounded, expiring rule.
+- Done-when: (1) ✓ owner opens the drawer, adds a person with `publish`/`write` and an expiry, saves; (2) ✓ a plain member on the same document still cannot; (3) ✓ the delegate publishes while the rule is live and not after expiry (evaluators honour `expiresAt`; the drawer writes an expiry-filtered index; the nightly rebuild retires later expiries); (4) ✓ every owner-issued save writes `NODE_ACL_CHANGED` naming the owner; (5) ✓ an owner cannot grant `admin` (drawer + DB bound) and is limited to the delegable action set.
+- Files: `components/permissions/PermissionDrawer.tsx`, `app/(protected)/documents/[libraryId]/page.tsx`, `supabase/migrations/20261044_rp_phase6_owner_delegation.sql`; tests `lib/__tests__/rpPhase6Migration.test.ts`, `lib/__tests__/rpPhase6Additive.test.ts` (source pins).
+- Migration: `20261044` — **printed for operator paste; pending apply**.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / access-control
 - **Locations:**
@@ -161,7 +168,14 @@ backfill. Ownership visibility is solved separately by `DEL-7`. Spec: `GAP-15`.
 ## DEL-3 · Team ownership collapses to a single uid with no succession, no membership requirement, no FK, and no audit
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 6 — the four `DEC-9` fixes, rung kept).** (1) The supervisor picker lists the TEAM's members; an explicit "allow a supervisor from outside this team" override widens it and states what it means (publish authority over every owned library), and out-of-team options are labelled. (2) Every supervisor change goes through `setTeamSupervisor` — a checked write that logs `TEAM_SUPERVISOR_CHANGED` with the previous and new person and the affected library list, and the page tells the admin which libraries' publish authority just moved; the page text now says what the dropdown does and lists the currently-owned libraries. (3) Clearing the supervisor of a team that owns libraries is refused with the list (or, with `clearOwnership`, clears the team ownership per library with an audit row each). (4) Team deletion clears `libraries.owner_team_id` (audited per library) BEFORE the delete, and the database backstops it: `libraries.owner_team_id` is now a real FK `ON DELETE SET NULL`, with any pre-existing dangling pointer nulled and audited in the migration. Supervisors who are not active members are no longer effective owners (`OWN-12`). Also: the teams page's admin gate reads the role collection.
+- Done-when: (1) ✓ audit row naming both people and every affected library; (2) ✓ clearing is blocked (or clears ownership with audit rows); (3) ✓ deleting clears `owner_team_id` (app + FK); (4) ✓ the page shows which libraries the change affects — per the department, not per library chip; the chip grid still marks `other` ownership, and the effective-owner display per chip is left as a residual polish item.
+- Files: `lib/teams.ts`, `app/(protected)/admin/teams/page.tsx`, `supabase/migrations/20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql`; tests `lib/__tests__/rpPhase6Additive.test.ts` (DEC-9 describe), `lib/__tests__/rpPhase6Migration.test.ts`.
+- Migration: `20261045` — **printed for operator paste; pending apply**.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / compliance
 - **Locations:**
@@ -278,7 +292,14 @@ member for libraries and documents (`OWN-1`), and Admin/Manager for teams.
 ## DEL-5 · Ownership bundles roster authority and publish authority, so an owner can be sole reviewer of their own revision
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 6 — built per `DEC-21`).** Reviewer independence is now a per-library policy, ON by default wherever a required-review roster is configured and opt-out via `review_control.requireIndependentReviewer = false` (a checkbox in the library's review-control modal, so it reads as a visible policy). Database (`20261045`): inside `enforce_document_publish_guard`'s completion check — deliberately above the role short-circuit, as a data-integrity gate — when the publisher is themselves on the version's roster, at least one signed PRIMARY must be someone else, or the promote is refused with a message that names the rule. App: `reviewCompletionForDraft(documentId, versionId, actorId)` applies the same rule, `recordReviewSignoff` judges completion for the signer as would-be publisher (so a sole primary's own signature no longer auto-finalizes), and `finalizeReviewedRevision` reports `needs_independent_reviewer`. The bundling of roster authority and publish authority in one flag remains (an owner still configures the roster) — what this closes is its safety consequence: an owner can no longer be the sole reviewer of their own revision.
+- DEC-21 acceptance: ✓ a sole signed primary cannot publish their own revision in a roster-configured library; ✓ a signer alongside an independent primary can; ✓ a library with no roster is unaffected (the clause binds only when `v_primary_reqs > 0`); ✓ opt-out per library.
+- Files: `supabase/migrations/20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql`, `lib/reviewControl.ts`, `types/schema.ts`, `components/documents/ReviewControlModal.tsx`; tests `lib/__tests__/rpPhase6Additive.test.ts` (DEC-21 describe), `lib/__tests__/rpPhase6Migration.test.ts`.
+- Migration: `20261045` — **printed for operator paste; pending apply**.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / compliance
 - **Locations:**

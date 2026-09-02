@@ -17,7 +17,14 @@ notifications.
 ## SURF-1 · "Remove from workspace" is a silent no-op — there is no working way to revoke a member
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 6 — built per `DEC-20`, shipped together with `GAP-5`/`OWN-12` as the pairing rule requires).** Both doors open, through ONE entry point. Database (`20261042`): an `org_members` DELETE policy (Admin by role collection, never yourself) — the missing permissive policy that made every client delete a zero-row "success"; the `revoke_member(p_member_id, p_mode)` SECURITY DEFINER RPC does the authority check (suspend/restore = Admin or Manager, and only an Admin may touch an Admin; remove = Admin), the self-guard, and the status UPDATE or DELETE as a real statement, so `trg_prevent_last_admin_*` fires with the caller's `auth.uid()` — the previously-dead DELETE arm of the last-admin trigger is now reachable. `my_team_ids()` joins active membership (DEC-20's explicit fix: a suspended member's team-derived grants stop applying). App: `lib/members.ts` `revokeMember` — an RPC error or a mode mismatch is thrown, never a disappearing row; the members page gained **Suspend** (the default action, non-destructive, restorable) and **Restore**, with **Remove** behind a confirmation that states what the sweep will do; the bare client `delete()` is gone. `authorizeOrgRole` already refused non-active status (pinned in Phase 5), so the API layer enforces suspend for free. `create-user`'s caller gate now reads the role collection.
+- Done-when: (1) ✓ an admin can revoke — suspend ends `my_org_ids()` membership immediately, remove deletes the row; (2) ✓ a refused revocation surfaces as an error (RPC raise → thrown; no optimistic removal before confirmation); (3) ✓ suspend is the non-destructive path and the UI default; (4) ✓ last-admin protection holds on both paths (real UPDATE/DELETE statements inside the RPC; no trigger bypass — pinned).
+- Files: `supabase/migrations/20261042_rp_phase6_revocation_and_succession.sql`, `lib/members.ts` (new), `app/(protected)/admin/users/page.tsx`, `app/api/admin/create-user/route.ts`; tests `lib/__tests__/rpPhase6Migration.test.ts`, `lib/__tests__/rpPhase6Additive.test.ts`.
+- Migration: `20261042` — **printed for operator paste; pending apply** (6-point verification + 5-line inventory ride the file).
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:**
@@ -144,7 +151,14 @@ round-trip.
 ## SURF-3 · Legal holds and retention have zero server-side enforcement
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 6).** The flag the delete guards read is no longer member-writable. `trg_document_retention_guard` (BEFORE UPDATE, `20261043`): `legal_hold` and its four companion columns change only for a controller (by role collection) — placing and releasing a legal hold is a controller decision, as the done-when states; `retention_policy`, `retention_until`, `disposition_state` and `disposed_at` change only for a controller, the document's effective owner, or a publisher of its library (the population that manages the record — the publish-time re-clock runs under a publisher); under a legal hold neither `disposition_state → 'disposed'` nor `status → 'Archived'` is accepted (the two UPDATE-shaped destructions the BEFORE DELETE guards could never see); service role passes (cron re-clock, admin routes). The hold-event log is append-only and its INSERT needs the same authority as the write it records. App side mirrors the rule with clear refusals (`assertLegalHoldAuthority`, `assertRetentionAuthority`), disposal is a checked write (a hold placed between the read and the write is refused by the DB and reported, closing the TOCTOU), and the bulk-archive path skips held documents loudly instead of archiving them. The scope note the verifiers added stands: deletion was already enforced; this closes placing, releasing, disposing, retention rewriting, and the archive verb.
+- Done-when: ✓ a non-controller cannot change `legal_hold`/`legal_hold_*`, and cannot change `retention_until`/`disposition_state` without owner/publisher authority (guard pinned column-by-column; the live probe proves every guarded column exists). The "test attempts it and asserts refusal" is met by the guard shape pins plus the app-side authority tests — no live-DB harness exists here.
+- Files: `supabase/migrations/20261043_rp_phase6_legal_hold_and_force_release.sql`, `lib/retention.ts`, `app/(protected)/documents/[libraryId]/page.tsx`; tests `lib/__tests__/rpPhase6Migration.test.ts`, `lib/__tests__/rpPhase6Additive.test.ts`, `lib/__tests__/checkedWrites.test.ts` (adapted).
+- Migration: `20261043` — **printed for operator paste; pending apply**.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / safety
 - **Locations:**
@@ -190,7 +204,15 @@ and asserts refusal.
 ## SURF-4 · The force-release database guard is defeated by a second, unguarded write
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 6).** Recon first: the "second, unguarded write" this finding names — the `documents` lock-column write — was ALREADY guarded by the document-control rails shipped earlier this session (`20261029` DCK-3 `enforce_document_lock_guard`: a non-holder without `checkout.force_release` cannot change `checked_out_by`/`current_lock_id`, UI or direct PATCH), and the app half was already loud (OWN-14). Done-when 1 was therefore met before this phase; done-when 2 was not — the two writes were still two statements. Now `force_release_document(p_doc, p_reason)` (`20261043`) ends the active sessions and clears the lock in ONE transaction; the existing guards (release guard, DCK-2, DCK-3) still fire inside it with the caller's `auth.uid()`, so authority is unchanged and a refusal leaves both halves exactly as they were. `forceReleaseDocument` calls the RPC (victim capture, episode close and notifications kept). The recon also found a NEW silent no-op the DCK-3 rail had created: `reconcileDocumentCheckoutState` cleared the lock columns with no error check, so for a non-holder the DB refusal was swallowed — it is now a checked write that reports the refusal.
+- Done-when: (1) ✓ (DCK-3 + this); (2) ✓ the two writes cannot diverge (single transaction; a refused session close never leaves the document unlocked, and vice-versa).
+- Residual (recorded): the cosmetic lock columns (`checked_out_by_name`, `checked_out_at`, `checkout_note`, `active_collaborators`) stay member-writable — collaborators legitimately add themselves — so a member could make a held document LOOK free in the UI; the lock itself cannot be moved.
+- Files: `supabase/migrations/20261043_rp_phase6_legal_hold_and_force_release.sql`, `lib/checkoutEpisodes.ts`.
+- Migration: `20261043` — **printed for operator paste; pending apply**.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / availability
 - **Locations:**
@@ -393,6 +415,7 @@ names.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Partial (2026-09-01, Phase 6 / DEC-17):** the two entries that were genuine exposure are closed at the database — `audit_logs` (org-level authority trail readable only by the roles the page claims, document-level history unchanged) and the asset registry tables (RESTRICTIVE write overlays for the roles the page claims) — and the `/admin/settings` gate now matches its Admin-only API (`20261045`). The consolidation of the other eighteen surfaces is deferred by DEC-17, not rejected; this finding stays OPEN for that.
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:** the table below; the census itself is the finding

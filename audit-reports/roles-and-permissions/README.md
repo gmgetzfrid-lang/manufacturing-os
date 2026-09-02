@@ -194,6 +194,24 @@ changed on apply. Migration `20261040_rp_phase5_additive_publish_path.sql` —
 `20261041_rp_phase5_node_visible_additive.sql` — **applied & verified live
 2026-09-01** (4-point probe all true). Phase 5 is COMPLETE; next is Phase 6.
 
+### Phase 6 — membership, delegation, and the remaining surfaces (session 2026-09-01)
+
+Three read-only recon agents first; every widening carries its inventory.
+
+| Item | Outcome |
+|---|---|
+| `SURF-1` / `DEC-20` + `GAP-5` + `OWN-12` (CRITICAL + gap + MEDIUM, together) | **RESOLVED** — `org_members` DELETE policy (Admin by collection) and a real suspend; ONE revocation RPC (`revoke_member`) with the last-admin trigger live on both paths; ownership resolution requires ACTIVE membership at every level in both layers (fall-through, never reassignment); removal sweeps ownership, supervision, checkouts, grants, rosters, subscriptions with one audit row per scope and notifies controllers; `my_team_ids` follows active membership — migration `20261042` |
+| `SURF-3` (HIGH) | **RESOLVED** — legal hold columns controller-only; retention columns controller/owner/publisher; under a hold no disposition and no archive by any verb; hold-event log append-only; app mirrors + checked disposal + held-aware bulk archive — migration `20261043` |
+| `SURF-4` (HIGH) | **RESOLVED** — the named bypass was already closed by DCK-3; the two writes are now ONE transaction (`force_release_document`); the stale-lock repair no longer swallows a refusal — migration `20261043` |
+| `DEL-1` + `GAP-3` (MEDIUM + gap) | **RESOLVED** — the drawer takes real authority (controller / effective owner / manage-grant); owners edit in bounded delegation mode (allow-only, no admin, expiry required); DB owner arm + admin-grant bound; folder-level delegation possible — migration `20261044` |
+| `DEL-3` / `DEC-9` (HIGH) | **RESOLVED** — the four fixes: constrained picker with explicit override, audited supervisor changes naming both people + affected libraries, refused clearing while owning, team delete clears ownership + FK `ON DELETE SET NULL` — migration `20261045` |
+| `DEL-5` / `DEC-21` (HIGH) | **RESOLVED** — reviewer independence per library (on by default with a roster, opt-out visible in the modal): a sole signed primary cannot publish their own revision, at the guard and in the app — migration `20261045` |
+| `DEC-17` | **IMPLEMENTED** — `audit_logs` org-level trail admin-class only (document history unchanged), asset registry write overlays, `/admin/settings` gate matches its API; `SURF-9` annotated (consolidation deferred per the decision); `OWN-11` annotated partial |
+
+Ship loop green: `tsc`, `eslint`, **1736 vitest** (37 new), full `next build`.
+Migrations `20261042` → `20261045` — **pending operator paste**, one at a time
+in order, each with its verification (and inventory) block.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

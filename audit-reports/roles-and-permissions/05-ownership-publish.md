@@ -685,6 +685,7 @@ silent is the failure mode here, not the typo.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Partial (2026-09-01, Phase 6 / DEC-21):** the worst case — the last signer being the ONLY primary and thereby publishing their own revision — is closed by reviewer independence (`DEL-5` record). Auto-finalize still runs under whoever signs last; done-when 1 (a defined publishing authority independent of signing order) remains OPEN for the review-gate work.
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / process
 - **Locations:**
@@ -736,7 +737,13 @@ should not suppress the controller fallback.
 ## OWN-12 · No succession: a deactivated or removed owner keeps authority and swallows every notification
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 6 — the `GAP-5` build, shipped with `SURF-1`).** Ownership resolution now REQUIRES an active membership at every level, with fall-through (never silent reassignment): the database's `user_is_effective_owner` (`20261042`) checks `member_is_active(org, uid)` at the document, folder, library, and team-supervisor rungs and falls through to the next level and finally false; the app's `resolveEffectiveOwner` takes an `activeUids` set and does the same, `effectiveOwnerForDocument` resolves the set itself (`activeMemberUids`, fail-safe: an unreadable roster never un-owns anything), and the four org-wide scans (`reviewCycles`, `reviewControl` overdue escalation, `acknowledgments` overdue escalation, `docControlRegister`) load the active set once and pass it. Consequence for the eleven "owner OR controllers" routers: `owner.userId` is now null for a departed or suspended owner, so the `? [owner] : controllers` shape routes to the controllers instead of a dead account — the dead-letter behaviour is closed at the resolver rather than at each router. Removal additionally SWEEPS: `revoke_member` nulls `owner_user_id`/`owner_name` on every library, folder and document the member owned and `teams.supervisor_user_id` where they supervised, writing one `OWNER_CLEARED` / `TEAM_SUPERVISOR_CLEARED` audit row per scope, and the app notifies the controllers (`member_revoked`) with the list; the register's existing unowned count/filter surfaces them.
+- Done-when: (1) ✓ a departed or deactivated member is never the effective owner for an authority decision (DB + app, tests: inactive doc owner falls through to an active supervisor; inactive supervisor → unowned); (2) ✓ notifications route to the controller fallback; (3) ✓ orphaned ownership is discoverable (register unowned filter) — and on removal it is cleared and announced, not merely discoverable.
+- Files: `supabase/migrations/20261042_rp_phase6_revocation_and_succession.sql`, `lib/ownership.ts`, `lib/reviewCycles.ts`, `lib/reviewControl.ts`, `lib/acknowledgments.ts`, `lib/docControlRegister.ts`, `lib/members.ts`.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / safety
 - **Locations:**

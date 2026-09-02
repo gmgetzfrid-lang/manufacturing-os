@@ -138,10 +138,18 @@ export default function PermissionsDrawer(props: {
 
   aclChain?: (AccessControl | undefined)[];
   canEdit: boolean;
+  /** DEL-1 / GAP-3: the actor may edit because they are the node's effective
+   *  owner or hold a manage-grant — NOT a controller. Their grants are
+   *  bounded: allow only, never `admin` or `managePermissions`, and every
+   *  rule must carry an expiry so delegations self-terminate. */
+  delegationOnly?: boolean;
 
   title?: string;
 }) {
   const { isOpen, onClose, nodeType, nodeId, canEdit } = props;
+  const delegationOnly = props.delegationOnly === true;
+  const DELEGABLE_ACTIONS: PermissionAction[] = ["discover", "read", "download", "upload", "createFolder", "editMetadata", "write", "publish"];
+  const [delegationErr, setDelegationErr] = useState<string | null>(null);
 
   // ... (keep existing state)
   const initial = useMemo(() => {
@@ -219,10 +227,20 @@ export default function PermissionsDrawer(props: {
     if (!sid) return;
 
     const exp = fromDateInput(expiresAt);
+    const chosen: PermissionAction[] = actions.length ? actions : (["discover", "read"] as PermissionAction[]);
+    if (delegationOnly) {
+      // GAP-3 bounds: an owner may only GRANT (never deny), only actions a
+      // delegate can hold without becoming an admin, and only with an expiry.
+      if (effect !== "allow") { setDelegationErr("As an owner you can grant access, not deny it — ask a controller for a deny rule."); return; }
+      const illegal = chosen.filter((a) => !DELEGABLE_ACTIONS.includes(a));
+      if (illegal.length) { setDelegationErr(`Owners cannot delegate ${illegal.join(", ")} — those stay with controllers.`); return; }
+      if (!exp) { setDelegationErr("Owner-issued grants must have an expiry so they self-terminate."); return; }
+      setDelegationErr(null);
+    }
     const next: AccessRule = {
       effect,
       subject: { type: subjectType, id: sid },
-      actions: actions.length ? actions : ["discover", "read"],
+      actions: chosen,
       ...(exp ? { expiresAt: exp as Timestamp } : {}),
     };
 
@@ -273,7 +291,9 @@ export default function PermissionsDrawer(props: {
       };
 
       const chain = [...(props.aclChain ?? []), nextAcl];
-      const aclIndex = buildAclIndexFromChain(chain);
+      // Expiry-aware index (OWN-7/DEC-10): an already-expired rule never bakes
+      // into acl_index — the SAME column the DB publish guard reads.
+      const aclIndex = buildAclIndexFromChain(chain, Date.now());
 
       const payload: Record<string, unknown> = {
         acl: nextAcl,
@@ -641,8 +661,14 @@ export default function PermissionsDrawer(props: {
                 </div>
               </div>
 
+              {delegationOnly && (
+                <div className="sm:col-span-2 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200">
+                  You are editing as the owner: grants only, no Admin / Manage Permissions, and every rule needs an expiry.
+                  {delegationErr && <div className="mt-1 font-bold text-rose-300">{delegationErr}</div>}
+                </div>
+              )}
               <div className="sm:col-span-2">
-                <div className="text-xs text-zinc-400 mb-1">Expires (optional)</div>
+                <div className="text-xs text-zinc-400 mb-1">{delegationOnly ? "Expires (required)" : "Expires (optional)"}</div>
                 <input
                   disabled={!canEdit}
                   type="datetime-local"

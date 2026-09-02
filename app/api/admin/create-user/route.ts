@@ -101,13 +101,18 @@ export async function POST(req: NextRequest) {
   // Verify caller is Admin or DocCtrl in the target org
   const { data: callerMember } = await supabaseAdmin
     .from("org_members")
-    .select("role")
+    .select("role, roles")
     .eq("org_id", orgId)
     .eq("uid", caller.id)
     .eq("status", "active")
     .single();
 
-  if (!callerMember || !["Admin", "DocCtrl"].includes(callerMember.role as string)) {
+  // ADD-1 / OWN-3: the controller tier follows the role COLLECTION.
+  const callerHeld = new Set<string>([
+    (callerMember?.role as string) || "",
+    ...(((callerMember?.roles as string[] | null) ?? [])),
+  ]);
+  if (!callerMember || !(callerHeld.has("Admin") || callerHeld.has("DocCtrl"))) {
     return NextResponse.json({ error: "Forbidden: insufficient permissions" }, { status: 403 });
   }
 

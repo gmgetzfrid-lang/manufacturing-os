@@ -10,19 +10,21 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
   listTeams, createTeam, updateTeam, deleteTeam,
-  listTeamMembers, addTeamMember, removeTeamMember, type Team,
-} from "@/lib/teams";
+  listTeamMembers, addTeamMember, removeTeamMember, type Team, setTeamSupervisor } from "@/lib/teams";
 import { setLibraryOwnerTeam } from "@/lib/ownership";
 import { UsersRound, Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appConfirm, appAlert } from "@/components/providers/DialogProvider";
 
 interface OrgMember { uid: string; display_name: string | null; email: string | null; role: string }
 
 const TEAM_COLORS = ["#4f46e5", "#2563eb", "#0d9488", "#059669", "#ea580c", "#e11d48", "#db2777", "#7c3aed"];
 
 export default function AdminTeamsPage() {
-  const { activeRole, activeOrgId, uid } = useRole();
-  const isAdmin = activeRole === "Admin" || activeRole === "Manager";
+  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
+  const isAdmin = hasAnyRole(["Admin", "Manager"]);
+  // DEC-9 fix 1: the supervisor picker lists the TEAM's members; an explicit
+  // override widens it to the whole org and says what that means.
+  const [supervisorOverride, setSupervisorOverride] = useState(false);
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [members, setMembers] = useState<OrgMember[]>([]);
@@ -52,10 +54,22 @@ export default function AdminTeamsPage() {
   }, [activeOrgId]);
 
   const setSupervisor = async (sup: string | null) => {
-    if (!selected) return;
+    if (!selected || !activeOrgId || !uid) return;
+    const before = selected.supervisorUserId ?? null;
     setSelected({ ...selected, supervisorUserId: sup });
     setTeams((prev) => prev.map((t) => (t.id === selected.id ? { ...t, supervisorUserId: sup } : t)));
-    try { await updateTeam(selected.id, { supervisorUserId: sup }); } catch { void refresh(); }
+    try {
+      // DEC-9 fix 2/3: audited (before/after + affected libraries); clearing
+      // while the department owns libraries is refused with the list.
+      const res = await setTeamSupervisor({ teamId: selected.id, orgId: activeOrgId, supervisorUserId: sup, actorId: uid, actorEmail: userEmail ?? null });
+      if (res.affectedLibraries.length > 0 && sup) {
+        void appAlert(`Publish authority over ${res.affectedLibraries.length} librar${res.affectedLibraries.length === 1 ? "y" : "ies"} (${res.affectedLibraries.map((l) => l.name).join(", ")}) moved to the new supervisor. This is audited.`);
+      }
+    } catch (e) {
+      setSelected((cur) => (cur ? { ...cur, supervisorUserId: before } : cur));
+      setTeams((prev) => prev.map((t) => (t.id === selected.id ? { ...t, supervisorUserId: before } : t)));
+      await appAlert({ message: (e as Error).message, tone: "danger" });
+    }
   };
   const toggleLibrary = async (libId: string, owned: boolean) => {
     if (!selected || !uid) return;
@@ -96,8 +110,17 @@ export default function AdminTeamsPage() {
   };
 
   const handleDelete = async (team: Team) => {
-    if (!(await appConfirm({ message: `Delete team "${team.name}"? Members keep their accounts; only this grouping is removed.`, tone: "danger" }))) return;
-    await deleteTeam(team.id);
+    const owned = libraries.filter((l) => l.owner_team_id === team.id);
+    const msg = owned.length
+      ? `Delete team "${team.name}"? It owns ${owned.length} librar${owned.length === 1 ? "y" : "ies"} (${owned.map((l) => l.name).join(", ")}) — their team ownership will be CLEARED (audited), leaving them without an effective owner until one is assigned. Members keep their accounts.`
+      : `Delete team "${team.name}"? Members keep their accounts; only this grouping is removed.`;
+    if (!(await appConfirm({ message: msg, tone: "danger" }))) return;
+    try {
+      await deleteTeam(team.id, { orgId: activeOrgId, actorId: uid, actorEmail: userEmail ?? null });
+    } catch (e) {
+      await appAlert({ message: (e as Error).message, tone: "danger" });
+      return;
+    }
     if (selected?.id === team.id) setSelected(null);
     void refresh();
   };
@@ -198,10 +221,20 @@ export default function AdminTeamsPage() {
                     <select value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
                       className="flex-1 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none">
                       <option value="">— none —</option>
-                      {members.map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}</option>)}
+                      {members
+                        .filter((m) => supervisorOverride || teamMemberIds.includes(m.uid) || m.uid === selected.supervisorUserId)
+                        .map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}{!teamMemberIds.includes(m.uid) ? " · not in this team" : ""}</option>)}
                     </select>
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">The supervisor becomes the effective owner of any library this department owns (unless a more specific owner is set).</div>
+                  <label className="flex items-center gap-2 text-[10px] text-[var(--color-text-muted)] cursor-pointer select-none">
+                    <input type="checkbox" checked={supervisorOverride} onChange={(e) => setSupervisorOverride(e.target.checked)} />
+                    Allow a supervisor from outside this team (they gain publish authority over every library this department owns)
+                  </label>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">
+                    Changing the supervisor transfers publish authority over every library this department owns
+                    {(() => { const owned = libraries.filter((l) => l.owner_team_id === selected.id); return owned.length ? ` — currently: ${owned.map((l) => l.name).join(", ")}` : " (none today)"; })()}
+                    . Every change is audited with both people and the affected libraries.
+                  </div>
                   <div>
                     <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Owns libraries</div>
                     <div className="flex flex-wrap gap-1.5">

@@ -12,7 +12,10 @@
 import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
-import { effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
+import { effectiveOwnerForDocument, getOrgControllers, isEffectiveOwnerOfDocument } from "@/lib/ownership";
+import { resolveActorPrincipal } from "@/lib/principal";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { resolveEffectiveRetentionPolicy, computeRetentionUntil } from "@/lib/retentionPolicy";
 import type { RetentionPolicy } from "@/types/schema";
 
@@ -96,6 +99,12 @@ export async function setRetentionPolicy(input: {
   level: Level; id: string; orgId: string; policy: RetentionPolicy | null; actorId?: string | null; actorName?: string | null;
 }): Promise<void> {
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
+  if (input.level === "document") {
+    await assertRetentionAuthority({ orgId: input.orgId, actorId: input.actorId, documentId: input.id });
+  } else if (input.level === "library") {
+    await assertRetentionAuthority({ orgId: input.orgId, actorId: input.actorId, libraryId: input.id });
+  }
+  // (folder-level policy writes are controller-only at the database.)
   // OWN-14: checked write — a refused policy save must not be logged as set.
   const { data: polRows, error: polErr } = await supabase
     .from(table)
@@ -117,6 +126,30 @@ export async function setRetentionPolicy(input: {
   }
 }
 
+// ── Authority (SURF-3) ───────────────────────────────────────────────────────
+// Mirrors trg_document_retention_guard: legal hold is a CONTROLLER decision
+// (spoliation liability); retention settings and disposition belong to a
+// controller, the document's effective owner, or a publisher of its library.
+// The database enforces the same rule for a direct PATCH; this gives the app
+// a clear refusal before it writes anything.
+
+async function assertLegalHoldAuthority(orgId: string, actorId: string | null | undefined, verb: string): Promise<void> {
+  if (!actorId) throw new Error(`Legal hold can only be ${verb} by an Admin or Document Controller.`);
+  const p = await resolveActorPrincipal({ uid: actorId, orgId });
+  if (!isControllerPrincipal(p)) {
+    throw new Error(`Legal hold can only be ${verb} by an Admin or Document Controller.`);
+  }
+}
+
+async function assertRetentionAuthority(input: { orgId: string; actorId?: string | null; documentId?: string | null; libraryId?: string | null }): Promise<void> {
+  if (!input.actorId) throw new Error("Retention settings can only be changed by a controller, the document's owner, or a publisher of its library.");
+  const p = await resolveActorPrincipal({ uid: input.actorId, orgId: input.orgId });
+  if (isControllerPrincipal(p)) return;
+  if (input.documentId && await isEffectiveOwnerOfDocument(input.documentId, input.actorId)) return;
+  if (input.libraryId && await resolveCanControlLibrary(input.libraryId, p)) return;
+  throw new Error("Retention settings can only be changed by a controller, the document's owner, or a publisher of its library.");
+}
+
 // ── Legal hold ───────────────────────────────────────────────────────────────
 
 export async function isLegalHold(documentId: string): Promise<boolean> {
@@ -129,6 +162,7 @@ export async function isLegalHold(documentId: string): Promise<boolean> {
 export async function placeLegalHold(input: {
   scope: Level; id: string; orgId: string; matter: string; reason?: string; actorId?: string | null; actorName?: string | null;
 }): Promise<number> {
+  await assertLegalHoldAuthority(input.orgId, input.actorId, "placed");
   const nowIso = new Date().toISOString();
   const patch = { legal_hold: true, legal_hold_matter: input.matter, legal_hold_reason: input.reason ?? null, legal_hold_by: input.actorId ?? null, legal_hold_at: nowIso };
   const ids = await scopeDocumentIds(input.scope, input.id);
@@ -154,6 +188,7 @@ export async function placeLegalHold(input: {
 export async function releaseLegalHold(input: {
   scope: Level; id: string; orgId: string; reason?: string; actorId?: string | null; actorName?: string | null;
 }): Promise<number> {
+  await assertLegalHoldAuthority(input.orgId, input.actorId, "released");
   const patch = { legal_hold: false, legal_hold_matter: null, legal_hold_reason: null, legal_hold_by: null, legal_hold_at: null };
   const ids = await scopeDocumentIds(input.scope, input.id);
   // OWN-14: checked, with the real released count (see placeLegalHold).
@@ -180,8 +215,16 @@ export async function disposeDocument(input: {
   documentId: string; orgId: string; action?: "archive" | "destroy"; reason?: string; actorId?: string | null; actorName?: string | null;
 }): Promise<{ ok: boolean; reason?: string }> {
   if (await isLegalHold(input.documentId)) return { ok: false, reason: "legal_hold" };
+  await assertRetentionAuthority({ orgId: input.orgId, actorId: input.actorId, documentId: input.documentId });
   const nowIso = new Date().toISOString();
-  await supabase.from("documents").update({ disposition_state: "disposed", disposed_at: nowIso, status: "Archived", updated_at: nowIso }).eq("id", input.documentId);
+  // Checked write: the DB guard refuses disposition under a hold placed
+  // between the read above and this write (the TOCTOU the app check alone
+  // could not close) — a refusal must not be logged as disposed.
+  const { data: disposed, error: dispErr } = await supabase.from("documents")
+    .update({ disposition_state: "disposed", disposed_at: nowIso, status: "Archived", updated_at: nowIso })
+    .eq("id", input.documentId).select("id");
+  if (dispErr) throw new Error(dispErr.message);
+  if (!disposed || disposed.length === 0) return { ok: false, reason: "refused" };
   await logEvent(input.orgId, { scopeType: "document", scopeId: input.documentId, documentId: input.documentId, action: "disposed", reason: input.reason, detail: { action: input.action ?? "archive" }, actorId: input.actorId, actorName: input.actorName });
   return { ok: true };
 }

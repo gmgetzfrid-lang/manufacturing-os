@@ -563,12 +563,14 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
   if (!rows.length) return 0;
 
   const docIds = uniq(rows.map((r) => r.document_id as string));
-  const [{ data: docs }, { data: libs }, { data: cols }, controllers] = await Promise.all([
+  const [{ data: docs }, { data: libs }, { data: cols }, controllers, { data: activeRows }] = await Promise.all([
     supabase.from("documents").select("id, library_id, collection_id, document_number, title, name, owner_user_id, owner_name").in("id", docIds),
     supabase.from("libraries").select("id, owner_user_id, owner_name").eq("org_id", orgId),
     supabase.from("collections").select("id, owner_user_id, owner_name").eq("org_id", orgId),
     getOrgControllers(orgId),
+    supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active"),
   ]);
+  const activeUids = new Set((activeRows ?? []).map((r) => (r as { uid: string }).uid)); // GAP-5 / OWN-12
   const dm = new Map((docs ?? []).map((d) => [(d as Record<string, unknown>).id as string, d as Record<string, unknown>]));
   const libOwn = new Map((libs ?? []).map((l) => [(l as Record<string, unknown>).id as string, l as Record<string, unknown>]));
   const colOwn = new Map((cols ?? []).map((c) => [(c as Record<string, unknown>).id as string, c as Record<string, unknown>]));
@@ -598,6 +600,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
         { owner_user_id: doc.owner_user_id as string | null, owner_name: doc.owner_name as string | null },
         doc.collection_id ? (colOwn.get(doc.collection_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined) : null,
         libOwn.get(doc.library_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined,
+        activeUids,
       );
       const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.assignee_user_id as string));
       await Promise.all(escalateTo.map((uid) =>

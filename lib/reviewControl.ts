@@ -331,7 +331,9 @@ export async function recordReviewSignoff(input: {
     );
   }
 
-  const { complete } = await reviewCompletionForDraft(input.documentId, input.versionId);
+  // DEC-21: completion is judged for THIS signer as the would-be publisher —
+  // if they are the only signed primary, the draft is not complete for them.
+  const { complete } = await reviewCompletionForDraft(input.documentId, input.versionId, input.signerUserId);
   const { data: docRow } = await supabase.from("documents").select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
   const owner = await effectiveOwnerForDocument({
     ownerUserId: (docRow?.owner_user_id as string | null) ?? null,
@@ -392,12 +394,39 @@ export async function listDraftRoster(documentId: string, versionId?: string | n
  *  required. A row only counts as signed when it carries a bound e-signature
  *  (RG-1) — a roster row born `status='signed'` with no signature_id is a
  *  forgery shape, not an approval, and must never satisfy the gate. */
-export async function reviewCompletionForDraft(documentId: string, versionId: string): Promise<{ requiredPrimaries: number; signed: number; complete: boolean; roster: ReviewSignoffRow[] }> {
+export async function reviewCompletionForDraft(
+  documentId: string,
+  versionId: string,
+  /** DEC-21: the person about to publish. When they are themselves on the
+   *  roster, at least one signed PRIMARY must be someone else — unless the
+   *  library opted out (`requireIndependentReviewer: false`). */
+  actorId?: string | null,
+): Promise<{ requiredPrimaries: number; signed: number; complete: boolean; independent: boolean; roster: ReviewSignoffRow[] }> {
   const roster = await listDraftRoster(documentId, versionId);
   const requiredPrimaries = roster.filter((r) => r.slot === "primary").length;
   const signed = roster.filter((r) => r.status === "signed" && r.signatureId != null).length;
-  const complete = requiredPrimaries > 0 && signed >= requiredPrimaries;
-  return { requiredPrimaries, signed, complete, roster };
+  let complete = requiredPrimaries > 0 && signed >= requiredPrimaries;
+  let independent = true;
+  if (complete && actorId && roster.some((r) => r.reviewerUserId === actorId)) {
+    const requireIndependent = await libraryRequiresIndependentReviewer(documentId);
+    if (requireIndependent) {
+      independent = roster.some((r) => r.slot === "primary" && r.status === "signed" && r.signatureId != null && r.reviewerUserId !== actorId);
+      if (!independent) complete = false;
+    }
+  }
+  return { requiredPrimaries, signed, complete, independent, roster };
+}
+
+/** DEC-21 policy lookup: defaults ON wherever a roster is configured; a
+ *  library sets `requireIndependentReviewer: false` to opt out. Fail-safe:
+ *  an unreadable library keeps the requirement. */
+async function libraryRequiresIndependentReviewer(documentId: string): Promise<boolean> {
+  const { data: doc } = await supabase.from("documents").select("library_id").eq("id", documentId).maybeSingle();
+  const libId = (doc?.library_id as string | null) ?? null;
+  if (!libId) return true;
+  const { data: lib } = await supabase.from("libraries").select("review_control").eq("id", libId).maybeSingle();
+  const rc = (lib?.review_control as ReviewControl | null) ?? null;
+  return rc?.requireIndependentReviewer !== false;
 }
 
 // ── Alternates ───────────────────────────────────────────────────────────────
@@ -438,8 +467,8 @@ export async function finalizeReviewedRevision(input: {
   if (!pendingId) return { published: false, reason: "no_pending_draft" };
 
   if (input.requireRosterComplete !== false) {
-    const { complete } = await reviewCompletionForDraft(input.documentId, pendingId);
-    if (!complete) return { published: false, reason: "incomplete" };
+    const { complete, independent } = await reviewCompletionForDraft(input.documentId, pendingId, input.actorId ?? null);
+    if (!complete) return { published: false, reason: independent ? "incomplete" : "needs_independent_reviewer" };
   }
 
   const { data: ver } = await supabase.from("document_versions").select("base_rev, revision_label, effective_date").eq("id", pendingId).maybeSingle();
@@ -570,12 +599,16 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
   if (!rows.length) return 0;
 
   const docIds = uniq(rows.map((r) => r.document_id as string));
-  const [{ data: docs }, { data: libs }, { data: cols }, controllers] = await Promise.all([
+  const [{ data: docs }, { data: libs }, { data: cols }, controllers, { data: activeRows }] = await Promise.all([
     supabase.from("documents").select("id, library_id, collection_id, review_control, owner_user_id, owner_name").in("id", docIds),
     supabase.from("libraries").select("id, review_control, owner_user_id, owner_name").eq("org_id", orgId),
     supabase.from("collections").select("id, review_control, owner_user_id, owner_name").eq("org_id", orgId),
     getOrgControllers(orgId),
+    supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active"),
   ]);
+  // GAP-5 / OWN-12: an inactive owner never receives the escalation — the
+  // resolver falls through and the controllers get it instead.
+  const activeUids = new Set((activeRows ?? []).map((r) => (r as { uid: string }).uid));
   const dm = new Map((docs ?? []).map((d) => [(d as Record<string, unknown>).id as string, d as Record<string, unknown>]));
   const libMap = new Map((libs ?? []).map((l) => [(l as Record<string, unknown>).id as string, l as Record<string, unknown>]));
   const colMap = new Map((cols ?? []).map((c) => [(c as Record<string, unknown>).id as string, c as Record<string, unknown>]));
@@ -624,6 +657,7 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
           { owner_user_id: doc.owner_user_id as string | null, owner_name: doc.owner_name as string | null },
           doc.collection_id ? (colMap.get(doc.collection_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined) : null,
           libMap.get(doc.library_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined,
+          activeUids,
         );
         const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
         await Promise.all(escalateTo.map((uid) =>

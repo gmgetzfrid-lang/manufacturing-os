@@ -106,7 +106,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   if (!docs.length) return { rows: [], kpis: computeRegisterKpis([]), capped };
 
   const docIds = docs.map((d) => d.id as string);
-  const [{ data: libs }, { data: cols }, ackMap, reviewMap, distAckRes] = await Promise.all([
+  const [{ data: libs }, { data: cols }, ackMap, reviewMap, distAckRes, { data: activeRows }] = await Promise.all([
     supabase.from("libraries").select("id, name, owner_user_id, owner_name, owner_team_id").eq("org_id", orgId),
     supabase.from("collections").select("id, owner_user_id, owner_name").eq("org_id", orgId),
     getAckSummaries(orgId, docIds),
@@ -115,7 +115,11 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     // other ack system; the register is the auditor artifact and must carry
     // the answer this feature exists to produce.
     supabase.from("distribution_acks").select("document_id, version_id").eq("org_id", orgId).is("acknowledged_at", null),
+    // GAP-5 / OWN-12: only ACTIVE members can be effective owners — a departed
+    // owner's documents show as UNOWNED here (the actionable signal).
+    supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active"),
   ]);
+  const activeUids = new Set((activeRows ?? []).map((r) => (r as { uid: string }).uid));
   // DIST-4: count only obligations that still bind — a pending ack on a
   // NON-CURRENT version is an orphan (the recipient's confirm bar is
   // version-scoped and can never clear it), and counting it inflated the
@@ -143,13 +147,14 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       .map((t) => (t.supervisor_user_id as string | null) ?? null)
       .filter((u): u is string => !!u))];
     const { data: sups } = supIds.length
-      ? await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).in("uid", supIds)
+      ? await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).eq("status", "active").in("uid", supIds)
       : { data: [] };
     const supName = new Map(((sups ?? []) as Array<Record<string, unknown>>)
       .map((m) => [m.uid as string, (m.display_name as string) || (m.email as string) || "Supervisor"]));
     for (const t of ((teams ?? []) as Array<Record<string, unknown>>)) {
       const sup = (t.supervisor_user_id as string | null) ?? null;
-      if (sup) teamSupervisor.set(t.id as string, { userId: sup, name: supName.get(sup) ?? (t.name as string) ?? "Supervisor" });
+      // GAP-5 / OWN-12: a supervisor who is not an ACTIVE member is not an owner.
+      if (sup && supName.has(sup)) teamSupervisor.set(t.id as string, { userId: sup, name: supName.get(sup) ?? (t.name as string) ?? "Supervisor" });
     }
   }
 
@@ -161,6 +166,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       { owner_user_id: (d.owner_user_id as string | null) ?? null, owner_name: (d.owner_name as string | null) ?? null },
       collectionId ? colMap.get(collectionId) ?? null : null,
       lib ?? null,
+      activeUids,
     );
     if (!owner.userId) {
       const teamId = lib?.owner_team_id ?? null;

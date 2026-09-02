@@ -103,6 +103,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   const [viewerTeams, setViewerTeams] = useState<string[]>([]);
   const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [timeoutDays, setTimeoutDays] = useState(7);
+  const [requireIndependent, setRequireIndependent] = useState(true);
 
   // Document class declaration (20261012) — 'drawing' makes MOC mandatory on
   // non-minor publishes and routes check-in changes through drafting;
@@ -146,6 +147,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         setAlternateTeams(c.alternateTeamIds ?? []);
         setViewerTeams(c.draftViewerTeamIds ?? []);
         setTimeoutDays(c.timeoutDays ?? 7);
+        setRequireIndependent(c.requireIndependentReviewer !== false);
         const [rp, ap, vp] = await Promise.all([resolvePeople(c.reviewerIds), resolvePeople(c.alternateIds), resolvePeople(c.draftViewerIds)]);
         if (alive) { setReviewers(rp); setAlternates(ap); setViewers(vp); }
       }
@@ -164,6 +166,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         alternateIds: alternates.map((p) => p.uid), alternateRoles, alternateTeamIds: alternateTeams,
         draftViewerIds: viewers.map((p) => p.uid), draftViewerRoles: viewerRoles, draftViewerTeamIds: viewerTeams,
         timeoutDays,
+        ...(level === "library" ? { requireIndependentReviewer: requireIndependent } : {}),
       };
       await setReviewControlPolicy({ level, id, orgId, control, actorId: uid, actorName: userName });
       // Doc-class declaration rides the same Save — written only when it
@@ -250,6 +253,12 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-[var(--color-text-muted)]">Activate alternates after</span>
                   <input type="number" min={1} value={timeoutDays} onChange={(e) => setTimeoutDays(Math.max(1, parseInt(e.target.value) || 1))} className="text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 w-16 outline-none focus:border-[var(--color-accent)]" />
+                  {level === "library" && (
+                    <label className="ml-4 inline-flex items-center gap-2 text-xs text-[var(--color-text-muted)] cursor-pointer select-none" title="DEC-21: when the person publishing is themselves a reviewer, at least one signed primary reviewer must be someone else. On by default for any library with a required-review roster.">
+                      <input type="checkbox" checked={requireIndependent} onChange={(e) => setRequireIndependent(e.target.checked)} />
+                      Require an independent reviewer (publisher can&apos;t be the only signer)
+                    </label>
+                  )}
                   <span className="text-[11px] text-[var(--color-text-muted)]">days</span>
                 </div>
                 <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} allTeams={allTeams} teamIds={viewerTeams} setTeamIds={setViewerTeams} />

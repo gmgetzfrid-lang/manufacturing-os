@@ -1022,17 +1022,31 @@ export default function LibraryExplorerPage() {
     if (!(await appConfirm({ title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`, message: "They keep their history but disappear from the default view." }))) return;
     const ids = Array.from(selectedDocIds);
     const now = new Date().toISOString();
-    await supabase.from("documents").update({
+    // SURF-3: a legal hold freezes the record against every destructive verb,
+    // archive included (the DB guard refuses it too). Skip held ones loudly.
+    const { data: heldRows } = await supabase.from("documents").select("id").in("id", ids).eq("legal_hold", true);
+    const held = new Set(((heldRows ?? []) as Array<{ id: string }>).map((r) => r.id));
+    const targets = ids.filter((id) => !held.has(id));
+    if (targets.length === 0) {
+      await appAlert({ message: `All ${ids.length} selected document${ids.length === 1 ? " is" : "s are"} under legal hold and cannot be archived.`, tone: "danger" });
+      return;
+    }
+    const { data: archived, error: archErr } = await supabase.from("documents").update({
       status: "Archived",
       archived_at: now,
       archived_by: uid ?? null,
       updated_at: now,
       updated_by: uid ?? null,
-    }).in("id", ids);
+    }).in("id", targets).select("id");
+    if (archErr) { await appAlert({ message: `Archive failed: ${archErr.message}`, tone: "danger" }); return; }
+    const done = new Set(((archived ?? []) as Array<{ id: string }>).map((r) => r.id));
     setDocuments((prev) => prev.map((d) =>
-      ids.includes(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
+      done.has(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
     ));
     setSelectedDocIds(new Set());
+    if (held.size > 0 || done.size < targets.length) {
+      await appAlert({ message: `Archived ${done.size} of ${ids.length}. ${held.size ? `${held.size} under legal hold were skipped.` : ""} ${done.size < targets.length ? `${targets.length - done.size} were refused.` : ""}`.trim() });
+    }
   };
 
   const handleStageSelected = () => {
@@ -2880,6 +2894,21 @@ export default function LibraryExplorerPage() {
 
   // OWN-3: controller tier follows the full role collection, not the headline.
   const isController = hasAnyRole(["Admin", "DocCtrl"]);
+  // DEL-1 / GAP-3: the Permissions drawer's authority is controller, OR the
+  // node's effective owner, OR a managePermissions/admin grant on its chain
+  // (canWithAclChain mirrors the DB's can_manage_node). Owners edit in
+  // delegation mode — bounded grants with an expiry.
+  const drawerDelegationAuthority = (() => {
+    if (!uid) return false;
+    const folder = renameFolderId ? folderMap.get(renameFolderId) ?? null : null;
+    const ownerId = selectedDoc
+      ? (selectedDoc.ownerUserId ?? library?.ownerUserId ?? null)
+      : (folder?.ownerUserId ?? library?.ownerUserId ?? null);
+    if (ownerId && ownerId === uid) return true;
+    const chain = selectedDoc ? buildDocChain(selectedDoc) : buildFolderChain(folder);
+    return canWithAclChain({ principal, action: "managePermissions", aclChain: chain, defaultAllow: false });
+  })();
+  const libraryDelegationAuthority = !!uid && !!library?.ownerUserId && library.ownerUserId === uid;
   const allSelected = sortedDocs.length > 0 && selectedDocIds.size === sortedDocs.length;
   const someSelected = selectedDocIds.size > 0 && !allSelected;
 
@@ -4676,7 +4705,8 @@ export default function LibraryExplorerPage() {
             (selectedDoc?.visibility ?? folderMap.get(renameFolderId ?? "")?.visibility) as NodeVisibility
           }
           aclChain={selectedDoc ? buildDocChain(selectedDoc) : buildFolderChain(folderMap.get(renameFolderId ?? "") ?? null)}
-          canEdit={isController}
+          canEdit={isController || drawerDelegationAuthority}
+          delegationOnly={!isController && drawerDelegationAuthority}
           title={selectedDoc?.title ?? folderMap.get(renameFolderId ?? "")?.name}
         />
       )}
@@ -4693,7 +4723,8 @@ export default function LibraryExplorerPage() {
           acl={library.acl}
           visibility={library.visibility as NodeVisibility}
           aclChain={[library.acl].filter(Boolean) as AccessControl[]}
-          canEdit={isController}
+          canEdit={isController || libraryDelegationAuthority}
+          delegationOnly={!isController && libraryDelegationAuthority}
           title={`${library.name} — library access`}
         />
       )}

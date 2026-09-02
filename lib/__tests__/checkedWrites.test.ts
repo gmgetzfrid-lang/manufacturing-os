@@ -49,6 +49,11 @@ vi.mock("@/lib/supabase", () => {
   }
   return { supabase: { from: (t: string) => chain(t) } };
 });
+// SURF-3: legal hold is a controller decision app-side too — this file tests
+// the write honesty, so the actor is a controller.
+vi.mock("@/lib/principal", () => ({
+  resolveActorPrincipal: vi.fn(async (i: { uid: string }) => ({ uid: i.uid, role: "Admin", roles: ["Admin"], orgId: "org1", teamIds: [], isActiveMember: true })),
+}));
 vi.mock("@/lib/audit", () => ({
   logAuditAction: vi.fn(async (p: Record<string, unknown>) => { state.audits.push(p); }),
 }));

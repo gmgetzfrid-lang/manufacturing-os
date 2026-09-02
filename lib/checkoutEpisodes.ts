@@ -606,49 +606,28 @@ export async function forceReleaseDocument(input: {
   actorName: string;
   reason?: string | null;
 }): Promise<void> {
-  const now = new Date().toISOString();
 
   // Who is about to lose their session? Captured BEFORE the update so the
   // affected users get a durable personal notification (the system thread
   // message alone is only visible if they happen to be online).
   const affected = await fetchActiveSessions(input.documentId);
 
-  // OWN-14: both halves of a force-release are CHECKED. A guard refusal on
-  // either write used to be silent — the UI then told everyone the lock was
-  // released while the session and the lock survived.
-  const { error: sessErr } = await supabase
-    .from("checkout_sessions")
-    .update({
-      status: "checked_in",
-      ended_at: now,
-      released_at: now,
-      released_by: input.actorUserId,
-      released_reason: input.reason ?? `Force released by ${input.actorName}`,
-    })
-    .eq("document_id", input.documentId)
-    .eq("status", "active")
-    .select("id");
-  if (sessErr) throw new Error(`Force release failed on the session: ${sessErr.message}`);
-  // (Zero session rows is legitimate here — the lock can exist without an
-  // active session row; the document write below is the authoritative half.)
-
+  // SURF-4 done-when 2: the session close and the lock clear are ONE
+  // transaction (the force_release_document RPC). The existing guards still
+  // fire inside it — a refusal leaves BOTH halves exactly as they were, so
+  // the two can no longer diverge into a checked-in session with a live lock
+  // (or the reverse). OWN-14: a refusal is loud.
   const episode = await getActiveEpisode(input.documentId);
-
-  const { data: docRows, error: docErr } = await supabase
-    .from("documents")
-    .update({
-      checked_out_by: null,
-      checked_out_by_name: null,
-      checked_out_at: null,
-      checkout_note: null,
-      current_lock_id: null,
-      active_collaborators: [],
-    })
-    .eq("id", input.documentId)
-    .select("id");
-  if (docErr) throw new Error(`Force release failed: ${docErr.message}`);
-  if (!docRows || docRows.length === 0) {
-    throw new Error("Force release was refused — the lock was NOT cleared (releasing another user's checkout needs controller authority).");
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("force_release_document", {
+    p_doc: input.documentId,
+    p_reason: input.reason ?? `Force released by ${input.actorName}`,
+  });
+  if (rpcErr) {
+    throw new Error(`Force release was refused — the lock was NOT cleared: ${rpcErr.message}`);
+  }
+  const rpc = (rpcData ?? null) as { documentId?: string; endedSessions?: number } | null;
+  if (!rpc || rpc.documentId !== input.documentId) {
+    throw new Error("Force release was not confirmed by the database — the lock was NOT cleared.");
   }
 
   if (episode) {
@@ -817,7 +796,10 @@ export async function reconcileDocumentCheckoutState(
   const sessions = await fetchActiveSessions(documentId, db);
 
   if (sessions.length === 0) {
-    await db
+    // SURF-4: the lock-column guard (DCK-3) refuses a non-holder without
+    // checkout.force_release — this repair path must not pretend it worked.
+    // Checked write; a refusal is logged and reported, never swallowed.
+    const { data: cleared, error: clearErr } = await db
       .from("documents")
       .update({
         checked_out_by: null,
@@ -827,7 +809,16 @@ export async function reconcileDocumentCheckoutState(
         current_lock_id: null,
         active_collaborators: [],
       })
-      .eq("id", documentId);
+      .eq("id", documentId)
+      .select("id");
+    if (clearErr) {
+      console.warn("[reconcileDocumentCheckoutState] stale lock NOT cleared:", clearErr.message);
+      return;
+    }
+    if (!cleared || cleared.length === 0) {
+      console.warn("[reconcileDocumentCheckoutState] stale lock NOT cleared — refused (needs the holder or checkout.force_release)");
+      return;
+    }
     const episode = await getActiveEpisode(documentId, { client: db });
     if (episode) {
       await closeEpisode({

@@ -22,7 +22,9 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
 import { appAlert } from "@/components/providers/DialogProvider";
 
-const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]);
+// DEC-17: this page's main action (schema health) is an Admin-only API — the
+// client gate now says the same thing instead of admitting DocCtrl to a 403.
+const ADMIN_ROLES = new Set(["Admin"]);
 
 interface OrgSummary {
   id: string;
@@ -35,8 +37,8 @@ interface OrgSummary {
 }
 
 export default function WorkspaceSettingsPage() {
-  const { activeRole, activeOrgId } = useRole();
-  const canRead = !!activeRole && ADMIN_ROLES.has(activeRole);
+  const { activeRole, activeOrgId, roles } = useRole();
+  const canRead = [activeRole, ...roles].some((r) => !!r && ADMIN_ROLES.has(r));
   const [org, setOrg] = useState<OrgSummary | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [libraryCount, setLibraryCount] = useState<number | null>(null);

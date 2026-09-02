@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
+import { revokeMember } from '@/lib/members';
 import type { Role } from '@/types/schema';
 import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS, isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE } from '@/lib/roleCapabilities';
 import {
@@ -67,7 +68,8 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
 ];
 
 export default function AdminUsersPage() {
-  const { activeRole, activeOrgId, uid } = useRole();
+  const { activeRole, activeOrgId, uid, userEmail } = useRole();
+  const userEmailForAudit = userEmail ?? null;
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -233,23 +235,55 @@ export default function AdminUsersPage() {
   const removeRole = (member: MemberRow, role: Role) =>
     persistRoles(member, rolesOf(member).filter((r) => r !== role));
 
-  // Remove a member from this workspace. Deletes the org_members row (revokes
-  // access immediately) — it does NOT delete their login account, so they can
-  // be re-added later. Guards against removing yourself.
+  // SURF-1 / DEC-20: revocation goes through the `revoke_member` RPC — the
+  // one path that actually revokes (there was no DELETE policy; the old
+  // client delete matched zero rows and reported success), surfaces a refusal
+  // as an error instead of a disappearing row, and on REMOVE runs the GAP-5
+  // succession sweep. Suspend is the default; remove is behind a confirmation.
+  const handleSuspendMember = async (member: MemberRow) => {
+    if (!!uid && member.uid === uid) { await appAlert("You can't suspend yourself."); return; }
+    if (!activeOrgId) return;
+    const who = member.display_name || member.email || 'this member';
+    if (!(await appConfirm({ message: `Suspend ${who}? They lose access immediately but keep their membership record, roles, and ownership — you can restore them later.`, tone: 'danger' }))) return;
+    setRemovingId(member.id);
+    try {
+      await revokeMember({ memberId: member.id, mode: 'suspend', orgId: activeOrgId, actorUserId: uid ?? '', actorName: userEmailForAudit, memberLabel: who });
+      setMembers((prev) => prev.map((m) => m.id === member.id ? { ...m, status: 'suspended' } : m));
+    } catch (err) {
+      await appAlert({ message: `Couldn't suspend member: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
+    } finally { setRemovingId(null); }
+  };
+
+  const handleRestoreMember = async (member: MemberRow) => {
+    if (!activeOrgId) return;
+    setRemovingId(member.id);
+    try {
+      await revokeMember({ memberId: member.id, mode: 'restore', orgId: activeOrgId, actorUserId: uid ?? '', actorName: userEmailForAudit });
+      setMembers((prev) => prev.map((m) => m.id === member.id ? { ...m, status: 'active' } : m));
+    } catch (err) {
+      await appAlert({ message: `Couldn't restore member: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
+    } finally { setRemovingId(null); }
+  };
+
   const handleRemoveMember = async (member: MemberRow) => {
     if (!!uid && member.uid === uid) {
       await appAlert("You can't remove yourself from the workspace.");
       return;
     }
+    if (!activeOrgId) return;
     const who = member.display_name || member.email || 'this member';
-    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access immediately. This does not delete their login account, and you can re-add them later.`, tone: 'danger' }))) {
+    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access immediately, everything they own becomes UNOWNED (cleared and audited — never silently reassigned), their open checkouts end, and their personal grants are revoked. This does not delete their login account. Prefer Suspend if this may be temporary.`, tone: 'danger' }))) {
       return;
     }
     setRemovingId(member.id);
     try {
-      const { error } = await supabase.from('org_members').delete().eq('id', member.id);
-      if (error) throw error;
+      const result = await revokeMember({ memberId: member.id, mode: 'remove', orgId: activeOrgId, actorUserId: uid ?? '', actorName: userEmailForAudit, memberLabel: who });
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
+      const c = result.cleared;
+      const total = c ? c.libraries.length + c.collections.length + c.documents.length + c.teams.length : 0;
+      if (total > 0) {
+        await appAlert(`${who} was removed. ${total} item${total === 1 ? '' : 's'} they owned ${total === 1 ? 'is' : 'are'} now unowned — assign new owners from the register (controllers have been notified).`);
+      }
     } catch (err) {
       console.error('Remove member failed:', err);
       await appAlert({ message: `Couldn't remove member: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
@@ -437,14 +471,38 @@ export default function AdminUsersPage() {
                         {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button
-                          onClick={() => handleRemoveMember(m)}
-                          disabled={removingId === m.id || (!!uid && m.uid === uid)}
-                          title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace'}
-                          className="text-[var(--color-text-faint)] hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                        </button>
+                        <div className="inline-flex items-center gap-2">
+                          {m.status === 'active' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleSuspendMember(m)}
+                              disabled={removingId === m.id || (!!uid && m.uid === uid)}
+                              title={!!uid && m.uid === uid ? "You can't suspend yourself" : 'Suspend (keeps the record; restorable)'}
+                              className="px-2 py-1 rounded text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-amber-400 hover:text-amber-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              Suspend
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreMember(m)}
+                              disabled={removingId === m.id}
+                              title="Restore access"
+                              className="px-2 py-1 rounded text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-emerald-400 hover:text-emerald-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              Restore
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(m)}
+                            disabled={removingId === m.id || (!!uid && m.uid === uid)}
+                            title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace (clears what they own)'}
+                            className="text-[var(--color-text-faint)] hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

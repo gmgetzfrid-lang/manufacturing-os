@@ -20,13 +20,38 @@ export interface EffectiveOwner {
 }
 
 /** Most-specific set owner wins (document > folder > library). null = no explicit
- *  owner, i.e. responsibility sits with the org's Admin/DocCtrl. */
-export function resolveEffectiveOwner(doc?: OwnerCols | null, folder?: OwnerCols | null, library?: OwnerCols | null): EffectiveOwner {
+ *  owner, i.e. responsibility sits with the org's Admin/DocCtrl.
+ *
+ *  GAP-5 / OWN-12: when `activeUids` is supplied, a level whose owner is NOT an
+ *  active member is skipped — the resolution falls through to the next level
+ *  and ultimately to null, so a departed or suspended owner is never the
+ *  effective owner for an authority decision or a notification route. The
+ *  database's `user_is_effective_owner` applies the same fall-through. */
+export function resolveEffectiveOwner(
+  doc?: OwnerCols | null,
+  folder?: OwnerCols | null,
+  library?: OwnerCols | null,
+  activeUids?: ReadonlySet<string> | null,
+): EffectiveOwner {
   const levels: [OwnerCols | null | undefined, Level][] = [[doc, "document"], [folder, "collection"], [library, "library"]];
   for (const [lvl, source] of levels) {
-    if (lvl?.owner_user_id) return { userId: lvl.owner_user_id, name: lvl.owner_name ?? null, source };
+    if (!lvl?.owner_user_id) continue;
+    if (activeUids && !activeUids.has(lvl.owner_user_id)) continue;
+    return { userId: lvl.owner_user_id, name: lvl.owner_name ?? null, source };
   }
   return { userId: null, name: null, source: null };
+}
+
+/** The subset of `uids` that are ACTIVE members of `orgId` (any uid when orgId
+ *  is unknown is treated as active — never narrows on missing context). */
+export async function activeMemberUids(orgId: string | null | undefined, uids: Array<string | null | undefined>): Promise<Set<string>> {
+  const wanted = Array.from(new Set(uids.filter((u): u is string => !!u)));
+  if (wanted.length === 0) return new Set();
+  if (!orgId) return new Set(wanted);
+  const { data, error } = await supabase
+    .from("org_members").select("uid").eq("org_id", orgId).eq("status", "active").in("uid", wanted);
+  if (error) return new Set(wanted); // fail-safe: an unreadable roster must not un-own everything
+  return new Set((data ?? []).map((r) => (r as { uid: string }).uid));
 }
 
 /** Pure owner resolution for console/register rows: document > folder >
@@ -82,26 +107,36 @@ export function ownershipRegisterToCsv(rows: OwnershipRegisterRow[]): string {
  *  explicit owner is set at any level. */
 export async function effectiveOwnerForDocument(doc: {
   ownerUserId?: string | null; ownerName?: string | null; collectionId?: string | null; libraryId: string;
+  /** When known, lets the resolver require an ACTIVE membership at every
+   *  level (GAP-5). Resolved from the library row when omitted. */
+  orgId?: string | null;
 }): Promise<EffectiveOwner> {
   let folder: OwnerCols | null = null;
   if (doc.collectionId) {
     const { data } = await supabase.from("collections").select("owner_user_id, owner_name").eq("id", doc.collectionId).maybeSingle();
     folder = (data as OwnerCols) ?? null;
   }
-  const { data: lib } = await supabase.from("libraries").select("owner_user_id, owner_name, owner_team_id").eq("id", doc.libraryId).maybeSingle();
-  const explicit = resolveEffectiveOwner({ owner_user_id: doc.ownerUserId, owner_name: doc.ownerName }, folder, (lib as OwnerCols) ?? null);
+  const { data: lib } = await supabase.from("libraries").select("owner_user_id, owner_name, owner_team_id, org_id").eq("id", doc.libraryId).maybeSingle();
+  const orgId = doc.orgId ?? ((lib as { org_id?: string | null } | null)?.org_id ?? null);
+  const teamId = (lib as { owner_team_id?: string | null } | null)?.owner_team_id ?? null;
+  let sup: string | null = null;
+  let teamName: string | null = null;
+  if (teamId) {
+    const { data: team } = await supabase.from("teams").select("supervisor_user_id, name").eq("id", teamId).maybeSingle();
+    sup = (team?.supervisor_user_id as string | null) ?? null;
+    teamName = (team?.name as string | null) ?? null;
+  }
+  // GAP-5 / OWN-12: only ACTIVE members can be effective owners; an inactive
+  // owner at any level falls through to the next (and the team rung, and null).
+  const active = await activeMemberUids(orgId, [doc.ownerUserId, folder?.owner_user_id, (lib as OwnerCols | null)?.owner_user_id, sup]);
+  const explicit = resolveEffectiveOwner({ owner_user_id: doc.ownerUserId, owner_name: doc.ownerName }, folder, (lib as OwnerCols) ?? null, active);
   if (explicit.userId) return explicit;
 
   // Team-owned library → the team's supervisor is the effective owner.
-  const teamId = (lib as { owner_team_id?: string | null } | null)?.owner_team_id ?? null;
-  if (teamId) {
-    const { data: team } = await supabase.from("teams").select("supervisor_user_id, name").eq("id", teamId).maybeSingle();
-    const sup = (team?.supervisor_user_id as string | null) ?? null;
-    if (sup) {
-      const { data: m } = await supabase.from("org_members").select("display_name, email").eq("uid", sup).maybeSingle();
-      const name = (m?.display_name as string) || (m?.email as string) || (team?.name as string) || "Supervisor";
-      return { userId: sup, name, source: "team" };
-    }
+  if (sup && active.has(sup)) {
+    const { data: m } = await supabase.from("org_members").select("display_name, email").eq("uid", sup).maybeSingle();
+    const name = (m?.display_name as string) || (m?.email as string) || teamName || "Supervisor";
+    return { userId: sup, name, source: "team" };
   }
   return { userId: null, name: null, source: null };
 }

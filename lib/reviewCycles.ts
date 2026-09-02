@@ -269,12 +269,16 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
   if (due.length === 0) return 0;
 
   // Resolve folder/library policy + owner once for the whole org.
-  const [{ data: libs }, { data: cols }, { data: ctrls }] = await Promise.all([
+  const [{ data: libs }, { data: cols }, { data: ctrls }, { data: activeRows }] = await Promise.all([
     supabase.from("libraries").select("id, review_policy, owner_user_id, owner_name").eq("org_id", orgId),
     supabase.from("collections").select("id, review_policy, owner_user_id, owner_name").eq("org_id", orgId),
     supabase.from("org_members").select("uid, role").eq("org_id", orgId).eq("status", "active")
       .or("role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}"),
+    supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active"),
   ]);
+  // GAP-5 / OWN-12: a departed or suspended owner never routes a notice — the
+  // resolver falls through to the next level and finally to the controllers.
+  const activeUids = new Set((activeRows ?? []).map((r) => (r as { uid: string }).uid));
   type Row = { id: string; review_policy: ReviewPolicy | null; owner_user_id: string | null; owner_name: string | null };
   const libPol = new Map((libs as Row[] ?? []).map((l) => [l.id, l.review_policy ?? null]));
   const colPol = new Map((cols as Row[] ?? []).map((c) => [c.id, c.review_policy ?? null]));
@@ -294,6 +298,7 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
       { owner_user_id: doc.owner_user_id, owner_name: doc.owner_name },
       doc.collection_id ? colOwn.get(doc.collection_id) : null,
       libOwn.get(doc.library_id),
+      activeUids,
     );
 
     // A delegated owner takes it off Admin/DocCtrl's plate; an unowned doc is

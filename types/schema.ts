@@ -207,6 +207,10 @@ export interface ReviewControl {
   draftViewerTeamIds?: string[];
   /** Auto-manage the 2A/2B letter suffix during review (default true). */
   useRevLetters?: boolean;
+  /** DEC-21 (library level): when the publisher is themselves on the roster,
+   *  at least one signed PRIMARY must be someone else. Defaults ON wherever a
+   *  required-review roster is configured; `false` opts a library out. */
+  requireIndependentReviewer?: boolean;
 }
 
 /** A retention policy — how long a controlled record must be kept before it's
