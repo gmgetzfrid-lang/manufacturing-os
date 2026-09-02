@@ -162,8 +162,15 @@ together; WF-23 in the same migration as WF-2's rails):
 | `WF-1` tail (HIGH) | **RESOLVED** — policy read errors no longer cache defaults for the TTL; `org_configurations` added to `schemaExpectations` |
 
 Ship loop green: `tsc`, `eslint`, **1657 vitest** (39 new), full `next build`.
-Migration `20261038_rp_phase4_ticket_workflow_rails.sql` — **pending operator
-paste** (6-point verification + 3-line inventory ride the file).
+Migration `20261038_rp_phase4_ticket_workflow_rails.sql` — **applied &
+verified live 2026-09-01**; inventory 0/0/0. The first probe run was 5/6: the
+late-binding column check found `closed_at`/`archived_at`/`archive_id` ABSENT
+live (the archive migrations `20260809`/`20260811` had never been hand-applied
+— every workflow close had been failing on the missing `closed_at`). Repaired
+the same hour by `20261039_tickets_guarded_column_repair.sql` (applied; report
+confirmed exactly those three were missing and all 22 are present now), and
+the tickets columns now ride `schemaExpectations` so schema-health shouts
+first next time.
 
 ### Phase 2 — database honesty (the trap phase)
 

@@ -187,6 +187,47 @@ describe("workflow-action route — the server half of the Phase 4 guards", () =
   });
 });
 
+describe("20261039 — the guarded-column repair covers everything 20261038 references", () => {
+  // Live finding 2026-09-01: the archive migrations (20260809/20260811) had
+  // never been hand-applied, so closed_at/archived_at/archive_id were absent
+  // and every client ticket write would have raised at trigger time. The
+  // repair must add (idempotently) every guarded column that is not a
+  // NOT NULL base-schema column — this pins the two files to each other.
+  const repair = readFileSync(
+    join(process.cwd(), "supabase", "migrations", "20261039_tickets_guarded_column_repair.sql"),
+    "utf8",
+  );
+  const BASE_NOT_NULL = new Set(["org_id", "ticket_id", "status", "requester_id", "created_at"]);
+  const guarded = [...updateFn.matchAll(/NEW\.(\w+)\s+IS DISTINCT FROM OLD\.\1/g)].map((m) => m[1]);
+
+  it("every guarded column outside the base schema has an ADD COLUMN IF NOT EXISTS", () => {
+    expect(guarded.length).toBe(22);
+    for (const col of guarded) {
+      if (BASE_NOT_NULL.has(col)) continue;
+      expect(repair, `repair missing: ${col}`)
+        .toMatch(new RegExp(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ${col} `));
+    }
+  });
+
+  it("the birth-nulled INSERT columns are covered too, and the report lists all 22", () => {
+    for (const m of insertFn.matchAll(/NEW\.(\w+) := NULL;/g)) {
+      expect(repair, `repair missing insert-referenced column: ${m[1]}`)
+        .toMatch(new RegExp(`ADD COLUMN IF NOT EXISTS ${m[1]} `));
+    }
+    const report = between(repair, "FROM unnest(ARRAY[", "]) AS c(col)");
+    for (const col of guarded) expect(report, `report missing: ${col}`).toContain(`'${col}'`);
+  });
+
+  it("uses the canonical types from the originating migrations", () => {
+    expect(repair).toMatch(/draft_iteration INT NOT NULL DEFAULT 0;/);
+    expect(repair).toMatch(/revision_count INT DEFAULT 0;/);
+    expect(repair).toMatch(/closed_at TIMESTAMPTZ;/);
+    expect(repair).toMatch(/archived_at TIMESTAMPTZ;/);
+    expect(repair).toMatch(/archive_id TEXT;/);
+    expect(repair).toMatch(/assigned_engineer_id UUID;/);
+  });
+});
+
 describe("migration hygiene", () => {
   it("verification block checks both triggers, the DELETE rail, and search_path pins", () => {
     const verify = between(sql, "── Verification", "── Inventory");

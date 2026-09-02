@@ -129,4 +129,14 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "documents", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Document classes — PSM MOC gate + drafting routing for drawings" },
   { table: "libraries", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Library-level document class declaration" },
   { table: "access_requests", column: "org_id", migration: "20261023_access_requests_scope_and_limit.sql", feature: "Org-scoped access requests (admin pending list, per-org isolation)" },
+  // Found absent in the live DB on 2026-09-01 by 20261038's late-binding probe
+  // (the archive migrations were never hand-applied); repaired by 20261039.
+  // The ticket triggers reference these, so their absence breaks every client
+  // ticket write — schema-health must shout, not the trigger.
+  { table: "tickets", column: "closed_at", migration: "20260811_ticket_closed_at.sql (repair: 20261039)", feature: "Ticket close clock — archive eligibility; workflow close writes it" },
+  { table: "tickets", column: "archived_at", migration: "20260809_ticket_archive.sql (repair: 20261039)", feature: "Closed-ticket archival (ticket-shed)" },
+  { table: "tickets", column: "archive_id", migration: "20260809_ticket_archive.sql (repair: 20261039)", feature: "Closed-ticket archival (ticket-shed)" },
+  { table: "tickets", column: "deliverable_rev", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
+  { table: "tickets", column: "draft_iteration", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
+  { table: "tickets", column: "engineer_review_reason", migration: "20260528_engineer_review_routing.sql (repair: 20261039)", feature: "Engineer routing (scoped review, final approval)" },
 ];

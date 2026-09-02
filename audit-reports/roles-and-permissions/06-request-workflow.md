@@ -1,7 +1,7 @@
 # 06 · Request workflow & the capability policy layer
 
 > **CLAIMED** session_01EwPqnfFHkE85ZXM4sTQvEU 2026-08-24T00:30:00Z
-> **Phase 4 worked 2026-09-01** — 12 of 24 resolved (WF-1..8, WF-14, WF-15, WF-22, WF-23); all 4 CRITICALs in this file closed. Migration `20261038` pending operator paste.
+> **Phase 4 worked 2026-09-01** — 12 of 24 resolved (WF-1..8, WF-14, WF-15, WF-22, WF-23); all 4 CRITICALs in this file closed. Migrations `20261038` + `20261039` (column repair) applied & verified live.
 
 The 12-status drafting state machine, who may drive each transition, and the
 capability policy that is supposed to make it configurable.
@@ -88,7 +88,7 @@ which are currently masked. Read those three before shipping this.
 - Done-when: (1) ✓ guarded columns move only through the service routes; (2) ✓ every census'd client write touches no guarded column, and the shape test asserts the guard does NOT cover `priority`/`comments`/`attachments`/`watchers`/`unread_by`/`last_modified`/`metadata`; (3) the raw-PATCH refusal cannot be integration-tested here (no live DB in CI) — the trigger DDL and its column list are pinned by `lib/__tests__/rpPhase4Migration.test.ts`, and the migration's verification block proves both triggers installed live.
 - **Residual (recorded):** a client can still rewrite `history`/`comments`/`attachments` CONTENT at equal-or-greater length (WF-9's move-behind-routes covers that half and stays OPEN); `unread_by`/`watchers` remain free client columns by design.
 - Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`; tests `lib/__tests__/rpPhase4Migration.test.ts`.
-- Migration: `20261038_rp_phase4_ticket_workflow_rails.sql` — **printed for operator paste; pending apply** (6-point verification + 3-line inventory ride the file; this line flips to "applied & verified live" when the probe booleans come back).
+- Migration: `20261038_rp_phase4_ticket_workflow_rails.sql` — **applied & verified live 2026-09-01** — first probe 5/6 true; the late-binding column probe was FALSE: `closed_at`, `archived_at`, `archive_id` were absent live (the `20260809`/`20260811` archive migrations had never been hand-applied, so every workflow close and every ticket-shed archive had been failing with a 500 naming `closed_at`). Repaired by `20261039` (idempotent `ADD COLUMN IF NOT EXISTS`, before/after report pasted back: all 22 present after, exactly those 3 absent before); the six columns now ride `lib/schemaExpectations.ts` so `/api/admin/schema-health` catches this class of drift for tickets. Inventory 0 / 0 / 0.
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-integrity / safety
 - **Locations:**
@@ -272,7 +272,7 @@ appears exactly when it becomes possible to honour. Build spec: `GAP-2`.
 **Resolution (2026-09-01, roles-and-permissions Phase 4).** An insert-time trigger, exactly as the chain-reaction note prescribes (the three client insert paths keep working unmodified): `trg_ticket_insert_integrity` (BEFORE INSERT, `20261038`) forces, for any authenticated client insert, `requester_id := auth.uid()`, `requester_email` := the member's `org_members.email` (when present), and `requester_role` := the stamped value ONLY if it is a role the caller actually HOLDS (headline or additive — multi-role members legitimately file under any of their roles), otherwise their headline role. `status` is forced to `PENDING_ASSIGNMENT` — a client cannot spawn a ticket mid-workflow — and every mid-workflow field (assigned drafter/engineer trio, `engineer_approved_at`, `closed_at`, `archived_at`, `archive_id`) is nulled at birth. Non-members are refused outright. Service-role inserts (`auth.uid() IS NULL`) pass untouched. The SESS-1 interaction (a placeholder "Viewer" stamped during membership resolution) is narrowed to the safe direction: "Viewer" not-in-collection is overwritten with the real headline; a held "Viewer" stamps as before, and "Viewer" fails toward MORE review, never less. Also carries WF-15's insert half (see that record).
 - Done-when: (1) ✓ `requester_role` + `requester_id` (+ email) reflect the authenticated caller's actual membership; (2) ✓ client-created tickets exist only in `PENDING_ASSIGNMENT`; (3) ✓ service-role creation paths pass through unchanged.
 - Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`; tests `lib/__tests__/rpPhase4Migration.test.ts` (WF-5 describe: identity force, held-role rule, status force, birth-nulls).
-- Migration: `20261038` — **printed for operator paste; pending apply** (verification probes ride the file). Cross-reference: also closes [`drafting-flow/AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3)'s substrate — record it there when that area is worked.
+- Migration: `20261038` — **applied & verified live 2026-09-01** (see WF-2 for the probe detail and the `20261039` column repair). Cross-reference: also closes [`drafting-flow/AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3)'s substrate — record it there when that area is worked.
 - **Verification:** CONFIRMED
 - **Blast radius:** security / safety
 - **Locations:**
@@ -779,7 +779,7 @@ closed. **Fix them together or the `WF-3` remediation is a no-op.**
 **Resolution (2026-09-01, roles-and-permissions Phase 4 — the narrower fix the chain-reaction note prescribes, NOT a type union).** Two halves. (1) Insert validation: `trg_ticket_insert_integrity` (`20261038`) refuses a client-created ticket whose `request_type` is outside the org's configured list ∪ {`Revision`, `ASBUILT`, `RFI`} — the union keeps the three programmatic creators working; orgs with no configured list keep free vocabulary; service inserts pass. (2) The close-without-review behavior is now a PROPERTY OF THE CONFIGURED TYPE: `SelectOption.closeWithoutReview` (checkbox per request-type option in /admin/requests, RFI checked in the shipped defaults), read by the route and the ticket page into `WorkflowContext.closeWithoutReviewTypes`; the engine offers `close_rfi` only for types in that list (default `['RFI']` — historical behavior — and a configured list REPLACES the default, so an org can both grant it to other types and revoke it from RFI). The `DRAFTING → CLOSED` edge additionally sits behind WF-8's drafter scoping now, so "any Drafter in the org" no longer reaches it on someone else's ticket. Prerequisite for `GAP-1` recorded as satisfied.
 - Done-when: ✓ creation outside the configured list refused at the DB (shape-pinned; live probe rides `20261038`); ✓ close-without-review driven by config, not the magic string (engine tests: FIELDQ configured → offered; RFI unconfigured → not offered).
 - Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`, `lib/workflow.ts`, `app/api/tickets/workflow-action/route.ts`, `app/(protected)/requests/[id]/page.tsx`, `app/(protected)/admin/requests/page.tsx`, `types/schema.ts`; tests `lib/__tests__/workflow.test.ts` (WF-15 describe), `lib/__tests__/rpPhase4Migration.test.ts`.
-- Migration: `20261038` — **printed for operator paste; pending apply**.
+- Migration: `20261038` — **applied & verified live 2026-09-01** (see WF-2).
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / process
 - **Locations:**
@@ -1136,7 +1136,7 @@ missing, rather than producing an empty transition and a success audit row.
 **Resolution (2026-09-01, roles-and-permissions Phase 4 — landed IN THE SAME migration as WF-2's rails, honoring the sequencing rule "WF-2 only after WF-23").** `org_capability_allows` re-created (`20261038`) with the fallback CASE covering ALL 17 capabilities from `CAPABILITY_DEFS`, token-for-token (MGMT trios, `DraftingSupervisor` on assign, `Engineer` tiers, `"*"` holds, `Admin/DocCtrl` force-release and archive view), `ELSE '[]'` still denying unknowns; body otherwise byte-equivalent in semantics to `20261025` (reads `data`, roles collection, Engineer token, grants, `SECURITY DEFINER SET search_path = public` restated). The "verified by a test rather than by inspection" done-when is met literally: `rpPhase4Migration.test.ts` PARSES the `WHEN '<cap>' THEN '[...]'::jsonb` pairs out of the migration and compares them `toEqual` against the live `CAPABILITY_DEFS` import — a divergence in either direction (missing id, extra id, differing tokens) fails the suite.
 - Done-when: ✓ SQL fallback and TS `DEFAULTS` agree for every `CapabilityId`, enforced by the census test on every run.
 - Files: `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql`; tests `lib/__tests__/rpPhase4Migration.test.ts` (WF-23 describe).
-- Migration: `20261038` — **printed for operator paste; pending apply** (probe: prosrc contains the full capability set).
+- Migration: `20261038` — **applied & verified live 2026-09-01** (probe: prosrc carries the full capability set — true).
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
 - **Locations:**
