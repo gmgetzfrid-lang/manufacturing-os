@@ -226,6 +226,33 @@ describe("20261044 — owner delegation (DEL-1/GAP-3), bounded", () => {
     expect(pol).toMatch(/AS RESTRICTIVE FOR UPDATE/);
     expect(pol).toMatch(/owner_user_id::text = auth\.uid\(\)::text/);
     expect(pol).toMatch(/can_manage_node\(acl_index, org_id\)/);
+    // The admin-grant bound is NOT a policy disjunct: WITH CHECK sees only the
+    // NEW row and the owner disjunct is already true, so "OR NOT beyond(...)"
+    // could never refuse anything. WITH CHECK mirrors USING; the trigger bounds.
+    expect(pol).not.toMatch(/acl_index_grants_admin_beyond/);
+    const using = between(pol, "USING (", "WITH CHECK (");
+    const check = pol.slice(pol.indexOf("WITH CHECK ("));
+    expect(check.replace("WITH CHECK (", "").replace(/\s+/g, " ").trim().replace(/\)\s*$/, ""))
+      .toBe(using.replace("USING (", "").replace(/\s+/g, " ").trim().replace(/\)\s*$/, ""));
+  });
+
+  it("the folder admin-grant bound is a BEFORE UPDATE trigger that compares OLD and NEW (same shape as the documents guard)", () => {
+    const fn = between(m44, "CREATE OR REPLACE FUNCTION collections_guard_access_change", "$$;");
+    expect(fn).toMatch(/IF auth\.uid\(\) IS NULL THEN RETURN NEW; END IF;/);
+    expect(fn).toMatch(/NEW\.acl_index IS DISTINCT FROM OLD\.acl_index\s*\n\s*AND NOT is_org_controller\(OLD\.org_id\)\s*\n\s*AND acl_index_grants_admin_beyond\(OLD\.acl_index, NEW\.acl_index\)/);
+    expect(fn).toMatch(/SET search_path = public/);
+    expect(m44).toMatch(/CREATE TRIGGER collections_guard_access\s*\n\s*BEFORE UPDATE ON collections\s*\n\s*FOR EACH ROW EXECUTE FUNCTION collections_guard_access_change\(\);/);
+    // The DDL must finish (COMMIT) after the trigger, before verification.
+    expect(m44.indexOf("CREATE TRIGGER collections_guard_access")).toBeLessThan(m44.indexOf("COMMIT;"));
+  });
+
+  it("widening: a 4-line pre-apply inventory that depends on nothing the DDL creates", () => {
+    const inv = m44.slice(m44.indexOf("── Inventory"));
+    expect(inv).toMatch(/run BEFORE the DDL/);
+    expect((inv.match(/UNION ALL/g) ?? []).length).toBe(3);
+    expect(inv).not.toMatch(/acl_index_grants_admin_beyond|collections_guard_access/);
+    expect(inv).toMatch(/m\.role IN \('Admin', 'DocCtrl'\) OR m\.roles && ARRAY\['Admin', 'DocCtrl'\]::text\[\]/);
+    expect(m44).toMatch(/expect true × 7/);
   });
 });
 

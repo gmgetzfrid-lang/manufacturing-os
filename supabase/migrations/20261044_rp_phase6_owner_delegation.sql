@@ -16,6 +16,12 @@
 --   2. collections_update_controllers — controller OR folder owner OR
 --      manage-grant (was controller-only: "folder-level delegation is dead at
 --      the database").
+--   3. collections_guard_access — the same non-controller admin-grant bound
+--      for folders, as a BEFORE UPDATE trigger. (A policy's WITH CHECK sees
+--      only the NEW row, so "no admin grants beyond what the folder already
+--      carried" can only be judged where OLD and NEW are both visible — the
+--      shape the documents guard already has. An earlier draft carried the
+--      bound as an OR-disjunct of the policy, which is unenforceable.)
 -- ─────────────────────────────────────────────────────────────────────────────
 
 BEGIN;
@@ -96,13 +102,34 @@ CREATE POLICY collections_update_controllers ON collections
     is_org_controller(org_id)
     OR owner_user_id::text = auth.uid()::text
     OR can_manage_node(acl_index, org_id)
-    -- GAP-3 bound: a non-controller's folder write may not mint admin grants.
-    OR NOT acl_index_grants_admin_beyond('{}'::jsonb, acl_index)
   );
+
+-- ── 3. folders: the non-controller admin-grant bound (BEFORE UPDATE) ────────
+CREATE OR REPLACE FUNCTION collections_guard_access_change()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  -- Service role / cron (the nightly index rebuild) has a null uid and passes.
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  -- GAP-3 bound: a NON-controller may not mint new admin / managePermissions
+  -- grants on a folder — compared per subject bucket, OLD against NEW.
+  IF NEW.acl_index IS DISTINCT FROM OLD.acl_index
+     AND NOT is_org_controller(OLD.org_id)
+     AND acl_index_grants_admin_beyond(OLD.acl_index, NEW.acl_index) THEN
+    RAISE EXCEPTION 'Owners can delegate access but cannot grant Admin or Manage Permissions — ask a controller.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS collections_guard_access ON collections;
+CREATE TRIGGER collections_guard_access
+  BEFORE UPDATE ON collections
+  FOR EACH ROW EXECUTE FUNCTION collections_guard_access_change();
 
 COMMIT;
 
--- ── Verification (read-only) — expect true × 4 ──────────────────────────────
+-- ── Verification (read-only) — expect true × 7 ──────────────────────────────
 SELECT 'documents access guard carries the owner arm' AS check,
        (SELECT prosrc LIKE '%user_is_effective_owner(OLD.owner_user_id, OLD.collection_id, OLD.library_id, auth.uid())%'
           AND prosrc LIKE '%acl_index_grants_admin_beyond(OLD.acl_index, NEW.acl_index)%'
@@ -117,4 +144,45 @@ SELECT 'folder update policy admits owner and manage-grant',
           FROM pg_policies WHERE tablename = 'collections' AND policyname = 'collections_update_controllers')
 UNION ALL
 SELECT 'admin-grant bound helper installed',
-       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'acl_index_grants_admin_beyond');
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'acl_index_grants_admin_beyond')
+UNION ALL
+SELECT 'folder update policy carries no vacuous bound (the bound lives in the trigger)',
+       (SELECT with_check NOT LIKE '%acl_index_grants_admin_beyond%'
+          FROM pg_policies WHERE tablename = 'collections' AND policyname = 'collections_update_controllers')
+UNION ALL
+SELECT 'folders admin-grant bound installed (BEFORE UPDATE trigger, OLD vs NEW)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'collections_guard_access'
+                AND tgrelid = 'collections'::regclass AND NOT tgisinternal)
+       AND (SELECT prosrc LIKE '%acl_index_grants_admin_beyond(OLD.acl_index, NEW.acl_index)%'
+              FROM pg_proc WHERE proname = 'collections_guard_access_change')
+UNION ALL
+SELECT 'search_path pinned on both guard functions',
+       (SELECT COUNT(*) = 2 FROM pg_proc
+         WHERE proname IN ('documents_guard_access_change', 'collections_guard_access_change')
+           AND array_to_string(proconfig, ',') LIKE '%search_path=public%');
+
+-- ── Inventory (read-only, aggregate) — run BEFORE the DDL ───────────────────
+-- This migration WIDENS folder UPDATE (owner + manage-grant) and document ACL
+-- authority (owner arm); the reversal clause needs the pre-apply population.
+-- Uses no object this migration creates, so it runs against the live schema.
+SELECT 'folders whose owner is not a controller (gain UPDATE / delegation authority)' AS inventory, COUNT(*)::text AS n
+FROM collections c WHERE c.owner_user_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = c.org_id AND m.uid = c.owner_user_id AND m.status = 'active'
+                  AND (m.role IN ('Admin', 'DocCtrl') OR m.roles && ARRAY['Admin', 'DocCtrl']::text[]))
+UNION ALL
+SELECT 'documents whose owner is not a controller (gain the ACL owner arm)', COUNT(*)::text
+FROM documents d WHERE d.owner_user_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = d.org_id AND m.uid = d.owner_user_id AND m.status = 'active'
+                  AND (m.role IN ('Admin', 'DocCtrl') OR m.roles && ARRAY['Admin', 'DocCtrl']::text[]))
+UNION ALL
+SELECT 'folders whose index already carries admin / managePermissions grants', COUNT(*)::text
+FROM collections c WHERE EXISTS (
+  SELECT 1 FROM (VALUES ('users'), ('roles'), ('teams'), ('orgs')) b(bucket), (VALUES ('admin'), ('managePermissions')) a(action)
+  WHERE jsonb_typeof(c.acl_index->'allow'->b.bucket->a.action) = 'array'
+    AND jsonb_array_length(c.acl_index->'allow'->b.bucket->a.action) > 0)
+UNION ALL
+SELECT 'documents whose index already carries admin / managePermissions grants', COUNT(*)::text
+FROM documents d WHERE EXISTS (
+  SELECT 1 FROM (VALUES ('users'), ('roles'), ('teams'), ('orgs')) b(bucket), (VALUES ('admin'), ('managePermissions')) a(action)
+  WHERE jsonb_typeof(d.acl_index->'allow'->b.bucket->a.action) = 'array'
+    AND jsonb_array_length(d.acl_index->'allow'->b.bucket->a.action) > 0);

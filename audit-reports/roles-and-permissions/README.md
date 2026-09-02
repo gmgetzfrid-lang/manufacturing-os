@@ -211,8 +211,9 @@ Three read-only recon agents first; every widening carries its inventory.
 Ship loop green: `tsc`, `eslint`, **1736 vitest** (37 new), full `next build`.
 Migrations, one at a time in order, each with its verification (and inventory)
 block: `20261042` — **applied & verified live 2026-09-02** (7/7, inventory all
-zero); `20261043` → `20261045` — **pending operator paste** (`20261043` §0 repairs the
-`revoke_member` TEXT[] assignment found in pre-flight; see `SURF-1`).
+zero); `20261043` — **applied & verified live 2026-09-02** (7/7, inventory all zero; its
+§0 repaired the `revoke_member` TEXT[] assignment found in pre-flight, see
+`SURF-1`); `20261044` → `20261045` — **pending operator paste**.
 
 ### Phase 2 — database honesty (the trap phase)
 
