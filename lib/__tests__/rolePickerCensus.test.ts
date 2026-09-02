@@ -58,3 +58,30 @@ describe("role pickers offer the whole role model (OWN-9)", () => {
     expect(roleArrays.length).toBe(ALL_ROLES.length);
   });
 });
+
+describe("role pickers the first census did not cover", () => {
+  it("the members page ROLE_OPTIONS offers every role, exactly once (values, not labels)", () => {
+    const src = read("app/(protected)/admin/users/page.tsx");
+    const block = between(src, "const ROLE_OPTIONS:", "];");
+    const values = [...block.matchAll(/value:\s*'([^']+)'/g)].map((m) => m[1]);
+    expect(new Set(values)).toEqual(new Set(ALL_ROLES));
+    expect(values.length).toBe(ALL_ROLES.length);
+  });
+
+  it("the library wizard ROLE_GROUPS covers every role, exactly once (DraftingSupervisor was missing)", () => {
+    const src = read("app/(protected)/admin/libraries/LibraryWizard.tsx");
+    const block = between(src, "const ROLE_GROUPS = [", "];");
+    const roles = [...block.matchAll(/roles:\s*\[([^\]]*)\]/g)]
+      .flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));
+    expect(new Set(roles)).toEqual(new Set(ALL_ROLES));
+    expect(roles.length).toBe(ALL_ROLES.length);
+  });
+});
+
+function between(text: string, from: string, to: string): string {
+  const a = text.indexOf(from);
+  if (a < 0) throw new Error(`anchor not found: ${from}`);
+  const b = text.indexOf(to, a + from.length);
+  if (b < 0) throw new Error(`end not found after ${from}: ${to}`);
+  return text.slice(a, b);
+}

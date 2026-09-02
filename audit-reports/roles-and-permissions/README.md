@@ -172,6 +172,25 @@ confirmed exactly those three were missing and all 22 are present now), and
 the tickets columns now ride `schemaExpectations` so schema-health shouts
 first next time.
 
+### Phase 5 — role resolution (session 2026-09-01)
+
+Every item widens authority, so each shipped only with its inventory
+counted; recon maps (three read-only agents) preceded every edit.
+
+| Item | Outcome |
+|---|---|
+| `OWN-3` / `DEC-2` (CRITICAL) | **RESOLVED** — the controller tier is a property of the role COLLECTION: four SQL sites re-created byte-faithfully with the controller check substituted (`enforce_document_publish_guard`, `user_can_publish_on_library` — whose ACL role matching now evaluates every held role — `publish_revision`, the sign-off/ack policies) — migration `20261040`; `node_visible` LAST and separately — migration `20261041`; app mirrors (`isControllerPrincipal`, `Principal.roles`, `getOrgControllers` + five sibling reads on the union, ten UI surfaces); `ROLE_RANK` untouched |
+| `CHAIN-1` (HIGH) | **RESOLVED** — restrictions bind on ANY held role (edit gate, reduced navigation), and the class was closed at its root: the ACL role-subject matcher and index evaluator match any held role for deny AND allow; download-url's `roles: []` hole fixed; `ROLE-1` annotated (Contractor is load-bearing) |
+| `SURF-10` (MEDIUM) | **RESOLVED** — `authorizeOrgRole` admits by the union (`normalizeRoles`, headline-seeded); 26 of 32 call sites widen exactly as the DB already did; restore/Stripe routes unchanged |
+| `OWN-6` + `OWN-10` (HIGH ×2, together) | **RESOLVED** — `resolveActorPrincipal` resolves roles + teams from the same rows the DB reads for every mutator (fail-safe on error); the Publish button mirrors the mutator's index-first rule; the simulator queries `team_members.uid`, READS its error into a visible banner, and evaluates the mutators' principal shape (+ library-owner arm) |
+| `ADD-1` (CRITICAL) | **RESOLVED** — priority 1 was WF-7 (Phase 4); the two admin pages pass the collection; the authority sweep above closes priority 3 |
+| `DEC-3` / `DEC-4` | **IMPLEMENTED** — `DORMANT_ROLES` (explicit five; Contractor excluded by name) + `ENGINEER_TIER_ROLES` notes in `lib/roleCapabilities.ts` (picker-only, per DEC-11); every role picker greys/labels them, all stay selectable and valid as ACL subjects; the library wizard's picker was missing `DraftingSupervisor` (an OWN-9-class gap the census didn't cover) — fixed and the census now covers all four pickers |
+
+Ship loop green: `tsc`, `eslint`, **1699 vitest** (39 new), full `next build`.
+Migration `20261040_rp_phase5_additive_publish_path.sql` — **pending operator
+inventory + paste** (DEC-2 inventory rides the file as aggregate counts);
+`20261041` (node_visible) is printed only after `20261040` verifies.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

@@ -244,7 +244,7 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   for (const org of (orgs as Array<{ id: string }> | null) ?? []) {
     const { data: admins } = await sb
       .from("org_members").select("uid")
-      .eq("org_id", org.id).eq("status", "active").in("role", ["Admin", "DocCtrl"]);
+      .eq("org_id", org.id).eq("status", "active").or("role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}");
     for (const a of (admins as Array<{ uid: string }> | null) ?? []) {
       for (const alert of hot) {
         const { count } = await sb

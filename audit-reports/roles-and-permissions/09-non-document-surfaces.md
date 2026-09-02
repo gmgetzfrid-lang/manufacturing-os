@@ -457,7 +457,13 @@ hook means twenty surfaces changing behaviour at once with no reviewer, which
 ## SURF-10 · `authorizeOrgRole` reads `role`; the database reads `role OR roles[]`
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 5).** `authorizeOrgRole` selects `role, roles, status` and admits when ANY held role (`normalizeRoles(roles, role)` — seeded from the headline, so a pre-backfill `roles: []` row still evaluates its headline) is in `allowedRoles`, matching `is_org_controller`. `AuthorizedActor` keeps `role` (the headline — the audit-row consumers are unchanged) and gains `roles`. Recon confirmed every one of the 32 call sites is GRANT-style (an allow-list → 403), so the union is a pure widening with no deny-side inversion; blast radius is exactly the `["Admin","DocCtrl"]` / `["Admin","Manager","DocCtrl"]` families (26 call sites) — the `["Admin"]` restore routes and `["Admin","Manager"]` Stripe routes are behaviorally unchanged, since Admin/Manager can only ever be headlines.
+- Done-when: ✓ union computed; ✓ `['Manager','DocCtrl']` pinned admitted to a `["Admin","DocCtrl"]` gate and `['Manager']` alone refused (`rpPhase5Additive.test.ts` … see the serverAuth describe).
+- Files: `lib/serverAuth.ts`. Header-comment note per the finding's chain-reaction paragraph: `lib/roleCapabilities.ts` already carries the DEC-11 "PICKER-ONLY" banner.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / availability
 - **Locations:**

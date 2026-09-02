@@ -74,7 +74,7 @@ import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
-import { canDiscover, canWithAclChain, isControllerRole, canPublishOnLibrary } from "@/lib/permissions";
+import { canDiscover, canWithAclChain, canPublishOnLibrary, canPublishViaIndex } from "@/lib/permissions";
 import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
@@ -302,7 +302,7 @@ export default function LibraryExplorerPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
+  const { activeOrgId, activeRole, roles, hasAnyRole, uid, userEmail } = useRole();
 
   const libraryId = params.libraryId as string;
 
@@ -1430,7 +1430,7 @@ export default function LibraryExplorerPage() {
     (async () => {
       try {
         const LIB_COLS =
-          "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config";
+          "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,acl_index,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config";
         let resp = await supabase
           .from("libraries")
           .select(LIB_COLS)
@@ -1457,6 +1457,7 @@ export default function LibraryExplorerPage() {
           folderSecurity: data.folder_security ?? "Inherited",
           defaultNewVisibility: data.default_new_visibility,
           defaultNewAcl: data.default_new_acl, acl: data.acl,
+          aclIndex: data.acl_index ?? undefined,
           color: data.color ?? undefined, icon: data.icon ?? undefined,
           coverImageUrl: data.cover_image_url ?? undefined, coverTint: data.cover_tint ?? undefined,
           homeConfig: data.home_config ?? undefined,
@@ -1507,14 +1508,14 @@ export default function LibraryExplorerPage() {
       { 
         orgId: activeOrgId, 
         onError: (msg) => setError(`Folder Error: ${msg}`),
-        hideHidden: !isControllerRole(activeRole)
+        hideHidden: !hasAnyRole(["Admin", "DocCtrl"])
       }
     );
 
     return () => {
       if (unsub) unsub();
     };
-  }, [libraryId, activeOrgId, activeRole]);
+  }, [libraryId, activeOrgId, activeRole, hasAnyRole]);
 
   // Per-folder document cache (library|folder|archived → rows) for instant
   // stale-while-revalidate folder switching. A ref, so it survives re-renders
@@ -1563,7 +1564,7 @@ export default function LibraryExplorerPage() {
             .eq("org_id", activeOrgId).eq("library_id", libraryId);
           if (currentFolderId) q = q.eq("collection_id", currentFolderId);
           else q = q.is("collection_id", null);
-          if (!isControllerRole(activeRole)) q = q.eq("visibility", "normal");
+          if (!hasAnyRole(["Admin", "DocCtrl"])) q = q.eq("visibility", "normal");
           // Hide archived docs from default view. Admins can flip the toggle
           // (showArchivedDocs) to surface them for restore.
           if (!showArchivedDocs) q = q.neq("status", "Archived");
@@ -1595,7 +1596,7 @@ export default function LibraryExplorerPage() {
     fetchDocs();
 
     return () => { alive = false; };
-  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docsRefreshTick]);
+  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docsRefreshTick, hasAnyRole]);
 
   // Read-&-understood completion for the visible docs — one grouped query per
   // page, recomputed from the roster (never a cached count), so the Ack pill/
@@ -1651,19 +1652,26 @@ export default function LibraryExplorerPage() {
     return {
       uid: uid ?? "",
       role: activeRole,
+      // OWN-3 / CHAIN-1: the full collection — controller tier and ACL role
+      // subjects (allow AND deny) evaluate against every held role.
+      roles,
       orgId: activeOrgId ?? undefined,
       teamIds: myTeamIds,
     };
-  }, [uid, activeRole, activeOrgId, myTeamIds]);
+  }, [uid, activeRole, roles, activeOrgId, myTeamIds]);
 
   // May this user publish revisions in THIS library? True for Admin/DocCtrl
   // (broad tier) and for anyone the library's ACL grants the "publish" action
   // (e.g. a Drafting Supervisor on a drawings library). Gates the Publish/Revert
   // controls; the lib mutators + DB trigger enforce the same rule for real.
-  const canPublish = useMemo(
-    () => canPublishOnLibrary({ principal, libraryAcl: library?.acl }),
-    [principal, library?.acl],
-  );
+  // Mirrors resolveCanControlLibrary (the mutator's rule): the chain-resolved
+  // acl_index first — the SAME column the DB publish guard reads — then the
+  // raw ACL fallback. The button and the mutator can no longer disagree.
+  const canPublish = useMemo(() => {
+    const viaIndex = canPublishViaIndex(library?.aclIndex ?? null, principal);
+    if (viaIndex !== null) return viaIndex;
+    return canPublishOnLibrary({ principal, libraryAcl: library?.acl });
+  }, [principal, library?.acl, library?.aclIndex]);
 
   const buildFolderChain = useCallback(
     (folder?: LibraryCollection | null): AccessControl[] => {
@@ -2870,7 +2878,8 @@ export default function LibraryExplorerPage() {
     );
   }
 
-  const isController = isControllerRole(activeRole);
+  // OWN-3: controller tier follows the full role collection, not the headline.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
   const allSelected = sortedDocs.length > 0 && selectedDocIds.size === sortedDocs.length;
   const someSelected = selectedDocIds.size > 0 && !allSelected;
 
@@ -4020,7 +4029,7 @@ export default function LibraryExplorerPage() {
                                         <PillCell
                                           values={list}
                                           label={def.pillGroupLabel || def.label || "Equipment"}
-                                          canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}
+                                          canEdit={isController || !hasAnyRole(["Viewer", "Auditor"])}
                                           orgId={activeOrgId ?? undefined}
                                           userId={uid ?? undefined}
                                           canManageAssets={["Admin", "Manager", "Supervisor"].includes(activeRole) || activeRole.includes("Engineer") || activeRole === "Drafter"}
@@ -4163,6 +4172,7 @@ export default function LibraryExplorerPage() {
                                     currentUserId={uid ?? undefined}
                                     currentUserEmail={userEmail ?? undefined}
                                     userRole={activeRole}
+                                    userRoles={roles}
                                     onCheckout={openCheckout}
                                   />
                                 </td>
@@ -4222,6 +4232,7 @@ export default function LibraryExplorerPage() {
             selectedDoc={selectedDoc}
             selectedVersion={selectedVersion}
             activeRole={activeRole}
+            activeRoles={roles}
             uid={uid || null}
             userEmail={userEmail || null}
             onClose={() => setSelectedDoc(null)}
@@ -4568,6 +4579,7 @@ export default function LibraryExplorerPage() {
           document={selectedDoc}
           columns={columnDefs}
           userRole={activeRole}
+          userRoles={roles}
           currentUserId={uid || undefined}
           currentUserEmail={userEmail || undefined}
           orgId={activeOrgId ?? undefined}

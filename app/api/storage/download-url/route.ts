@@ -4,6 +4,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { canDiscover } from "@/lib/permissions";
+import { normalizeRoles } from "@/lib/roleCapabilities";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
@@ -70,13 +71,14 @@ export async function GET(req: NextRequest) {
         const visibility = (doc?.visibility as NodeVisibility | undefined) ?? "normal";
         if (doc && (visibility === "private" || visibility === "hidden")) {
           const [{ data: mem }, { data: teams }] = await Promise.all([
-            supabaseAdmin.from("org_members").select("role").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
+            supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
             supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
           ]);
           const allowed = canDiscover({
             principal: {
               uid: user.id,
               role: (mem?.role as Role) ?? "Viewer",
+              roles: normalizeRoles(mem?.roles, mem?.role),
               orgId,
               teamIds: (teams ?? []).map((t) => t.team_id as string),
               isActiveMember: true,
@@ -111,7 +113,11 @@ export async function GET(req: NextRequest) {
             supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
             supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
           ]);
-          const heldRoles = ((mem2?.roles as string[] | null) ?? [(mem2?.role as string) ?? "Viewer"]);
+          // `??` only caught null: a row with roles: [] dropped the headline and
+          // every role-based download deny stopped matching. normalizeRoles
+          // seeds from the headline unconditionally.
+          const heldRoles: string[] = normalizeRoles(mem2?.roles, mem2?.role);
+          if (heldRoles.length === 0) heldRoles.push("Viewer");
           const teamIds2 = (teams2 ?? []).map((t) => t.team_id as string);
           const denied =
             (dl.users?.download ?? []).includes(user.id) ||

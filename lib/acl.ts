@@ -19,7 +19,14 @@ import type {
 
 export type SubjectContext = {
   uid?: string;
+  /** Headline role (legacy callers). */
   role?: Role;
+  /** CHAIN-1: the FULL held collection. A role subject — allow OR deny —
+   *  matches if ANY held role equals it. Without this, a deny naming
+   *  `Auditor` stopped matching the moment the auditor was also given
+   *  `Requester` (the headline moved), so adding a role REMOVED a
+   *  restriction. Callers that pass only `role` keep prior behavior. */
+  roles?: Role[];
   teamIds?: string[];
   orgId?: string;
   now?: Date;
@@ -69,8 +76,10 @@ function subjectMatches(subj: PermissionSubject, ctx: SubjectContext): boolean {
       return !!ctx.uid && ctx.uid === id;
     case "team":
       return Array.isArray(ctx.teamIds) && ctx.teamIds.includes(id);
-    case "role":
-      return !!ctx.role && ctx.role === (id as Role);
+    case "role": {
+      if (ctx.role && ctx.role === (id as Role)) return true;
+      return Array.isArray(ctx.roles) && ctx.roles.includes(id as Role);
+    }
     case "org":
       return !!ctx.orgId && ctx.orgId === id;
     default:

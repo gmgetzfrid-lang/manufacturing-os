@@ -20,7 +20,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { listActiveHoldsForDocument } from "@/lib/holds";
-import { canPublishOnLibrary, canPublishViaIndex, isControllerRole, type Principal } from "@/lib/permissions";
+import { canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal, type Principal } from "@/lib/permissions";
 import type { AccessControl, DocumentHold } from "@/types/schema";
 
 export type PublishBlockCode = "locked_by_other" | "on_hold";
@@ -35,7 +35,11 @@ export interface PublishGuardState {
 
 export interface PublishGuardContext {
   actorUserId: string;
+  /** Headline role (legacy callers). */
   actorRole?: string | null;
+  /** OWN-3: the actor's full role collection — the controller tier (force
+   *  past lock/hold) is a property of the collection, not the headline. */
+  actorRoles?: string[] | null;
   /** A controller (Admin/DocCtrl) may pass `force` to override a lock/hold. */
   force?: boolean;
   /** Precomputed per-library publish authority (see canPublishOnLibrary). Lets a
@@ -111,7 +115,8 @@ export function evaluatePublishGuard(
   ctx: PublishGuardContext,
 ): GuardDecision {
   const forcing = ctx.force === true;
-  const isController = isControllerRoleName(ctx.actorRole);
+  const isController = isControllerRoleName(ctx.actorRole)
+    || (ctx.actorRoles ?? []).some((r) => isControllerRoleName(r));
   // A controller (Admin/DocCtrl) forces past EVERYTHING. A per-library publisher
   // (canControlLibrary, e.g. a granted Drafting Supervisor) may force past a
   // foreign CHECKOUT — but an active HOLD still stops them: holds are deliberate
@@ -236,7 +241,7 @@ export async function resolveCanControlLibrary(
   libraryId: string,
   principal: Principal,
 ): Promise<boolean> {
-  if (isControllerRole(principal.role)) return true;
+  if (isControllerPrincipal(principal)) return true;
   if (!libraryId) return false;
   const { data } = await supabase
     .from("libraries")

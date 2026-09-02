@@ -313,6 +313,9 @@ export interface LibraryConfig {
 
   visibility?: NodeVisibility;
   acl?: AccessControl;
+  /** Chain-resolved allow/deny index — the SAME column the DB publish guard
+   *  reads; the page evaluates it first so the Publish button and the mutator agree. */
+  aclIndex?: AclIndex;
 
   /** Accountable owner (libraries.owner_user_id). Existence is decided by the
    *  id — ownerName is a display convenience, never an existence check (DEL-8). */

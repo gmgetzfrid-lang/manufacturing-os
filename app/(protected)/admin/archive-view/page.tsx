@@ -13,7 +13,7 @@ import BackupViewer from "@/components/archive/BackupViewer";
 import { useRole } from "@/components/providers/RoleContext";
 
 export default function ArchiveViewPage() {
-  const { activeOrgId, activeRole } = useRole();
+  const { activeOrgId, activeRole, roles, uid } = useRole();
   // Policy-gated (default: Admin/DocCtrl) — this page opens backup contents,
   // and previously had no guard at all.
   const [allowed, setAllowed] = React.useState<boolean | null>(null);
@@ -22,10 +22,10 @@ export default function ArchiveViewPage() {
     let alive = true;
     void import("@/lib/capabilityPolicy").then(async ({ loadCapabilityPolicy, policyAllows }) => {
       const p = await loadCapabilityPolicy(activeOrgId);
-      if (alive) setAllowed(policyAllows(p, "admin.archive_view", activeRole));
+      if (alive) setAllowed(policyAllows(p, "admin.archive_view", activeRole, roles, uid ?? undefined));
     }).catch(() => { if (alive) setAllowed(true); });
     return () => { alive = false; };
-  }, [activeOrgId, activeRole]);
+  }, [activeOrgId, activeRole, roles, uid]);
   if (allowed === false) {
     return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">The backup viewer is limited to Admin and Document Control. An Admin can change this under Admin → Permissions → Action permissions.</div>;
   }

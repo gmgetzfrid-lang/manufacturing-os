@@ -45,7 +45,13 @@ See `CHAIN-1`.
 ## CHAIN-1 · Restriction-style checks read the headline role, so adding a role *removes* a restriction
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 5).** Restriction-style checks evaluate the FULL collection — deny-if-any: the document edit gate is `isController || !hasAnyRole(["Viewer","Auditor"])`, the Sidebar's reduced navigation is `hasAnyRole(['Viewer','Contractor'])`. The recon also found the class runs deeper than the two cited sites and those are closed too: the ACL role-subject matcher (`lib/acl.ts` `subjectMatches`) now matches ANY held role via a new `SubjectContext.roles` — so a `deny` naming an additively-held role binds (and an `allow` naming one grants, the ADD-1 half); `canPublishViaIndex` evaluates every held role for deny AND allow; `knowledgeAccess.loadPrincipal` passes its already-fetched collection into the ACL context; the library page principal carries `roles`; the SQL `user_can_publish_on_library` (20261040) and `node_visible` (20261041) role matches evaluate every held role; and the download-url route's `?? [headline]` (which dropped the headline for a `roles: []` row and silently un-denied every role-based download deny) uses `normalizeRoles`. Grant-style sites were converted to any-of only where OWN-3/ADD-1 called for it — a restriction WAIVER (`requiresEngineerApproval` on the ticket's stored requester role) was deliberately left headline-based: widening it would widen a safety-gate bypass.
+- Done-when: (1) ✓ restrictions bind on any held role (UI pins + ACL/evaluator tests); (2) ✓ `ROLE-1` annotated — `Contractor` is load-bearing; (3) ✓ `roles=['Auditor','Requester']` covered: the ACL deny binds with the collection and is lifted without it (`rpPhase5Additive.test.ts`), and the edit-gate source pin.
+- Files: `app/(protected)/documents/[libraryId]/page.tsx`, `components/navigation/Sidebar.tsx`, `lib/acl.ts`, `lib/permissions.ts`, `lib/knowledgeAccess.ts`, `app/api/storage/download-url/route.ts`, `audit-reports/roles-and-permissions/01-role-inventory.md` (ROLE-1 annotation).
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** security / access-control
 - **Locations:**

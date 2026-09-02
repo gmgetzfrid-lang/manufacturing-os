@@ -36,18 +36,19 @@ type UiLibrary = LibraryConfig & {
   _isPublicRead: boolean;
 };
 
-const isControllerRole = (role: Role) => role === "Admin" || role === "DocCtrl";
 const toArrayRole = (v: unknown): Role[] => (Array.isArray(v) ? (v as Role[]) : []);
 const safeLower = (v: unknown) => (typeof v === "string" ? v.toLowerCase() : "");
 
-function computeCanRead(lib: Partial<LibraryConfig>, role: Role) {
+function computeCanRead(lib: Partial<LibraryConfig>, role: Role, roles: Role[] = []) {
   const readAccess = (lib as { readAccess?: Role[] | "ALL" }).readAccess;
   if (readAccess === "ALL") return true;
 
   const readList = toArrayRole(readAccess);
   const visibleTo = toArrayRole((lib as { visibleTo?: unknown }).visibleTo);
+  // ADD-1: a role-granted read follows the full collection, not the headline.
+  const held = [role, ...roles];
 
-  return readList.includes(role) || visibleTo.includes(role);
+  return held.some((r) => readList.includes(r) || visibleTo.includes(r));
 }
 
 function computeIsPublicRead(lib: Partial<LibraryConfig>) {
@@ -56,7 +57,7 @@ function computeIsPublicRead(lib: Partial<LibraryConfig>) {
 
 export default function DocumentsHomePage() {
   const router = useRouter();
-  const { activeRole, userEmail, activeOrgId } = useRole();
+  const { activeRole, roles, hasAnyRole, userEmail, activeOrgId } = useRole();
 
   // Start false — only flip to true once we actually have everything we need
   // to fetch. This avoids "Loading libraries..." showing up forever when the
@@ -141,7 +142,8 @@ export default function DocumentsHomePage() {
       : l));
   };
 
-  const isController = isControllerRole(activeRole);
+  // OWN-3: controller tier follows the full role collection.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
 
   const fetchLibraries = async (opts?: { silent?: boolean }) => {
     if (!activeOrgId) {
@@ -182,7 +184,7 @@ export default function DocumentsHomePage() {
           pageConfig: row.page_config ?? undefined,
         };
 
-        const _canRead = computeCanRead(normalized, activeRole);
+        const _canRead = computeCanRead(normalized, activeRole, roles);
         const _isPublicRead = computeIsPublicRead(normalized);
 
         return {
@@ -210,7 +212,7 @@ export default function DocumentsHomePage() {
     if (!userEmail || !activeOrgId) return;
     fetchLibraries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userEmail, activeRole, activeOrgId]);
+  }, [userEmail, activeRole, roles, activeOrgId]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

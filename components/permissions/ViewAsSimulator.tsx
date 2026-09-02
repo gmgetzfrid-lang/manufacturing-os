@@ -14,17 +14,20 @@ import {
   grantsForUser, grantActive, __resetCapabilityPolicyCache,
   type CapabilityPolicy, type CapabilityId,
 } from "@/lib/capabilityPolicy";
-import { canDiscover, canPublishOnLibrary, canPublishViaIndex, isControllerRole } from "@/lib/permissions";
+import { canDiscover, canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal } from "@/lib/permissions";
 import type { AccessControl, AclIndex, NodeVisibility, Role } from "@/types/schema";
 
 interface Member { uid: string; name: string; role: string; roles: string[] }
-interface LibRow { id: string; name: string; acl: AccessControl | null; aclIndex: AclIndex | null; visibility: NodeVisibility }
+interface LibRow { id: string; name: string; acl: AccessControl | null; aclIndex: AclIndex | null; visibility: NodeVisibility; ownerUserId: string | null }
 
 export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean }) {
   const { activeOrgId, uid: actorUid, userEmail: actorEmail } = useRole();
   const [members, setMembers] = useState<Member[]>([]);
   const [libs, setLibs] = useState<LibRow[]>([]);
   const [teamIds, setTeamIds] = useState<string[]>([]);
+  // OWN-10: a failed team lookup must be VISIBLE, never an empty result —
+  // this is the tool an admin signs a recertification on.
+  const [teamsErr, setTeamsErr] = useState<string | null>(null);
   const [pick, setPick] = useState<string>("");
   const [policy, setPolicy] = useState<CapabilityPolicy>({});
 
@@ -33,7 +36,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     void (async () => {
       const [m, l, p] = await Promise.all([
         supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", activeOrgId).eq("status", "active").order("display_name"),
-        supabase.from("libraries").select("id, name, acl, acl_index, visibility").eq("org_id", activeOrgId).order("name"),
+        supabase.from("libraries").select("id, name, acl, acl_index, visibility, owner_user_id").eq("org_id", activeOrgId).order("name"),
         loadCapabilityPolicy(activeOrgId),
       ]);
       setMembers((((m.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
@@ -45,6 +48,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
         acl: (r.acl as AccessControl | null) ?? null,
         aclIndex: (r.acl_index as AclIndex | null) ?? null,
         visibility: ((r.visibility as NodeVisibility) || "normal"),
+        ownerUserId: (r.owner_user_id as string | null) ?? null,
       })));
       setPolicy(p);
     })();
@@ -54,11 +58,17 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   useEffect(() => {
     let alive = true;
     void (async () => {
-      if (!pick) { if (alive) setTeamIds([]); return; }
+      if (!pick) { if (alive) { setTeamIds([]); setTeamsErr(null); } return; }
       try {
-        const { data } = await supabase.from("team_members").select("team_id").eq("user_id", pick);
-        if (alive) setTeamIds((((data ?? []) as Array<{ team_id: string }>)).map((r) => r.team_id));
-      } catch { if (alive) setTeamIds([]); }
+        // team_members is keyed (team_id, uid) — the old `user_id` filter was a
+        // PostgREST 400 whose error was never read, so every member simulated
+        // as belonging to zero teams (OWN-10).
+        const { data, error } = await supabase.from("team_members").select("team_id").eq("uid", pick);
+        if (!alive) return;
+        if (error) { setTeamIds([]); setTeamsErr(error.message); return; }
+        setTeamsErr(null);
+        setTeamIds((((data ?? []) as Array<{ team_id: string }>)).map((r) => r.team_id));
+      } catch (e) { if (alive) { setTeamIds([]); setTeamsErr((e as Error).message || "Team lookup failed"); } }
     })();
     return () => { alive = false; };
   }, [pick]);
@@ -156,12 +166,22 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
           </div>
           <div>
             <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Content access by library</div>
+            {teamsErr && (
+              <div className="mb-2 rounded-lg border border-rose-300 bg-rose-50 px-2 py-1.5 text-[11px] text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                Team memberships could not be loaded ({teamsErr}). The rows below OMIT team-derived grants — do not sign off on them.
+              </div>
+            )}
             <ul className="space-y-1">
               {libs.map((l) => {
-                const principal = { uid: who.uid, role: who.role as Role, orgId: activeOrgId ?? undefined, teamIds, isActiveMember: true };
-                const sees = canDiscover({ principal, aclChain: [l.acl ?? undefined], visibility: l.visibility });
+                // The SAME principal shape the mutators now build (roles collection +
+                // teams), evaluated by the SAME functions — so this reports what the
+                // app will actually allow, not a re-implementation.
+                const principal = { uid: who.uid, role: who.role as Role, roles: who.roles as Role[], orgId: activeOrgId ?? undefined, teamIds, isActiveMember: true };
+                const isLibOwner = !!l.ownerUserId && l.ownerUserId === who.uid;
+                const sees = canDiscover({ principal, aclChain: [l.acl ?? undefined], visibility: l.visibility, effectiveOwnerUserId: l.ownerUserId });
                 const viaIdx = canPublishViaIndex(l.aclIndex, principal);
-                const publishes = isControllerRole(principal.role) || (viaIdx !== null ? viaIdx : canPublishOnLibrary({ principal, libraryAcl: l.acl ?? undefined }));
+                const publishes = isControllerPrincipal(principal) || isLibOwner
+                  || (viaIdx !== null ? viaIdx : canPublishOnLibrary({ principal, libraryAcl: l.acl ?? undefined }));
                 return (
                   <li key={l.id} className="text-[11px] flex items-center gap-2">
                     <span className="font-bold text-[var(--color-text)]">{l.name}</span>
@@ -175,7 +195,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               })}
               {libs.length === 0 && <li className="text-[11px] italic text-[var(--color-text-faint)]">No libraries.</li>}
             </ul>
-            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Folder/document-level rules refine within each library — open a node&apos;s permissions to inspect. Ownership grants (owner of a doc/folder/library) add publish authority on those items.</div>
+            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Folder/document-level rules refine within each library — open a node&apos;s permissions to inspect. Library ownership is reflected above; folder/document ownership and a team-supervisor rung are resolved per node.</div>
           </div>
         </div>
       )}

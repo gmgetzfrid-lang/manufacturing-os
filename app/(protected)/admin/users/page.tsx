@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import type { Role } from '@/types/schema';
-import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS } from '@/lib/roleCapabilities';
+import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS, isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE } from '@/lib/roleCapabilities';
 import {
   Users,
   UserPlus,
@@ -47,10 +47,10 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: 'Requester', label: 'Requester' },
   { value: 'Drafter', label: 'Drafter' },
   { value: 'DraftingSupervisor', label: 'Drafting Supervisor (routes incoming requests)' },
-  { value: 'Engineer-1', label: 'Engineer · level 1' },
-  { value: 'Engineer-2', label: 'Engineer · level 2' },
-  { value: 'Engineer-3', label: 'Engineer · level 3' },
-  { value: 'Engineer-4', label: 'Engineer · level 4' },
+  { value: 'Engineer-1', label: 'Engineer · level 1 (tiers are labels — identical authority)' },
+  { value: 'Engineer-2', label: 'Engineer · level 2 (tiers are labels — identical authority)' },
+  { value: 'Engineer-3', label: 'Engineer · level 3 (tiers are labels — identical authority)' },
+  { value: 'Engineer-4', label: 'Engineer · level 4 (tiers are labels — identical authority)' },
   { value: 'Supervisor', label: 'Supervisor' },
   { value: 'Manager', label: 'Manager' },
   { value: 'DocCtrl', label: 'Doc Control' },
@@ -521,9 +521,15 @@ export default function AdminUsersPage() {
                   value={formData.role}
                   onChange={e => setFormData({...formData, role: e.target.value})}
                 >
-                  {ROLE_OPTIONS.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
+                  {ROLE_OPTIONS.filter((r) => !isDormantRole(r.value)).map((r) => (
+                    <option key={r.value} value={r.value} title={roleDisplayNote(r.value) ?? undefined}>{r.label}</option>
                   ))}
+                  {/* DEC-3: dormant roles stay assignable but are visibly discouraged. */}
+                  <optgroup label="Dormant — use a team instead">
+                    {ROLE_OPTIONS.filter((r) => isDormantRole(r.value)).map((r) => (
+                      <option key={r.value} value={r.value} title={DORMANT_ROLE_NOTE}>{r.label} · dormant</option>
+                    ))}
+                  </optgroup>
                 </Select>
               </div>
 
@@ -582,15 +588,22 @@ function RoleAddPicker({
             </div>
             {options.map((r) => {
               const adds = capabilitiesAdded(r, current).map((c) => CAPABILITY_LABELS[c]);
+              const note = roleDisplayNote(r);
+              const dormant = isDormantRole(r);
               return (
                 <button
                   key={r}
                   type="button"
+                  title={note ?? undefined}
                   onClick={() => { onAdd(r); setOpen(false); }}
-                  className="block w-full text-left px-3 py-2 hover:bg-[var(--color-accent-soft)] transition-colors"
+                  className={`block w-full text-left px-3 py-2 hover:bg-[var(--color-accent-soft)] transition-colors ${dormant ? 'opacity-60' : ''}`}
                 >
-                  <div className="text-xs font-bold text-[var(--color-text)]">{r}</div>
+                  <div className="text-xs font-bold text-[var(--color-text)]">
+                    {r}
+                    {dormant && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">dormant</span>}
+                  </div>
                   <div className="text-[10px] text-[var(--color-text-muted)] leading-tight mt-0.5">+ {adds.join(' · ')}</div>
+                  {note && <div className="text-[10px] text-[var(--color-text-faint)] leading-tight mt-0.5 italic">{note}</div>}
                 </button>
               );
             })}

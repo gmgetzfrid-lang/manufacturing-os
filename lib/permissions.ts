@@ -8,7 +8,15 @@ import { evaluateAclChain } from "@/lib/acl";
 
 export interface Principal {
   uid: string;
+  /** The headline (highest-ranked) role — kept for display and for the
+   *  legacy single-role callers. Authority reads `roles` when present. */
   role: Role;
+  /** OWN-3 / CHAIN-1: the member's FULL additive role collection. When
+   *  supplied, every role-shaped decision (controller tier, ACL role
+   *  subjects — allow AND deny) evaluates against all of them, so a role is
+   *  worth the same whether it is the headline or an additive one, and a
+   *  restriction binds whether or not something higher-ranked sits above it. */
+  roles?: Role[];
   orgId?: string;
   teamIds?: string[];
   /** Defense-in-depth: when known to be false, ACL grants are dropped. */
@@ -17,6 +25,24 @@ export interface Principal {
 
 export function isControllerRole(role: Role) {
   return role === "Admin" || role === "DocCtrl";
+}
+
+/** Every role the principal holds: headline ∪ additive collection, deduped.
+ *  Never empty — the headline is always present. */
+export function heldRoles(p: Pick<Principal, "role" | "roles">): Role[] {
+  const out: Role[] = [];
+  for (const r of [p.role, ...(p.roles ?? [])]) {
+    if (r && !out.includes(r)) out.push(r);
+  }
+  return out;
+}
+
+/** OWN-3/DEC-2: the controller tier is a property of the COLLECTION — a
+ *  DocCtrl who also holds Manager (headline `Manager`, since Manager
+ *  outranks DocCtrl) is still a controller. Mirrors the database's
+ *  `is_org_controller` (role IN (...) OR roles && ARRAY[...]). */
+export function isControllerPrincipal(p: Pick<Principal, "role" | "roles">): boolean {
+  return heldRoles(p).some(isControllerRole);
 }
 
 export function canWithAclChain(params: {
@@ -32,7 +58,7 @@ export function canWithAclChain(params: {
 }): boolean {
   const { principal, action, aclChain = [], defaultAllow = true } = params;
 
-  if (isControllerRole(principal.role)) return true;
+  if (isControllerPrincipal(principal)) return true;
   if (params.effectiveOwnerUserId && principal.uid
       && params.effectiveOwnerUserId === principal.uid
       && (action === "read" || action === "discover")) return true;
@@ -40,6 +66,7 @@ export function canWithAclChain(params: {
   const decision = evaluateAclChain(aclChain, {
     uid: principal.uid,
     role: principal.role,
+    roles: heldRoles(principal),
     orgId: principal.orgId,
     teamIds: principal.teamIds,
     isActiveMember: principal.isActiveMember,
@@ -81,19 +108,21 @@ export function canPublishViaIndex(
   if (!idx || (!idx.allow && !idx.deny)) return null;
   if (p.isActiveMember === false) return false;
   const uid = p.uid;
-  const role = p.role as string;
+  // CHAIN-1 / ADD-1: role subjects match ANY held role — a deny naming an
+  // additively-held role binds, and an allow naming one grants.
+  const roles = heldRoles(p) as string[];
   const teams = p.teamIds ?? [];
   const has = (m: Record<string, string[]> | undefined, act: string, id: string) =>
     Array.isArray(m?.[act]) && (m[act] as string[]).includes(id);
   const deniedPublish =
     has(idx.deny?.users, "publish", uid) ||
-    has(idx.deny?.roles, "publish", role) ||
+    roles.some((r) => has(idx.deny?.roles, "publish", r)) ||
     teams.some((t) => has(idx.deny?.teams, "publish", t));
   if (deniedPublish) return false;
   const allowActs = ["publish", "admin"];
   return allowActs.some((a) =>
     has(idx.allow?.users, a, uid) ||
-    has(idx.allow?.roles, a, role) ||
+    roles.some((r) => has(idx.allow?.roles, a, r)) ||
     teams.some((t) => has(idx.allow?.teams, a, t)),
   );
 }
@@ -102,10 +131,11 @@ export function canPublishOnLibrary(params: {
   principal: Principal;
   libraryAcl?: AccessControl;
 }): boolean {
-  if (isControllerRole(params.principal.role)) return true;
+  if (isControllerPrincipal(params.principal)) return true;
   const decision = evaluateAclChain([params.libraryAcl], {
     uid: params.principal.uid,
     role: params.principal.role,
+    roles: heldRoles(params.principal),
     orgId: params.principal.orgId,
     teamIds: params.principal.teamIds,
     isActiveMember: params.principal.isActiveMember,
@@ -125,13 +155,14 @@ export function canDiscover(params: {
 }): boolean {
   const { principal, aclChain = [], visibility = "normal" } = params;
 
-  if (isControllerRole(principal.role)) return true;
+  if (isControllerPrincipal(principal)) return true;
   if (params.effectiveOwnerUserId && principal.uid
       && params.effectiveOwnerUserId === principal.uid) return true;
 
   const decision = evaluateAclChain(aclChain, {
     uid: principal.uid,
     role: principal.role,
+    roles: heldRoles(principal),
     orgId: principal.orgId,
     teamIds: principal.teamIds,
     isActiveMember: principal.isActiveMember,

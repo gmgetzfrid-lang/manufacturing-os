@@ -120,7 +120,7 @@ export default function Sidebar({
 } = {}) {
   const pathname = usePathname();
   const router = useRouter();
-  const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
+  const { activeRole, hasAnyRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
   const { sectionCounts } = useTicketNotifications();
   // A nav item badges ONLY its own section's items — red when something there
   // needs action, blue for unread FYI, nothing when clear. (The header bell
@@ -206,7 +206,9 @@ export default function Sidebar({
   }, [uid]);
 
   const orgOptions = useMemo(() => orgs.slice().sort((a, b) => a.name.localeCompare(b.name)), [orgs]);
-  const isAdmin = activeRole === 'Admin' || activeRole === 'DocCtrl';
+  // OWN-3: the admin section follows the COLLECTION — an additively-held
+  // DocCtrl (headline Manager) is still a controller.
+  const isAdmin = hasAnyRole(['Admin', 'DocCtrl']);
 
   const isPathActive = useCallback((path: string) => {
     if (!pathname) return false;
@@ -244,8 +246,10 @@ export default function Sidebar({
     // section already uses.
     // Projects stays in the reduced set: contracted engineers submit
     // revisions and check review status through a project's Intake tab.
+    // CHAIN-1: a RESTRICTION binds if ANY held role is restricted — adding a
+    // higher-ranked role to a Contractor must not lift the reduced navigation.
     const work: NavLeaf[] =
-      activeRole === 'Viewer' || activeRole === 'Contractor'
+      hasAnyRole(['Viewer', 'Contractor'])
         ? workAll.filter((item) => ['Home', 'Documents', 'Drafting Requests', 'Projects'].includes(item.label))
         : workAll;
 
@@ -272,7 +276,7 @@ export default function Sidebar({
       { id: 'work', title: 'Work', hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue', items: work },
       ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
-  }, [sectionCounts, badgeOf, isAdmin, activeRole]);
+  }, [sectionCounts, badgeOf, isAdmin, hasAnyRole]);
 
   // Per-section "does any item match the current route?"
   const sectionIsActive = useCallback(

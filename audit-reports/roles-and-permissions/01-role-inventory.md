@@ -45,6 +45,7 @@ code path branches on it.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Annotation (2026-09-01, Phase 5 / CHAIN-1 done-when 2):** `Contractor` is NOT a pure label. It is load-bearing as a RESTRICTION — reduced navigation at `components/navigation/Sidebar.tsx` (the `hasAnyRole(['Viewer','Contractor'])` gate; formerly `activeRole === 'Contractor'`). It must not be treated as removable, and `DEC-3` excludes it from the dormant set for this reason. The conclusion about the other five department roles (`Accounting`, `Safety`, `HR`, `Maintenance`, `Operations`) stands; those five are now marked dormant in every role picker (`DORMANT_ROLES` in `lib/roleCapabilities.ts`) and remain fully valid ACL subjects.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity / access-control
 - **Locations:**

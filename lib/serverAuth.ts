@@ -10,12 +10,16 @@
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
+import { normalizeRoles } from "@/lib/roleCapabilities";
 
 export type AuthorizedActor = {
   userId: string;
   email: string;
   orgId: string;
+  /** Headline role (kept for audit rows — unchanged by SURF-10). */
   role: string;
+  /** SURF-10: the full held collection; the gate evaluates against it. */
+  roles: string[];
   admin: SupabaseClient;   // service-role client, scoped to this request
 };
 
@@ -48,20 +52,27 @@ export async function authorizeOrgRole(
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   const { data: member } = await admin
     .from("org_members")
-    .select("role, status")
+    .select("role, roles, status")
     .eq("org_id", orgId)
     .eq("uid", data.user.id)
     .maybeSingle();
   const role = (member as { role?: string } | null)?.role;
   const status = (member as { status?: string } | null)?.status;
   if (status !== "active") return { error: "Not a member of this org", status: 403 };
-  if (!allowedRoles.includes(role || "")) return { error: "Insufficient role", status: 403 };
+  // SURF-10: the gate reads the UNION of the headline and the additive
+  // collection, matching the database's is_org_controller — a member holding
+  // DocCtrl additively under a Manager headline is admitted to DocCtrl routes.
+  // normalizeRoles seeds from the headline, so a pre-backfill `roles: []`
+  // row still evaluates its headline.
+  const held: string[] = normalizeRoles((member as { roles?: unknown } | null)?.roles, role);
+  if (!held.some((r) => allowedRoles.includes(r))) return { error: "Insufficient role", status: 403 };
 
   return {
     userId: data.user.id,
     email: data.user.email || "",
     orgId,
-    role: role!,
+    role: role || held[0] || "",
+    roles: held,
     admin,
   };
 }

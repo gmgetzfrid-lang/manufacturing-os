@@ -82,7 +82,7 @@ const toDate = (date: unknown): Date => {
 
 // --- COMPONENT ---
 export default function AnalyticsPage() {
-  const { activeOrgId, activeRole } = useRole();
+  const { activeOrgId, activeRole, roles, uid } = useRole();
   // Policy-gated (default: Admin/Manager/Supervisor/DocCtrl). This page was
   // previously reachable by ANY member via direct URL — nav hiding is not a
   // permission model.
@@ -92,10 +92,10 @@ export default function AnalyticsPage() {
     let alive = true;
     void import("@/lib/capabilityPolicy").then(async ({ loadCapabilityPolicy, policyAllows }) => {
       const p = await loadCapabilityPolicy(activeOrgId);
-      if (alive) setAllowed(policyAllows(p, "admin.analytics_view", activeRole));
+      if (alive) setAllowed(policyAllows(p, "admin.analytics_view", activeRole, roles, uid ?? undefined));
     }).catch(() => { if (alive) setAllowed(true); });
     return () => { alive = false; };
-  }, [activeOrgId, activeRole]);
+  }, [activeOrgId, activeRole, roles, uid]);
   const [loading, setLoading] = useState(true);
   
   // STATE

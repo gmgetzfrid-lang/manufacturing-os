@@ -12,6 +12,10 @@ import {
   primaryRole,
   normalizeRoles,
   ROLE_CAPABILITIES,
+  DORMANT_ROLES,
+  ENGINEER_TIER_ROLES,
+  isDormantRole,
+  roleDisplayNote,
 } from "@/lib/roleCapabilities";
 import { ALL_ROLES } from "@/types/schema";
 
@@ -87,5 +91,29 @@ describe("normalizeRoles — tolerant of pre-migration rows", () => {
   it("drops unknown junk instead of crashing", () => {
     expect(normalizeRoles(["NotARole", "Drafter", 42], "AlsoNotARole")).toEqual(["Drafter"]);
     expect(normalizeRoles(undefined, undefined)).toEqual([]);
+  });
+});
+
+describe("DEC-3 / DEC-4 — display notes are explicit lists, never derived", () => {
+  it("exactly the five department roles are dormant; Contractor is NOT (it is a load-bearing restriction)", () => {
+    expect([...DORMANT_ROLES].sort()).toEqual(["Accounting", "HR", "Maintenance", "Operations", "Safety"]);
+    expect(isDormantRole("Contractor")).toBe(false);
+    expect(isDormantRole("Viewer")).toBe(false);
+    expect(isDormantRole("Auditor")).toBe(false);
+  });
+
+  it("dormant roles stay in ALL_ROLES and keep their capabilities (deprecate, delete nothing)", () => {
+    for (const r of DORMANT_ROLES) {
+      expect(ALL_ROLES).toContain(r);
+      expect(ROLE_CAPABILITIES[r]).toBeDefined();
+    }
+  });
+
+  it("the four Engineer tiers carry the equivalence note; other roles carry none", () => {
+    expect([...ENGINEER_TIER_ROLES]).toEqual(["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4"]);
+    for (const r of ENGINEER_TIER_ROLES) expect(roleDisplayNote(r)).toMatch(/identical authority/);
+    for (const r of DORMANT_ROLES) expect(roleDisplayNote(r)).toMatch(/Use a team instead/);
+    expect(roleDisplayNote("Drafter")).toBeNull();
+    expect(roleDisplayNote("Contractor")).toBeNull();
   });
 });

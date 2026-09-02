@@ -51,7 +51,7 @@ export async function runStorageAlerts(sb: SupabaseClient): Promise<{ alerts: nu
 
     const { data: admins } = await sb
       .from("org_members").select("uid")
-      .eq("org_id", s.org_id).eq("status", "active").in("role", ["Admin", "DocCtrl"]);
+      .eq("org_id", s.org_id).eq("status", "active").or("role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}");
     for (const a of (admins as Array<{ uid: string }> | null) ?? []) {
       const { count } = await sb
         .from("notifications").select("id", { count: "exact", head: true })

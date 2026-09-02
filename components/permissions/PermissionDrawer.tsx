@@ -29,6 +29,7 @@ import type {
   Timestamp,
   NodeVisibility,
 } from "@/types/schema";
+import { isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE } from "@/lib/roleCapabilities";
 
 export type NodeType = "library" | "collection" | "document" | "set";
 
@@ -553,11 +554,20 @@ export default function PermissionsDrawer(props: {
                           !canEdit ? "opacity-50 cursor-not-allowed" : ""
                         }`}
                       >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>
+                        {ROLES.filter((r) => !isDormantRole(r)).map((r) => (
+                          <option key={r} value={r} title={roleDisplayNote(r) ?? undefined}>
                             {r}
                           </option>
                         ))}
+                        {/* DEC-3: dormant department roles stay selectable (existing rules
+                            still name them) but are visibly discouraged. */}
+                        <optgroup label="Dormant — use a team instead">
+                          {ROLES.filter((r) => isDormantRole(r)).map((r) => (
+                            <option key={r} value={r} title={DORMANT_ROLE_NOTE}>
+                              {r} (dormant)
+                            </option>
+                          ))}
+                        </optgroup>
                       </select>
                     </div>
                   ) : subjectType === "user" ? (

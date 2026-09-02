@@ -6,6 +6,7 @@
 // attestation snapshots the access list for the record and resets the clock.
 
 import { supabase } from "@/lib/supabase";
+import { normalizeRoles } from "@/lib/roleCapabilities";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
 import { getOrgControllers } from "@/lib/ownership";
@@ -175,8 +176,8 @@ export async function listMyDueRecerts(orgId: string, uid: string, opts?: { lead
   const leadDays = opts?.leadDays ?? 30;
   const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + leadDays);
   const today = todayISO();
-  const { data: me } = await supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle();
-  const isController = me?.role === "Admin" || me?.role === "DocCtrl";
+  const { data: me } = await supabase.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+  const isController = normalizeRoles(me?.roles, me?.role).some((r) => r === "Admin" || r === "DocCtrl");
   const { data } = await supabase.from("libraries")
     .select("id, name, next_recertification_date, owner_user_id")
     .eq("org_id", orgId).not("next_recertification_date", "is", null)

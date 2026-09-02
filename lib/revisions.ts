@@ -29,12 +29,13 @@ import {
   DocumentMutationBlockedError,
   type PublishGuardState,
 } from "@/lib/documentGuards";
+import { resolveActorPrincipal } from "@/lib/principal";
 import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisodes";
 import { notify } from "@/lib/inAppNotifications";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
 import type { Principal } from "@/lib/permissions";
-import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
+import type { DocumentRecord, DocumentVersion, DocumentStatus } from "@/types/schema";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
@@ -215,11 +216,13 @@ async function authorizePublish(opts: {
   /** Controller's explicit emergency force (bypasses lock AND hold). */
   force?: boolean;
 }): Promise<PublishGuardState> {
-  const principal: Principal = {
-    uid: opts.actorUserId,
-    role: (opts.actorRole ?? "Viewer") as Role,
-    orgId: opts.orgId,
-  };
+  // OWN-3 / OWN-6: the principal carries the actor's full role collection
+  // and team memberships — resolved from the same rows the DB guard reads —
+  // so an additively-held DocCtrl is a controller and a team publish grant
+  // is honored here exactly as the database honors it.
+  const principal: Principal = await resolveActorPrincipal({
+    uid: opts.actorUserId, orgId: opts.orgId, headlineRole: opts.actorRole,
+  });
   let canControlLibrary = await resolveCanControlLibrary(opts.libraryId, principal);
   // The document's effective owner may publish it even without library authority.
   if (!canControlLibrary) {
@@ -243,6 +246,7 @@ async function authorizePublish(opts: {
   const decision = evaluatePublishGuard(state, {
     actorUserId: opts.actorUserId,
     actorRole: opts.actorRole,
+    actorRoles: principal.roles ?? null,
     canControlLibrary,
     force: opts.force === true,
     overrideLock: lockedByOther && !!opts.overrideReason?.trim(),
@@ -1050,7 +1054,7 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
 
   // Same authority population as publish/revert: per-library control, or
   // effective ownership of this document.
-  const principal: Principal = { uid: actorUserId, role: (actorRole ?? "Viewer") as Role, orgId };
+  const principal: Principal = await resolveActorPrincipal({ uid: actorUserId, orgId, headlineRole: actorRole });
   let authorized = await resolveCanControlLibrary(libraryId, principal);
   if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
   if (!authorized) {
@@ -1682,7 +1686,7 @@ export async function backfillVersion(input: BackfillInput): Promise<DocumentVer
   // publish-shaped authority. Same authority population as publish, revert
   // and label correction: per-library control, or effective ownership of
   // this document. Checked before anything is hashed or uploaded.
-  const principal: Principal = { uid: actorUserId, role: (actorRole ?? "Viewer") as Role, orgId };
+  const principal: Principal = await resolveActorPrincipal({ uid: actorUserId, orgId, headlineRole: actorRole });
   let authorized = await resolveCanControlLibrary(libraryId, principal);
   if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
   if (!authorized) {

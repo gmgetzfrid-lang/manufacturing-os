@@ -12,6 +12,7 @@
 // every affected doc when a library/folder policy changes.
 
 import { supabase } from "@/lib/supabase";
+import { normalizeRoles } from "@/lib/roleCapabilities";
 import { notify } from "@/lib/inAppNotifications";
 import { resolveEffectiveOwner } from "@/lib/ownership";
 import type { ReviewPolicy } from "@/types/schema";
@@ -240,8 +241,8 @@ export async function listMyDueReviews(orgId: string, uid: string, opts?: { lead
   if (!uid) return [];
   const leadDays = opts?.leadDays ?? 30;
   const today = new Date().toISOString().slice(0, 10);
-  const { data: me } = await supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle();
-  const isController = me?.role === "Admin" || me?.role === "DocCtrl";
+  const { data: me } = await supabase.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+  const isController = normalizeRoles(me?.roles, me?.role).some((r) => r === "Admin" || r === "DocCtrl");
   const due = await listDueReviews(orgId, leadDays);
   return due
     .filter((d) => isController || d.owner_user_id === uid)
@@ -271,7 +272,8 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
   const [{ data: libs }, { data: cols }, { data: ctrls }] = await Promise.all([
     supabase.from("libraries").select("id, review_policy, owner_user_id, owner_name").eq("org_id", orgId),
     supabase.from("collections").select("id, review_policy, owner_user_id, owner_name").eq("org_id", orgId),
-    supabase.from("org_members").select("uid, role").eq("org_id", orgId).eq("status", "active").in("role", ["Admin", "DocCtrl"]),
+    supabase.from("org_members").select("uid, role").eq("org_id", orgId).eq("status", "active")
+      .or("role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}"),
   ]);
   type Row = { id: string; review_policy: ReviewPolicy | null; owner_user_id: string | null; owner_name: string | null };
   const libPol = new Map((libs as Row[] ?? []).map((l) => [l.id, l.review_policy ?? null]));

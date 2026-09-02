@@ -49,12 +49,15 @@ const CheckoutInfoPopover = ({
   doc: docRecord, 
   onClose,
   userRole,
+  userRoles,
   currentUserId,
   currentUserEmail
 }: { 
   doc: DocumentRecord; 
   onClose: () => void;
   userRole?: string | null;
+  /** OWN-3: the full role collection — force-release follows it. */
+  userRoles?: string[] | null;
   currentUserId?: string;
   currentUserEmail?: string;
 }) => {
@@ -235,7 +238,7 @@ const CheckoutInfoPopover = ({
     }
   };
 
-  const canAdmin = userRole === 'Admin' || userRole === 'DocCtrl';
+  const canAdmin = [userRole, ...(userRoles ?? [])].some((r) => r === 'Admin' || r === 'DocCtrl'); // OWN-3
 
   return (
     <div 
@@ -356,12 +359,15 @@ export default function CheckoutStatusCell({
   currentUserId,
   currentUserEmail,
   userRole,
+  userRoles,
   onCheckout 
 }: { 
   docRecord: DocumentRecord; 
   currentUserId?: string;
   currentUserEmail?: string;
   userRole?: string | null;
+  /** OWN-3: the full role collection (optional; headline-only callers keep prior behavior). */
+  userRoles?: string[] | null;
   onCheckout: (doc: DocumentRecord) => void;
 }) {
   const [showInfo, setShowInfo] = useState(false);
@@ -492,6 +498,7 @@ export default function CheckoutStatusCell({
           doc={docRecord} 
           onClose={() => setShowInfo(false)} 
           userRole={userRole} 
+          userRoles={userRoles}
           currentUserId={currentUserId}
           currentUserEmail={currentUserEmail}
         />

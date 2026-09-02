@@ -6,6 +6,7 @@
 // always see everything for audit purposes).
 
 import { supabase } from "@/lib/supabase";
+import { normalizeRoles } from "@/lib/roleCapabilities";
 import { logAuditAction } from "@/lib/audit";
 import { notify, notifyMany } from "@/lib/inAppNotifications";
 import { listFollowerIds } from "@/lib/subscriptions";
@@ -586,9 +587,9 @@ export async function assertCanManageProject(projectId: string, actorUserId: str
     return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
   }
   const { data: mem } = await supabase
-    .from("org_members").select("role").eq("org_id", p.org_id).eq("uid", actorUserId).eq("status", "active").maybeSingle();
-  const role = (mem as { role?: string } | null)?.role;
-  if (role === "Admin" || role === "DocCtrl") {
+    .from("org_members").select("role, roles").eq("org_id", p.org_id).eq("uid", actorUserId).eq("status", "active").maybeSingle();
+  const held = normalizeRoles((mem as { roles?: unknown } | null)?.roles, (mem as { role?: string } | null)?.role);
+  if (held.some((r) => r === "Admin" || r === "DocCtrl")) {
     return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
   }
   throw new Error("Only the project owner or an admin can do this.");

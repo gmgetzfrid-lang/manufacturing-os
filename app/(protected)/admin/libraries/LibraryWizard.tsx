@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AccessRule, LibraryConfig, LibraryType, MetadataFieldDefinition, Role } from "@/types/schema";
+import { isDormantRole, roleDisplayNote } from "@/lib/roleCapabilities";
 import { ALL_ROLES } from "@/types/schema";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 
@@ -88,7 +89,7 @@ const FIELD_TYPES: Array<{ value: MetadataFieldDefinition["type"]; label: string
 
 const ROLE_GROUPS = [
   { title: "Leadership", roles: ["Admin", "DocCtrl", "Manager", "Supervisor"] as Role[] },
-  { title: "Engineering", roles: ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4"] as Role[] },
+  { title: "Engineering", roles: ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4", "DraftingSupervisor"] as Role[] },
   { title: "Operations", roles: ["Operations", "Maintenance", "Safety"] as Role[] },
   { title: "Business", roles: ["Accounting", "HR", "Auditor"] as Role[] },
   { title: "Other", roles: ["Requester", "Drafter", "Contractor", "Viewer"] as Role[] },
@@ -163,13 +164,14 @@ function RolePicker({
                   key={role}
                   type="button"
                   onClick={() => toggle(role)}
+                  title={roleDisplayNote(role) ?? undefined}
                   className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
                     active
                       ? "bg-slate-900 text-white border-slate-900"
                       : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-slate-400 hover:text-[var(--color-text)]"
-                  }`}
+                  } ${isDormantRole(role) && !active ? "opacity-60 border-dashed" : ""}`}
                 >
-                  {role}
+                  {role}{isDormantRole(role) ? " · dormant" : ""}
                 </button>
               );
             })}

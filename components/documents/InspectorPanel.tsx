@@ -47,6 +47,8 @@ interface InspectorPanelProps {
   selectedDoc: DocumentRecord | null;
   selectedVersion: DocumentVersion | null;
   activeRole: string;
+  /** OWN-3: the full role collection — controller tier follows it. */
+  activeRoles?: string[];
   uid: string | null;
   userEmail: string | null;
   onClose: () => void;
@@ -106,6 +108,7 @@ export default function InspectorPanel({
   selectedDoc,
   selectedVersion,
   activeRole,
+  activeRoles,
   uid,
   userEmail,
   onMetadata,
@@ -129,8 +132,10 @@ export default function InspectorPanel({
   orgId,
   customColumns,
 }: InspectorPanelProps) {
-  const canManageAssets = activeRole === 'Admin' || activeRole === 'Manager' || activeRole === 'Supervisor'
-    || (activeRole?.includes('Engineer') ?? false) || activeRole === 'Drafter' || activeRole === 'DocCtrl';
+  const heldRoles = Array.from(new Set([activeRole, ...(activeRoles ?? [])].filter(Boolean)));
+  const holdsAny = (rs: string[]) => heldRoles.some((r) => rs.includes(r));
+  const canManageAssets = holdsAny(['Admin', 'Manager', 'Supervisor', 'Drafter', 'DocCtrl'])
+    || heldRoles.some((r) => r.includes('Engineer'));
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -153,7 +158,7 @@ export default function InspectorPanel({
     })();
     return () => { alive = false; };
   }, [selectedDoc?.id]);
-  const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
+  const isController = holdsAny(['Admin', 'DocCtrl']); // OWN-3: collection, not headline
 
   // Cheap per-selection counts: they let the ALERTS zone render only when
   // something is actually wrong, and give drawer headers honest summaries
@@ -670,7 +675,7 @@ export default function InspectorPanel({
             documentNumber={selectedDoc.documentNumber}
             userId={uid ?? undefined}
             userName={userEmail ?? undefined}
-            canManage={["Admin", "DocCtrl", "Manager", "Supervisor"].includes(activeRole ?? "")}
+            canManage={holdsAny(["Admin", "DocCtrl", "Manager", "Supervisor"])}
           />
         </div>
       )}
@@ -760,6 +765,7 @@ export default function InspectorPanel({
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}
           userRole={activeRole}
+          userRoles={activeRoles}
           onCheckout={onCheckout}
         />
         {isController && isCheckedOut && onForceUnlock && (

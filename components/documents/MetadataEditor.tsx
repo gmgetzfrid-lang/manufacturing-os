@@ -130,6 +130,8 @@ export default function MetadataEditor(props: {
   document: DocumentRecord | null;
   columns: MetadataFieldDefinition[];
   userRole?: string | null;
+  /** OWN-3: the full role collection — edit authority follows it. */
+  userRoles?: string[] | null;
   currentUserId?: string;
   currentUserEmail?: string;
   /** Active org id — required for asset-tag chips to be clickable. */
@@ -137,13 +139,13 @@ export default function MetadataEditor(props: {
   onCheckout?: (doc: DocumentRecord) => void;
   onSave: (payload: MetadataEditorSavePayload) => Promise<void>;
 }) {
-  const { isOpen, onClose, document, columns, onSave, userRole, currentUserId, currentUserEmail, orgId, onCheckout } = props;
+  const { isOpen, onClose, document, columns, onSave, userRole, userRoles, currentUserId, currentUserEmail, orgId, onCheckout } = props;
   // Roles that can create assets / upload photos
-  const canManageAssets = userRole === "Admin" || userRole === "Manager" || userRole === "Supervisor"
-    || (userRole?.includes("Engineer") ?? false) || userRole === "Drafter" || userRole === "DocCtrl";
+  const heldRoles = [userRole, ...(userRoles ?? [])].filter(Boolean) as string[];
+  const canManageAssets = heldRoles.some((r) => ["Admin", "Manager", "Supervisor", "Drafter", "DocCtrl"].includes(r) || r.includes("Engineer"));
 
   // Only Admin and DocCtrl can edit
-  const canEdit = userRole === "Admin" || userRole === "DocCtrl";
+  const canEdit = heldRoles.some((r) => r === "Admin" || r === "DocCtrl"); // OWN-3: collection, not headline
 
   // ── Core fields state ───────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
@@ -320,6 +322,7 @@ export default function MetadataEditor(props: {
                   currentUserId={currentUserId}
                   currentUserEmail={currentUserEmail}
                   userRole={userRole}
+                  userRoles={userRoles}
                   onCheckout={onCheckout}
                 />
               </div>

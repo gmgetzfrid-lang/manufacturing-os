@@ -149,3 +149,41 @@ export function normalizeRoles(rolesArr: unknown, legacyRole: unknown): Role[] {
   push(legacyRole);
   return out;
 }
+
+// ─── Display-only role notes (DEC-3 / DEC-4) ─────────────────────────────
+// PICKER-ONLY, like everything else in this module. Nothing evaluates these
+// to authorize an action; they exist so the pickers stop offering strings
+// that grant nothing beyond Requester without telling the admin so.
+
+/** DEC-3: the five capability-dead department roles. Deprecated, NOT
+ *  deleted — role identity is a bare string inside customer JSON with no
+ *  version field, so removing one from ALL_ROLES would silently orphan every
+ *  stored ACL rule that names it. Rendered greyed with a "use a team" hint;
+ *  still selectable; still a valid ACL subject. This is an EXPLICIT list on
+ *  purpose: "grants nothing new" would also catch Contractor, which is
+ *  load-bearing as a RESTRICTION (reduced navigation) and must never be
+ *  marked dormant. */
+export const DORMANT_ROLES: readonly Role[] = ["Accounting", "Safety", "HR", "Maintenance", "Operations"];
+
+export function isDormantRole(role: string): boolean {
+  return (DORMANT_ROLES as readonly string[]).includes(role);
+}
+
+export const DORMANT_ROLE_NOTE =
+  "Use a team instead — this role grants nothing beyond Requester.";
+
+/** DEC-4: the four Engineer tiers are labels with IDENTICAL authority — every
+ *  check is "role contains Engineer" and the capability policy's `Engineer`
+ *  token matches all four. Kept as customer-visible seniority; documented as
+ *  equivalent so nobody assigns a tier expecting a power difference. */
+export const ENGINEER_TIER_ROLES: readonly Role[] = ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4"];
+
+export const ENGINEER_TIER_NOTE =
+  "Engineering tiers are labels — all four grant identical authority. Use a capability grant to differentiate.";
+
+/** The display note a picker should attach to a role, or null. */
+export function roleDisplayNote(role: string): string | null {
+  if (isDormantRole(role)) return DORMANT_ROLE_NOTE;
+  if ((ENGINEER_TIER_ROLES as readonly string[]).includes(role)) return ENGINEER_TIER_NOTE;
+  return null;
+}

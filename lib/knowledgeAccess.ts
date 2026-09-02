@@ -23,6 +23,9 @@ export interface KnowledgePrincipal {
   uid: string;
   orgId: string;
   role: Role;
+  /** CHAIN-1: the full held collection — ACL role subjects (allow and deny)
+   *  evaluate against all of them, not just the headline. */
+  roles: Role[];
   isController: boolean;
   teamIds: string[];
 }
@@ -40,6 +43,7 @@ export async function loadPrincipal(orgId: string, uid: string): Promise<Knowled
     uid,
     orgId,
     role: (member.role as Role) ?? ("Viewer" as Role),
+    roles: [...roles].filter(Boolean) as Role[],
     isController: roles.has("Admin") || roles.has("DocCtrl"),
     teamIds: (teams ?? []).map((t) => t.team_id as string),
   };
@@ -65,6 +69,7 @@ function chainReadable(
     {
       uid: principal.uid,
       role: principal.role,
+      roles: principal.roles,
       orgId: principal.orgId,
       teamIds: principal.teamIds,
       isActiveMember: true,

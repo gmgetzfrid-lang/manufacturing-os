@@ -27,7 +27,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   canManage: boolean;
   onChanged?: () => void;
 }) {
-  const { uid, userEmail, activeRole } = useRole();
+  const { uid, userEmail, activeRole, hasAnyRole } = useRole();
   const [pendingVersionId, setPendingVersionId] = useState<string | null>(null);
   const [draftFileUrl, setDraftFileUrl] = useState<string | null>(null);
   const [roster, setRoster] = useState<ReviewSignoffRow[]>([]);
@@ -86,7 +86,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   // Who may SEE the in-review draft: reviewers/alternates + owner/publisher +
   // Admin/DocCtrl + explicitly-configured draft viewers. Everyone else only
   // learns that a review is in progress.
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  const isController = hasAnyRole(["Admin", "DocCtrl"]); // OWN-3: collection, not headline
   const canSeeDraft = isController || canManage
     || roster.some((r) => r.reviewerUserId === uid)
     || (uid ? (control?.draftViewerIds ?? []).includes(uid) : false)

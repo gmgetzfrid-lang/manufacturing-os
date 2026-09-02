@@ -84,7 +84,7 @@ function ageChip(days: number): { cls: string; label: string } {
 }
 
 export default function LifecycleBoard() {
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { activeOrgId, uid, userEmail, activeRole, hasAnyRole } = useRole();
   const [docs, setDocs] = useState<BoardDoc[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -180,7 +180,7 @@ export default function LifecycleBoard() {
 
       {/* Document Control review queue: open branches, unverified-provenance
           revisions, 14d+ checkouts. Controllers only; silent when empty. */}
-      {activeOrgId && uid && (activeRole === "Admin" || activeRole === "DocCtrl") && (
+      {activeOrgId && uid && hasAnyRole(["Admin", "DocCtrl"]) && (
         <DocControlQueue
           orgId={activeOrgId}
           currentUser={{ uid, email: userEmail ?? null, role: activeRole ?? null }}

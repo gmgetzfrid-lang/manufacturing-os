@@ -55,7 +55,13 @@ from a single role that was chosen by rank, not by relevance.
 ## ADD-1 · The additive role collection reaches production authority in exactly one place
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01 — priority 1 landed in Phase 4 as WF-7; priorities 2–3 closed in Phase 5).** (1) `getActions` receives and evaluates the full collection (`WorkflowContext.userRoles`, threaded by the route and the ticket page — WF-7). (2) The two admin pages (`/admin/analytics`, `/admin/archive-view`) pass `roles` and `uid` to `policyAllows`. (3) The authority sweep: every controller-tier check on the publish path and its UI (OWN-3), the restriction-style gates (CHAIN-1), the ACL role-subject matcher and index evaluator (allow AND deny), `authorizeOrgRole` (SURF-10), the library read-access check on the documents index, and the six lib-level controller lookups now read the collection — so adding a role grants what the picker said it would. The 204-read sweep was scoped to AUTHORITY reads; display-only `activeRole` reads (badges, attribution, `signerRole`) intentionally keep the headline.
+- Done-when: ✓ engine evaluates the collection (`workflow.test.ts` WF-7 describe); ✓ adding a role grants what the picker promises (additive Drafter self-assigns, additive DocCtrl publishes, additive DraftingSupervisor is granted by an ACL role subject); ✓ `["Manager","Drafter"]`-shaped case pinned (`Viewer`+`Drafter` → self_assign in `workflow.test.ts`; `Requester`+`DraftingSupervisor` → publish via index in `rpPhase5Additive.test.ts`).
+- Files: `lib/workflow.ts` (Phase 4), `app/(protected)/admin/analytics/page.tsx`, `app/(protected)/admin/archive-view/page.tsx`, plus the Phase 5 files listed under OWN-3 / CHAIN-1 / SURF-10.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**

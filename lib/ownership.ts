@@ -149,7 +149,11 @@ export async function isEffectiveOwnerOfDocument(documentId: string, uid: string
 /** The org's Admin/DocCtrl user ids — the fallback owners and the escalation
  *  target when a delegated owner falls behind. */
 export async function getOrgControllers(orgId: string): Promise<string[]> {
-  const { data } = await supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active").in("role", ["Admin", "DocCtrl"]);
+  // OWN-3: controllers are a property of the COLLECTION — a DocCtrl who also
+  // holds Manager (headline Manager) is still a controller. Mirrors the DB's
+  // is_org_controller: role IN (...) OR roles && ARRAY[...].
+  const { data } = await supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active")
+    .or("role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}");
   return (data ?? []).map((r) => (r as { uid: string }).uid);
 }
 

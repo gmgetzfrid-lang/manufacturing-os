@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { ChevronRight, ChevronDown, CheckSquare, Square, MinusSquare } from "lucide-react";
 import { Role } from "@/types/schema";
+import { isDormantRole, roleDisplayNote } from "@/lib/roleCapabilities";
 
 export const ROLE_HIERARCHY: { name: string; roles: Role[] }[] = [
   { 
@@ -117,7 +118,15 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                       <div className="mr-3">
                         {isSelected ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4 text-slate-200" />}
                       </div>
-                      <span className={`text-sm ${isSelected ? 'font-semibold text-blue-900' : 'text-[var(--color-text-muted)]'}`}>{role}</span>
+                      <span
+                        title={roleDisplayNote(role) ?? undefined}
+                        className={`text-sm ${isSelected ? 'font-semibold text-blue-900' : 'text-[var(--color-text-muted)]'} ${isDormantRole(role) ? 'opacity-60' : ''}`}
+                      >
+                        {role}
+                        {isDormantRole(role) && (
+                          <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">dormant · use a team</span>
+                        )}
+                      </span>
                     </div>
                   );
                 })}

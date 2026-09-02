@@ -41,8 +41,8 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState<boolean>(false);
   const [reverseTarget, setReverseTarget] = useState<TimelineEvent | null>(null);
-  const { uid, userEmail, activeRole } = useRole();
-  const isReverseAuthorized = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { uid, userEmail, activeRole, hasAnyRole } = useRole();
+  const isReverseAuthorized = hasAnyRole(["Admin", "DocCtrl"]); // OWN-3: collection, not headline
   const [loading, setLoading] = useState<boolean>(true);
   const [activeSnapshot, setActiveSnapshot] = useState<DocumentVersion | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);

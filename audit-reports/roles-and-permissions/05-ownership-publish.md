@@ -232,7 +232,16 @@ readers of the column: `lib/ownership.ts:79`, `lib/docControlRegister.ts:155`,
 ## OWN-3 · Adding a second role to your Doc Control manager silently strips their publish authority
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 5 — built per `DEC-2`: additive publish path, `ROLE_RANK` untouched).** Both halves. DATABASE (`20261040`, four of DEC-2's five sites; `node_visible` LAST and separately in `20261041` per the decision): `enforce_document_publish_guard` (live body from `20261030`) routes its controller short-circuit through `is_org_controller(NEW.org_id)`; `user_can_publish_on_library` reads `COALESCE(roles, ARRAY[role])` and short-circuits on `v_roles && ARRAY['Admin','DocCtrl']` — AND its ACL role-subject matching (allow and deny) now evaluates every held role (the CHAIN-1/ADD-1 half of the same function); `publish_revision`'s `v_is_controller` is additive inline on `p_actor` (not `is_org_controller`, because a service-role caller names its actor); the sign-off/ack UPDATE and DELETE policies use `is_org_controller`. Each re-created body is proven byte-faithful to its live predecessor except the substitution by a line-diff test. APP: `Principal` gained `roles`; `isControllerPrincipal`/`heldRoles` in `lib/permissions.ts` make the controller tier a property of the collection in `canWithAclChain`, `canPublishOnLibrary`, `canDiscover`, `canPublishViaIndex`, `resolveCanControlLibrary`, and `evaluatePublishGuard` (`actorRoles`); every mutator principal (`authorizePublish`, `correctRevisionLabel`, `backfillVersion`) is now resolved by `lib/principal.ts` from `org_members.role/roles` + `team_members` — the same rows the DB reads — failing SAFE to the caller's headline on a read error, never wider. `getOrgControllers()` and the five sibling controller reads (`reviewCycles` ×2, `accessRecert`, `projects`, `storageAlerts`, `storageUsage`) query the union (`role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}`). UI: the library page, documents index, Sidebar admin section, `InspectorPanel`, `ReviewGateSection`, `HistoryDrawer`, `LifecycleBoard`, `CheckoutStatusCell`, `MetadataEditor` read the collection (`hasAnyRole` / `activeRoles` / `userRoles`). `ROLE_RANK` is byte-identical (pinned by `membershipSelection.test.ts`).
+- Done-when: (1) ✓ additive DocCtrl has the same publish/supersede/force authority as a headline DocCtrl (DB + app + UI); (2) ✓ `roles=['Manager','DocCtrl']` pinned against the publish path (`rpPhase5Additive.test.ts`: controller tier, no-ACL library publish, private-node visibility, force-past-hold); (3) ✓ `getOrgControllers()` returns them (query shape pinned).
+- DEC-2 acceptance: ✓ `['Manager','DocCtrl']` publishes / appears in controllers / sees private (after `20261041`); ✓ `['Manager']` alone does none; ✓ `ROLE_RANK` unchanged.
+- Files: `supabase/migrations/20261040_rp_phase5_additive_publish_path.sql`, `20261041_rp_phase5_node_visible_additive.sql`, `lib/permissions.ts`, `lib/principal.ts` (new), `lib/documentGuards.ts`, `lib/revisions.ts`, `lib/ownership.ts`, `lib/reviewCycles.ts`, `lib/accessRecert.ts`, `lib/projects.ts`, `lib/storageAlerts.ts`, `lib/storageUsage.ts`, the UI files above; tests `lib/__tests__/rpPhase5Additive.test.ts`, `lib/__tests__/rpPhase5Migration.test.ts`.
+- Migrations: `20261040` — **pending operator inventory + paste** (the DEC-2 inventory rides the migration file as aggregate counts; this line flips to "applied & verified live" when the probe booleans come back); `20261041` (node_visible) — printed only AFTER `20261040` verifies, per DEC-2.
+- Residual (recorded): `lib/reviewControl.ts` `finalizeReviewedRevision` performs the promote with no app-side authority check — its only gate is the (now additive) DB trigger; consistent, but the app-side check belongs to the review-gate work. `acl_subject_in_bucket` itself is still single-role; `node_visible` compensates by evaluating each held role (20261041).
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / access-control
 - **Locations:**
@@ -436,7 +445,14 @@ controller force. Retire the v1 fallback in the same change.
 ## OWN-6 · Team-based publish grants are dead on every mutator path while the database honors them
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 5, shipped together with OWN-10).** The three mutator principals (`authorizePublish` — rev-up/submit/revert/supersede — `correctRevisionLabel`, `backfillVersion`) no longer build `{ uid, role, orgId }` from a caller-supplied headline; `resolveActorPrincipal` (`lib/principal.ts`) reads `org_members.role/roles` and `team_members` (via the existing `getMyTeamIds`) and returns `{ uid, role, roles, orgId, teamIds, isActiveMember }` — so `resolveCanControlLibrary` → `canPublishViaIndex`/`canPublishOnLibrary` finally see the same `teamIds` the database's `user_can_publish_on_library` resolves. The library page's Publish button now mirrors the mutator's rule exactly (chain-resolved `acl_index` first, raw-ACL fallback) — it selects `acl_index` on the library row for that purpose — so "the button lies" cannot recur in either direction. Fail-safe: a membership read error keeps the caller's headline and adds no roles (teams are still carried — additive, and evaluated against the same ACL the DB evaluates).
+- Done-when: ✓ a member whose only publish authority is a team grant passes the evaluator the mutator uses (`rpPhase5Additive.test.ts`: resolved principal + `canPublishViaIndex` team grant → true; the old team-less principal → false); the end-to-end rev-up is exercised through `authorizePublish` with `resolveCanControlLibrary` unmocked in that test's principal path.
+- Inventory: the count of libraries carrying `allow.teams.publish`/`admin` grants (now live app-side) rides `20261040`'s inventory block — recorded in OWN-3's line when the operator pastes it back.
+- Files: `lib/principal.ts`, `lib/revisions.ts`, `app/(protected)/documents/[libraryId]/page.tsx`, `types/schema.ts` (`LibraryConfig.aclIndex`).
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / ux
 - **Locations:**
@@ -618,7 +634,14 @@ and the bulk selector, and a rule naming it authorizes a publish end to end.
 ## OWN-10 · The "View as" simulator reads a non-existent column, so it under-reports every team-derived grant
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-01, roles-and-permissions Phase 5, shipped together with OWN-6).** `ViewAsSimulator` queries `team_members` by `uid` (the only `user_id` site in the repo is gone). The recon found the finding UNDERSTATED the failure: the effect destructured only `data`, so the PostgREST 400 was never even observed — the empty result ran on the SUCCESS branch. Now the `error` is read into a visible state: a rose banner ("Team memberships could not be loaded (…). The rows below OMIT team-derived grants — do not sign off on them.") replaces silent emptiness, and the catch reports too. The simulator evaluates the SAME principal shape the mutators now build — headline + full `roles` collection + resolved `teamIds` — through `isControllerPrincipal`, `canDiscover` (with the library's `owner_user_id` as `effectiveOwnerUserId`) and `canPublishViaIndex`/`canPublishOnLibrary`, plus a library-owner arm. Additive DocCtrl and team-granted publishers now show as what the app will actually allow.
+- Done-when: (1) ✓ real team memberships resolved; (2) ✓ query failure surfaces as a visible error, never an empty result; (3) ✓ reported authority matches the mutator path (same evaluators, same principal shape) and the database (team + additive controller arms, after `20261040`/`20261041`).
+- Scope note: folder/document-level ownership and the team-supervisor rung are resolved per node by the DB (`user_is_effective_owner`); the simulator reflects LIBRARY ownership, and its footer says so.
+- Files: `components/permissions/ViewAsSimulator.tsx`; source pins in `lib/__tests__/rpPhase5Additive.test.ts`.
+
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / access-control
 - **Locations:**
