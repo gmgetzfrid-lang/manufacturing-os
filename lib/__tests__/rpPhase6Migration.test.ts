@@ -52,6 +52,24 @@ describe("20261042 — revocation (SURF-1/DEC-20) with succession (GAP-5/OWN-12)
     expect(fn).toMatch(/SELECT supervisor_user_id INTO v_owner FROM teams WHERE id = v_team;/);
   });
 
+  it("policy probes match the DEPARSED expression pg_policies stores: a cast never sits bare inside a LIKE pattern", () => {
+    // pg_policies.qual / with_check hold pg_get_expr output: ARRAY['Admin']::text[]
+    // becomes ARRAY['Admin'::text], and x::text becomes (x)::text. A literal
+    // source-form cast in a LIKE pattern is therefore a probe that can only
+    // be false live (20261042 probe 1 came back false for exactly this).
+    for (const m of [m42, m43, m44, m45]) {
+      const v = m.slice(m.indexOf("── Verification"));
+      const pats = [...v.matchAll(/(?:qual|with_check) LIKE '([^']*(?:''[^']*)*)'/g)].map((x) => x[1]);
+      for (const pat of pats) {
+        expect(pat, pat).not.toMatch(/\w::\w/);       // identifier::type — deparse wraps it in parens
+        expect(pat, pat).not.toMatch(/\]::\w+\[\]/);  // ARRAY[...]::text[] — deparse moves the cast inside
+      }
+    }
+    const v42 = between(m42, "── Verification", "── Inventory");
+    expect(v42).toMatch(/qual LIKE '%me\.roles && ARRAY\[''Admin''%'/);
+    expect(m44).toMatch(/qual LIKE '%owner_user_id%::text = %auth\.uid\(\)%::text%'/);
+  });
+
   it("verification proves every column the sweep late-binds exists (63 pairs, same lesson as 20261038)", () => {
     const v = between(m42, "── Verification", "── Inventory");
     expect(v).toMatch(/expect true × 7/);

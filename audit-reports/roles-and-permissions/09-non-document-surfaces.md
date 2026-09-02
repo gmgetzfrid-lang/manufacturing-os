@@ -23,6 +23,7 @@ notifications.
 - Done-when: (1) ✓ an admin can revoke — suspend ends `my_org_ids()` membership immediately, remove deletes the row; (2) ✓ a refused revocation surfaces as an error (RPC raise → thrown; no optimistic removal before confirmation); (3) ✓ suspend is the non-destructive path and the UI default; (4) ✓ last-admin protection holds on both paths (real UPDATE/DELETE statements inside the RPC; no trigger bypass — pinned).
 - Files: `supabase/migrations/20261042_rp_phase6_revocation_and_succession.sql`, `lib/members.ts` (new), `app/(protected)/admin/users/page.tsx`, `app/api/admin/create-user/route.ts`; tests `lib/__tests__/rpPhase6Migration.test.ts`, `lib/__tests__/rpPhase6Additive.test.ts`.
 - Migration: `20261042` — **printed for operator paste; pending apply** (7-point verification incl. a 63-column late-binding probe + 5-line inventory ride the file).
+  - 2026-09-02 first live run: DDL applied (6/7 true, inventory 0/0/0/0/0). Probe 1 was false because `pg_policies.qual` holds the DEPARSED expression (`ARRAY['Admin']::text[]` is stored as `ARRAY['Admin'::text]`); the probe matched the source form. Probe corrected to the stored form, the same trap pre-empted in `20261044` (`x::text` is stored as `(x)::text`), and a test now forbids a bare cast inside any `qual`/`with_check` LIKE pattern across all four Phase 6 migrations. Re-verification of probe 1 pending paste-back.
 
 
 - **Verification:** CONFIRMED

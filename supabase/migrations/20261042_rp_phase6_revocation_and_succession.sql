@@ -258,9 +258,12 @@ GRANT EXECUTE ON FUNCTION revoke_member(uuid, text) TO authenticated;
 COMMIT;
 
 -- ── Verification (read-only) — expect true × 7 ──────────────────────────────
+-- pg_policies stores the DEPARSED expression: ARRAY['Admin']::text[] comes
+-- back as ARRAY['Admin'::text], so the match stops before the cast.
 SELECT 'org_members has a DELETE policy (Admin, by collection)' AS check,
        EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'org_members' AND policyname = 'org_members_delete'
-                AND cmd = 'DELETE' AND qual LIKE '%ARRAY[''Admin'']%') AS ok
+                AND cmd = 'DELETE' AND qual LIKE '%me.roles && ARRAY[''Admin''%'
+                AND qual LIKE '%<> auth.uid()%') AS ok
 UNION ALL
 SELECT 'my_team_ids requires an active membership',
        (SELECT prosrc LIKE '%m.status = ''active''%' FROM pg_proc WHERE proname = 'my_team_ids')

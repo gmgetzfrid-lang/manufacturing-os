@@ -113,7 +113,7 @@ SELECT 'documents access guard keeps the OWN-2 ownership arm',
           FROM pg_proc WHERE proname = 'documents_guard_access_change')
 UNION ALL
 SELECT 'folder update policy admits owner and manage-grant',
-       (SELECT qual LIKE '%owner_user_id::text = auth.uid()::text%' AND qual LIKE '%can_manage_node(acl_index, org_id)%'
+       (SELECT qual LIKE '%owner_user_id%::text = %auth.uid()%::text%' AND qual LIKE '%can_manage_node(acl_index, org_id)%'
           FROM pg_policies WHERE tablename = 'collections' AND policyname = 'collections_update_controllers')
 UNION ALL
 SELECT 'admin-grant bound helper installed',
