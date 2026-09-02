@@ -209,8 +209,10 @@ Three read-only recon agents first; every widening carries its inventory.
 | `DEC-17` | **IMPLEMENTED** — `audit_logs` org-level trail admin-class only (document history unchanged), asset registry write overlays, `/admin/settings` gate matches its API; `SURF-9` annotated (consolidation deferred per the decision); `OWN-11` annotated partial |
 
 Ship loop green: `tsc`, `eslint`, **1736 vitest** (37 new), full `next build`.
-Migrations `20261042` → `20261045` — **pending operator paste**, one at a time
-in order, each with its verification (and inventory) block.
+Migrations, one at a time in order, each with its verification (and inventory)
+block: `20261042` — **applied & verified live 2026-09-02** (7/7, inventory all
+zero); `20261043` → `20261045` — **pending operator paste** (`20261043` §0 repairs the
+`revoke_member` TEXT[] assignment found in pre-flight; see `SURF-1`).
 
 ### Phase 2 — database honesty (the trap phase)
 

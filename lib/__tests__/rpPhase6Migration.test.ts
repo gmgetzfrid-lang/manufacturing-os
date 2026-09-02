@@ -171,6 +171,29 @@ describe("20261043 — legal hold at the database (SURF-3) + atomic force-releas
     expect(m43).toMatch(/REVOKE ALL ON FUNCTION force_release_document\(uuid, text\) FROM PUBLIC;/);
   });
 
+  it("section 0 re-creates revoke_member from 20261042 with exactly one line changed: the TEXT[] assignment", () => {
+    // documents.active_collaborators is TEXT[] (schema.sql); 20261042 assigned
+    // '[]'::jsonb, which plpgsql rejects when it plans the REMOVE path.
+    const a = between(m42, "CREATE OR REPLACE FUNCTION revoke_member", "REVOKE ALL ON FUNCTION revoke_member");
+    const b = between(m43, "CREATE OR REPLACE FUNCTION revoke_member", "-- ── 1. documents retention");
+    const { onlyInA, onlyInB } = lineDiff(a, b);
+    expect(onlyInA.map((l) => l.trim())).toEqual(["checkout_note = NULL, current_lock_id = NULL, active_collaborators = '[]'::jsonb"]);
+    expect(onlyInB.map((l) => l.trim())).toEqual(["checkout_note = NULL, current_lock_id = NULL, active_collaborators = '{}'::text[]"]);
+    expect(m43).toMatch(/expect true × 7/);
+    // The DECLARE block legitimately initialises jsonb accumulators with
+    // '[]'::jsonb, so the probe must name the assignment, not the literal.
+    expect(m43).toMatch(/prosrc NOT LIKE '%active_collaborators = ''\[\]''::jsonb%'/);
+    expect(m43).not.toMatch(/prosrc NOT LIKE '%''\[\]''::jsonb%'/);
+  });
+
+  it("no unapplied Phase 6 migration assigns jsonb to documents.active_collaborators (TEXT[])", () => {
+    // Comment lines are excluded: 20261043's §0 header quotes the defect.
+    for (const m of [m43, m44, m45]) {
+      const code = m.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+      expect(code).not.toMatch(/active_collaborators\s*=\s*'\[\]'::jsonb/);
+    }
+  });
+
   it("verification proves every guarded column exists (late-bound plpgsql safety)", () => {
     const v = between(m43, "── Verification", "── Inventory");
     expect(v).toMatch(/COUNT\(\*\) = 10 FROM information_schema\.columns/);
