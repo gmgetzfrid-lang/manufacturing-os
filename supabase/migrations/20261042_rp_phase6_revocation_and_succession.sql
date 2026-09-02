@@ -257,7 +257,7 @@ GRANT EXECUTE ON FUNCTION revoke_member(uuid, text) TO authenticated;
 
 COMMIT;
 
--- ── Verification (read-only) — expect true × 6 ──────────────────────────────
+-- ── Verification (read-only) — expect true × 7 ──────────────────────────────
 SELECT 'org_members has a DELETE policy (Admin, by collection)' AS check,
        EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'org_members' AND policyname = 'org_members_delete'
                 AND cmd = 'DELETE' AND qual LIKE '%ARRAY[''Admin'']%') AS ok
@@ -283,7 +283,36 @@ UNION ALL
 SELECT 'search_path pinned on all four functions',
        (SELECT COUNT(*) = 4 FROM pg_proc
          WHERE proname IN ('my_team_ids', 'user_is_effective_owner', 'member_is_active', 'revoke_member')
-           AND array_to_string(proconfig, ',') LIKE '%search_path=public%');
+           AND array_to_string(proconfig, ',') LIKE '%search_path=public%')
+UNION ALL
+-- plpgsql late-binds every column revoke_member and user_is_effective_owner
+-- touch, so a column missing live would only surface as a runtime error on
+-- the first revocation. Prove all 63 exist now (same lesson as 20261038).
+SELECT 'every column the revocation sweep late-binds exists',
+       (SELECT COUNT(*) = 63 FROM information_schema.columns c
+          JOIN (VALUES
+            ('org_members','id'), ('org_members','uid'), ('org_members','org_id'), ('org_members','status'),
+            ('org_members','role'), ('org_members','roles'), ('org_members','email'),
+            ('audit_logs','action'), ('audit_logs','resource_id'), ('audit_logs','resource_type'),
+            ('audit_logs','org_id'), ('audit_logs','user_id'), ('audit_logs','user_email'), ('audit_logs','details'),
+            ('libraries','id'), ('libraries','name'), ('libraries','org_id'), ('libraries','owner_user_id'),
+            ('libraries','owner_name'), ('libraries','owner_team_id'),
+            ('collections','id'), ('collections','name'), ('collections','org_id'), ('collections','owner_user_id'),
+            ('collections','owner_name'),
+            ('documents','id'), ('documents','document_number'), ('documents','title'), ('documents','name'),
+            ('documents','library_id'), ('documents','org_id'), ('documents','owner_user_id'), ('documents','owner_name'),
+            ('documents','checked_out_by'), ('documents','checked_out_by_name'), ('documents','checked_out_at'),
+            ('documents','checkout_note'), ('documents','current_lock_id'), ('documents','active_collaborators'),
+            ('teams','id'), ('teams','name'), ('teams','org_id'), ('teams','supervisor_user_id'),
+            ('checkout_sessions','org_id'), ('checkout_sessions','user_id'), ('checkout_sessions','status'),
+            ('checkout_sessions','ended_at'), ('checkout_sessions','released_at'), ('checkout_sessions','released_by'),
+            ('checkout_sessions','released_reason'), ('checkout_sessions','document_id'),
+            ('org_configurations','org_id'), ('org_configurations','key'), ('org_configurations','data'),
+            ('subscriptions','org_id'), ('subscriptions','user_id'),
+            ('team_members','org_id'), ('team_members','uid'), ('team_members','team_id'),
+            ('project_members','project_id'), ('project_members','user_id'),
+            ('projects','id'), ('projects','org_id')
+          ) v(t, col) ON c.table_schema = 'public' AND c.table_name = v.t AND c.column_name = v.col);
 
 -- ── Inventory (read-only, aggregate) — what the membership-aware resolver
 --    starts routing to controllers, and what removal will have to sweep.

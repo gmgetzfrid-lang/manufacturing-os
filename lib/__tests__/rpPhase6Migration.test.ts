@@ -52,6 +52,21 @@ describe("20261042 — revocation (SURF-1/DEC-20) with succession (GAP-5/OWN-12)
     expect(fn).toMatch(/SELECT supervisor_user_id INTO v_owner FROM teams WHERE id = v_team;/);
   });
 
+  it("verification proves every column the sweep late-binds exists (63 pairs, same lesson as 20261038)", () => {
+    const v = between(m42, "── Verification", "── Inventory");
+    expect(v).toMatch(/expect true × 7/);
+    const probe = between(v, "JOIN (VALUES", ") v(t, col)");
+    const pairs = [...probe.matchAll(/\('(\w+)','(\w+)'\)/g)].map((m) => `${m[1]}.${m[2]}`);
+    expect(pairs.length).toBe(63);
+    expect(new Set(pairs).size).toBe(63);
+    expect(v).toMatch(/COUNT\(\*\) = 63 FROM information_schema\.columns/);
+    // Every column the function bodies reference by name is in the probe.
+    for (const c of ["checkout_sessions.released_reason", "documents.active_collaborators", "documents.current_lock_id",
+                     "org_configurations.data", "teams.supervisor_user_id", "libraries.owner_team_id", "org_members.roles"]) {
+      expect(pairs).toContain(c);
+    }
+  });
+
   it("revoke_member: three modes, authority by collection, self-guard, last-admin trigger left live", () => {
     const fn = between(m42, "CREATE OR REPLACE FUNCTION revoke_member", "REVOKE ALL ON FUNCTION revoke_member");
     expect(fn).toMatch(/IF p_mode NOT IN \('suspend', 'remove', 'restore'\)/);
