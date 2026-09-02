@@ -187,9 +187,11 @@ counted; recon maps (three read-only agents) preceded every edit.
 | `DEC-3` / `DEC-4` | **IMPLEMENTED** — `DORMANT_ROLES` (explicit five; Contractor excluded by name) + `ENGINEER_TIER_ROLES` notes in `lib/roleCapabilities.ts` (picker-only, per DEC-11); every role picker greys/labels them, all stay selectable and valid as ACL subjects; the library wizard's picker was missing `DraftingSupervisor` (an OWN-9-class gap the census didn't cover) — fixed and the census now covers all four pickers |
 
 Ship loop green: `tsc`, `eslint`, **1699 vitest** (39 new), full `next build`.
-Migration `20261040_rp_phase5_additive_publish_path.sql` — **pending operator
-inventory + paste** (DEC-2 inventory rides the file as aggregate counts);
-`20261041` (node_visible) is printed only after `20261040` verifies.
+DEC-2 inventory (operator-run): 0 members hold Admin/DocCtrl additively under
+a higher headline; 0 libraries carry team publish grants — nobody's authority
+changed on apply. Migration `20261040_rp_phase5_additive_publish_path.sql` —
+**applied & verified live 2026-09-01** (6-point probe all true);
+`20261041` (node_visible) pending operator paste.
 
 ### Phase 2 — database honesty (the trap phase)
 
