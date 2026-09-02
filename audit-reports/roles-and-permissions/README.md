@@ -191,7 +191,8 @@ DEC-2 inventory (operator-run): 0 members hold Admin/DocCtrl additively under
 a higher headline; 0 libraries carry team publish grants — nobody's authority
 changed on apply. Migration `20261040_rp_phase5_additive_publish_path.sql` —
 **applied & verified live 2026-09-01** (6-point probe all true);
-`20261041` (node_visible) pending operator paste.
+`20261041_rp_phase5_node_visible_additive.sql` — **applied & verified live
+2026-09-01** (4-point probe all true). Phase 5 is COMPLETE; next is Phase 6.
 
 ### Phase 2 — database honesty (the trap phase)
 
