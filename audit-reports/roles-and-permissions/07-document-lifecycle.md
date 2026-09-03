@@ -196,6 +196,10 @@ waive review is not.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+
+**Partial (2026-09-02, Phase 6 severity sweep, Round A — the refresh slice).** `lib/draftHandoff.ts` no longer deletes the stash on read: `readDraft` is read-only and `discardDraft` runs only after the request insert succeeds, so refreshing `/requests/new?draft=…` before submitting still yields the marked-up file (Done-when 2 ✓; a StrictMode double-run cannot attach the file twice). Done-when 1 and 3 need the per-(document, version, user) markup store — that is `GAP-7` (Phase 7, independent) and stays OPEN here.
+- Files: `lib/draftHandoff.ts`, `app/(protected)/requests/new/page.tsx`. Tests: `lib/__tests__/lifeSweep.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** data-loss / safety
 - **Locations:**
@@ -251,7 +255,13 @@ the human to launder it through their filesystem. Persisting markup unblocks
 ## LIFE-4 · The book-viewer markup hand-off drops the source-document link entirely
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A).** The book-viewer hand-off's document id now reaches the ticket. `requests/new` keeps the stashed sheet's `docId`/`docNumber` (`stashedDoc`), derives `srcDocId = sourceDocId || stashedDoc.id`, and uses it for `metadata.source_document`, the "Source Linked" history entry and the source chip — so a marked-up ticket is found by `lib/impact.ts` (`metadata->source_document->>id`) and by the drafting-intent bridge exactly like a "Send to Drafting" one.
+- Done-when: (1) ✓ the Impact panel of the marked-up sheet lists the ticket (single sheet — `source_document` stays single-valued; multi-sheet provenance is `GAP-8`, and the first stashed sheet is the one recorded); (2) ✓ assignment produces the `document_intents` row (same id, same bridge); (3) ✓ the source-document confirmation renders for the marked-up case (`srcDocId || sourceFileUrl`), with copy that says the marked-up sheet is attached.
+- Files: `app/(protected)/requests/new/page.tsx`. Tests: `lib/__tests__/lifeSweep.test.ts`.
+- Ship loop green: `tsc`, `eslint`, vitest, `next build`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / correctness
 - **Locations:**
@@ -455,7 +465,13 @@ already says it goes, and surface the open hold to whoever closes the ticket.
 ## LIFE-7 · The PSM undocumented-field-change alert is bell-only; every comparable alert gets email
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A).** The PSM undocumented-change escalation now goes through `emit()` on a new `safety` notification category — bell AND email — whose event type (`safety_alert`) is deliberately unknown to `shouldSendForEvent`, so no per-category preference can mute it (the same mechanism a drawing recall uses). When the controller roster is empty the reporter sees a warning toast ("PSM alert has no recipient") and a `PSM_ALERT_UNROUTED` audit row is written — a hazard report never looks routed when it was not.
+- Done-when: (1) ✓ rows land in `email_notifications` (via `queueEmail` inside `emit`); (2) ✓ `email_on_assignment: false` does not gate `safety_alert` (test pins the closed preference switch); (3) ✓ empty roster is visible and recorded.
+- Files: `components/documents/CheckInPanel.tsx`, `lib/notify/dispatch.ts` (`NotifCategory` gains `safety`; `categoryToEventType` exported). Tests: `lib/__tests__/lifeSweep.test.ts`.
+- Residual: the assignment-queue notify a few lines above stays bell-only on purpose (it is legitimately preference-gated).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:**

@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { remapRow, conflictTargetFor, isSkippedTable, type RestorePlan } from "@/lib/dataRestore";
+import { remapRow, conflictTargetFor, isSkippedTable, type RestorePlan, isImmutableTable, IMMUTABLE_TABLES } from "@/lib/dataRestore";
 import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES } from "@/lib/exportTables";
 
 export const runtime = "nodejs";
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 
-  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"] };
+  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"]; manifest?: { orgId?: string; orgName?: string } };
   try { parsed = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const table = (parsed.table || "").trim();
@@ -37,6 +37,10 @@ export async function POST(req: NextRequest) {
   const idRemap = parsed.idRemap;
   if (!table || !IMPORTABLE.has(table)) {
     return NextResponse.json({ error: `Table "${table}" is not part of the backup contract.` }, { status: 400 });
+  }
+  if (isImmutableTable(table)) {
+    // SURF-8: append-only / self-insert-only tables cannot be blind-imported.
+    return NextResponse.json({ error: `Table "${table}" is append-only (${IMMUTABLE_TABLES[table]}); it is never restored by import.` }, { status: 400 });
   }
   if (isSkippedTable(table)) {
     return NextResponse.json({ error: `Table "${table}" is reconciled, never blind-imported.` }, { status: 400 });
@@ -84,6 +88,22 @@ export async function POST(req: NextRequest) {
     } else {
       inserted += up.count ?? chunk.length;
     }
+  }
+
+  // SURF-8 done-when 2: every restore chunk leaves an audit row naming the
+  // table, the row count and the backup it came from. Checked write — a
+  // restore whose trail cannot be written must not look complete.
+  const { error: auditErr } = await sb.from("audit_logs").insert({
+    action: "RESTORE_CHUNK", resource_type: "org", resource_id: orgId, org_id: orgId,
+    user_id: actor.userId, user_email: actor.email,
+    details: {
+      table, rowsReceived: rows.length, rowsAfterFilters: mapped.length, inserted,
+      backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
+      backupOrgName: parsed.manifest?.orgName ?? null,
+    },
+  });
+  if (auditErr) {
+    return NextResponse.json({ error: `Rows were written but the restore audit row failed: ${auditErr.message}`, inserted }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, inserted });

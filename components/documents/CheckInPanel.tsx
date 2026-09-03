@@ -290,16 +290,33 @@ export default function CheckInPanel({
     // impossible.
     if (undocumented) {
       void (async () => {
+        const title = `PSM alert: undocumented field change — ${docLabel}`;
+        const body = `${userName} reported the field differs from ${docLabel} with no MOC on record: "${note.trim()}"`;
         try {
           const controllers = (await getOrgControllers(doc.orgId!)).filter((u) => u !== currentUser.uid);
           if (controllers.length > 0) {
-            await notifyMany({
-              orgId: doc.orgId!, userIds: controllers,
+            // LIFE-7: bell AND email, on the "safety" category — the one
+            // preference toggle cannot mute (like a drawing recall). The
+            // owner-review path a few lines down already goes this way.
+            const { emit } = await import("@/lib/notify/dispatch");
+            await emit({
+              orgId: doc.orgId!, category: "safety", kind: "request_pending_approval",
+              title, body, link: `/requests/${row.id}`,
+              resource: { type: "ticket", id: row.id as string },
               actorUserId: currentUser.uid, actorName: userName,
-              kind: "request_pending_approval",
-              title: `PSM alert: undocumented field change — ${docLabel}`,
-              body: `${userName} reported the field differs from ${docLabel} with no MOC on record: "${note.trim()}"`,
-              link: `/requests/${row.id}`, resourceType: "ticket", resourceId: row.id as string,
+              audience: { involved: controllers },
+            });
+          } else {
+            // Nowhere to go. Say so where the reporter can see it and leave a
+            // record — a hazard report must never look routed when it was not.
+            showToast({
+              type: "warning", title: "PSM alert has no recipient",
+              message: "No other active Admin or Document Controller exists in this workspace, so nobody was notified. Escalate this by hand.",
+            });
+            await logAuditAction({
+              orgId: doc.orgId!, userId: currentUser.uid, userEmail: currentUser.email || undefined,
+              action: "PSM_ALERT_UNROUTED", resourceType: "ticket", resourceId: row.id as string,
+              details: { reason: "no_active_controllers", title },
             });
           }
         } catch (e) { console.warn("[checkin] PSM escalation notify failed (non-blocking)", e); }

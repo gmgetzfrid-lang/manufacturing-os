@@ -210,6 +210,9 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
 
   // Step 3 — permissions (plain language)
   const [viewAccess, setViewAccess] = useState<"all" | "restricted">("all");
+  // DOCACL-2: what a NEW folder or document under this library starts as.
+  // "normal" is open to every member until someone restricts it.
+  const [newNodeVisibility, setNewNodeVisibility] = useState<"normal" | "hidden">("normal");
   const [viewRoles, setViewRoles] = useState<Role[]>([]);
   const [uploadRoles, setUploadRoles] = useState<Role[]>(["DocCtrl", "Admin", "Engineer-1", "Engineer-2"]);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -232,6 +235,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         setOwnerQuery("");
         setColumns(initialData.customColumns?.length ? initialData.customColumns : defaultColumns());
         setViewAccess(initialData.readAccess === "ALL" ? "all" : "restricted");
+        setNewNodeVisibility(initialData.defaultNewVisibility === "hidden" ? "hidden" : "normal");
         setViewRoles(Array.isArray(initialData.readAccess) ? initialData.readAccess : []);
         setUploadRoles(initialData.writeAccess ?? ["DocCtrl", "Admin"]);
       } else {
@@ -242,6 +246,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         setOwnerQuery("");
         setColumns(defaultColumns());
         setViewAccess("all");
+        setNewNodeVisibility("normal");
         setViewRoles([]);
         setUploadRoles(["DocCtrl", "Admin", "Engineer-1", "Engineer-2"]);
         setShowAdvanced(false);
@@ -293,7 +298,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
       adminAccess: adminRoles,
       visibleTo,
       folderSecurity: "Inherited",
-      defaultNewVisibility: "normal",
+      defaultNewVisibility: newNodeVisibility,
       acl,
       defaultNewAcl: acl,
       ownerUserId: owner?.uid ?? null,
@@ -608,6 +613,21 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                       <div className="font-bold">Restricted</div>
                       <div className="text-xs font-normal mt-0.5 opacity-70">Only selected roles</div>
                     </button>
+                  </div>
+                  <div className="rounded-xl border border-[var(--color-border)] p-3">
+                    <div className="text-xs font-bold text-[var(--color-text)]">New folders and documents start as</div>
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" onClick={() => setNewNodeVisibility("normal")}
+                        className={`flex-1 px-3 py-2 rounded-lg border text-xs font-bold text-left ${newNodeVisibility === "normal" ? "border-green-500 bg-green-50 text-green-800" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                        Open (Normal)
+                        <div className="text-[11px] font-normal opacity-70">Readable by every member until someone restricts it.</div>
+                      </button>
+                      <button type="button" onClick={() => setNewNodeVisibility("hidden")}
+                        className={`flex-1 px-3 py-2 rounded-lg border text-xs font-bold text-left ${newNodeVisibility === "hidden" ? "border-orange-500 bg-orange-50 text-orange-800" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                        Restricted (Hidden)
+                        <div className="text-[11px] font-normal opacity-70">Only people and roles with an explicit allow can find it.</div>
+                      </button>
+                    </div>
                   </div>
                   {viewAccess === "restricted" && (
                     <div className="pt-2">

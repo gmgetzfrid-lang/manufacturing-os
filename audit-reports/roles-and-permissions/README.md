@@ -219,6 +219,25 @@ see `DEL-1`); `20261045` — **applied & verified live 2026-09-02** (9/9; invent
 the asset overlay's whiteboard-flip carve-out was found in pre-flight, see `DEC-17`).
 **Phase 6 is fully live.**
 
+### Phase 6 — severity sweep (item 8), Round A (2026-09-02)
+
+Recon first: five read-only agents re-verified every open `LIFE`/`DEL`/`DOCACL`/`ADD`/`SURF`
+finding against the post-Phase-6 code (several were already met by earlier phases).
+Round A is the no-migration set.
+
+| Item | Outcome |
+|---|---|
+| `LIFE-4` (HIGH) | **RESOLVED** — the book-viewer hand-off keeps the source-document link (Impact panel, intent bridge, chip) |
+| `LIFE-7` (HIGH) | **RESOLVED** — PSM alert is bell + email on an un-mutable `safety` category; empty roster visible + audited |
+| `LIFE-3` (HIGH) | **partial** — the stash survives a refresh (Done-when 2); the markup store is `GAP-7` (Phase 7) |
+| `OWN-7` (HIGH) | **RESOLVED** — expiry honoured at every save-time index build, census-tested |
+| `SURF-8` (HIGH) | **RESOLVED** — restore refuses the seven immutable tables, audits every chunk, mints no privileged role |
+| `SURF-6` (HIGH) | **RESOLVED** — already repaired by `20261025`, recorded |
+| `DEL-2` (HIGH) | **RESOLVED** — the ownership cascade carries read access in knowledge access and the page's folder rung |
+| `DEL-7` (MEDIUM) | **RESOLVED** — the ownership register/console/CSV from Phase 5/6 meets every done-when |
+| `ADD-2` (HIGH) | **RESOLVED** — simulator and production share the collection-aware evaluators |
+| `DOCACL-2` (HIGH) | **RESOLVED** — default-open is said out loud in the drawer, one-click restrict, wizard default |
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

@@ -91,7 +91,12 @@ use the same `bool_or` shape it already uses for teams. Mirror the change in
 ## DOCACL-2 · The default is open — this is deny-by-exception, not grant-by-exception
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A).** Default-open is now said out loud where rules are written: while a node is Normal the permission drawer shows an "Open to all members" pill, explains that allow rules add nothing until the node is restricted (only deny rules bite), and offers a one-click "Restrict to the people listed below" (sets Hidden, keeps the rules). The library wizard exposes what new folders and documents start as (Open / Restricted) instead of hardcoding `normal`, read back on edit and saved as `defaultNewVisibility` — the value the library page already stamps on new nodes.
+- Done-when: ✓ the deny-by-exception default is visible at the point of decision and reversible in one click; ✓ a library can be born restrict-by-default. Residual (design, unchanged): visibility is per-node — a `normal` child inside a `hidden` folder resets to open (`lib/acl.ts` inheritance rule); the drawer's pill now makes that state visible on the child.
+- Files: `components/permissions/PermissionDrawer.tsx`, `app/(protected)/admin/libraries/LibraryWizard.tsx`. Tests: `lib/__tests__/sweepRoundA.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**

@@ -196,7 +196,7 @@ export default function RestorePage() {
           const res = await fetch(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(activeOrgId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ table, rows: chunk, idRemap }),
+            body: JSON.stringify({ table, rows: chunk, idRemap, manifest: { orgId: envelope.manifest.orgId, orgName: envelope.manifest.orgName } }),
           });
           const body = await res.json().catch(() => null);
           if (!res.ok) { tableFailed = true; break; }

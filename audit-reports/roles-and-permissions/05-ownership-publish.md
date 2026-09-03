@@ -493,7 +493,12 @@ complete a rev-up end to end, and a test pins it.
 ## OWN-7 · `acl_index` discards rule expiry, so publish grants never expire at the database
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A).** Every save-time index build now passes `Date.now()`: `lib/libraryCollections.ts` (folder create), `app/(protected)/admin/libraries/page.tsx` (library save) and the three library-page sites (`buildAclIndexFromChain` for new nodes, folder saves and moves). A census test walks `app/`, `components/` and `lib/` and fails on any `buildAclIndex`/`buildAclIndexFromChain` call without the `nowMs` argument. With the nightly rebuild (`lib/aclIndexRebuild.ts`, 03:00) also expiry-aware, an expired grant can no longer be baked into `acl_index` at save time.
+- Done-when: ✓ an expired rule is absent from the index the DB reads, from the moment it is saved. Residual (deliberate, per the finding): the index shape carries no expiry, so a grant that expires *between* a save and the next rebuild is honoured by the app evaluators immediately and by the database only after the 03:00 rebuild (≤ 24 h). Closing that window means an expiry field in `AclIndexBucket` — the `types/schema.ts` chain reaction the finding defers.
+- Files: the five call sites above. Tests: `lib/__tests__/sweepRoundA.test.ts` (census).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:**

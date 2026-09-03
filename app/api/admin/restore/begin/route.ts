@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, mergeNewUserUids, type CurrentMember } from "@/lib/dataRestore";
+import { planRestore, mergeNewUserUids, type CurrentMember, restoredMemberRole } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -64,7 +64,9 @@ export async function POST(req: NextRequest) {
   for (const u of plan.users.filter((x) => x.disposition === "new" && x.oldUid)) {
     const newUid = globalThis.crypto?.randomUUID?.() || `restored-${u.oldUid}`;
     const { error } = await sb.from("org_members").insert({
-      org_id: orgId, uid: newUid, email: u.email, role: u.role || "Viewer",
+      // SURF-8: never mint a privileged row from a backup; the role collection
+      // is seeded too (ADD-5) so the placeholder is not born with roles = {}.
+      org_id: orgId, uid: newUid, email: u.email, role: restoredMemberRole(u.role), roles: [restoredMemberRole(u.role)],
       status: "inactive", display_name: u.displayName ?? null,
     });
     if (!error) {

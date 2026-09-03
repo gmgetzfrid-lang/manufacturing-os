@@ -597,7 +597,7 @@ export default function LibraryExplorerPage() {
       const parentChain = chainOf(parentCollectionId);
       const myChain = newAcl ? [...parentChain, newAcl] : parentChain;
       if (newAcl) {
-        const aclIndex = buildAclIndexFromChain(myChain);
+        const aclIndex = buildAclIndexFromChain(myChain, Date.now()); // OWN-7
         // A failed index write would leave the folder's RLS index missing its
         // inherited restrictions — that must fail the upload, not pass silently.
         const { error: idxErr } = await supabase.from("collections")
@@ -1717,6 +1717,26 @@ export default function LibraryExplorerPage() {
     [buildFolderChain, folderMap, library?.acl]
   );
 
+  // DEL-2: the effective-owner cascade the database applies (document →
+  // folder lineage → library) — the client filter must never re-hide a row
+  // the DB's ownership branch deliberately returned. (Team-supervisor rung
+  // resolves DB-side only.)
+  const folderOwnerFor = useCallback(
+    (collectionId?: string | null): string | null => {
+      let cur = collectionId ? folderMap.get(collectionId) : undefined;
+      const seen = new Set<string>();
+      while (cur) {
+        const id = cur.id ?? "";
+        if (!id || seen.has(id)) break;
+        seen.add(id);
+        if (cur.ownerUserId) return cur.ownerUserId;
+        cur = cur.parentId ? folderMap.get(cur.parentId) : undefined;
+      }
+      return null;
+    },
+    [folderMap],
+  );
+
   // Explorer behaviour: changing folders drops the selection. Carrying
   // checked-but-invisible rows across navigation means the next bulk action
   // silently includes documents the person can no longer see.
@@ -1753,14 +1773,13 @@ export default function LibraryExplorerPage() {
         principal,
         visibility: f.visibility ?? "normal",
         aclChain: buildFolderChain(f),
-        // GAP-15: ownership carries read access — the folder's own owner or
-        // the library's owner must not be re-hidden client-side after the DB
-        // deliberately returned the row. (The team-supervisor rung resolves
-        // DB-side only; direct owners cover the acceptance case.)
-        effectiveOwnerUserId: f.ownerUserId ?? library?.ownerUserId ?? null,
+        // GAP-15 / DEL-2: ownership carries read access — the folder's own
+        // owner, an ancestor folder's owner, or the library's owner must not
+        // be re-hidden client-side after the DB deliberately returned the row.
+        effectiveOwnerUserId: f.ownerUserId ?? folderOwnerFor(f.parentId) ?? library?.ownerUserId ?? null,
       })
     );
-  }, [visibleFolders, principal, buildFolderChain, library?.ownerUserId]);
+  }, [visibleFolders, principal, buildFolderChain, folderOwnerFor, library?.ownerUserId]);
 
   // useDeferredValue lets typing in the search box stay responsive on
   // large libraries — React keeps the input snappy and re-runs the
@@ -1774,9 +1793,9 @@ export default function LibraryExplorerPage() {
         action: "read",
         aclChain: buildDocChain(docRecord),
         defaultAllow: true,
-        // GAP-15: ownership carries read access — never re-hide a row the
-        // DB's ownership branch deliberately returned.
-        effectiveOwnerUserId: docRecord.ownerUserId ?? library?.ownerUserId ?? null,
+        // GAP-15 / DEL-2: ownership carries read access — never re-hide a row
+        // the DB's ownership branch deliberately returned (folder rung included).
+        effectiveOwnerUserId: docRecord.ownerUserId ?? folderOwnerFor(docRecord.collectionId) ?? library?.ownerUserId ?? null,
       });
       if (!canRead) return false;
       if (!q) return true;
@@ -1800,7 +1819,7 @@ export default function LibraryExplorerPage() {
       }
       return false;
     });
-  }, [documents, principal, deferredSearch, buildDocChain, library?.ownerUserId]);
+  }, [folderOwnerFor, documents, principal, deferredSearch, buildDocChain, library?.ownerUserId]);
 
   const sortedDocs = useMemo(() => {
     return [...filteredDocs].sort((a, b) => {
@@ -2099,7 +2118,7 @@ export default function LibraryExplorerPage() {
 
       if (newAcl) {
         const chain = [...buildFolderChain(currentFolder), newAcl];
-        const aclIndex = buildAclIndexFromChain(chain);
+        const aclIndex = buildAclIndexFromChain(chain, Date.now()); // OWN-7
         await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
       }
 
@@ -2482,7 +2501,7 @@ export default function LibraryExplorerPage() {
           visibility: library.defaultNewVisibility ?? "normal",
           acl: library.defaultNewAcl ?? null,
           acl_index: library.defaultNewAcl
-            ? buildAclIndexFromChain([...chainForTarget(targetCollectionId), library.defaultNewAcl])
+            ? buildAclIndexFromChain([...chainForTarget(targetCollectionId), library.defaultNewAcl], Date.now()) // OWN-7
             : null,
           created_at: now,
           created_by: uid,

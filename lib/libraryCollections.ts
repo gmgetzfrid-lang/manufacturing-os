@@ -92,7 +92,8 @@ export async function createFolder(input: CreateFolderInput): Promise<string> {
   const nextPathNames = [...parentPathNames, name].filter(Boolean);
   const nextPathIds = parentId ? [...parentPathIds, parentId] : [];
 
-  const aclIndex = input.acl ? buildAclIndex(input.acl) : null;
+  // OWN-7: an already-expired rule must not bake into the index at save time.
+  const aclIndex = input.acl ? buildAclIndex(input.acl, Date.now()) : null;
 
   const { data, error } = await supabase
     .from(TABLE)

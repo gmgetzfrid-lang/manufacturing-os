@@ -92,6 +92,35 @@ const SKIP_TABLES: Record<string, string> = {
   push_subscriptions: "device push registrations are machine-specific — re-established per device",
 };
 
+// SURF-8: append-only / self-insert-only tables are never blind-imported.
+// The service-role restore path bypasses every RLS rail that makes them
+// immutable, so an import would mint signatures, acknowledgments and audit
+// history the people named never made. They stay in the backup for review.
+export const IMMUTABLE_TABLES: Record<string, string> = {
+  e_signatures: "e-signatures are minted only by the signer's own ceremony",
+  audit_logs: "the audit trail is append-only — restored history would be indistinguishable from real",
+  drawing_audit_logs: "drawing audit completions are written only by the reviewing path",
+  document_acknowledgments: "read-and-understood acknowledgments are the assignee's own act",
+  distribution_acks: "distribution acknowledgments are the recipient's own act",
+  document_review_signoffs: "review sign-offs are bound to the reviewer's e-signature",
+  org_configurations: "the capability policy changes only through the audited, controller-gated editor",
+};
+
+/** True when `table` is append-only / self-insert-only and must not be blind-imported. */
+export function isImmutableTable(table: string): boolean {
+  return table in IMMUTABLE_TABLES;
+}
+
+/** SURF-8 done-when 3: a restored placeholder never carries a privileged role
+ *  the operator did not choose. The backup's role is honoured only when it
+ *  confers nothing; anything else becomes Viewer until an Admin re-grants it. */
+export const PRIVILEGED_ROLES: ReadonlySet<string> = new Set(["Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor"]);
+export function restoredMemberRole(backupRole: string | undefined | null): string {
+  const r = (backupRole ?? "").trim();
+  if (!r || PRIVILEGED_ROLES.has(r)) return "Viewer";
+  return r;
+}
+
 interface BackupMember { uid?: string; email?: string; display_name?: string; role?: string }
 
 /** Build the reconciliation plan for restoring `env` into `current`. Pure. */
@@ -145,7 +174,7 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
   let totalRows = 0;
   for (const [name, rows] of Object.entries(env.tables)) {
     const n = Array.isArray(rows) ? rows.length : 0;
-    const skip = SKIP_TABLES[name];
+    const skip = SKIP_TABLES[name] ?? IMMUTABLE_TABLES[name]; // SURF-8: immutable tables are never planned in
     tables.push({ name, rows: n, willImport: !skip, reason: skip });
     if (!skip) totalRows += n;
   }
@@ -245,9 +274,15 @@ function deepRemapValues(value: unknown, uidMap: Record<string, string>, orgPair
   return value;
 }
 
-/** True when `table` is one the restore never blind-imports. */
+/** True when `table` is one the restore never blind-imports (reconciled
+ *  identity/config tables, and SURF-8's immutable tables). */
 export function isSkippedTable(table: string): boolean {
-  return table in SKIP_TABLES;
+  return table in SKIP_TABLES || table in IMMUTABLE_TABLES;
+}
+
+/** Why a table is never blind-imported, for the plan review. */
+export function skipReasonFor(table: string): string | null {
+  return SKIP_TABLES[table] ?? IMMUTABLE_TABLES[table] ?? null;
 }
 
 // User-reference columns across the schema — DOCUMENTATION of what the deep

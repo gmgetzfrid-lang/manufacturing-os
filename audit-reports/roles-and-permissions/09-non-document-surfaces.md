@@ -338,7 +338,10 @@ two fixes so the post-action drain does not break.
 ## SURF-6 · Migration `20260901_db_hard_enforcement.sql` references two columns that do not exist
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, verified in the Phase 6 sweep recon — already fixed).** Both phantom columns in `20260901_db_hard_enforcement.sql` (`org_configurations.value`, `team_members.user_id`) were re-created with the real names by `20261025_fix_capability_and_deny_column_typos.sql` (`data`, `uid`), re-affirmed by `20261038` for `org_capability_allows`, and the live state was verified 2026-08-24 (`11-database-authority.md`, `DB-1`/`DB-2`). No further code change; the finding is closed as the DB-1/DB-2 code half.
+
 - **Verification:** CONFIRMED (in code) / SUSPECTED (the live database may carry ad-hoc drift)
 - **Blast radius:** availability / access-control
 - **Re-verified:** hardening pass — **SURVIVES**, and both columns are verifiable in one look. `:44` reads `org_configurations.value` — the table's columns are `id, org_id, key, data, updated_at` (`schema.sql:52-59`) — and `:143` reads `tm.user_id` on a table keyed `team_id, uid, org_id, added_at, added_by` (`20260707_teams.sql:19-26`). Same roots as `DB-1`/`WF-1` and `DB-2`; one migration fixes all four.
@@ -373,7 +376,12 @@ See `DB-1` (`org_configurations.value`) and `DB-2` (`team_members.user_id`).
 ## SURF-8 · Restore is an unaudited service-role write path into tables the database makes immutable
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A).** (1) Seven append-only / self-insert-only tables (`e_signatures`, `audit_logs`, `drawing_audit_logs`, `document_acknowledgments`, `distribution_acks`, `document_review_signoffs`, `org_configurations`) are `IMMUTABLE_TABLES`: `planRestore` never plans them in (they show in the review with the reason) and `/api/admin/restore/apply-table` refuses them before any write — they stay in the backup for review rather than being imported into a shadow. (2) Every restore chunk writes a `RESTORE_CHUNK` audit row (table, rows received, rows after filters, rows inserted, backup org id/name) as a *checked* write — if the trail cannot be written the chunk reports failure. (3) Restored placeholder members get `restoredMemberRole(backupRole)`: any privileged role (Admin, DocCtrl, Manager, Supervisor, DraftingSupervisor) becomes `Viewer` until an Admin re-grants it, and `roles[]` is seeded so the row is not born with an empty collection (`ADD-5`).
+- Done-when: (1) ✓ refused; (2) ✓ audited per chunk; (3) ✓ no privileged row from a backup.
+- Files: `lib/dataRestore.ts`, `app/api/admin/restore/apply-table/route.ts`, `app/api/admin/restore/begin/route.ts`, `app/api/admin/restore/apply/route.ts`, `app/(protected)/admin/restore/page.tsx`. Tests: `lib/__tests__/sweepRoundA.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / data-integrity
 - **Locations:**

@@ -10,7 +10,7 @@ import { defaultSlaTargetDate } from '@/lib/notifications';
 import { emit } from '@/lib/notify/dispatch';
 import { resolveTicketRecipients } from '@/lib/ticketRouting';
 import { generateTicketNumber } from '@/lib/ticketNumber';
-import { takeDraft } from '@/lib/draftHandoff';
+import { readDraft, discardDraft } from '@/lib/draftHandoff';
 import { loadCodebook } from '@/lib/codebook';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
@@ -98,17 +98,32 @@ export default function NewTicketPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
+  // LIFE-4: the book-viewer hand-off stashes the marked-up sheet's document id
+  // next to the blob. Keep it, so the ticket carries metadata.source_document
+  // in the marked-up case too — that link is what the Impact panel and the
+  // drafting-intent bridge key on. (One sheet: source_document stays
+  // single-valued; multi-sheet provenance is GAP-8.)
+  const [stashedDoc, setStashedDoc] = useState<{ id: string; number: string } | null>(null);
+  const srcDocId = sourceDocId || stashedDoc?.id || '';
+  const srcDocNum = sourceDocNum || stashedDoc?.number || '';
 
   // Pull in marked-up PDFs handed off from the book viewer (stashed in
   // IndexedDB) and attach them as files, so they upload with the request.
+  // The stash is read, not consumed (LIFE-3): it is discarded on submit, so a
+  // refresh before submitting still yields the file.
   useEffect(() => {
     if (!draftKey) return;
     let alive = true;
-    takeDraft(draftKey)
+    readDraft(draftKey)
       .then((d) => {
         if (!alive || !d || d.files.length === 0) return;
         const fs = d.files.map((f) => new File([f.blob], f.name, { type: f.blob.type || 'application/pdf' }));
-        setFiles((prev) => [...prev, ...fs]);
+        setFiles((prev) => {
+          const have = new Set(prev.map((f) => f.name));
+          return [...prev, ...fs.filter((f) => !have.has(f.name))];
+        });
+        const withDoc = d.files.find((f) => f.docId);
+        if (withDoc?.docId) setStashedDoc({ id: withDoc.docId, number: withDoc.docNumber ?? '' });
       })
       .catch((e) => console.error('draft markup handoff failed', e));
     return () => { alive = false; };
@@ -262,10 +277,10 @@ export default function NewTicketPage() {
       const historyEntries: Array<Record<string, unknown>> = [
         { action: 'Created', user: userEmail, role: activeRole, date: now, details: 'Ticket created via portal' },
       ];
-      if (sourceDocId) {
+      if (srcDocId) {
         historyEntries.push({
           action: 'Source Linked', user: userEmail, role: activeRole, date: now,
-          details: `Sent from document viewer · ${sourceDocNum || sourceDocTitle || sourceDocId} Rev ${sourceDocRev || '?'}`,
+          details: `Sent from document viewer · ${srcDocNum || sourceDocTitle || srcDocId} Rev ${sourceDocRev || '?'}`,
         });
       }
 
@@ -287,10 +302,10 @@ export default function NewTicketPage() {
 
       const metadata: Record<string, unknown> = {};
       if (Object.keys(customValues).length > 0) metadata.custom_categories = customValues;
-      if (sourceDocId) {
+      if (srcDocId) {
         metadata.source_document = {
-          id: sourceDocId,
-          document_number: sourceDocNum,
+          id: srcDocId,
+          document_number: srcDocNum,
           title: sourceDocTitle,
           rev: sourceDocRev,
           path: sourceFileUrl,
@@ -330,6 +345,8 @@ export default function NewTicketPage() {
         .select('id')
         .single();
       if (insertError) throw insertError;
+      // The hand-off stash has done its job (LIFE-3): drop it now, not on read.
+      if (draftKey) void discardDraft(draftKey).catch(() => { /* best-effort */ });
 
       // Notify the right people. Fire-and-forget — the redirect
       // shouldn't wait. resolveTicketRecipients picks the role pool
@@ -405,16 +422,18 @@ export default function NewTicketPage() {
         <form onSubmit={handleSubmit} className="space-y-6">
 
           {/* Source-document chip when arriving via "Send to Drafting" */}
-          {sourceFileUrl && (
+          {(srcDocId || sourceFileUrl) && (
             <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-start gap-3">
               <FileText className="w-5 h-5 text-teal-700 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-[10px] font-black text-teal-800 uppercase tracking-widest">Source document</div>
                 <div className="text-sm font-bold text-[var(--color-text)] truncate mt-0.5">
-                  {sourceDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
+                  {srcDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
                 </div>
                 <div className="text-[11px] text-teal-700 mt-0.5">
-                  Attached automatically as a Source reference. It&apos;ll appear on the ticket once you submit.
+                  {sourceFileUrl
+                    ? <>Attached automatically as a Source reference. It&apos;ll appear on the ticket once you submit.</>
+                    : <>Your marked-up sheet is attached. The ticket will link back to this document once you submit.</>}
                 </div>
               </div>
             </div>

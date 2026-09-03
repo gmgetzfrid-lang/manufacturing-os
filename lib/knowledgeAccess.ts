@@ -53,6 +53,9 @@ type ContainerNode = {
   acl: AccessControl | null;
   visibility: NodeVisibility | null;
   parent_id?: string | null;
+  /** DEL-2: ownership carries read access (document → folder lineage →
+   *  library → team supervisor), the cascade node_visible applies. */
+  owner_user_id?: string | null;
 };
 
 /** Read-decision for one node given its ancestor ACL chain. Default-allow
@@ -62,8 +65,13 @@ function chainReadable(
   chain: Array<AccessControl | null | undefined>,
   visibility: NodeVisibility | null | undefined,
   principal: KnowledgePrincipal,
+  effectiveOwnerUid?: string | null,
 ): boolean {
   if (principal.isController) return true;
+  // DEL-2: the effective owner reads their own node, whatever the ACL says —
+  // the same arm lib/permissions.ts and node_visible carry. (loadPrincipal
+  // only returns ACTIVE members, so a departed owner never reaches here.)
+  if (effectiveOwnerUid && effectiveOwnerUid === principal.uid) return true;
   const decision = evaluateAclChain(
     chain.map((a) => a ?? undefined),
     {
@@ -85,22 +93,31 @@ function chainReadable(
 /** The document-control landscape needed for chain evaluation, fetched once
  *  per request. */
 export async function loadDcLandscape(orgId: string): Promise<{
-  libraries: Map<string, ContainerNode & { name: string }>;
+  libraries: Map<string, ContainerNode & { name: string; owner_team_id?: string | null }>;
   folders: Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>;
+  /** team id → supervisor uid, the last rung of the ownership cascade. */
+  teamSupervisors: Map<string, string>;
 }> {
   // collections is select("*") so the trash filter works before AND after
   // migration 20261011 (naming deleted_at explicitly would 42703 pre-migration).
-  const [libsRes, foldersRes] = await Promise.all([
-    supabaseAdmin.from("libraries").select("id, name, acl, visibility").eq("org_id", orgId),
+  const [libsRes, foldersRes, teamsRes] = await Promise.all([
+    supabaseAdmin.from("libraries").select("id, name, acl, visibility, owner_user_id, owner_team_id").eq("org_id", orgId),
     supabaseAdmin.from("collections").select("*").eq("org_id", orgId),
+    supabaseAdmin.from("teams").select("id, supervisor_user_id").eq("org_id", orgId),
   ]);
-  const libraries = new Map<string, ContainerNode & { name: string }>();
+  const libraries = new Map<string, ContainerNode & { name: string; owner_team_id?: string | null }>();
   for (const l of libsRes.data ?? []) {
     libraries.set(l.id as string, {
       name: (l.name as string) ?? "Library",
       acl: (l.acl as AccessControl) ?? null,
       visibility: (l.visibility as NodeVisibility) ?? null,
+      owner_user_id: (l.owner_user_id as string | null) ?? null,
+      owner_team_id: (l.owner_team_id as string | null) ?? null,
     });
+  }
+  const teamSupervisors = new Map<string, string>();
+  for (const t of teamsRes.data ?? []) {
+    if (t.supervisor_user_id) teamSupervisors.set(t.id as string, t.supervisor_user_id as string);
   }
   const folders = new Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>();
   for (const c of foldersRes.data ?? []) {
@@ -111,10 +128,36 @@ export async function loadDcLandscape(orgId: string): Promise<{
       parent_id: (c.parent_id as string | null) ?? null,
       acl: (c.acl as AccessControl) ?? null,
       visibility: (c.visibility as NodeVisibility) ?? null,
+      owner_user_id: (c.owner_user_id as string | null) ?? null,
       path_names: (c.path_names as string[]) ?? [],
     });
   }
-  return { libraries, folders };
+  return { libraries, folders, teamSupervisors };
+}
+
+/** DEL-2: the effective owner of a node — document owner, else the nearest
+ *  owning folder up the lineage, else the library owner, else the owning
+ *  team's supervisor. Mirrors user_is_effective_owner / resolveEffectiveOwner. */
+export function effectiveOwnerFor(
+  docOwner: string | null | undefined,
+  folderId: string | null | undefined,
+  libraryId: string | null | undefined,
+  landscape: Pick<Awaited<ReturnType<typeof loadDcLandscape>>, "libraries" | "folders" | "teamSupervisors">,
+): string | null {
+  if (docOwner) return docOwner;
+  let cur = folderId ?? null;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const f = landscape.folders.get(cur);
+    if (!f) break;
+    if (f.owner_user_id) return f.owner_user_id;
+    cur = f.parent_id ?? null;
+  }
+  const lib = libraryId ? landscape.libraries.get(libraryId) : undefined;
+  if (lib?.owner_user_id) return lib.owner_user_id;
+  if (lib?.owner_team_id) return landscape.teamSupervisors.get(lib.owner_team_id) ?? null;
+  return null;
 }
 
 /** Build the ACL chain for a folder: library ACL, then ancestors top-down,
@@ -149,11 +192,12 @@ export function containerReadable(
   if (kind === "library") {
     const lib = landscape.libraries.get(id);
     if (!lib) return false;
-    return chainReadable([lib.acl], lib.visibility, principal);
+    return chainReadable([lib.acl], lib.visibility, principal, effectiveOwnerFor(null, null, id, landscape));
   }
   const fc = folderChain(id, landscape);
   if (!fc) return false;
-  return chainReadable(fc.chain, fc.visibility, principal);
+  const folder = landscape.folders.get(id);
+  return chainReadable(fc.chain, fc.visibility, principal, effectiveOwnerFor(null, id, folder?.library_id, landscape));
 }
 
 /** All folder ids in the subtree rooted at folderId (inclusive). */
@@ -188,6 +232,7 @@ type DocAclRow = {
   is_private: boolean | null;
   scope: string | null;
   created_by: string | null;
+  owner_user_id?: string | null;
 };
 
 /** Which of these CONTROLLED documents can this principal read? Evaluates
@@ -205,7 +250,7 @@ export async function readableControlledDocIds(
   for (let i = 0; i < docIds.length; i += 100) {
     const { data } = await supabaseAdmin
       .from("documents")
-      .select("id, library_id, collection_id, acl, visibility, is_private, scope, created_by")
+      .select("id, library_id, collection_id, acl, visibility, is_private, scope, created_by, owner_user_id")
       .in("id", docIds.slice(i, i + 100));
     docs.push(...((data ?? []) as DocAclRow[]));
   }
@@ -216,7 +261,8 @@ export async function readableControlledDocIds(
     const lib = doc.library_id ? landscape.libraries.get(doc.library_id) : null;
     const fc = doc.collection_id ? folderChain(doc.collection_id, landscape) : null;
     const chain = [lib?.acl ?? null, ...(fc?.chain.slice(1) ?? []), doc.acl];
-    if (chainReadable(chain, doc.visibility, principal)) readable.add(doc.id);
+    const owner = effectiveOwnerFor(doc.owner_user_id, doc.collection_id, doc.library_id, landscape);
+    if (chainReadable(chain, doc.visibility, principal, owner)) readable.add(doc.id);
   }
   return readable;
 }

@@ -118,7 +118,10 @@ Priority order:
 ## ADD-2 · The view-as simulator evaluates authority differently than production does
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, verified in the Phase 6 sweep recon — met by Phase 4/5 work).** `lib/workflow.ts` passes the held collection to `policyAllows` (`WorkflowContext.userRoles`; both call sites — the ticket page and the workflow-action route — supply it), and the engineer test unions the collection too; the simulator calls the same `policyAllows` / `canDiscover` / `canPublishViaIndex` with the same `Principal` shape, so its verdict is production's. Residual (disclosed in the simulator UI): its publish verdict uses library-level ownership only, where the DB applies the full effective-owner cascade.
+
 - **Verification:** CONFIRMED (by comparing arguments; the visible symptom was not observed in a browser)
 - **Blast radius:** trust / verification
 - **Locations:**

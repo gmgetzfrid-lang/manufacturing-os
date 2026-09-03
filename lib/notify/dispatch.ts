@@ -18,7 +18,7 @@ import {
   type ResourceType,
 } from "./recipients";
 export type NotifChannel = "inapp" | "email";
-export type NotifCategory = "mention" | "assignment" | "status" | "watched" | "sla" | "system" | "recall";
+export type NotifCategory = "mention" | "assignment" | "status" | "watched" | "sla" | "system" | "recall" | "safety";
 
 export interface EmitInput {
   orgId: string;
@@ -47,7 +47,8 @@ export interface EmitInput {
 
 // Map our preference category to the eventType string queueEmail understands,
 // so the existing per-category email toggles keep working unchanged.
-function categoryToEventType(c: NotifCategory): string {
+// Exported for the test that pins which categories are un-mutable.
+export function categoryToEventType(c: NotifCategory): string {
   switch (c) {
     case "mention": return "comment_mention";
     case "assignment": return "assignment";
@@ -59,6 +60,10 @@ function categoryToEventType(c: NotifCategory): string {
     // unknown to shouldSendForEvent's switch, so it falls to the default and
     // is always emailed.
     case "recall": return "safety_recall";
+    // LIFE-7: a PSM finding (an undocumented field change) is the same class
+    // as a recall — "safety_alert" is likewise unknown to shouldSendForEvent,
+    // so no per-category toggle can silence it.
+    case "safety": return "safety_alert";
     default: return "system";
   }
 }

@@ -411,6 +411,26 @@ export default function PermissionsDrawer(props: {
                 <div className="mt-2 text-xs text-zinc-500">
                   Hidden = not discoverable unless explicitly allowed.
                 </div>
+                {visibility === "normal" && (
+                  // DOCACL-2: default-open is deny-by-exception. Say so where
+                  // the rules are written, and offer the one-click flip.
+                  <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2">
+                    <div className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                      Open to all members
+                    </div>
+                    <div className="mt-1 text-[11px] text-zinc-400">
+                      Every active member can read this while it is Normal. Allow rules below add nothing until you restrict it; only deny rules bite.
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => setVisibility("hidden")}
+                      className={`mt-2 rounded-lg border border-emerald-500/40 px-2 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/10 ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+                    >
+                      Restrict to the people listed below
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">

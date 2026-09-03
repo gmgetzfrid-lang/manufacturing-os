@@ -116,7 +116,12 @@ without mentioning that delegating is not among them.
 ## DEL-2 · Ownership grants publish, roster, retention and legal-hold authority — but **not read access**
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A).** The database (`node_visible` ownership branch, Phase 3b/5) and the library page already admitted the owner to read; the two paths that still disagreed now carry the same cascade. `lib/knowledgeAccess.ts` resolves the effective owner (document → folder lineage → library → owning team's supervisor, `effectiveOwnerFor`) from an owner-aware landscape and short-circuits `chainReadable` for them, so an owner's own private/hidden documents surface in knowledge retrieval and the browse picker. The library page's client filter walks the folder lineage (`folderOwnerFor`) instead of only the document's and the library's direct owner, so a folder-level owner is never re-hidden client-side after the DB returned the row.
+- Done-when: ✓ an effective owner reads their node on every path the app evaluates. Residual: the page-side team-supervisor rung still resolves DB-only (the page does not load teams); the DB returns the row and the client filter falls through to the library owner.
+- Files: `lib/knowledgeAccess.ts`, `app/(protected)/documents/[libraryId]/page.tsx`. Tests: `lib/__tests__/sweepRoundA.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / safety
 - **Locations:**
@@ -382,7 +387,10 @@ behaviour.
 ## DEL-7 · Nobody can see who owns what — no ownership register above the document level, and the one entry point is mislabelled
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, verified in the Phase 6 sweep recon — met by Phase 5/6 work).** The ownership register exists above the document level: `/admin/permissions` shows owner and source per library/folder, exports `ownership-register.csv` across libraries, folders and documents (`ownershipRegisterToCsv`, pure and tested), and counts unowned nodes; the register keeps its `unowned` filter and KPI; the library menu item is named "Ownership & review cycle". Done-when 1–3 ✓. Residual: the console reads folders under the caller's RLS (admin-gated, so the practical exposure is nil — see `DEL-9`).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / ux
 - **Locations:**

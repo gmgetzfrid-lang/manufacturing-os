@@ -116,7 +116,7 @@ export default function LibraryAdminPage() {
         read_access: config.readAccess ?? "ALL", visible_to: config.visibleTo ?? [],
         folder_security: config.folderSecurity, default_new_visibility: config.defaultNewVisibility,
         default_new_acl: config.defaultNewAcl ?? null, acl: mergedAcl,
-        acl_index: buildAclIndex(mergedAcl ?? undefined),
+        acl_index: buildAclIndex(mergedAcl ?? undefined, Date.now()), // OWN-7: expiry-aware at save time
       };
 
       if (editingLib) {
