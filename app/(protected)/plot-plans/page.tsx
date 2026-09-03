@@ -23,12 +23,12 @@ import { useToast } from "@/components/providers/ToastProvider";
 import type { PlotPlan } from "@/types/schema";
 
 export default function PlotPlansPage() {
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const { showToast } = useToast();
   const [plans, setPlans] = useState<PlotPlan[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;

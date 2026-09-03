@@ -284,7 +284,7 @@ describe("20261045 — admin gates (DEC-17), team FK (DEC-9), reviewer independe
     expect(pol).toMatch(/OR NOT \(/);
   });
 
-  it("asset registry: RESTRICTIVE write overlays per command, existing tables only, reads untouched", () => {
+  it("asset registry: RESTRICTIVE write overlays per command, existing tables only, reads untouched; assets UPDATE carves out the whiteboard flip", () => {
     const blk = between(m45, "-- ── 2. asset registry writes", "-- ── 3. team ownership");
     expect(blk).toMatch(/ARRAY\['assets','asset_types','asset_photos','asset_files','plot_plans'\]/);
     expect(blk).toMatch(/to_regclass\('public\.' \|\| t\) IS NULL THEN CONTINUE/);
@@ -292,6 +292,18 @@ describe("20261045 — admin gates (DEC-17), team FK (DEC-9), reviewer independe
     expect(blk).toMatch(/AS RESTRICTIVE FOR UPDATE/);
     expect(blk).toMatch(/AS RESTRICTIVE FOR DELETE/);
     expect(blk).not.toMatch(/RESTRICTIVE FOR SELECT|RESTRICTIVE FOR ALL/);
+    // The flip roles apply to assets UPDATE only; INSERT / DELETE keep the page roles.
+    expect(blk).toMatch(/upd := CASE WHEN t = 'assets' THEN flip_roles ELSE page_roles END;/);
+    expect(blk).toMatch(/FOR INSERT WITH CHECK \(%s\)', t \|\| '_write_roles_insert', t, page_roles\)/);
+    expect(blk).toMatch(/FOR DELETE USING \(%s\)', t \|\| '_write_roles_delete', t, page_roles\)/);
+    expect(blk).toMatch(/flip_roles text := '\(caller_is_active_member\(org_id\) AND NOT caller_holds_any_role\(org_id, ARRAY\[''Viewer'',''Auditor''\]::text\[\]\)\)'/);
+    // A flipping member is confined to the flip columns by a BEFORE UPDATE guard.
+    const fn = between(blk, "CREATE OR REPLACE FUNCTION assets_guard_registry_columns", "$$;");
+    expect(fn).toMatch(/IF auth\.uid\(\) IS NULL THEN RETURN NEW; END IF;/);
+    expect(fn).toMatch(/to_jsonb\(NEW\) - 'whiteboard_state' - 'updated_at' - 'updated_by'/);
+    expect(fn).toMatch(/NOT caller_holds_any_role\(OLD\.org_id, ARRAY\['Admin','DocCtrl','Manager','Supervisor'\]::text\[\]\)/);
+    expect(blk).toMatch(/CREATE TRIGGER assets_guard_registry BEFORE UPDATE ON assets FOR EACH ROW EXECUTE FUNCTION assets_guard_registry_columns\(\)/);
+    expect(m45).toMatch(/expect true × 9/);
   });
 
   it("libraries.owner_team_id gets an FK ON DELETE SET NULL after dangling pointers are nulled and audited", () => {

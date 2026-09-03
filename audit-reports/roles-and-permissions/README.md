@@ -206,14 +206,16 @@ Three read-only recon agents first; every widening carries its inventory.
 | `DEL-1` + `GAP-3` (MEDIUM + gap) | **RESOLVED** — the drawer takes real authority (controller / effective owner / manage-grant); owners edit in bounded delegation mode (allow-only, no admin, expiry required); DB owner arm + admin-grant bound; folder-level delegation possible — migration `20261044` |
 | `DEL-3` / `DEC-9` (HIGH) | **RESOLVED** — the four fixes: constrained picker with explicit override, audited supervisor changes naming both people + affected libraries, refused clearing while owning, team delete clears ownership + FK `ON DELETE SET NULL` — migration `20261045` |
 | `DEL-5` / `DEC-21` (HIGH) | **RESOLVED** — reviewer independence per library (on by default with a roster, opt-out visible in the modal): a sole signed primary cannot publish their own revision, at the guard and in the app — migration `20261045` |
-| `DEC-17` | **IMPLEMENTED** — `audit_logs` org-level trail admin-class only (document history unchanged), asset registry write overlays, `/admin/settings` gate matches its API; `SURF-9` annotated (consolidation deferred per the decision); `OWN-11` annotated partial |
+| `DEC-17` | **IMPLEMENTED** — `audit_logs` org-level trail admin-class only (document history unchanged), asset registry write overlays (with the whiteboard-flip carve-out for working members found in pre-flight), `/admin/settings` gate matches its API; `SURF-9` annotated (consolidation deferred per the decision); `OWN-11` annotated partial |
 
 Ship loop green: `tsc`, `eslint`, **1736 vitest** (37 new), full `next build`.
 Migrations, one at a time in order, each with its verification (and inventory)
 block: `20261042` — **applied & verified live 2026-09-02** (7/7, inventory all
 zero); `20261043` — **applied & verified live 2026-09-02** (7/7, inventory all zero; its
 §0 repaired the `revoke_member` TEXT[] assignment found in pre-flight, see
-`SURF-1`); `20261044` → `20261045` — **pending operator paste**.
+`SURF-1`); `20261044` — **applied & verified live 2026-09-02** (7/7; inventory
+0 / 0 / 33 / 691; its folder bound became a BEFORE UPDATE trigger in pre-flight,
+see `DEL-1`); `20261045` — **pending operator paste**.
 
 ### Phase 2 — database honesty (the trap phase)
 

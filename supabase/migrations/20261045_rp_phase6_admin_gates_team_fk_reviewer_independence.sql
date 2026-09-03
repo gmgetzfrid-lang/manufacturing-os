@@ -12,7 +12,11 @@
 --      CAPABILITY_POLICY_CHANGED payloads straight from PostgREST.)
 --   2. asset tables (assets, asset_types, asset_photos, asset_files,
 --      plot_plans): RESTRICTIVE write overlays for the roles the assets page
---      claims — Admin, DocCtrl, Manager, Supervisor. Reads unchanged.
+--      claims — Admin, DocCtrl, Manager, Supervisor. Reads unchanged. One
+--      carve-out found in pre-flight: the plot-plan WHITEBOARD flip
+--      (assets.whiteboard_state) is offered to every working member, so the
+--      assets UPDATE overlay admits any active non-read-only member and a
+--      BEFORE UPDATE guard confines them to the flip columns.
 --   3. libraries.owner_team_id → teams(id) ON DELETE SET NULL, dangling
 --      pointers nulled first (each one audited), so a deleted team can never
 --      leave phantom team ownership.
@@ -47,18 +51,62 @@ CREATE POLICY audit_logs_admin_trail ON audit_logs
   );
 
 -- ── 2. asset registry writes: the roles the page claims ─────────────────────
+-- Registry EDITS (create, delete, any registry column) belong to the roles
+-- the assets page claims. One write is different in kind: the plot-plan
+-- WHITEBOARD flip (assets.whiteboard_state) is the field-coordination
+-- affordance the page offers every working member — Operations most of all —
+-- so the assets UPDATE overlay admits any ACTIVE member who holds no
+-- read-only role (Viewer / Auditor: deny-if-any, CHAIN-1), and a BEFORE
+-- UPDATE guard confines such a member to the flip columns. DEC-17's
+-- done-when — "a Viewer cannot write assets" — holds on every path.
+CREATE OR REPLACE FUNCTION caller_is_active_member(p_org uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM org_members WHERE uid = auth.uid() AND org_id = p_org AND status = 'active');
+$$;
+
 DO $$
-DECLARE t text;
+DECLARE
+  t text;
+  page_roles text := 'caller_holds_any_role(org_id, ARRAY[''Admin'',''DocCtrl'',''Manager'',''Supervisor'']::text[])';
+  flip_roles text := '(caller_is_active_member(org_id) AND NOT caller_holds_any_role(org_id, ARRAY[''Viewer'',''Auditor'']::text[]))';
+  upd text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['assets','asset_types','asset_photos','asset_files','plot_plans'] LOOP
     IF to_regclass('public.' || t) IS NULL THEN CONTINUE; END IF;
+    upd := CASE WHEN t = 'assets' THEN flip_roles ELSE page_roles END;
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_write_roles_insert', t);
-    EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR INSERT WITH CHECK (caller_holds_any_role(org_id, ARRAY[''Admin'',''DocCtrl'',''Manager'',''Supervisor'']::text[]))', t || '_write_roles_insert', t);
+    EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR INSERT WITH CHECK (%s)', t || '_write_roles_insert', t, page_roles);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_write_roles_update', t);
-    EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR UPDATE USING (caller_holds_any_role(org_id, ARRAY[''Admin'',''DocCtrl'',''Manager'',''Supervisor'']::text[])) WITH CHECK (caller_holds_any_role(org_id, ARRAY[''Admin'',''DocCtrl'',''Manager'',''Supervisor'']::text[]))', t || '_write_roles_update', t);
+    EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR UPDATE USING (%s) WITH CHECK (%s)', t || '_write_roles_update', t, upd, upd);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_write_roles_delete', t);
-    EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR DELETE USING (caller_holds_any_role(org_id, ARRAY[''Admin'',''DocCtrl'',''Manager'',''Supervisor'']::text[]))', t || '_write_roles_delete', t);
+    EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR DELETE USING (%s)', t || '_write_roles_delete', t, page_roles);
   END LOOP;
+END $$;
+
+-- assets: a working member may flip the whiteboard state (and its
+-- bookkeeping columns); every other column is a registry edit for the
+-- page's roles. Compared row-to-row, so a future column is a registry
+-- column by default.
+CREATE OR REPLACE FUNCTION assets_guard_registry_columns()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  IF (to_jsonb(NEW) - 'whiteboard_state' - 'updated_at' - 'updated_by')
+     IS DISTINCT FROM (to_jsonb(OLD) - 'whiteboard_state' - 'updated_at' - 'updated_by')
+     AND NOT caller_holds_any_role(OLD.org_id, ARRAY['Admin','DocCtrl','Manager','Supervisor']::text[]) THEN
+    RAISE EXCEPTION 'Only Admin, Document Control, Manager or Supervisor can edit the asset registry.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF to_regclass('public.assets') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS assets_guard_registry ON assets';
+    EXECUTE 'CREATE TRIGGER assets_guard_registry BEFORE UPDATE ON assets FOR EACH ROW EXECUTE FUNCTION assets_guard_registry_columns()';
+  END IF;
 END $$;
 
 -- ── 3. team ownership cannot dangle ─────────────────────────────────────────
@@ -197,7 +245,7 @@ $$;
 
 COMMIT;
 
--- ── Verification (read-only) — expect true × 6 ──────────────────────────────
+-- ── Verification (read-only) — expect true × 9 ──────────────────────────────
 SELECT 'audit_logs admin-trail overlay installed (restrictive SELECT)' AS check,
        EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'audit_logs'
                 AND policyname = 'audit_logs_admin_trail' AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT') AS ok
@@ -222,9 +270,25 @@ SELECT 'publish guard carries the independence clause and keeps DEC-2 + RG-1',
           AND prosrc LIKE '%e.signer_user_id = s.reviewer_user_id%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard')
 UNION ALL
-SELECT 'search_path pinned on the guard and the role helper',
-       (SELECT COUNT(*) = 2 FROM pg_proc
-         WHERE proname IN ('enforce_document_publish_guard', 'caller_holds_any_role')
+SELECT 'assets UPDATE overlay admits working members and excludes read-only roles (whiteboard flip)',
+       (SELECT qual LIKE '%caller_is_active_member(org_id)%' AND qual LIKE '%''Viewer''%' AND qual LIKE '%''Auditor''%'
+          FROM pg_policies WHERE tablename = 'assets' AND policyname = 'assets_write_roles_update')
+UNION ALL
+SELECT 'assets registry-column guard installed (BEFORE UPDATE, row-to-row minus the flip columns)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'assets_guard_registry'
+                AND tgrelid = 'assets'::regclass AND NOT tgisinternal)
+       AND (SELECT prosrc LIKE '%- ''whiteboard_state'' - ''updated_at'' - ''updated_by''%'
+              FROM pg_proc WHERE proname = 'assets_guard_registry_columns')
+UNION ALL
+SELECT 'the three flip columns exist on assets (late-bound safety)',
+       (SELECT COUNT(*) = 3 FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'assets'
+           AND column_name IN ('whiteboard_state', 'updated_at', 'updated_by'))
+UNION ALL
+SELECT 'search_path pinned on the four functions',
+       (SELECT COUNT(*) = 4 FROM pg_proc
+         WHERE proname IN ('enforce_document_publish_guard', 'caller_holds_any_role',
+                           'caller_is_active_member', 'assets_guard_registry_columns')
            AND array_to_string(proconfig, ',') LIKE '%search_path=public%');
 
 -- ── Inventory (read-only, aggregate) ────────────────────────────────────────

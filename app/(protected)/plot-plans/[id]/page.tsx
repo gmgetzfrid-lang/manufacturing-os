@@ -23,9 +23,15 @@ import type { PlotPlan, PlotPlanMarker, WhiteboardState } from "@/types/schema";
 export default function PlotPlanBoard() {
   const params = useParams();
   const id = String(params?.id ?? "");
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { activeOrgId, uid, userEmail, activeRole, hasAnyRole } = useRole();
   const { showToast } = useToast();
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
+  // DEC-17 carve-out mirror: the whiteboard flip is open to every working
+  // member, but read-only roles are denied — deny-if-any (CHAIN-1). The
+  // database enforces the same rule; the controls render disabled with a
+  // reason, never hidden (DEC-12).
+  const canFlip = !hasAnyRole(["Viewer", "Auditor"]);
+  const FLIP_BLOCKED = "Read-only roles (Viewer, Auditor) can't change equipment state.";
 
   const [plan, setPlan] = useState<PlotPlan | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -122,7 +128,7 @@ export default function PlotPlanBoard() {
   };
 
   const advanceState = async (asset: Asset) => {
-    if (!uid || !activeOrgId) return;
+    if (!uid || !activeOrgId || !canFlip) return;
     const cur = (asset.whiteboard_state ?? "pending") as WhiteboardState;
     const next = nextState(cur);
     try {
@@ -134,7 +140,7 @@ export default function PlotPlanBoard() {
   };
 
   const setBlocked = async (asset: Asset) => {
-    if (!uid || !activeOrgId) return;
+    if (!uid || !activeOrgId || !canFlip) return;
     try {
       await setEquipmentState({ assetId: asset.id, orgId: activeOrgId, newState: "blocked", previousState: (asset.whiteboard_state ?? "pending") as WhiteboardState, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
       setAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, whiteboard_state: "blocked" } : a)));
@@ -277,11 +283,11 @@ export default function PlotPlanBoard() {
               </span>
             </div>
             <div className="space-y-2">
-              <button onClick={() => advanceState(selAsset)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm font-bold hover:bg-[var(--color-accent-hover)]">
+              <button onClick={() => advanceState(selAsset)} disabled={!canFlip} title={canFlip ? undefined : FLIP_BLOCKED} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed">
                 Advance to {STATE_CONFIG[nextState((selAsset.whiteboard_state ?? "pending") as WhiteboardState)].label} <ChevronRight className="w-4 h-4" />
               </button>
               {selAsset.whiteboard_state !== "blocked" && (
-                <button onClick={() => setBlocked(selAsset)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-rose-200 text-rose-700 text-sm font-bold hover:bg-rose-50">
+                <button onClick={() => setBlocked(selAsset)} disabled={!canFlip} title={canFlip ? undefined : FLIP_BLOCKED} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-rose-200 text-rose-700 text-sm font-bold hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed">
                   Mark blocked
                 </button>
               )}
