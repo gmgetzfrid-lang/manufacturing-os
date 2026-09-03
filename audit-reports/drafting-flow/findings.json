@@ -602,9 +602,9 @@
       "locations": [
         "supabase/schema.sql:433-434",
         "app/(protected)/settings/notifications/page.tsx:143",
-        "lib/notifications.ts:163",
+        "lib/notifications.ts:122",
         "lib/notify/dispatch.ts:56",
-        "lib/notifications.ts:276-282",
+        "lib/notifications.ts:237-243",
         "app/(protected)/requests/page.tsx:508"
       ],
       "has_verifier_correction": false,
@@ -796,7 +796,7 @@
       "locations": [
         "lib/workflow.ts:80-342",
         "app/api/cron/maintenance/route.ts",
-        "lib/notifications.ts:257-271",
+        "lib/notifications.ts:216-232",
         "lib/search.ts:376"
       ],
       "has_verifier_correction": false,
@@ -1410,7 +1410,7 @@
       "locations": [
         "types/schema.ts:1019",
         "lib/workflow.ts:185",
-        "lib/notifications.ts:283-287",
+        "lib/notifications.ts:237-243",
         "types/schema.ts:761",
         "lib/docClass.ts:28"
       ],
@@ -2801,9 +2801,9 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/notifications.ts:257",
-        "lib/notifications.ts:265",
-        "lib/notifications.ts:286",
+        "lib/notifications.ts:216",
+        "lib/notifications.ts:224",
+        "lib/notifications.ts:245",
         "lib/notify/dispatch.ts:56",
         "app/(protected)/settings/notifications/page.tsx:143",
         "app/api/cron/maintenance/route.ts:159"
@@ -3760,7 +3760,7 @@
         "adversarial-independent"
       ],
       "refuted": false,
-      "summary": "A requester wants to withdraw a request that is no longer needed. The workflow diagram modal — the app's own explanation of the lifecycle — tells them Canceled is where withdrawn requests go. There is no button anywhere that produces it. They either abandon the ticket in place (where it keeps generating SLA/attention noise, since lib/notifications.ts:259 only suppresses CLOSED and CANCELED) or an ",
+      "summary": "A requester wants to withdraw a request that is no longer needed. The workflow diagram modal — the app's own explanation of the lifecycle — tells them Canceled is where withdrawn requests go. There is no button anywhere that produces it. They either abandon the ticket in place (where it keeps generating SLA/attention noise, since lib/notifications.ts:218 only suppresses CLOSED and CANCELED) or an ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
     },

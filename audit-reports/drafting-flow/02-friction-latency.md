@@ -64,7 +64,7 @@ Three of the six are avoidable without loosening a single control.
 - **Locations:**
   - `lib/workflow.ts:80-342` — no transition fires without an explicit user action
   - `app/api/cron/maintenance/route.ts` — nudges stale **checkouts** (`:348`), review cycles, effective dates and acknowledgments. **No ticket scan of any kind.**
-  - `lib/notifications.ts:257-271` — `isPastDue` / `isNearingDue`
+  - `lib/notifications.ts:216-232` — `isPastDue` / `isNearingDue`
   - a repo-wide search shows `target_completion_at` has **no server-side reader**: `lib/search.ts:376` (a type), and test files. Nothing else.
 - **Related:** `LEAK-1`, `FRIC-7`, `WF-19` (roles-and-permissions area)
 - **Re-verified:** hardening pass — **SURVIVES**, by absence, and checked two ways. `grep -n ticket app/api/cron/maintenance/route.ts` returns **nothing** — the only scheduled job in the product does no ticket work at all — and a repo-wide search for escalation logic finds it only in the document-control modules (`distributionAcks.ts`, `reviewControl.ts`, `reviewCycles.ts`), never for a drafting ticket.
@@ -422,10 +422,12 @@ first, with an obvious one-click path to the full queue.
 4. **The requester auto-subscribes as a watcher**
    (`app/(protected)/requests/new/page.tsx:328`) — nobody has to remember to
    follow their own request.
-5. **Per-request-type SLA defaults** (`lib/notifications.ts:283-287`) — the data
+5. **Per-request-type SLA defaults** (`lib/notifications.ts:237-243`) — the data
    model for a real SLA is already there and already org-shaped. `FRIC-1` is
    about nothing *reading* it, not about it being wrong.
 6. **The stat strip's per-role slot counts**
    (`app/(protected)/requests/page.tsx:335-337`) — the queue already knows what
    each role cares about. `FRIC-9` is about the list not using what the header
    already computed.
+
+> Line citations into `lib/notifications.ts` re-pointed 2026-09-02 after the roles-and-permissions sweep removed the browser external-mail path (`SURF-17`); the cited symbols are unchanged.

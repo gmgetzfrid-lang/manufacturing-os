@@ -262,6 +262,22 @@ Round A is the no-migration set.
 | `SURF-15` | **RESOLVED** — the subscription gate has its caller (create-user), refusal behind `SUBSCRIPTION_ENFORCE` |
 | `SURF-16` | **partial** — audited, checked team writes + `MEMBER_CREATED`; members page gates reconciled; team policies by collection ship with `ADD-4` |
 
+### Phase 6 — severity sweep, Round B (2026-09-02) — the migration round
+
+| Item | Outcome |
+|---|---|
+| `ADD-4` + `DOCACL-1` + `SURF-16` (DB) | **RESOLVED** — fifteen mirror-only definitions read the collection through `caller_holds_any_role`; `can_manage_node` evaluates every held role; teams policies by collection |
+| `ADD-5` | **RESOLVED** — `org_members` role/roles sync trigger with a `role_rank` mirror of `ROLE_RANK`; one-shot repair |
+| `OWN-8` | **RESOLVED** — explicit deny wins in all three evaluators (`DEC-8`) |
+| `OWN-15` | **RESOLVED** — leaving Superseded/Archived/Void takes publish authority; unarchive restore statuses allow-listed |
+| `DEL-4` | **RESOLVED** — the supervisor swap is a controller act at the DB and on the page |
+| `DEL-9` | **RESOLVED** — the app asks `user_is_effective_owner` via RPC |
+| `SURF-11` / `SURF-12` / `SURF-13` | **RESOLVED** — project roster roles bind; acknowledgments are the assignee's own signed act; sign-off names pinned |
+| `SURF-17` / `SURF-18` | **RESOLVED** — client mail addresses same-org members only, never external; server-side transmittal route; SELECT/confined UPDATE on the queue |
+| `LIFE-6` | **RESOLVED** — hold origin column; a close cannot be silent over an open originating hold (`DEC-25`) |
+
+Migrations `20261046` → `20261047` — **pending operator paste**, one at a time, inventory BEFORE each DDL.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

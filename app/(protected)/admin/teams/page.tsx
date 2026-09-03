@@ -22,6 +22,10 @@ const TEAM_COLORS = ["#4f46e5", "#2563eb", "#0d9488", "#059669", "#ea580c", "#e1
 export default function AdminTeamsPage() {
   const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const isAdmin = hasAnyRole(["Admin", "Manager"]);
+  // DEL-4: changing a department's supervisor transfers publish authority
+  // over every library it owns — a controller act (the database guards it
+  // the same way); a Manager keeps name / colour / roster.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
   // DEC-9 fix 1: the supervisor picker lists the TEAM's members; an explicit
   // override widens it to the whole org and says what that means.
   const [supervisorOverride, setSupervisorOverride] = useState(false);
@@ -219,7 +223,9 @@ export default function AdminTeamsPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-bold text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</span>
                     <select value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
-                      className="flex-1 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none">
+                      disabled={!isController}
+                      title={isController ? undefined : "Only an Admin or Document Controller can change a department's supervisor — it transfers publish authority."}
+                      className="flex-1 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none disabled:opacity-60 disabled:cursor-not-allowed">
                       <option value="">— none —</option>
                       {members
                         .filter((m) => supervisorOverride || teamMemberIds.includes(m.uid) || m.uid === selected.supervisorUserId)
@@ -227,7 +233,7 @@ export default function AdminTeamsPage() {
                     </select>
                   </div>
                   <label className="flex items-center gap-2 text-[10px] text-[var(--color-text-muted)] cursor-pointer select-none">
-                    <input type="checkbox" checked={supervisorOverride} onChange={(e) => setSupervisorOverride(e.target.checked)} />
+                    <input type="checkbox" checked={supervisorOverride} disabled={!isController} onChange={(e) => setSupervisorOverride(e.target.checked)} />
                     Allow a supervisor from outside this team (they gain publish authority over every library this department owns)
                   </label>
                   <div className="text-[10px] text-[var(--color-text-muted)]">
@@ -242,8 +248,8 @@ export default function AdminTeamsPage() {
                         const owned = l.owner_team_id === selected.id;
                         const otherTeam = !!l.owner_team_id && l.owner_team_id !== selected.id;
                         return (
-                          <button key={l.id} onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam}
-                            title={otherTeam ? "Owned by another department" : undefined}
+                          <button key={l.id} onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam || !isController}
+                            title={otherTeam ? "Owned by another department" : !isController ? "Only an Admin or Document Controller can assign library ownership to a department" : undefined}
                             className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors disabled:opacity-40 ${owned ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                             {l.name}{otherTeam ? " · other" : ""}
                           </button>

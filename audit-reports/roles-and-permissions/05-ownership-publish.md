@@ -543,7 +543,11 @@ expiry and asserts refusal.
 ## OWN-8 · `admin`-implies-everything vs. explicit `publish` deny: the three evaluators disagree in opposite directions
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B — `DEC-8`: explicit deny wins).** The three evaluators now answer the two disagreement cases identically. `lib/acl.ts` `can()` tests the deny of the requested action before the admin short-circuit; `canPublishViaIndex` grants publish through an `admin` allow only when `admin` is not explicitly denied (user / any held role / team); `user_can_publish_on_library` gains the same `v_admin_denied` gate on its three admin arms (byte-fidelity line-diff against the `20261040` body: only those lines changed). `can_manage_node` already had the deny-gated shape. Fixtures: `{allow admin, deny publish}` → denied everywhere; `{allow admin, deny admin}` → denied everywhere; `{allow admin}` → allowed.
+- Migration: `20261046` — **printed for operator paste; pending apply** (12-point verification; 5-line inventory recorded BEFORE apply — the rewrite widens where an additively held Admin/Manager/DocCtrl/Supervisor was read by headline alone).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**
@@ -891,7 +895,11 @@ log.
 ## OWN-15 · Un-supersede, unarchive, and arbitrary status restore are not guarded at the database
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B).** `enforce_document_publish_guard` (body from `20261045`, one disjunct added) treats leaving `Superseded` / `Archived` / `Void` as advancing, so un-supersede, unarchive and un-void take the same authority as a publish (controller, per-library publisher, or effective owner) — the client-side prerequisite the finding named (`HistoryDrawer` by collection) was already met. `unarchiveDocument` restores only to an allow-list (`Issued` / `Draft` / `In Review`) instead of any string. Residual: `documents.status` still has no `CHECK` — adding one is a data-verification exercise on a column that has been free text since day one, recorded, not done here.
+- Migration: `20261046` — **printed for operator paste; pending apply** (12-point verification; 5-line inventory recorded BEFORE apply — the rewrite widens where an additively held Admin/Manager/DocCtrl/Supervisor was read by headline alone).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / data-integrity
 - **Locations:**

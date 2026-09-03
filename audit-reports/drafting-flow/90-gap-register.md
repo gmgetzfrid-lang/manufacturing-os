@@ -514,7 +514,7 @@ wait state and tells the party that owns it, escalating if it stays.
 ### Design
 
 The data model already exists — `target_completion_at` is set at creation with
-per-request-type defaults (`lib/notifications.ts:283-287`), and `isPastDue` /
+per-request-type defaults (`lib/notifications.ts:237-243`), and `isPastDue` /
 `isNearingDue` are written and tested. **Nothing reads them server-side.** A
 repo-wide search finds no consumer outside the UI and the test file.
 
@@ -1591,8 +1591,10 @@ everywhere it appears.
 |---|---|
 | **A parallel review roster with signatures, alternates and auto-finalize** | **Built** — `lib/reviewControl.ts`, on the document side. `GAP-103` is about reaching it from the ticket, not writing it. |
 | **Plain-English status explanations** | **Built twice** — `attentionLabel` and `WorkflowDiagramModal`. `GAP-108` routes them to the right surfaces. |
-| **Per-request-type SLA defaults** | **Built** — `lib/notifications.ts:283-287`. `GAP-106` is about nothing reading them. |
+| **Per-request-type SLA defaults** | **Built** — `lib/notifications.ts:237-243`. `GAP-106` is about nothing reading them. |
 | **Queue routing by role pool with fallback** | **Built** — `lib/ticketRouting.ts`. `LEAK-1` is about the workflow route never calling it. |
 | **A per-person delegation with expiry** | **Built** — `capabilityPolicy.UserGrant`. `GAP-102` uses it rather than adding a role. |
 | **Container-chain rule inheritance** | **Built** — `docClass` and `review_control` both resolve document → folder → library. `GAP-101` and `GAP-104` reuse the pattern. |
 | **Triage-first routing to the drafting supervisor** | **Built and working.** `GAP-101` adds one field to a step that already exists. |
+
+> Line citations into `lib/notifications.ts` re-pointed 2026-09-02 after the roles-and-permissions sweep removed the browser external-mail path (`SURF-17`); the cited symbols are unchanged.

@@ -108,7 +108,7 @@ are needed.
 - **Locations:**
   - `types/schema.ts:1019` — `export type RequestType = string;` — open, unvalidated free text
   - `lib/workflow.ts:185` — the **only** place `requestType` affects authority in the entire codebase: `if (ticket.requestType === 'RFI')`
-  - `lib/notifications.ts:283-287` — the only other use: an SLA default lookup
+  - `lib/notifications.ts:237-243` — the only other use: an SLA default lookup
   - `types/schema.ts:761` — `changeType?: "Major" | "Minor" | "Correction"` — **exists, but on `DocumentVersion`, not on the ticket**
   - `lib/docClass.ts:28` — `DocClass = "drawing" | "procedure"` — **exists, but on the document, not on the ticket**
 - **Related:** `TIER-1`, `TIER-3`, `GAP-101`
@@ -472,3 +472,5 @@ the eight findings above point at, recorded so the intent is not lost.
 5. **The deliverable-rev scheme** (`lib/ticketTransitions.ts:88-107`) —
    `1A → 1B → 1 → 2A → 2`, correctly reset on each revision request. The pure
    functions are sound and unit-frozen.
+
+> Line citations into `lib/notifications.ts` re-pointed 2026-09-02 after the roles-and-permissions sweep removed the browser external-mail path (`SURF-17`); the cited symbols are unchanged.

@@ -530,7 +530,11 @@ matching `is_org_controller`, and a test pins the `['Manager','DocCtrl']` case.
 ## SURF-11 · `project_members.role` is dead — an "Observer" has manager authority
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B).** `project_members.role` decides management authority: `can_manage_project` admits only `owner` / `collaborator` roster rows (an `observer` is on the roster to see, never to manage), requires an ACTIVE org membership on both the owner and the roster arms, reads the org roles by collection, and is search_path-pinned; `is_project_member` / `is_project_owner` require an active membership. `project_visible_to_me` stays role-agnostic (an observer should see a private project). No app change: `canManage = isOwner || isAdmin` already matched.
+- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**
@@ -565,7 +569,11 @@ inactive member's project rows stop authorizing writes.
 ## SURF-12 · Distribution acknowledgments are forgeable by any member
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B).** `distribution_acks` was closed by `20261032`; the sibling `document_acknowledgments` now has the same rails: INSERT may only mint a `pending`, unsigned row, and `enforce_document_ack_guard` (BEFORE UPDATE) makes the `pending → acknowledged` transition the named assignee's own act bound to their own e-signature (org-matched; version-matched where the row names one), refuses a self-waiver by a non-controller, and refuses editing or resurrecting a recorded acknowledgment. The app's signing path already writes exactly that shape.
+- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -592,7 +600,11 @@ matching the `document_acknowledgments` rule.
 ## SURF-13 · `document_review_signoffs` UPDATE does not pin reviewer identity
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B).** The identity pin `20261030` gave review sign-offs already covered reviewer/slot/draft/document/org; the guard (body from `20261030`, line-diff pinned) now also pins `reviewer_name` and refuses a signature attached to a row that is not being signed. The policy's membership-only `WITH CHECK` is documented as cosmetic: the trigger is the rail.
+- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / safety
 - **Locations:**
@@ -687,7 +699,11 @@ anyone enables it.
 ## SURF-16 · Teams are ACL subjects with no audit trail, and `/api/admin/create-user` disagrees with its own page
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B — the DB half; the app half landed in Round A3).** `teams_admin_write` / `team_members_admin_write` read the collection (`caller_holds_any_role(org_id, ARRAY['Admin','Manager'])`), so an additively held Manager administers teams; the supervisor swap is a controller act (`DEL-4`). All five legs closed.
+- Migration: `20261046` — **printed for operator paste; pending apply** (12-point verification; 5-line inventory recorded BEFORE apply — the rewrite widens where an additively held Admin/Manager/DocCtrl/Supervisor was read by headline alone).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 
 **Partial (2026-09-02, Phase 6 severity sweep, Round A3 — the app half).** Three of the five legs were already closed by Phase 6 (`my_team_ids` active join, `owner_team_id` FK, audited supervisor change/delete). Now: `createTeam`, `updateTeam`, `addTeamMember`, `removeTeamMember` write `TEAM_CREATED` / `TEAM_UPDATED` / `TEAM_MEMBER_ADDED` / `TEAM_MEMBER_REMOVED` (update and remove are checked writes, so a refusal never leaves a phantom audit row; `TEAM_%` already rides the admin-only audit overlay); `/api/admin/create-user` writes `MEMBER_CREATED`; the members page's gates read the role collection and match the routes they front (page: Admin|Manager|DocCtrl; add: Admin|DocCtrl like the route; suspend/restore: Admin|Manager and remove: Admin like `revoke_member`). Remaining (DB half, next migration round): `teams_admin_write` / `team_members_admin_write` still read the headline `role` — they become `caller_holds_any_role(org_id, ARRAY['Admin','Manager'])` with the `ADD-4` rewrite.
 - Files: `lib/teams.ts`, `app/(protected)/admin/teams/page.tsx`, `app/api/admin/create-user/route.ts`, `app/(protected)/admin/users/page.tsx`. Tests: `lib/__tests__/sweepRoundA3.test.ts`.
@@ -738,7 +754,11 @@ them.**
 ## SURF-17 · A member can queue mail to an arbitrary address with arbitrary HTML (split from `SURF-5`)
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B).** A member can no longer queue mail to an arbitrary address with arbitrary HTML. Database: a client INSERT into `email_notifications` must address a member of the same org (`lower(r.email) = lower(to_email)`) and may not be marked external (the DEC-30 inventory of client-queued non-member mail is recorded before apply). App: the transmittal email is queued by `/api/transmittal/send-email` — session-authenticated, the caller must be an active member and the issuer or a controller, the message is rendered from the transmittal ROW (the request carries only an id), audited `TRANSMITTAL_EMAILED`; `sendTransmittalEmail` calls the route; `queueExternalEmail` is removed from the browser library. Server-side inserts (intake, cron, transmittal acknowledgment) are untouched.
+- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Files: `app/api/transmittal/send-email/route.ts`, `lib/transmittals.ts`, `lib/notifications.ts`. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** security (phishing relay) / brand
 - **Locations:**
@@ -772,7 +792,11 @@ WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
 ## SURF-18 · `email_notifications` has no SELECT/UPDATE policy, so dedupe and the dead-letter panel silently no-op
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B).** `email_notifications` gains a SELECT policy (own rows — the 60-second dedupe window finally sees something — or the admin trail for Admin/Manager by collection) and an UPDATE policy for Admin/Manager confined by `enforce_email_requeue_columns` to `status` / `attempt_count` only, so the dead-letter panel can count and re-queue but can never rewrite a queued message's address or body (`SURF-17`'s second door stays shut). Both key on `org_id`, never on `to_user_id` alone (the `SURF-5` trap).
+- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / observability
 - **Locations:**

@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
-import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
@@ -1246,7 +1246,11 @@ export default function TicketDetailView() {
       // which a tampered client or a closed tab can skip.
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error("Not authenticated");
-      const res = await fetch('/api/tickets/workflow-action', {
+      // LIFE-6 / DEC-25: a close over a hold this ticket opened comes back
+      // 409 holds_open; the closer chooses — release now, or keep with a
+      // stated reason — and the action is re-sent with that resolution.
+      let holdResolution: { action: 'release' | 'keep'; reason?: string | null } | null = null;
+      const send = () => fetch('/api/tickets/workflow-action', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
@@ -1260,8 +1264,32 @@ export default function TicketDetailView() {
           engineer: engineerData || null,
           redlineAttachment,
           finalAttachment: newFinalFile || null,
+          holdResolution,
         }),
       });
+      let res = await send();
+      if (res.status === 409 && !holdResolution) {
+        const j = await res.clone().json().catch(() => ({})) as { code?: string; holds?: Array<{ reason: string }> };
+        if (j.code === 'holds_open') {
+          const holdLabel = (j.holds ?? []).map((h) => h.reason).join(', ') || 'a hold';
+          const release = await appConfirm({
+            title: 'This request opened a hold that is still active',
+            message: `${holdLabel} is still blocking the document. Release it now? Choose No to keep it open and record why.`,
+            confirmLabel: 'Release the hold',
+            cancelLabel: 'Keep it open',
+          });
+          if (release) {
+            const reason = await appPrompt({ title: 'Release reason (optional)', message: 'Recorded on the hold and the audit trail.', placeholder: 'e.g. field verified against Rev B' });
+            if (reason === null) { setActionLoading(null); return; }
+            holdResolution = { action: 'release', reason };
+          } else {
+            const reason = await appPrompt({ title: 'Why does the hold stay open?', message: 'Required — the document stays blocked after this request closes.', placeholder: 'e.g. awaiting vendor data; hold owned by the owner' });
+            if (reason === null || !reason.trim()) { setActionLoading(null); return; }
+            holdResolution = { action: 'keep', reason };
+          }
+          res = await send();
+        }
+      }
 
       if (res.status === 409) {
         setActionLoading(null);

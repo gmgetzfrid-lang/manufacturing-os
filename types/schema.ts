@@ -567,6 +567,8 @@ export interface DocumentHold {
   releasedByName?: string | null;
   releasedAt?: Timestamp;
   releasedReason?: string | null;
+  /** LIFE-6 / DEC-25: the drafting ticket whose check-in placed the hold. */
+  originTicketId?: string | null;
 }
 
 // ─── Operational entity graph (Phase 1) ──────────────────────────

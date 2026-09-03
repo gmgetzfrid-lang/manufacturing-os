@@ -140,8 +140,11 @@ export function evaluateAcl(
   const { allowed, denied } = evaluateRules(acl.rules ?? [], ctx);
 
   const can = (action: PermissionAction) => {
-    if (allowed.has("admin") && !denied.has("admin")) return true;
+    // OWN-8 / DEC-8: an explicit deny of THIS action wins over an admin
+    // allow — the SQL evaluators (user_can_publish_on_library,
+    // can_manage_node) apply the same order.
     if (denied.has(action)) return false;
+    if (allowed.has("admin") && !denied.has("admin")) return true;
     return allowed.has(action);
   };
 

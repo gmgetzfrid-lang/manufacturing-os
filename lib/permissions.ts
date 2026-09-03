@@ -119,7 +119,14 @@ export function canPublishViaIndex(
     roles.some((r) => has(idx.deny?.roles, "publish", r)) ||
     teams.some((t) => has(idx.deny?.teams, "publish", t));
   if (deniedPublish) return false;
-  const allowActs = ["publish", "admin"];
+  // OWN-8 / DEC-8: an 'admin' allow grants publish only when 'admin' is not
+  // itself explicitly denied (user / ANY held role / team) — mirrors
+  // user_can_publish_on_library's v_admin_denied.
+  const deniedAdmin =
+    has(idx.deny?.users, "admin", uid) ||
+    roles.some((r) => has(idx.deny?.roles, "admin", r)) ||
+    teams.some((t) => has(idx.deny?.teams, "admin", t));
+  const allowActs = deniedAdmin ? ["publish"] : ["publish", "admin"];
   return allowActs.some((a) =>
     has(idx.allow?.users, a, uid) ||
     roles.some((r) => has(idx.allow?.roles, a, r)) ||

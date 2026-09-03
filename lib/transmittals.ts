@@ -16,7 +16,6 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { openPrintWindow } from "@/lib/evidencePack";
-import { queueExternalEmail } from "@/lib/notifications";
 
 export type TransmittalStatus = "draft" | "issued" | "acknowledged" | "voided";
 
@@ -272,36 +271,29 @@ export function renderTransmittalEmail(t: Transmittal, portalUrl: string): { sub
  * no portal token (pre-20260910 database). Failure to queue never fails the
  * issue itself — the transmittal IS issued; the email is delivery on top.
  */
-export async function sendTransmittalEmail(t: Transmittal, actor: TransmittalActor): Promise<boolean> {
+export async function sendTransmittalEmail(t: Transmittal, _actor: TransmittalActor): Promise<boolean> {
+  // SURF-17: the email is queued SERVER-SIDE from the transmittal row
+  // (/api/transmittal/send-email) — a browser can no longer address or author
+  // external mail. The route decides who may send and audits it.
   const to = t.recipientEmail?.trim();
   if (!to || !t.portalToken || t.status === "voided") return false;
-  const portalUrl = transmittalPortalUrl(t.portalToken);
-  const { subject, text, html } = renderTransmittalEmail(t, portalUrl);
   try {
-    await queueExternalEmail({
-      orgId: t.orgId,
-      senderUserId: actor.actorUserId,
-      toEmail: to,
-      subject,
-      bodyText: text,
-      bodyHtml: html,
-      resourceId: t.id,
-      eventType: "transmittal_issued",
-      metadata: { number: t.number, purpose: t.purpose },
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return false;
+    const res = await fetch("/api/transmittal/send-email", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ transmittalId: t.id }),
     });
-    await logAuditAction({
-      action: "TRANSMITTAL_EMAILED",
-      resourceId: t.id,
-      resourceType: "transmittal",
-      orgId: actor.orgId,
-      userId: actor.actorUserId,
-      userEmail: actor.actorName,
-      userRole: actor.actorRole,
-      details: { number: t.number, to },
-    });
-    return true;
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({})) as { error?: string };
+      console.warn("[transmittals] email send refused:", j.error ?? res.status);
+      return false;
+    }
+    const j = await res.json().catch(() => ({})) as { sent?: boolean };
+    return j.sent === true;
   } catch (e) {
-    console.warn("Transmittal email couldn't be queued:", (e as Error).message);
+    console.warn("[transmittals] email send failed (the transmittal is still issued):", e);
     return false;
   }
 }

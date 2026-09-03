@@ -375,7 +375,7 @@ if (newComment) {
 
 **Mechanism.** `CANCELED` appears in the TicketStatus union, in `TERMINAL_TICKET_STATUSES`, in computeTransition's `TERMINAL` array (so it would stamp `closed_at`), in the archive eligibility filter, and — visibly to end users — in the workflow diagram modal as "Withdrawn or returned to the requester. A terminal exit off the main flow." No transition in computeTransition's switch produces it. Three differently-shaped searches confirm the absence: `grep -rn "status.*CANCELED\|CANCELED.*status"` filtered to writes returns only comments and a test; `grep -rin canceled` filtered to `update|insert|= 'CANCELED'` returns only Stripe subscription statuses and read-side `!==` comparisons; and `grep -rn "cancel_ticket\|'cancel'\|\"cancel\""` returns nothing. Conversely, `WorkflowEngine.getActions` has no `case 'CANCELED'`, so a ticket in that state offers only the global Force Close, and only to `ticket.force_close` holders (default Admin/Manager/Supervisor).
 
-**Failure scenario.** A requester wants to withdraw a request that is no longer needed. The workflow diagram modal — the app's own explanation of the lifecycle — tells them Canceled is where withdrawn requests go. There is no button anywhere that produces it. They either abandon the ticket in place (where it keeps generating SLA/attention noise, since lib/notifications.ts:259 only suppresses CLOSED and CANCELED) or an admin force-closes it, mislabelling a withdrawal as a completed-and-acknowledged package. If a row ever does reach CANCELED — a data import, a direct write via the wide-open RLS policy of finding #2 — its requester and drafter have no action at all.
+**Failure scenario.** A requester wants to withdraw a request that is no longer needed. The workflow diagram modal — the app's own explanation of the lifecycle — tells them Canceled is where withdrawn requests go. There is no button anywhere that produces it. They either abandon the ticket in place (where it keeps generating SLA/attention noise, since lib/notifications.ts:218 only suppresses CLOSED and CANCELED) or an admin force-closes it, mislabelling a withdrawal as a completed-and-acknowledged package. If a row ever does reach CANCELED — a data import, a direct write via the wide-open RLS policy of finding #2 — its requester and drafter have no action at all.
 
 **Evidence.**
 
@@ -662,3 +662,5 @@ if (action.requiresFile) {
 - [ ] An API-route test posts `submit_final` with `finalAttachment: null` and asserts 400, with the ticket still at PENDING_IFC
 
 ---
+
+> Line citations into `lib/notifications.ts` re-pointed 2026-09-02 after the roles-and-permissions sweep removed the browser external-mail path (`SURF-17`); the cited symbols are unchanged.

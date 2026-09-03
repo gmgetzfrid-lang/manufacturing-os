@@ -36,6 +36,10 @@ interface Body {
   engineer?: { id: string; name: string; email: string } | null;
   redlineAttachment?: TicketAttachment | null;
   finalAttachment?: TicketAttachment | null;
+  /** LIFE-6 / DEC-25: how the closer addressed the hold(s) this ticket
+   *  opened — release them now, or keep them with a stated reason. Absent
+   *  when a close would leave one open, the close is refused (409 holds_open). */
+  holdResolution?: { action: "release" | "keep"; reason?: string | null } | null;
 }
 
 export async function POST(req: NextRequest) {
@@ -226,6 +230,55 @@ export async function POST(req: NextRequest) {
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients, newComment } = computeTransition(ticket, input);
+
+  // LIFE-6 / DEC-25: a ticket cannot close silently over a hold it opened.
+  // The closer releases it now, or records why it stays — never auto-release.
+  if (body.actionType === "close_ticket" || body.actionType === "close_rfi") {
+    const { data: openHolds, error: holdsErr } = await supabaseAdmin
+      .from("document_holds")
+      .select("id, document_id, reason, notes")
+      .eq("origin_ticket_id", body.ticketId)
+      .is("released_at", null);
+    if (holdsErr && !/origin_ticket_id/.test(holdsErr.message)) {
+      return NextResponse.json({ error: `Couldn't check this ticket's holds: ${holdsErr.message}` }, { status: 500 });
+    }
+    const holds = (openHolds ?? []) as Array<{ id: string; document_id: string; reason: string; notes: string | null }>;
+    if (holds.length > 0) {
+      const resolution = body.holdResolution ?? null;
+      const reason = (resolution?.reason ?? "").trim();
+      if (!resolution || (resolution.action === "keep" && !reason)) {
+        return NextResponse.json({
+          error: "This request opened a hold that is still active. Release it, or record why it stays, before closing.",
+          code: "holds_open",
+          holds: holds.map((h) => ({ id: h.id, documentId: h.document_id, reason: h.reason })),
+        }, { status: 409 });
+      }
+      const nowIso = new Date().toISOString();
+      if (resolution.action === "release") {
+        const { data: released, error: relErr } = await supabaseAdmin
+          .from("document_holds")
+          .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
+                    released_reason: reason || `Released on close of ticket ${ticket.ticketId ?? body.ticketId}` })
+          .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
+        if (relErr) return NextResponse.json({ error: `Couldn't release the hold: ${relErr.message}` }, { status: 500 });
+        for (const h of holds) {
+          await supabaseAdmin.from("audit_logs").insert({
+            action: "HOLD_RELEASED", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
+            user_id: caller.id, user_email: callerEmail ?? null,
+            details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: (released ?? []).length },
+          }).then(() => undefined, () => undefined);
+        }
+      } else {
+        for (const h of holds) {
+          await supabaseAdmin.from("audit_logs").insert({
+            action: "HOLD_KEPT_ON_CLOSE", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
+            user_id: caller.id, user_email: callerEmail ?? null,
+            details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId },
+          }).then(() => undefined, () => undefined);
+        }
+      }
+    }
+  }
 
   // Compare-and-set on the status we validated against. If another reviewer
   // moved the ticket since, refuse to clobber their transition.

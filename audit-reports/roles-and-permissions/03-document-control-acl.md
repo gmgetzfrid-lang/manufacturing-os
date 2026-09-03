@@ -38,7 +38,11 @@ policy and the ACL policy. A direct API call cannot route around it.
 ## DOCACL-1 · Role-based ACL rules match the primary role only
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B).** The last role-subject evaluator that matched the headline only, `can_manage_node`, now evaluates ANY held role for the `admin` / `managePermissions` allow tests and — deny-if-any per `CHAIN-1` — for the matching deny tests (the read and publish paths were made collection-aware in Phases 3b/5; `lib/acl.ts` already matched `ctx.roles`). Residual, recorded: a role-subject DENY of `read` is enforced by `lib/acl.ts` only — `node_visible` enforces user-subject read/discover denies at the database; extending it is a `node_visible` body change deferred with `DOCACL-3`.
+- Migration: `20261046` — **printed for operator paste; pending apply** (12-point verification; 5-line inventory recorded BEFORE apply — the rewrite widens where an additively held Admin/Manager/DocCtrl/Supervisor was read by headline alone).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**

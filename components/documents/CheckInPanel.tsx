@@ -409,6 +409,7 @@ export default function CheckInPanel({
                 reason: "Field Verification Needed", notes: note.trim(),
                 openedBy: currentUser.uid, openedByName: userName,
                 openedByEmail: currentUser.email ?? undefined, openedByRole: currentUser.role ?? undefined,
+                originTicketId: ticket.id, // LIFE-6: the hold knows its ticket
               });
               if (hold.id) done.hold = { id: hold.id };
             } catch (e) {

@@ -402,7 +402,12 @@ fix with no dependencies.
 ## LIFE-6 · The "Field Verification Needed" hold is unlinked, unrecorded, and never released
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round B — built per `DEC-25`).** `document_holds.origin_ticket_id` (FK `ON DELETE SET NULL`, partial index on open holds) links a hold to the ticket whose check-in placed it; `openHold` writes it, the check-in passes it, `outcome_ref.holdId` was written in Round A2 and the history panel shows it. The close gate lives inside the workflow route's enforcement frame: closing a ticket that still has an open originating hold returns `409 holds_open` unless the closer either releases it now (released server-side, audited `HOLD_RELEASED`) or records why it stays (`HOLD_KEPT_ON_CLOSE` with the reason) — never auto-released. The ticket page turns the 409 into the two-way choice and re-sends with the resolution.
+- Done-when: (1) ✓ `outcome_ref.holdId`; (2) ✓ the hold carries its ticket, the ticket's history entry links the hold; (3) ✓ a close over an open originating hold cannot be silent.
+- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Files: `lib/holds.ts`, `types/schema.ts`, `components/documents/CheckInPanel.tsx`, `app/api/tickets/workflow-action/route.ts`, `app/(protected)/requests/[id]/page.tsx`. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+
 
 **Partial (2026-09-02, Phase 6 severity sweep, Round A2 — Done-when 1).** The check-in keeps the hold `openHold` returns and writes `outcome_ref.holdId` (the field `20261012` documented), remembered per card so a retry never opens a second hold; `CheckoutHistoryPanel` shows it (`LIFE-10`). Done-when 2 and 3 (the hold shows its originating ticket and vice versa; a close over an open originating hold cannot be silent — `DEC-25`) need `document_holds.origin_ticket_id` and the server-side close gate: they ship with the next migration round.
 - Files: `components/documents/CheckInPanel.tsx`. Tests: `lib/__tests__/lifeSweep2.test.ts`.

@@ -172,6 +172,17 @@ export async function isEffectiveOwnerOfDocument(documentId: string, uid: string
   if (!uid) return false;
   const { data } = await supabase.from("documents").select("owner_user_id, owner_name, collection_id, library_id").eq("id", documentId).maybeSingle();
   if (!data) return false;
+  // DEL-9: ask the database's own cascade (user_is_effective_owner runs as
+  // definer, so a folder rung the caller cannot read is never skipped —
+  // the app and the guard answer identically). Fall back to the client
+  // resolver only when the RPC is unavailable (pre-20261046).
+  const { data: viaDb, error } = await supabase.rpc("user_is_effective_owner", {
+    p_doc_owner: (data.owner_user_id as string | null) ?? null,
+    p_collection: (data.collection_id as string | null) ?? null,
+    p_library: (data.library_id as string | null) ?? null,
+    p_uid: uid,
+  });
+  if (!error && typeof viaDb === "boolean") return viaDb;
   const eff = await effectiveOwnerForDocument({
     ownerUserId: (data.owner_user_id as string | null) ?? null,
     ownerName: (data.owner_name as string | null) ?? null,

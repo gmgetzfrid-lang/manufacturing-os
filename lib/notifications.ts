@@ -99,52 +99,11 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
   }
 }
 
-export type QueueExternalEmailInput = {
-  orgId: string;
-  /** The org member on whose behalf the mail goes out (sender of record).
-   *  email_notifications.to_user_id is NOT NULL, so this fills it — delivery
-   *  itself always uses toEmail. */
-  senderUserId: string;
-  toEmail: string;
-  subject: string;
-  bodyText: string;
-  bodyHtml?: string;
-  resourceType?: "ticket" | "project" | "document";
-  resourceId?: string;
-  eventType: string;
-  metadata?: Record<string, unknown>;
-};
 
-/**
- * Queue an email to someone OUTSIDE the org (transmittal recipients,
- * intake submitters). No preference check — external parties have no
- * notification_preferences row, and the sender explicitly asked for the
- * send — and no burst-dedupe, because each external send is deliberate.
- */
-export async function queueExternalEmail(input: QueueExternalEmailInput): Promise<void> {
-  const toEmail = input.toEmail.trim();
-  // Cheap shape check so a typo'd address fails at queue time, not in Resend.
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toEmail)) {
-    throw new Error(`"${toEmail}" doesn't look like an email address.`);
-  }
-  const { error } = await supabase.from("email_notifications").insert({
-    org_id: input.orgId,
-    to_user_id: input.senderUserId,
-    to_email: toEmail,
-    subject: input.subject,
-    body_text: input.bodyText,
-    body_html: input.bodyHtml || null,
-    resource_type: input.resourceType || null,
-    resource_id: input.resourceId || null,
-    event_type: input.eventType,
-    metadata: { ...(input.metadata || {}), external: true },
-    status: "queued",
-  });
-  if (error) throw new Error(error.message);
-  void kickEmailDrain().then((r) => {
-    if (r && !r.ok) console.warn(`send-queued kick returned HTTP ${r.status}; queued for cron retry`);
-  });
-}
+// queueExternalEmail was removed under SURF-17: external mail (transmittal
+// recipients, intake submitters) is queued server-side from the row, and
+// migration 20261047 makes a client INSERT with metadata.external = true
+// impossible. The legitimate path is /api/transmittal/send-email.
 
 function shouldSendForEvent(
   prefs: Record<string, unknown> | null,

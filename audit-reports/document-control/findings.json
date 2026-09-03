@@ -1723,7 +1723,7 @@
       "locations": [
         "supabase/migrations/20260910_transmittal_portal.sql:15-17",
         "supabase/migrations/20260910_transmittal_portal.sql:39-44",
-        "lib/transmittals.ts:436-456",
+        "lib/transmittals.ts:428-448",
         "lib/roleCapabilities.ts:39",
         "lib/roleCapabilities.ts:48-67",
         "app/(protected)/transmittals/page.tsx:54-70"
@@ -1752,7 +1752,7 @@
         "supabase/migrations/20260910_transmittal_portal.sql:53-56",
         "supabase/migrations/20260818_followups_rls.sql:50-58",
         "supabase/migrations/20260815_versions_collections_delete_controllers.sql:15",
-        "lib/transmittals.ts:641-645",
+        "lib/transmittals.ts:633-637",
         "supabase/migrations/20260826_legal_hold_delete_guard.sql:29-33"
       ],
       "has_verifier_correction": false,
@@ -3266,11 +3266,11 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/transmittals.ts:558-591",
-        "lib/transmittals.ts:536-548",
-        "lib/transmittals.ts:594-619",
-        "lib/transmittals.ts:622-639",
-        "lib/transmittals.ts:642-645",
+        "lib/transmittals.ts:550-583",
+        "lib/transmittals.ts:528-540",
+        "lib/transmittals.ts:586-611",
+        "lib/transmittals.ts:614-631",
+        "lib/transmittals.ts:634-637",
         "app/(protected)/transmittals/page.tsx:136-179",
         "app/(protected)/transmittals/page.tsx:280-289"
       ],
@@ -3328,7 +3328,7 @@
         "app/api/share/file/route.ts:129-141",
         "lib/staleCopies.ts:1-14",
         "lib/staleCopies.ts:38-46",
-        "lib/transmittals.ts:396-406",
+        "lib/transmittals.ts:388-398",
         "components/documents/InspectorPanel.tsx:1036-1078"
       ],
       "has_verifier_correction": true,
@@ -3354,7 +3354,7 @@
       "locations": [
         "app/(protected)/transmittals/page.tsx:417-429",
         "app/(protected)/transmittals/page.tsx:304-315",
-        "lib/transmittals.ts:309-323",
+        "lib/transmittals.ts:301-315",
         "lib/transmittals.ts:188-196",
         "lib/transmittals.ts:275-307"
       ],
@@ -3433,10 +3433,10 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "lib/transmittals.ts:389-392",
+        "lib/transmittals.ts:381-384",
         "lib/publicOrigin.ts:1-22",
         "lib/downloads.ts:90-100",
-        "lib/transmittals.ts:312-322",
+        "lib/transmittals.ts:304-314",
         "app/(protected)/transmittals/page.tsx:261"
       ],
       "has_verifier_correction": true,
@@ -3995,7 +3995,7 @@
         "supabase/migrations/20260910_transmittal_portal.sql:11-13",
         "supabase/migrations/20260910_transmittal_portal.sql:24",
         "app/api/transmittal/route.ts:120-134",
-        "lib/transmittals.ts:335-369",
+        "lib/transmittals.ts:327-361",
         "lib/transmittals.ts:116-121",
         "lib/evidencePack.ts:184-190"
       ],

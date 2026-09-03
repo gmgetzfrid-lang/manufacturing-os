@@ -45,6 +45,8 @@ interface HoldRow {
   released_by_name: string | null;
   released_at: string | null;
   released_reason: string | null;
+  /** LIFE-6 / DEC-25 (20261047): the drafting ticket whose check-in placed it. */
+  origin_ticket_id?: string | null;
 }
 
 function rowToHold(r: HoldRow): DocumentHold {
@@ -62,6 +64,7 @@ function rowToHold(r: HoldRow): DocumentHold {
     releasedByName: r.released_by_name,
     releasedAt: r.released_at,
     releasedReason: r.released_reason,
+    originTicketId: r.origin_ticket_id ?? null,
   };
 }
 
@@ -77,6 +80,9 @@ export interface OpenHoldInput {
   openedByName?: string;
   openedByEmail?: string;
   openedByRole?: string;
+  /** LIFE-6 / DEC-25: the ticket this hold originates from (a check-in's
+   *  "Field Verification Needed" offer) — the close gate finds it here. */
+  originTicketId?: string | null;
 }
 
 /** Self-contained capability check for holds — enforced HERE so every entry
@@ -122,6 +128,7 @@ export async function openHold(input: OpenHoldInput): Promise<DocumentHold> {
       expected_release_at: input.expectedReleaseAt ?? null,
       opened_by: input.openedBy,
       opened_by_name: input.openedByName ?? null,
+      ...(input.originTicketId ? { origin_ticket_id: input.originTicketId } : {}),
     })
     .select("*")
     .single();

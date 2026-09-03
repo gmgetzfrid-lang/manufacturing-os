@@ -1373,9 +1373,16 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
   });
 }
 
+/** OWN-15: the statuses an unarchive may restore to — never an arbitrary
+ *  string (documents.status has no CHECK constraint). */
+export const UNARCHIVE_RESTORE_STATUSES = ["Issued", "Draft", "In Review"] as const;
+
 export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<void> {
   const { doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus } = input;
   if (!doc.id) throw new Error("Document is missing an id");
+  if (restoreStatus && !(UNARCHIVE_RESTORE_STATUSES as readonly string[]).includes(restoreStatus)) {
+    throw new Error(`Cannot restore to "${restoreStatus}" — choose Issued, Draft or In Review.`);
+  }
 
   const now = new Date().toISOString();
   const { error } = await supabase

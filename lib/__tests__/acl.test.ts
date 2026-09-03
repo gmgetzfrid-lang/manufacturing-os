@@ -61,16 +61,20 @@ describe("evaluateAcl — single node", () => {
     expect(d?.can("write")).toBe(true);
   });
 
-  it("an admin grant is only revoked by denying 'admin' itself — NOT a specific action", () => {
-    // SHARP EDGE (flagged for the security-review slice): denying a specific
-    // action does NOT override a blanket admin grant. The current contract is
-    // "to strip an admin, deny 'admin'." Frozen here so any future change to
-    // this rule is a deliberate, visible diff — not a silent privilege change.
+  it("an explicit deny of a specific action wins over a blanket admin grant (OWN-8 / DEC-8)", () => {
+    // This test previously froze the OPPOSITE rule ("to strip an admin, deny
+    // 'admin'"; a specific deny did not bite) as a flagged sharp edge. The
+    // roles-and-permissions audit (OWN-8) found the three evaluators
+    // disagreeing on exactly this case, and DEC-8 settled it: an explicit deny
+    // of the requested action always wins — in lib/acl.ts, canPublishViaIndex
+    // and user_can_publish_on_library (20261046). Changed deliberately,
+    // 2026-09-02, Phase 6 severity sweep Round B.
     const adminWithSpecificDeny = evaluateAcl(
       acl([rule("allow", "user", "u1", ["admin"]), rule("deny", "user", "u1", ["write"])]),
       { uid: "u1" },
     );
-    expect(adminWithSpecificDeny?.can("write")).toBe(true); // admin still wins
+    expect(adminWithSpecificDeny?.can("write")).toBe(false); // the explicit deny bites
+    expect(adminWithSpecificDeny?.can("read")).toBe(true);   // the admin grant still covers the rest
 
     const adminDenied = evaluateAcl(
       acl([rule("allow", "user", "u1", ["admin"]), rule("deny", "user", "u1", ["admin"])]),
