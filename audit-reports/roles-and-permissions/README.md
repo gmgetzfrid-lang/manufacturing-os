@@ -335,6 +335,14 @@ Migrations: `20261051` — **applied & verified live 2026-09-02** (5/5; new tabl
 
 No migration.
 
+### Round D2 (2026-09-02) — a completed roster routes; it never publishes itself
+
+| Item | Outcome |
+|---|---|
+| `OWN-11` | **RESOLVED** — auto-finalize under the last signer is gone; a completed roster writes `REVIEW_COMPLETE_AWAITING_PUBLISH` and routes "Ready to publish" to the owner ∪ controllers, who publish from the inspector under their own authority. `GAP-4` unblocked |
+
+No migration.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |
@@ -513,11 +521,13 @@ correctly at zero teams — verified path by path in report 08. Do not introduce
 ### "Ownership means being the approval of revision and superseding"
 
 **Ownership grants execution, not approval.** An owner may press publish but is
-never a required signer — `ReviewControl` has no owner slot. Worse, whether an
-approved draft auto-publishes depends on *which reviewer happens to sign last*
-(`OWN-11`). And ownership grants publish, roster, retention and legal-hold
-authority **but not read access** (`DEL-2`) — an owner can be assigned to a
-private library they cannot open.
+never a required signer — `ReviewControl` has no owner slot (that is `GAP-4`,
+now unblocked). Since Round D2 a completed review roster never publishes
+itself: it routes "Ready to publish" to the owner and the controllers, and
+one of them publishes under their own authority — signing order no longer
+decides the outcome (`OWN-11`, resolved). Ownership also grants publish,
+roster, retention and legal-hold authority **and**, since Phase 6, read
+access on what is owned (`DEL-2`).
 
 ### "As-built markup → drafting request → to be added"
 

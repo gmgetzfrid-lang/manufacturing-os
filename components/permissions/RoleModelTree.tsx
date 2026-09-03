@@ -103,7 +103,7 @@ const SITUATIONAL: Array<{ title: string; body: string[] }> = [
   ]},
   { title: "Review signer (roster row)", body: [
     "Being on a draft's review roster grants exactly one power: signing your own row (e-signature bound to the draft's content hash).",
-    "The LAST required signer triggers auto-finalize — the promote runs under their authority, so it only succeeds if they're also a controller, owner, or granted publisher; otherwise it falls back to the manual publish button.",
+    "A completed roster never publishes itself: the last signature routes a \"Ready to publish\" notice to the document's owner and the controllers, and one of them publishes from the inspector under their own authority (OWN-11). Which reviewer signs last changes nothing.",
   ]},
   { title: "Ticket participant (identity, not role)", body: [
     "The assigned drafter, assigned engineer, and original requester get their workflow actions by IDENTITY — e.g. a Manager who filed a request acts as its requester regardless of role.",

@@ -256,6 +256,8 @@ The work is three things:
 
 **Verdict: BUILD_NARROW** · Effort: **M** · Depends on: `OWN-11`, `DEC-21`
 
+*Unblocked 2026-09-02: `OWN-11` is resolved (Round D2 — a completed roster routes to the owner and controllers and never publishes itself) and `DEC-21` landed in Phase 6.4. This build is now free to start.*
+
 > *"Setting ownership means they are the approval of revision and superseding —
 > they control the library along with admin."*
 

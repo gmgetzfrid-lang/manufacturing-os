@@ -53,14 +53,11 @@ describe("DEC-16 — engineerApprovalRequired fails closed on either value", () 
   });
 });
 
-describe("OWN-11 done-when 2 — the ready-to-publish notice reaches someone who can act and says why", () => {
-  it("watchers are owner AND controllers; a refused automatic publish carries its reason", () => {
+describe("OWN-11 done-when 2 — the ready-to-publish notice reaches someone who can act", () => {
+  it("watchers are owner AND controllers (Round D2 replaced the automatic publish itself — see sweepRoundD2)", () => {
     const rc = src("lib/reviewControl.ts");
     expect(rc).toContain("const watchers = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== input.signerUserId);");
     expect(rc).not.toContain("uniq([...(owner.userId ? [owner.userId] : controllers)])");
-    expect(rc).toContain('if (!res.published) autoRefusedBecause = res.reason ?? "the publish guard refused";');
-    expect(rc).toMatch(/the automatic publish was refused \(\$\{autoRefusedBecause\}\)/);
-    expect(rc).toContain(": readyBody)");
   });
 });
 

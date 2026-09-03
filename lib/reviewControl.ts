@@ -355,43 +355,31 @@ export async function recordReviewSignoff(input: {
   // AND the controllers, never the owner instead of them (an owner on leave
   // used to swallow it; OWN-12 only covered a departed owner).
   const watchers = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== input.signerUserId);
-  // AUTO-FINALIZE: the last required signature promotes the draft to the
-  // controlled revision immediately — an approved draft must not sit
-  // unpublished until someone remembers to reopen the inspector. The DB
-  // publish guard re-checks completion transactionally, so a race between
-  // two "last" signers is safe (one promotes, the other finds no pending
-  // draft). If the promote fails for any reason, the "Ready to publish"
-  // notification below still goes out and the manual button remains.
-  let autoPublished = false;
-  let autoRefusedBecause: string | null = null;
+  // OWN-11 done-when 1 (Round D2): the outcome of a completed roster no
+  // longer depends on WHICH reviewer signs last. Auto-finalize used to run the
+  // promote under the last signer's authority — an Engineer signing last left
+  // the draft sitting, a DocCtrl signing last published it instantly. It never
+  // auto-publishes now: a completed roster ALWAYS routes to the named
+  // publishing authority — the document's effective owner and the org's
+  // controllers — who publish from the inspector (finalizeReviewedRevision,
+  // under their own authority, with the DB guard re-checking completion and
+  // independence). This matches the stated model: ownership means being the
+  // approval of revision, so the owner's act is the publish, not a reviewer's.
+  const readyBody = "All required reviewers have signed off. As the document's owner or a document controller, publish the revision from the inspector — it stays a draft until you do.";
   if (complete) {
-    try {
-      const res = await finalizeReviewedRevision({
-        orgId: input.orgId, documentId: input.documentId,
-        actorId: input.signerUserId, actorName: input.signerName,
-      });
-      autoPublished = res.published;
-      if (!res.published) autoRefusedBecause = res.reason ?? "the publish guard refused";
-    } catch (e) { autoRefusedBecause = (e as Error).message || "the publish guard refused"; }
+    await logAuditAction({
+      action: "REVIEW_COMPLETE_AWAITING_PUBLISH", resourceType: "document", resourceId: input.documentId,
+      orgId: input.orgId, userId: input.signerUserId, userEmail: input.signerEmail ?? undefined, userRole: input.signerRole ?? undefined,
+      details: { versionId: input.versionId, revisionLabel: input.revisionLabel, routedTo: watchers, ownerUserId: owner.userId ?? null },
+    }).catch(() => { /* audit best-effort */ });
   }
-  // OWN-11 done-when 2: say WHY the automatic publish did not happen, so the
-  // person who can act knows what to do rather than wondering.
-  const readyBody = autoRefusedBecause
-    ? `All required reviewers have signed off, but the automatic publish was refused (${autoRefusedBecause}) — a publisher or the owner must publish it from the inspector.`
-    : "All required reviewers have signed off — the revision can be published.";
 
   await Promise.all(watchers.map((uid) =>
     notify({
       orgId: input.orgId, userId: uid,
       kind: complete ? "review_complete" : "review_signed",
-      title: complete
-        ? (autoPublished ? `Published after review: ${input.revisionLabel}` : `Ready to publish: ${input.revisionLabel}`)
-        : `Reviewer signed: ${input.revisionLabel}`,
-      body: complete
-        ? (autoPublished
-            ? "All required reviewers signed off — the revision is now the controlled copy."
-            : readyBody)
-        : `${input.signerName} signed off on the draft.`,
+      title: complete ? `Ready to publish: ${input.revisionLabel}` : `Reviewer signed: ${input.revisionLabel}`,
+      body: complete ? readyBody : `${input.signerName} signed off on the draft.`,
       link, resourceType: "document", resourceId: input.documentId,
       actorUserId: input.signerUserId, actorName: input.signerName,
     })
