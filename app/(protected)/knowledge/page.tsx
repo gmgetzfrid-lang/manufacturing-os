@@ -25,9 +25,10 @@ import {
 } from "@/lib/knowledge";
 
 export default function KnowledgePage() {
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const { showToast } = useToast();
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [libraries, setLibraries] = useState<KnowledgeLibrary[] | null>(null);
   const [error, setError] = useState<string | null>(null);

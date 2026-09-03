@@ -24,13 +24,14 @@ interface OrgBrandingCtx {
 const Ctx = createContext<OrgBrandingCtx | null>(null);
 
 export function OrgBrandingProvider({ children }: { children: React.ReactNode }) {
-  const { activeOrgId, activeRole } = useRole();
+  const { activeOrgId, hasAnyRole } = useRole();
   const { applyOrgPalette } = useTheme();
   const [branding, setBranding] = useState<OrgBranding | null>(null);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const canEdit = activeRole === "Admin";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canEdit = hasAnyRole(["Admin"]);
 
   const applyBranding = useCallback(async (b: OrgBranding | null) => {
     setBranding(b);

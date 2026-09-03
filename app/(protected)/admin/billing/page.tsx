@@ -24,9 +24,10 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
 
 export default function BillingPage() {
-  const { activeRole, activeOrgId } = useRole();
+  const { activeRole, hasAnyRole, activeOrgId } = useRole();
   const { info, loading, refresh } = useSubscription();
-  const isAuthorized = ["Admin", "Manager"].includes(activeRole);
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAuthorized = hasAnyRole(["Admin", "Manager"]);
 
   const searchParams = useSearchParams();
   const checkoutResult = searchParams.get("checkout");

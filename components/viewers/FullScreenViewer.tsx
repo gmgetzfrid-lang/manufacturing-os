@@ -132,6 +132,8 @@ interface FullScreenViewerProps {
   viewingVersionId?: string;
   document?: DocumentRecord;
   userRole?: string | null;
+  /** ADD-1: the full role COLLECTION — authority is any-of these, never the headline alone. */
+  userRoles?: string[] | null;
   currentUserId?: string;
   currentUserEmail?: string;
   onCheckout?: (doc: DocumentRecord) => void;
@@ -151,7 +153,7 @@ interface FullScreenViewerProps {
 
 export default function FullScreenViewer({
   isOpen, onClose, url, title, docNumber, rev, viewingVersionId, document: docRecord,
-  userRole, currentUserId, currentUserEmail, onCheckout,
+  userRole, userRoles, currentUserId, currentUserEmail, onCheckout,
   orgId, customColumns, initialPageStates, onPageStatesChange, onCommit,
 }: FullScreenViewerProps) {
   // Whether the bytes on screen ARE the document's current version. A copy
@@ -159,8 +161,10 @@ export default function FullScreenViewer({
   // controlled master, and its stamp/QR/audit must name the old rev (REV-1).
   const viewingIsCurrent = !viewingVersionId || viewingVersionId === docRecord?.currentVersionId;
   const servedVersionId = viewingVersionId ?? docRecord?.currentVersionId ?? undefined;
-  const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
-    || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
+  // ADD-1: authority by the role COLLECTION (headline included), never the headline alone.
+  const heldForAssets = [userRole ?? '', ...(userRoles ?? [])];
+  const canManageAssets = heldForAssets.some((r) => r === 'Admin' || r === 'Manager' || r === 'Supervisor'
+    || r.includes('Engineer') || r === 'Drafter' || r === 'DocCtrl');
   const router = useRouter();
   const [tagsBarOpen, setTagsBarOpen] = useState(true);
   // ─── Pre-fetched PDF bytes (one fetch for view AND save) ──────────────
@@ -1189,7 +1193,7 @@ export default function FullScreenViewer({
           </div>
           {docRecord && onCheckout && (
             <div className="pl-3 border-l border-slate-700 shrink-0">
-              <CheckoutStatusCell docRecord={docRecord} currentUserId={currentUserId} currentUserEmail={currentUserEmail} userRole={userRole} onCheckout={onCheckout} />
+              <CheckoutStatusCell docRecord={docRecord} currentUserId={currentUserId} currentUserEmail={currentUserEmail} userRole={userRole} userRoles={userRoles} onCheckout={onCheckout} />
             </div>
           )}
           {docRecord && (() => {

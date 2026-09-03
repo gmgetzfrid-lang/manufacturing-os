@@ -15,9 +15,10 @@ import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { KeyEditor, EmbeddingKeyEditor, UsagePanel } from "@/components/knowledge/AiSettingsModal";
 
 export default function IntelligenceSetupPage() {
-  const { activeOrgId, activeRole } = useRole();
-  const isAdmin = activeRole === "Admin";
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, hasAnyRole } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = hasAnyRole(["Admin"]);
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
   const [data, setData] = useState<Awaited<ReturnType<typeof getAiConnections>> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);

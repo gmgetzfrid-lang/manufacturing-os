@@ -37,6 +37,7 @@ import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
 import { rebuildAclIndexes, type RebuildCounts } from "@/lib/aclIndexRebuild";
+import { roleFilter } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -351,7 +352,7 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>): Promise<number> 
       .select("uid")
       .eq("org_id", row.org_id)
       .eq("status", "active")
-      .in("role", ["Admin", "DocCtrl"]);
+      .or(roleFilter(["Admin", "DocCtrl"]));
     const recipients = ((controllers as Array<{ uid: string }> | null) ?? [])
       .map((c) => c.uid)
       .filter((uid) => uid !== row.user_id);

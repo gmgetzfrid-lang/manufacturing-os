@@ -19,6 +19,7 @@ import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { openAiKey } from "@/lib/ai/keyVault";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -40,10 +41,11 @@ export async function POST(req: NextRequest) {
   const userId = userData.user.id;
 
   const { data: member } = await supabaseAdmin
-    .from("org_members").select("role, status")
+    .from("org_members").select("role, roles, status")
     .eq("org_id", orgId).eq("uid", userId).maybeSingle();
   const m = member as { role?: string; status?: string } | null;
-  if (!m || m.status !== "active" || !["Admin", "DocCtrl"].includes(m.role ?? "")) {
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  if (!m || m.status !== "active" || !memberHoldsAny(m, ["Admin", "DocCtrl"])) {
     return bad("Only admins and document controllers shape the process map.", 403);
   }
 

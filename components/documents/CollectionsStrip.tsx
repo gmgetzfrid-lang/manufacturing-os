@@ -25,6 +25,8 @@ interface CollectionsStripProps {
   libraryId: string;
   userId: string;
   userRole: string;
+  /** ADD-1: the full role COLLECTION — authority is any-of these, never the headline alone. */
+  userRoles?: string[] | null;
   /** Folder being viewed. null = library root. Books are scoped to it, so a
    *  book curated inside a folder only shows when you're in that folder. */
   folderId: string | null;
@@ -52,7 +54,7 @@ function bookCover(color?: string | null): string {
 }
 
 export default function CollectionsStrip({
-  orgId, libraryId, userId, userRole, folderId, folderName, folders, libraryDocs, onOpenAsBook,
+  orgId, libraryId, userId, userRole, userRoles, folderId, folderName, folders, libraryDocs, onOpenAsBook,
 }: CollectionsStripProps) {
   const [collections, setCollections] = useState<CuratedCollection[]>([]);
   const [itemsMap, setItemsMap] = useState<Record<string, string[]>>({});
@@ -62,7 +64,8 @@ export default function CollectionsStrip({
   const [openCollectionId, setOpenCollectionId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const isAdmin = ADMIN_ROLES.includes(userRole);
+  // ADD-1: authority by the role COLLECTION (headline included), never the headline alone.
+  const isAdmin = [userRole, ...(userRoles ?? [])].some((r) => ADMIN_ROLES.includes(r));
 
   const refresh = useCallback(async () => {
     if (!orgId || !libraryId || !userId) return;

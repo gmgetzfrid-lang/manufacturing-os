@@ -23,6 +23,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { normalizeTag } from "@/lib/codebook";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -70,10 +71,11 @@ export async function POST(req: NextRequest) {
   const userId = userData.user.id;
 
   const { data: member } = await supabaseAdmin
-    .from("org_members").select("role, status")
+    .from("org_members").select("role, roles, status")
     .eq("org_id", orgId).eq("uid", userId).maybeSingle();
   const m = member as { role?: string; status?: string } | null;
-  if (!m || m.status !== "active" || !["Admin", "DocCtrl"].includes(m.role ?? "")) {
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  if (!m || m.status !== "active" || !memberHoldsAny(m, ["Admin", "DocCtrl"])) {
     return bad("Only admins and document controllers shape the graph.", 403);
   }
 

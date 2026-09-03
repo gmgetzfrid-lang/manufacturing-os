@@ -65,8 +65,9 @@ export default function AssetsPage() {
 }
 
 function AssetsPageInner() {
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
-  const isAdmin = ADMIN_ROLES.includes(activeRole);
+  const { activeOrgId, activeRole, roles, hasAnyRole, uid, userEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = roles.some((r) => ADMIN_ROLES.includes(r));
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -248,7 +249,7 @@ function AssetsPageInner() {
 
   // Pinning libraries to a unit writes the unit's codebook entry — same bar
   // as every other codebook write (RLS: Admin / DocCtrl).
-  const canEditLinks = activeRole === "Admin" || activeRole === "DocCtrl";
+  const canEditLinks = hasAnyRole(["Admin", "DocCtrl"]);
   const currentUnit = unitFilter && unitFilter !== "__unassigned"
     ? book.units.find((u) => u.code === unitFilter) ?? null
     : null;

@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, conflictTargetFor, type RestoreEnvelopeLike, type CurrentMember, restoredMemberRole } from "@/lib/dataRestore";
+import { planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, conflictTargetFor, type RestoreEnvelopeLike, type CurrentMember, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     const { error } = await sb.from("org_members").insert({
       // SURF-8: never mint a privileged row from a backup; the role collection
       // is seeded too (ADD-5) so the placeholder is not born with roles = {}.
-      org_id: orgId, uid: newUid, email: u.email, role: restoredMemberRole(u.role), roles: [restoredMemberRole(u.role)],
+      org_id: orgId, uid: newUid, email: u.email, role: restoredMemberHeadline(restoredMemberRoles(u.role, u.roles)), roles: restoredMemberRoles(u.role, u.roles),
       status: "inactive", display_name: u.displayName ?? null,
     });
     if (!error) {

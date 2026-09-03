@@ -27,7 +27,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   canManage: boolean;
   onChanged?: () => void;
 }) {
-  const { uid, userEmail, activeRole, hasAnyRole } = useRole();
+  const { uid, userEmail, activeRole, roles, hasAnyRole } = useRole();
   const [pendingVersionId, setPendingVersionId] = useState<string | null>(null);
   const [draftFileUrl, setDraftFileUrl] = useState<string | null>(null);
   const [roster, setRoster] = useState<ReviewSignoffRow[]>([]);
@@ -90,7 +90,8 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   const canSeeDraft = isController || canManage
     || roster.some((r) => r.reviewerUserId === uid)
     || (uid ? (control?.draftViewerIds ?? []).includes(uid) : false)
-    || (control?.draftViewerRoles ?? []).includes((activeRole as string) ?? "")
+    // ADD-1: a draft-viewer ROLE grant matches any role the member holds.
+    || roles.some((r) => (control?.draftViewerRoles ?? []).includes(r))
     || (control?.draftViewerTeamIds ?? []).some((t) => myTeamIds.includes(t));
 
   // ── Actions ──

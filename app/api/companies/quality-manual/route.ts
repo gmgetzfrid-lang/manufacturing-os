@@ -19,6 +19,7 @@ import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { resolveDocumentFile } from "@/lib/docFileServer";
 import { QUALITY_MANUAL_RUBRIC, validateRubricFindings, rubricCoverageScore } from "@/lib/checklistEngine";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -41,9 +42,10 @@ export async function POST(req: NextRequest) {
   const userId = userData.user.id;
 
   const { data: member } = await supabaseAdmin
-    .from("org_members").select("role, status").eq("org_id", orgId).eq("uid", userId).maybeSingle();
+    .from("org_members").select("role, roles, status").eq("org_id", orgId).eq("uid", userId).maybeSingle();
   const m = member as { role?: string; status?: string } | null;
-  if (!m || m.status !== "active" || !["Admin", "DocCtrl"].includes(m.role ?? "")) {
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  if (!m || m.status !== "active" || !memberHoldsAny(m, ["Admin", "DocCtrl"])) {
     return bad("Only admins and document controllers evaluate company quality manuals.", 403);
   }
 

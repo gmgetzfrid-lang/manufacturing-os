@@ -28,11 +28,12 @@ interface Step {
 const DISMISS_KEY = "mfg-os.setup-checklist.dismissed";
 
 export default function SetupChecklist() {
-  const { activeOrgId, activeRole } = useRole();
+  const { activeOrgId, hasAnyRole } = useRole();
   const [steps, setSteps] = React.useState<Step[] | null>(null);
   const [dismissed, setDismissed] = React.useState(true);
 
-  const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);
 
   React.useEffect(() => {
     try { setDismissed(localStorage.getItem(DISMISS_KEY) === "1"); } catch { setDismissed(false); }

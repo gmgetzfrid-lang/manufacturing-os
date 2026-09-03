@@ -133,7 +133,8 @@ export async function POST(req: NextRequest) {
   // otherwise manage members) could mint an Admin and escalate — the RLS
   // guard on org_members doesn't apply here because this route uses the
   // service-role key, which bypasses RLS.
-  if (String(role) === "Admin" && (callerMember.role as string) !== "Admin") {
+  // ADD-1: the caller's Admin hat counts however it is held.
+  if (String(role) === "Admin" && !callerHeld.has("Admin")) {
     return NextResponse.json({ error: "Only an Admin can grant the Admin role" }, { status: 403 });
   }
 
@@ -229,7 +230,7 @@ export async function POST(req: NextRequest) {
     existingMember &&
     (String(existingMember.role) === "Admin" ||
       normalizeRoles(existingMember.roles, existingMember.role as Role | undefined).includes("Admin"));
-  if (existingIsAdmin && (callerMember.role as string) !== "Admin") {
+  if (existingIsAdmin && !callerHeld.has("Admin")) {
     return NextResponse.json({ error: "Only an Admin can change an existing Admin's role" }, { status: 403 });
   }
 

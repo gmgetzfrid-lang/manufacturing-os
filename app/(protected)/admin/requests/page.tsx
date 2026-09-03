@@ -56,17 +56,19 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 
 export default function DraftingConfigPage() {
   const router = useRouter();
-  const { activeRole, activeOrgId } = useRole();
+  const { activeRole, hasAnyRole, activeOrgId } = useRole();
   const [settings, setSettings] = useState<OrgDraftingSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   // --- ACCESS GUARD ---
   useEffect(() => {
-    if (activeRole && !['Admin', 'DocCtrl'].includes(activeRole)) {
+    // ADD-1: authority by the role COLLECTION; `activeRole` only says the
+    // membership has resolved.
+    if (activeRole && !hasAnyRole(['Admin', 'DocCtrl'])) {
       router.push('/dashboard');
     }
-  }, [activeRole, router]);
+  }, [activeRole, router, hasAnyRole]);
 
   // --- DATA FETCHING ---
   useEffect(() => {

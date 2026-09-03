@@ -30,9 +30,10 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 export default function OutputTemplatesPage() {
-  const { activeOrgId, activeRole } = useRole();
+  const { activeOrgId, hasAnyRole } = useRole();
   const { showToast } = useToast();
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [templates, setTemplates] = useState<OutputTemplate[]>([]);
   const [generations, setGenerations] = useState<OutputGeneration[]>([]);

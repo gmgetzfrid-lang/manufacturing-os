@@ -21,6 +21,7 @@ import { recordSignature } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers } from "@/lib/ownership";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
+import { heldRoles, roleFilter } from "@/lib/roleHeld";
 
 type Level = "library" | "collection" | "document";
 interface ControlCols { review_control?: ReviewControl | null }
@@ -86,12 +87,16 @@ async function expandSet(orgId: string, ids: string[], roles: string[], teams: s
   }
   const roleList = uniq(roles);
   if (roleList.length) {
-    const { data } = await supabase.from("org_members").select("uid, display_name, email, role").eq("org_id", orgId).eq("status", "active").in("role", roleList);
+    // ADD-1: a reviewer ROLE resolves to everyone holding it — headline or additive.
+    const { data } = await supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", orgId).eq("status", "active").or(roleFilter(roleList));
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    const covered = new Set(rows.map((r) => r.role as string));
+    const covered = new Set<string>();
     for (const r of rows) {
+      const held = heldRoles(r as { role?: unknown; roles?: unknown });
+      const matched = roleList.find((x) => held.includes(x)) ?? (r.role as string);
+      for (const h of held) if (roleList.includes(h)) covered.add(h);
       const uidv = r.uid as string;
-      if (!out.has(uidv)) out.set(uidv, { uid: uidv, name: (r.display_name as string) || (r.email as string) || null, role: r.role as string, source: "role" });
+      if (!out.has(uidv)) out.set(uidv, { uid: uidv, name: (r.display_name as string) || (r.email as string) || null, role: matched, source: "role" });
     }
     for (const role of roleList) if (!covered.has(role)) warnings.push(`${label}: role "${role}" has no active members`);
   }

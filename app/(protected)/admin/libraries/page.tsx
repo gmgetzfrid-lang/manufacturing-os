@@ -14,7 +14,7 @@ import { buildAclIndex, mergeWizardLibraryAcl } from "@/lib/acl";
 
 export default function LibraryAdminPage() {
   const router = useRouter();
-  const { activeRole, activeOrgId, uid } = useRole();
+  const { activeRole, hasAnyRole, activeOrgId, uid } = useRole();
 
   const [loading, setLoading] = useState(true);
   const [libraries, setLibraries] = useState<LibraryConfig[]>([]);
@@ -30,7 +30,8 @@ export default function LibraryAdminPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortOrder, setSortOrder] = useState<"name" | "recent">("recent");
 
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
 
   // Guard
   useEffect(() => {

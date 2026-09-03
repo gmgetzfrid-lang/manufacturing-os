@@ -14,6 +14,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   backfillOrgMentions, indexDocumentMentions, loadAliasDictionary,
 } from "@/lib/mentionIndexer";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -40,10 +41,10 @@ export async function POST(req: NextRequest) {
 
   // Rebuilding the org's link map is a controller action, not a read.
   const { data: member } = await supabaseAdmin
-    .from("org_members").select("role")
+    .from("org_members").select("role, roles")
     .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle();
-  const role = (member as { role?: string } | null)?.role;
-  if (!role || !["Admin", "DocCtrl", "Manager", "Supervisor"].includes(role)) {
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  if (!memberHoldsAny(member as { role?: unknown; roles?: unknown } | null, ["Admin", "DocCtrl", "Manager", "Supervisor"])) {
     return bad("Forbidden", 403);
   }
 

@@ -19,6 +19,7 @@ import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { validateParsedQuote } from "@/lib/bidTab";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -59,13 +60,14 @@ export async function POST(req: NextRequest) {
   const userId = userData.user.id;
 
   const [{ data: member }, { data: project }] = await Promise.all([
-    supabaseAdmin.from("org_members").select("role, status").eq("org_id", orgId).eq("uid", userId).maybeSingle(),
+    supabaseAdmin.from("org_members").select("role, roles, status").eq("org_id", orgId).eq("uid", userId).maybeSingle(),
     supabaseAdmin.from("projects").select("id, owner_user_id").eq("id", projectId).eq("org_id", orgId).maybeSingle(),
   ]);
   const m = member as { role?: string; status?: string } | null;
   if (!m || m.status !== "active") return bad("Not a member of this workspace.", 403);
   if (!project) return bad("Project not found.", 404);
-  const isController = ["Admin", "DocCtrl"].includes(m.role ?? "");
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isController = memberHoldsAny(m, ["Admin", "DocCtrl"]);
   const isOwner = String(project.owner_user_id ?? "") === userId;
   if (!isController && !isOwner) {
     return bad("Only the project owner or a document controller can run cost-document reads.", 403);

@@ -92,8 +92,9 @@ const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>>
 };
 
 export default function AuditLogPage() {
-  const { activeOrgId, activeRole, userEmail } = useRole();
-  const canRead = !!activeRole && ADMIN_ROLES.has(activeRole);
+  const { activeOrgId, activeRole, roles, userEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canRead = roles.some((r) => ADMIN_ROLES.has(r));
 
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);

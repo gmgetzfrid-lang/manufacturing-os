@@ -60,8 +60,9 @@ const contentTypeFor = (key: string) =>
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
 
 export default function RestorePage() {
-  const { activeOrgId, activeRole } = useRole();
-  const isAdmin = activeRole === "Admin";
+  const { activeOrgId, hasAnyRole } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = hasAnyRole(["Admin"]);
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

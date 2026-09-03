@@ -48,8 +48,9 @@ const EMPTY_STATUS: Status = {
 };
 
 export default function IntelligencePage() {
-  const { activeOrgId, activeRole } = useRole();
-  const isAdmin = activeRole === "Admin";
+  const { activeOrgId, hasAnyRole } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = hasAnyRole(["Admin"]);
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
 

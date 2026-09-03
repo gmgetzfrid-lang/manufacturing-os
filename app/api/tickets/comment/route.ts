@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { extractMentionUids } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 // POST /api/tickets/comment
 //
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
 
   const { data: member } = await supabaseAdmin
     .from("org_members")
-    .select("role, email")
+    .select("role, roles, email")
     .eq("org_id", ticket.orgId)
     .eq("uid", caller.id)
     .eq("status", "active")
@@ -169,7 +170,7 @@ async function authorizeCommentChange(req: NextRequest, body: { ticketId?: strin
 
   const { data: member } = await supabaseAdmin
     .from("org_members")
-    .select("role, email")
+    .select("role, roles, email")
     .eq("org_id", ticket.orgId)
     .eq("uid", caller.id)
     .eq("status", "active")
@@ -182,7 +183,8 @@ async function authorizeCommentChange(req: NextRequest, body: { ticketId?: strin
 
   const callerEmail = (member.email as string | null) || caller.email || "";
   const isAuthor = target.authorUid === caller.id || (!!callerEmail && target.user === callerEmail);
-  const isAdmin = member.role === "Admin";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = memberHoldsAny(member, ["Admin"]);
   if (!isAuthor && !isAdmin) return { error: "Only the author or an Admin can change this comment", status: 403 as const };
 
   return { ticket, comments, target, callerId: caller.id, readLastModified: (row as { last_modified?: string | null }).last_modified ?? null };

@@ -38,8 +38,9 @@ interface DocMeta {
 }
 
 export default function HoldsPage() {
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
-  const canRelease = !!activeRole && ADMIN_ROLES.has(activeRole);
+  const { activeOrgId, activeRole, roles, uid, userEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canRelease = roles.some((r) => ADMIN_ROLES.has(r));
 
   const [holds, setHolds] = useState<DocumentHold[]>([]);
   const [docs, setDocs] = useState<Map<string, DocMeta>>(new Map());

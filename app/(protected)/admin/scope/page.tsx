@@ -42,8 +42,9 @@ type EditTarget =
   | null;
 
 export default function ScopePage() {
-  const { activeOrgId, activeRole, uid } = useRole();
-  const canEdit = !!activeRole && ADMIN_ROLES.has(activeRole);
+  const { activeOrgId, roles, uid } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canEdit = roles.some((r) => ADMIN_ROLES.has(r));
 
   const [tree, setTree] = useState<ScopeNode[]>([]);
   const [loading, setLoading] = useState(true);

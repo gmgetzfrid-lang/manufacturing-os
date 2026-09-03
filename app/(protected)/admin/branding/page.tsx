@@ -21,7 +21,7 @@ const dist = (a: string, b: string) => { const [r1, g1, b1] = hexToRgb(a); const
 const isHex = (s: string) => /^#[0-9a-fA-F]{6}$/.test(s);
 
 export default function AdminBrandingPage() {
-  const { activeOrgId, activeRole } = useRole();
+  const { activeOrgId, hasAnyRole } = useRole();
   const { branding, logoUrl, save } = useOrgBranding();
 
   const [palette, setPalette] = useState<Palette>(branding?.palette ?? PALETTE_PRESETS[0]);
@@ -33,7 +33,8 @@ export default function AdminBrandingPage() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const isAdmin = activeRole === "Admin";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = hasAnyRole(["Admin"]);
 
   if (!isAdmin) {
     return (

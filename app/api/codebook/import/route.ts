@@ -32,6 +32,7 @@ import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import type { ProposedEntry } from "@/lib/codebook";
 import { parseModelJson } from "@/lib/modelJson";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -189,9 +190,10 @@ export async function POST(req: NextRequest) {
 
   // Codebook writers only (same roles as the RLS policy).
   const { data: member } = await supabaseAdmin
-    .from("org_members").select("role").eq("org_id", orgId).eq("uid", user.id)
+    .from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id)
     .eq("status", "active").maybeSingle();
-  if (!member || !["Admin", "DocCtrl"].includes(String(member.role))) {
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  if (!member || !memberHoldsAny(member, ["Admin", "DocCtrl"])) {
     return bad("Only Admins and Document Controllers can build the codebook", 403);
   }
 

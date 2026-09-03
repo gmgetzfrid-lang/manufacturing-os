@@ -19,10 +19,14 @@
 
 import { supabase } from "@/lib/supabase";
 import type { OrgDraftingSettings, Role, TicketStatus } from "@/types/schema";
+import { heldRoles } from "@/lib/roleHeld";
 
 interface MemberLite {
   uid: string;
+  /** Headline (display). Authority is `roles`. */
   role: Role;
+  /** ADD-1: every role held — headline plus additive; routing pools read this. */
+  roles: Role[];
   name?: string | null;
   email?: string | null;
 }
@@ -32,12 +36,12 @@ interface MemberLite {
 export async function listActiveMembers(orgId: string): Promise<MemberLite[]> {
   const { data, error } = await supabase
     .from("org_members")
-    .select("uid, role, display_name, email")
+    .select("uid, role, roles, display_name, email")
     .eq("org_id", orgId)
     .eq("status", "active");
   if (error) { console.warn("[ticketRouting] listActiveMembers failed:", error.message); return []; }
-  return ((data ?? []) as Array<{ uid: string; role: string; display_name?: string | null; email?: string | null }>)
-    .map((m) => ({ uid: m.uid, role: m.role as Role, name: m.display_name, email: m.email }));
+  return ((data ?? []) as Array<{ uid: string; role: string; roles?: string[] | null; display_name?: string | null; email?: string | null }>)
+    .map((m) => ({ uid: m.uid, role: m.role as Role, roles: heldRoles(m) as Role[], name: m.display_name, email: m.email }));
 }
 
 /** Read the org's drafting routing policy from org_configurations. Defaults
@@ -76,7 +80,8 @@ export async function resolveTicketRecipients(
     listActiveMembers(orgId),
     getRoutingConfig(orgId),
   ]);
-  const byRole = (r: Role) => members.filter((m) => m.role === r);
+  // ADD-1: a role pool is everyone HOLDING the role, not everyone whose headline it is.
+  const byRole = (r: Role) => members.filter((m) => m.roles.includes(r));
   const engineerRoles: Role[] = ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4"];
   const admins = byRole("Admin");
 
@@ -96,7 +101,7 @@ export async function resolveTicketRecipients(
   let pool: MemberLite[] = [];
   switch (status) {
     case "PENDING_ENG_INITIAL":
-      pool = fallbackToAdmins(members.filter((m) => engineerRoles.includes(m.role)));
+      pool = fallbackToAdmins(members.filter((m) => m.roles.some((r) => engineerRoles.includes(r))));
       break;
     case "PENDING_ASSIGNMENT":
     case "PENDING_IFC":

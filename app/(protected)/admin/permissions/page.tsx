@@ -58,8 +58,9 @@ function VisBadge({ v }: { v: string }) {
 }
 
 export default function PermissionsConsolePage() {
-  const { activeRole, activeOrgId } = useRole();
-  const canEdit = !!activeRole && ADMIN_ROLES.has(activeRole);
+  const { roles, activeOrgId } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canEdit = roles.some((r) => ADMIN_ROLES.has(r));
 
   const [libs, setLibs] = useState<LibRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);

@@ -70,8 +70,9 @@ type Run = {
 };
 
 export default function DataExportPage() {
-  const { activeOrgId, activeRole } = useRole();
-  const isAuthorized = ["Admin", "Manager", "DocCtrl"].includes(activeRole);
+  const { activeOrgId, activeRole, hasAnyRole } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAuthorized = hasAnyRole(["Admin", "Manager", "DocCtrl"]);
 
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);

@@ -725,8 +725,9 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
   );
   // Shaping the graph is ADMIN curation of the shared map — the entry point
   // only exists for Admin/DocCtrl, and the server enforces the same gate.
-  const { activeOrgId: shapeOrgId, activeRole: shapeRole, uid: shapeUid, userEmail: shapeUserEmail } = useRole();
-  const canShape = shapeRole === "Admin" || shapeRole === "DocCtrl";
+  const { activeOrgId: shapeOrgId, hasAnyRole: shapeHasAnyRole, uid: shapeUid, userEmail: shapeUserEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canShape = shapeHasAnyRole(["Admin", "DocCtrl"]);
   const [shaping, setShaping] = useState(false);
   const [proof, setProof] = useState<ProofState | null>(null);
   const proofCtx = useMemo(() => ({
@@ -1119,9 +1120,10 @@ export default function KnowledgeLibraryPage() {
   const params = useParams<{ id: string }>();
   const libraryId = params.id;
   const router = useRouter();
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const { showToast } = useToast();
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [library, setLibrary] = useState<KnowledgeLibrary | null>(null);
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);

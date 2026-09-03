@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { computeForKnowledgeDoc, applyForDocument, type BridgeConfig } from "@/lib/equipmentBridgeServer";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -35,9 +36,10 @@ async function authWriter(req: NextRequest, orgId: string): Promise<{ userId: st
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (error || !user) return bad("Not authenticated", 401);
   const { data: member } = await supabaseAdmin
-    .from("org_members").select("role").eq("org_id", orgId).eq("uid", user.id)
+    .from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id)
     .eq("status", "active").maybeSingle();
-  if (!member || !WRITER_ROLES.has(String(member.role))) return bad("Not permitted", 403);
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  if (!member || !memberHoldsAny(member, [...WRITER_ROLES])) return bad("Not permitted", 403);
   return { userId: user.id };
 }
 

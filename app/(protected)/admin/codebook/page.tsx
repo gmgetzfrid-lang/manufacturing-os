@@ -45,8 +45,9 @@ const TABS: Array<{ key: Tab; label: string; icon: React.ComponentType<{ classNa
 ];
 
 export default function CodebookPage() {
-  const { activeOrgId, uid, activeRole } = useRole();
-  const canWrite = !!activeRole && WRITER_ROLES.has(activeRole);
+  const { activeOrgId, uid, roles } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canWrite = roles.some((r) => WRITER_ROLES.has(r));
   const [book, setBook] = useState<Codebook | null>(null);
   const [tab, setTab] = useState<Tab>("units");
   const [importOpen, setImportOpen] = useState(false);

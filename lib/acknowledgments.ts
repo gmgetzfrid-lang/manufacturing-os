@@ -18,6 +18,7 @@ import { logAuditAction } from "@/lib/audit";
 import { recordSignature } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
 import type { AckPolicy } from "@/types/schema";
+import { heldRoles, roleFilter } from "@/lib/roleHeld";
 
 type Level = "library" | "collection" | "document";
 interface PolicyCols { ack_policy?: AckPolicy | null }
@@ -76,12 +77,16 @@ export async function expandAssignees(orgId: string, policy: AckPolicy): Promise
 
   const roles = uniq(policy.assigneeRoles ?? []);
   if (roles.length) {
-    const { data } = await supabase.from("org_members").select("uid, display_name, email, role").eq("org_id", orgId).eq("status", "active").in("role", roles);
+    // ADD-1: an assignee ROLE resolves to everyone holding it — headline or additive.
+    const { data } = await supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", orgId).eq("status", "active").or(roleFilter(roles));
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    const covered = new Set(rows.map((r) => r.role as string));
+    const covered = new Set<string>();
     for (const r of rows) {
+      const held = heldRoles(r as { role?: unknown; roles?: unknown });
+      const matched = roles.find((x) => held.includes(x)) ?? (r.role as string);
+      for (const h of held) if (roles.includes(h)) covered.add(h);
       const uidv = r.uid as string;
-      if (!byUid.has(uidv)) byUid.set(uidv, { uid: uidv, name: (r.display_name as string) || (r.email as string) || null, role: r.role as string, source: "role" });
+      if (!byUid.has(uidv)) byUid.set(uidv, { uid: uidv, name: (r.display_name as string) || (r.email as string) || null, role: matched, source: "role" });
     }
     for (const role of roles) if (!covered.has(role)) warnings.push(`Role "${role}" has no active members`);
   }

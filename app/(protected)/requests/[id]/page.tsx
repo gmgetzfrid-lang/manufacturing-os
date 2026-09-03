@@ -894,7 +894,8 @@ export default function TicketDetailView() {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editTextDraft, setEditTextDraft] = useState<string>('');
 
-  const isAdmin = ['Admin', 'DocCtrl'].includes(activeRole);
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isAdmin = hasAnyRole(['Admin', 'DocCtrl']);
 
   // --- 1. DATA SYNC ---
   useEffect(() => {
@@ -1665,7 +1666,7 @@ export default function TicketDetailView() {
             >
               <QrCode className="w-4 h-4" /> <span className="hidden sm:inline">Traveler</span>
             </button>
-            {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId) && (
+            {(hasAnyRole(['Drafter', 'Requester', 'Admin']) || uid === ticket.requesterId) && (
               <>
                 <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                   {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />} 

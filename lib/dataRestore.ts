@@ -17,6 +17,10 @@
 //   • Nothing is trusted blindly: incomplete backups and missing files surface
 //     as warnings.
 
+import { heldRoles } from "@/lib/roleHeld";
+import { primaryRole } from "@/lib/roleCapabilities";
+import type { Role } from "@/types/schema";
+
 export interface RestoreEnvelopeLike {
   manifest: {
     orgId: string;
@@ -43,6 +47,8 @@ export interface UserReconcileItem {
   email: string;
   displayName?: string;
   role?: string;
+  /** The backup's additive collection, carried so restore can keep what confers nothing. */
+  roles?: string[];
   disposition: UserDisposition;
   /** Present when disposition === "linked": the existing workspace uid. */
   newUid?: string;
@@ -121,7 +127,21 @@ export function restoredMemberRole(backupRole: string | undefined | null): strin
   return r;
 }
 
-interface BackupMember { uid?: string; email?: string; display_name?: string; role?: string }
+/** ADD-1: the restored COLLECTION — every non-privileged role the backup held
+ *  (headline or additive) survives; privileged ones are dropped, not the whole
+ *  set. Empty after filtering → ["Viewer"], so the row is never born with roles = {}. */
+export function restoredMemberRoles(backupRole: string | undefined | null, backupRoles?: readonly string[] | null): string[] {
+  const kept = heldRoles({ role: backupRole ?? undefined, roles: backupRoles ?? undefined }).filter((r) => !PRIVILEGED_ROLES.has(r));
+  return kept.length > 0 ? kept : ["Viewer"];
+}
+
+/** The headline mirrored into `org_members.role` for a restored collection —
+ *  the highest-ranked of what survived (the DB trigger would derive the same). */
+export function restoredMemberHeadline(roles: readonly string[]): string {
+  return primaryRole(roles as Role[]);
+}
+
+interface BackupMember { uid?: string; email?: string; display_name?: string; role?: string; roles?: string[] | null }
 
 /** Build the reconciliation plan for restoring `env` into `current`. Pure. */
 export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext): RestorePlan {
@@ -156,6 +176,7 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
       email: (m.email ?? "").trim(),
       displayName: m.display_name,
       role: m.role,
+      roles: Array.isArray(m.roles) ? m.roles.filter((r): r is string => typeof r === "string") : undefined,
       disposition: existing ? "linked" : "new",
       newUid: existing,
     });

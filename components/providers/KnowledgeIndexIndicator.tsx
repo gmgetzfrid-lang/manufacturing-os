@@ -44,8 +44,9 @@ interface DriveState {
 }
 
 export default function KnowledgeIndexIndicator() {
-  const { activeOrgId, activeRole } = useRole();
-  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, hasAnyRole } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
   const [state, setState] = useState<DriveState | null>(null);
   const [hidden, setHidden] = useState(false);
   // Minimized: indexing keeps running, but the card collapses to a small

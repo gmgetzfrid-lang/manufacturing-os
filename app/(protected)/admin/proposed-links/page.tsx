@@ -80,9 +80,10 @@ function diagnose(inputs: RunInputs): string[] {
 }
 
 export default function ProposedLinksPage() {
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
-  const canDecide = ["Admin", "DocCtrl", "Manager", "Supervisor"].includes(activeRole ?? "");
-  const canRun = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canDecide = hasAnyRole(["Admin", "DocCtrl", "Manager", "Supervisor"]);
+  const canRun = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [rows, setRows] = useState<LinkProposal[] | null>(null);
   const [error, setError] = useState<string | null>(null);

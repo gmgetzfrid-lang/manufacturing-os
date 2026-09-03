@@ -48,8 +48,9 @@ const KIND_META: Record<string, { label: string; icon: typeof FileSearch; hue: s
 const REASONING_HUE = "from-amber-500 to-orange-600";
 
 export default function SkillLibraryPage() {
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
-  const canManageOrg = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canManageOrg = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [rules, setRules] = useState<LinkRule[] | null | undefined>(undefined);
   const [rskills, setRskills] = useState<AnswerSkill[] | null | undefined>(undefined);

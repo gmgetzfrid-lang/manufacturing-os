@@ -32,8 +32,9 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 export default function ConnectionSkillsPanel() {
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
-  const canManageOrg = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canManageOrg = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [rules, setRules] = useState<LinkRule[] | null | undefined>(undefined);
   const [open, setOpen] = useState(false);

@@ -13,6 +13,7 @@ export const maxDuration = 300;
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
+import { roleFilter } from "@/lib/roleHeld";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
@@ -45,7 +46,7 @@ async function alertAdminsOfExport(
     .select("uid")
     .eq("org_id", info.orgId)
     .eq("status", "active")
-    .in("role", ["Admin", "DocCtrl"]);
+    .or(roleFilter(["Admin", "DocCtrl"]));
   const recipients = ((admins ?? []) as Array<{ uid: string }>)
     .map((m) => m.uid)
     .filter((uid) => uid && uid !== info.actorUserId);

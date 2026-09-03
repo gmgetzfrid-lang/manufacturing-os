@@ -102,8 +102,9 @@ const CATEGORY_META: Record<DataClass, { icon: typeof Recycle; tint: string; bar
 };
 
 export default function StorageBackupPage() {
-  const { activeOrgId, activeRole } = useRole();
-  const canPurge = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, hasAnyRole } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canPurge = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);

@@ -73,7 +73,7 @@ describe("SURF-8 — restore refuses immutable tables, audits chunks, mints no r
     expect(restoredMemberRole("Requester")).toBe("Requester");
     for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts"]) {
       const s = src(f);
-      expect(s).toMatch(/role: restoredMemberRole\(u\.role\), roles: \[restoredMemberRole\(u\.role\)\]/);
+      expect(s).toMatch(/role: restoredMemberHeadline\(restoredMemberRoles\(u\.role, u\.roles\)\), roles: restoredMemberRoles\(u\.role, u\.roles\)/ /* ADD-1 Round C1b: the surviving COLLECTION is seeded, headline mirrored */);
       expect(s).not.toMatch(/role: u\.role \|\| "Viewer"/);
     }
   });

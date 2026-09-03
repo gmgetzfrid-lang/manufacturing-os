@@ -37,8 +37,9 @@ export default function AiInstructionsPage() {
 }
 
 function AiInstructionsInner() {
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
-  const canWrite = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  const canWrite = hasAnyRole(["Admin", "DocCtrl"]);
   const searchParams = useSearchParams();
 
   const [rows, setRows] = useState<AiInstruction[] | null>(null);

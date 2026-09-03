@@ -28,7 +28,7 @@ interface HubDoc {
 export default function AssetHubPage() {
   const params = useParams();
   const tag = decodeURIComponent(String(params?.tag ?? ""));
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
+  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
   const [packing, setPacking] = useState(false);
   const [packProgress, setPackProgress] = useState<[number, number] | null>(null);
   const [packNote, setPackNote] = useState<string | null>(null);
@@ -240,7 +240,7 @@ export default function AssetHubPage() {
           <AliasPanel
             orgId={activeOrgId}
             assetId={asset.id}
-            canManage={["Admin", "DocCtrl", "Manager", "Supervisor"].includes(activeRole ?? "")}
+            canManage={hasAnyRole(["Admin", "DocCtrl", "Manager", "Supervisor"])}
             userId={uid ?? undefined}
             userName={userEmail ?? undefined}
           />

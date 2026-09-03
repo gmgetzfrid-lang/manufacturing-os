@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
+import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
     const { data: projQ } = await supabaseAdmin
       .from("projects").select("owner_user_id, name").eq("id", projectIdQ).maybeSingle();
     const { data: controllersQ } = await supabaseAdmin
-      .from("org_members").select("uid").eq("org_id", orgIdQ).eq("status", "active").in("role", ["Admin", "DocCtrl"]);
+      .from("org_members").select("uid").eq("org_id", orgIdQ).eq("status", "active").or(roleFilter(["Admin", "DocCtrl"]));
     const targetsQ = [...new Set([
       ...(((controllersQ ?? []) as Array<{ uid: string }>).map((c) => c.uid)),
       ...(projQ?.owner_user_id ? [String(projQ.owner_user_id)] : []),
@@ -337,8 +338,9 @@ export async function POST(req: NextRequest) {
         let creatorMay = false;
         if (creator) {
           const { data: m } = await supabaseAdmin
-            .from("org_members").select("role").eq("org_id", orgId).eq("uid", creator).eq("status", "active").maybeSingle();
-          creatorMay = m?.role === "Admin" || m?.role === "DocCtrl";
+            .from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", creator).eq("status", "active").maybeSingle();
+          // ADD-1: authority by the role COLLECTION, never the headline alone.
+          creatorMay = memberHoldsAny(m, ["Admin", "DocCtrl"]);
           if (!creatorMay) {
             const { data: can } = await supabaseAdmin
               .rpc("user_can_publish_on_library", { p_library: targetDoc.library_id, p_uid: creator, p_org: orgId });
@@ -392,7 +394,7 @@ export async function POST(req: NextRequest) {
 
   // ── Notify the project team + audit ──
   const { data: controllers } = await supabaseAdmin
-    .from("org_members").select("uid").eq("org_id", orgId).eq("status", "active").in("role", ["Admin", "DocCtrl"]);
+    .from("org_members").select("uid").eq("org_id", orgId).eq("status", "active").or(roleFilter(["Admin", "DocCtrl"]));
   const targets = [...new Set([
     ...(((controllers ?? []) as Array<{ uid: string }>).map((c) => c.uid)),
     ...(project.owner_user_id ? [String(project.owner_user_id)] : []),

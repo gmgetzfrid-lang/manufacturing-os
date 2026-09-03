@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { runLinkProposers } from "@/lib/linkProposerServer";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -31,10 +32,11 @@ export async function POST(req: NextRequest) {
 
   const { data: member } = await supabaseAdmin
     .from("org_members")
-    .select("role, status")
+    .select("role, roles, status")
     .eq("org_id", orgId).eq("uid", userData.user.id).maybeSingle();
   const role = (member as { role?: string; status?: string } | null);
-  if (!role || role.status !== "active" || !["Admin", "DocCtrl"].includes(role.role ?? "")) {
+  // ADD-1: authority by the role COLLECTION, never the headline alone.
+  if (!role || role.status !== "active" || !memberHoldsAny(role, ["Admin", "DocCtrl"])) {
     return NextResponse.json({ error: "Not permitted" }, { status: 403 });
   }
 

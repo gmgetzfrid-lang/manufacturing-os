@@ -287,6 +287,14 @@ Migrations: `20261046` — **applied & verified live 2026-09-02** (12/12; invent
 
 Migrations: `20261048` (`drawing_audit_logs` INSERT / UPDATE for the controller tier by collection) — **applied & verified live 2026-09-02** (4/4; inventory before apply: 12 rows, 1 policy, 0 write policies, 3 controller-tier memberships). Round C1 fully live.
 
+### Phase 6 — severity sweep, Round C1b (2026-09-02) — the headline census
+
+| Item | Outcome |
+|---|---|
+| `ADD-1` amendment (+ `ADD-3` residual) | **DONE** — an exhaustive census found 42 more headline-keyed client gates across 27 files and 23 server-side singular-role reads (11 routes, the create-user escalation guard, 3 notify pools, 4 pool resolvers in `lib/`). All read the collection now: `hasAnyRole` / `roles` on the client; `lib/roleHeld.ts` (`memberHoldsAny`, `roleFilter`) on the server; `FullScreenViewer` / `CollectionsStrip` take `userRoles`; restore keeps the backup's harmless collection. Census test pins every file |
+
+No migration.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

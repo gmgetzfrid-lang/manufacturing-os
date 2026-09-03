@@ -2858,7 +2858,7 @@ export default function LibraryExplorerPage() {
               type={def.pillGroupLabel || "Equipment"}
               orgId={activeOrgId ?? undefined}
               userId={uid ?? undefined}
-              canManage={["Admin", "Manager", "Supervisor"].includes(activeRole)}
+              canManage={hasAnyRole(["Admin", "Manager", "Supervisor"])}
             />
           ))}
         </div>
@@ -3103,6 +3103,7 @@ export default function LibraryExplorerPage() {
           viewingVersionId={selectedVersion.id}
           document={selectedDoc}
           userRole={activeRole}
+          userRoles={roles}
           currentUserId={uid || undefined}
           currentUserEmail={userEmail || undefined}
           onCheckout={openCheckout}
@@ -3552,6 +3553,7 @@ export default function LibraryExplorerPage() {
                   libraryId={libraryId}
                   userId={uid}
                   userRole={activeRole}
+                  userRoles={roles}
                   folderId={currentFolderId}
                   folderName={currentFolder?.name ?? null}
                   folders={folders}
@@ -4082,7 +4084,7 @@ export default function LibraryExplorerPage() {
                                           canEdit={isController || !hasAnyRole(["Viewer", "Auditor"])}
                                           orgId={activeOrgId ?? undefined}
                                           userId={uid ?? undefined}
-                                          canManageAssets={["Admin", "Manager", "Supervisor"].includes(activeRole) || activeRole.includes("Engineer") || activeRole === "Drafter"}
+                                          canManageAssets={hasAnyRole(["Admin", "Manager", "Supervisor", "Drafter"]) || roles.some((r) => r.includes("Engineer"))}
                                           onSave={async (newVals) => {
                                             const newMeta = { ...(docRecord.metadata ?? {}), [colKey]: newVals };
                                             // Optimistic local update so the chip
