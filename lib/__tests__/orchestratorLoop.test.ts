@@ -50,7 +50,12 @@ vi.mock("@/lib/orchestrator/tools", () => {
 import { runOrchestrator, systemPrompt, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
 
-const CTX: ToolContext = { orgId: "org-1", userId: "u-1", role: "DocCtrl", approved: new Set() };
+const CTX: ToolContext = {
+  orgId: "org-1", userId: "u-1", role: "DocCtrl", approved: new Set(),
+  // SURF-7: the caller's ACL principal rides in the context.
+  principal: { uid: "u-1", orgId: "org-1", role: "DocCtrl", roles: ["DocCtrl"], isController: true, teamIds: [] },
+  actorName: "Doc Control",
+};
 
 /** A model that replies with a fixed script, then repeats its last line. */
 function scripted(lines: string[]): ModelCall & { prompts: string[] } {

@@ -19,6 +19,7 @@
 //      should accept.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import type { ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
@@ -27,6 +28,12 @@ export interface ToolContext {
   orgId: string;
   userId: string;
   role: string;
+  /** SURF-7 / EGRESS-3: the caller's ACL principal (role collection, teams,
+   *  controller tier). Every tool that touches a controlled document filters
+   *  through it — the service-role key never widens what the caller may see. */
+  principal: KnowledgePrincipal;
+  /** The caller's display name, for anything sent in their name. */
+  actorName: string;
   /** Actions the human has already approved this turn, by fingerprint. */
   approved: ReadonlySet<string>;
 }
@@ -68,6 +75,43 @@ export interface ToolDef {
 
 const CONTROLLER_ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor"];
 
+/** The controller tier by the role COLLECTION (an additively held DocCtrl
+ *  counts — DEC-2), never the headline alone. */
+function holdsControllerTier(ctx: ToolContext): boolean {
+  return ctx.principal.roles.some((r) => CONTROLLER_ROLES.includes(r));
+}
+
+/** SURF-7: which of these controlled documents may the CALLER read? Fails
+ *  CLOSED — if the readable set cannot be computed, nothing is readable. */
+async function readableIds(ctx: ToolContext, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  try { return await readableControlledDocIds(ctx.principal, ids); }
+  catch { return new Set(); }
+}
+
+/** SURF-7 / IEDGE-2: which of these KNOWLEDGE documents are mirrors of a
+ *  controlled document the caller may NOT read? The same hop the knowledge
+ *  ask route makes. Upload-origin knowledge documents (no source) stay
+ *  org-readable and are never excluded here. Fails CLOSED: if the hop cannot
+ *  be evaluated, every id given is treated as unreadable. */
+async function unreadableMirrors(ctx: ToolContext, knowledgeDocIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(knowledgeDocIds.filter((id) => id && id !== "null" && id !== "undefined"))];
+  if (ids.length === 0) return new Set();
+  try {
+    const mirrored: Array<{ id: string; source_document_id: string }> = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabaseAdmin
+        .from("knowledge_documents").select("id, source_document_id")
+        .in("id", ids.slice(i, i + 200)).not("source_document_id", "is", null);
+      if (error) throw error;
+      mirrored.push(...((data ?? []) as Array<{ id: string; source_document_id: string }>));
+    }
+    if (mirrored.length === 0) return new Set();
+    const readable = await readableControlledDocIds(ctx.principal, [...new Set(mirrored.map((m) => m.source_document_id))]);
+    return new Set(mirrored.filter((m) => !readable.has(m.source_document_id)).map((m) => m.id));
+  } catch { return new Set(ids); }
+}
+
 /** Stable id for "this exact action", so approving one thing approves that
  *  thing and not the next thing the model thought of. */
 export function fingerprint(tool: string, params: Record<string, unknown>): string {
@@ -102,10 +146,13 @@ const findDocuments: ToolDef = {
       .or(`document_number.ilike.%${q}%,title.ilike.%${q}%`)
       .neq("status", "Archived")
       .order("updated_at", { ascending: false })
-      .limit(LIMIT);
+      .limit(LIMIT * 4);
+    // SURF-7: only what the caller could open themselves.
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const readable = await readableIds(ctx, rows.map((r) => String(r.id)));
     return {
       data: {
-        matches: (data ?? []).map((d) => {
+        matches: rows.filter((r) => readable.has(String(r.id))).slice(0, LIMIT).map((d) => {
           const r = d as Record<string, unknown>;
           return {
             document_id: r.id, number: r.document_number, title: r.title,
@@ -154,6 +201,12 @@ const searchDocuments: ToolDef = {
         }
       }
     } catch { /* columns absent on old schemas — nothing to exclude */ }
+    // SURF-7: a passage from a knowledge MIRROR of a controlled document is
+    // only returned when the caller may read that document (the same hop the
+    // knowledge ask route makes). Fails closed for mirrors; upload-origin
+    // knowledge documents stay org-readable, unchanged.
+    const kIds = ((data ?? []) as Array<Record<string, unknown>>).map((r) => String(r.knowledge_document_id));
+    for (const id of await unreadableMirrors(ctx, kIds)) excluded.add(id);
     return {
       data: {
         passages: (data ?? [])
@@ -206,15 +259,28 @@ const equipmentMentions: ToolDef = {
 
     const { data } = await supabaseAdmin
       .from("entity_mentions")
-      .select("page, context_snippet, mention_count, knowledge_documents(name)")
+      .select("page, context_snippet, mention_count, knowledge_document_id, document_id, knowledge_documents(name)")
       .eq("org_id", ctx.orgId).eq("asset_id", (match as { id: string }).id)
       .order("mention_count", { ascending: false })
-      .limit(LIMIT);
+      .limit(LIMIT * 4);
+    // SURF-7 / IEDGE-2: the proving sentence is document content — a mention
+    // is returned only when the caller may read the document it came from
+    // (the controlled document directly, or through its knowledge mirror).
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const [hiddenMirrors, readableDocs] = await Promise.all([
+      unreadableMirrors(ctx, rows.map((r) => String(r.knowledge_document_id ?? ""))),
+      readableIds(ctx, [...new Set(rows.map((r) => r.document_id).filter((d): d is string => typeof d === "string" && d.length > 0))]),
+    ]);
+    const visible = rows.filter((r) => {
+      if (typeof r.knowledge_document_id === "string" && hiddenMirrors.has(r.knowledge_document_id)) return false;
+      if (typeof r.document_id === "string" && r.document_id.length > 0 && !readableDocs.has(r.document_id)) return false;
+      return true;
+    }).slice(0, LIMIT);
     return {
       data: {
         tag: (match as { tag: string }).tag,
         found: true,
-        mentions: (data ?? []).map((m) => {
+        mentions: visible.map((m) => {
           const r = m as Record<string, unknown>;
           const kd = r.knowledge_documents as { name?: string } | { name?: string }[] | null;
           const name = Array.isArray(kd) ? kd[0]?.name : kd?.name;
@@ -230,12 +296,17 @@ const checkPermissions: ToolDef = {
   description: "Whether the current user may read or edit a document. Check before proposing any action on it.",
   params: [{ name: "document_id", type: "string", required: true, description: "Document UUID." }],
   async run(args, ctx) {
-    // RLS is the real gate; this reports what the caller can already see, so
-    // a "no" here is the same "no" the database would give.
+    // SURF-7: this code runs on the service-role key, so RLS is NOT the gate
+    // here — the caller's ACL principal is evaluated explicitly, and a "no"
+    // is the same "no" the database would give the caller directly.
     const { data } = await supabaseAdmin
       .from("documents").select("id, document_number, status, org_id")
       .eq("id", String(args.document_id)).eq("org_id", ctx.orgId).maybeSingle();
     if (!data) return { data: { readable: false, editable: false, note: "Not visible to this user." } };
+    const readable = await readableIds(ctx, [String(args.document_id)]);
+    if (!readable.has(String(args.document_id))) {
+      return { data: { readable: false, editable: false, note: "Not visible to this user." } };
+    }
     // A document can carry several open holds at once (one per reason), so
     // this asks "any" rather than "the" — maybeSingle() would throw on the
     // second one and report a permission answer as an error.
@@ -246,7 +317,7 @@ const checkPermissions: ToolDef = {
     return {
       data: {
         readable: true,
-        editable: CONTROLLER_ROLES.includes(ctx.role) && !hold,
+        editable: holdsControllerTier(ctx) && !hold,
         on_hold: hold,
         holds: (holds ?? []).map((h) => (h as { reason: string }).reason),
         status: (data as { status: string }).status,
@@ -297,7 +368,7 @@ const tracePidLines: ToolDef = {
     { name: "hops", type: "number", description: "Neighbourhood radius when no end tag (default 2)." },
   ],
   async run(args, ctx) {
-    const edges = await loadLineGraph(ctx.orgId);
+    const edges = await loadLineGraph(ctx);
     // Say what this is built from. Claiming valve-level tracing when the
     // source is page co-occurrence would be a lie an engineer acts on.
     const basis =
@@ -328,7 +399,9 @@ const tracePidLines: ToolDef = {
         const k = `${row.document_id}#${row.page}`;
         byPage.set(k, (byPage.get(k) ?? new Set()).add(row.tag));
       }
-      const hits = [...byPage].filter(([, tags]) => tags.size === 2).map(([k]) => k);
+      // SURF-7 / IEDGE-2: a sheet the caller cannot read is not named to them.
+      const hidden = await unreadableMirrors(ctx, [...new Set([...byPage.keys()].map((k) => k.split("#")[0]))]);
+      const hits = [...byPage].filter(([k, tags]) => tags.size === 2 && !hidden.has(k.split("#")[0])).map(([k]) => k);
       if (hits.length > 0) {
         const ids = [...new Set(hits.map((k) => k.split("#")[0]))];
         const { data: docs } = await supabaseAdmin
@@ -366,18 +439,24 @@ const tracePidLines: ToolDef = {
  * tool result says so — an approximation labelled honestly beats an exact
  * answer that doesn't exist.
  */
-async function loadLineGraph(orgId: string): Promise<LineEdge[]> {
+async function loadLineGraph(ctx: ToolContext): Promise<LineEdge[]> {
   const { data, error } = await supabaseAdmin
     .from("knowledge_page_entities")
     .select("document_id, page, kind, tag")
-    .eq("org_id", orgId)
+    .eq("org_id", ctx.orgId)
     .in("kind", TAG_ENTITY_KINDS as unknown as string[])
     .order("document_id", { ascending: true })
     .limit(20000);
   if (error) return [];
 
+  // SURF-7 / IEDGE-2: the graph is built only from sheets the caller may read
+  // — a trace must not walk a drawing they cannot open.
+  const rowsAll = (data ?? []) as Array<{ document_id: string; page: number; kind: string; tag: string }>;
+  const hidden = await unreadableMirrors(ctx, [...new Set(rowsAll.map((r) => r.document_id))]);
+
   const byPage = new Map<string, { equipment: string[]; refs: string[] }>();
-  for (const row of (data ?? []) as Array<{ document_id: string; page: number; kind: string; tag: string }>) {
+  for (const row of rowsAll) {
+    if (hidden.has(row.document_id)) continue;
     const key = `${row.document_id}#${row.page}`;
     const slot = byPage.get(key) ?? { equipment: [], refs: [] };
     (row.kind === "equipment" ? slot.equipment : slot.refs).push(row.tag);
@@ -441,6 +520,10 @@ const checkoutDocument: ToolDef = {
       .from("documents").select("id, document_number, title, library_id, checked_out_by, checked_out_by_name")
       .eq("id", String(args.document_id)).eq("org_id", ctx.orgId).maybeSingle();
     if (!doc) return { data: { error: "No such document in this org." } };
+    // SURF-7: a document the caller cannot read does not exist for them.
+    if (!(await readableIds(ctx, [String(args.document_id)])).has(String(args.document_id))) {
+      return { data: { error: "No such document in this org." } };
+    }
     const d = doc as {
       document_number: string; library_id: string;
       checked_out_by: string | null; checked_out_by_name: string | null;
@@ -457,7 +540,7 @@ const checkoutDocument: ToolDef = {
         },
       };
     }
-    if (!CONTROLLER_ROLES.includes(ctx.role)) {
+    if (!holdsControllerTier(ctx)) {
       return { data: { error: "This user's role can't check documents out." } };
     }
 
@@ -486,6 +569,11 @@ const notifyPersonnel: ToolDef = {
       .from("documents").select("id, document_number, library_id")
       .eq("id", String(args.document_id)).eq("org_id", ctx.orgId).maybeSingle();
     if (!doc) return { data: { error: "No such document in this org." } };
+    // SURF-7: the caller must be able to read the document they are talking
+    // about; otherwise it does not exist for them.
+    if (!(await readableIds(ctx, [String(args.document_id)])).has(String(args.document_id))) {
+      return { data: { error: "No such document in this org." } };
+    }
     const d = doc as { document_number: string; library_id: string };
 
     // Membership check before the proposal, not after: an org id in a
@@ -510,7 +598,7 @@ const notifyPersonnel: ToolDef = {
       body: String(args.message),
       link: `/documents/${d.library_id}?doc=${args.document_id}`,
       resource: { type: "document", id: String(args.document_id) },
-      actorUserId: ctx.userId, actorName: "Document controller",
+      actorUserId: ctx.userId, actorName: ctx.actorName,
       audience: { involved: [String(args.user_id)] },
     }).catch(() => undefined);
     return { data: { status: "sent" } };
@@ -533,6 +621,11 @@ const logAuditCompletion: ToolDef = {
     const status = String(args.status);
     if (!["passed", "broken_connectors", "flagged", "skipped"].includes(status)) {
       return { data: { error: "status must be passed, broken_connectors, flagged, or skipped." } };
+    }
+    // SURF-7: recording an audit completion is a controller-tier act; the
+    // service-role write must not let a Viewer's confirmation mint one.
+    if (!holdsControllerTier(ctx)) {
+      return { data: { error: "Only Admin, Document Control, Manager or Supervisor can record an audit completion." } };
     }
     const params = { sheet_number: args.sheet_number, revision: args.revision, status };
     const gate = proposal(

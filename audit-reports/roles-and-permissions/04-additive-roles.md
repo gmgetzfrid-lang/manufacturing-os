@@ -163,7 +163,13 @@ that must not stand.
 ## ADD-3 · `primaryRole` is chosen by rank, which is not the same as chosen by relevance
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round C1).** `primaryRole` is labelled for what it is: the DISPLAY headline and the value mirrored into the legacy `org_members.role` column (kept in sync by `20261046`'s trigger) — its doc comment states it is never an authority or applicability test and points at `hasAnyRole` / `heldRoles` / `relevantRequesterRole`. The one place the projection reached an authority decision through a *stamped* value — a request's `requester_role`, which decides whether the PENDING_REVIEW approval must route through an engineer — now stamps `relevantRequesterRole(roles, headline)`: an engineer tier held anywhere in the collection wins (the `["Manager","Engineer-2"]` row of the table above is an engineer), then management / DocCtrl, then the headline; and `requiresEngineerApproval(role, roles?)` reads the collection whenever it is known. The ticket page's sign gate and the requests console's Force Close gate read the collection through `hasAnyRole`; the orchestrator's controller tier does too (`SURF-7`). The console's card lens (*"{role} Console"*) stays on the headline deliberately — it is a display choice, which is what `primaryRole` is for.
+- Done-when: ✓ doc comment states display / legacy-RLS only; ✓ no authority check on this path consumes it.
+- Residual (`ADD-1` territory, Round C1b): the recon found twelve admin-page affordance gates still keyed on the headline (users, assets, ai-instructions, libraries, branding, restore, proposed-links, storage, intelligence ×3, output-templates). Each sits on a page whose database policy already reads the collection (`ADD-4`), so the mismatch is UI-only — a page hides a button the database would allow; they are converted in the next round.
+- Files: `lib/roleCapabilities.ts`, `lib/workflow.ts`, `app/(protected)/requests/new/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `app/(protected)/requests/page.tsx`. Tests: `lib/__tests__/sweepRoundC.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / design
 - **Locations:**

@@ -97,7 +97,10 @@ tools.ts:532-551 — `async run(args, ctx) { const status = String(args.status);
 ## ORCH-3 · Every orchestrator read tool runs on the service-role key and bypasses the document ACL that the sibling ask route enforces — check_permissions reports the wrong answer
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, fixed under roles-and-permissions Phase 6 Round C1 as [`EGRESS-3`](../roles-and-permissions/10-content-egress.md) — the owning record; this one points there).** `find_documents`, `search_documents`, `equipment_mentions` and `trace_pid_lines` filter through `readableControlledDocIds` for the calling principal (fail closed); `check_permissions` derives `readable` / `editable` from that same chain and its comment now says so; the answer chips are filtered the same way. `lib/__tests__/sweepRoundC.test.ts` denies a document for a Viewer at the ACL seam (`readableControlledDocIds` is the unit under mock, the private-row evaluation itself being the production path of `/api/knowledge/ask`) and asserts each read tool returns nothing from it while a controller sees it. The intelligence area is unclaimed; its own pass re-verifies.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orchestrator/tools.ts:1`, `lib/orchestrator/tools.ts:21`, `lib/orchestrator/tools.ts:91`, `lib/orchestrator/tools.ts:232`, `lib/orchestrator/tools.ts:249`, `lib/supabaseAdmin.ts:4`, `supabase/migrations/20260708_acl_rls_enforcement.sql:85`, `lib/knowledgeAccess.ts:190`, `app/api/knowledge/ask/route.ts:177`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claimed ACL exists and is real (20260708_acl_rls_enforcement.sql:85-87, RESTRICTIVE `node_visible(...)` on documents; knowledgeAccess.ts:189-215 evaluates library→folder→document chains), and the orchestrator honours only `ai_excluded`, never visibility/acl_index. No role gate anywhere on /api/orchestrator (route.ts:62-67 checks membership only); the caller needing their own BYO key is a billing constraint, not an authority one.
@@ -118,9 +121,9 @@ tools.ts:6-13 header: "NOTHING WIDENS ACCESS. Every handler is org-scoped and re
 
 **Done when.**
 
-- [ ] find_documents, search_documents, equipment_mentions and trace_pid_lines filter their results through readableControlledDocIds (or an equivalent ACL evaluation) for the calling principal before returning
-- [ ] check_permissions derives readable/editable from the same ACL chain the UI and RLS use, so its answer matches what the user would see in the library
-- [ ] a test creates a private document with no grant for a Viewer and asserts that each read tool returns zero rows for that user
+- [x] find_documents, search_documents, equipment_mentions and trace_pid_lines filter their results through readableControlledDocIds (or an equivalent ACL evaluation) for the calling principal before returning
+- [x] check_permissions derives readable/editable from the same ACL chain the UI and RLS use, so its answer matches what the user would see in the library
+- [x] a test creates a private document with no grant for a Viewer and asserts that each read tool returns zero rows for that user — *denied at the ACL seam under mock, see the resolution*
 
 ---
 

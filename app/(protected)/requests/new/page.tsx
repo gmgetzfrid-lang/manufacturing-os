@@ -63,7 +63,7 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 export default function NewTicketPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { activeRole, userEmail, activeOrgId, uid } = useRole();
+  const { activeRole, roles, userEmail, activeOrgId, uid } = useRole();
 
   // Pre-fill from URL params when arriving via "Send to Drafting" from the
   // document viewer. Parameters that aren't present just fall through to
@@ -316,7 +316,10 @@ export default function NewTicketPage() {
         requester_id: uid,
         requester_name: userEmail?.split('@')[0] || 'Unknown',
         requester_email: userEmail,
-        requester_role: activeRole,
+        // ADD-3: the role that decides approval routing is chosen by
+        // relevance (an engineer tier held anywhere waives the engineer
+        // route), not by the headline's rank.
+        requester_role: relevantRequesterRole(roles, activeRole),
         attachments: uploadedAttachments,
         history: historyEntries,
         comments: [], unread_by: [],
@@ -657,6 +660,7 @@ export default function NewTicketPage() {
 
 import type { CustomCategoryConfig, CustomFieldDef } from '@/types/schema';
 import { buildSourceDocumentRef } from '@/lib/sourceDocRef';
+import { relevantRequesterRole } from '@/lib/roleCapabilities';
 
 function CustomCategoryCard({
   category, values, onChange,

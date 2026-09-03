@@ -63,7 +63,12 @@ export function isDocCtrlRole(role?: Role | string): boolean {
  * borderline — exclude here since drafters approving their own work as
  * requester is a separate antipattern.
  */
-export function requiresEngineerApproval(requesterRole?: Role | string): boolean {
+export function requiresEngineerApproval(requesterRole?: Role | string, requesterRoles?: readonly string[] | null): boolean {
+  // ADD-3: when the requester's full collection is known, ANY held engineer /
+  // management / DocCtrl role waives the engineer route — relevance, not rank.
+  if (requesterRoles && requesterRoles.length > 0) {
+    if (requesterRoles.some((r) => isEngineerRole(r) || isManagementRole(r) || isDocCtrlRole(r))) return false;
+  }
   if (!requesterRole) return true;
   if (isEngineerRole(requesterRole)) return false;
   if (isManagementRole(requesterRole)) return false;

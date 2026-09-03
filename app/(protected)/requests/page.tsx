@@ -139,7 +139,7 @@ const StageChip = ({ label, n, className }: { label: string; n: number; classNam
 // =========================================================================================
 
 export default function RequestPortal() {
-  const { activeRole, roles, activeOrgId, uid } = useRole();
+  const { activeRole, roles, activeOrgId, uid, hasAnyRole } = useRole();
   
   // --- STATE ---
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -1099,7 +1099,7 @@ export default function RequestPortal() {
                                       <div className="absolute right-0 mt-2 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 origin-top-right animate-in fade-in zoom-in-95 duration-150">
                                         <div className="py-1">
                                           <button onClick={() => handleQuickMarkUrgent(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark Urgent</button>
-                                          {['Manager', 'Admin'].includes(activeRole) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
+                                          {hasAnyRole(['Manager', 'Admin']) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
                                         </div>
                                       </div>
                                     </>

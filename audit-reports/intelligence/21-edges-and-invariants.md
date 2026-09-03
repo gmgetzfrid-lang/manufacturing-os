@@ -94,7 +94,10 @@ app/api/graph/ask/route.ts:83 — `const { data: rawHits, error: askErr } = awai
 ## IEDGE-2 · Orchestrator read tools run on the service role and honour only the ai_excluded flag — never the per-asker ACL — so the Assistant answers any member from restricted documents
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, fixed under roles-and-permissions Phase 6 Round C1 as [`EGRESS-3`](../roles-and-permissions/10-content-egress.md) — the owning record; this one points there).** `ToolContext` carries the caller's ACL principal (`loadPrincipal`: role collection, teams, controller tier) and every read tool filters through `readableControlledDocIds` — `find_documents`, `search_documents` (mirror hop), `equipment_mentions` (mirror hop + direct `document_id`) and `trace_pid_lines` (graph built only from readable sheets). The readable set is evaluated per tool call through that one seam rather than cached once per run — same answer, and the failure path is the one asked for: if the set or the mirror hop cannot be computed, every source-linked result is dropped. `lib/__tests__/sweepRoundC.test.ts` drives each tool and the whole loop as a denied Viewer and asserts no passage from the denied document reaches the tool result or the next prompt. The intelligence area is unclaimed; its own pass re-verifies against these criteria (`DEC-29`: the reproduction here is unit-level, at the ACL seam, not a live tenant).
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orchestrator/tools.ts:120-167`, `lib/orchestrator/tools.ts:83-105`, `lib/orchestrator/tools.ts:200-225`, `app/api/orchestrator/route.ts:74-78`, `lib/orchestrator/tools.ts:26-32`
 - **Also surfaced independently as** [`ORCH-3`](./15-orchestrator.md#orch-3) — two lenses found this separately. Fix once.
@@ -113,9 +116,9 @@ lib/orchestrator/tools.ts:133-135 — `const { data, error } = await supabaseAdm
 
 **Done when.**
 
-- [ ] ToolContext gains the caller's readable-document set (computed once per run via loadPrincipal + readableControlledDocIds) and search_documents, find_documents and equipment_mentions all filter against it
-- [ ] Failure to compute the readable set drops all source-linked results rather than passing them through
-- [ ] A test drives the loop as a denied Viewer and asserts no passage from the denied document reaches the tool result
+- [x] ToolContext gains the caller's readable-document set (computed once per run via loadPrincipal + readableControlledDocIds) and search_documents, find_documents and equipment_mentions all filter against it — *evaluated per call through the same seam, see the resolution*
+- [x] Failure to compute the readable set drops all source-linked results rather than passing them through
+- [x] A test drives the loop as a denied Viewer and asserts no passage from the denied document reaches the tool result
 
 ---
 

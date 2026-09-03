@@ -121,11 +121,30 @@ export function addableRoles(current: Role[]): Role[] {
   return ALL_ROLES.filter((r) => !current.includes(r) && capabilitiesAdded(r, current).length > 0);
 }
 
-/** Highest-ranked role in the collection — the headline / RLS-facing role.
+/** Highest-ranked role in the collection — the DISPLAY headline and the value
+ *  mirrored into the legacy `org_members.role` column (kept in sync at the
+ *  database by 20261046's trigger). ADD-3: this is NEVER an authority or
+ *  applicability test — rank is not relevance (a ["Requester","Engineer-2"]
+ *  member is an engineer for approval purposes, whatever the headline).
+ *  Use `hasAnyRole` / `heldRoles` / `relevantRequesterRole` for decisions.
  *  Falls back to "Viewer" for an empty collection. */
 export function primaryRole(roles: Role[]): Role {
   if (roles.length === 0) return "Viewer";
   return [...roles].sort((a, b) => (ROLE_RANK[b] ?? 0) - (ROLE_RANK[a] ?? 0))[0];
+}
+
+/** ADD-3: the role a request should be stamped with for APPROVAL ROUTING —
+ *  chosen by relevance, not rank. An engineer tier held anywhere in the
+ *  collection makes the requester an engineer (they approve their own
+ *  request directly); otherwise a management / DocCtrl role; otherwise the
+ *  headline. */
+export function relevantRequesterRole(roles: readonly Role[], headline?: Role | null): Role {
+  const eng = roles.filter((r) => r.startsWith("Engineer")).sort((a, b) => (ROLE_RANK[b] ?? 0) - (ROLE_RANK[a] ?? 0))[0];
+  if (eng) return eng;
+  const mgmt = roles.filter((r) => ["Admin", "Manager", "Supervisor", "DraftingSupervisor", "DocCtrl"].includes(r))
+    .sort((a, b) => (ROLE_RANK[b] ?? 0) - (ROLE_RANK[a] ?? 0))[0];
+  if (mgmt) return mgmt;
+  return headline ?? (roles.length ? primaryRole([...roles]) : "Viewer");
 }
 
 /** Numeric rank of a role (higher = more capable). Read-only view of the

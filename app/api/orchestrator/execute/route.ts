@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { toolByName, fingerprint, type ToolContext } from "@/lib/orchestrator/tools";
 import { validateParams } from "@/lib/orchestrator/protocol";
+import { loadPrincipal } from "@/lib/knowledgeAccess";
 
 export const runtime = "nodejs";
 
@@ -38,12 +39,17 @@ export async function POST(req: NextRequest) {
     ? body.parameters as Record<string, unknown>
     : {};
 
-  const { data: member } = await supabaseAdmin
-    .from("org_members").select("uid, role")
-    .eq("org_id", orgId).eq("uid", user.id).eq("status", "active")
-    .maybeSingle();
-  if (!member) return bad("Not a member of this workspace", 403);
-  const role = (member.role as string) ?? "Viewer";
+  // SURF-7 / EGRESS-3: the caller's ACL principal — role COLLECTION, teams,
+  // controller tier — is what every tool filters through. The service-role
+  // key fetches; the principal decides what the caller may see or do.
+  const [principal, { data: member }] = await Promise.all([
+    loadPrincipal(orgId, user.id),
+    supabaseAdmin.from("org_members").select("uid, role, display_name, email")
+      .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
+  ]);
+  if (!principal || !member) return bad("Not a member of this workspace", 403);
+  const role = principal.role;
+  const actorName = ((member.display_name as string | null) || (member.email as string | null)?.split("@")[0] || "A colleague");
 
   const def = toolByName(toolName);
   if (!def || !def.writes) return bad("That isn't an executable action.", 400);
@@ -55,7 +61,7 @@ export async function POST(req: NextRequest) {
   // fingerprint and executes; every role/org/membership check inside the
   // handler still runs — this route grants confirmation, not authority.
   const ctx: ToolContext = {
-    orgId, userId: user.id, role,
+    orgId, userId: user.id, role, principal, actorName,
     approved: new Set([fingerprint(def.name, checked.values)]),
   };
 

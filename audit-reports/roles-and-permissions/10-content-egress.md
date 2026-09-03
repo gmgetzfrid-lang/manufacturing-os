@@ -193,7 +193,18 @@ afterwards preserves that.
 ## EGRESS-3 · The AI orchestrator acts with service-role authority the caller does not have
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round C1).** The orchestrator now acts as the person driving it. Both routes (`/api/orchestrator`, `/api/orchestrator/execute`) load the caller's ACL principal with `loadPrincipal` — role COLLECTION, teams, controller tier — and carry it, with the caller's display name, in `ToolContext`; `role` is derived from the principal, so the secondary-DocCtrl case named in the chain reaction (`ADD-1`) is closed here too. The service-role key still fetches; the principal decides what the caller may see or do, through the same `readableControlledDocIds` seam `/api/knowledge/ask` uses:
+- `find_documents` fetches four times the limit and returns only the readable subset; `search_documents` returns a passage from a knowledge MIRROR of a controlled document only when the caller may read the source (upload-origin knowledge documents are org-readable and unchanged); `equipment_mentions` applies the same hop and additionally requires the mention's direct `document_id` to be readable; `trace_pid_lines` builds the line graph only from sheets the caller may read and never names a hidden sheet as a same-sheet hit. The answer's document chips are filtered the same way. Everything fails CLOSED: if the readable set cannot be computed nothing controlled is readable, and if the mirror hop cannot be evaluated every mirror is hidden.
+- `check_permissions` evaluates the real chain and its comment now describes the mechanism that runs (*"RLS is NOT the gate here"*); `editable` is the controller tier by the collection, minus an open hold.
+- `log_audit_completion` refuses anyone outside Admin / DocCtrl / Manager / Supervisor (by collection) BEFORE the confirmation gate, so a Viewer's click can no longer mint a completion; `20261048` gives `drawing_audit_logs` the matching INSERT / UPDATE policies for the same tier (no member DELETE, SELECT unchanged) so the database states the rule the app enforces. `checkout_document` requires readability and the same tier.
+- `notify_personnel` requires readability and sends in the caller's own name (display name, else the email's local part) — never *"Document controller"*.
+- Done-when: (1) ✓ every read filtered by the caller's actual document access; (2) ✓ `check_permissions` evaluates the real ACL and says so; (3) ✓ controller-gated, matching write policy in `20261048`; (4) ✓ attributed to the real caller.
+- Scope: `check_audit_history` and `query_equipment_by_unit` read registries every member may read at the database (`drawing_audit_logs` SELECT, `assets` RLS) — no document ACL applies; unchanged. The readable set is evaluated per tool call rather than cached once per run — same seam, same answer; a cache is an optimisation, not a rule.
+- Cross-area: the same code closes intelligence [`IEDGE-2`](../intelligence/21-edges-and-invariants.md) and [`ORCH-3`](../intelligence/15-orchestrator.md); their records point here.
+- Migration: `20261048` — **pending apply** (widening: a controller-tier member gains a direct write path that only the service role had; inventory recorded BEFORE apply per the `DEC-2` reversal clause). Files: `lib/orchestrator/tools.ts`, `app/api/orchestrator/route.ts`, `app/api/orchestrator/execute/route.ts`. Tests: `lib/__tests__/sweepRoundC.test.ts` (each read tool and the whole loop driven as a denied Viewer; the controller gate; attribution; source pins; `20261048` shape), `lib/__tests__/orchestratorLoop.test.ts` (context shape).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** security / confidentiality / data-integrity
 - **Locations:**

@@ -804,7 +804,7 @@ const FileViewerModal = ({
 export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
-  const { activeRole, roles, userEmail, activeOrgId, uid } = useRole();
+  const { activeRole, roles, userEmail, activeOrgId, uid, hasAnyRole } = useRole();
   // The org's capability policy — so the buttons drawn here match what the
   // workflow-action route will actually allow (it re-derives with the same
   // policy). Undefined until loaded → defaults, which mirror historic rules.
@@ -2101,7 +2101,7 @@ export default function TicketDetailView() {
               resourceType="ticket"
               resourceId={ticket.id}
               resourceLabel={`request ${ticket.ticketId}`}
-              canSign={activeRole === 'Admin' || activeRole === 'DocCtrl' || (activeRole?.includes('Engineer') ?? false)}
+              canSign={hasAnyRole(['Admin', 'DocCtrl']) || roles.some((r) => r.startsWith('Engineer'))}
             />
           )}
         </div>

@@ -34,7 +34,8 @@
       "LOW": 46
     },
     "by_status": {
-      "OPEN": 256,
+      "OPEN": 254,
+      "RESOLVED": 2,
       "REFUTED": 2
     }
   },
@@ -189,7 +190,7 @@
       "id": "IEDGE-2",
       "title": "Orchestrator read tools run on the service role and honour only the ai_excluded flag — never the per-asker ACL — so the Assistant answers any member from restricted documents",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1653,7 +1654,7 @@
       "id": "ORCH-3",
       "title": "Every orchestrator read tool runs on the service-role key and bypasses the document ACL that the sibling ask route enforces — check_permissions reports the wrong answer",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

@@ -360,16 +360,22 @@ See `DB-1` (`org_configurations.value`) and `DB-2` (`team_members.user_id`).
 ## SURF-7 · The AI orchestrator acts with service-role authority the caller does not have
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round C1).** Recorded in full at [`EGRESS-3`](./10-content-egress.md) — the mechanism-by-mechanism outcome, the files and the tests are there. In short: every orchestrator tool that touches a controlled document now evaluates the CALLER's ACL principal (`loadPrincipal` → `readableControlledDocIds`, the seam `/api/knowledge/ask` already used) and fails closed; the controller tier is held by the role collection; `log_audit_completion` refuses a non-controller before the confirmation gate and `drawing_audit_logs` gains the matching write policy (`20261048`); the AI's notifications carry the caller's own name.
+- Done-when: see `EGRESS-3` (all four hold).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** security / confidentiality
 - **Re-verified:** hardening pass — **SURVIVES**. Cross-area duplicate of `intelligence/IEDGE-2` and `EGRESS-3` — `lib/orchestrator/tools.ts` uses `supabaseAdmin` throughout, and the file's own comment concedes it.
 - **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Claim holds. 20260929_mention_engine.sql:155-158 gives drawing_audit_logs RLS with a SELECT-only member policy and no INSERT/UPDATE policy, so the service-role orchestrator really is the sole writer, and the only gate on that write is `proposal()` — a human confirmation available to any role including Viewer. check_permissions' own comment is falsified by the client it uses.
 
-> **Recorded in full as [`EGRESS-4`](./10-content-egress.md).** Cross-referenced
+> **Recorded in full as [`EGRESS-3`](./10-content-egress.md).** Cross-referenced
 > here because `log_audit_completion` writes to `drawing_audit_logs` with no role
 > check at all, on a table whose RLS grants only SELECT to members — making the
 > AI the sole writer of a record it accepts from a Viewer.
+>
+> *(Cross-reference corrected 2026-09-02: the original pointed at `EGRESS-4`, which is the `knowledge_chunks` finding.)*
 
 ---
 

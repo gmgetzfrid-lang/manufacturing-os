@@ -25,6 +25,7 @@ import { ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementTe
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
+import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -58,12 +59,17 @@ export async function POST(req: NextRequest) {
       : [],
   );
 
-  const { data: member } = await supabaseAdmin
-    .from("org_members").select("uid, role")
-    .eq("org_id", orgId).eq("uid", user.id).eq("status", "active")
-    .maybeSingle();
-  if (!member) return bad("Not a member of this workspace", 403);
-  const role = (member.role as string) ?? "Viewer";
+  // SURF-7 / EGRESS-3: the caller's ACL principal — role COLLECTION, teams,
+  // controller tier — is what every tool filters through. The service-role
+  // key fetches; the principal decides what the caller may see or do.
+  const [principal, { data: member }] = await Promise.all([
+    loadPrincipal(orgId, user.id),
+    supabaseAdmin.from("org_members").select("uid, role, display_name, email")
+      .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
+  ]);
+  if (!principal || !member) return bad("Not a member of this workspace", 403);
+  const role = principal.role;
+  const actorName = ((member.display_name as string | null) || (member.email as string | null)?.split("@")[0] || "A colleague");
 
   // ── Same key policy as every other AI surface: the asker's own. ──────────
   const { data: conn } = await supabaseAdmin
@@ -129,7 +135,7 @@ export async function POST(req: NextRequest) {
     return { text: out.text, usage: out.usage };
   };
 
-  const ctx: ToolContext = { orgId, userId: user.id, role, approved };
+  const ctx: ToolContext = { orgId, userId: user.id, role, approved, principal, actorName };
 
   let run;
   try {
@@ -153,7 +159,7 @@ export async function POST(req: NextRequest) {
   // against the doc-control registry first (number, then title), then the
   // knowledge libraries (mirrors of AI-excluded documents skipped). An
   // answer citing "EP 5-6-2" with nothing to click is a dead end.
-  const mentionedDocs: Array<{ id: string; number: string | null; title: string; mention: string; openUrl: string }> = [];
+  let mentionedDocs: Array<{ id: string; number: string | null; title: string; mention: string; openUrl: string }> = [];
   try {
     const squash = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
     const designations = [...new Set(run.answer.match(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g) ?? [])].slice(0, 24);
@@ -197,6 +203,23 @@ export async function POST(req: NextRequest) {
         }
         if (mentionedDocs.length >= 12) break;
       }
+      // SURF-7: the chips are a second read of every document in the org —
+      // keep only the controlled documents the CALLER may read (and knowledge
+      // mirrors of readable ones). Fails closed.
+      try {
+        const ctrlIds = mentionedDocs.filter((d) => d.openUrl.startsWith("/documents/")).map((d) => d.id);
+        const mirrorIds = mentionedDocs.filter((d) => d.openUrl.startsWith("/knowledge/")).map((d) => d.id);
+        const mirrorSrc = new Map<string, string>();
+        if (mirrorIds.length > 0) {
+          const { data: mirrors } = await supabaseAdmin.from("knowledge_documents").select("id, source_document_id")
+            .in("id", mirrorIds).not("source_document_id", "is", null);
+          for (const m of (mirrors ?? []) as Array<{ id: string; source_document_id: string }>) mirrorSrc.set(m.id, m.source_document_id);
+        }
+        const readable = await readableControlledDocIds(principal, [...new Set([...ctrlIds, ...mirrorSrc.values()])]);
+        mentionedDocs = mentionedDocs.filter((d) =>
+          d.openUrl.startsWith("/documents/") ? readable.has(d.id)
+          : !mirrorSrc.has(d.id) || readable.has(mirrorSrc.get(d.id) as string));
+      } catch { mentionedDocs = []; }
     }
   } catch { /* chips are decoration — never block the answer */ }
 
