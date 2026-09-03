@@ -9,8 +9,8 @@
 import React from "react";
 import { X, PenLine, ShieldCheck, Loader2, Type as TypeIcon, Signature, KeyRound } from "lucide-react";
 import {
-  signingReauthState, verifySigningCredential, reauthWithProvider,
-  type SignatureIntent, type SigningReauth,
+  signingReauthState, reauthWithProvider,
+  type SignatureIntent, type SigningReauth, type SigningCredential,
 } from "@/lib/eSignatures";
 import SignaturePad from "@/components/signatures/SignaturePad";
 
@@ -32,7 +32,9 @@ export default function SignatureCeremony({
   /** Hide the intent picker (e.g. a read-&-understood flow is always "Acknowledged"). */
   lockIntent?: boolean;
   onCancel: () => void;
-  onSign: (intent: SignatureIntent, statement: string, signatureImage?: string | null) => void;
+  /** SURF-14: the credential rides WITH the signature to the server, which
+   *  verifies it before minting the row — nothing is verified here. */
+  onSign: (intent: SignatureIntent, statement: string, signatureImage?: string | null, reauth?: SigningCredential) => void;
 }) {
   const [intent, setIntent] = React.useState<SignatureIntent>(defaultIntent);
   const [mode, setMode] = React.useState<"draw" | "type">(allowDrawn ? defaultMode : "type");
@@ -45,7 +47,6 @@ export default function SignatureCeremony({
   // password; SSO accounts need a recent provider sign-in.
   const [reauth, setReauth] = React.useState<SigningReauth | null | "loading">("loading");
   const [password, setPassword] = React.useState("");
-  const [verifying, setVerifying] = React.useState(false);
   const [reauthError, setReauthError] = React.useState<string | null>(null);
   React.useEffect(() => {
     let cancelled = false;
@@ -60,10 +61,10 @@ export default function SignatureCeremony({
   const signed = mode === "draw" ? !!drawn : nameMatches;
   const identityReady =
     reauth === "loading" ? false
-    : reauth === null ? true                 // no session info — server still validates the write
+    : reauth === null ? true                 // no session info here — the signing route verifies and refuses if it cannot
     : reauth.method === "password" ? password.length > 0
     : reauth.fresh;
-  const canSign = signed && agreed && identityReady && !busy && !verifying;
+  const canSign = signed && agreed && identityReady && !busy;
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onCancel(); };
@@ -72,19 +73,14 @@ export default function SignatureCeremony({
   }, [onCancel, busy]);
 
   const submit = async () => {
-    if (reauth !== "loading" && reauth?.method === "password") {
-      setVerifying(true);
-      setReauthError(null);
-      try {
-        await verifySigningCredential(reauth.email, password);
-      } catch (e) {
-        setReauthError((e as Error).message);
-        setVerifying(false);
-        return;
-      }
-      setVerifying(false);
-    }
-    onSign(intent, statement, mode === "draw" ? drawn : null);
+    setReauthError(null);
+    // The password is never checked in the browser: it goes to the signing
+    // route, which verifies it against Supabase Auth and only then mints the
+    // row — so a signature is bound to a re-authentication the server saw.
+    const credential: SigningCredential = reauth !== "loading" && reauth?.method === "password"
+      ? { method: "password", password }
+      : { method: "sso" };
+    onSign(intent, statement, mode === "draw" ? drawn : null, credential);
   };
 
   // Switching modes remounts the pad blank — clear the captured image so a
@@ -204,7 +200,7 @@ export default function SignatureCeremony({
             disabled={!canSign}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm font-bold disabled:opacity-50"
           >
-            {busy || verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />} Sign
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />} Sign
           </button>
         </div>
       </div>

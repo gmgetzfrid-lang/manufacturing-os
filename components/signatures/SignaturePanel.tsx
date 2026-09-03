@@ -71,7 +71,12 @@ export default function SignaturePanel({
                       <span className="font-bold">{s.intent}</span> by <span className="font-bold" style={{ fontFamily: "cursive" }}>{s.signerName}</span>
                       {s.signerRole && <span className="text-[var(--color-text-muted)]"> · {s.signerRole}</span>}
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">{new Date(s.signedAt).toLocaleString()}</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                      {new Date(s.signedAt).toLocaleString()}
+                      {s.reauthMethod && (
+                        <span> · re-authenticated by {s.reauthMethod === "password" ? "password" : "provider sign-in"}{s.reauthAt ? ` at ${new Date(s.reauthAt).toLocaleTimeString()}` : ""}</span>
+                      )}
+                    </div>
                   </div>
                 </li>
               );

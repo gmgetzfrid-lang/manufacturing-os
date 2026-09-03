@@ -1,11 +1,14 @@
 // lib/eSignatures.ts
 //
 // Formal e-signature capture + read. A signature is an immutable, attributable
-// affirmation of intent against a resource. It also mirrors an audit event so
-// the signature shows up in the resource's existing timeline.
+// affirmation of intent against a resource. SURF-14 / RG-9 / EVID-3: the row is
+// MINTED BY THE SERVER (/api/signatures/sign) — the browser sends what the
+// signer affirmed plus their re-authentication credential; the route verifies
+// the credential, derives the signer's name / role / email from org_members and
+// the content hash from the version row, writes the row on the service-role key
+// and mirrors the audit event. No client insert path exists (20261050).
 
 import { supabase } from "@/lib/supabase";
-import { logAuditAction } from "@/lib/audit";
 
 export type SignatureIntent = "Approved" | "Reviewed" | "Rejected" | "Witnessed" | "Acknowledged";
 
@@ -24,6 +27,9 @@ export interface ESignature {
   signerEmail?: string | null;
   signatureImage?: string | null;
   signedAt: string;
+  /** RG-9: how the signer re-authenticated at the moment of signing, set server-side. */
+  reauthMethod?: "password" | "sso" | null;
+  reauthAt?: string | null;
 }
 
 function rowTo(r: Record<string, unknown>): ESignature {
@@ -42,6 +48,8 @@ function rowTo(r: Record<string, unknown>): ESignature {
     signerEmail: (r.signer_email as string) ?? null,
     signatureImage: (r.signature_image as string) ?? null,
     signedAt: String(r.signed_at),
+    reauthMethod: (r.reauth_method as "password" | "sso" | null) ?? null,
+    reauthAt: (r.reauth_at as string | null) ?? null,
   };
 }
 
@@ -68,13 +76,11 @@ export async function signingReauthState(): Promise<SigningReauth | null> {
   return { method: "sso", email: user.email, fresh: Date.now() - last < SSO_REAUTH_WINDOW_MS };
 }
 
-/** Verify a password account's credential at the moment of signing. Throws
- *  with a human message on a wrong password. */
-export async function verifySigningCredential(email: string, password: string): Promise<void> {
-  if (!password) throw new Error("Enter your password to sign.");
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw new Error("That password doesn't match — signature not applied.");
-}
+/** The credential the ceremony collected, verified by the SERVER at the moment
+ *  of signing (never here — a client-side check binds nothing to the row). */
+export type SigningCredential =
+  | { method: "password"; password: string }
+  | { method: "sso" };
 
 /** Send an SSO account back through its provider with a forced login prompt,
  *  returning to `returnTo` (defaults to the current page) to finish signing. */
@@ -100,6 +106,10 @@ export async function listSignatures(resourceType: string, resourceId: string): 
   return ((data as Array<Record<string, unknown>>) ?? []).map(rowTo);
 }
 
+/** Run the signing ceremony's server half. `signerUserId` / `signerName` /
+ *  `signerRole` / `signerEmail` are accepted for call-site compatibility but
+ *  the SERVER derives every one of them from the bearer and the membership
+ *  row — nothing the browser says about who is signing reaches the row. */
 export async function recordSignature(input: {
   orgId: string;
   resourceType: string;
@@ -114,39 +124,27 @@ export async function recordSignature(input: {
   signerEmail?: string;
   /** Optional touchpad-drawn signature, stored as a PNG data URL. */
   signatureImage?: string | null;
+  /** The re-authentication the ceremony collected; verified server-side. */
+  reauth?: SigningCredential | null;
 }): Promise<ESignature> {
-  const { data, error } = await supabase
-    .from("e_signatures")
-    .insert({
-      org_id: input.orgId,
-      resource_type: input.resourceType,
-      resource_id: input.resourceId,
-      document_version_id: input.documentVersionId ?? null,
-      content_hash: input.contentHash ?? null,
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not authenticated");
+  const res = await fetch("/api/signatures/sign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({
+      orgId: input.orgId,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      documentVersionId: input.documentVersionId ?? null,
+      contentHash: input.contentHash ?? null,
       intent: input.intent,
       statement: input.statement,
-      signer_user_id: input.signerUserId,
-      signer_name: input.signerName,
-      signer_role: input.signerRole ?? null,
-      signer_email: input.signerEmail ?? null,
-      signature_image: input.signatureImage ?? null,
-      user_agent: typeof navigator !== "undefined" ? navigator.userAgent : null,
-    })
-    .select("*")
-    .single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to record signature");
-
-  // Mirror into the audit trail so it appears in the resource timeline.
-  await logAuditAction({
-    orgId: input.orgId,
-    userId: input.signerUserId,
-    userEmail: input.signerEmail,
-    userRole: input.signerRole,
-    action: "ESIGNATURE_CAPTURED",
-    resourceType: input.resourceType,
-    resourceId: input.resourceId,
-    details: { intent: input.intent, statement: input.statement, signerName: input.signerName },
-  }).catch(() => { /* audit best-effort */ });
-
-  return rowTo(data as Record<string, unknown>);
+      signatureImage: input.signatureImage ?? null,
+      reauth: input.reauth ?? { method: "sso" },
+    }),
+  });
+  const out = (await res.json().catch(() => ({}))) as { signature?: Record<string, unknown>; error?: string };
+  if (!res.ok || !out.signature) throw new Error(out.error || "Failed to record signature");
+  return rowTo(out.signature);
 }

@@ -7,7 +7,7 @@
 
 import React from "react";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
-import { recordSignature, type SignatureIntent } from "@/lib/eSignatures";
+import { recordSignature, type SignatureIntent, type SigningCredential } from "@/lib/eSignatures";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 
@@ -26,7 +26,7 @@ export function requestSignature(detail: RequestSignatureDetail) {
 }
 
 export default function SignatureCaptureHost() {
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { activeOrgId, uid, userEmail, activeRole, member } = useRole();
   const { showToast } = useToast();
   const [req, setReq] = React.useState<RequestSignatureDetail | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -41,9 +41,12 @@ export default function SignatureCaptureHost() {
   }, []);
 
   if (!req) return null;
-  const signerName = (userEmail?.split("@")[0] ?? "").trim() || "user";
+  // RG-9: the name the signer types to confirm is their membership display
+  // name (the server records the same); the email local part is only the
+  // fallback for a member who never set one.
+  const signerName = (member?.displayName ?? "").trim() || (userEmail?.split("@")[0] ?? "").trim() || "user";
 
-  const sign = async (intent: SignatureIntent, statement: string, signatureImage?: string | null) => {
+  const sign = async (intent: SignatureIntent, statement: string, signatureImage?: string | null, reauth?: SigningCredential) => {
     if (!activeOrgId || !uid) return;
     setBusy(true);
     try {
@@ -60,6 +63,7 @@ export default function SignatureCaptureHost() {
         signerRole: activeRole ?? undefined,
         signerEmail: userEmail ?? undefined,
         signatureImage: signatureImage ?? undefined,
+        reauth: reauth ?? null,
       });
       window.dispatchEvent(new CustomEvent("signature-recorded", { detail: { resourceType: req.resourceType, resourceId: req.resourceId } }));
       showToast({ type: "success", title: "Signed", message: `${intent} — recorded with your name and timestamp.` });

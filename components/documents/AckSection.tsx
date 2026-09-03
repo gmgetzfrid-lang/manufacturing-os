@@ -11,6 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
+import type { SigningCredential } from "@/lib/eSignatures";
 import AckPill from "@/components/documents/AckPill";
 import {
   resolveEffectiveAckPolicy, listRoster, recordAcknowledgment, waiveAcknowledgment,
@@ -37,7 +38,7 @@ export default function AckSection({ doc, orgId, canManage }: {
   orgId: string;
   canManage: boolean;
 }) {
-  const { uid, userEmail, activeRole } = useRole();
+  const { uid, userEmail, activeRole, member } = useRole();
   const [docPol, setDocPol] = useState<AckPolicy | null>(null);
   const [folderPol, setFolderPol] = useState<AckPolicy | null>(null);
   const [libPol, setLibPol] = useState<AckPolicy | null>(null);
@@ -73,12 +74,13 @@ export default function AckSection({ doc, orgId, canManage }: {
   const summary = summarize(roster);
   if (summary.hardGate === false && eff?.hardGate) summary.hardGate = true;
   const myPending = roster.find((r) => r.assigneeUserId === uid && r.status === "pending");
-  const signerName = (userEmail?.split("@")[0] ?? "").trim() || "user";
+  // RG-9: the typed-name check compares against the membership display name (the server records the same).
+  const signerName = (member?.displayName ?? "").trim() || (userEmail?.split("@")[0] ?? "").trim() || "user";
   const label = doc.documentNumber || doc.title || doc.name || "this document";
   const rev = myPending?.revisionLabel || doc.rev || "";
 
   // ── Sign (any assignee) ──
-  const doSign = async (_intent: unknown, statement: string, signatureImage?: string | null) => {
+  const doSign = async (_intent: unknown, statement: string, signatureImage?: string | null, reauth?: SigningCredential) => {
     if (!uid || !doc.id || !myPending) return;
     setBusy(true);
     try {
@@ -87,6 +89,7 @@ export default function AckSection({ doc, orgId, canManage }: {
         revisionLabel: myPending.revisionLabel, rosterId: myPending.id,
         signerUserId: uid, signerName, signerRole: activeRole ?? null, signerEmail: userEmail ?? null,
         statement, signatureImage: signatureImage ?? null,
+        reauth: reauth ?? null,
       });
       setSigning(false);
       await load();

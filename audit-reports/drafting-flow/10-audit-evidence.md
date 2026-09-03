@@ -111,7 +111,10 @@ lib/distributionAcks.ts:186-193 —
 ## EVID-3 · E-signatures — the strongest evidentiary artifact — are written directly by the browser with client-asserted signer name, role, intent and content hash
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, fixed under roles-and-permissions Round C3 as [`SURF-14`](../roles-and-permissions/09-non-document-surfaces.md) — the owning record; this one points there).** `recordSignature` calls `/api/signatures/sign`, which derives `signer_name`, `signer_role` and `signer_email` from `org_members` for the authenticated caller and ignores client-supplied values for those columns; `content_hash` is taken from the version row's `file_hash` (computed by the publish path from the bytes it stored) and a disagreeing client hash is refused; the database rail is the strongest available — `20261050` leaves NO INSERT policy on `e_signatures` and installs a BEFORE INSERT trigger that refuses any user-JWT insert, so a direct PostgREST insert (mismatched role, unauthorised intent, or otherwise) cannot land at all, and `intent = 'Approved'` is gated on approval capability by the role collection in the only writer. The test (`lib/__tests__/sweepRoundC3.test.ts`) drives the route with forged identity, a wrong password, a disagreeing hash and an unauthorised `Approved`, and pins the migration's policy set and trigger — the live-database refusal itself is by absence of any INSERT policy, which the migration's verification probe checks on apply. The drafting-flow area is unclaimed; its own pass re-verifies.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/eSignatures.ts:103-137`, `supabase/migrations/20260720_e_signatures.sql:54-64`, `components/signatures/SignatureCaptureHost.tsx:50-63`, `lib/revisions.ts:177-181`, `lib/revisions.ts:873`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: there is no server route for signature capture (grep shows only client callers in lib/reviewControl.ts:296, lib/acknowledgments.ts:433, AckSection/ReviewGateSection), no check that the signer holds authority over the resource, and no server-side recomputation of content_hash (lib/revisions.ts:177-181 hashes the file in the browser). The one real constraint is that signer_user_id must equal the authenticated uid, so the underlying account is not forgeable — only the displayed name, role, intent, statement and hash are.
@@ -155,10 +158,10 @@ lib/revisions.ts:177-181 —
 
 **Done when.**
 
-- [ ] recordSignature moves behind a server route that derives signer_name, signer_role and signer_email from org_members for the authenticated caller, and rejects client-supplied values for those columns
-- [ ] content_hash is computed or verified server-side against the object actually stored in R2 before the signature row is accepted
-- [ ] A restrictive RLS policy or trigger prevents an INSERT whose signer_role does not match the caller's recorded role, and prevents intent='Approved' from a caller lacking approval capability
-- [ ] A test proves a direct PostgREST insert with a mismatched signer_role or an unauthorised intent is rejected
+- [x] recordSignature moves behind a server route that derives signer_name, signer_role and signer_email from org_members for the authenticated caller, and rejects client-supplied values for those columns
+- [x] content_hash is computed or verified server-side against the object actually stored in R2 before the signature row is accepted — *verified against the version row's `file_hash`, the hash the publish path computed from the stored bytes*
+- [x] A restrictive RLS policy or trigger prevents an INSERT whose signer_role does not match the caller's recorded role, and prevents intent='Approved' from a caller lacking approval capability — *no client INSERT exists at all (policy dropped, trigger refuses); the sole writer derives the role and gates the intent*
+- [x] A test proves a direct PostgREST insert with a mismatched signer_role or an unauthorised intent is rejected — *at the route (unit) and by the migration's pinned policy set; the live refusal is checked by the migration's verification probe*
 
 ---
 

@@ -296,7 +296,10 @@ lib/reviewControl.ts:224 filters notifications but not rows; :128-131 expandRevi
 ## RG-9 · Signing re-authentication is advisory only — it is client-side, leaves no record on the signature, and defaults to satisfied when the session cannot be read
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, fixed under roles-and-permissions Round C3 as [`SURF-14`](../roles-and-permissions/09-non-document-surfaces.md) — the owning record; this one points there).** Signature capture goes through `/api/signatures/sign`, which re-verifies the credential (password probed against Supabase Auth; SSO freshness read from the token's user record) and writes the `e_signatures` row itself; `reauth_method` / `reauth_at` are set server-side (`20261050`) and the signature panel renders them; `signer_name` is the member's `display_name` from `org_members` resolved server-side (email local part only as the fallback for a member who never set one), and the ceremony's typed-name check compares against that same display name. The "defaults to satisfied when the session cannot be read" branch is gone: the browser decides only which field to show; the server refuses when it cannot verify.
+
 - **Verification:** CONFIRMED
 - **Locations:** `lib/eSignatures.ts:48-90`, `lib/eSignatures.ts:103-137`, `components/signatures/SignatureCeremony.tsx:61-66`, `components/signatures/SignatureCeremony.tsx:74-88`, `supabase/migrations/20260720_e_signatures.sql:26-38`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The comment's own claim in the file header (lib/eSignatures.ts:48-52) is not enforced anywhere server-side: the RLS INSERT policy (20260720_e_signatures.sql:55-60) checks only `signer_user_id = auth.uid()` plus active membership, so any code holding the session — including the other two callers, components/signatures/SignatureCaptureHost.tsx:50 and lib/acknowledgments.ts:429 — reaches recordSignature without passing through the ceremony. The 'defaults to satisfied' and 'no record on the signature' halves are both literally true.
@@ -315,9 +318,9 @@ components/signatures/SignatureCeremony.tsx:61-65 for identityReady including th
 
 **Done when.**
 
-- [ ] Signature capture goes through a server route that re-verifies the credential (or a fresh-session claim) and writes the e_signatures row itself
-- [ ] e_signatures records reauth_method and reauth_at, set server-side, and the signature panel renders them
-- [ ] signer_name is the member's display_name from org_members, resolved server-side, not the email local part; the typed-name check compares against that
+- [x] Signature capture goes through a server route that re-verifies the credential (or a fresh-session claim) and writes the e_signatures row itself
+- [x] e_signatures records reauth_method and reauth_at, set server-side, and the signature panel renders them
+- [x] signer_name is the member's display_name from org_members, resolved server-side, not the email local part; the typed-name check compares against that
 
 ---
 

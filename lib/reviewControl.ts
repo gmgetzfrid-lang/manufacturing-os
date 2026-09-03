@@ -17,7 +17,7 @@
 import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
-import { recordSignature } from "@/lib/eSignatures";
+import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers } from "@/lib/ownership";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
@@ -309,6 +309,8 @@ export async function recordReviewSignoff(input: {
   orgId: string; documentId: string; libraryId: string; versionId: string; revisionLabel: string; contentHash?: string | null;
   signoffId: string; signerUserId: string; signerName: string; signerRole?: string | null; signerEmail?: string | null;
   statement: string; signatureImage?: string | null;
+  /** SURF-14: the re-authentication the ceremony collected — verified by the signing route. */
+  reauth?: SigningCredential | null;
 }): Promise<void> {
   const sig = await recordSignature({
     orgId: input.orgId, resourceType: "document_version", resourceId: input.versionId,
@@ -317,6 +319,7 @@ export async function recordReviewSignoff(input: {
     signerUserId: input.signerUserId, signerName: input.signerName,
     signerRole: input.signerRole ?? undefined, signerEmail: input.signerEmail ?? undefined,
     signatureImage: input.signatureImage ?? undefined,
+    reauth: input.reauth ?? null,
   });
   const nowIso = new Date().toISOString();
   // Pin the write to the signer's OWN roster row and check the result (RG-2):

@@ -103,7 +103,7 @@ const SKIP_TABLES: Record<string, string> = {
 // immutable, so an import would mint signatures, acknowledgments and audit
 // history the people named never made. They stay in the backup for review.
 export const IMMUTABLE_TABLES: Record<string, string> = {
-  e_signatures: "e-signatures are minted only by the signer's own ceremony",
+  e_signatures: "e-signatures are minted only by the signing ceremony's server route, after re-authentication",
   audit_logs: "the audit trail is append-only — restored history would be indistinguishable from real",
   drawing_audit_logs: "drawing audit completions are written only by the reviewing path",
   document_acknowledgments: "read-and-understood acknowledgments are the assignee's own act",

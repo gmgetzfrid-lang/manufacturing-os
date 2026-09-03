@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 32,
-      "OPEN": 115
+      "RESOLVED": 33,
+      "OPEN": 114
     }
   },
   "status_vocabulary": [
@@ -3204,7 +3204,7 @@
       "id": "RG-9",
       "title": "Signing re-authentication is advisory only — it is client-side, leaves no record on the signature, and defaults to satisfied when the session cannot be read",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

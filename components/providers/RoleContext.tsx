@@ -17,6 +17,8 @@ type OrgMember = {
   roles: Role[];  // additive collection
   status: "active" | "invited" | "suspended" | "inactive";
   email?: string;
+  /** RG-9: the name a signature is recorded under (org_members.display_name). */
+  displayName?: string | null;
 };
 
 // ─── Resolution budgets (SESS-2) ─────────────────────────────────────
@@ -301,6 +303,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         roles: collection,
         status: ((mem.status as string | null) ?? "inactive") as OrgMember["status"],
         email: (mem.email as string | undefined) ?? email ?? undefined,
+        displayName: ((mem.display_name as string | null | undefined) ?? "").trim() || null,
       };
       const active = nextMember.status === "active";
       setMember(nextMember);

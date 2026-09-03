@@ -25,8 +25,8 @@
       "LOW": 4
     },
     "by_status": {
-      "RESOLVED": 88,
-      "OPEN": 41,
+      "RESOLVED": 89,
+      "OPEN": 40,
       "REFUTED": 3
     }
   },
@@ -3314,7 +3314,7 @@
       "id": "SURF-14",
       "title": "Signature re-authentication is client-side only",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "compliance",

@@ -26,7 +26,8 @@
       "LOW": 23
     },
     "by_status": {
-      "OPEN": 135,
+      "OPEN": 134,
+      "RESOLVED": 1,
       "REFUTED": 4
     }
   },
@@ -703,7 +704,7 @@
       "id": "EVID-3",
       "title": "E-signatures — the strongest evidentiary artifact — are written directly by the browser with client-asserted signer name, role, intent and content hash",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

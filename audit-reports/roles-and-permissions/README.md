@@ -305,6 +305,14 @@ No migration.
 
 Migrations: `20261049` (`publish_revision` writes `related_ticket_id`; the column added idempotently) — **applied & verified live 2026-09-02** (4/4; not a widening). Round C2 fully live.
 
+### Phase 6 — severity sweep, Round C3 (2026-09-02) — the signing ceremony is the server's
+
+| Item | Outcome |
+|---|---|
+| `SURF-14` (+ document-control `RG-9`, drafting-flow `EVID-3`) | **RESOLVED** — `/api/signatures/sign` verifies the re-authentication (password probe / SSO freshness), derives signer identity from `org_members`, takes the content hash from the version row, gates `Approved` on capability, writes on the service-role key with `reauth_method` / `reauth_at`, checked audit write. The browser verifies nothing; the client INSERT policy is dropped and a trigger refuses any user-JWT insert |
+
+Migrations: `20261050` — **pending apply** (apply after the deploy that carries the route; inventory first).
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

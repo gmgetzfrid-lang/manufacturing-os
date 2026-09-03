@@ -15,7 +15,7 @@
 import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
-import { recordSignature } from "@/lib/eSignatures";
+import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
 import type { AckPolicy } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
@@ -430,6 +430,8 @@ export async function recordAcknowledgment(input: {
   contentHash?: string | null; rosterId?: string | null;
   signerUserId: string; signerName: string; signerRole?: string | null; signerEmail?: string | null;
   statement: string; signatureImage?: string | null;
+  /** SURF-14: the re-authentication the ceremony collected — verified by the signing route. */
+  reauth?: SigningCredential | null;
 }): Promise<void> {
   const sig = await recordSignature({
     orgId: input.orgId, resourceType: "document", resourceId: input.documentId,
@@ -438,6 +440,7 @@ export async function recordAcknowledgment(input: {
     signerUserId: input.signerUserId, signerName: input.signerName,
     signerRole: input.signerRole ?? undefined, signerEmail: input.signerEmail ?? undefined,
     signatureImage: input.signatureImage ?? undefined,
+    reauth: input.reauth ?? null,
   });
 
   const nowIso = new Date().toISOString();

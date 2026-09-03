@@ -14,6 +14,7 @@ import { resolveFileUrl } from "@/lib/storage";
 import { getMyTeamIds } from "@/lib/teams";
 import { useRole } from "@/components/providers/RoleContext";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
+import type { SigningCredential } from "@/lib/eSignatures";
 import {
   listDraftRoster, recordReviewSignoff, activateAlternate,
   finalizeReviewedRevision, resolveEffectiveReviewControl,
@@ -27,7 +28,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   canManage: boolean;
   onChanged?: () => void;
 }) {
-  const { uid, userEmail, activeRole, roles, hasAnyRole } = useRole();
+  const { uid, userEmail, activeRole, roles, hasAnyRole, member } = useRole();
   const [pendingVersionId, setPendingVersionId] = useState<string | null>(null);
   const [draftFileUrl, setDraftFileUrl] = useState<string | null>(null);
   const [roster, setRoster] = useState<ReviewSignoffRow[]>([]);
@@ -80,7 +81,8 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   const complete = primaries.length > 0 && signedCount >= primaries.length;
   const draftLabel = roster[0]?.revisionLabel || null;
   const mine = roster.find((r) => r.reviewerUserId === uid && r.status === "pending" && (r.slot === "primary" || r.activated));
-  const signerName = (userEmail?.split("@")[0] ?? "").trim() || "user";
+  // RG-9: the typed-name check compares against the membership display name (the server records the same).
+  const signerName = (member?.displayName ?? "").trim() || (userEmail?.split("@")[0] ?? "").trim() || "user";
   const label = doc.documentNumber || doc.title || doc.name || "this document";
 
   // Who may SEE the in-review draft: reviewers/alternates + owner/publisher +
@@ -95,7 +97,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     || (control?.draftViewerTeamIds ?? []).some((t) => myTeamIds.includes(t));
 
   // ── Actions ──
-  const doSign = async (_i: unknown, statement: string, signatureImage?: string | null) => {
+  const doSign = async (_i: unknown, statement: string, signatureImage?: string | null, reauth?: SigningCredential) => {
     if (!uid || !doc.id || !mine || !pendingVersionId) return;
     setBusy(true);
     try {
@@ -104,6 +106,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
         revisionLabel: draftLabel || "", contentHash: mine.contentHash,
         signoffId: mine.id, signerUserId: uid, signerName, signerRole: activeRole ?? null, signerEmail: userEmail ?? null,
         statement, signatureImage: signatureImage ?? null,
+        reauth: reauth ?? null,
       });
       setSigning(false); await load(); onChanged?.();
     } finally { setBusy(false); }
