@@ -303,7 +303,7 @@ No migration.
 | `LIFE-5` | **RESOLVED** — the check-in's MOC position rides into the publish; a recorded "no MOC" cannot be silently contradicted (explicit acknowledgement, written into the change log); reconcilable by `related_ticket_id` |
 | `LIFE-11` | **RESOLVED** — the hand-back is the launcher: an as-built ticket presets `issue_type: "As-Built"` visibly and overridably (`DEC-26`) |
 
-Migrations: `20261049` (`publish_revision` writes `related_ticket_id`; the column added idempotently) — **pending apply**; not a widening.
+Migrations: `20261049` (`publish_revision` writes `related_ticket_id`; the column added idempotently) — **applied & verified live 2026-09-02** (4/4; not a widening). Round C2 fully live.
 
 ### Phase 2 — database honesty (the trap phase)
 
