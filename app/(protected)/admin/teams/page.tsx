@@ -101,8 +101,8 @@ export default function AdminTeamsPage() {
     const has = teamMemberIds.includes(memberUid);
     setTeamMemberIds((prev) => has ? prev.filter((x) => x !== memberUid) : [...prev, memberUid]); // optimistic
     try {
-      if (has) await removeTeamMember(selected.id, memberUid);
-      else await addTeamMember({ teamId: selected.id, uid: memberUid, orgId: activeOrgId, addedBy: uid });
+      if (has) await removeTeamMember(selected.id, memberUid, { orgId: activeOrgId, actorId: uid, actorEmail: userEmail });
+      else await addTeamMember({ teamId: selected.id, uid: memberUid, orgId: activeOrgId, addedBy: uid, addedByEmail: userEmail });
       void refresh();
     } catch {
       setTeamMemberIds(await listTeamMembers(selected.id)); // revert on error
@@ -209,7 +209,7 @@ export default function AdminTeamsPage() {
               <>
                 <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
                   <span className="w-8 h-8 rounded-lg grid place-items-center text-white shrink-0" style={{ backgroundColor: selected.color ?? "#4f46e5" }}><UsersRound className="w-4 h-4" /></span>
-                  <input defaultValue={selected.name} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void updateTeam(selected.id, { name: e.target.value.trim() }).then(refresh); } }}
+                  <input defaultValue={selected.name} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void updateTeam(selected.id, { name: e.target.value.trim() }, activeOrgId && uid ? { orgId: activeOrgId, actorId: uid, actorEmail: userEmail } : undefined).then(refresh).catch((err) => appAlert((err as Error).message)); } }}
                     className="font-black text-[var(--color-text)] bg-transparent flex-1 outline-none" />
                   <span className="text-xs text-[var(--color-text-muted)]">{teamMemberIds.length} in team</span>
                 </div>

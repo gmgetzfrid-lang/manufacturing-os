@@ -8,8 +8,10 @@
 // server operation that touches the branch.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { buildAclIndexFromChain } from "@/lib/acl";
+import type { AccessControl } from "@/types/schema";
 
-export interface CollectionTreeRow { id: string; parent_id: string | null; name: string }
+export interface CollectionTreeRow { id: string; parent_id: string | null; name: string; acl?: AccessControl | null }
 
 export interface CollectionTree {
   byId: Map<string, CollectionTreeRow>;
@@ -96,4 +98,60 @@ export async function rebuildSubtreePaths(
     }
   }
   return ids.length;
+}
+
+/** DOCACL-4: the ACL chain a folder's index is built from — library ACL,
+ *  then each ancestor's ACL root→leaf (from the LIVE tree, not path_ids),
+ *  then the folder's own. */
+export function folderAclChain(tree: CollectionTree, libraryAcl: AccessControl | null | undefined, id: string): Array<AccessControl | undefined> {
+  const lineage: Array<AccessControl | undefined> = [];
+  let cur = tree.byId.get(id);
+  for (let hops = 0; cur && hops < 200; hops++) {
+    lineage.unshift(cur.acl ?? undefined);
+    cur = cur.parent_id ? tree.byId.get(cur.parent_id) : undefined;
+  }
+  return [libraryAcl ?? undefined, ...lineage];
+}
+
+/** DOCACL-4: after a re-parent, the moved subtree's inherited grants change —
+ *  rewrite `acl_index` for every folder in the subtree AND every document in
+ *  those folders from the live chain, expiry-aware, in the same request. The
+ *  nightly rebuild remains the backstop; this closes the ≤24 h window in
+ *  which the database enforced the OLD chain. Fails loudly on a write error. */
+export async function rebuildSubtreeAclIndex(
+  admin: SupabaseClient,
+  tree: CollectionTree,
+  libraryAcl: AccessControl | null | undefined,
+  rootIds: string[],
+  nowMs: number,
+): Promise<{ folders: number; documents: number }> {
+  const ids = subtreeIds(tree, rootIds);
+  let folders = 0, documents = 0;
+  for (let i = 0; i < ids.length; i += 25) {
+    const chunk = ids.slice(i, i + 25);
+    const results = await Promise.all(chunk.map((id) => {
+      if (!tree.byId.get(id)) return Promise.resolve({ error: null });
+      const next = buildAclIndexFromChain(folderAclChain(tree, libraryAcl, id), nowMs);
+      return admin.from("collections").update({ acl_index: next }).eq("id", id);
+    }));
+    const failed = results.find((r) => (r as { error: { message: string } | null }).error);
+    if (failed) throw new Error(`Couldn't rewrite subtree acl_index: ${(failed as { error: { message: string } }).error.message}`);
+    folders += chunk.length;
+  }
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await admin.from("documents").select("id, collection_id, acl").in("collection_id", ids.slice(i, i + 200)).limit(5000);
+    if (error) throw new Error(`Couldn't load subtree documents: ${error.message}`);
+    const docs = (data ?? []) as Array<{ id: string; collection_id: string; acl: AccessControl | null }>;
+    for (let j = 0; j < docs.length; j += 25) {
+      const chunk = docs.slice(j, j + 25);
+      const results = await Promise.all(chunk.map((d) => {
+        const next = buildAclIndexFromChain([...folderAclChain(tree, libraryAcl, d.collection_id), d.acl ?? undefined], nowMs);
+        return admin.from("documents").update({ acl_index: next }).eq("id", d.id);
+      }));
+      const failed = results.find((r) => (r as { error: { message: string } | null }).error);
+      if (failed) throw new Error(`Couldn't rewrite document acl_index: ${(failed as { error: { message: string } }).error.message}`);
+      documents += chunk.length;
+    }
+  }
+  return { folders, documents };
 }

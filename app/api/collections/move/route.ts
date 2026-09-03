@@ -16,7 +16,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
-import { loadCollectionTree, rebuildSubtreePaths, type CollectionTreeRow } from "@/lib/serverCollections";
+import { loadCollectionTree, rebuildSubtreePaths, rebuildSubtreeAclIndex, type CollectionTreeRow } from "@/lib/serverCollections";
+import type { AccessControl } from "@/types/schema";
 
 export const runtime = "nodejs";
 
@@ -89,18 +90,35 @@ export async function POST(req: NextRequest) {
   try { subtreeSize = await rebuildSubtreePaths(supabaseAdmin, tree, [collectionId]); }
   catch (e) { pathError = (e as Error).message; }
 
+  // DOCACL-4: the inherited grants of the whole subtree just changed — rewrite
+  // acl_index (folders AND their documents) from the live chain now, not at
+  // the next nightly rebuild. Also loud-but-not-fatal: the move happened.
+  let aclCounts: { folders: number; documents: number } | null = null;
+  let aclError: string | null = null;
+  try {
+    const { data: lib } = await supabaseAdmin.from("libraries").select("acl").eq("id", libraryId).maybeSingle();
+    aclCounts = await rebuildSubtreeAclIndex(supabaseAdmin, tree, (lib?.acl as AccessControl | null) ?? null, [collectionId], Date.now());
+  } catch (e) { aclError = (e as Error).message; }
+
   await supabaseAdmin.from("audit_logs").insert({
     action: "FOLDER_MOVED",
     resource_type: "collection", resource_id: collectionId,
     org_id: orgId, user_id: user.id, user_email: user.email ?? null,
-    details: { name: nodeRow.name, newParentId, subtreeSize, ...(pathError ? { pathRebuildError: pathError } : {}) },
+    details: {
+      name: nodeRow.name, newParentId, subtreeSize,
+      ...(aclCounts ? { aclIndexRewritten: aclCounts } : {}),
+      ...(pathError ? { pathRebuildError: pathError } : {}),
+      ...(aclError ? { aclIndexError: aclError } : {}),
+    },
   }).then(() => undefined, () => undefined);
 
+  const warnings: string[] = [];
+  if (pathError) warnings.push(`breadcrumb paths for its subtree couldn't all be rewritten (${pathError}) — they self-correct on the next move or rename`);
+  if (aclError) warnings.push(`inherited permissions for its subtree couldn't all be re-indexed (${aclError}) — the nightly rebuild will repair them; until then the old inheritance is enforced`);
   return NextResponse.json({
     ok: true,
     subtreeSize,
-    ...(pathError
-      ? { warning: `The folder moved, but breadcrumb paths for its subtree couldn't all be rewritten (${pathError}). They'll self-correct on the next move or rename.` }
-      : {}),
+    ...(aclCounts ? { aclIndexRewritten: aclCounts } : {}),
+    ...(warnings.length ? { warning: `The folder moved, but ${warnings.join("; ")}.` } : {}),
   });
 }

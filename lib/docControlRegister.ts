@@ -117,9 +117,14 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     supabase.from("distribution_acks").select("document_id, version_id").eq("org_id", orgId).is("acknowledged_at", null),
     // GAP-5 / OWN-12: only ACTIVE members can be effective owners — a departed
     // owner's documents show as UNOWNED here (the actionable signal).
-    supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active"),
+    supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).eq("status", "active"),
   ]);
   const activeUids = new Set((activeRows ?? []).map((r) => (r as { uid: string }).uid));
+  // DEL-8: the owner's CURRENT name, never the owner_name snapshot.
+  const activeName = new Map((activeRows ?? []).map((r) => {
+    const m = r as { uid: string; display_name?: string | null; email?: string | null };
+    return [m.uid, m.display_name || m.email || null] as const;
+  }));
   // DIST-4: count only obligations that still bind — a pending ack on a
   // NON-CURRENT version is an orphan (the recipient's confirm bar is
   // version-scoped and can never clear it), and counting it inflated the
@@ -185,7 +190,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       status: (d.status as string | null) ?? null,
       rev: (d.rev as string | null) ?? null,
       updatedAt: (d.updated_at as string | null) ?? null,
-      ownerName: owner.name,
+      ownerName: owner.userId ? (activeName.get(owner.userId) ?? owner.name ?? "assigned member") : null,
       ownerUserId: owner.userId,
       owned: !!owner.userId,
       nextReviewDate,
@@ -239,10 +244,13 @@ function csvCell(v: string | number | null | undefined): string {
 
 /** The master register as CSV — the artifact an auditor asks to be handed. */
 export function registerToCsv(rows: RegisterRow[]): string {
-  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Origin", "Effective", "Next review", "Review status", "Ack", "Distribution unconfirmed", "In review", "Retain until", "Legal hold", "Disposition"];
+  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Owner status", "Origin", "Effective", "Next review", "Review status", "Ack", "Distribution unconfirmed", "In review", "Retain until", "Legal hold", "Disposition"];
   const lines = rows.map((r) => [
     r.number, r.title, r.libraryName, r.rev ?? "", r.status ?? "",
-    r.ownerName ?? "Admin/DocCtrl",
+    // DEL-8: branch on the id, not the name — an owned-but-unnamed row never
+    // prints as if it fell to the controllers (same line as ownershipRegisterToCsv).
+    r.ownerUserId ? (r.ownerName || "assigned member") : "— (falls to Admin/DocCtrl)",
+    r.ownerUserId ? "active owner" : "unowned — falls to Admin/DocCtrl",
     r.originLabel,
     r.effectiveDate ? `${r.effectiveDate}${r.effectivePending ? " (pending)" : ""}` : "",
     r.nextReviewDate ?? "",

@@ -42,7 +42,7 @@ const ROWS: Row[] = [
   { area: "Reviews", cap: "Auto-publish as last review signer", m: "yycccccc----", cond: "Signer must also hold publish authority" },
   { area: "Reviews", cap: "Acknowledge read-&-understood", m: "cccccccccccc", cond: "Only your own assignment row" },
   { area: "Reviews", cap: "Retention, disposition & purge", m: "yy----------" },
-  { area: "Reviews", cap: "Access recertification reviews", m: "yy----------", warn: "Owners are notified when a recert is due, but only Admin/DocCtrl can open the recertification flow — the owner path is a known gap." },
+  { area: "Reviews", cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner" },
   // ── Drafting requests ──
   { area: "Requests", cap: "Create a drafting request", m: "yyyyyyyyyy--" },
   { area: "Requests", cap: "Initial engineering approval / reject", m: "y-yy-y------" },

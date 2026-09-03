@@ -68,7 +68,7 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
 ];
 
 export default function AdminUsersPage() {
-  const { activeRole, activeOrgId, uid, userEmail } = useRole();
+  const { activeRole, activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const userEmailForAudit = userEmail ?? null;
 
   const [members, setMembers] = useState<MemberRow[]>([]);
@@ -77,7 +77,12 @@ export default function AdminUsersPage() {
   // Pending access requests for THIS org (EGRESS-5 / DEC-19). The SELECT policy
   // is Admin-only, so the card renders only for Admins — a Manager would see a
   // permanently empty list.
-  const isAdmin = activeRole === 'Admin';
+  // SURF-16 / DEC-2: every gate on this page reads the role COLLECTION and
+  // matches the server rule it fronts — create-user is Admin|DocCtrl (the
+  // route), suspend/restore is Admin|Manager and remove is Admin (revoke_member).
+  const isAdmin = hasAnyRole(['Admin']);
+  const canAddMember = hasAnyRole(['Admin', 'DocCtrl']);
+  const canManageMembership = hasAnyRole(['Admin', 'Manager']);
   const [pendingRequests, setPendingRequests] = useState<Array<{ id: string; display_name: string; email: string; created_at: string }>>([]);
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -337,7 +342,7 @@ export default function AdminUsersPage() {
     }
   };
 
-  if (!['Admin', 'Manager'].includes(activeRole)) {
+  if (!hasAnyRole(['Admin', 'Manager', 'DocCtrl'])) {
     return <div className="p-8 text-red-600">Access Denied. Admins Only.</div>;
   }
 
@@ -355,10 +360,12 @@ export default function AdminUsersPage() {
           </span>
         }
         actions={
-          <Button onClick={() => setIsModalOpen(true)}>
-            <UserPlus className="w-4 h-4" />
-            Add Team Member
-          </Button>
+          canAddMember ? (
+            <Button onClick={() => setIsModalOpen(true)}>
+              <UserPlus className="w-4 h-4" />
+              Add Team Member
+            </Button>
+          ) : undefined
         }
       />
 
@@ -476,8 +483,8 @@ export default function AdminUsersPage() {
                             <button
                               type="button"
                               onClick={() => handleSuspendMember(m)}
-                              disabled={removingId === m.id || (!!uid && m.uid === uid)}
-                              title={!!uid && m.uid === uid ? "You can't suspend yourself" : 'Suspend (keeps the record; restorable)'}
+                              disabled={removingId === m.id || (!!uid && m.uid === uid) || !canManageMembership}
+                              title={!canManageMembership ? 'Only an Admin or Manager can suspend a member' : !!uid && m.uid === uid ? "You can't suspend yourself" : 'Suspend (keeps the record; restorable)'}
                               className="px-2 py-1 rounded text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-amber-400 hover:text-amber-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                               Suspend
@@ -486,7 +493,7 @@ export default function AdminUsersPage() {
                             <button
                               type="button"
                               onClick={() => handleRestoreMember(m)}
-                              disabled={removingId === m.id}
+                              disabled={removingId === m.id || !canManageMembership}
                               title="Restore access"
                               className="px-2 py-1 rounded text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-emerald-400 hover:text-emerald-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             >
@@ -496,7 +503,7 @@ export default function AdminUsersPage() {
                           <button
                             type="button"
                             onClick={() => handleRemoveMember(m)}
-                            disabled={removingId === m.id || (!!uid && m.uid === uid)}
+                            disabled={removingId === m.id || (!!uid && m.uid === uid) || !isAdmin}
                             title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace (clears what they own)'}
                             className="text-[var(--color-text-faint)] hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                           >

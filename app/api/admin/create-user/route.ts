@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ALL_ROLES, type Role } from "@/types/schema";
 import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
+import { assertOrgHasAccess } from "@/lib/serverAuth";
 
 // Bounded lookup of auth users by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -114,6 +115,18 @@ export async function POST(req: NextRequest) {
   ]);
   if (!callerMember || !(callerHeld.has("Admin") || callerHeld.has("DocCtrl"))) {
     return NextResponse.json({ error: "Forbidden: insufficient permissions" }, { status: 403 });
+  }
+
+  // SURF-15: adding a seat is THE billable mutation — the server-side
+  // subscription gate finally has a caller. Per DEC-18 the refusal is behind
+  // SUBSCRIPTION_ENFORCE so behaviour is byte-identical until billing is
+  // switched on; off, the would-be 402 is logged, never silent.
+  const gate = await assertOrgHasAccess(supabaseAdmin, orgId);
+  if (gate) {
+    if (process.env.SUBSCRIPTION_ENFORCE === "true") {
+      return NextResponse.json({ error: gate.error }, { status: gate.status });
+    }
+    console.warn(`[create-user] subscription gate would refuse org ${orgId} (SUBSCRIPTION_ENFORCE off): ${gate.error}`);
   }
 
   // Only an Admin may grant the Admin role. Without this a DocCtrl (who can
@@ -305,6 +318,14 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: memberError.message }, { status: 500 });
   }
+
+  // SURF-16: membership creation leaves a trail (MEMBER_% rides the admin-only
+  // audit overlay from 20261045).
+  await supabaseAdmin.from("audit_logs").insert({
+    action: "MEMBER_CREATED", resource_type: "member", resource_id: userId, org_id: orgId,
+    user_id: caller.id, user_email: caller.email ?? null,
+    details: { memberEmail: email, role, createdNewUser },
+  }).then(() => undefined, () => undefined);
 
   // Seed the additive role collection to match the headline role. Best-effort:
   // if the `roles` column isn't present yet (pre-migration), this no-ops and

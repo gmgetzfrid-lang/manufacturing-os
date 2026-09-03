@@ -650,7 +650,11 @@ server-side before inserting, and the direct client INSERT path is closed.
 ## SURF-15 · `assertOrgHasAccess` has zero callers — subscription enforcement is client-only
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A3).** `assertOrgHasAccess` has its caller: `/api/admin/create-user` — the billable seat mutation — consults it after the authority check. Per `DEC-18` the refusal (402) is behind `SUBSCRIPTION_ENFORCE=true`; with the flag off the would-be refusal is logged, so behaviour is byte-identical today and never silent. Data-export routes stay deliberately ungated.
+- Files: `app/api/admin/create-user/route.ts`. Tests: `lib/__tests__/sweepRoundA3.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** business-logic
 - **Locations:**
@@ -684,6 +688,10 @@ anyone enables it.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+
+**Partial (2026-09-02, Phase 6 severity sweep, Round A3 — the app half).** Three of the five legs were already closed by Phase 6 (`my_team_ids` active join, `owner_team_id` FK, audited supervisor change/delete). Now: `createTeam`, `updateTeam`, `addTeamMember`, `removeTeamMember` write `TEAM_CREATED` / `TEAM_UPDATED` / `TEAM_MEMBER_ADDED` / `TEAM_MEMBER_REMOVED` (update and remove are checked writes, so a refusal never leaves a phantom audit row; `TEAM_%` already rides the admin-only audit overlay); `/api/admin/create-user` writes `MEMBER_CREATED`; the members page's gates read the role collection and match the routes they front (page: Admin|Manager|DocCtrl; add: Admin|DocCtrl like the route; suspend/restore: Admin|Manager and remove: Admin like `revoke_member`). Remaining (DB half, next migration round): `teams_admin_write` / `team_members_admin_write` still read the headline `role` — they become `caller_holds_any_role(org_id, ARRAY['Admin','Manager'])` with the `ADD-4` rewrite.
+- Files: `lib/teams.ts`, `app/(protected)/admin/teams/page.tsx`, `app/api/admin/create-user/route.ts`, `app/(protected)/admin/users/page.tsx`. Tests: `lib/__tests__/sweepRoundA3.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / ux
 - **Locations:**

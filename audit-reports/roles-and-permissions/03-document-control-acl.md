@@ -193,7 +193,12 @@ you described.
 ## DOCACL-4 · `acl_index` is denormalized and must be rebuilt by the writer — nothing verifies it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A3).** The nightly rebuild (`lib/aclIndexRebuild.ts`, Phase 6) made drift detectable and repaired within 24 h; this round closes the synchronous half. (1) `/api/collections/move` rewrites `acl_index` for the moved subtree — every folder and every document in it — from the LIVE chain, expiry-aware, in the same request (`rebuildSubtreeAclIndex`; the audit row and the response carry the counts, and a failure is reported, never hidden — "until then the old inheritance is enforced"). (2) `createFolder` indexes library → ancestors → parent → self (`buildNewFolderIndex`), so a folder born under a restricted parent no longer indexes as if it had none. (3) With `OWN-7`, every save-time build is expiry-aware. The DB-trigger option in the remediation is recorded as not built: the synchronous rewrite on the one path that changes inheritance plus the nightly repair loop cover the invariant without a trigger that would have to re-derive chains in SQL.
+- Done-when: (1) ✓ a move no longer leaves descendants on the old chain; (2) ✓ creation-time indexes match a rebuild; (3) ✓ drift is detectable (rebuild counts).
+- Files: `lib/serverCollections.ts`, `app/api/collections/move/route.ts`, `lib/libraryCollections.ts`. Tests: `lib/__tests__/sweepRoundA3.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / data-integrity
 - **Locations:**
@@ -236,7 +241,12 @@ health signal.
 ## DOCACL-5 · The database collapses every action to "any allow", so read vs discover vs download is UI-only
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A3 — the centralize option).** The SQL collapse stays coarse by design (row visibility); the content boundary is now one helper: `canServeContent` in `lib/permissions.ts` serves bytes on an effective `read` or `download` — never on `discover` — for private/hidden nodes, with the same controller and effective-owner short-circuits as `canDiscover`, and leaves normal nodes default-open. `/api/storage/download-url` (the only byte-serving route that used `canDiscover`) now calls it; its explicit download-deny re-check stays as defence in depth. A test proves a discover-only grantee of a private node can see it exists and is refused the bytes.
+- Done-when: ✓ read vs discover vs download are distinguished where content is served.
+- Files: `lib/permissions.ts`, `app/api/storage/download-url/route.ts`. Tests: `lib/__tests__/sweepRoundA3.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**

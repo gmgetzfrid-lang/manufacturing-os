@@ -251,6 +251,17 @@ Round A is the no-migration set.
 | `LIFE-11` | **partial** — `presetIssueType` seam in RevUpModal; the as-built launcher is `LIFE-1`/`DEC-22` |
 | `LIFE-6` | **partial** — `outcome_ref.holdId` written; origin column + close gate ship with the next migration |
 
+### Phase 6 — severity sweep, Round A3 (2026-09-02) — remaining no-migration MEDIUMs
+
+| Item | Outcome |
+|---|---|
+| `DOCACL-4` | **RESOLVED** — a move re-indexes its subtree (folders + documents) from the live chain; folders are born chain-indexed |
+| `DOCACL-5` | **RESOLVED** — `canServeContent`: bytes on read/download, never discover; the download route uses it |
+| `DEL-6` | **RESOLVED** — the library owner can open the recertification flow |
+| `DEL-8` | **RESOLVED** — the register resolves live owner names and an explicit Owner status column |
+| `SURF-15` | **RESOLVED** — the subscription gate has its caller (create-user), refusal behind `SUBSCRIPTION_ENFORCE` |
+| `SURF-16` | **partial** — audited, checked team writes + `MEMBER_CREATED`; members page gates reconciled; team policies by collection ship with `ADD-4` |
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

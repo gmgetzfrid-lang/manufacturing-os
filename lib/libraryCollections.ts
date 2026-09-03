@@ -2,7 +2,7 @@
 // Supabase implementation — replaces Firestore version
 
 import { supabase } from "@/lib/supabase";
-import { buildAclIndex } from "@/lib/acl";
+import { buildAclIndex, buildAclIndexFromChain } from "@/lib/acl";
 import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig, LibraryHomeConfig } from "@/types/schema";
 
 const TABLE = "collections";
@@ -74,6 +74,32 @@ function normalizePathIds(node?: LibraryCollection | null): string[] {
   return [];
 }
 
+/** The chain-resolved, expiry-aware index for a folder about to be created
+ *  under `parentId` in `libraryId` (DOCACL-4). Reads the library ACL and the
+ *  parent's ancestor ACLs once; a read failure falls back to the node's own
+ *  ACL rather than blocking creation (the nightly rebuild repairs it). */
+async function buildNewFolderIndex(libraryId: string, parentId: string | null, acl?: AccessControl): Promise<AclIndex | null> {
+  const now = Date.now();
+  try {
+    const { data: lib } = await supabase.from("libraries").select("acl").eq("id", libraryId).maybeSingle();
+    const chain: Array<AccessControl | undefined> = [(lib?.acl as AccessControl | null) ?? undefined];
+    if (parentId) {
+      const parent = await getCollectionById(parentId);
+      const ancestorIds = parent?.pathIds ?? [];
+      if (ancestorIds.length) {
+        const { data: ancs } = await supabase.from("collections").select("id, acl").in("id", ancestorIds);
+        const byId = new Map((ancs ?? []).map((a) => [(a as { id: string }).id, (a as { acl: AccessControl | null }).acl ?? undefined]));
+        for (const id of ancestorIds) chain.push(byId.get(id));
+      }
+      chain.push(parent?.acl ?? undefined);
+    }
+    chain.push(acl);
+    return buildAclIndexFromChain(chain, now);
+  } catch {
+    return acl ? buildAclIndex(acl, now) : null;
+  }
+}
+
 export async function createFolder(input: CreateFolderInput): Promise<string> {
   const parentId = normalizeParentId(input.parentId);
 
@@ -92,8 +118,10 @@ export async function createFolder(input: CreateFolderInput): Promise<string> {
   const nextPathNames = [...parentPathNames, name].filter(Boolean);
   const nextPathIds = parentId ? [...parentPathIds, parentId] : [];
 
-  // OWN-7: an already-expired rule must not bake into the index at save time.
-  const aclIndex = input.acl ? buildAclIndex(input.acl, Date.now()) : null;
+  // OWN-7 / DOCACL-4: the index is what the database enforces, so it must
+  // carry the CHAIN (library → ancestors → this folder), expiry-aware — a
+  // folder born under a restricted parent must not index as if it had none.
+  const aclIndex = await buildNewFolderIndex(input.libraryId, parentId, input.acl);
 
   const { data, error } = await supabase
     .from(TABLE)

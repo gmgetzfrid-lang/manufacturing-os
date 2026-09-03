@@ -177,6 +177,33 @@ export function canDiscover(params: {
   return decision.isDiscoverable();
 }
 
+/** DOCACL-5: may this principal be handed the CONTENT (a signed URL)?
+ *  `discover` means "may know it exists" — never "may open it". Private and
+ *  hidden nodes require an effective `read` or `download`; a normal node stays
+ *  default-open (the route's explicit download-deny check still applies).
+ *  Controllers and the effective owner short-circuit exactly as in canDiscover. */
+export function canServeContent(params: {
+  principal: Principal;
+  aclChain?: (AccessControl | undefined)[];
+  visibility?: NodeVisibility;
+  effectiveOwnerUserId?: string | null;
+}): boolean {
+  const { principal, aclChain = [], visibility = "normal" } = params;
+  if (isControllerPrincipal(principal)) return true;
+  if (params.effectiveOwnerUserId && principal.uid && params.effectiveOwnerUserId === principal.uid) return true;
+  if (visibility !== "hidden" && visibility !== "private") return true;
+  const decision = evaluateAclChain(aclChain, {
+    uid: principal.uid,
+    role: principal.role,
+    roles: heldRoles(principal),
+    orgId: principal.orgId,
+    teamIds: principal.teamIds,
+    isActiveMember: principal.isActiveMember,
+  });
+  if (!decision) return false;
+  return decision.can("download") || decision.can("read");
+}
+
 // canBlindDrillAccess and filterDiscoverable were removed under DEC-11: both
 // were exported with zero callers, pure, and trivially restorable from git.
 // The blind-drill capability itself lives on in lib/acl.ts (canBlindDrill)

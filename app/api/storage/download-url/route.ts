@@ -3,7 +3,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { canDiscover } from "@/lib/permissions";
+import { canServeContent } from "@/lib/permissions";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
@@ -74,7 +74,9 @@ export async function GET(req: NextRequest) {
             supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
             supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
           ]);
-          const allowed = canDiscover({
+          // DOCACL-5: a discover-only grantee may know the document exists;
+          // the bytes need read or download.
+          const allowed = canServeContent({
             principal: {
               uid: user.id,
               role: (mem?.role as Role) ?? "Viewer",

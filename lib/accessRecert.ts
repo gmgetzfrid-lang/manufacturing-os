@@ -4,6 +4,9 @@
 // access?" control. On a cadence, the library's owner / Admin / DocCtrl reviews
 // who has access (from the library ACL) and attests it's still appropriate; the
 // attestation snapshots the access list for the record and resets the clock.
+// DEL-6: the owner is notified AND can open the flow (the library page admits
+// the owner alongside controllers); the write is checked, so a refused
+// attestation surfaces instead of silently no-oping.
 
 import { supabase } from "@/lib/supabase";
 import { normalizeRoles } from "@/lib/roleCapabilities";

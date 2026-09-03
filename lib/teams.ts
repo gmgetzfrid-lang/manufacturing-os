@@ -79,17 +79,38 @@ export async function createTeam(input: {
     .select("*")
     .single();
   if (error) throw error;
-  return fromDb(data as Record<string, unknown>);
+  const team = fromDb(data as Record<string, unknown>);
+  // SURF-16: teams are ACL subjects — their creation is on the record.
+  await logAuditAction({
+    action: "TEAM_CREATED", resourceType: "team", resourceId: team.id, orgId: input.orgId,
+    userId: input.createdBy, details: { name: input.name },
+  }).catch(() => { /* audit is best-effort */ });
+  return team;
 }
 
-export async function updateTeam(teamId: string, patch: { name?: string; description?: string; color?: string; supervisorUserId?: string | null }): Promise<void> {
+/** Actor context for audited team writes (SURF-16). */
+export interface TeamActorCtx { orgId: string; actorId: string; actorEmail?: string | null }
+
+export async function updateTeam(
+  teamId: string,
+  patch: { name?: string; description?: string; color?: string; supervisorUserId?: string | null },
+  ctx?: TeamActorCtx,
+): Promise<void> {
   const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.name !== undefined) row.name = patch.name;
   if (patch.description !== undefined) row.description = patch.description;
   if (patch.color !== undefined) row.color = patch.color;
   if (patch.supervisorUserId !== undefined) row.supervisor_user_id = patch.supervisorUserId;
-  const { error } = await supabase.from("teams").update(row).eq("id", teamId);
+  // Checked write: a refused update (RLS) is an error, not a phantom audit row.
+  const { data, error } = await supabase.from("teams").update(row).eq("id", teamId).select("id");
   if (error) throw error;
+  if (!data || data.length === 0) throw new Error("The team could not be updated (not found or not permitted).");
+  if (ctx) {
+    await logAuditAction({
+      action: "TEAM_UPDATED", resourceType: "team", resourceId: teamId, orgId: ctx.orgId,
+      userId: ctx.actorId, userEmail: ctx.actorEmail ?? undefined, details: { patch },
+    }).catch(() => { /* audit is best-effort */ });
+  }
 }
 
 /** DEC-9 fix 2 + 3: change a team's supervisor with an audit row naming both
@@ -181,16 +202,29 @@ export async function listTeamMembers(teamId: string): Promise<string[]> {
   return (data ?? []).map((r) => (r as { uid: string }).uid);
 }
 
-export async function addTeamMember(input: { teamId: string; uid: string; orgId: string; addedBy: string }): Promise<void> {
+export async function addTeamMember(input: { teamId: string; uid: string; orgId: string; addedBy: string; addedByEmail?: string | null }): Promise<void> {
   const { error } = await supabase.from("team_members").insert({
     team_id: input.teamId, uid: input.uid, org_id: input.orgId, added_by: input.addedBy,
   });
   if (error) throw error;
+  // SURF-16: joining a team silently widens every team-subject grant — record it.
+  await logAuditAction({
+    action: "TEAM_MEMBER_ADDED", resourceType: "team", resourceId: input.teamId, orgId: input.orgId,
+    userId: input.addedBy, userEmail: input.addedByEmail ?? undefined, details: { memberUid: input.uid },
+  }).catch(() => { /* audit is best-effort */ });
 }
 
-export async function removeTeamMember(teamId: string, uid: string): Promise<void> {
-  const { error } = await supabase.from("team_members").delete().eq("team_id", teamId).eq("uid", uid);
+export async function removeTeamMember(teamId: string, uid: string, ctx?: TeamActorCtx): Promise<void> {
+  // Checked delete: zero rows means refused or already gone — say so.
+  const { data, error } = await supabase.from("team_members").delete().eq("team_id", teamId).eq("uid", uid).select("uid");
   if (error) throw error;
+  if (!data || data.length === 0) throw new Error("The member could not be removed from the team (not found or not permitted).");
+  if (ctx) {
+    await logAuditAction({
+      action: "TEAM_MEMBER_REMOVED", resourceType: "team", resourceId: teamId, orgId: ctx.orgId,
+      userId: ctx.actorId, userEmail: ctx.actorEmail ?? undefined, details: { memberUid: uid },
+    }).catch(() => { /* audit is best-effort */ });
+  }
 }
 
 /** Team ids the given user belongs to — used to populate the ACL principal. */

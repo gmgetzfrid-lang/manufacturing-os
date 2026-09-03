@@ -2913,6 +2913,8 @@ export default function LibraryExplorerPage() {
 
   // OWN-3: controller tier follows the full role collection, not the headline.
   const isController = hasAnyRole(["Admin", "DocCtrl"]);
+  // DEL-6: the library's owner is told to recertify access — they can.
+  const isLibraryOwner = !!uid && !!library?.ownerUserId && library.ownerUserId === uid;
   // DEL-1 / GAP-3: the Permissions drawer's authority is controller, OR the
   // node's effective owner, OR a managePermissions/admin grant on its chain
   // (canWithAclChain mirrors the DB's can_manage_node). Owners edit in
@@ -3439,7 +3441,7 @@ export default function LibraryExplorerPage() {
                     <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Recently deleted…
                   </button>
                 )}
-                {isController && (
+                {(isController || isLibraryOwner) && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); setRecertOpen(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"

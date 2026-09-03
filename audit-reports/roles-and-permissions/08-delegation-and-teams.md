@@ -350,7 +350,12 @@ decision rather than an invisible gap.
 ## DEL-6 · Owners are told to recertify library access and cannot
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A3).** The library owner can now open the recertification flow the notification tells them about: the library page admits `isController || isLibraryOwner` to the "Access recertification" action, the module header says so, and the permissions explorer's matrix reads "If library owner" instead of the known-gap warning. The attestation write was already a checked `libraries` update (it throws on refusal), and `libraries` UPDATE is admitted for members today — if a later round narrows it, the owner arm must be added there (mirror `collections_update_controllers`).
+- Done-when: ✓ an owner told to recertify can; ✓ the matrix is honest.
+- Files: `app/(protected)/documents/[libraryId]/page.tsx`, `lib/accessRecert.ts`, `components/permissions/PermissionsExplorer.tsx`. Tests: `lib/__tests__/sweepRoundA3.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / ux
 - **Locations:**
@@ -435,7 +440,12 @@ fix with no dependencies.
 ## DEL-8 · `owner_name` is a denormalized snapshot that drifts, and is the only thing most surfaces render
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A3 — in the register, not with a trigger).** The register loader already read active members; it now reads their current `display_name`/`email` and resolves the owner column from the owner's id (`activeName`), falling back to the snapshot and finally "assigned member" — never printing an owned row as unowned. The CSV branches on the id (the exact line `ownershipRegisterToCsv` already had) and gains an "Owner status" column (`active owner` / `unowned — falls to Admin/DocCtrl`); with `GAP-5` a departed owner already resolves to unowned. Search-by-current-name works because `ownerName` is live.
+- Done-when: (1) ✓ live names; (2) ✓ owned-but-unnamed never looks unowned; (3) ✓ status column. Residual: the remaining `owner_name` readers listed in the finding are display fallbacks, not authority — left as-is.
+- Files: `lib/docControlRegister.ts`. Tests: `lib/__tests__/sweepRoundA3.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / compliance
 - **Locations:**
