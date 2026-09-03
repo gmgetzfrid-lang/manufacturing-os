@@ -255,7 +255,7 @@ with no signal. The four fixes below are the whole of the work.
 - **Status:** RESOLVED
 
 **Resolution (2026-09-02, Phase 6 severity sweep, Round B).** The half that was still open — the supervisor swap, the actual authority transfer — is a controller act at both layers: `teams_guard_supervisor_change` (BEFORE UPDATE on `teams`) refuses a `supervisor_user_id` change by anyone who is not an Admin/DocCtrl by collection, and the teams page disables the supervisor select, the outside-team override and the library-ownership chips for non-controllers with the reason. A Manager keeps team name / colour / roster (the `teams` policies, now by collection).
-- Migration: `20261046` — **printed for operator paste; pending apply** (12-point verification; 5-line inventory recorded BEFORE apply — the rewrite widens where an additively held Admin/Manager/DocCtrl/Supervisor was read by headline alone).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+- Migration: `20261046` — **applied & verified live 2026-09-02** (12-point probe all true; inventory recorded BEFORE apply: 0 additive holders under a lower headline, 0 empty / 0 headline-missing / 0 mis-ranked collections, 0 terminal-status documents).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
 
 - **Verification:** CONFIRMED
 - **Blast radius:** security
@@ -499,7 +499,7 @@ correctly does and `RoleModelTree` incorrectly does not.
 - **Status:** RESOLVED
 
 **Resolution (2026-09-02, Phase 6 severity sweep, Round B — the sharpest case was `DEC-7`, Phase 3b/5; this is the consolidation).** `user_is_effective_owner` is granted to `authenticated`, and `isEffectiveOwnerOfDocument` — the check behind every client publish/manage decision — asks it via RPC, so the app and the guard evaluate the same cascade with the same (definer) visibility; a folder rung the caller cannot read is never skipped. The client resolver remains only as the pre-migration fallback. Residual: the register's per-row owner column still resolves client-side under the viewer's RLS (per-viewer for private folders); a definer set-returning helper is the next step if that matters to an auditor.
-- Migration: `20261046` — **printed for operator paste; pending apply** (12-point verification; 5-line inventory recorded BEFORE apply — the rewrite widens where an additively held Admin/Manager/DocCtrl/Supervisor was read by headline alone).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+- Migration: `20261046` — **applied & verified live 2026-09-02** (12-point probe all true; inventory recorded BEFORE apply: 0 additive holders under a lower headline, 0 empty / 0 headline-missing / 0 mis-ranked collections, 0 terminal-status documents).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
 
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / compliance

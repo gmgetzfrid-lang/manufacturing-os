@@ -276,7 +276,7 @@ Round A is the no-migration set.
 | `SURF-17` / `SURF-18` | **RESOLVED** — client mail addresses same-org members only, never external; server-side transmittal route; SELECT/confined UPDATE on the queue |
 | `LIFE-6` | **RESOLVED** — hold origin column; a close cannot be silent over an open originating hold (`DEC-25`) |
 
-Migrations `20261046` → `20261047` — **pending operator paste**, one at a time, inventory BEFORE each DDL.
+Migrations: `20261046` — **applied & verified live 2026-09-02** (12/12; inventory all zero); `20261047` — **pending operator paste** (inventory BEFORE the DDL).
 
 ### Phase 2 — database honesty (the trap phase)
 
