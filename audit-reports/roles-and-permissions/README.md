@@ -285,7 +285,7 @@ Migrations: `20261046` — **applied & verified live 2026-09-02** (12/12; invent
 | `SURF-7` / `EGRESS-3` | **RESOLVED** — every orchestrator read filters through the caller's ACL principal and fails closed; `check_permissions` evaluates the real chain; controller acts by the collection; notifications in the caller's name. Closes intelligence `IEDGE-2` / `ORCH-3` (same code) |
 | `ADD-3` | **RESOLVED** — `primaryRole` labelled display / mirror only; approval routing stamps the relevant role by the collection; sign and force-close gates read the collection. Twelve headline-keyed admin affordances → Round C1b |
 
-Migrations: `20261048` (`drawing_audit_logs` INSERT / UPDATE for the controller tier by collection) — **pending apply**; widening, so the inventory is recorded first.
+Migrations: `20261048` (`drawing_audit_logs` INSERT / UPDATE for the controller tier by collection) — **applied & verified live 2026-09-02** (4/4; inventory before apply: 12 rows, 1 policy, 0 write policies, 3 controller-tier memberships). Round C1 fully live.
 
 ### Phase 2 — database honesty (the trap phase)
 
