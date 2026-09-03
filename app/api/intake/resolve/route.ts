@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { parseSourceDocument } from "@/lib/sourceDocRef";
 
 export const runtime = "nodejs";
 
@@ -146,12 +147,13 @@ export async function GET(req: NextRequest) {
       .in("status", OPEN_STATUSES)
       .limit(20);
     redlineRequests = (((tickets ?? []) as Array<Record<string, unknown>>)).map((t) => {
-      const meta = (t.metadata ?? {}) as { source_document?: { number?: string | null; title?: string | null } };
+      // LIFE-15: the parser accepts the canonical shape and every legacy one.
+      const src = parseSourceDocument((t.metadata ?? null) as Record<string, unknown> | null);
       return {
         ticketRef: String(t.id),
         ticketNumber: (t.ticket_id as string | null) ?? null,
         title: String(t.title ?? "Collision ticket"),
-        docLabel: meta.source_document?.number || meta.source_document?.title || null,
+        docLabel: src?.documentNumber || src?.title || null,
       };
     });
   } catch { /* slice empty */ }

@@ -403,6 +403,10 @@ fix with no dependencies.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+
+**Partial (2026-09-02, Phase 6 severity sweep, Round A2 — Done-when 1).** The check-in keeps the hold `openHold` returns and writes `outcome_ref.holdId` (the field `20261012` documented), remembered per card so a retry never opens a second hold; `CheckoutHistoryPanel` shows it (`LIFE-10`). Done-when 2 and 3 (the hold shows its originating ticket and vice versa; a close over an open originating hold cannot be silent — `DEC-25`) need `document_holds.origin_ticket_id` and the server-side close gate: they ship with the next migration round.
+- Files: `components/documents/CheckInPanel.tsx`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / safety
 - **Locations:**
@@ -521,7 +525,12 @@ explicitly detects and reports an empty roster.
 ## LIFE-8 · `markup_requests.shared_markup_url` is never set; `markup_ref` thread messages have no producer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A2 — the honest narrow fix the finding names).** The inbox toast no longer claims "the requester can see your markups are available"; it says the share is noted on the document's activity thread. `resolveMarkupRequest` is now a checked write (a refused update throws instead of reporting "shared") and, on `shared`, posts the `markup_ref` message `ActivityThread` already renders — with the URL when one is supplied — so the pointer the UI can back exists. `shared_markup_url` stays writable for a future producer; it grants nothing.
+- Done-when: (1) ✓ the UI stops claiming an artifact it cannot show; (2) ✓ a `markup_ref` row lands in `checkout_messages`.
+- Files: `lib/markupRequests.ts`, `app/(protected)/inbox/page.tsx`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -567,7 +576,12 @@ stop the toast claiming availability it cannot deliver.**
 ## LIFE-9 · Tickets born inside the app skip fields the portal makes mandatory
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A2).** Both in-app producers now satisfy the request form's required set: a check-in ticket carries `unit` derived from the document's own metadata (`unitOfDocumentMetadata`, the viewer hand-off's heuristic), and a collision ticket carries `unit` (from the intake sheet's metadata, best-effort), `target_completion_at` (the same SLA clock) and enrols its flagger as a watcher.
+- Done-when: (1) ✓ title/description/unit present on all three origins (`unit` may be blank when the document's metadata names none — the same blank the form would refuse, surfaced under "no unit" rather than invented); (2) ✓; (3) ✓ for documents whose metadata carries a unit.
+- Files: `components/documents/CheckInPanel.tsx`, `lib/transitionIn.ts`, `lib/sourceDocRef.ts`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / ux
 - **Locations:**
@@ -621,7 +635,12 @@ already the fallback vocabulary at `app/(protected)/requests/new/page.tsx:139-15
 ## LIFE-10 · `outcome_ref` is write-only, and the field-verification register the migration indexed has no reader
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A2).** `outcome_ref` has a reader: `CheckoutHistoryPanel` maps it on every session row, links a check-in outcome to the ticket it spawned (`/requests/{id}`, labelled by ticket number), shows "hold placed" when `holdId` is present (written since this round — `LIFE-6`), and shows the attested revision on a field-verified row. A "Last field-verified" banner reads the register (`checkout_sessions` where `outcome IN (field_verified, discrepancy)`) and states the rev, date and person — and, when a later `discrepancy` exists, that it has been superseded.
+- Done-when: (1) ✓; (2) ✓ (a later discrepancy visibly supersedes); (3) ✓.
+- Files: `components/documents/CheckoutHistoryPanel.tsx`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / compliance
 - **Locations:**
@@ -675,6 +694,10 @@ created. That is the single most useful traversal in the whole flow.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+
+**Partial (2026-09-02, Phase 6 severity sweep, Round A2 — step 1 of the fix).** `RevUpModal` accepts `presetIssueType` (+ an optional note), applies it after the remembered per-library value exactly like `presetChangeType`, and shows "Defaulted to … by the launcher — change it if that's wrong" beside the field — visible and overridable, per `DEC-26`. The launcher that KNOWS the publish is an as-built — the ticket→document hand-back (`LIFE-1` / `DEC-22`) — is what passes it; until that lands, Done-when 1 is not yet observable and this stays OPEN.
+- Files: `components/documents/RevUpModal.tsx`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / compliance
 - **Locations:**
@@ -723,7 +746,11 @@ classification is a precondition for the turnover item *"Final as-built drawings
 ## LIFE-12 · Ticket approval and document approval are two universes with no bridge and no shared vocabulary
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A2 — Done-when 1; 2 and 3 were already met by absence).** The ticket's Source Document card now loads the document's effective review control and states, before any approval, that publishing the deliverable requires reviewer sign-off (N configured reviewers) — or may route through review — and that approving the ticket does not satisfy it. No ticket action creates or satisfies a `document_review_signoffs` row (`DEC-23` deleted the only bridge; the test pins that the page never calls `recordReviewSignoff`).
+- Files: `app/(protected)/requests/[id]/page.tsx`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** process / compliance
 - **Locations:**
@@ -839,7 +866,12 @@ by a missing field, with no visible fallback on the ticket page.
 ## LIFE-14 · A check-in that fails after ticket creation orphans the ticket and leaves the checkout open
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A2).** The durable key already existed: the check-in ticket carries `metadata.checkin.episodeId`. `CheckInPanel` now looks that ticket up on mount (open status, this episode) and reuses it before ever creating one, so a check-in interrupted after ticket creation and resumed in a new component instance links to the existing ticket. The 24 h ad-hoc sweep writes `auto_released` only over a NULL `outcome` — it can no longer overwrite a human verdict.
+- Done-when: (1) ✓; (2) ✓ for the sweep path (the remaining way to leave a NULL outcome is a session close that never completes — visible in the history panel as an open session, not a false verdict).
+- Files: `components/documents/CheckInPanel.tsx`, `lib/projects.ts`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -889,7 +921,11 @@ recovery, and neither reconciles the orphaned tickets.
 ## LIFE-15 · Three producers of `metadata.source_document` write three different shapes
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 6 severity sweep, Round A2).** `buildSourceDocumentRef` in `lib/sourceDocRef.ts` is the one producer shape — `{id, document_number, title, rev}`, `null` (never `""`) for anything unknown, no `path`, and `null` without a non-empty id — and all three producers write through it (`CheckInPanel`, `requests/new`, `lib/transitionIn`). `parseSourceDocument` stays tolerant for historical rows; the strict reader in `/api/intake/resolve` now goes through the parser too (it could not read the check-in shape before). Done-when ✓: a test pins the builder↔parser round-trip and every legacy shape.
+- Files: `lib/sourceDocRef.ts`, `components/documents/CheckInPanel.tsx`, `app/(protected)/requests/new/page.tsx`, `lib/transitionIn.ts`, `app/api/intake/resolve/route.ts`. Tests: `lib/__tests__/lifeSweep2.test.ts`, `lib/__tests__/sourceDocRef.test.ts` (unchanged, still green).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness
 - **Locations:**

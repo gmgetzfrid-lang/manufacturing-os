@@ -23,12 +23,22 @@ import {
   type CheckoutEpisode,
 } from "@/lib/checkoutEpisodes";
 import { listActivity, type ActivityMessage } from "@/lib/activityThread";
+import Link from "next/link";
 
 interface CheckoutHistoryPanelProps {
   orgId: string;
   documentId: string;
   /** Live episode id — excluded from the history list. */
   activeEpisodeId?: string | null;
+}
+
+/** LIFE-10: the document's standing field-verification claim, and whether a
+ *  later discrepancy has superseded it. */
+interface FieldVerification {
+  verifiedAt: string | null;
+  rev: string | null;
+  by: string | null;
+  supersededBy: { at: string | null; by: string | null } | null;
 }
 
 interface EpisodeSessionRow {
@@ -43,6 +53,9 @@ interface EpisodeSessionRow {
   /** The check-in register entry (20261012) — what came of the checkout. */
   outcome: string | null;
   outcomeNote: string | null;
+  /** LIFE-10: what the outcome pointed at — the ticket it spawned, the hold
+   *  it placed, the revision it attested (written since 20261012, read here). */
+  outcomeRef: { ticketId?: string; ticketNumber?: string; holdId?: string; rev?: string | null; versionId?: string | null } | null;
 }
 
 /** Honest register labels. field_verified is the walkdown attestation — the
@@ -86,6 +99,30 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
   const [episodes, setEpisodes] = useState<CheckoutEpisode[]>([]);
   const [legacyCount, setLegacyCount] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null); // episode id or "__legacy__"
+  const [fieldVerification, setFieldVerification] = useState<FieldVerification | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      // select("*") stays pre-migration safe (outcome columns are 20261012).
+      const { data } = await supabase
+        .from("checkout_sessions").select("*")
+        .eq("document_id", documentId).in("outcome", ["field_verified", "discrepancy"])
+        .order("ended_at", { ascending: false }).limit(50);
+      if (!alive) return;
+      const rows = ((data ?? []) as Array<Record<string, unknown>>);
+      const last = rows.find((r) => r.outcome === "field_verified");
+      if (!last) { setFieldVerification(null); return; }
+      const lastAt = (last.ended_at as string | null) ?? null;
+      const later = rows.find((r) => r.outcome === "discrepancy" && ((r.ended_at as string | null) ?? "") > (lastAt ?? ""));
+      const ref = (last.outcome_ref as { rev?: string | null } | null) ?? null;
+      setFieldVerification({
+        verifiedAt: lastAt, rev: ref?.rev ?? null, by: (last.user_name as string | null) ?? null,
+        supersededBy: later ? { at: (later.ended_at as string | null) ?? null, by: (later.user_name as string | null) ?? null } : null,
+      });
+    })();
+    return () => { alive = false; };
+  }, [documentId]);
+
   const [detail, setDetail] = useState<EpisodeDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -149,6 +186,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
         endedAt: (r.ended_at as string | null) ?? null,
         outcome: (r.outcome as string | null) ?? null,
         outcomeNote: (r.outcome_note as string | null) ?? null,
+        outcomeRef: (r.outcome_ref as EpisodeSessionRow["outcomeRef"]) ?? null,
       }));
 
       const messages = await listActivity(orgId, documentId, { episodeId: isLegacy ? null : key });
@@ -184,6 +222,18 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
   const hasAnything = episodes.length > 0 || legacyCount > 0;
 
   return (
+    <>
+    {fieldVerification && (
+      <div className={`mb-3 rounded-lg border px-3 py-2 text-xs ${fieldVerification.supersededBy ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+        <span className="font-bold">Last field-verified</span>
+        {fieldVerification.rev ? ` against Rev ${fieldVerification.rev}` : ""}
+        {fieldVerification.verifiedAt ? ` on ${new Date(fieldVerification.verifiedAt).toLocaleDateString()}` : ""}
+        {fieldVerification.by ? ` by ${fieldVerification.by}` : ""}
+        {fieldVerification.supersededBy && (
+          <span className="font-bold"> — superseded by a field discrepancy{fieldVerification.supersededBy.by ? ` reported by ${fieldVerification.supersededBy.by}` : ""}{fieldVerification.supersededBy.at ? ` on ${new Date(fieldVerification.supersededBy.at).toLocaleDateString()}` : ""}.</span>
+        )}
+      </div>
+    )}
     <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
@@ -260,6 +310,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -295,6 +346,11 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                       return (
                         <span className={`font-bold ${oc.cls}`}> · {oc.label}
                           {s.outcomeNote && <span className="font-normal text-[var(--color-text-muted)] italic"> — &ldquo;{s.outcomeNote}&rdquo;</span>}
+                          {s.outcomeRef?.ticketId && (
+                            <Link href={`/requests/${s.outcomeRef.ticketId}`} className="font-bold text-blue-700 hover:underline"> · {s.outcomeRef.ticketNumber || "ticket"}</Link>
+                          )}
+                          {s.outcomeRef?.holdId && <span className="font-normal text-rose-700"> · hold placed</span>}
+                          {s.outcome === "field_verified" && s.outcomeRef?.rev && <span className="font-normal text-[var(--color-text-muted)]"> (Rev {s.outcomeRef.rev})</span>}
                         </span>
                       );
                     }

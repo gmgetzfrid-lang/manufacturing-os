@@ -238,6 +238,19 @@ Round A is the no-migration set.
 | `ADD-2` (HIGH) | **RESOLVED** — simulator and production share the collection-aware evaluators |
 | `DOCACL-2` (HIGH) | **RESOLVED** — default-open is said out loud in the drawer, one-click restrict, wizard default |
 
+### Phase 6 — severity sweep, Round A2 (2026-09-02) — lifecycle MEDIUMs, no migration
+
+| Item | Outcome |
+|---|---|
+| `LIFE-15` | **RESOLVED** — one canonical `source_document` shape (`buildSourceDocumentRef`), tolerant reader, intake reader fixed |
+| `LIFE-9` | **RESOLVED** — check-in and collision tickets carry unit / target date / watcher like the request form |
+| `LIFE-8` | **RESOLVED** — honest share toast; checked write; `markup_ref` posted to the document thread |
+| `LIFE-10` | **RESOLVED** — `outcome_ref` read: ticket links, hold chip, last-field-verified banner with supersession |
+| `LIFE-14` | **RESOLVED** — resume the ticket by `metadata.checkin.episodeId`; the sweep never clobbers a verdict |
+| `LIFE-12` | **RESOLVED** — the ticket shows the source document's review requirement before approval |
+| `LIFE-11` | **partial** — `presetIssueType` seam in RevUpModal; the as-built launcher is `LIFE-1`/`DEC-22` |
+| `LIFE-6` | **partial** — `outcome_ref.holdId` written; origin column + close gate ship with the next migration |
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

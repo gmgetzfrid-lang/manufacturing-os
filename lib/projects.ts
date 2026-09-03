@@ -1068,7 +1068,10 @@ export async function autoReleaseExpiredAdHoc(
       .from("checkout_sessions")
       .update({ ...basePayload, outcome: "auto_released" })
       .in("id", ids)
-      .eq("status", "active");
+      .eq("status", "active")
+      // LIFE-14: a session that already carries a human verdict keeps it —
+      // the sweep must never overwrite evidence with 'auto_released'.
+      .is("outcome", null);
     if (sweepErr) {
       const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
       if (isMissingOutcomeSchema(sweepErr)) {

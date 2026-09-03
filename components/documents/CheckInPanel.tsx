@@ -48,6 +48,7 @@ import { uploadTicketAttachment } from "@/lib/storage";
 import { openHold } from "@/lib/holds";
 import { postHandoff } from "@/lib/activityThread";
 import type { CheckoutSession, DocumentRecord, DocumentVersion } from "@/types/schema";
+import { buildSourceDocumentRef, unitOfDocumentMetadata } from "@/lib/sourceDocRef";
 
 interface CheckInPanelProps {
   document: DocumentRecord;
@@ -152,7 +153,26 @@ export default function CheckInPanel({
   // (ticket + uploads + PSM escalation, attestation audit row, owner
   // notification) are remembered per card so a transient failure in the
   // session-closing write never duplicates them on the retry click.
-  const doneRef = useRef<{ cardId: string | null; ticket?: { id: string; number: string }; attested?: boolean; notified?: boolean }>({ cardId: null });
+  const doneRef = useRef<{ cardId: string | null; ticket?: { id: string; number: string }; hold?: { id: string }; attested?: boolean; notified?: boolean }>({ cardId: null });
+  // LIFE-14: a check-in interrupted AFTER its ticket was created (the session
+  // close failed, the panel was remounted) must resume that ticket, never
+  // create a second one. The ticket carries metadata.checkin.episodeId, which
+  // is the durable key this useRef lacks.
+  const resumedTicketRef = useRef<{ id: string; number: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    resumedTicketRef.current = null;
+    if (!episode?.id || !doc.orgId) return;
+    void (async () => {
+      const { data } = await supabase
+        .from("tickets").select("id, ticket_id")
+        .eq("org_id", doc.orgId!).eq("metadata->checkin->>episodeId", episode.id)
+        .neq("status", "CLOSED").order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (!alive || !data) return;
+      resumedTicketRef.current = { id: (data as { id: string }).id, number: (data as { ticket_id: string }).ticket_id };
+    })();
+    return () => { alive = false; };
+  }, [episode?.id, doc.orgId]);
   const doneFor = (cardId: string) => {
     if (doneRef.current.cardId !== cardId) doneRef.current = { cardId };
     return doneRef.current;
@@ -241,6 +261,9 @@ export default function CheckInPanel({
       request_type: requestType,
       status: "PENDING_ASSIGNMENT",
       priority: undocumented ? 1 : 2,
+      // LIFE-9: the request form requires a unit; a check-in ticket derives it
+      // from the document's own metadata so unit-filtered queues include it.
+      unit: unitOfDocumentMetadata((doc as { metadata?: Record<string, unknown> | null }).metadata) ?? "",
       // Same SLA clock a portal request gets — check-in tickets must not be
       // the ones with no due date.
       target_completion_at: defaultSlaTargetDate(requestType),
@@ -259,7 +282,7 @@ export default function CheckInPanel({
       // metadata.source_document keeps this ticket visible to the document's
       // Impact panel (lib/impact.ts queries this exact JSON path).
       metadata: {
-        source_document: { id: doc.id, document_number: doc.documentNumber ?? null, title: doc.title ?? null, rev: doc.rev ?? null, path: null },
+        source_document: buildSourceDocumentRef({ id: doc.id, documentNumber: doc.documentNumber, title: doc.title, rev: doc.rev }),
         checkin: { episodeId: episode?.id ?? null, checkoutNumber: episode?.seq ?? null, purpose: mySession.purpose ?? null, outcome: card.outcome },
         ...(card.moc === "required" ? { moc: { status: mocStatus, number: mocStatus === "none" ? null : mocNumber.trim() || null } } : {}),
         ...(card.ticketKind === "minor" ? { minor_correction: true } : {}),
@@ -376,16 +399,18 @@ export default function CheckInPanel({
         case "draft_ticket": {
           // Idempotent: a retry after a failed session-close reuses the ticket
           // already created — never a second ticket, upload set, or PSM alert.
-          const ticket = done.ticket ?? await createDraftingTicket(selected);
+          const ticket = done.ticket ?? resumedTicketRef.current ?? await createDraftingTicket(selected);
           done.ticket = ticket;
-          if (alsoHold && selected.allowHoldOffer) {
+          if (alsoHold && selected.allowHoldOffer && !done.hold) {
             try {
-              await openHold({
+              // LIFE-6: keep the hold's id so the register entry links to it.
+              const hold = await openHold({
                 orgId: doc.orgId!, documentId: doc.id!,
                 reason: "Field Verification Needed", notes: note.trim(),
                 openedBy: currentUser.uid, openedByName: userName,
                 openedByEmail: currentUser.email ?? undefined, openedByRole: currentUser.role ?? undefined,
               });
+              if (hold.id) done.hold = { id: hold.id };
             } catch (e) {
               showToast({ type: "warning", title: "Hold not placed", message: (e as Error).message });
             }
@@ -398,7 +423,7 @@ export default function CheckInPanel({
           await finishAndRecord(
             selected.outcome,
             recordNote,
-            { ticketId: ticket.id, ticketNumber: ticket.number, ...(mocRef ? { moc: mocRef } : {}) },
+            { ticketId: ticket.id, ticketNumber: ticket.number, ...(mocRef ? { moc: mocRef } : {}), ...(done.hold ? { holdId: done.hold.id } : {}) },
             selected.outcome === "discrepancy"
               ? `${userName} reported a field discrepancy — ticket ${ticket.number}${mocStatus === "none" ? " (no MOC on record — flagged)" : mocNumber ? ` (${mocNumber.trim()})` : ""}.`
               : `${userName} requested ${selected.ticketKind === "minor" ? "a minor correction" : "a revision"} — ticket ${ticket.number}.`,

@@ -9,10 +9,11 @@
 //                         field except id may be "" (searchParams defaults)
 //   * lib/transitionIn    {id, number, title} — `number`, no rev, no path
 //
-// This helper normalizes all three so the ticket page can render one card.
-// Normalization is read-side on purpose: the stored blobs are historical
-// records and the producers stay untouched here (the divergence itself is
-// recorded as its own finding).
+// The read side normalizes all three so the ticket page renders one card —
+// historical rows keep every shape they were written in. Since LIFE-15 every
+// producer writes through `buildSourceDocumentRef` below, so new rows share
+// ONE canonical shape: {id, document_number, title, rev} with null (never "")
+// for anything unknown and no `path` (it had no consumer).
 
 export interface SourceDocRef {
   id: string;
@@ -45,6 +46,26 @@ export function parseSourceDocument(
     rev: str(r.rev),
     path: str(r.path),
   };
+}
+
+/** The ONE shape every producer writes (LIFE-15). Returns null without a
+ *  non-empty id, so a producer can never write a reference to nothing. */
+export function buildSourceDocumentRef(doc: {
+  id?: string | null; documentNumber?: string | null; title?: string | null; rev?: string | null;
+}): { id: string; document_number: string | null; title: string | null; rev: string | null } | null {
+  const id = str(doc.id);
+  if (!id) return null;
+  return { id, document_number: str(doc.documentNumber), title: str(doc.title), rev: str(doc.rev) };
+}
+
+/** LIFE-9: the unit a document belongs to, read the way the viewer hand-off
+ *  reads it — the first custom-metadata value whose key names a unit/area. */
+export function unitOfDocumentMetadata(metadata: Record<string, unknown> | null | undefined): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  for (const [k, v] of Object.entries(metadata)) {
+    if (/\bunit\b|\barea\b/i.test(k) && v != null && v !== "") return String(v);
+  }
+  return null;
 }
 
 /** Compare the revision the request was raised against with the document's

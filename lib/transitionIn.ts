@@ -23,6 +23,8 @@ import { normalizeTag } from "@/lib/assets";
 import { generateTicketNumber } from "@/lib/ticketNumber";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
+import { buildSourceDocumentRef, unitOfDocumentMetadata } from "@/lib/sourceDocRef";
+import { defaultSlaTargetDate } from "@/lib/notifications";
 
 /** Global variant of the entity-tag pattern (lib/notes.ts keeps the
  *  single-match one): FE-201, P-101A, PSV-1002 … The trailing lookahead
@@ -301,6 +303,13 @@ export async function flagCollisionToDrafting(
 
   try {
     const ticketNumber = await generateTicketNumber(orgId);
+    // LIFE-9: the same required-field set the request form enforces — the
+    // unit comes from the intake sheet's own metadata (best-effort read).
+    let unit = "";
+    try {
+      const { data: sheet } = await supabase.from("documents").select("metadata").eq("id", candidate.docId).eq("org_id", orgId).maybeSingle();
+      unit = unitOfDocumentMetadata((sheet as { metadata?: Record<string, unknown> | null } | null)?.metadata) ?? "";
+    } catch { /* unit stays blank; the ticket is still created */ }
     const { data: row, error } = await supabase.from("tickets").insert({
       org_id: orgId,
       ticket_id: ticketNumber,
@@ -309,6 +318,10 @@ export async function flagCollisionToDrafting(
       request_type: "Revision",
       status: "PENDING_ASSIGNMENT",
       priority: impact.numberCollision ? 1 : 2,
+      unit,
+      // Same SLA clock a request-form ticket gets, and the flagger follows it.
+      target_completion_at: defaultSlaTargetDate("Revision"),
+      watchers: [input.actorId],
       requester_id: input.actorId,
       requester_name: input.actorEmail?.split("@")[0] || "User",
       requester_email: input.actorEmail,
@@ -319,7 +332,7 @@ export async function flagCollisionToDrafting(
         details: `Project intake sheet: ${candidate.label}`,
       }],
       metadata: {
-        source_document: { id: candidate.docId, number: candidate.number, title: candidate.title },
+        source_document: buildSourceDocumentRef({ id: candidate.docId, documentNumber: candidate.number, title: candidate.title, rev: candidate.rev }),
         intake_collision: {
           projectId,
           intakeLinkId,

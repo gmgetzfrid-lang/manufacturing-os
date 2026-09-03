@@ -303,13 +303,8 @@ export default function NewTicketPage() {
       const metadata: Record<string, unknown> = {};
       if (Object.keys(customValues).length > 0) metadata.custom_categories = customValues;
       if (srcDocId) {
-        metadata.source_document = {
-          id: srcDocId,
-          document_number: srcDocNum,
-          title: sourceDocTitle,
-          rev: sourceDocRev,
-          path: sourceFileUrl,
-        };
+        // LIFE-15: the one canonical shape (null over "", no path).
+        metadata.source_document = buildSourceDocumentRef({ id: srcDocId, documentNumber: srcDocNum, title: sourceDocTitle, rev: sourceDocRev });
       }
 
       const ticketRow: Record<string, unknown> = {
@@ -661,6 +656,7 @@ export default function NewTicketPage() {
 // where `next` is the whole map for this category.
 
 import type { CustomCategoryConfig, CustomFieldDef } from '@/types/schema';
+import { buildSourceDocumentRef } from '@/lib/sourceDocRef';
 
 function CustomCategoryCard({
   category, values, onChange,

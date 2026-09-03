@@ -148,8 +148,10 @@ export default function InboxPage() {
       showToast({
         type: "success",
         title: status === "shared" ? "Marked as shared" : "Request declined",
+        // LIFE-8: claim only what the system can back — no file is attached
+        // to the request; the share is noted on the document's activity thread.
         message: status === "shared"
-          ? "The requester can see your markups are available."
+          ? "Noted on the document's activity thread — hand the marked-up sheet over there or on the ticket."
           : "The requester has been told you declined.",
       });
       await refresh({ background: true });

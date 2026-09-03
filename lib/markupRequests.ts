@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { writeActivity } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import type { MarkupRequest, MarkupRequestStatus, Timestamp } from "@/types/schema";
+import { postMarkupRef } from "@/lib/activityThread";
 
 export function rowToMarkupRequest(r: Record<string, unknown>): MarkupRequest {
   return {
@@ -115,7 +116,7 @@ export type ResolveMarkupRequestInput = {
 
 export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Promise<void> {
   const now = new Date().toISOString();
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("markup_requests")
     .update({
       status: input.status,
@@ -123,8 +124,29 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
       shared_markup_url: input.sharedMarkupUrl || null,
       resolved_at: now,
     })
-    .eq("id", input.markupRequestId);
+    .eq("id", input.markupRequestId)
+    .select("document_id")
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  // A refused update (RLS) returns no row — never report "shared" for it.
+  if (!updated) throw new Error("The markup request could not be updated (not found or not permitted).");
+
+  // LIFE-8: sharing leaves the `markup_ref` row ActivityThread already
+  // renders, on the document the request was about — the artifact pointer
+  // the UI can back. Best-effort: the resolution itself is already recorded.
+  if (input.status === "shared" && (updated as { document_id?: string | null }).document_id) {
+    try {
+      await postMarkupRef({
+        orgId: input.orgId,
+        documentId: (updated as { document_id: string }).document_id,
+        userId: input.actorUserId,
+        userName: input.actorEmail?.split("@")[0] || "Member",
+        markupRequestId: input.markupRequestId,
+        summary: `Markups shared${input.response?.trim() ? `: ${input.response.trim()}` : ""}${input.sharedMarkupUrl ? ` — ${input.sharedMarkupUrl}` : ""}`,
+        metadata: input.sharedMarkupUrl ? { shared_markup_url: input.sharedMarkupUrl } : null,
+      });
+    } catch (e) { console.warn("[markupRequests] markup_ref post failed (non-blocking)", e); }
+  }
 
   if (input.projectId) {
     await writeActivity({

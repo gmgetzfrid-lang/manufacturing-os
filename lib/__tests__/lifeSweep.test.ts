@@ -37,7 +37,7 @@ describe("LIFE-4 — the book-viewer hand-off keeps the source-document link", (
   it("the stashed docId reaches metadata.source_document, the history entry and the chip", () => {
     expect(s).toMatch(/const srcDocId = sourceDocId \|\| stashedDoc\?\.id \|\| '';/);
     expect(s).toMatch(/if \(withDoc\?\.docId\) setStashedDoc\(\{ id: withDoc\.docId, number: withDoc\.docNumber \?\? '' \}\);/);
-    expect(s).toMatch(/if \(srcDocId\) \{\s*\n\s*metadata\.source_document = \{\s*\n\s*id: srcDocId,\s*\n\s*document_number: srcDocNum,/);
+    expect(s).toMatch(/metadata\.source_document = buildSourceDocumentRef\(\{ id: srcDocId, documentNumber: srcDocNum, title: sourceDocTitle, rev: sourceDocRev \}\);/);
     expect(s).toMatch(/\{\(srcDocId \|\| sourceFileUrl\) && \(/);
     expect(s).not.toMatch(/if \(sourceDocId\) \{\s*\n\s*metadata\.source_document/);
   });

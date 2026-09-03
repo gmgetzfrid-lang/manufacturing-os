@@ -67,6 +67,10 @@ interface RevUpModalProps {
   presetChangeType?: DocumentVersion["changeType"];
   /** Prefill the change-log narrative (e.g. the typed correction note). */
   presetChangeLog?: string;
+  /** LIFE-11 / DEC-26: a launcher that KNOWS the issue purpose (an as-built
+   *  ticket's hand-back) presets it — shown beside the field, overridable. */
+  presetIssueType?: DocumentVersion["issueType"];
+  presetIssueTypeNote?: string;
 }
 
 const ISSUE_TYPES: { value: NonNullable<DocumentVersion["issueType"]>; label: string }[] = [
@@ -88,7 +92,7 @@ const inputClass =
 export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
   orgId, actorUserId, actorEmail, actorRole, onSuccess, onReviewSubmitted,
-  onDirectPublished, presetChangeType, presetChangeLog,
+  onDirectPublished, presetChangeType, presetChangeLog, presetIssueType, presetIssueTypeNote,
 }: RevUpModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -148,6 +152,7 @@ export default function RevUpModal({
     // knows what this publish IS (e.g. check-in's Correction card).
     if (presetChangeType) setChangeType(presetChangeType);
     if (presetChangeLog) setChangeLog(presetChangeLog);
+    if (presetIssueType) setIssueType(presetIssueType);
     setError(null);
     setConflict(null);
     setShowBranchInput(false);
@@ -178,7 +183,7 @@ export default function RevUpModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey, presetChangeType, presetChangeLog]);
+  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey, presetChangeType, presetChangeLog, presetIssueType]);
 
   // Resolve this library/folder/document's pre-publish review policy when the
   // modal opens, so we know whether to publish directly or open an in-review
@@ -629,6 +634,11 @@ export default function RevUpModal({
               <select value={issueType} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className={inputClass}>
                 {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+              {presetIssueType && issueType === presetIssueType && (
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  {presetIssueTypeNote ?? `Defaulted to ${presetIssueType} by the launcher — change it if that's wrong.`}
+                </p>
+              )}
             </Field>
             <Field label="Change Type">
               <select value={changeType} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className={inputClass}>

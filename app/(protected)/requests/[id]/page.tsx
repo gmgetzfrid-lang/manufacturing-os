@@ -63,6 +63,7 @@ import {
   Archive,
   QrCode,
 } from 'lucide-react';
+import { effectiveReviewControlForDocument } from '@/lib/reviewControl';
 
 // =========================================================================================
 // UTILITY: SAFE DATE CONVERTER & FORMATTERS
@@ -977,7 +978,11 @@ export default function TicketDetailView() {
   const sourceRefId = sourceRef?.id ?? null;
   const [sourceDoc, setSourceDoc] = useState<{
     state: 'idle' | 'loading' | 'loaded' | 'unavailable';
-    doc?: { id: string; libraryId: string | null; rev: string | null; documentNumber: string | null; title: string | null };
+    doc?: { id: string; libraryId: string | null; rev: string | null; documentNumber: string | null; title: string | null; collectionId?: string | null };
+    /** LIFE-12: the document's review requirement — a ticket approval never
+     *  satisfies it, and the drafter should see that before the deliverable
+     *  is approved. */
+    review?: { mode: 'require' | 'publisher_choice' | 'none'; configured: number } | null;
   }>({ state: 'idle' });
   const ticketOrgId = ticket?.orgId ?? null;
   useEffect(() => {
@@ -986,7 +991,7 @@ export default function TicketDetailView() {
     setSourceDoc((s) => (s.state === 'loaded' && s.doc?.id === sourceRefId ? s : { state: 'loading' }));
     supabase
       .from('documents')
-      .select('id, library_id, rev, document_number, title')
+      .select('id, library_id, collection_id, rev, document_number, title')
       .eq('id', sourceRefId)
       // Scoped to the TICKET's org, not just RLS: a viewer who belongs to two
       // workspaces can otherwise resolve a same-id document from the other
@@ -997,16 +1002,24 @@ export default function TicketDetailView() {
         if (!alive) return;
         if (!data) { setSourceDoc({ state: 'unavailable' }); return; }
         const d = data as Record<string, unknown>;
-        setSourceDoc({
-          state: 'loaded',
-          doc: {
-            id: d.id as string,
-            libraryId: (d.library_id as string | null) ?? null,
-            rev: (d.rev as string | null) ?? null,
-            documentNumber: (d.document_number as string | null) ?? null,
-            title: (d.title as string | null) ?? null,
-          },
-        });
+        const doc = {
+          id: d.id as string,
+          libraryId: (d.library_id as string | null) ?? null,
+          collectionId: (d.collection_id as string | null) ?? null,
+          rev: (d.rev as string | null) ?? null,
+          documentNumber: (d.document_number as string | null) ?? null,
+          title: (d.title as string | null) ?? null,
+        };
+        setSourceDoc({ state: 'loaded', doc });
+        if (doc.libraryId) {
+          void effectiveReviewControlForDocument({ collectionId: doc.collectionId, libraryId: doc.libraryId })
+            .then((rc) => {
+              if (!alive) return;
+              const configured = (rc.reviewerIds?.length ?? 0) + (rc.reviewerRoles?.length ?? 0) + (rc.reviewerTeamIds?.length ?? 0);
+              setSourceDoc((s) => (s.state === 'loaded' && s.doc?.id === doc.id ? { ...s, review: { mode: rc.mode, configured } } : s));
+            })
+            .catch(() => { /* the card simply shows no requirement line */ });
+        }
       });
     return () => { alive = false; };
   }, [sourceRefId, ticketOrgId]);
@@ -1904,6 +1917,13 @@ export default function TicketDetailView() {
                          <p className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
                            {sourceRef.rev ? `Raised against Rev ${sourceRef.rev}` : 'Source revision not recorded on this request'}
                          </p>
+                         {sourceDoc.state === 'loaded' && sourceDoc.review && sourceDoc.review.mode !== 'none' && (
+                           <p className="text-[10px] font-semibold text-amber-800 mt-1">
+                             {sourceDoc.review.mode === 'require'
+                               ? `Publishing the deliverable to this document requires reviewer sign-off (${sourceDoc.review.configured} configured reviewer${sourceDoc.review.configured === 1 ? '' : 's'}) — approving this ticket does not satisfy it.`
+                               : 'Publishing the deliverable to this document may route through review — approving this ticket does not satisfy a document sign-off.'}
+                           </p>
+                         )}
                        </div>
                      </div>
                      <div className="flex items-center gap-2 shrink-0">
