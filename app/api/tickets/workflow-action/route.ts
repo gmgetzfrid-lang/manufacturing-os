@@ -11,6 +11,8 @@ import {
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
+import { parseSourceDocument } from "@/lib/sourceDocRef";
+import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
 
 // POST /api/tickets/workflow-action
 //
@@ -285,6 +287,34 @@ export async function POST(req: NextRequest) {
   // CAS on status AND last-modified: status alone let two no-status-change
   // actions (save_progress, comments) interleave and clobber each other's
   // whole-array attachments/comments/history writes.
+  // LIFE-1 / GAP-6 (acceptance 5): closing a ticket that was raised against a
+  // controlled document and produced no register revision leaves a VISIBLE,
+  // QUERYABLE state on the ticket (`metadata.deliverable.state =
+  // "not_in_register"`), a history line, and a note to the people told about
+  // the close — never silence. It never publishes anything (DEC-22).
+  let handbackNote: string | null = null;
+  if (newStatus === "CLOSED") {
+    try {
+      const src = parseSourceDocument(ticket.metadata);
+      if (src?.id && deliverableStateOf(ticket.metadata)?.state !== "published") {
+        const { data: docRow } = await supabaseAdmin
+          .from("documents").select("rev, document_number").eq("id", src.id).eq("org_id", ticket.orgId).maybeSingle();
+        const registerRev = ((docRow as { rev?: string | null } | null)?.rev ?? null);
+        const docLabel = ((docRow as { document_number?: string | null } | null)?.document_number) || src.documentNumber || "the source document";
+        const merged = noteDeliverableNotInRegister(ticket.metadata, { documentId: src.id, registerRev });
+        if (merged) {
+          updates.metadata = merged;
+          handbackNote = `Closed without a register revision: ${docLabel} remains at Rev ${registerRev ?? "—"}. The deliverable was not published as a revision.`;
+          const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
+          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+        }
+      }
+    } catch (e) {
+      console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);
+    }
+  }
+  const fanOutComment = [body.comment ?? null, handbackNote].filter((x): x is string => !!x && x.trim().length > 0).join("\n\n") || null;
+
   let baseQuery = supabaseAdmin
     .from("tickets")
     .update(updates)
@@ -410,7 +440,7 @@ export async function POST(req: NextRequest) {
   // Failures here never fail the action (the transition is already committed);
   // they're logged for the maintenance cron's visibility.
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, comment: body.comment ?? null });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, comment: fanOutComment });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     const drainUrl = new URL("/api/notifications/send-queued", req.url);

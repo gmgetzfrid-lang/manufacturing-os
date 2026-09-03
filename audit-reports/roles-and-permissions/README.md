@@ -295,6 +295,16 @@ Migrations: `20261048` (`drawing_audit_logs` INSERT / UPDATE for the controller 
 
 No migration.
 
+### Phase 7 — build 4, Round C2 (2026-09-02) — the ticket → document hand-back
+
+| Item | Outcome |
+|---|---|
+| `GAP-6` / `DEC-22` (`LIFE-1`) | **RESOLVED** — "Publish as revision of DOC-xxx" on the ticket for library publish authority or the effective owner; pre-seeds `RevUpModal` and runs `revUpDocument` unchanged; outcome recorded by a server route that requires the version's provenance; closing without a revision leaves a visible "not in the register" state. Never auto-publish |
+| `LIFE-5` | **RESOLVED** — the check-in's MOC position rides into the publish; a recorded "no MOC" cannot be silently contradicted (explicit acknowledgement, written into the change log); reconcilable by `related_ticket_id` |
+| `LIFE-11` | **RESOLVED** — the hand-back is the launcher: an as-built ticket presets `issue_type: "As-Built"` visibly and overridably (`DEC-26`) |
+
+Migrations: `20261049` (`publish_revision` writes `related_ticket_id`; the column added idempotently) — **pending apply**; not a widening.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

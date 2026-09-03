@@ -71,6 +71,17 @@ interface RevUpModalProps {
    *  ticket's hand-back) presets it — shown beside the field, overridable. */
   presetIssueType?: DocumentVersion["issueType"];
   presetIssueTypeNote?: string;
+  /** GAP-6 / DEC-22: the ticket hand-back pre-seeds the Final deliverable as
+   *  the new PDF. Still replaceable by the publisher. */
+  presetFile?: File | null;
+  /** LIFE-5: the MOC position captured at check-in, carried to the publish
+   *  that needs it. A recorded "no MOC" cannot be silently contradicted —
+   *  entering a number then requires an explicit acknowledgement that is
+   *  written into the change log. */
+  presetMocOrigin?: { status: "completed" | "in_progress" | "none"; number: string | null; label: string } | null;
+  /** GAP-6: provenance — written to document_versions.related_ticket_id.
+   *  Never a review waiver (DEC-23). */
+  relatedTicketId?: string | null;
 }
 
 const ISSUE_TYPES: { value: NonNullable<DocumentVersion["issueType"]>; label: string }[] = [
@@ -93,6 +104,7 @@ export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
   orgId, actorUserId, actorEmail, actorRole, onSuccess, onReviewSubmitted,
   onDirectPublished, presetChangeType, presetChangeLog, presetIssueType, presetIssueTypeNote,
+  presetFile, presetMocOrigin, relatedTicketId,
 }: RevUpModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -104,6 +116,7 @@ export default function RevUpModal({
   const [checkedByName, setCheckedByName] = useState("");
   const [approvedByName, setApprovedByName] = useState("");
   const [mocReference, setMocReference] = useState("");
+  const [mocOriginAck, setMocOriginAck] = useState(false);
   const [sourceFileName, setSourceFileName] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [reviewControl, setReviewControl] = useState<ReviewControl | null>(null);
@@ -153,6 +166,10 @@ export default function RevUpModal({
     if (presetChangeType) setChangeType(presetChangeType);
     if (presetChangeLog) setChangeLog(presetChangeLog);
     if (presetIssueType) setIssueType(presetIssueType);
+    // The hand-back's Final deliverable and the check-in's MOC position.
+    if (presetFile) setFile(presetFile);
+    if (presetMocOrigin?.number) setMocReference(presetMocOrigin.number);
+    setMocOriginAck(false);
     setError(null);
     setConflict(null);
     setShowBranchInput(false);
@@ -183,7 +200,7 @@ export default function RevUpModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey, presetChangeType, presetChangeLog, presetIssueType]);
+  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey, presetChangeType, presetChangeLog, presetIssueType, presetFile, presetMocOrigin?.number]);
 
   // Resolve this library/folder/document's pre-publish review policy when the
   // modal opens, so we know whether to publish directly or open an in-review
@@ -250,6 +267,26 @@ export default function RevUpModal({
     if (f) handleFile(f);
   };
 
+  // LIFE-5: say where the MOC position came from, and make contradicting a
+  // recorded "no MOC" an explicit act.
+  const mocOriginNote = presetMocOrigin ? (
+    <div className="mt-1 space-y-1">
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        {presetMocOrigin.status === "none"
+          ? `The check-in for ${presetMocOrigin.label} recorded that no MOC exists for this change.`
+          : presetMocOrigin.number
+            ? `MOC ${presetMocOrigin.number} carried from ${presetMocOrigin.label} (${presetMocOrigin.status === "completed" ? "completed" : "in progress"}).`
+            : `${presetMocOrigin.label} recorded an MOC as ${presetMocOrigin.status === "completed" ? "completed" : "in progress"} without a number.`}
+      </p>
+      {presetMocOrigin.status === "none" && mocReference.trim().length > 0 && (
+        <label className="flex items-start gap-2 text-[11px] text-amber-800">
+          <input type="checkbox" checked={mocOriginAck} onChange={(e) => setMocOriginAck(e.target.checked)} className="mt-0.5" />
+          <span>I confirm the check-in&apos;s &quot;no MOC&quot; record was wrong — this contradiction is written into the change log.</span>
+        </label>
+      )}
+    </div>
+  ) : null;
+
   const doPublish = async (asBranch: boolean) => {
     setError(null);
     if (!file) return setError("Please attach the new PDF.");
@@ -268,18 +305,32 @@ export default function RevUpModal({
         "This is a drawing-class document — PSM requires the MOC reference for a non-minor revision. Enter the MOC number, or set the change type to Minor/Correction if this is replacement-in-kind.",
       );
     }
+    // LIFE-5 done-when 2: an origin that recorded "no MOC exists" cannot
+    // silently acquire one. The contradiction needs intent, and it is written
+    // into the change log where an auditor reconciling the two records finds it.
+    const mocContradictsOrigin = presetMocOrigin?.status === "none" && mocReference.trim().length > 0;
+    if (mocContradictsOrigin && !mocOriginAck) {
+      return setError(
+        `The check-in for ${presetMocOrigin?.label ?? "this request"} recorded that no MOC exists for this change. Entering an MOC number contradicts that record — tick the acknowledgement under the MOC field, or clear it.`,
+      );
+    }
+    const effectiveChangeLog = mocContradictsOrigin
+      ? `${changeLog.trim()}\n\nMOC ${mocReference.trim()} recorded at publish contradicts the check-in's "no MOC" position (${presetMocOrigin?.label ?? "drafting request"}) — acknowledged by the publisher.`
+      : changeLog;
 
     setSubmitting(true);
     try {
       const common = {
         doc, libraryId, folderPath, file,
-        revisionLabel, changeLog,
+        revisionLabel, changeLog: effectiveChangeLog,
         issueType, changeType,
         drawnByName, checkedByName, approvedByName,
         mocReference, sourceFileName,
         effectiveDate: effectiveDate || null,
         orgId, actorUserId, actorEmail, actorRole,
         overrideReason: lockedByOther ? overrideReason : undefined,
+        // GAP-6: provenance for a ticket-originated publish (inert on the review path too — never a waiver).
+        relatedTicketId: relatedTicketId ?? null,
       };
       if (willReview && !asBranch) {
         // Open an in-review draft (2A) instead of publishing. The live rev stays
@@ -571,6 +622,7 @@ export default function RevUpModal({
                   <FileText className="w-4 h-4" />
                   <span className="font-medium">{file.name}</span>
                   <span className="text-xs text-emerald-600">({(file.size / 1024).toFixed(0)} KB)</span>
+                  {presetFile && file === presetFile && <span className="text-xs text-emerald-600">· the request&apos;s Final deliverable</span>}
                 </div>
               ) : (
                 <div className="flex items-center justify-center gap-2 text-sm text-[var(--color-text-muted)]">
@@ -710,6 +762,7 @@ export default function RevUpModal({
                 className={`${inputClass} ${mocReference.trim().length >= 3 ? "" : "border-amber-400 bg-amber-50/40"}`}
                 placeholder="MOC-2026-0142"
               />
+              {mocOriginNote}
             </Field>
           )}
           {/* The exemption must be VISIBLE, not silent: a remembered "Minor"
@@ -748,6 +801,7 @@ export default function RevUpModal({
             {!mocRequired && (
               <Field label="MOC Reference" hint="Optional ticket # from change platform" isoTopic="moc_reference">
                 <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className={inputClass} placeholder="MOC-2026-0142" />
+                {mocOriginNote}
               </Field>
             )}
             <Field label="Source CAD File" hint="e.g. P-101_Rev3.dwg">

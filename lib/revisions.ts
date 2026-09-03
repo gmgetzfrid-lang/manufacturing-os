@@ -160,6 +160,10 @@ export type RevUpInput = {
   branchReason?: string;
   /** Optional native CAD source (DWG / zip of xrefs) stored alongside the PDF. */
   sourceFile?: File | null;
+  /** GAP-6 / DEC-22: the drafting ticket this revision DELIVERS. Provenance
+   *  only — written to document_versions.related_ticket_id; since DEC-23 it
+   *  waives nothing (a ticket approval never satisfies a document sign-off). */
+  relatedTicketId?: string | null;
 };
 
 export type RevUpResult = {
@@ -524,6 +528,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     source_file_key: sourceFileKey,
     file_hash: fileHash,
     provenance,
+    related_ticket_id: input.relatedTicketId ?? null,
   };
 
   // 3. THE PUBLISH CONTRACT. One transaction, serialized per document by a
@@ -674,6 +679,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       drawnByName: drawnByName?.trim() || null,
       checkedByName: checkedByName?.trim() || null,
       approvedByName: approvedByName?.trim() || null,
+      relatedTicketId: input.relatedTicketId ?? null,
     },
   });
 
@@ -781,9 +787,10 @@ async function legacyRevUpAfterUpload(input: {
       .from("document_versions").insert(insertBody).select("*").single();
     if (error) {
       const msg = (error.message ?? "").toLowerCase();
-      if (msg.includes("provenance") || msg.includes("source_file_key")) {
+      if (msg.includes("provenance") || msg.includes("source_file_key") || msg.includes("related_ticket_id")) {
         delete insertBody.provenance;
         delete insertBody.source_file_key;
+        delete insertBody.related_ticket_id;
         const retry = await supabase
           .from("document_versions").insert(insertBody).select("*").single();
         if (retry.error || !retry.data) {
@@ -891,6 +898,7 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
       supersedes_version_id: liveVersionId,
       drawn_by_name: drawnByName?.trim() || null, checked_by_name: checkedByName?.trim() || null, approved_by_name: approvedByName?.trim() || null,
       moc_reference: mocReference?.trim() || null, source_file_name: sourceFileName?.trim() || null, file_hash: fileHash,
+      related_ticket_id: input.relatedTicketId ?? null,
       effective_date: input.effectiveDate ? input.effectiveDate.slice(0, 10) : null,
       // No released_at — an in-review draft isn't released until it's approved.
     })

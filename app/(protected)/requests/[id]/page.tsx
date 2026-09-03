@@ -5,11 +5,11 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
+import { uploadTicketAttachment, getSignedUrlForPath, ArchivedFileError } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
-import { Ticket, TicketStatus, TicketAttachment, TicketComment } from '@/types/schema';
+import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
@@ -21,6 +21,14 @@ import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { parseSourceDocument, revDrift } from '@/lib/sourceDocRef';
+// GAP-6 / DEC-22: the ticket → document hand-back. Publish authority on the
+// document's LIBRARY (or effective ownership) — never ticket authority.
+import { docRowToDocumentRecord } from '@/lib/documentRows';
+import { resolveCanControlLibrary } from '@/lib/documentGuards';
+import { isEffectiveOwnerOfDocument } from '@/lib/ownership';
+import { getMyTeamIds } from '@/lib/teams';
+import { handbackPreset, latestFinalAttachment, deliverableStateOf } from '@/lib/ticketHandback';
+import RevUpModal from '@/components/documents/RevUpModal';
 import { publicOrigin } from '@/lib/publicOrigin';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
@@ -886,6 +894,13 @@ export default function TicketDetailView() {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [viewerFile, setViewerFile] = useState<TicketAttachment | null>(null);
   const [showArchiveViewer, setShowArchiveViewer] = useState(false);
+  // GAP-6 / DEC-22: the hand-back — a publish-authority holder publishes the
+  // Final deliverable as the source document's next revision.
+  const [showHandback, setShowHandback] = useState(false);
+  const [handbackDoc, setHandbackDoc] = useState<DocumentRecord | null>(null);
+  const [handbackFile, setHandbackFile] = useState<File | null>(null);
+  const [handbackBusy, setHandbackBusy] = useState(false);
+  const [canPublishSource, setCanPublishSource] = useState(false);
 
   // Admin Override State
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -1024,6 +1039,80 @@ export default function TicketDetailView() {
       });
     return () => { alive = false; };
   }, [sourceRefId, ticketOrgId]);
+
+  // GAP-6 / DEC-22: may THIS caller publish a revision of the source document?
+  // Library publish authority (controller, publish grant, index) OR the
+  // document's effective owner — the same pair `authorizePublish` checks when
+  // the publish runs, so the button and the mutator cannot disagree. Ticket
+  // authority plays no part.
+  useEffect(() => {
+    let alive = true;
+    const docId = sourceDoc.state === 'loaded' ? sourceDoc.doc?.id ?? null : null;
+    const libId = sourceDoc.state === 'loaded' ? sourceDoc.doc?.libraryId ?? null : null;
+    if (!docId || !libId || !uid) { setCanPublishSource(false); return; }
+    (async () => {
+      try {
+        const teamIds = await getMyTeamIds(uid);
+        const principal = { uid, role: activeRole, roles, orgId: activeOrgId ?? undefined, teamIds, isActiveMember: true };
+        const [viaLibrary, viaOwner] = await Promise.all([
+          resolveCanControlLibrary(libId, principal),
+          isEffectiveOwnerOfDocument(docId, uid).catch(() => false),
+        ]);
+        if (alive) setCanPublishSource(viaLibrary || viaOwner);
+      } catch { if (alive) setCanPublishSource(false); }
+    })();
+    return () => { alive = false; };
+  }, [sourceDoc, uid, activeRole, roles, activeOrgId]);
+
+  // Pre-seed the existing rev-up flow with the Final deliverable and open it.
+  // Nothing is published here — RevUpModal → revUpDocument does that, with
+  // every guard and post-publish side effect (DEC-22: never a second path).
+  const openHandback = async () => {
+    if (!ticket || sourceDoc.state !== 'loaded' || !sourceDoc.doc) return;
+    const final = latestFinalAttachment(ticket.attachments);
+    if (!final) return;
+    setHandbackBusy(true);
+    try {
+      const { data: row } = await supabase.from('documents').select('*').eq('id', sourceDoc.doc.id).eq('org_id', ticket.orgId).maybeSingle();
+      if (!row) throw new Error('The source document is not accessible to you.');
+      const url = /^https?:\/\//i.test(final.url) ? final.url : await getSignedUrlForPath(final.url);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('The Final deliverable could not be fetched from storage.');
+      const blob = await res.blob();
+      setHandbackDoc(docRowToDocumentRecord(row as Record<string, unknown>));
+      setHandbackFile(new File([blob], final.name, { type: blob.type || 'application/pdf' }));
+      setShowHandback(true);
+    } catch (e) {
+      const msg = e instanceof ArchivedFileError
+        ? 'The Final deliverable was archived offline — restore the archive before publishing it.'
+        : (e as Error).message;
+      showToast({ type: 'error', title: 'Cannot start the publish', message: msg });
+    } finally {
+      setHandbackBusy(false);
+    }
+  };
+
+  // After the publish landed (or opened a review draft), record it on the
+  // ticket through the server, which verifies the version row is this
+  // request's deliverable before writing anything.
+  const recordHandback = async (versionId: string, revisionLabel: string) => {
+    if (!ticket?.id) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+      const res = await fetch('/api/tickets/handback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ ticketId: ticket.id, versionId }),
+      });
+      const out = await res.json().catch(() => ({} as Record<string, unknown>)) as { error?: string; warning?: string; metadata?: Record<string, unknown>; history?: Ticket['history'] };
+      if (!res.ok) throw new Error(out.error || 'Could not record the publish on the request');
+      setTicket((t) => (t ? { ...t, metadata: out.metadata ?? t.metadata, history: out.history ?? t.history } : t));
+      showToast({ type: 'success', title: `Rev ${revisionLabel} recorded on the request`, message: out.warning ?? 'The deliverable is in the register and the request knows it.' });
+    } catch (e) {
+      showToast({ type: 'error', title: 'Published, but not recorded on the request', message: (e as Error).message });
+    }
+  };
 
   // --- 2. SAFE SCROLL ---
   useEffect(() => {
@@ -1484,10 +1573,39 @@ export default function TicketDetailView() {
   // LOGIC: Check for Staged Files
   const hasStagedFiles = ticket.attachments?.some(a => a.status === 'staged' && a.type === 'Draft');
 
+  // GAP-6: what the hand-back pre-seeds (computed here, where `ticket` is known).
+  const handbackLibraryId = sourceDoc.state === 'loaded' ? sourceDoc.doc?.libraryId ?? null : null;
+  const handback = handbackLibraryId
+    ? { ...handbackPreset(ticket), libraryId: handbackLibraryId, ticketId: ticket.id ?? '', label: `request ${ticket.ticketId}` }
+    : null;
+  const deliverable = deliverableStateOf(ticket.metadata);
+  const canOfferHandback = !!handback && canPublishSource && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published';
+
   return (
     <div className="pb-20">
 
       {/* MODALS */}
+      {showHandback && handbackDoc && handbackFile && activeOrgId && uid && handback && handback.ticketId && (
+        <RevUpModal
+          isOpen={showHandback}
+          onClose={() => setShowHandback(false)}
+          doc={handbackDoc}
+          libraryId={handback.libraryId}
+          orgId={activeOrgId}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole}
+          presetFile={handbackFile}
+          presetIssueType={handback.issueType}
+          presetIssueTypeNote={handback.issueTypeNote}
+          presetMocOrigin={handback.mocOrigin ? { ...handback.mocOrigin, label: handback.label } : null}
+          presetChangeLog={handback.changeLog}
+          relatedTicketId={handback.ticketId}
+          onSuccess={() => { /* onDirectPublished / onReviewSubmitted record the outcome */ }}
+          onDirectPublished={(v) => { setShowHandback(false); if (v.id) void recordHandback(v.id, v.revisionLabel); }}
+          onReviewSubmitted={(d) => { setShowHandback(false); void recordHandback(d.versionId, d.revisionLabel); }}
+        />
+      )}
       {showRedlineEditor && fileToRedline && (
         <RedlineEditorMount
           file={fileToRedline}
@@ -1978,6 +2096,27 @@ export default function TicketDetailView() {
                            </span>
                          ) : null;
                        })()}
+                       {deliverable?.state === 'published' && (
+                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
+                           <CheckCircle2 className="w-3 h-3" /> {deliverable.in_review ? `Draft ${deliverable.revision_label} in document review` : `Published as Rev ${deliverable.revision_label}`}
+                         </span>
+                       )}
+                       {deliverable?.state === 'not_in_register' && (
+                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                           <AlertTriangle className="w-3 h-3" /> Closed — deliverable not in the register{deliverable.register_rev ? ` (still Rev ${deliverable.register_rev})` : ''}
+                         </span>
+                       )}
+                       {canOfferHandback && sourceDoc.state === 'loaded' && sourceDoc.doc && (
+                         <button
+                           type="button"
+                           onClick={() => { void openHandback(); }}
+                           disabled={handbackBusy}
+                           title="Publish this request's Final deliverable as the next revision of the source document — offered to publish authority on the document's library, not to whoever can close the request (DEC-22)"
+                           className="text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-md px-2 py-1"
+                         >
+                           {handbackBusy ? 'Preparing…' : `Publish as revision of ${sourceRef.documentNumber || sourceDoc.doc.documentNumber || 'document'}`}
+                         </button>
+                       )}
                        {sourceDoc.state === 'loaded' && sourceDoc.doc?.libraryId ? (
                          <Link
                            href={`/documents/${sourceDoc.doc.libraryId}?doc=${sourceDoc.doc.id}`}

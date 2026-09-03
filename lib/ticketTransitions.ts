@@ -71,6 +71,10 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     attachments: (row.attachments as Ticket["attachments"]) ?? [],
     comments: (row.comments as Ticket["comments"]) ?? [],
     history: (row.history as Ticket["history"]) ?? [],
+    // The JSONB bag: source_document (the intent bridge, the hand-back),
+    // moc, checkin, deliverable. Without it every server-side reader of
+    // ticket.metadata saw undefined.
+    metadata: (row.metadata as Record<string, unknown> | null) ?? undefined,
     unreadBy: (row.unread_by as string[]) ?? [],
     watchers: (row.watchers as string[]) ?? [],
     revisionCount: row.revision_count as number | undefined,

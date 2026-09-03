@@ -25,8 +25,8 @@
       "LOW": 4
     },
     "by_status": {
-      "RESOLVED": 85,
-      "OPEN": 44,
+      "RESOLVED": 88,
+      "OPEN": 41,
       "REFUTED": 3
     }
   },
@@ -1135,7 +1135,7 @@
       "id": "LIFE-1",
       "title": "The drafting loop has no return path — a closed ticket never becomes a revision",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "safety / data-integrity",
@@ -1231,7 +1231,7 @@
       "id": "LIFE-5",
       "title": "The MOC position is captured, then abandoned — nothing carries it to the publish that needs it",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "safety / compliance",
@@ -2596,7 +2596,7 @@
       "id": "LIFE-11",
       "title": "The as-built *intent* never reaches the revision — `issueType: \"As-Built\"` is an unconnected dropdown",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "correctness / compliance",

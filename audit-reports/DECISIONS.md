@@ -804,6 +804,8 @@ must land first.
 
 **Risk:** high — new publish path.
 
+*Landed 2026-09-02 (roles-and-permissions Phase 7 build 4 / Round C2): built on this shape — see `GAP-6`, `LIFE-1`, `LIFE-5`, `LIFE-11`; migration `20261049`. There is no new publish path: the ticket pre-seeds `RevUpModal` and `revUpDocument` runs unchanged.*
+
 <a id="dec-23"></a>
 ## DEC-23 · The `related_ticket_id` review waiver
 

@@ -41,7 +41,13 @@ by bug.
 ## LIFE-1 · The drafting loop has no return path — a closed ticket never becomes a revision
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 7 build 4 / Round C2 — the hand-back, built to `GAP-6` on the `DEC-22` shape).** The loop has a return path, and it is the existing publish path. When a ticket carries `metadata.source_document.id` and a `Final` attachment, the source-document card offers **"Publish as revision of DOC-xxx"** — to a caller who holds publish authority **on that document's library** (`resolveCanControlLibrary`) or is the document's effective owner (`isEffectiveOwnerOfDocument`), the same pair `authorizePublish` checks when the publish runs; ticket authority plays no part. The action resolves the latest Final deliverable from storage into a `File`, loads the document record, and opens `RevUpModal` pre-seeded (the file, the issue purpose per `DEC-26`, the check-in's MOC position per `LIFE-5`, a change log naming the ticket, and `relatedTicketId` for provenance) — then `revUpDocument` does everything else: `authorizePublish` → `assertCanPublishRevision` (a hold refuses it exactly as a manual publish), the publish contract RPC, the audit row, and `runPostPublishSideEffects` (ack roster, supersede notifications, package pin-drift). A review-gated library opens the reviewer roster instead, as any publish would. The outcome is recorded on the ticket by `/api/tickets/handback`, which trusts nothing in the body: the named version must belong to the ticket's org and source document and carry `related_ticket_id = ticket` — the provenance `20261049` makes `publish_revision` write. Closing a ticket that has a source document and produced no revision now leaves `metadata.deliverable = { state: "not_in_register", register_rev, … }`, a history line, and a note in the close notification — never silence; the card shows it as an amber chip. Never auto-publish on close.
+- Done-when: (1) ✓ visible, queryable "deliverable not yet in the register" state on close (`metadata.deliverable.state`, history, notification); (2) ✓ the ticket-originated publish goes through `assertCanPublishRevision` (it IS a `revUpDocument` call); (3) ✓ `runPostPublishSideEffects` fires (same call). `GAP-6` acceptance 1–5 hold (see its record).
+- Found and fixed on the way: `rowToTicket` (`lib/ticketTransitions.ts`) never mapped the `metadata` column, so every SERVER-side reader of `ticket.metadata` — including the existing ticket ⇄ intent bridge in the workflow-action route, which keys on `metadata.source_document` — has been reading `undefined`. It maps it now; the bridge, the close-time state and the recording route all depend on it (pinned by the test).
+- Migration: `20261049` — **pending apply** (not a widening: `publish_revision` re-created with the live `20261040` body plus `related_ticket_id` in the INSERT; the app half is inert until it lands — an unknown JSON key is ignored). Files: `lib/ticketHandback.ts` (new), `components/documents/RevUpModal.tsx`, `lib/revisions.ts`, `app/(protected)/requests/[id]/page.tsx`, `app/api/tickets/handback/route.ts` (new), `app/api/tickets/workflow-action/route.ts`. Tests: `lib/__tests__/sweepRoundC2.test.ts` (helpers, the recording route driven with a mocked client, source pins, `20261049` line-diff against the live body).
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / data-integrity
 - **Locations:**
@@ -329,7 +335,12 @@ multi-sheet request still cannot be fully represented; see `GAP-3`.
 ## LIFE-5 · The MOC position is captured, then abandoned — nothing carries it to the publish that needs it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 7 build 4 / Round C2, with `LIFE-1` / `GAP-6`).** The two MOC gates now speak. The hand-back reads the check-in's position (`metadata.moc` — `completed` / `in_progress` with its number, or `none`) and carries it into `RevUpModal` as `presetMocOrigin`: a captured number prefills the MOC reference, and the field says where it came from ("MOC MOC-7 carried from request REQ-42 (in progress)"). A recorded **"no MOC"** cannot be silently contradicted: entering a number then requires an explicit acknowledgement under the field, and the contradiction is written into the change log ("MOC … recorded at publish contradicts the check-in's 'no MOC' position (request REQ-42) — acknowledged by the publisher"), so the laundering scenario leaves a trail where the auditor looks. Reconciliation: every ticket-originated `document_versions` row carries `related_ticket_id` (`20261049`), so `moc_reference` joins back to `tickets.metadata.moc` by the row itself.
+- Done-when: (1) ✓ the MOC number shows without the publisher typing it; (2) ✓ a "no MOC" origin cannot silently acquire one (explicit acknowledgement, logged); (3) ✓ reconcilable by `related_ticket_id`.
+- Files: `components/documents/RevUpModal.tsx`, `lib/ticketHandback.ts`, `app/(protected)/requests/[id]/page.tsx`. Tests: `lib/__tests__/sweepRoundC2.test.ts`.
+
 
 > **Phase 0 partial — already overtaken (2026-08-24).** The "free, independent
 > part" (relabel the RevUpModal MOC input, which said *optional* for a field
@@ -698,7 +709,12 @@ created. That is the single most useful traversal in the whole flow.
 ## LIFE-11 · The as-built *intent* never reaches the revision — `issueType: "As-Built"` is an unconnected dropdown
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Phase 7 build 4 / Round C2 — step 2, the launcher).** The hand-back is the launcher that knows: a ticket whose `request_type` is `ASBUILT` pre-seeds `issueType: "As-Built"` (`handbackPreset`, per `DEC-26`), and the modal shows "Defaulted to As-Built because request REQ-xxx is an as-built request — change it if that's wrong" — visible, overridable with intent, never silently defaulted. The Lifecycle board's As-Built column reads `issue_type` from the published versions, so an as-built ticket that completed through the hand-back now appears there.
+- Done-when: (1) ✓ carried without the publisher remembering, visibly and overridably; (2) ✓ the board reflects completed as-built tickets (through the revision they produced).
+- Files: `lib/ticketHandback.ts`, `components/documents/RevUpModal.tsx`, `app/(protected)/requests/[id]/page.tsx`. Tests: `lib/__tests__/sweepRoundC2.test.ts`.
+
 
 **Partial (2026-09-02, Phase 6 severity sweep, Round A2 — step 1 of the fix).** `RevUpModal` accepts `presetIssueType` (+ an optional note), applies it after the remembered per-library value exactly like `presetChangeType`, and shows "Defaulted to … by the launcher — change it if that's wrong" beside the field — visible and overridable, per `DEC-26`. The launcher that KNOWS the publish is an as-built — the ticket→document hand-back (`LIFE-1` / `DEC-22`) — is what passes it; until that lands, Done-when 1 is not yet observable and this stays OPEN.
 - Files: `components/documents/RevUpModal.tsx`. Tests: `lib/__tests__/lifeSweep2.test.ts`.
