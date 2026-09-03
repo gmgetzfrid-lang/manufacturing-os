@@ -533,7 +533,7 @@ matching `is_org_controller`, and a test pins the `['Manager','DocCtrl']` case.
 - **Status:** RESOLVED
 
 **Resolution (2026-09-02, Phase 6 severity sweep, Round B).** `project_members.role` decides management authority: `can_manage_project` admits only `owner` / `collaborator` roster rows (an `observer` is on the roster to see, never to manage), requires an ACTIVE org membership on both the owner and the roster arms, reads the org roles by collection, and is search_path-pinned; `is_project_member` / `is_project_owner` require an active membership. `project_visible_to_me` stays role-agnostic (an observer should see a private project). No app change: `canManage = isOwner || isAdmin` already matched.
-- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+- Migration: `20261047` — **applied & verified live 2026-09-02** (10-point probe all true; inventory recorded BEFORE apply, all zero: no unsigned acknowledgments in history, no observer roster rows, no client-queued non-member mail, no external mail in 90 days, no unlinked field-verification holds).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
 
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
@@ -572,7 +572,7 @@ inactive member's project rows stop authorizing writes.
 - **Status:** RESOLVED
 
 **Resolution (2026-09-02, Phase 6 severity sweep, Round B).** `distribution_acks` was closed by `20261032`; the sibling `document_acknowledgments` now has the same rails: INSERT may only mint a `pending`, unsigned row, and `enforce_document_ack_guard` (BEFORE UPDATE) makes the `pending → acknowledged` transition the named assignee's own act bound to their own e-signature (org-matched; version-matched where the row names one), refuses a self-waiver by a non-controller, and refuses editing or resurrecting a recorded acknowledgment. The app's signing path already writes exactly that shape.
-- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+- Migration: `20261047` — **applied & verified live 2026-09-02** (10-point probe all true; inventory recorded BEFORE apply, all zero: no unsigned acknowledgments in history, no observer roster rows, no client-queued non-member mail, no external mail in 90 days, no unlinked field-verification holds).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
 
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
@@ -603,7 +603,7 @@ matching the `document_acknowledgments` rule.
 - **Status:** RESOLVED
 
 **Resolution (2026-09-02, Phase 6 severity sweep, Round B).** The identity pin `20261030` gave review sign-offs already covered reviewer/slot/draft/document/org; the guard (body from `20261030`, line-diff pinned) now also pins `reviewer_name` and refuses a signature attached to a row that is not being signed. The policy's membership-only `WITH CHECK` is documented as cosmetic: the trigger is the rail.
-- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+- Migration: `20261047` — **applied & verified live 2026-09-02** (10-point probe all true; inventory recorded BEFORE apply, all zero: no unsigned acknowledgments in history, no observer roster rows, no client-queued non-member mail, no external mail in 90 days, no unlinked field-verification holds).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
 
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / safety
@@ -757,7 +757,7 @@ them.**
 - **Status:** RESOLVED
 
 **Resolution (2026-09-02, Phase 6 severity sweep, Round B).** A member can no longer queue mail to an arbitrary address with arbitrary HTML. Database: a client INSERT into `email_notifications` must address a member of the same org (`lower(r.email) = lower(to_email)`) and may not be marked external (the DEC-30 inventory of client-queued non-member mail is recorded before apply). App: the transmittal email is queued by `/api/transmittal/send-email` — session-authenticated, the caller must be an active member and the issuer or a controller, the message is rendered from the transmittal ROW (the request carries only an id), audited `TRANSMITTAL_EMAILED`; `sendTransmittalEmail` calls the route; `queueExternalEmail` is removed from the browser library. Server-side inserts (intake, cron, transmittal acknowledgment) are untouched.
-- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Files: `app/api/transmittal/send-email/route.ts`, `lib/transmittals.ts`, `lib/notifications.ts`. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+- Migration: `20261047` — **applied & verified live 2026-09-02** (10-point probe all true; inventory recorded BEFORE apply, all zero: no unsigned acknowledgments in history, no observer roster rows, no client-queued non-member mail, no external mail in 90 days, no unlinked field-verification holds).. Files: `app/api/transmittal/send-email/route.ts`, `lib/transmittals.ts`, `lib/notifications.ts`. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
 
 - **Verification:** CONFIRMED
 - **Blast radius:** security (phishing relay) / brand
@@ -795,7 +795,7 @@ WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
 - **Status:** RESOLVED
 
 **Resolution (2026-09-02, Phase 6 severity sweep, Round B).** `email_notifications` gains a SELECT policy (own rows — the 60-second dedupe window finally sees something — or the admin trail for Admin/Manager by collection) and an UPDATE policy for Admin/Manager confined by `enforce_email_requeue_columns` to `status` / `attempt_count` only, so the dead-letter panel can count and re-queue but can never rewrite a queued message's address or body (`SURF-17`'s second door stays shut). Both key on `org_id`, never on `to_user_id` alone (the `SURF-5` trap).
-- Migration: `20261047` — **printed for operator paste; pending apply** (10-point verification incl. a 14-column late-binding probe; 5-line inventory recorded BEFORE apply).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
+- Migration: `20261047` — **applied & verified live 2026-09-02** (10-point probe all true; inventory recorded BEFORE apply, all zero: no unsigned acknowledgments in history, no observer roster rows, no client-queued non-member mail, no external mail in 90 days, no unlinked field-verification holds).. Tests: `lib/__tests__/rpSweepMigrations.test.ts` (shape + line-diffs against the live predecessors), `lib/__tests__/sweepRoundB.test.ts`.
 
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / observability
