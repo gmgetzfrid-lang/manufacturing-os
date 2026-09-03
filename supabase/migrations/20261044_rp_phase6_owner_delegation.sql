@@ -135,8 +135,11 @@ SELECT 'documents access guard carries the owner arm' AS check,
           AND prosrc LIKE '%acl_index_grants_admin_beyond(OLD.acl_index, NEW.acl_index)%'
           FROM pg_proc WHERE proname = 'documents_guard_access_change') AS ok
 UNION ALL
+-- prosrc is the body VERBATIM: the apostrophe in the message is stored as
+-- the two quotes written inside the dollar-quoted body, so the probe needs
+-- '''' (an escaped pair) to match it.
 SELECT 'documents access guard keeps the OWN-2 ownership arm',
-       (SELECT prosrc LIKE '%Not permitted to change this document''s owner.%'
+       (SELECT prosrc LIKE '%Not permitted to change this document''''s owner.%'
           FROM pg_proc WHERE proname = 'documents_guard_access_change')
 UNION ALL
 SELECT 'folder update policy admits owner and manage-grant',

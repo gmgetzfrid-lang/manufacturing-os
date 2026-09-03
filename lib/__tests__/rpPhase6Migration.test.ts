@@ -52,6 +52,23 @@ describe("20261042 — revocation (SURF-1/DEC-20) with succession (GAP-5/OWN-12)
     expect(fn).toMatch(/SELECT supervisor_user_id INTO v_owner FROM teams WHERE id = v_team;/);
   });
 
+  it("prosrc probes that want an apostrophe use an escaped PAIR: pg_proc stores the dollar-quoted body verbatim", () => {
+    // Inside $$...$$ a literal's DELIMITING quotes are single in prosrc
+    // ('active' probes as ''active'' and matched live), but an apostrophe
+    // INSIDE a literal is written as two quotes and stored that way, so a
+    // probe for it needs '''' — with '' it matches one quote and can only be
+    // false live (20261044 probe 2 came back false for exactly this).
+    for (const m of [m42, m43, m44, m45]) {
+      const v = m.slice(m.indexOf("── Verification"));
+      for (const x of v.matchAll(/prosrc (?:NOT )?LIKE '((?:[^']|'')*)'/g)) {
+        const pat = x[1];
+        const unescaped = pat.replace(/''/g, "'");
+        if (/[A-Za-z]'[A-Za-z]/.test(unescaped)) expect(pat, pat).toMatch(/[A-Za-z]''''[A-Za-z]/);
+      }
+    }
+    expect(m44).toMatch(/prosrc LIKE '%Not permitted to change this document''''s owner\.%'/);
+  });
+
   it("policy probes match the DEPARSED expression pg_policies stores: a cast never sits bare inside a LIKE pattern", () => {
     // pg_policies.qual / with_check hold pg_get_expr output: ARRAY['Admin']::text[]
     // becomes ARRAY['Admin'::text], and x::text becomes (x)::text. A literal
