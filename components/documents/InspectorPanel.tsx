@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, PenLine } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -33,6 +33,8 @@ import CollapsibleSection from "@/components/ui/CollapsibleSection";
 import DocClassControl from "@/components/documents/DocClassControl";
 import AddToPackageButton from "@/components/documents/AddToPackageButton";
 import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
+import MarkupsSection from "@/components/documents/MarkupsSection";
+import type { DocumentMarkup } from "@/lib/markups";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
@@ -79,6 +81,10 @@ interface InspectorPanelProps {
   versionHistoryRefreshKey?: number;
   /** Open a specific historical version in the full-screen viewer. */
   onOpenVersion?: (v: DocumentVersion) => void;
+  /** GAP-7: open the viewer seeded with a stored markup (the author continues; anyone else views). */
+  onOpenMarkup?: (m: DocumentMarkup) => void;
+  /** Bumped by the page after the viewer commits, so the list reloads. */
+  markupsRefreshKey?: number;
   // Asset-tag chip integration — when provided, the inspector renders a
   // tag-photo strip directly so users don't have to open Metadata Editor.
   orgId?: string;
@@ -129,6 +135,7 @@ export default function InspectorPanel({
   onRevertVersion,
   versionHistoryRefreshKey,
   onOpenVersion,
+  onOpenMarkup, markupsRefreshKey,
   orgId,
   customColumns,
 }: InspectorPanelProps) {
@@ -778,6 +785,14 @@ export default function InspectorPanel({
           </button>
         )}
           <CheckoutHistoryPanel orgId={selectedDoc.orgId} documentId={selectedDoc.id} />
+        </CollapsibleSection>
+      )}
+
+      {/* MARKUPS — GAP-7: a markup that exists is discoverable from the document
+          without anyone having downloaded anything. */}
+      {selectedDoc.id && (
+        <CollapsibleSection id="markups" title="Markups" icon={PenLine}>
+          <MarkupsSection documentId={selectedDoc.id} currentUserId={uid ?? undefined} onOpenMarkup={onOpenMarkup} refreshKey={markupsRefreshKey} />
         </CollapsibleSection>
       )}
 

@@ -25,8 +25,8 @@
       "LOW": 4
     },
     "by_status": {
-      "RESOLVED": 89,
-      "OPEN": 40,
+      "RESOLVED": 90,
+      "OPEN": 39,
       "REFUTED": 3
     }
   },
@@ -1168,7 +1168,7 @@
       "id": "LIFE-3",
       "title": "Viewer markup is never persisted — the redline exists only in React state",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "data-loss / safety",

@@ -460,6 +460,8 @@ requester at closure that the document is still un-revised.
 
 **Verdict: BUILD_NARROW** · Effort: **M** · Design settled by `DEC-24`
 
+**Status: RESOLVED (2026-09-02, roles-and-permissions Phase 7 build 1 / Round C4).** Built to this spec on the `DEC-24` shape and no wider. In: server-side persistence of viewer markup as normalized per-page fabric JSON, keyed to `(document_id, version_id, user_id)` with `checkout_session_id` as provenance (`document_markups`, `20261051`), saved as the user moves between pages and on close, restored on reopen. Out, as specified: no collaborative markup, no versioning beyond last-write-per-user-per-version. Design honoured: the three existing `FullScreenViewer` hooks are wired at the one render site (`initialPageStates` seeded from the store, `onPageStatesChange` autosave, `onCommit` on close); `bakeMarkupIntoPdf` stays for export as a derivative; the `takeDraft` delete-on-read was already replaced by `readDraft` / `discardDraft` (Round A). "Do not" honoured: the baked PDF is never the only copy (the fabric JSON is the record — who drew what, on which revision, when); IndexedDB is not the source of truth (the stash only carries a baked file into a request); no new viewer. Acceptance: (1) ✓ closing and reopening the viewer on the same document and version restores the user's markup; (2) ✓ refreshing `/requests/new?draft=…` still yields the marked-up file; (3) ✓ a markup is discoverable from the document's inspector without a download. Tests: `lib/__tests__/sweepRoundC4.test.ts`. Migration `20261051` pending operator paste.
+
 ### Scope
 
 **In:** server-side persistence of viewer markup, keyed to

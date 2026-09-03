@@ -65,6 +65,8 @@ const FullScreenViewer = dynamic(() => import("@/components/viewers/FullScreenVi
 const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer"), { ssr: false });
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
+import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
+import { listVersions } from "@/lib/revisions";
 import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
@@ -1687,6 +1689,38 @@ export default function LibraryExplorerPage() {
     return canPublishOnLibrary({ principal, libraryAcl: library?.acl });
   }, [principal, library?.acl, library?.aclIndex]);
 
+  // GAP-7 / DEC-24: the viewer is seeded from the markup STORE and saves back
+  // to it — the caller's own markup by default, or a chosen stored markup from
+  // the inspector (the author continues; anyone else views, nothing is saved).
+  const [markupSeed, setMarkupSeed] = useState<{ key: string; states: Record<number, object>; readOnly: boolean } | null>(null);
+  const [pendingMarkup, setPendingMarkup] = useState<DocumentMarkup | null>(null);
+  const [markupsRefreshKey, setMarkupsRefreshKey] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    if (!showFullScreen || !selectedDoc?.id || !selectedVersion?.id || !uid) { setMarkupSeed(null); return; }
+    const docId = selectedDoc.id, versionId = selectedVersion.id;
+    (async () => {
+      try {
+        if (pendingMarkup && pendingMarkup.documentId === docId && pendingMarkup.versionId === versionId) {
+          if (alive) setMarkupSeed({ key: `${docId}:${versionId}:${pendingMarkup.userId}`, states: pendingMarkup.pageStates, readOnly: pendingMarkup.userId !== uid });
+          return;
+        }
+        const mine = await loadMyMarkup(docId, versionId, uid);
+        if (alive) setMarkupSeed({ key: `${docId}:${versionId}:${uid}`, states: mine?.pageStates ?? {}, readOnly: false });
+      } catch {
+        // The store could not be read: open the sheet blank rather than not at all — but never save over an unknown state.
+        if (alive) setMarkupSeed({ key: `${docId}:${versionId}:unavailable`, states: {}, readOnly: true });
+      }
+    })();
+    return () => { alive = false; };
+  }, [showFullScreen, selectedDoc?.id, selectedVersion?.id, uid, pendingMarkup]);
+  const persistMarkup = useCallback(async (states: Record<number, object>) => {
+    if (!selectedDoc?.id || !selectedVersion?.id || !uid || !activeOrgId) return;
+    const sessionId = await myActiveSessionId(selectedDoc.id, uid);
+    await saveMyMarkup({ orgId: activeOrgId, documentId: selectedDoc.id, versionId: selectedVersion.id, uid, checkoutSessionId: sessionId, pageStates: states });
+    setMarkupsRefreshKey((k) => k + 1);
+  }, [selectedDoc?.id, selectedVersion?.id, uid, activeOrgId]);
+
   const buildFolderChain = useCallback(
     (folder?: LibraryCollection | null): AccessControl[] => {
       const chain: AccessControl[] = [];
@@ -3092,10 +3126,11 @@ export default function LibraryExplorerPage() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {showFullScreen && selectedDoc && selectedVersion && (
+      {showFullScreen && selectedDoc && selectedVersion && markupSeed && (
         <FullScreenViewer
+          key={markupSeed.key}
           isOpen={showFullScreen}
-          onClose={() => setShowFullScreen(false)}
+          onClose={() => { setShowFullScreen(false); setPendingMarkup(null); }}
           url={selectedVersion.fileUrl}
           title={selectedDoc.title || "Document"}
           docNumber={selectedDoc.documentNumber || ""}
@@ -3109,6 +3144,12 @@ export default function LibraryExplorerPage() {
           onCheckout={openCheckout}
           orgId={activeOrgId ?? undefined}
           customColumns={(library?.customColumns ?? []) as unknown as Array<{ key: string; label: string; type?: string; pillGroupLabel?: string }>}
+          initialPageStates={markupSeed.states}
+          onPageStatesChange={markupSeed.readOnly ? undefined : (states) => { void persistMarkup(states).catch((e) => console.warn("[markups] autosave failed", e)); }}
+          onCommit={markupSeed.readOnly ? undefined : async (states) => {
+            try { await persistMarkup(states); }
+            catch (e) { void appAlert({ title: "Markup not saved", message: (e as Error).message }); }
+          }}
         />
       )}
 
@@ -4296,6 +4337,20 @@ export default function LibraryExplorerPage() {
             onCheckout={openCheckout}
             onForceUnlock={handleForceUnlock}
             onFullScreen={() => setShowFullScreen(true)}
+            onOpenMarkup={(m) => {
+              void (async () => {
+                if (!selectedDoc?.id) return;
+                if (selectedVersion?.id !== m.versionId) {
+                  const vs = await listVersions(selectedDoc.id).catch(() => [] as DocumentVersion[]);
+                  const v = vs.find((x) => x.id === m.versionId);
+                  if (!v) { void appAlert({ title: "Revision not found", message: "The revision this markup was drawn on is no longer available." }); return; }
+                  setSelectedVersion(v);
+                }
+                setPendingMarkup(m);
+                setShowFullScreen(true);
+              })();
+            }}
+            markupsRefreshKey={markupsRefreshKey}
             onToggleStage={(doc) => {
               setStagedDocs((prev) => {
                 if (prev.some((d) => d.id === doc.id)) return prev.filter((d) => d.id !== doc.id);

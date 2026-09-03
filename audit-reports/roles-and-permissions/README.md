@@ -313,6 +313,14 @@ Migrations: `20261049` (`publish_revision` writes `related_ticket_id`; the colum
 
 Migrations: `20261050` — **pending apply** (apply after the deploy that carries the route; inventory first).
 
+### Phase 7 — build 1, Round C4 (2026-09-02) — markup as a durable artifact
+
+| Item | Outcome |
+|---|---|
+| `GAP-7` / `DEC-24` (`LIFE-3`, drafting-flow `LEAK-5`) | **RESOLVED** — `document_markups` keeps the viewer's per-page fabric JSON per (document, version, user); the register page wires the viewer's three hooks (seed on open, autosave on page switch, save on close); the inspector lists every markup on a document and opens it. Reads as visible as the document; writes the author's own |
+
+Migrations: `20261051` — **pending apply** (new table; not a widening).
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

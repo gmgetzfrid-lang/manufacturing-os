@@ -189,7 +189,10 @@ compare-and-set and audit path as every other ticket mutation.
 ## LEAK-5 · Field markup is destroyed by a page refresh
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, fixed under roles-and-permissions Round C4 as [`LIFE-3`](../roles-and-permissions/07-document-lifecycle.md) / [`GAP-7`](../roles-and-permissions/90-gap-register.md) — the owning records; this one points there).** The document page now passes all three viewer hooks: markup is seeded from the server-side store on open, autosaved on page switches and on close, and restored on reopen; a page refresh no longer destroys it. The drafting-flow area is unclaimed; its own pass re-verifies.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** data-loss / adoption
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `FullScreenViewer` exposes `initialPageStates`, `onPageStatesChange` and `onCommit` (`:138-143`), and the document page passes **none of them** — a grep for all three at the call site (`documents/[libraryId]/page.tsx:3025-3036`) returns nothing. Markup lives in component state only.

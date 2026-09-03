@@ -874,6 +874,8 @@ non-destructive, or scope its deletion to successful ticket creation.
 
 **Risk:** medium.
 
+*Landed 2026-09-02 (roles-and-permissions Phase 7 build 1 / Round C4): built on this shape — see `GAP-7`, `LIFE-3`; migration `20261051`. Autosave is per page switch and on close (the viewer reports page states as they change); a keystroke-level save is deliberately not added.*
+
 <a id="dec-25"></a>
 ## DEC-25 · A ticket closing over its own open hold
 

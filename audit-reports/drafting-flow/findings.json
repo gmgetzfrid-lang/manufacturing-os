@@ -26,8 +26,8 @@
       "LOW": 23
     },
     "by_status": {
-      "OPEN": 134,
-      "RESOLVED": 1,
+      "OPEN": 133,
+      "RESOLVED": 2,
       "REFUTED": 4
     }
   },
@@ -1185,7 +1185,7 @@
       "id": "LEAK-5",
       "title": "Field markup is destroyed by a page refresh",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "data-loss / adoption",

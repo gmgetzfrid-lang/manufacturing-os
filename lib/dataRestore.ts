@@ -363,7 +363,9 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "milestones", "milestone_notes",
   "ticket_number_counters", "tickets", "ticket_comments",
   "checkout_sessions", "checkout_episodes", "checkout_messages",
-  "markup_requests", "notes", "download_audits",
+  "markup_requests",
+  "document_markups", // GAP-7: after documents + document_versions (FKs); the author uid is remapped like any user column
+  "notes", "download_audits",
   "audit_logs", "notifications", "email_notifications",
   "table_views", "sla_defaults", "org_configurations",
   "export_destinations", "export_runs", "ai_usage_events",

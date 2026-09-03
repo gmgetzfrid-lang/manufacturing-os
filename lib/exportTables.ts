@@ -112,6 +112,7 @@ export const ORG_SCOPED_TABLES = [
   "project_documents",
   "project_activity",
   "markup_requests",
+  "document_markups", // GAP-7 / DEC-24: viewer markup per (document, version, user) — evidence, exported
   "milestones",
   "milestone_notes",
 

@@ -386,6 +386,12 @@ export default function FullScreenViewer({
   const [committing, setCommitting] = useState(false);
   // True while we bake markups into the PDF for a "Send to Drafting" handoff.
   const [sendingDraft, setSendingDraft] = useState(false);
+  // GAP-7 / DEC-24: report the per-page states as they change (a page switch
+  // stores the page being left), so a parent can AUTOSAVE — not only on close.
+  useEffect(() => {
+    if (onPageStatesChange && Object.keys(pageStates).length > 0) onPageStatesChange(pageStates);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageStates]);
 
   // Undo/redo per-page snapshot stacks
   const undoRef = useRef<Record<number, string[]>>({});
