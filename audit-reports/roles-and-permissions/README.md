@@ -311,7 +311,7 @@ Migrations: `20261049` (`publish_revision` writes `related_ticket_id`; the colum
 |---|---|
 | `SURF-14` (+ document-control `RG-9`, drafting-flow `EVID-3`) | **RESOLVED** — `/api/signatures/sign` verifies the re-authentication (password probe / SSO freshness), derives signer identity from `org_members`, takes the content hash from the version row, gates `Approved` on capability, writes on the service-role key with `reauth_method` / `reauth_at`, checked audit write. The browser verifies nothing; the client INSERT policy is dropped and a trigger refuses any user-JWT insert |
 
-Migrations: `20261050` — **pending apply** (apply after the deploy that carries the route; inventory first).
+Migrations: `20261050` — **applied & verified live 2026-09-02** (5/5; inventory before apply: 1 row, 0 in 30 days, 2 policies, 1 INSERT policy). Round C3 fully live.
 
 ### Phase 7 — build 1, Round C4 (2026-09-02) — markup as a durable artifact
 
