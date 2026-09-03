@@ -615,6 +615,8 @@ flag day.
 
 **Risk:** low.
 
+*Landed 2026-09-02 (roles-and-permissions Round D1): `engineerApprovalRequired(snapshot, currentRoles)` in `lib/workflow.ts`; the route looks the requester's current collection up on every action, the page best-effort. See `WF-12`, `DRAFT-3`.*
+
 ---
 
 # Non-document surfaces

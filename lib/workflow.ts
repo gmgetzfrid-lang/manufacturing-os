@@ -32,6 +32,12 @@ export interface WorkflowContext {
    *  a property of the CONFIGURED type, not a hardcoded string. Defaults to
    *  ['RFI'] (the historical behavior). */
   closeWithoutReviewTypes?: string[];
+  /** DEC-16 / WF-12 / DRAFT-3: the requester's CURRENT role collection (their
+   *  org_members row today), when known. The engineer gate requires approval
+   *  if EITHER the snapshot stamped at filing OR the current collection says
+   *  so — the snapshot can only fail closed, never open. `null` / undefined =
+   *  unknown (snapshot decides); `[]` = known to hold nothing (required). */
+  requesterRoles?: readonly string[] | null;
 }
 
 /** DEC-12 threshold: independence appears exactly when it becomes possible
@@ -63,6 +69,25 @@ export function isDocCtrlRole(role?: Role | string): boolean {
  * borderline — exclude here since drafters approving their own work as
  * requester is a separate antipattern.
  */
+/**
+ * DEC-16 (WF-12 / DRAFT-3): the engineer gate, evaluated against BOTH the
+ * role snapshot stamped on the ticket at filing AND the requester's current
+ * role collection. Required if either requires it. The snapshot is a
+ * historical record and is never refreshed; the current collection is
+ * looked up at evaluation time by the workflow route (authoritative) and,
+ * best-effort, by the ticket page. Unknown current (`null`/`undefined`) lets
+ * the snapshot decide; a known-empty current collection (the requester is no
+ * longer an active member) requires an engineer.
+ */
+export function engineerApprovalRequired(snapshotRole?: Role | string | null, currentRoles?: readonly string[] | null): boolean {
+  const bySnapshot = requiresEngineerApproval(snapshotRole ?? undefined);
+  if (currentRoles === null || currentRoles === undefined) return bySnapshot;
+  const byCurrent = currentRoles.length === 0
+    ? true
+    : !currentRoles.some((r) => isEngineerRole(r) || isManagementRole(r) || isDocCtrlRole(r));
+  return bySnapshot || byCurrent;
+}
+
 export function requiresEngineerApproval(requesterRole?: Role | string, requesterRoles?: readonly string[] | null): boolean {
   // ADD-3: when the requester's full collection is known, ANY held engineer /
   // management / DocCtrl role waives the engineer route — relevance, not rank.
@@ -127,8 +152,12 @@ export const WorkflowEngine = {
     const producerIsChecker = sod && isDrafterIdentity;
     const SOD_REASON = "Needs a second person: the assigned drafter cannot approve their own deliverable (independent approval, orgs of 3+).";
 
-    // Does the original requester's role require an engineer in the loop?
-    const needsEngineerApproval = requiresEngineerApproval(ticket.requesterRole);
+    // Does the requester need an engineer in the loop? DEC-16: the role
+    // stamped at filing is a SNAPSHOT (kept as the historical record) and is
+    // disjoined with the requester's current collection — approval is
+    // required if either says so, so a demotion after filing cannot leave
+    // an in-flight ticket bypassing the gate.
+    const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles);
 
     switch (ticket.status) {
       // --- INITIAL REVIEW STAGE ---

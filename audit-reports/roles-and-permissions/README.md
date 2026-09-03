@@ -321,6 +321,20 @@ Migrations: `20261050` — **applied & verified live 2026-09-02** (5/5; inventor
 
 Migrations: `20261051` — **applied & verified live 2026-09-02** (5/5; new table, not a widening). Round C4 fully live.
 
+### Round D1 (2026-09-02) — the remaining HIGH group, no migration
+
+| Item | Outcome |
+|---|---|
+| `WF-12` / `DRAFT-3` (`DEC-16`) | **RESOLVED** — the engineer gate requires approval if the filing snapshot OR the requester's current collection requires it; the route looks the current collection up on every action; the rule is documented on the type and the function |
+| `OWN-11` | **partial 2** — the ready-to-publish notice reaches owner AND controllers and says why an automatic publish was refused; done-when 1 (a defined publishing authority, independent of signing order) → Round D2 |
+| `CHAIN-2` (`DEC-1`) | **RESOLVED** — closed out against the live `20261046` role-sync trigger and `20261024` backfill; the SQL / TS rank agreement is now asserted for all 19 roles |
+| `CHAIN-5` (`DEC-5`) | **RESOLVED** — the constraint is recorded beside `ALL_ROLES`; the 19 strings are pinned |
+| `CHAIN-6` | **RESOLVED** (informational) — three overtaken rows refreshed |
+| `CHAIN-7` | **RESOLVED** — a Manager is shown exactly the Users link the page admits |
+| `CHAIN-3` | **partial** — two of three resolutions unified; the three "management" lists are `WF-24` |
+
+No migration.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

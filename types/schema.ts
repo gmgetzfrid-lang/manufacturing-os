@@ -23,6 +23,14 @@ export type Role =
   | "Viewer"
   | "Auditor";
 
+// DEC-5 / CHAIN-5: role identity IS the role's NAME. These strings are stored
+// verbatim inside customer JSON — documents / collections / libraries `acl`
+// and `acl_index`, org_configurations.data (the capability policy) — with no
+// id and no version stamp. Renaming or removing ANY of these nineteen strings
+// orphans live grants silently (the rule stays in the JSON and simply stops
+// matching). No role may be renamed or removed until DEC-5 is revisited with
+// stable ids and a blob migration; lib/__tests__/sweepRoundD1.test.ts pins
+// the list.
 export const ALL_ROLES: Role[] = [
   "Admin",
   "DocCtrl",
@@ -1133,6 +1141,11 @@ export interface Ticket {
   requesterId: string;
   requesterName?: string;
   requesterEmail?: string;
+  /** The requester's role STAMPED AT FILING (relevance-chosen, see
+   *  relevantRequesterRole) — a historical snapshot, never refreshed. DEC-16:
+   *  the engineer gate requires approval if this snapshot OR the requester's
+   *  current org_members collection requires it (engineerApprovalRequired),
+   *  so the snapshot can only fail closed. */
   requesterRole?: Role;
 
   assignedDrafterId?: string | null;

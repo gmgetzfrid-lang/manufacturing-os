@@ -12,6 +12,7 @@ import {
 import type { Role, TicketAttachment } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
+import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
 
 // POST /api/tickets/workflow-action
@@ -127,10 +128,21 @@ export async function POST(req: NextRequest) {
   // capability policy, so admin-configured authority is enforced here, not
   // just drawn in the UI.
   const capPolicy = await loadCapabilityPolicy(ticket.orgId, supabaseAdmin);
+  // DEC-16: the requester's CURRENT collection rides beside the snapshot, so
+  // a demotion after filing cannot leave the engineer gate bypassed. A
+  // requester who is no longer an active member is known to hold nothing.
+  let requesterRoles: string[] = [];
+  if (ticket.requesterId) {
+    const { data: reqMember } = await supabaseAdmin
+      .from("org_members").select("role, roles")
+      .eq("org_id", ticket.orgId).eq("uid", ticket.requesterId).eq("status", "active").maybeSingle();
+    requesterRoles = heldRoles(reqMember as { role?: unknown; roles?: unknown } | null);
+  }
   const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, {
     userRoles: callerRoles,
     activeMemberCount: activeMemberCount ?? 0,
     closeWithoutReviewTypes,
+    requesterRoles,
   });
   const action = allowed.find((a) => a.action === body.actionType);
   if (!action) {

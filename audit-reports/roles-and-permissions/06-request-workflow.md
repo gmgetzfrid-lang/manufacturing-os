@@ -628,7 +628,12 @@ and, once `WF-1` is fixed, `checkout.force_release` at the database.
 ## WF-12 · `requiresEngineerApproval` reads an undocumented role SNAPSHOT that survives demotion
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Round D1 — `DEC-16`).** The snapshot stays as the historical record and the gate fails closed on either value. `engineerApprovalRequired(snapshotRole, currentRoles)` (`lib/workflow.ts`) requires an engineer if the role stamped at filing requires one OR the requester's current role collection does; an unknown current collection lets the snapshot decide, and a requester who is no longer an active member (known to hold nothing) requires one. `getActions` reads `ctx.requesterRoles`; the workflow-action route looks the requester's current `org_members` collection up on every action (authoritative), and the ticket page loads it best-effort so the buttons drawn match the route. A demoted requester's in-flight tickets no longer bypass the gate; a promoted engineer's old tickets still do not require one (the `!isEng` clause and the disjunction both keep that).
+- Done-when: (1) ✓ demoted requester's in-flight tickets no longer bypass the engineer gate (the current collection says "required"); (2) ✓ the rule is documented on `Ticket.requesterRole` (`types/schema.ts`) and on `engineerApprovalRequired` / the `getActions` comment.
+- Files: `lib/workflow.ts`, `app/api/tickets/workflow-action/route.ts`, `app/(protected)/requests/[id]/page.tsx`, `types/schema.ts`. Tests: `lib/__tests__/sweepRoundD1.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:**

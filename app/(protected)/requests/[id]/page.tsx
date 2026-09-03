@@ -21,6 +21,7 @@ import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { parseSourceDocument, revDrift } from '@/lib/sourceDocRef';
+import { heldRoles } from '@/lib/roleHeld';
 // GAP-6 / DEC-22: the ticket → document hand-back. Publish authority on the
 // document's LIBRARY (or effective ownership) — never ticket authority.
 import { docRowToDocumentRecord } from '@/lib/documentRows';
@@ -822,6 +823,9 @@ export default function TicketDetailView() {
   // buttons match the workflow-action route's evaluation of the same context.
   const [activeMemberCount, setActiveMemberCount] = useState(0);
   const [closeWithoutReviewTypes, setCloseWithoutReviewTypes] = useState<string[]>(['RFI']);
+  // DEC-16: the requester's CURRENT role collection, so the buttons drawn here
+  // match the gate the route enforces (snapshot OR current). null = unknown.
+  const [requesterRoles, setRequesterRoles] = useState<string[] | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
@@ -1039,6 +1043,17 @@ export default function TicketDetailView() {
       });
     return () => { alive = false; };
   }, [sourceRefId, ticketOrgId]);
+
+  const requesterId = ticket?.requesterId ?? null;
+  useEffect(() => {
+    let alive = true;
+    if (!requesterId || !ticketOrgId) { setRequesterRoles(null); return; }
+    supabase.from('org_members').select('role, roles')
+      .eq('org_id', ticketOrgId).eq('uid', requesterId).eq('status', 'active').maybeSingle()
+      .then(({ data }) => { if (alive) setRequesterRoles(data ? heldRoles(data as { role?: unknown; roles?: unknown }) : []); })
+      .then(undefined, () => { if (alive) setRequesterRoles(null); });
+    return () => { alive = false; };
+  }, [requesterId, ticketOrgId]);
 
   // GAP-6 / DEC-22: may THIS caller publish a revision of the source document?
   // Library publish authority (controller, publish grant, index) OR the
@@ -1558,6 +1573,7 @@ export default function TicketDetailView() {
     userRoles: roles,
     activeMemberCount,
     closeWithoutReviewTypes,
+    requesterRoles,
   });
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
   

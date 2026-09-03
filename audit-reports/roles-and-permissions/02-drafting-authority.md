@@ -146,7 +146,12 @@ exist.
 ## DRAFT-3 · The engineer-approval requirement is decided from the requester's primary role only
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Round D1 — with `WF-12` / `DEC-16`; the stamp side landed in Round C1 / `ADD-3`).** The decision reads the collection at both ends. At filing, `requester_role` is stamped by relevance (`relevantRequesterRole`): an engineer tier held anywhere wins, then management / DocCtrl, then the headline — so an engineer whose headline is Manager is never forced through a redundant review. At evaluation, `engineerApprovalRequired(snapshot, currentRoles)` disjoins the stamped snapshot with the requester's CURRENT collection (looked up by the route on every action) and requires an engineer if either says so. The evaluation moment is documented: the stamp is a snapshot kept as the historical record; the current collection is consulted at every evaluation; the pair can only fail closed. On the first scenario — a `["Supervisor","Drafter"]` member approving "their own returned draft": the collection genuinely holds Supervisor, so management approval is theirs by design; what stops a producer checking their own deliverable is separation of duties (`GAP-2` / `DEC-12`, `DEC-37`: the assigned drafter cannot approve, and a requester cannot self-assign), which is slot-based and unaffected by which hats the person wears.
+- Done-when: (1) ✓ Drafter-alongside-Supervisor cannot approve a draft they produced (slot independence); (2) ✓ an engineer who is also a manager is not forced through a redundant review; (3) ✓ the evaluation moment is documented and consistent (snapshot at filing ∨ current at evaluation).
+- Files: `lib/workflow.ts`, `lib/roleCapabilities.ts`, `types/schema.ts`, `app/api/tickets/workflow-action/route.ts`, `app/(protected)/requests/[id]/page.tsx`. Tests: `lib/__tests__/sweepRoundD1.test.ts`, `lib/__tests__/sweepRoundC.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / governance
 - **Locations:**

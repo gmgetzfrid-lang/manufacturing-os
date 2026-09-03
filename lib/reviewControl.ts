@@ -351,7 +351,10 @@ export async function recordReviewSignoff(input: {
   });
   const controllers = await getOrgControllers(input.orgId);
   const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
-  const watchers = uniq([...(owner.userId ? [owner.userId] : controllers)]).filter((u) => u !== input.signerUserId);
+  // OWN-11 done-when 2: the notice reaches someone who can act — the owner
+  // AND the controllers, never the owner instead of them (an owner on leave
+  // used to swallow it; OWN-12 only covered a departed owner).
+  const watchers = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== input.signerUserId);
   // AUTO-FINALIZE: the last required signature promotes the draft to the
   // controlled revision immediately — an approved draft must not sit
   // unpublished until someone remembers to reopen the inspector. The DB
@@ -360,6 +363,7 @@ export async function recordReviewSignoff(input: {
   // draft). If the promote fails for any reason, the "Ready to publish"
   // notification below still goes out and the manual button remains.
   let autoPublished = false;
+  let autoRefusedBecause: string | null = null;
   if (complete) {
     try {
       const res = await finalizeReviewedRevision({
@@ -367,8 +371,14 @@ export async function recordReviewSignoff(input: {
         actorId: input.signerUserId, actorName: input.signerName,
       });
       autoPublished = res.published;
-    } catch { /* fall back to the manual finalize path */ }
+      if (!res.published) autoRefusedBecause = res.reason ?? "the publish guard refused";
+    } catch (e) { autoRefusedBecause = (e as Error).message || "the publish guard refused"; }
   }
+  // OWN-11 done-when 2: say WHY the automatic publish did not happen, so the
+  // person who can act knows what to do rather than wondering.
+  const readyBody = autoRefusedBecause
+    ? `All required reviewers have signed off, but the automatic publish was refused (${autoRefusedBecause}) — a publisher or the owner must publish it from the inspector.`
+    : "All required reviewers have signed off — the revision can be published.";
 
   await Promise.all(watchers.map((uid) =>
     notify({
@@ -380,7 +390,7 @@ export async function recordReviewSignoff(input: {
       body: complete
         ? (autoPublished
             ? "All required reviewers signed off — the revision is now the controlled copy."
-            : "All required reviewers have signed off — the revision can be published.")
+            : readyBody)
         : `${input.signerName} signed off on the draft.`,
       link, resourceType: "document", resourceId: input.documentId,
       actorUserId: input.signerUserId, actorName: input.signerName,

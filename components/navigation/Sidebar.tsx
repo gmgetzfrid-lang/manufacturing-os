@@ -253,9 +253,13 @@ export default function Sidebar({
         ? workAll.filter((item) => ['Home', 'Documents', 'Drafting Requests', 'Projects'].includes(item.label))
         : workAll;
 
+    // CHAIN-7: the set shown a link equals the set the page admits. The
+    // Users page admits Admin / Manager / DocCtrl, so a Manager gets exactly
+    // that entry; the rest of the section stays controller-only.
+    const usersEntry: NavLeaf = { label: 'Users', href: '/admin/users', icon: Users, tone: 'blue' };
     const admin: NavLeaf[] = isAdmin ? [
       { label: 'Facility setup',    href: '/setup',             icon: Compass,    tone: 'violet'  },
-      { label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'blue'    },
+      usersEntry,
       { label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'cyan'    },
       { label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'indigo'  },
       { label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'orange'  },
@@ -270,7 +274,7 @@ export default function Sidebar({
       { label: 'Billing',           href: '/admin/billing',     icon: CreditCard, tone: 'emerald' },
       { label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
       { label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
-    ] : [];
+    ] : hasAnyRole(['Manager']) ? [usersEntry] : [];
 
     return [
       { id: 'work', title: 'Work', hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue', items: work },

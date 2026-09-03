@@ -695,6 +695,7 @@ silent is the failure mode here, not the typo.
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Partial (2026-09-01, Phase 6 / DEC-21):** the worst case — the last signer being the ONLY primary and thereby publishing their own revision — is closed by reviewer independence (`DEL-5` record). Auto-finalize still runs under whoever signs last; done-when 1 (a defined publishing authority independent of signing order) remains OPEN for the review-gate work.
+- **Partial 2 (2026-09-02, Round D1):** done-when 2 is closed — the "ready to publish" notice reaches the owner AND the controllers (the exclusive `owner ? [owner] : controllers` form is gone; an owner on leave no longer swallows it), and when the automatic publish is refused the notice says why (`finalizeReviewedRevision`'s `reason`, or the thrown message, is carried into the body: *"…the automatic publish was refused (needs_independent_reviewer) — a publisher or the owner must publish it from the inspector"*). Done-when 1 (publishing authority independent of signing order) is Round D2: a server-side finalize under a defined authority. Files: `lib/reviewControl.ts`. Tests: `lib/__tests__/sweepRoundD1.test.ts`.
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / process
 - **Locations:**

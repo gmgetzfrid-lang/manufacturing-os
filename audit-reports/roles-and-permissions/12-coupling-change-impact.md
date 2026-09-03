@@ -97,7 +97,12 @@ other five department roles is unaffected.
 ## CHAIN-2 · `primaryRole()` is a four-line browser function that 200+ authority checks treat as truth
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Round D1 — closing out `DEC-1`, whose three steps landed across Phases 2 and 6).** Step 1, the backfill (`DB-3`, `20261024`) landed in Phase 2 and signup seeds `roles: ["Admin"]`. Steps 2 and 3 landed in Round B as `20261046` (`ADD-5`): `role_rank(text)` is the SQL mirror of `ROLE_RANK`, and `org_members_sync_role_collection` runs `BEFORE INSERT OR UPDATE OF role, roles` — not service-role exempt, so restore produces a consistent headline too — seeding an empty collection from the headline, folding a headline into the collection, and re-deriving the headline as the highest-ranked held role; a one-shot repair fixed rows written before it (inventory before apply: 0 mis-ranked, 0 empty, 0 headline-missing). `role` is therefore a database-maintained projection of `roles`; the admin page still writes both, harmlessly, and every other writer (create-user, restore, signup) writes a value the trigger reconciles. `lib/__tests__/sweepRoundD1.test.ts` walks all nineteen roles and asserts the SQL `CASE` table and `roleRank` agree.
+- Done-when: (1) ✓ no row where `role <> primaryRole(roles)` — the trigger derives it on every write and the repair fixed the past (verified live: 0 mis-ranked); (2) ✓ with a precision: a write that sets only `role` does not *replace* the effective headline — the trigger folds the written role INTO the collection and re-derives the headline from the whole collection (`ADD-5`'s deliberate design, so legacy single-role writers keep working), and only an Admin may write `org_members.role` at all (`org_members_update`'s conferral clause); (3) ✓ signup produces `roles = ARRAY['Admin']`; (4) ✓ the SQL / TypeScript rank agreement is asserted for all 19 roles; (5) ✓ `DB-3` landed before any additive conversion.
+- Migrations: `20261024`, `20261046` — both applied & verified live. Tests: `lib/__tests__/sweepRoundD1.test.ts`, `lib/__tests__/rpSweepMigrations.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / model-complexity
 - **Locations:**
@@ -160,6 +165,7 @@ headline.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Partial (2026-09-02, Round D1 — re-verified):** two of the three "different resolutions" are now the same resolution: the workflow engine reads the caller's collection (`WF-7`) and the routing pools read every member's collection (`ADD-1`, Round C1b). What still differs is the three definitions of "management" — `MANAGEMENT_ROLES` (attention, includes DraftingSupervisor), `isManagementRole` (workflow, excludes it) and `MGMT` (capability defaults, excludes it) — which is exactly `WF-24`; this record closes when `WF-24` does.
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / access-control
 - **Locations:**
@@ -254,7 +260,11 @@ matches the enforced behaviour or is explicitly listed under "Known gaps."
 ## CHAIN-5 · No stored permission blob carries a version, so no role can safely be removed
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Round D1 — the `DEC-5` constraint, recorded where a rename would hit it).** Nothing is built and nothing is removed. The constraint now sits beside `ALL_ROLES` in `types/schema.ts`: role identity is the name, the name is stored verbatim in customer JSON in seven places with no id and no version, and no role may be renamed or removed until `DEC-5` is revisited with stable ids and a blob migration. `lib/__tests__/sweepRoundD1.test.ts` pins `ALL_ROLES` to the same nineteen strings the audit started with, so a rename fails a test before it orphans a grant.
+- Done-when: ✓ `ALL_ROLES` holds the same 19 strings; ✓ the constraint is recorded at the point of change.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -299,7 +309,10 @@ it.
 ## CHAIN-6 · Change-impact map — what each candidate change actually touches
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Round D1 — reference material, refreshed; carried as resolved so it is not counted as an open defect, per the independent verifier's correction to "informational").** The three rows overtaken by later work are updated in place below: the `org_configurations.value` fix (`DB-1` / `WF-1`) landed in Phase 2, so `WF-10` and `WF-11` are live findings now, not latent ones; `WF-23` is resolved (`20261038`), so the `WF-2` precondition is discharged; `OWN-6` / `OWN-10` landed in Phase 5. The map remains the blast-radius reference to check before touching the role model.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** Re-read in the hardening pass. **This is a change-impact map, not a defect** — there is nothing to refute. Its value is as a blast-radius reference before touching the role model.
@@ -317,11 +330,11 @@ defect.
 | Pin `search_path` on 13 functions (`DB-6`) | 13 definitions | **Safe.** No behavioural change. Identify which `enforce_document_publish_guard` definition is live first. |
 | Add `owner_user_id` to the access-change guard (`OWN-2`) | 1 trigger + 1 UI flow | **Mostly safe.** Blocks owner-to-owner reassignment unless explicitly allowed. |
 | Add RESTRICTIVE policies to `libraries` (`OWN-1`) | 6+ call sites | **Not safe alone.** Every one uses `.update()` without `.select()` and will fail **silently** (`OWN-14`). |
-| Thread `teamIds` into the publish principal (`OWN-6`) | ~1 function | **Widens authority.** Audit existing `allow.teams.publish` grants first — they have been inert. |
+| Thread `teamIds` into the publish principal (`OWN-6`) | ~1 function | **Landed (Phase 5, with `OWN-10`).** The widening was inventoried before apply; team publish grants are live and the simulator agrees with the app. |
 | Make publish-path SQL additive (`OWN-3`) | 3 functions | **Widens authority.** Needs `DB-3` first, and an inventory of secondary-DocCtrl holders. |
 | Reorder `ROLE_RANK` to lift `DocCtrl` (`OWN-3` alt) | 1 constant | **Resist.** Silently removes Manager-tier ticket authority from the same people. Do not do this *and* the additive fix. |
-| Narrow `tickets` RLS (`WF-2`) | 3 client writers | **Not safe alone.** Read `WF-23` first — the SQL capability defaults deny everyone. |
-| Fix `org_configurations.value` (`DB-1`, `WF-1`) | 2 files | **Activates three latent findings** (`WF-10`, `WF-11`, `WF-23`). |
+| Narrow `tickets` RLS (`WF-2`) | 3 client writers | **Precondition discharged.** `WF-23` is resolved (`20261038`); the remaining hazard is `WF-9`'s three client writers, which must move behind the route first. |
+| Fix `org_configurations.value` (`DB-1`, `WF-1`) | 2 files | **Landed (Phase 2).** It activated `WF-10`, `WF-11` and `WF-23` as predicted: `WF-23` is resolved; `WF-10` and `WF-11` are live, open findings — treat them as such. |
 | Delete any role (`ROLE-1`) | customer JSON in 7 places | **Resist.** No stored blob is versioned (`CHAIN-5`). |
 | Restore `org_members` DELETE (`SURF-1`) | 1 policy | **Makes `OWN-12` bite.** Ownership has no succession. |
 | Give ownership a read branch (`DEL-2`) | `node_visible` | **Widens read access.** `DEC-7` picks the implicit branch — an auto-granted ACL rule adds a second dependent write to the call site with the known silent-failure bug. |
@@ -335,7 +348,12 @@ it `INVALID` with evidence rather than silently working around it.
 ## CHAIN-7 · The sidebar shows DocCtrl an admin Users link that the page then denies
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
+
+**Resolution (2026-09-02, Round D1).** The set shown the link equals the set the page admits. The Users page admits Admin / Manager / DocCtrl (`SURF-16`, by the collection); the sidebar's Admin section was Admin / DocCtrl only, so the mismatch had inverted since the audit (DocCtrl admitted, Manager unlinked). The sidebar now shows a Manager exactly the Users entry — the rest of the section stays controller-only — so a DocCtrl and a Manager each see a link that works and nobody sees one that is denied.
+- Done-when: ✓ link set = admit set ({Admin, Manager, DocCtrl} both sides).
+- Files: `components/navigation/Sidebar.tsx`. Tests: `lib/__tests__/sweepRoundD1.test.ts`.
+
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / trust
 - **Locations:**
