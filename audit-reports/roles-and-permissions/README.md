@@ -215,7 +215,9 @@ zero); `20261043` — **applied & verified live 2026-09-02** (7/7, inventory all
 §0 repaired the `revoke_member` TEXT[] assignment found in pre-flight, see
 `SURF-1`); `20261044` — **applied & verified live 2026-09-02** (7/7; inventory
 0 / 0 / 33 / 691; its folder bound became a BEFORE UPDATE trigger in pre-flight,
-see `DEL-1`); `20261045` — **pending operator paste**.
+see `DEL-1`); `20261045` — **applied & verified live 2026-09-02** (9/9; inventory 4 / 0;
+the asset overlay's whiteboard-flip carve-out was found in pre-flight, see `DEC-17`).
+**Phase 6 is fully live.**
 
 ### Phase 2 — database honesty (the trap phase)
 
