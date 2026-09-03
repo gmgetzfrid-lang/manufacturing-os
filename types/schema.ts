@@ -1209,6 +1209,11 @@ export interface SelectOption {
    *  answered in discussion). Enforced by the workflow engine and the
    *  ticket-insert trigger, not just the form. */
   closeWithoutReview?: boolean;
+  /** Request-type options only (DRAFT-2): tickets of this type must go
+   *  through engineering review BEFORE a drafter can be assigned or pick the
+   *  ticket up. Read by the workflow engine (assignment actions render
+   *  disabled with the reason) and re-enforced by the workflow-action route. */
+  engineeringFirst?: boolean;
 }
 
 export interface FormFieldConfig {

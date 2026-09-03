@@ -68,6 +68,12 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     assignedEngineerId: row.assigned_engineer_id as string | null | undefined,
     assignedEngineerName: row.assigned_engineer_name as string | null | undefined,
     assignedEngineerEmail: row.assigned_engineer_email as string | null | undefined,
+    // DRAFT-2: the engineering-review stamps were never mapped, so every
+    // server-side reader saw undefined — the "engineering first" gate reads
+    // engineerReviewRequestedAt to know the review has happened.
+    engineerReviewRequestedAt: row.engineer_review_requested_at as string | null | undefined,
+    engineerApprovedAt: row.engineer_approved_at as string | null | undefined,
+    engineerReviewReason: row.engineer_review_reason as string | null | undefined,
     attachments: (row.attachments as Ticket["attachments"]) ?? [],
     comments: (row.comments as Ticket["comments"]) ?? [],
     history: (row.history as Ticket["history"]) ?? [],

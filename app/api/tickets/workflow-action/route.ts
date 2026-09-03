@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { WorkflowEngine } from "@/lib/workflow";
-import { loadCapabilityPolicy, policyAllows } from "@/lib/capabilityPolicy";
+import { WorkflowEngine, ticketResource } from "@/lib/workflow";
+import { loadCapabilityPolicy, policyAllows, scopedTokensFor } from "@/lib/capabilityPolicy";
+import { flaggedRequestTypes } from "@/lib/requestTypes";
 import {
   computeTransition,
   classifyTransitionNotification,
@@ -110,6 +111,7 @@ export async function POST(req: NextRequest) {
 
   // WF-15: close-without-review is a property of the CONFIGURED type.
   let closeWithoutReviewTypes: string[] = ["RFI"];
+  let engineeringFirstTypes: string[] = [];
   try {
     const { data: cfgRow } = await supabaseAdmin
       .from("org_configurations")
@@ -121,6 +123,8 @@ export async function POST(req: NextRequest) {
       ?.requestTypes?.options) ?? [];
     const flagged = opts.filter((o) => o.closeWithoutReview === true).map((o) => String(o.value ?? "")).filter(Boolean);
     if (flagged.length > 0) closeWithoutReviewTypes = flagged;
+    // DRAFT-2: "engineering first" is the same kind of type property.
+    engineeringFirstTypes = flaggedRequestTypes(cfgRow?.data, "engineeringFirst");
   } catch { /* default stands */ }
 
   // THE enforcement: the action must be one the state machine offers this
@@ -141,9 +145,13 @@ export async function POST(req: NextRequest) {
   const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, {
     userRoles: callerRoles,
     activeMemberCount: activeMemberCount ?? 0,
+    engineeringFirstTypes,
     closeWithoutReviewTypes,
     requesterRoles,
   });
+  // DEC-13 stage 2: the resource this ticket presents to the policy — the
+  // same fields getActions just evaluated with.
+  const resource = ticketResource(ticket);
   const action = allowed.find((a) => a.action === body.actionType);
   if (!action) {
     return NextResponse.json(
@@ -195,6 +203,18 @@ export async function POST(req: NextRequest) {
       if (!held.some((r) => r.includes("Engineer"))) {
         return NextResponse.json({ error: "The selected reviewer does not hold an Engineer role" }, { status: 400 });
       }
+      // DEC-13 (DRAFT-1 / GAP-1): when the org scoped the reviewing
+      // capability to THIS ticket's type, the picked engineer must satisfy
+      // that rule. The assigned engineer acts by identity afterwards, so the
+      // pick is where a type-scoped reviewer group is enforced. No scoped
+      // rule → the Engineer-role check above is the whole test, as before.
+      const pickCap = body.actionType === "request_eng_review" ? "ticket.eng_review" : "ticket.final_approve";
+      const scoped = scopedTokensFor(capPolicy, pickCap, resource);
+      if (scoped !== null && !policyAllows(capPolicy, pickCap, (held[0] ?? "Viewer") as Role, held as Role[], ref, resource)) {
+        return NextResponse.json({
+          error: `The selected reviewer is outside the group this workspace allows to review ${ticket.requestType} requests (${pickCap}: ${scoped.join(", ") || "nobody"})`,
+        }, { status: 400 });
+      }
       // WF-14 (+DEC-12, +DEC-37): the reviewer slot is INDEPENDENT of the
       // deliverable's producer and its beneficiary. In orgs of 3+ the picked
       // engineer may not be the requester, the assigned drafter, or the
@@ -218,7 +238,7 @@ export async function POST(req: NextRequest) {
       // authority under the org's policy — membership alone was the only
       // check before.
       const mayDraft = policyAllows(capPolicy, "ticket.draft_work",
-        (held[0] ?? "Viewer") as Role, held as Role[], ref);
+        (held[0] ?? "Viewer") as Role, held as Role[], ref, resource);
       if (!mayDraft) {
         return NextResponse.json({ error: "The selected drafter does not hold drafting authority (ticket.draft_work)" }, { status: 400 });
       }

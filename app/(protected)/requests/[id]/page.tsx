@@ -12,6 +12,7 @@ import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogPr
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { flaggedRequestTypes } from '@/lib/requestTypes';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
@@ -823,6 +824,9 @@ export default function TicketDetailView() {
   // buttons match the workflow-action route's evaluation of the same context.
   const [activeMemberCount, setActiveMemberCount] = useState(0);
   const [closeWithoutReviewTypes, setCloseWithoutReviewTypes] = useState<string[]>(['RFI']);
+  // DRAFT-2: "engineering first" types gate assignment until engineering has
+  // been in the loop — read from the same configured option list.
+  const [engineeringFirstTypes, setEngineeringFirstTypes] = useState<string[]>([]);
   // DEC-16: the requester's CURRENT role collection, so the buttons drawn here
   // match the gate the route enforces (snapshot OR current). null = unknown.
   const [requesterRoles, setRequesterRoles] = useState<string[] | null>(null);
@@ -848,6 +852,7 @@ export default function TicketDetailView() {
           ?.requestTypes?.options) ?? [];
         const flagged = opts.filter((o) => o.closeWithoutReview === true).map((o) => String(o.value ?? '')).filter(Boolean);
         if (flagged.length > 0) setCloseWithoutReviewTypes(flagged);
+        setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));
       });
     return () => { alive = false; };
   }, [activeOrgId]);
@@ -1572,6 +1577,7 @@ export default function TicketDetailView() {
   const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
     userRoles: roles,
     activeMemberCount,
+    engineeringFirstTypes,
     closeWithoutReviewTypes,
     requesterRoles,
   });

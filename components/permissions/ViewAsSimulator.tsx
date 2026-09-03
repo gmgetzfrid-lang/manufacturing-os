@@ -10,10 +10,11 @@ import { UserSearch, Check, Minus, Eye, EyeOff, UploadCloud, KeyRound, Loader2, 
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import {
-  CAPABILITY_DEFS, loadCapabilityPolicy, policyAllows, addUserGrant, revokeUserGrant,
+  CAPABILITY_DEFS, loadCapabilityPolicy, policyAllows, scopedTokensFor, addUserGrant, revokeUserGrant,
   grantsForUser, grantActive, __resetCapabilityPolicyCache,
-  type CapabilityPolicy, type CapabilityId,
+  type CapabilityPolicy, type CapabilityId, type CapabilityResource,
 } from "@/lib/capabilityPolicy";
+import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
 import { canDiscover, canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal } from "@/lib/permissions";
 import type { AccessControl, AclIndex, NodeVisibility, Role } from "@/types/schema";
 
@@ -30,15 +31,22 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   const [teamsErr, setTeamsErr] = useState<string | null>(null);
   const [pick, setPick] = useState<string>("");
   const [policy, setPolicy] = useState<CapabilityPolicy>({});
+  // DEC-13 stage 2: the simulator evaluates against a RESOURCE too — pick a
+  // request type and the list below answers "for a ticket of this type",
+  // through the same policyAllows(resource) the workflow route enforces.
+  const [requestTypes, setRequestTypes] = useState<RequestTypeOption[]>([]);
+  const [simType, setSimType] = useState("");
 
   useEffect(() => {
     if (!activeOrgId) return;
     void (async () => {
-      const [m, l, p] = await Promise.all([
+      const [m, l, p, rt] = await Promise.all([
         supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", activeOrgId).eq("status", "active").order("display_name"),
         supabase.from("libraries").select("id, name, acl, acl_index, visibility, owner_user_id").eq("org_id", activeOrgId).order("name"),
         loadCapabilityPolicy(activeOrgId),
+        loadRequestTypeOptions(activeOrgId),
       ]);
+      setRequestTypes(rt);
       setMembers((((m.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         uid: String(r.uid), name: String(r.display_name || r.email || r.uid),
         role: String(r.role ?? "Viewer"), roles: (r.roles as string[] | null) ?? [],
@@ -131,13 +139,15 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     return out;
   }, [who, libs]);
 
+  const resource = useMemo<CapabilityResource | undefined>(() => (simType ? { requestType: simType } : undefined), [simType]);
   const caps = useMemo(() => {
     if (!who) return [];
     return CAPABILITY_DEFS.map((d) => ({
       def: d,
-      ok: policyAllows(policy, d.id, who.role, who.roles, who.uid),
+      ok: policyAllows(policy, d.id, who.role, who.roles, who.uid, resource),
+      scoped: scopedTokensFor(policy, d.id, resource) !== null,
     }));
-  }, [who, policy]);
+  }, [who, policy, resource]);
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
@@ -153,12 +163,22 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       {who && (
         <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Actions {who.name} can take ({caps.filter((c) => c.ok).length}/{caps.length})</div>
+            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-2 flex-wrap">
+              <span>Actions {who.name} can take ({caps.filter((c) => c.ok).length}/{caps.length})</span>
+              <label className="inline-flex items-center gap-1 font-medium">
+                <span>for request type</span>
+                <select value={simType} onChange={(e) => setSimType(e.target.value)} className="h-6 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px]">
+                  <option value="">(any — base rules)</option>
+                  {requestTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              </label>
+            </div>
             <ul className="space-y-0.5">
-              {caps.map(({ def, ok }) => (
+              {caps.map(({ def, ok, scoped }) => (
                 <li key={def.id} className={`text-[11px] flex items-center gap-1.5 ${ok ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
                   {ok ? <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" /> : <Minus className="w-3 h-3 shrink-0" />}
                   {def.label} <span className="text-[var(--color-text-faint)]">· {def.area}</span>
+                  {scoped && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title={`A rule scoped to ${simType} replaces the base list for this capability`}>· scoped to {simType}</span>}
                 </li>
               ))}
             </ul>

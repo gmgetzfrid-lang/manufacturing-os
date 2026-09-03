@@ -38,7 +38,7 @@ route, so a tampered client changes nothing. **That part is solid.**
 ## DRAFT-1 · Authority cannot vary by request type
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / governance
 - **Locations:**
@@ -99,12 +99,73 @@ evaluated correctly (see `ROLE-1`).
 - The default policy reproduces today's behaviour exactly for orgs that configure nothing.
 - A test pins the refusal server-side, not just the hidden button.
 
+**Resolution (2026-09-03, Round D3 — `DEC-13` stage 2).** Authority now varies
+by request type (and by unit; library and discipline are reserved keys in the
+same shape).
+
+- **The evaluator.** `policyAllows(policy, cap, role, extraRoles, uid, resource?)`
+  in `lib/capabilityPolicy.ts`. A `caps` entry is `string[] | CapabilityRule[]`
+  with `CapabilityRule = { tokens, when?: { requestType?, unit?, libraryId?,
+  discipline? } }`. `tokensFor` resolves the effective list: the first
+  conditional rule whose every listed key matches the resource **replaces** the
+  base list; otherwise the unconditional rule, the bare list, or the shipped
+  default. `scopedTokensFor` reports whether a rule is scoped to the resource at
+  all (null = "nothing type-specific here"). `RESOURCE_KEYS` is the single list
+  of keys either side reads. "ASBUILT may only be approved by DocCtrl" is
+  `"ticket.direct_approve": [{tokens:["Engineer"]}, {tokens:["DocCtrl"], when:{requestType:["ASBUILT"]}}]`.
+- **All four call sites moved together** (`GAP-1` "Do not"): `getActions`
+  evaluates every capability against `ticketResource(ticket)` (request type +
+  unit); `lib/holds.ts assertHoldCapability` takes an optional resource (no
+  hold caller threads one — the base list governs, which is also what the
+  `document_holds` policies see); `ViewAsSimulator` gained a "for request type"
+  select and marks each row a scoped rule replaced; migration **`20261052`**
+  adds `org_capability_allows_for(p_org, p_cap, p_uid, p_resource jsonb)` with
+  the same resolution rule and re-creates the 3-argument
+  `org_capability_allows` as a wrapper passing `'{}'` (every existing policy and
+  trigger keeps its signature and its answer).
+- **Server refusal.** `app/api/tickets/workflow-action/route.ts` evaluates
+  `getActions` with the resource (a scoped-out Manager gets 403), validates an
+  engineer **pick** against the scoped `ticket.eng_review` /
+  `ticket.final_approve` group (400 "outside the group") — the assigned
+  engineer acts by identity afterwards, so the pick is where a type-scoped
+  reviewer group is enforced — and the requester's own approval is bound by a
+  scoped `ticket.direct_approve` rule (they get "Send for Engineer Final
+  Approval" instead; every other identity action is untouched).
+- **Editor.** `CapabilityPolicyEditor` gained a "Request-type overrides" panel
+  keyed to the org's configured request types (`lib/requestTypes.ts`). A
+  capability with no override is still stored as the bare list, so an org that
+  never adds one stores byte-identical JSON; rules scoped by unit/library/
+  discipline are preserved verbatim on save. `validateCapabilityPolicy`
+  requires Admin on **every** rule of a critical capability (a scoped rule is a
+  second door the rail must cover) and refuses unknown `when` keys.
+- **Tests** (`lib/__tests__/sweepRoundD3.test.ts`, 25): resolution semantics
+  (replace, AND/OR, first match, missing value never matches, grants unscoped);
+  parsing and validation; editor round-trip; `getActions` on ASBUILT vs ISO for
+  Engineer / DocCtrl / Manager / Admin and the requester-identity binding; the
+  route refusing an ASBUILT approval (403) and an out-of-group pick (400)
+  end-to-end with a mocked admin client; `20261052`'s default CASE, token loop,
+  grants loop and membership read byte-identical to the live `20261038` body,
+  and the resource-key list identical to `RESOURCE_KEYS`.
+
+**Done-when.** 1 ✓ — a "named group" is a role token, including the dormant
+department roles of `DEC-3` (`team:` / `uid:` subject tokens were deliberately
+not added: a person is reachable by a personal grant, and `GAP-1` puts the
+discipline taxonomy out of scope; the `discipline` key is reserved in the shape
+for it). 2 ✓ — hidden in `getActions`, refused by the route. 3 ✓ — pinned:
+defaults unchanged with and without a resource, editor stores bare lists, SQL
+CASE byte-identical. 4 ✓ — the route tests above.
+
+**Scope / residual.** Personal grants stay unscoped (`WF-13` row 6). A policy
+change after an engineer was picked does not unseat that engineer (the pick is
+the rail; `ticket.reassign_engineer` swaps them). `DEC-13` stage 3 (the engineer
+gate as a real capability) is the next round — see `WF-13`.
+
 ---
 
 ## DRAFT-2 · Triage-first routing works, but the request type cannot influence it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** process
 - **Locations:**
@@ -140,6 +201,37 @@ exist.
 **Done when.**
 - Either the parameters influence the initial status, or they are gone.
 - A type can be marked "always route through engineering first" without code changes.
+
+**Resolution (2026-09-03, Round D3).** Both arms of done-when 1 are settled the
+honest way round: the dead parameters are **gone** — `WorkflowEngine.getInitialStatus()`
+takes nothing (`lib/workflow.ts`; the test pins `.length === 0`) — and a type
+**can** change the route without code changes:
+
+- `SelectOption.engineeringFirst` (`types/schema.ts`) — a checkbox beside
+  "Close w/o review" on Admin → Requests → Request Types.
+- `WorkflowContext.engineeringFirstTypes` — read by the route and the ticket
+  page from the same option list as `closeWithoutReviewTypes`, through the new
+  shared parser `lib/requestTypes.ts` (`flaggedRequestTypes`).
+- At `PENDING_ASSIGNMENT`, a ticket of such a type renders **Assign Drafter**
+  and **Pick Up Ticket** disabled with the reason ("routes through engineering
+  first: flag it for engineering review before a drafter is assigned") while
+  engineering has not been in the loop (`engineerReviewRequestedAt` /
+  `assignedEngineerId` both empty); **Flag for Engineering Review** stays live.
+  The route refuses the disabled action with the same message (403). After
+  `approve_team` brings the ticket back to the queue the gate lifts.
+- Found while wiring it: `rowToTicket` (`lib/ticketTransitions.ts`) never
+  mapped `engineer_review_requested_at` / `engineer_approved_at` /
+  `engineer_review_reason`, so every server-side reader saw undefined. Mapped
+  and pinned.
+
+The entry status stays `PENDING_ASSIGNMENT` for every type (the triage-first
+default is preserved, as the finding asked); "engineering first" gates the exit
+from the queue rather than pre-routing the status, because `WF-22` requires the
+engineer to be **picked** with the transition — an automatic `PENDING_ENG_TEAM`
+entry would have nobody assigned. Tests: `sweepRoundD3.test.ts` (engine and the
+route end-to-end).
+
+**Done-when.** 1 ✓ (gone). 2 ✓ (a checkbox on the configured type).
 
 ---
 
@@ -264,7 +356,7 @@ want to be mandatory.
 ## DRAFT-5 · Drafter self-assignment can bypass the assignment queue
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** process
 - **Locations:**
@@ -293,6 +385,23 @@ consider gating self-assign on the ticket already having passed triage.
 **Done when.**
 - The default reflects the intended shop model.
 - Self-assignment, where allowed, cannot precede triage.
+
+**Resolution (2026-09-03, Round D3 — decided, not re-defaulted).** The shop
+model is the **pull model**: `ticket.self_assign` keeps its `["Drafter"]`
+default, and the capability's description now says so and says how to change
+it ("Clear this list to make assignment supervisor-only"). Rationale: the
+assignment queue **is** the triage point — a ticket sits in
+`PENDING_ASSIGNMENT` visible to the supervisor and to drafters alike, and the
+policy grid is the documented place an org that wants deliberate assignment
+narrows it (audited, effective immediately). Where triage means *engineering*
+triage — an "engineering first" type (`DRAFT-2`) — self-assignment **cannot**
+precede it: Pick Up Ticket is disabled with the reason and the route refuses
+it. The `DEC-12` rail (a requester never drafts their own request, orgs of 3+)
+is unchanged. Pinned in `sweepRoundD3.test.ts`.
+
+**Done-when.** 1 ✓ — the default reflects the intended (pull) model and is
+labelled. 2 ✓ by decision — for the queue the pull model is the triage; for
+engineering-first types the review gate holds.
 
 ---
 

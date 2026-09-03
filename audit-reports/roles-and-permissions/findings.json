@@ -25,8 +25,8 @@
       "LOW": 4
     },
     "by_status": {
-      "RESOLVED": 97,
-      "OPEN": 32,
+      "RESOLVED": 101,
+      "OPEN": 28,
       "REFUTED": 3
     }
   },
@@ -139,7 +139,7 @@
       "id": "DRAFT-1",
       "title": "Authority cannot vary by request type",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "safety / governance",
@@ -999,7 +999,7 @@
       "id": "DRAFT-2",
       "title": "Triage-first routing works, but the request type cannot influence it",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "process",
@@ -2338,7 +2338,7 @@
       "id": "DRAFT-5",
       "title": "Drafter self-assignment can bypass the assignment queue",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "process",
@@ -3430,7 +3430,7 @@
       "id": "WF-13",
       "title": "What the capability policy structurally cannot express",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "model-complexity / scaling",

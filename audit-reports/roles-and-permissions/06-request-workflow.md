@@ -674,7 +674,7 @@ change is to make the asymmetry fail *closed* rather than open.
 ## WF-13 · What the capability policy structurally cannot express
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity / scaling
 - **Locations:**
@@ -728,6 +728,30 @@ makes the hardcoded engineer gate a real capability. Full spec: `GAP-1`.
    `org_capability_allows`.
 2. An org that has configured no `when` clause behaves byte-identically to today.
 3. All four call sites move together, and the simulator agrees with the route.
+
+**Resolution (2026-09-03, Round D3 — `DEC-13` stage 2 landed).** The shape now
+has a resource dimension: `caps` entries may be rule lists `{tokens, when}`
+and `policyAllows` takes a `resource` (`lib/capabilityPolicy.ts`); the four
+evaluators moved together and the simulator agrees with the route — full
+record under `DRAFT-1`. Against the table:
+
+| Requirement | Now |
+|---|---|
+| The engineer-approval gate itself | `DEC-16` made it a fail-closed disjunction (snapshot OR current); making it a **capability** is `DEC-13` stage 3 — next round |
+| Per-request-type authority | **expressible and enforced** (`when.requestType`) |
+| Per-discipline reviewers | `discipline` is a reserved resource key; no taxonomy exists, no caller supplies one (`GAP-1` "Out") |
+| Per-library / per-unit scoping | `unit` is supplied by every ticket evaluation; `libraryId` is in the shape, no caller yet |
+| Quorum / two-person rule | not built — `WF-4` |
+| Delegation chains | not built (grants stay flat, admin-issued) |
+| Time-boxed role changes | not built |
+| Negative grants / suspension | not built — additive by design |
+| Ticket-scoped authority | `WF-8` (done earlier) |
+
+**Done-when.** 1 ✓ — enforced in `getActions`, re-enforced in the route,
+honoured by `org_capability_allows_for` (`20261052`). 2 ✓ — pinned
+byte-identical (defaults, bare-list storage, SQL CASE). 3 ✓ — the same
+`policyAllows(…, resource)` call shape at all four sites, pinned by source;
+the simulator's request-type select runs the same function the route does.
 
 ---
 

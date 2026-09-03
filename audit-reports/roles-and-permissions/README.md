@@ -343,6 +343,21 @@ No migration.
 
 No migration.
 
+### Round D3 (2026-09-03) — authority varies by request type (DEC-13 stage 2)
+
+| Item | Outcome |
+|---|---|
+| `DRAFT-1` (CRITICAL) / `GAP-1` / `DEC-13` stage 2 | **RESOLVED / BUILT** — `policyAllows(…, resource?)`; `caps` entries may be `{tokens, when}` rules whose match REPLACES the base list; all four evaluators moved together (`getActions`, holds, simulator, SQL `org_capability_allows_for` via `20261052` with the 3-argument wrapper kept); the route refuses a scoped-out approval (403) and an out-of-group reviewer pick (400); the requester's own approval is bound by a scoped direct-approval rule; "Request-type overrides" panel in the permissions console; unconfigured orgs byte-identical (pinned) |
+| `WF-13` | **RESOLVED** — the expressiveness table re-scored; per-type ✓, per-unit supplied, library/discipline reserved keys; quorum / chains / time-boxed roles / negative grants recorded as not built |
+| `DRAFT-2` | **RESOLVED** — `getInitialStatus()` takes nothing; a request type can be marked **Engineering first** (Admin → Requests): assignment and pick-up render disabled with the reason and the route refuses them until engineering has been in the loop. Found and fixed: `rowToTicket` never mapped the engineering-review stamps |
+| `DRAFT-5` | **RESOLVED** (decision) — the pull model stays the default and says so; clear the list for supervisor-only assignment; engineering-first types are never picked up before their review |
+
+**Hand-applied migration (DEC-30):** `20261052_rp_phase7_capability_resource_dimension.sql`
+— printed for the SQL editor; not a widening (the 3-argument entry point
+returns exactly what it did). Apply → verification (5) → inventory (2 counts).
+
+Open from `DEC-13`: stage 3 (the engineer gate as a real capability) — next round.
+
 ### Phase 2 — database honesty (the trap phase)
 
 | Item | Outcome |

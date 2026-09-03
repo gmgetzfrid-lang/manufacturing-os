@@ -58,14 +58,9 @@ describe("role helpers", () => {
 });
 
 describe("getInitialStatus — assignment-first routing", () => {
-  it("every request type and requester role starts at PENDING_ASSIGNMENT", () => {
-    const types = ["ISO", "RFI", "MOC", "INSPECTION", "ASBUILT"] as const;
-    const roles: Role[] = ["Viewer", "Requester", "Engineer-1", "Admin", "Drafter"];
-    for (const ty of types) {
-      for (const r of roles) {
-        expect(WorkflowEngine.getInitialStatus(ty as never, r)).toBe("PENDING_ASSIGNMENT");
-      }
-    }
+  it("every request starts at PENDING_ASSIGNMENT; the signature takes nothing (DRAFT-2: the dead type/role parameters are gone)", () => {
+    expect(WorkflowEngine.getInitialStatus()).toBe("PENDING_ASSIGNMENT");
+    expect(WorkflowEngine.getInitialStatus.length).toBe(0);
   });
 });
 

@@ -1,5 +1,5 @@
-import { Role, RequestType, TicketStatus, Ticket } from "@/types/schema";
-import { policyAllows, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { Role, TicketStatus, Ticket } from "@/types/schema";
+import { policyAllows, scopedTokensFor, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
 
 export interface WorkflowAction {
   label: string;
@@ -38,6 +38,19 @@ export interface WorkflowContext {
    *  so — the snapshot can only fail closed, never open. `null` / undefined =
    *  unknown (snapshot decides); `[]` = known to hold nothing (required). */
   requesterRoles?: readonly string[] | null;
+  /** DRAFT-2: request types the org marked "engineering first" — a ticket of
+   *  such a type cannot be assigned (or picked up) until engineering has
+   *  been in the loop. A property of the CONFIGURED type, read from the same
+   *  option list as `closeWithoutReviewTypes`. Absent = no type is gated. */
+  engineeringFirstTypes?: string[];
+}
+
+/** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
+ *  its request type and unit. The route, the page and the simulator all
+ *  build it from here, so a type-scoped rule reads the same fields
+ *  everywhere. (`libraryId` / `discipline` are not ticket properties.) */
+export function ticketResource(ticket: Pick<Ticket, "requestType" | "unit">): CapabilityResource {
+  return { requestType: ticket.requestType || null, unit: ticket.unit || null };
 }
 
 /** DEC-12 threshold: independence appears exactly when it becomes possible
@@ -102,14 +115,14 @@ export function requiresEngineerApproval(requesterRole?: Role | string, requeste
 }
 
 export const WorkflowEngine = {
-  // Logic: Determines the starting status based on Request Type and Requester Role
-  getInitialStatus: (_type: RequestType, _requesterRole: Role): TicketStatus => {
-    // Every new request lands in the assignment queue — routed to the
-    // DraftingSupervisor if one is set, otherwise Admins. Engineering review is
-    // an OPTIONAL branch the assigner triggers via "Flag for Engineering
-    // Review", never an automatic gate.
-    return 'PENDING_ASSIGNMENT';
-  },
+  // Every new request lands in the assignment queue — routed to the
+  // DraftingSupervisor if one is set, otherwise Admins. Engineering review is
+  // a branch the assigner triggers via "Flag for Engineering Review"; a
+  // request TYPE can make that branch mandatory (`engineeringFirst`, DRAFT-2),
+  // which gates assignment rather than changing the entry status. DRAFT-2:
+  // the former (type, role) parameters were never read — the signature no
+  // longer implies a routing capability that does not exist.
+  getInitialStatus: (): TicketStatus => 'PENDING_ASSIGNMENT',
 
   // State Machine: Returns valid buttons/actions for the current User and
   // Ticket state. `policy` is the org's capability policy — omitted (client
@@ -126,7 +139,11 @@ export const WorkflowEngine = {
     // one (the headline is max-rank, so consulting it alone SUBTRACTED
     // authority from multi-role people).
     const roleCollection = ctx?.userRoles && ctx.userRoles.length > 0 ? ctx.userRoles : null;
-    const allows = (cap: Parameters<typeof policyAllows>[1]) => policyAllows(policy, cap, userRole, roleCollection, userId);
+    // DEC-13: every capability is evaluated against THIS ticket's resource,
+    // so an org's type-scoped rule ("ASBUILT → DocCtrl only") replaces the
+    // base list here exactly as it does in the route and the simulator.
+    const resource = ticketResource(ticket);
+    const allows = (cap: Parameters<typeof policyAllows>[1]) => policyAllows(policy, cap, userRole, roleCollection, userId, resource);
     const isEng = isEngineerRole(userRole) || (roleCollection ?? []).some((r) => isEngineerRole(r));
     const isManagement = allows('ticket.manage');
 
@@ -158,6 +175,19 @@ export const WorkflowEngine = {
     // required if either says so, so a demotion after filing cannot leave
     // an in-flight ticket bypassing the gate.
     const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles);
+    // DEC-13 (DRAFT-1 / GAP-1): a rule scoped to this ticket's type on
+    // `ticket.direct_approve` binds the REQUESTER'S own approval too. Identity
+    // keeps every review action (request revision, send for engineer
+    // approval); "who may approve THIS type" is the org's to say. With no
+    // scoped rule this is false and the requester path is exactly as before.
+    const requesterScopedOut = scopedTokensFor(policy, 'ticket.direct_approve', resource) !== null
+      && !allows('ticket.direct_approve');
+    // DRAFT-2: an "engineering first" type cannot be assigned until
+    // engineering has been in the loop (a review was requested — and, being
+    // back in this queue, completed — or an engineer is on the ticket).
+    const engineeringFirstPending = (ctx?.engineeringFirstTypes ?? []).includes(ticket.requestType)
+      && !ticket.engineerReviewRequestedAt && !ticket.assignedEngineerId;
+    const ENG_FIRST_REASON = 'This request type routes through engineering first: flag it for engineering review before a drafter is assigned.';
 
     switch (ticket.status) {
       // --- INITIAL REVIEW STAGE ---
@@ -224,7 +254,8 @@ export const WorkflowEngine = {
             label: 'Assign Drafter',
             action: 'assign',
             variant: 'default',
-            description: 'Select a drafter to begin work.'
+            description: 'Select a drafter to begin work.',
+            ...(engineeringFirstPending ? { disabledReason: ENG_FIRST_REASON } : {}),
           });
           actions.push({
             label: 'Flag for Engineering Review',
@@ -243,7 +274,11 @@ export const WorkflowEngine = {
             label: 'Pick Up Ticket',
             action: 'self_assign',
             variant: 'outline',
-            ...(selfIsRequester ? { disabledReason: "Needs a second person: you can't draft your own request (independent drafting, orgs of 3+)." } : {}),
+            ...(engineeringFirstPending
+              ? { disabledReason: ENG_FIRST_REASON }
+              : selfIsRequester
+                ? { disabledReason: "Needs a second person: you can't draft your own request (independent drafting, orgs of 3+)." }
+                : {}),
           });
         }
         break;
@@ -287,7 +322,7 @@ export const WorkflowEngine = {
       // This is where the engineer-routing fork lives.
       case 'PENDING_REVIEW':
         if (canActAsRequester) {
-          if (needsEngineerApproval && !isEng) {
+          if ((needsEngineerApproval && !isEng) || requesterScopedOut) {
             // Viewer-tier requesters can't sign off on engineering work.
             // Their "approve" is actually "send for engineer final approval".
             // WF-3: and their "minor correction" must be too — the old

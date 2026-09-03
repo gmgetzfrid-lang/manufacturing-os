@@ -208,6 +208,18 @@ export default function DraftingConfigPage() {
                   />
                   Close w/o review
                 </label>
+                <label
+                  className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] whitespace-nowrap cursor-pointer select-none"
+                  title="Tickets of this type must go through engineering review before a drafter can be assigned or pick the ticket up. The assignment actions stay visible but disabled until an engineer has reviewed the scope."
+                >
+                  <input
+                    type="checkbox"
+                    checked={opt.engineeringFirst === true}
+                    onChange={(e) => updateOption('requestTypes', i, 'engineeringFirst', e.target.checked)}
+                    className="rounded border-[var(--color-border)]"
+                  />
+                  Engineering first
+                </label>
               </div>
             )}
           />

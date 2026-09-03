@@ -529,6 +529,8 @@ model worse. See `GAP-1`.
 
 **Risk:** high — signature change across four evaluators.
 
+*Landed 2026-09-03 (roles-and-permissions Round D3): stages 1–2. Stage 1 was `WF-15` (`20261038`). Stage 2: `policyAllows(…, resource?)` with `{tokens, when}` rules in `lib/capabilityPolicy.ts`; `getActions`, holds, the simulator and the SQL evaluator (`20261052`: `org_capability_allows_for` + the 3-argument wrapper) moved together; the route refuses a scoped-out approval and an out-of-group reviewer pick; the permissions console edits request-type overrides. See `DRAFT-1`, `WF-13`, `GAP-1`. Stage 3 (the engineer gate as a capability) is open — next round.*
+
 <a id="dec-14"></a>
 ## DEC-14 · `CANCELED`, `NEW`, `PENDING_ENG_INITIAL`
 

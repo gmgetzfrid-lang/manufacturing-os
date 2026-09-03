@@ -20,6 +20,16 @@
 //     changes nothing.
 //   * Saves are guardrailed (critical capabilities must keep Admin) and
 //     audited with before/after.
+//   * DEC-13 stage 2 (DRAFT-1 / WF-13 / GAP-1): a capability entry may be a
+//     list of RULES, each `{ tokens, when? }`. A rule with a `when` clause
+//     applies only to a matching RESOURCE (request type, unit, library,
+//     discipline) and, when it matches, its tokens REPLACE the base list —
+//     that is how "ASBUILT may only be approved by DocCtrl" is said. An entry
+//     with no `when` (or the legacy bare `string[]`) behaves exactly as
+//     before, and a caller that passes no resource sees only the base list,
+//     so every unconfigured org is byte-identical to today. The four
+//     evaluators — getActions, holds, the simulator and the SQL
+//     org_capability_allows_for — read the SAME shape with the SAME rule.
 
 import { supabase } from "@/lib/supabase";
 
@@ -66,7 +76,8 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "ticket.assign", area: "Requests", label: "Assign drafters",
     description: "Run the assignment queue.", defaultRoles: [...MGMT, "DraftingSupervisor"] },
   { id: "ticket.self_assign", area: "Requests", label: "Self-assign drafting work",
-    description: "Pick up unassigned tickets from the queue.", defaultRoles: ["Drafter"] },
+    description: "Pick up unassigned tickets from the queue — the pull model, on by default (DRAFT-5). Clear this list to make assignment supervisor-only; an 'engineering first' request type is never picked up before its review.",
+    defaultRoles: ["Drafter"] },
   { id: "ticket.draft_work", area: "Requests", label: "Do drafting work",
     description: "Save progress, submit drafts, issue IFC (the assigned drafter always can).", defaultRoles: ["Drafter"] },
   { id: "ticket.requester_review", area: "Requests", label: "Requester review",
@@ -109,10 +120,40 @@ export interface UserGrant {
   grantedAt?: string | null;
 }
 
+/** The RESOURCE a capability is evaluated against (DEC-13 stage 2). Every
+ *  field is optional; a caller with nothing to say passes nothing and gets
+ *  the base list. Keys are matched by name on both sides (TS and SQL), so a
+ *  `when` clause naming any other key is ignored by both evaluators (and
+ *  refused at save by validateCapabilityPolicy). */
+export interface CapabilityResource {
+  requestType?: string | null;
+  unit?: string | null;
+  libraryId?: string | null;
+  discipline?: string | null;
+}
+
+/** The resource keys a `when` clause may condition on — the ONLY keys either
+ *  evaluator reads. Extend here and in org_capability_allows_for together. */
+export const RESOURCE_KEYS = ["requestType", "unit", "libraryId", "discipline"] as const;
+export type ResourceKey = (typeof RESOURCE_KEYS)[number];
+
+/** `when`: every listed key must match (AND across keys, OR within a list).
+ *  A clause with no non-empty list is unconditional. */
+export type CapabilityRuleWhen = Partial<Record<ResourceKey, string[]>>;
+
+export interface CapabilityRule {
+  tokens: string[];
+  when?: CapabilityRuleWhen;
+}
+
+/** A stored capability entry: the legacy bare token list, or a rule list. */
+export type CapabilityEntry = string[] | CapabilityRule[];
+
 export interface CapabilityPolicy {
-  /** capability -> allowed role tokens (absent key = shipped default). */
-  caps?: Partial<Record<CapabilityId, string[]>>;
-  /** per-person delegations, additive on top of role authority. */
+  /** capability -> allowed role tokens or rules (absent key = shipped default). */
+  caps?: Partial<Record<CapabilityId, CapabilityEntry>>;
+  /** per-person delegations, additive on top of role authority. A grant has
+   *  no resource scope: it confers the capability everywhere (WF-13 row 6). */
   grants?: UserGrant[];
 }
 
@@ -136,22 +177,124 @@ export function grantActive(g: UserGrant, now: Date = new Date()): boolean {
   return !g.expiresAt || Date.parse(g.expiresAt) > now.getTime();
 }
 
+// ── Rules and resources (DEC-13 stage 2) ───────────────────────────────────
+
+export function isRuleArray(entry: CapabilityEntry | undefined): entry is CapabilityRule[] {
+  return Array.isArray(entry) && entry.length > 0 && typeof entry[0] === "object" && entry[0] !== null;
+}
+
+/** Does this rule condition on anything? Empty / absent lists don't count. */
+export function ruleIsConditional(rule: CapabilityRule): boolean {
+  return RESOURCE_KEYS.some((k) => (rule.when?.[k]?.length ?? 0) > 0);
+}
+
+/** A conditional rule matches when EVERY key it lists finds the resource's
+ *  value in its list. A missing resource value never matches — so a caller
+ *  that passes nothing can only ever see the base list. */
+export function ruleMatches(rule: CapabilityRule, resource: CapabilityResource | null | undefined): boolean {
+  if (!ruleIsConditional(rule)) return false;
+  for (const k of RESOURCE_KEYS) {
+    const list = rule.when?.[k];
+    if (!list || list.length === 0) continue;
+    const v = resource?.[k];
+    if (!v || !list.includes(v)) return false;
+  }
+  return true;
+}
+
+/** The tokens of the first conditional rule matching `resource`, or null when
+ *  no rule is scoped to it — callers use null to mean "nothing type-specific
+ *  is configured here" (the requester-identity path and pick validation). */
+export function scopedTokensFor(
+  policy: CapabilityPolicy | null | undefined,
+  cap: CapabilityId,
+  resource: CapabilityResource | null | undefined,
+): string[] | null {
+  const entry = policy?.caps?.[cap];
+  if (!isRuleArray(entry) || !resource) return null;
+  const hit = entry.find((r) => ruleMatches(r, resource));
+  return hit ? hit.tokens : null;
+}
+
+/** The unconditional tokens: the bare list, the first rule with no `when`,
+ *  or the shipped default. */
+export function baseTokensFor(policy: CapabilityPolicy | null | undefined, cap: CapabilityId): string[] {
+  const entry = policy?.caps?.[cap];
+  if (entry === undefined) return DEFAULTS[cap] ?? [];
+  if (isRuleArray(entry)) {
+    const base = entry.find((r) => !ruleIsConditional(r));
+    return base ? base.tokens : DEFAULTS[cap] ?? [];
+  }
+  return entry as string[];
+}
+
+/** The effective token list for one evaluation: a matching scoped rule
+ *  REPLACES the base list; otherwise the base list. */
+export function tokensFor(
+  policy: CapabilityPolicy | null | undefined,
+  cap: CapabilityId,
+  resource?: CapabilityResource | null,
+): string[] {
+  return scopedTokensFor(policy, cap, resource) ?? baseTokensFor(policy, cap);
+}
+
+/** Do any of the held roles satisfy this token list? */
+export function heldMatchesTokens(tokens: readonly string[], held: readonly string[]): boolean {
+  return held.some((r) => tokens.some((t) => roleTokenMatches(t, r)));
+}
+
+/** Human-readable `when` (for validation messages and the impact preview). */
+export function describeWhen(when: CapabilityRuleWhen | undefined): string {
+  const parts = RESOURCE_KEYS
+    .filter((k) => (when?.[k]?.length ?? 0) > 0)
+    .map((k) => `${k} ∈ {${(when?.[k] ?? []).join(", ")}}`);
+  return parts.length > 0 ? parts.join(" and ") : "always";
+}
+
 /** The single authority check: role tokens first, then any live per-person
- *  grant for `uid`. Identity-based rights are handled by callers. */
+ *  grant for `uid`. Identity-based rights are handled by callers. `resource`
+ *  (DEC-13) selects a type/unit/library-scoped rule when the org configured
+ *  one; absent, only the base list is consulted. */
 export function policyAllows(
   policy: CapabilityPolicy | null | undefined,
   cap: CapabilityId,
   role?: string | null,
   extraRoles?: string[] | null,
   uid?: string | null,
+  resource?: CapabilityResource | null,
 ): boolean {
-  const list = policy?.caps?.[cap] ?? DEFAULTS[cap] ?? [];
+  const list = tokensFor(policy, cap, resource);
   const held = [role, ...(extraRoles ?? [])].filter((r): r is string => !!r);
-  if (held.some((r) => list.some((t) => roleTokenMatches(t, r)))) return true;
+  if (heldMatchesTokens(list, held)) return true;
   if (uid && policy?.grants) {
     return policy.grants.some((g) => g.cap === cap && g.uid === uid && grantActive(g));
   }
   return false;
+}
+
+/** Parse one stored entry: a bare string list, or a list of `{tokens, when?}`
+ *  rules. Unknown `when` keys are dropped (the SQL evaluator ignores them
+ *  too); a rule without a usable `tokens` list is dropped; a rule list with
+ *  nothing usable left yields undefined (= shipped default). */
+export function normalizeCapabilityEntry(v: unknown): CapabilityEntry | undefined {
+  if (!Array.isArray(v)) return undefined;
+  if (v.every((x) => typeof x === "string")) return v as string[];
+  const rules: CapabilityRule[] = [];
+  for (const x of v) {
+    if (!x || typeof x !== "object") continue;
+    const tokens = (x as { tokens?: unknown }).tokens;
+    if (!Array.isArray(tokens) || !tokens.every((t) => typeof t === "string")) continue;
+    const rawWhen = (x as { when?: unknown }).when;
+    const when: CapabilityRuleWhen = {};
+    if (rawWhen && typeof rawWhen === "object") {
+      for (const k of RESOURCE_KEYS) {
+        const list = (rawWhen as Record<string, unknown>)[k];
+        if (Array.isArray(list) && list.every((t) => typeof t === "string") && list.length > 0) when[k] = list as string[];
+      }
+    }
+    rules.push(Object.keys(when).length > 0 ? { tokens: tokens as string[], when } : { tokens: tokens as string[] });
+  }
+  return rules.length > 0 ? rules : undefined;
 }
 
 // ── Load (cached) ──────────────────────────────────────────────────────────
@@ -190,8 +333,8 @@ export async function loadCapabilityPolicy(
     const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;
     const caps: CapabilityPolicy["caps"] = {};
     for (const def of CAPABILITY_DEFS) {
-      const v = rawCaps[def.id];
-      if (Array.isArray(v) && v.every((x) => typeof x === "string")) caps[def.id] = v as string[];
+      const entry = normalizeCapabilityEntry(rawCaps[def.id]);
+      if (entry !== undefined) caps[def.id] = entry;
     }
     const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));
     const grants = (Array.isArray(raw.grants) ? (raw.grants as UserGrant[]) : [])
@@ -212,8 +355,24 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
     const v = policy.caps?.[def.id];
     if (v === undefined) continue;
     if (!Array.isArray(v)) return `${def.label}: invalid value`;
-    if (def.critical && !v.includes("Admin") && !v.includes("*")) {
-      return `${def.label}: Admin cannot be removed from a critical capability — that's the rail that keeps the org recoverable.`;
+    // Every list that can become THE list — the base and each scoped rule —
+    // must keep Admin on a critical capability: a scoped rule replaces the
+    // base wholesale, so it is a second door the rail has to cover.
+    const lists: Array<{ tokens: unknown; where: string }> = isRuleArray(v)
+      ? v.map((r, i) => ({ tokens: r?.tokens, where: ruleIsConditional(r) ? ` (rule ${i + 1}: ${describeWhen(r.when)})` : "" }))
+      : [{ tokens: v, where: "" }];
+    for (const { tokens, where } of lists) {
+      if (!Array.isArray(tokens) || !tokens.every((t) => typeof t === "string")) return `${def.label}: invalid value${where}`;
+      if (def.critical && !tokens.includes("Admin") && !tokens.includes("*")) {
+        return `${def.label}${where}: Admin cannot be removed from a critical capability — that's the rail that keeps the org recoverable.`;
+      }
+    }
+    if (isRuleArray(v)) {
+      for (const r of v) {
+        for (const k of Object.keys(r.when ?? {})) {
+          if (!(RESOURCE_KEYS as readonly string[]).includes(k)) return `${def.label}: a rule conditions on an unknown resource key "${k}"`;
+        }
+      }
     }
   }
   const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));

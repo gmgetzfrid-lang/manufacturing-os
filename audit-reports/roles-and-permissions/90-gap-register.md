@@ -49,7 +49,7 @@ stated.
 <a id="gap-1"></a>
 ## GAP-1 · Only certain people can approve certain types of requests
 
-**Verdict: BUILD** · Effort: **L** · Depends on: `WF-15`, then `DEC-13`
+**Verdict: BUILD** · Effort: **L** · Depends on: `WF-15`, then `DEC-13` · **BUILT (stages 1–2) 2026-09-03, Round D3**
 
 > *"The issue mostly is that in the drafting work flow only certain people can
 > approve certain types of requests."*
@@ -116,6 +116,28 @@ lets Manager requesters self-approve.
    list.
 
 **Related findings:** `DRAFT-1`, `WF-13`, `WF-15`, `WF-8`.
+
+### Built (2026-09-03, Round D3)
+
+Stage 1 landed with `WF-15` (`20261038` validates `request_type` at insert).
+Stage 2 landed in Round D3: `policyAllows(policy, cap, role, extraRoles, uid,
+resource?)`, `caps` entries `{tokens, when?: {requestType, unit, libraryId,
+discipline}}`, all four call sites moved together, migration `20261052`
+(`org_capability_allows_for` + the 3-argument wrapper), a "Request-type
+overrides" panel in the permissions console, and the simulator's request-type
+select. Full record: `DRAFT-1`; expressiveness table: `WF-13`.
+
+**Acceptance.** 1 ✓ (`getActions`, the route — 403 on the action, 400 on an
+out-of-group reviewer pick — and the SQL evaluator). 2 ✓ (pinned byte-identical:
+defaults with and without a resource, bare-list storage when no override, SQL
+CASE equal to `20261038`). 3 ✓ (the same `policyAllows(…, resource)` at both
+sites, pinned by source). 4 ✓ (`WF-15`).
+
+**Not built, by this spec's own "Out":** per-discipline reviewers (the
+`discipline` key is reserved; no taxonomy), `team:` / `uid:` subject tokens
+(personal grants cover a person; grants stay unscoped). Stage 3 — the engineer
+gate as a real capability — is the next round.
+
 
 ---
 

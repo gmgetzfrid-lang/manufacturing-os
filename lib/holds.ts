@@ -89,7 +89,15 @@ export interface OpenHoldInput {
  *  point (inspector strip, quick-hold button, admin page) obeys the org's
  *  Action-permissions policy without each caller re-plumbing role state.
  *  Default policy is "*" (everyone) = historical behavior. */
-async function assertHoldCapability(orgId: string, cap: "holds.open" | "holds.release"): Promise<void> {
+async function assertHoldCapability(
+  orgId: string,
+  cap: "holds.open" | "holds.release",
+  // DEC-13 stage 2: the evaluator takes a resource; no hold caller threads
+  // one today (a hold's library is not in hand here), so the BASE list
+  // governs — which is also what the document_holds policies see through
+  // the 3-argument org_capability_allows. Both halves agree by construction.
+  resource?: import("@/lib/capabilityPolicy").CapabilityResource,
+): Promise<void> {
   try {
     const [{ loadCapabilityPolicy, policyAllows }, { data: auth }] = await Promise.all([
       import("@/lib/capabilityPolicy"),
@@ -103,7 +111,7 @@ async function assertHoldCapability(orgId: string, cap: "holds.open" | "holds.re
     ]);
     const role = (member?.role as string | undefined) ?? "Viewer";
     const extra = (member?.roles as string[] | null) ?? [];
-    if (!policyAllows(policy, cap, role, extra, uid)) {
+    if (!policyAllows(policy, cap, role, extra, uid, resource)) {
       throw new Error(cap === "holds.open"
         ? "Your role isn't allowed to place holds. An Admin can change this under Admin → Permissions → Action permissions."
         : "Your role isn't allowed to release holds. An Admin can change this under Admin → Permissions → Action permissions.");
