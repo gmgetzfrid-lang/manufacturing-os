@@ -319,7 +319,7 @@ Migrations: `20261050` — **applied & verified live 2026-09-02** (5/5; inventor
 |---|---|
 | `GAP-7` / `DEC-24` (`LIFE-3`, drafting-flow `LEAK-5`) | **RESOLVED** — `document_markups` keeps the viewer's per-page fabric JSON per (document, version, user); the register page wires the viewer's three hooks (seed on open, autosave on page switch, save on close); the inspector lists every markup on a document and opens it. Reads as visible as the document; writes the author's own |
 
-Migrations: `20261051` — **pending apply** (new table; not a widening).
+Migrations: `20261051` — **applied & verified live 2026-09-02** (5/5; new table, not a widening). Round C4 fully live.
 
 ### Phase 2 — database honesty (the trap phase)
 
