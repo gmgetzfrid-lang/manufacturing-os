@@ -8,6 +8,14 @@ export type Role =
   | "Manager"
   | "Supervisor"
   | "DraftingSupervisor"
+  // DEC-4 / ROLE-2: Engineer-1..4 are ONE role wearing four LABELS. Every
+  // authority check is "role contains Engineer" (lib/workflow.ts,
+  // lib/ticketAttention.ts, the `Engineer` policy token, the SQL
+  // `r LIKE '%Engineer%'`), the capability map is identical for all four,
+  // and nothing may infer seniority from the number — the only consumer of
+  // the tier order is ROLE_RANK (the display headline). Differentiate
+  // authority with a capability grant or a request-type override, never
+  // with the tier.
   | "Engineer-1"
   | "Engineer-2"
   | "Engineer-3"

@@ -69,7 +69,8 @@ describe("DOCACL-5 — content is served on read/download, never on discover", (
   });
   it("the download-url route uses canServeContent", () => {
     const r = src("app/api/storage/download-url/route.ts");
-    expect(r).toMatch(/const allowed = canServeContent\(\{/);
+    expect(r).toMatch(/const contentCheck = \{/); // Round E / DOCACL-3: the same evaluation feeds the bypass audit
+    expect(r).toMatch(/const allowed = canServeContent\(contentCheck\);/);
     expect(r).not.toMatch(/canDiscover\(/);
   });
 });

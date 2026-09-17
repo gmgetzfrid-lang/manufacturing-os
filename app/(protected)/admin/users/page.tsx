@@ -5,7 +5,8 @@ import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { revokeMember } from '@/lib/members';
 import type { Role } from '@/types/schema';
-import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS, isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE } from '@/lib/roleCapabilities';
+import { capabilitiesAdded, primaryRole, CAPABILITY_LABELS, isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE, pickerRoster, pickerNote } from '@/lib/roleCapabilities';
+import { holdsReadOnlyRole, READ_ONLY_ROLES } from '@/lib/roleHeld';
 import {
   Users,
   UserPlus,
@@ -461,6 +462,14 @@ export default function AdminUsersPage() {
                                   </span>
                                 );
                               })}
+                              {memberRoles.length > 1 && holdsReadOnlyRole(memberRoles) && (
+                                <span
+                                  title={`Holds ${memberRoles.filter((r) => READ_ONLY_ROLES.includes(r)).join(' + ')}: read-only on document editing and equipment state whatever else they hold (deny-if-any). Remove it to lift the restriction.`}
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800"
+                                >
+                                  read-only
+                                </span>
+                              )}
                               {!isSelf && (
                                 <RoleAddPicker current={memberRoles} disabled={locked} onAdd={(r) => addRole(m, r)} />
                               )}
@@ -627,11 +636,18 @@ function RoleAddPicker({
   onAdd: (role: Role) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const options = addableRoles(current);
+  // ROLE-4: the WHOLE roster, in three labelled groups — a hidden role
+  // explains nothing; a grouped one explains itself.
+  const roster = pickerRoster(current);
+  const groups: Array<{ title: string; hint: string | null; roles: Role[]; dim: boolean }> = [
+    { title: 'Roles that add new access', hint: null, roles: roster.adds, dim: false },
+    { title: 'Labels and restrictions', hint: 'Add nothing this member lacks — recorded as a label, or a read-only / reduced-navigation restriction.', roles: roster.addsNothing, dim: false },
+    { title: 'Dormant department labels', hint: DORMANT_ROLE_NOTE, roles: roster.dormant, dim: true },
+  ].filter((g) => g.roles.length > 0);
 
-  // Nothing left that would grant new access — the guardrail in action.
-  if (options.length === 0) {
-    return <span className="text-[10px] text-[var(--color-text-faint)] italic px-1">full access</span>;
+  // Every role is already held.
+  if (groups.length === 0) {
+    return <span className="text-[10px] text-[var(--color-text-faint)] italic px-1">every role held</span>;
   }
 
   return (
@@ -648,30 +664,34 @@ function RoleAddPicker({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
-              Roles that add new access
-            </div>
-            {options.map((r) => {
-              const adds = capabilitiesAdded(r, current).map((c) => CAPABILITY_LABELS[c]);
-              const note = roleDisplayNote(r);
-              const dormant = isDormantRole(r);
-              return (
-                <button
-                  key={r}
-                  type="button"
-                  title={note ?? undefined}
-                  onClick={() => { onAdd(r); setOpen(false); }}
-                  className={`block w-full text-left px-3 py-2 hover:bg-[var(--color-accent-soft)] transition-colors ${dormant ? 'opacity-60' : ''}`}
-                >
-                  <div className="text-xs font-bold text-[var(--color-text)]">
-                    {r}
-                    {dormant && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">dormant</span>}
-                  </div>
-                  <div className="text-[10px] text-[var(--color-text-muted)] leading-tight mt-0.5">+ {adds.join(' · ')}</div>
-                  {note && <div className="text-[10px] text-[var(--color-text-faint)] leading-tight mt-0.5 italic">{note}</div>}
-                </button>
-              );
-            })}
+            {groups.map((g) => (
+              <React.Fragment key={g.title}>
+                <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]" title={g.hint ?? undefined}>
+                  {g.title}
+                </div>
+                {g.roles.map((r) => {
+                  const adds = capabilitiesAdded(r, current).map((c) => CAPABILITY_LABELS[c]);
+                  const note = pickerNote(r, current) ?? roleDisplayNote(r);
+                  const dormant = isDormantRole(r);
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      title={note ?? undefined}
+                      onClick={() => { onAdd(r); setOpen(false); }}
+                      className={`block w-full text-left px-3 py-2 hover:bg-[var(--color-accent-soft)] transition-colors ${g.dim ? 'opacity-60' : ''}`}
+                    >
+                      <div className="text-xs font-bold text-[var(--color-text)]">
+                        {r}
+                        {dormant && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">dormant</span>}
+                      </div>
+                      {adds.length > 0 && <div className="text-[10px] text-[var(--color-text-muted)] leading-tight mt-0.5">+ {adds.join(' · ')}</div>}
+                      {note && <div className="text-[10px] text-[var(--color-text-faint)] leading-tight mt-0.5 italic">{note}</div>}
+                    </button>
+                  );
+                })}
+              </React.Fragment>
+            ))}
           </div>
         </>
       )}

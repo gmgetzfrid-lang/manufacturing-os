@@ -44,7 +44,7 @@ code path branches on it.
 ## ROLE-1 · Six department roles gate nothing, and cannot do the one job left to them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Annotation (2026-09-01, Phase 5 / CHAIN-1 done-when 2):** `Contractor` is NOT a pure label. It is load-bearing as a RESTRICTION — reduced navigation at `components/navigation/Sidebar.tsx` (the `hasAnyRole(['Viewer','Contractor'])` gate; formerly `activeRole === 'Contractor'`). It must not be treated as removable, and `DEC-3` excludes it from the dormant set for this reason. The conclusion about the other five department roles (`Accounting`, `Safety`, `HR`, `Maintenance`, `Operations`) stands; those five are now marked dormant in every role picker (`DORMANT_ROLES` in `lib/roleCapabilities.ts`) and remain fully valid ACL subjects.
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity / access-control
@@ -97,12 +97,22 @@ actually function.
 - Either an ACL rule naming a department reaches every member of that department, or the six roles no longer exist and the equivalent teams do.
 - Adding someone to a department no longer competes with their functional role.
 
+**Resolution (2026-09-17, Round E).** The six roles keep their ONE job — being NAMED — and that job now works end to end. The mechanism the finding describes (the ACL role match against the *primary* role) no longer holds: `lib/acl.ts` `subjectMatches` and the SQL `node_visible` (`20261041`) evaluate every held role (CHAIN-1, Phase 5), so a rule naming `Safety` reaches a `["Requester","Safety"]` member whatever the headline. Round E adds the second door DEC-13 stage 2 opened: the five dormant department labels are addressable capability-policy TOKENS — `POLICY_TOKENS` in `components/permissions/CapabilityPolicyEditor.tsx` now lists them (labelled "(dept)") in the grid and in the request-type override rows, so "INCIDENT requests are reviewed by Safety" can be written from the console and is honoured by `policyAllows` and the SQL evaluator alike; the four Engineer tiers stay reachable through the single `Engineer` token (DEC-4). `lib/roleCapabilities.ts` records the job (`DORMANT_ROLE_JOB`) and the add-role picker repeats it on every dormant entry. Remediation option 2 (convert to teams, retire the roles) is declined per DEC-3 / DEC-5 — no stored blob is versioned.
+- Tests: `lib/__tests__/roundE_D_rolesAdmin.test.ts` — "ROLE-1" describe: the token census (every role in `ALL_ROLES` reachable, every dormant role listed, no tier token), a request-type override naming `Safety` (matches by collection on INCIDENT only), an ACL allow AND deny naming `Safety` binding for the additive holder, the `20261041` `unnest(v_roles)` pin.
+- Reproduced: at the base commit `POLICY_TOKENS` had no department entry, so no override could name one (`TOKENS` line 30); the ACL half was already collection-aware (CHAIN-1) — confirmed by the new test against `canServeContent` / `canWithAclChain`.
+
+**Done-when.**
+1. ✓ An ACL rule naming a department reaches every member of that department — app (`lib/acl.ts`) and database (`node_visible`, `20261041`) both match any held role; the alternative ("the six roles no longer exist") is declined by DEC-3.
+2. ✓ Adding someone to a department no longer competes with their functional role — the collection is a set; headline rank plays no part in matching.
+
+**Scope / residual.** The ack-roster query the independent pass named (`lib/acknowledgments.ts` `.in("role", roles)`) was already converted in Round C1b (`.or(roleFilter(roles))`) — nothing left there. `Contractor` is untouched and not dormant (CHAIN-1). No migration.
+
 ---
 
 ## ROLE-2 · The four Engineer tiers are one role wearing four names
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity / drafting authority
 - **Locations:**
@@ -144,12 +154,22 @@ Option A plus `DRAFT-1` is very likely what you actually want.
 - The tier either carries authority or is no longer part of `Role`.
 - No code path infers seniority from a string match on `"Engineer"` unless that is the documented contract.
 
+**Resolution (2026-09-17, Round E).** Resolved per DEC-4: the four tiers are one role wearing four labels, and the decision is now recorded AT THE TYPE — `types/schema.ts` carries the DEC-4 / ROLE-2 contract above `"Engineer-1"` (identical authority; every check is "role contains Engineer"; the only consumer of the tier order is `ROLE_RANK`, the display headline; differentiate with a capability grant or a request-type override, never the tier). Recon for "any place that treats tiers as ranks" found one outside `ROLE_RANK`: the library wizard's default upload set named `Engineer-1` and `Engineer-2` only (`app/(protected)/admin/libraries/LibraryWizard.tsx`), which — because an ACL role subject matches by exact name — silently left Engineer-3/4 out of every new library's upload grant; it now names all four (`...ENGINEER_TIER_ROLES`). `relevantRequesterRole` sorts tiers by `ROLE_RANK` to choose the stamped label — that is the one permitted consumer and is unchanged. The policy editor keeps exactly one `Engineer` token (no per-tier token), pinned.
+- Tests: `lib/__tests__/roundE_D_rolesAdmin.test.ts` — "ROLE-2 / DEC-4" describe: identical capability arrays, `roleTokenMatches("Engineer", tier)` for all four, no tier adds anything over another, the type-level note, the documented `includes("Engineer")` contract in `lib/workflow.ts`, the wizard default (both occurrences) naming all four.
+- Reproduced: `LibraryWizard.tsx:217/251` at the base commit — `["DocCtrl", "Admin", "Engineer-1", "Engineer-2"]`.
+
+**Done-when.**
+1. ✓ (as amended by DEC-4, which binds over the record's either/or) The tier carries NO authority and stays part of `Role` as a label — recorded at the type, in the picker labels (Phase 5) and in the policy editor's single token; the "no longer part of `Role`" branch is declined by DEC-4 / DEC-5.
+2. ✓ No code path infers seniority from a string match on `"Engineer"` — the string match IS the documented contract (type note, `lib/capabilityPolicy.ts` header, `lib/workflow.ts`), and the one place that ranked tiers as distinct roles (the wizard default) is corrected.
+
+**Scope / residual.** `ROLE_RANK` is byte-identical (DEC-2). `app/api/signatures/sign/route.ts` `APPROVAL_TIER` lists all four tiers already. No migration.
+
 ---
 
 ## ROLE-3 · `Requester` is capability-identical to the six department labels
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Locations:**
@@ -180,12 +200,22 @@ pure "may file requests" marker, which is what everyone assumes it is.
 - Reviewing someone else's returned draft requires either identity or an explicit grant.
 - The difference between `Requester` and a department label is documented, or one of them is removed.
 
+**Resolution (2026-09-17, Round E).** The failure scenario no longer reproduces: WF-8 (Phase 4) made `ticket.requester_review` substitute ONLY on a ticket with no requester of record (`canActAsRequester = isRequesterIdentity || (!ticket.requesterId && allows('ticket.requester_review'))`), so a Requester-role stranger gets no review action on anyone else's returned draft — identity carries the right, exactly as the remediation wanted. The remaining recommendation (narrow the shipped default to `[]`) is deliberately NOT taken: after WF-8 the role-wide half only ever reaches an orphaned ticket, which is precisely what an org-wide default should cover; emptying it would strand requester-less tickets behind `ticket.manage` and would change the SQL evaluator's default for every org (the "defaults reproduce historical behaviour" contract). What was missing is now written down: `Requester` is the "may file requests" marker and the shipped default reviewer for a requester-less ticket; the five department labels are dormant (DEC-3), identical in authority, in no policy default, and exist to be named (ROLE-1). Recorded in `lib/roleCapabilities.ts` (the map comment, `REQUESTER_ROLE_NOTE`), in the add-role picker note, and in the in-app role model (`components/permissions/RoleModelTree.tsx`: the Requester row and the department row).
+- Tests: `lib/__tests__/roundE_D_rolesAdmin.test.ts` — "ROLE-3" describe: a Requester stranger and a `["Requester","Safety"]` stranger get `[]` on another person's `PENDING_REVIEW` ticket; the requester keeps `request_revision`; the default is still `["Requester"]` and substitutes on a requester-less ticket for a Requester, not for `Safety`; source pins on the three documentation sites.
+- Reproduced: traced `lib/workflow.ts:161` (WF-8 shape) and asserted the stranger case in the new test before writing the documentation.
+
+**Done-when.**
+1. ✓ Reviewing someone else's returned draft requires identity (or `ticket.manage`) — a role grant alone no longer reaches it (WF-8, re-pinned here).
+2. ✓ The difference between `Requester` and a department label is documented in the three places the roster is read (neither is removed — DEC-3 / DEC-5).
+
+**Scope / residual.** Default unchanged (reasoned above); no migration.
+
 ---
 
 ## ROLE-4 · The smart picker hides most of the roster, which is the model telling you something
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / model-complexity
 - **Locations:**
@@ -214,6 +244,15 @@ member doesn't already have — use a team to record department."*
 
 **Done when.**
 - A hidden role explains itself, or there are no roles that add nothing.
+
+**Resolution (2026-09-17, Round E).** The add-role picker shows the WHOLE roster. `addableRoles` (the "never an empty add" guardrail) is untouched; the picker now renders `pickerRoster(current)` (`lib/roleCapabilities.ts`) — three labelled groups whose union is exactly `ALL_ROLES` minus what is held: "Roles that add new access" (the old list), "Labels and restrictions" (roles that add nothing — a label, or Viewer / Auditor / Contractor, which RESTRICT), and "Dormant department labels" (DEC-3, greyed). Every entry that used to vanish now carries its reason via `pickerNote`: `READ_ONLY_ROLE_NOTE` for Viewer/Auditor (read-only on document editing and equipment state, deny-if-any — ROLE-5), `CONTRACTOR_ROLE_NOTE`, the dormant note plus `DORMANT_ROLE_JOB`, the Engineer-tier note, `REQUESTER_ROLE_NOTE`, or "adds nothing … a label only". "full access" became "every role held", which is the only case with nothing to offer. An admin can now record "this person is in Safety" or place a Viewer restriction on a Drafter — with the consequence stated before the click.
+- Tests: `lib/__tests__/rolePickerCensus.test.ts` — new "ROLE-4" describe: for every single-role collection the three groups partition `ALL_ROLES` minus the held role, dormant == `DORMANT_ROLES` minus held, `adds` == the guardrail's answer minus dormant; a Drafter is offered Requester / Contractor / Viewer / the five department labels / Auditor with the right notes; the members page renders the three groups (source pin). `lib/__tests__/roleCapabilities.test.ts` (the guardrail) is unchanged and green.
+- Reproduced: `addableRoles(["Drafter"])` at the base commit omitted all seven of Requester / Accounting / Safety / HR / Maintenance / Operations / Contractor and Viewer (the guardrail test itself asserts that), and `RoleAddPicker` rendered only that list.
+
+**Done-when.**
+1. ✓ A hidden role explains itself — no role is hidden; each roster entry that adds nothing says why it is still offered.
+
+**Scope / residual.** `app/(protected)/admin/users/page.tsx` (the picker component), `lib/roleCapabilities.ts`. No migration.
 
 ---
 

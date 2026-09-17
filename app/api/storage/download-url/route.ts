@@ -3,7 +3,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { canServeContent } from "@/lib/permissions";
+import { canServeContent, controllerBypassDecided } from "@/lib/permissions";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
           ]);
           // DOCACL-5: a discover-only grantee may know the document exists;
           // the bytes need read or download.
-          const allowed = canServeContent({
+          const contentCheck = {
             principal: {
               uid: user.id,
               role: (mem?.role as Role) ?? "Viewer",
@@ -87,7 +87,24 @@ export async function GET(req: NextRequest) {
             },
             aclChain: [doc.acl as AccessControl | undefined],
             visibility,
-          });
+          };
+          const allowed = canServeContent(contentCheck);
+          // DOCACL-3 / DEC-43: controllers are unscoped by design (the
+          // recovery rail, DEC-2). The mitigation is a RECORD: when the
+          // bytes of a restricted node are served ONLY because the caller
+          // is a controller, write an audit row. Best-effort — a failed
+          // audit insert never blocks the rail.
+          if (allowed && controllerBypassDecided(contentCheck)) {
+            await supabaseAdmin.from("audit_logs").insert({
+              action: "CONTROLLER_RESTRICTED_READ",
+              resource_type: "document",
+              resource_id: docId,
+              org_id: orgId,
+              user_id: user.id,
+              user_email: user.email ?? null,
+              details: { path, visibility, roles: contentCheck.principal.roles },
+            }).then(() => undefined, () => undefined);
+          }
           if (!allowed) {
             // GAP-15/DEC-7: ownership carries read access — the effective
             // owner (document → folder → library → team-supervisor cascade,

@@ -73,11 +73,12 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
         ["Requests (tickets)", ["Self-assign from the assignment queue", "Save progress, submit drafts, submit final IFC, close RFIs"]],
         ["Documents", ["Edit asset tags", "No publish authority unless granted or owner"]],
       ]},
-      { role: "Requester", summary: "Originates and accepts work.", perms: [
-        ["Requests (tickets)", ["Create requests", "Review the returned draft: approve toward IFC, request revision, close"]],
+      { role: "Requester", summary: "The 'may file requests' marker. Originates and accepts work.", perms: [
+        ["Requests (tickets)", ["Create requests", "Review the returned draft on OWN tickets by identity: approve toward IFC, request revision, close", "Shipped default reviewer (ticket.requester_review) only for a ticket with no requester of record — never someone else's ticket (WF-8)"]],
       ]},
-      { role: "Accounting / Safety / HR / Maintenance / Operations", summary: "Request-only roles.", perms: [
+      { role: "Accounting / Safety / HR / Maintenance / Operations", summary: "Dormant department labels (DEC-3): identical to Requester in authority, in no policy default.", perms: [
         ["Requests (tickets)", ["Create requests; requester powers on their own tickets"]],
+        ["Addressable as a group", ["A content ACL rule naming the department reaches every member holding it (any position in the collection)", "A capability-policy token — including a request-type override — may name it", "Prefer a team for departmental access; the label stays for stored rules"]],
       ]},
     ],
   },

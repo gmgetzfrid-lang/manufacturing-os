@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AccessRule, LibraryConfig, LibraryType, MetadataFieldDefinition, Role } from "@/types/schema";
+import { ENGINEER_TIER_ROLES } from "@/lib/roleCapabilities";
 import { isDormantRole, roleDisplayNote } from "@/lib/roleCapabilities";
 import { ALL_ROLES } from "@/types/schema";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
@@ -214,7 +215,10 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
   // "normal" is open to every member until someone restricts it.
   const [newNodeVisibility, setNewNodeVisibility] = useState<"normal" | "hidden">("normal");
   const [viewRoles, setViewRoles] = useState<Role[]>([]);
-  const [uploadRoles, setUploadRoles] = useState<Role[]>(["DocCtrl", "Admin", "Engineer-1", "Engineer-2"]);
+  // ROLE-2 / DEC-4: the Engineer tiers are one role with four labels, so a
+  // default that named two of them treated the tiers as ranks — an ACL role
+  // subject matches by exact name, and Engineer-3/4 were silently left out.
+  const [uploadRoles, setUploadRoles] = useState<Role[]>(["DocCtrl", "Admin", ...ENGINEER_TIER_ROLES]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
@@ -248,7 +252,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         setViewAccess("all");
         setNewNodeVisibility("normal");
         setViewRoles([]);
-        setUploadRoles(["DocCtrl", "Admin", "Engineer-1", "Engineer-2"]);
+        setUploadRoles(["DocCtrl", "Admin", ...ENGINEER_TIER_ROLES]);
         setShowAdvanced(false);
       }
     })();

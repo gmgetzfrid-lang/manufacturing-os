@@ -62,6 +62,13 @@ export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
   "Engineer-3": ["approve_engineering", "view_requests", "create_requests"],
   "Engineer-4": ["approve_engineering", "view_requests", "create_requests"],
   Drafter: ["draft_work", "create_requests"],
+  // ROLE-3: `Requester` is the "may file requests" marker AND the shipped
+  // default for `ticket.requester_review` — which, since WF-8, substitutes
+  // only on a ticket that has NO requester of record (a ticket's own
+  // requester always keeps the review right by identity). The five
+  // department labels below hold the same single capability and appear in
+  // no policy default: they are DORMANT (DEC-3) — kept as ACL subjects and
+  // policy tokens so a department can be named as an access group.
   Requester: ["create_requests"],
   Accounting: ["create_requests"],
   Safety: ["create_requests"],
@@ -191,6 +198,18 @@ export function isDormantRole(role: string): boolean {
 export const DORMANT_ROLE_NOTE =
   "Use a team instead — this role grants nothing beyond Requester.";
 
+/** ROLE-1 / ROLE-3: the one job a dormant department role keeps — it can be
+ *  NAMED: by a content ACL rule (`{type:"role", id:"Safety"}` binds for
+ *  every member holding Safety anywhere in their collection, CHAIN-1 /
+ *  20261041) and by a capability-policy token, including a request-type
+ *  override (DEC-13 stage 2: "INCIDENT requests are reviewed by Safety"). */
+export const DORMANT_ROLE_JOB =
+  "Addressable as a group: a content ACL rule or a capability-policy token (including a request-type override) may name it.";
+
+/** ROLE-3: what separates Requester from the department labels. */
+export const REQUESTER_ROLE_NOTE =
+  "The 'may file requests' marker. Also the shipped default reviewer for a returned draft on a ticket with no requester of record; a ticket's own requester always keeps that right by identity.";
+
 /** DEC-4: the four Engineer tiers are labels with IDENTICAL authority — every
  *  check is "role contains Engineer" and the capability policy's `Engineer`
  *  token matches all four. Kept as customer-visible seniority; documented as
@@ -204,5 +223,52 @@ export const ENGINEER_TIER_NOTE =
 export function roleDisplayNote(role: string): string | null {
   if (isDormantRole(role)) return DORMANT_ROLE_NOTE;
   if ((ENGINEER_TIER_ROLES as readonly string[]).includes(role)) return ENGINEER_TIER_NOTE;
+  return null;
+}
+
+// ─── The full-roster picker (ROLE-4) ─────────────────────────────────────
+// `addableRoles` is the "never an empty add" guardrail and stays as it is.
+// The picker itself must show the WHOLE roster, because a role that adds no
+// capability is still worth recording (a department label, a seniority
+// tier) or — for Viewer / Auditor / Contractor — is a RESTRICTION the admin
+// may want to place. A hidden role explains nothing; a grouped, labelled
+// one explains itself.
+
+export const READ_ONLY_ROLE_NOTE =
+  "Restricts: holding this makes the member read-only on document editing and equipment state (deny-if-any, whatever else they hold). Workflow authority from other roles is unchanged.";
+
+export const CONTRACTOR_ROLE_NOTE =
+  "Restricts: reduced navigation (the Viewer sidebar) plus the ability to file requests.";
+
+export interface PickerRoster {
+  /** Not held, and adds at least one capability — the historical picker. */
+  adds: Role[];
+  /** Not held, adds nothing new: labels, tiers, and the three restrictions. */
+  addsNothing: Role[];
+  /** Not held, dormant department labels (DEC-3) — grouped and discouraged. */
+  dormant: Role[];
+}
+
+/** Every role NOT already held, in three labelled groups. The union of the
+ *  groups is exactly ALL_ROLES minus `current`; `adds` equals `addableRoles`
+ *  minus the dormant ones. */
+export function pickerRoster(current: Role[]): PickerRoster {
+  const adds: Role[] = [], addsNothing: Role[] = [], dormant: Role[] = [];
+  for (const r of ALL_ROLES) {
+    if (current.includes(r)) continue;
+    if (isDormantRole(r)) { dormant.push(r); continue; }
+    if (capabilitiesAdded(r, current).length > 0) adds.push(r); else addsNothing.push(r);
+  }
+  return { adds, addsNothing, dormant };
+}
+
+/** Why a role that adds nothing is still offered — the picker's explanation. */
+export function pickerNote(role: Role, current: Role[]): string | null {
+  if (role === "Viewer" || role === "Auditor") return READ_ONLY_ROLE_NOTE;
+  if (role === "Contractor") return CONTRACTOR_ROLE_NOTE;
+  if (isDormantRole(role)) return `${DORMANT_ROLE_NOTE} ${DORMANT_ROLE_JOB}`;
+  if ((ENGINEER_TIER_ROLES as readonly string[]).includes(role)) return ENGINEER_TIER_NOTE;
+  if (role === "Requester") return REQUESTER_ROLE_NOTE;
+  if (capabilitiesAdded(role, current).length === 0) return "Adds nothing this member doesn't already have — a label only.";
   return null;
 }

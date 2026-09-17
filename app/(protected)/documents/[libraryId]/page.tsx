@@ -7,6 +7,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import { supabase } from "@/lib/supabase";
 import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
+import { holdsReadOnlyRole } from "@/lib/roleHeld";
 import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
 import LibraryHomeBoard from "@/components/documents/LibraryHomeBoard";
@@ -4122,7 +4123,7 @@ export default function LibraryExplorerPage() {
                                         <PillCell
                                           values={list}
                                           label={def.pillGroupLabel || def.label || "Equipment"}
-                                          canEdit={isController || !hasAnyRole(["Viewer", "Auditor"])}
+                                          canEdit={!holdsReadOnlyRole(roles)}
                                           orgId={activeOrgId ?? undefined}
                                           userId={uid ?? undefined}
                                           canManageAssets={hasAnyRole(["Admin", "Manager", "Supervisor", "Drafter"]) || roles.some((r) => r.includes("Engineer"))}
