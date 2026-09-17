@@ -1,5 +1,5 @@
 import { Role, TicketStatus, Ticket } from "@/types/schema";
-import { policyAllows, scopedTokensFor, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
+import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type CapabilityResource, type UserGrant } from "@/lib/capabilityPolicy";
 
 export interface WorkflowAction {
   label: string;
@@ -76,13 +76,6 @@ export function isDocCtrlRole(role?: Role | string): boolean {
 }
 
 /**
- * Returns true when a requester with this role MUST route their PENDING_REVIEW
- * approval through an engineer. Engineers and Management approve directly;
- * DocCtrl is included with management for IFC sign-off purposes. Drafter is
- * borderline — exclude here since drafters approving their own work as
- * requester is a separate antipattern.
- */
-/**
  * DEC-16 (WF-12 / DRAFT-3): the engineer gate, evaluated against BOTH the
  * role snapshot stamped on the ticket at filing AND the requester's current
  * role collection. Required if either requires it. The snapshot is a
@@ -91,27 +84,72 @@ export function isDocCtrlRole(role?: Role | string): boolean {
  * best-effort, by the ticket page. Unknown current (`null`/`undefined`) lets
  * the snapshot decide; a known-empty current collection (the requester is no
  * longer an active member) requires an engineer.
+ *
+ * DEC-13 stage 3: WHICH roles are exempt is the org's
+ * `ticket.engineer_gate_exempt` capability (default: management, every
+ * Engineer tier, DocCtrl — byte-identical to the historical hardcoded test),
+ * so `policy` / `requesterId` / `resource` select the org's list, honour a
+ * personal grant of it, and let a request-type override narrow it. The
+ * disjunction above is NOT configurable: the capability only decides who is
+ * exempt, never whether the snapshot OR current test runs.
  */
-export function engineerApprovalRequired(snapshotRole?: Role | string | null, currentRoles?: readonly string[] | null): boolean {
-  const bySnapshot = requiresEngineerApproval(snapshotRole ?? undefined);
+export function engineerApprovalRequired(
+  snapshotRole?: Role | string | null,
+  currentRoles?: readonly string[] | null,
+  policy?: CapabilityPolicy | null,
+  requesterId?: string | null,
+  resource?: CapabilityResource | null,
+): boolean {
+  const bySnapshot = requiresEngineerApproval(snapshotRole ?? undefined, null, policy, requesterId, resource);
   if (currentRoles === null || currentRoles === undefined) return bySnapshot;
   const byCurrent = currentRoles.length === 0
     ? true
-    : !currentRoles.some((r) => isEngineerRole(r) || isManagementRole(r) || isDocCtrlRole(r));
+    : requiresEngineerApproval(undefined, currentRoles, policy, requesterId, resource);
   return bySnapshot || byCurrent;
 }
 
-export function requiresEngineerApproval(requesterRole?: Role | string, requesterRoles?: readonly string[] | null): boolean {
-  // ADD-3: when the requester's full collection is known, ANY held engineer /
-  // management / DocCtrl role waives the engineer route — relevance, not rank.
+/**
+ * Returns true when a requester with this role MUST route their PENDING_REVIEW
+ * approval through an engineer. The exempt roles are the org's
+ * `ticket.engineer_gate_exempt` list (DEC-13 stage 3); with no policy the
+ * shipped default applies — Engineers and Management approve directly and
+ * DocCtrl is included with management for IFC sign-off purposes. Drafter is
+ * borderline — excluded by default since drafters approving their own work as
+ * requester is a separate antipattern. No role at all fails closed.
+ */
+export function requiresEngineerApproval(
+  requesterRole?: Role | string,
+  requesterRoles?: readonly string[] | null,
+  policy?: CapabilityPolicy | null,
+  requesterId?: string | null,
+  resource?: CapabilityResource | null,
+): boolean {
+  // ADD-3: when the requester's full collection is known, ANY held exempt
+  // role waives the engineer route — relevance, not rank.
   if (requesterRoles && requesterRoles.length > 0) {
-    if (requesterRoles.some((r) => isEngineerRole(r) || isManagementRole(r) || isDocCtrlRole(r))) return false;
+    if (policyAllows(policy, 'ticket.engineer_gate_exempt', null, [...requesterRoles], requesterId, resource)) return false;
   }
   if (!requesterRole) return true;
-  if (isEngineerRole(requesterRole)) return false;
-  if (isManagementRole(requesterRole)) return false;
-  if (isDocCtrlRole(requesterRole)) return false;
-  return true;
+  return !policyAllows(policy, 'ticket.engineer_gate_exempt', requesterRole, null, requesterId, resource);
+}
+
+/** WF-16: the personal grants WITHOUT WHICH this actor would not be offered
+ *  `actionName` — evaluated by re-running the state machine with each of the
+ *  actor's live grants removed in turn (a grant that is merely redundant with
+ *  their roles is not named). Empty = the action came from a role or from
+ *  identity. Pure; the workflow route writes the result into the audit row. */
+export function decisiveGrants(
+  ticket: Ticket, userRole: Role, userId: string, policy: CapabilityPolicy | undefined, ctx: WorkflowContext | undefined, actionName: string,
+): UserGrant[] {
+  const mine = (policy?.grants ?? []).filter((g) => g.uid === userId && grantActive(g));
+  if (mine.length === 0) return [];
+  const offers = (p: CapabilityPolicy | undefined) => WorkflowEngine.getActions(ticket, userRole, userId, p, ctx).some((a) => a.action === actionName);
+  const without = (drop: (g: UserGrant) => boolean): CapabilityPolicy => ({ ...(policy ?? {}), grants: (policy?.grants ?? []).filter((g) => !drop(g)) });
+  const decisive = mine.filter((g) => !offers(without((x) => x === g)));
+  if (decisive.length > 0) return decisive;
+  // Two grants each sufficient on their own: neither is individually
+  // decisive, but together they are — name them all.
+  return offers(without((g) => g.uid === userId)) ? [] : mine;
 }
 
 export const WorkflowEngine = {
@@ -174,7 +212,9 @@ export const WorkflowEngine = {
     // disjoined with the requester's current collection — approval is
     // required if either says so, so a demotion after filing cannot leave
     // an in-flight ticket bypassing the gate.
-    const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles);
+    // DEC-13 stage 3: the exempt roles are the org's
+    // `ticket.engineer_gate_exempt` list, scoped to this ticket's resource.
+    const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);
     // DEC-13 (DRAFT-1 / GAP-1): a rule scoped to this ticket's type on
     // `ticket.direct_approve` binds the REQUESTER'S own approval too. Identity
     // keeps every review action (request revision, send for engineer

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { WorkflowEngine, ticketResource } from "@/lib/workflow";
-import { loadCapabilityPolicy, policyAllows, scopedTokensFor } from "@/lib/capabilityPolicy";
+import { WorkflowEngine, ticketResource, decisiveGrants } from "@/lib/workflow";
+import { loadCapabilityPolicyEntry, policyAllows, scopedTokensFor } from "@/lib/capabilityPolicy";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import {
   computeTransition,
@@ -131,7 +131,10 @@ export async function POST(req: NextRequest) {
   // caller at the ticket's current status — evaluated with the ORG'S OWN
   // capability policy, so admin-configured authority is enforced here, not
   // just drawn in the UI.
-  const capPolicy = await loadCapabilityPolicy(ticket.orgId, supabaseAdmin);
+  // WF-10: the server-side read is short-lived (SERVER_CACHE_TTL_MS) and the
+  // policy route invalidates it on write; the version stamp names, in the
+  // audit row, which policy this decision was made under.
+  const { policy: capPolicy, version: policyVersion } = await loadCapabilityPolicyEntry(ticket.orgId, supabaseAdmin);
   // DEC-16: the requester's CURRENT collection rides beside the snapshot, so
   // a demotion after filing cannot leave the engineer gate bypassed. A
   // requester who is no longer an active member is known to hold nothing.
@@ -142,13 +145,14 @@ export async function POST(req: NextRequest) {
       .eq("org_id", ticket.orgId).eq("uid", ticket.requesterId).eq("status", "active").maybeSingle();
     requesterRoles = heldRoles(reqMember as { role?: unknown; roles?: unknown } | null);
   }
-  const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, {
+  const engineCtx = {
     userRoles: callerRoles,
     activeMemberCount: activeMemberCount ?? 0,
     engineeringFirstTypes,
     closeWithoutReviewTypes,
     requesterRoles,
-  });
+  };
+  const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, engineCtx);
   // DEC-13 stage 2: the resource this ticket presents to the policy — the
   // same fields getActions just evaluated with.
   const resource = ticketResource(ticket);
@@ -164,6 +168,24 @@ export async function POST(req: NextRequest) {
   if (action.disabledReason) {
     return NextResponse.json({ error: action.disabledReason }, { status: 403 });
   }
+  // WF-16: WHY is this action permitted? When a personal grant is what admits
+  // the caller (the state machine would not offer the action without it),
+  // the audit row names the grant — role authority and delegation are
+  // otherwise indistinguishable in the log. Identity relations ride along
+  // as fact; grants are unscoped (WF-13 row 6), so no resource is named.
+  const usedGrants = decisiveGrants(ticket, callerRole, caller.id, capPolicy, engineCtx, action.action);
+  const identity = [
+    ticket.requesterId === caller.id ? "requester" : null,
+    ticket.assignedDrafterId === caller.id ? "drafter" : null,
+    ticket.assignedEngineerId === caller.id ? "engineer" : null,
+  ].filter((x): x is string => !!x);
+  const authority = {
+    via: usedGrants.length > 0 ? "grant" : "role",
+    ...(usedGrants.length > 0 ? { grants: usedGrants.map((g) => ({ cap: g.cap, expiresAt: g.expiresAt ?? null, grantedBy: g.grantedBy ?? null, grantedAt: g.grantedAt ?? null, note: g.note ?? null })) } : {}),
+    ...(identity.length > 0 ? { identity } : {}),
+    roles: callerRoles,
+    policyVersion,
+  };
   if (action.requiresComment && !body.comment?.trim()) {
     return NextResponse.json({ error: "This action requires a comment" }, { status: 400 });
   }
@@ -414,7 +436,7 @@ export async function POST(req: NextRequest) {
     user_id: caller.id,
     user_email: callerEmail,
     user_role: callerRole,
-    details: { from: ticket.status, to: newStatus, label: action.label },
+    details: { from: ticket.status, to: newStatus, label: action.label, authority },
   });
 
   // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's

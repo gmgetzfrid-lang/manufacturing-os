@@ -209,7 +209,7 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
     expect(r).toContain("const resource = ticketResource(ticket);");
     expect(r).toContain("const scoped = scopedTokensFor(capPolicy, pickCap, resource);");
     expect(r).toContain('(held[0] ?? "Viewer") as Role, held as Role[], ref, resource);');
-    expect(r).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);
+    expect(r).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);
     // the only policyAllows call sites, every one resource-aware or deliberately base-only
     const sites = ["lib/workflow.ts", "lib/holds.ts", "components/permissions/ViewAsSimulator.tsx", "app/api/tickets/workflow-action/route.ts",
@@ -404,14 +404,17 @@ describe("20261052 — org_capability_allows_for + the 3-argument wrapper", () =
     expect(forFn).toContain("v_tokens := v_entry;");
     expect(forFn).toContain("p_resource := COALESCE(p_resource, '{}'::jsonb);");
   });
-  it("the default CASE is byte-identical to the live 20261038 body and still mirrors CAPABILITY_DEFS", () => {
+  it("the default CASE is byte-identical to the 20261038 body and mirrors CAPABILITY_DEFS as of Round D3 (17 rows; Round E's 20261057 added the stage-3 row)", () => {
     const caseNew = between(forFn, "v_tokens := CASE p_cap", "END;");
     const caseLive = between(liveFn, "v_tokens := CASE p_cap", "END;");
     expect(caseNew).toBe(caseLive);
     const sqlDefaults = new Map<string, string[]>();
     for (const m of caseNew.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
-    for (const def of CAPABILITY_DEFS) expect(sqlDefaults.get(def.id), def.id).toEqual(def.defaultRoles);
-    expect(sqlDefaults.size).toBe(CAPABILITY_DEFS.length);
+    for (const [cap, tokens] of sqlDefaults) expect(CAPABILITY_DEFS.find((d) => d.id === cap)?.defaultRoles, cap).toEqual(tokens);
+    expect(sqlDefaults.size).toBe(17);
+    // the only capability this (historical) CASE lacks is DEC-13 stage 3's —
+    // the live census now runs against 20261057 (rpPhase4Migration.test.ts)
+    expect(CAPABILITY_DEFS.map((d) => d.id).filter((id) => !sqlDefaults.has(id))).toEqual(["ticket.engineer_gate_exempt"]);
   });
   it("the token loop and the grants loop are byte-identical to the live body", () => {
     const loopsNew = between(forFn, "FOR t IN SELECT jsonb_array_elements_text(v_tokens) LOOP", "END;\n$$;");

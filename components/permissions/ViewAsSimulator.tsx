@@ -262,7 +262,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     </button>
                   </div>
                   {grantErr && <div className="text-[10px] text-rose-600 dark:text-rose-400 font-bold">{grantErr}</div>}
-                  <div className="text-[10px] text-[var(--color-text-faint)]">Additive only — a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Audited with before/after; the &ldquo;View as&rdquo; list above updates instantly.</div>
+                  <div className="text-[10px] text-[var(--color-text-faint)]">Additive only — a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Admin only, never to yourself; applied and audited with before/after on the server (WF-11); a workflow action it admits names it in the audit log (WF-16). Grants have no request-type scope — a delegation applies to every ticket (WF-13). The &ldquo;View as&rdquo; list above updates instantly.</div>
                 </div>
               )}
             </div>

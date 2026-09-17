@@ -44,12 +44,13 @@ describe("DEC-16 — engineerApprovalRequired fails closed on either value", () 
     const r = src("app/api/tickets/workflow-action/route.ts");
     expect(r).toContain('.eq("org_id", ticket.orgId).eq("uid", ticket.requesterId).eq("status", "active").maybeSingle();');
     expect(r).toContain("requesterRoles = heldRoles(reqMember as { role?: unknown; roles?: unknown } | null);");
-    expect(r).toMatch(/closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);
+    expect(r).toMatch(/closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
     const p = src("app/(protected)/requests/[id]/page.tsx");
     expect(p).toContain("const [requesterRoles, setRequesterRoles] = useState<string[] | null>(null);");
     expect(p).toMatch(/closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);
     expect(src("types/schema.ts")).toMatch(/requester's role STAMPED AT FILING[\s\S]*DEC-16/);
-    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles);");
+    // Round E (DEC-13 stage 3): the same disjunction, now told WHICH roles are exempt by the org's policy
+    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);");
   });
 });
 
