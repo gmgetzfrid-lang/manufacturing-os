@@ -103,6 +103,13 @@ describe("WF-24 — the badge and the ticket page agree: attention is the engine
     expect(isActionRequired(t, ctx(["Drafter"]))).toBe(true);
     expect(isActionRequired(t, { uid: "me", roles: ["Drafter"], policy: { caps: { "ticket.self_assign": [] } } })).toBe(false);
   });
+  it("DEC-12 × WF-24: a Drafter who is the requester, org of 3+ — pick-up is disabled on the page, so the badge is off; without the count (or below 3) it is on", () => {
+    const t = mk({ status: "PENDING_ASSIGNMENT", requesterId: "me" });
+    expect(isActionRequired(t, { uid: "me", roles: ["Drafter"], activeMemberCount: 3 })).toBe(false);
+    expect(isActionRequired(t, { uid: "me", roles: ["Drafter"] })).toBe(true);
+    expect(isActionRequired(t, { uid: "me", roles: ["Drafter"], activeMemberCount: 2 })).toBe(true);
+    expect(isActionRequired(mk({ status: "PENDING_ASSIGNMENT", requesterId: "someone" }), { uid: "me", roles: ["Drafter"], activeMemberCount: 3 })).toBe(true);
+  });
   it("a separation-of-duties block is not an action item: the drafter-as-requester at 3+ is not flagged to approve", () => {
     const t = mk({ status: "PENDING_REVIEW", requesterId: "me", requesterRole: "Engineer-2", assignedDrafterId: "me" });
     // request_revision stays live for them, so the ticket still needs them.

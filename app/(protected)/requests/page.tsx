@@ -236,15 +236,26 @@ export default function RequestPortal() {
   // capability policy, so a row is marked exactly when the ticket page would
   // offer this viewer a live action.
   const [capPolicy, setCapPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  // GAP-2 / DEC-12: the active member count the ticket page evaluates the
+  // engine under — separation of duties (3+) disables a Drafter-requester's
+  // pick-up, so without it the row was marked for a ticket the page showed
+  // as view-only.
+  const [activeMemberCount, setActiveMemberCount] = useState<number | undefined>(undefined);
   useEffect(() => {
     let alive = true;
     if (!activeOrgId) return;
     void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setCapPolicy(p); }).catch(() => {});
+    void supabase
+      .from('org_members')
+      .select('uid', { count: 'exact', head: true })
+      .eq('org_id', activeOrgId)
+      .eq('status', 'active')
+      .then(({ count }) => { if (alive && typeof count === 'number') setActiveMemberCount(count); }, () => {});
     return () => { alive = false; };
   }, [activeOrgId]);
   const isActionRequired = useCallback(
-    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes }),
-    [uid, roles, capPolicy, engineeringFirstTypes, closeWithoutReviewTypes],
+    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount }),
+    [uid, roles, capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount],
   );
 
 
@@ -396,9 +407,11 @@ export default function RequestPortal() {
   const cardLabels = useMemo(() => {
     if (activeRole === 'Drafter') return { slot2: 'My Workload', slot3: 'Revisions Needed', slot4: 'Available to Claim' };
     if (activeRole === 'Requester') return { slot2: 'My Open Requests', slot3: 'Waiting on Review', slot4: 'Completed History' };
-    if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) return { slot2: 'Pending Approval', slot3: 'Unassigned Pool', slot4: 'Revision Status' };
+    if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) return { slot2: 'Engineering Review', slot3: 'Unassigned Pool', slot4: 'Revision Status' };
     if (activeRole === 'DocCtrl') return { slot2: 'Ready to Issue', slot3: 'Pending Closure', slot4: 'Total Archives' };
-    return { slot2: 'Team Queue', slot3: 'Drawing Review', slot4: 'New Requests' }; 
+    // DEC-14: the retired initial-review stage's tiles now count the
+    // engineering-review queue (management) and final sign-offs (engineers).
+    return { slot2: 'Team Queue', slot3: 'Drawing Review', slot4: 'Final Approvals' }; 
   }, [activeRole]);
 
   // --------------------------------------------------------------------

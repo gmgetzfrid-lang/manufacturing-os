@@ -171,6 +171,12 @@ export const WorkflowEngine = {
       || (!ticket.requesterId && allows('ticket.requester_review'));
     const canActAsDrafter = isDrafterIdentity
       || (!ticket.assignedDrafterId && allows('ticket.draft_work'));
+    // WF-24: is there a requester who can still act? A co-reviewer's arm is
+    // on the requester's behalf (optional) only while one exists AND is not
+    // KNOWN to have left: the route resolves a deactivated requester's
+    // current collection as `[]` (DEC-16), and a ticket nobody is flagged
+    // for stalls silently. `null` / undefined = unknown = assume present.
+    const requesterCanAct = !!ticket.requesterId && ctx?.requesterRoles?.length !== 0;
 
     // GAP-2/DEC-12 (+DEC-37): independence is a property of the SLOT — one
     // deliverable's producer cannot be its checker. Active at >= 3 members.
@@ -371,9 +377,10 @@ export const WorkflowEngine = {
           // WF-24: the ticket waits on the REQUESTER's review; a co-reviewer
           // acting on their behalf is optional — exactly as the on-behalf
           // close at FINAL_DRAFT — so every engineer and manager is not
-          // badged for every ticket in review. With no requester to act,
+          // badged for every ticket in review. With no requester to act
+          // (none set, or the requester is known to have left the org),
           // the co-review IS the review and stays required.
-          const onBehalf = ticket.requesterId ? { optional: true } : {};
+          const onBehalf = requesterCanAct ? { optional: true } : {};
           actions.push({
             label: 'Approve (Issue for Construction)',
             action: 'approve_draft_ifc',
@@ -471,8 +478,10 @@ export const WorkflowEngine = {
       case 'FINAL_DRAFT':
          if (canActAsRequester || allows('ticket.direct_approve') || isManagement) {
              // WF-24: the ticket waits on the REQUESTER's acknowledgement;
-             // a co-reviewer or manager closing on their behalf is optional.
-             const onBehalf = canActAsRequester ? {} : { optional: true };
+             // a co-reviewer or manager closing on their behalf is optional
+             // — unless the requester is known to have left (see
+             // `requesterCanAct`), when the close IS the closure.
+             const onBehalf = canActAsRequester ? {} : requesterCanAct ? { optional: true } : {};
              actions.push({
                label: 'Acknowledge & Close', action: 'close_ticket', variant: 'success',
                ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),

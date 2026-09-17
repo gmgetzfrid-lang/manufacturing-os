@@ -172,6 +172,28 @@ describe("PENDING_REVIEW — the engineer-approval fork", () => {
     expect(acts.find((a) => a.action === "request_revision")?.optional).toBeUndefined();
   });
 
+  it("WF-24: a requester KNOWN to have left (current collection []) is nobody to act on behalf of — the co-review and the on-behalf close are required again; unknown (null / undefined) or any held role assumes present", () => {
+    const review = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
+    const final = mk({ status: "FINAL_DRAFT", requesterId: "u-1" });
+    for (const role of ["Engineer-1", "Admin", "Manager"] as const) {
+      const gone = WorkflowEngine.getActions(review, role, "other", undefined, { requesterRoles: [] });
+      for (const a of ["approve_draft_ifc", "approve_minor_correction", "request_revision"]) {
+        expect(gone.find((x) => x.action === a)?.optional, `${role}/${a}`).toBeUndefined();
+      }
+      const goneFinal = WorkflowEngine.getActions(final, role, "other", undefined, { requesterRoles: [] });
+      expect(goneFinal.find((x) => x.action === "close_ticket")?.optional, role).toBeUndefined();
+      expect(goneFinal.find((x) => x.action === "reject_final")?.optional, role).toBeUndefined();
+      for (const rr of [null, undefined, ["Viewer"]] as const) {
+        expect(WorkflowEngine.getActions(review, role, "other", undefined, { requesterRoles: rr }).find((x) => x.action === "approve_draft_ifc")?.optional, `${role}/${String(rr)}`).toBe(true);
+        expect(WorkflowEngine.getActions(final, role, "other", undefined, { requesterRoles: rr }).find((x) => x.action === "close_ticket")?.optional, `${role}/${String(rr)}`).toBe(true);
+      }
+    }
+    // the requester's own review / close is never optional, whatever the collection says
+    expect(WorkflowEngine.getActions(review, "Viewer", "u-1", undefined, { requesterRoles: ["Viewer"] }).find((x) => x.action === "request_revision")?.optional).toBeUndefined();
+    expect(WorkflowEngine.getActions(final, "Viewer", "u-1", undefined, { requesterRoles: ["Viewer"] }).find((x) => x.action === "close_ticket")?.optional).toBeUndefined();
+    // no requester at all: required on both stages
+    expect(WorkflowEngine.getActions(mk({ status: "FINAL_DRAFT", requesterId: "" }), "Engineer-1", "other").find((x) => x.action === "close_ticket")?.optional).toBeUndefined();
+  });
   it("minor-correction fast approve exists ONLY for actors who could approve directly (WF-3)", () => {
     const t = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
     // WF-3 closure: a Viewer-tier requester cannot self-approve, so their

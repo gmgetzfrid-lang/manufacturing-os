@@ -249,14 +249,31 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     expect(src("app/(protected)/requests/[id]/page.tsx")).toContain("const isAdmin = hasAnyRole(['Admin', 'DocCtrl']);");
     expect(src("app/api/tickets/comment/route.ts")).toContain('const CLASSIFY_ROLES = ["Admin", "DocCtrl"];');
   });
+  it("computeTransition: attach_file ADDS readers and never removes them — the queue pool and the assigned engineer keep their unread marker; the actor's own clears; a transition still resets", () => {
+    const queued = ticket({ status: "PENDING_ASSIGNMENT", assignedDrafterId: null, assignedEngineerId: "e-1", unreadBy: ["sup-1", "a-1", "req-1"], watchers: ["w-1"] });
+    const r = computeTransition(queued, { actionType: "attach_file", actionLabel: "Attach File", attachment: file, actor: { uid: "req-1", email: "r@x.io", role: "Requester" }, now: NOW });
+    expect(r.updates.status).toBeUndefined();
+    expect(r.updates.unread_by).toEqual(["sup-1", "a-1", "e-1", "w-1"]);
+    // told: the participants and followers (the comment route's set) — not the preserved pool, which was told about the queue entry already
+    expect(r.recipients).toEqual(["e-1", "w-1"]);
+    // no prior markers: exactly the old fan-out set
+    const fresh = computeTransition(ticket(), { actionType: "attach_file", actionLabel: "Attach File", attachment: file, actor: { uid: "req-1", email: "r@x.io", role: "Requester" }, now: NOW });
+    expect(fresh.updates.unread_by).toEqual(["d-1"]);
+    expect(fresh.recipients).toEqual(["d-1"]);
+    // a transition resets to requester + drafter − actor, as before
+    const t = computeTransition(ticket({ unreadBy: ["sup-1"] }), { actionType: "submit_draft", actionLabel: "Submit", actor: { uid: "d-1", email: "d@x.io", role: "Drafter" }, now: NOW });
+    expect(t.updates.unread_by).toEqual(["req-1"]);
+    expect(src("lib/ticketTransitions.ts")).toContain("updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...activityRecipients])).filter(");
+  });
   it("route: attaching a file is ACTIVITY, not a transition — no alert supersede, no email, a comment-style bell row without metadata.action", async () => {
     state.user = { id: "req-1" };
     state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
-    state.rows.tickets = [ticketRow()];
+    // the WF-19 queue pool is already unread for this ticket — an attachment must ADD readers, never wipe them
+    state.rows.tickets = [ticketRow({ unread_by: ["sup-1"] })];
     state.rows.notifications = [{ id: "n-1", user_id: "d-1", resource_id: "t1", read_at: null, metadata: { action: "assign", status: "DRAFTING" } }];
     const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { ...file, type: "Reference", name: "vendor.pdf" } });
     expect(res.status).toBe(200);
-    expect(updateOf("tickets")[0].unread_by).toEqual(["d-1"]);
+    expect(updateOf("tickets")[0].unread_by).toEqual(["sup-1", "d-1"]);
     // the drafter's outstanding "you were assigned" alert is NOT retired
     expect(state.calls.filter((c) => c.table === "notifications" && c.method === "update")).toHaveLength(0);
     // one activity row for the other participant, comment-style: no metadata.action for the stale-alert reconciliation to act on
@@ -265,10 +282,11 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     expect(rows[0]).toMatchObject({ kind: "ticket_comment", title: "File added · REQ-1 x", body: "Added Reference file: vendor.pdf", metadata: { activity: "attach_file", status: "DRAFTING" } });
     expect((rows[0].metadata as Record<string, unknown>).action).toBeUndefined();
     expect(insertsOf("email_notifications")).toEqual([]);
-    // a real transition still supersedes and emails (the contrast)
+    // a real transition still supersedes, emails and RESETS unread_by (the contrast)
     state.calls = []; state.user = { id: "d-1" };
-    state.rows.tickets = [ticketRow({ attachments: [file] })];
+    state.rows.tickets = [ticketRow({ attachments: [file], unread_by: ["sup-1"] })];
     expect((await post({ ticketId: "t1", actionType: "submit_draft" })).status).toBe(200);
+    expect(updateOf("tickets")[0].unread_by).toEqual(["req-1"]);
     expect(state.calls.filter((c) => c.table === "notifications" && c.method === "update")).toHaveLength(1);
     expect(insertsOf("notifications")[0]).toMatchObject({ kind: "ticket_status", metadata: { action: "submit_draft", status: "PENDING_REVIEW" } });
     expect(insertsOf("email_notifications").map((e) => e.to_user_id)).toEqual(["req-1"]);
@@ -408,7 +426,8 @@ describe("WF-17 / DEC-14 — cancel_request exists; NEW and PENDING_ENG_INITIAL 
     const del = callIndex("document_intents", "delete");
     expect(del).toBeGreaterThan(callIndex("tickets", "update"));
     expect(legsAfter(del, "document_intents")).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"]]);
-    expect(src("app/api/tickets/workflow-action/route.ts")).toContain('} else if (newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT") {');
+    expect(src("app/api/tickets/workflow-action/route.ts")).toContain('const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";');
+    expect(src("app/api/tickets/workflow-action/route.ts")).toContain("} else if (clearsAll) {");
   });
   it("CANCELED is terminal on every live-work surface: no open-ticket query or filter excludes only CLOSED", () => {
     const files = [
@@ -582,6 +601,36 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
     expect(callIndex("document_intents", "delete")).toBe(-1);
     expect(callIndex("document_intents", "upsert")).toBeGreaterThan(-1);
   });
+  it("route: the previous drafter's intent is retired at EVERY status reassign is offered — PENDING_REVIEW, PENDING_FINAL_APPROVAL, PENDING_IFC — and the new drafter is registered where the ticket is on a drafter's bench (PENDING_IFC)", async () => {
+    state.user = { id: "a-1" };
+    state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter"), member("d-2", "Drafter"), member("e-1", "Engineer-2")];
+    for (const status of ["PENDING_REVIEW", "PENDING_FINAL_APPROVAL", "PENDING_IFC"] as const) {
+      state.calls = [];
+      state.rows.tickets = [ticketRow({ status, assigned_engineer_id: status === "PENDING_FINAL_APPROVAL" ? "e-1" : null, metadata: { source_document: { id: "doc-1" } } })];
+      const res = await post({ ticketId: "t1", actionType: "reassign_drafter", comment: "Hector is out this week", assignment: { id: "d-2", name: "Sam" } });
+      expect(res.status, status).toBe(200);
+      expect((await res.json()).status).toBe(status);
+      const del = callIndex("document_intents", "delete");
+      expect(del, status).toBeGreaterThan(callIndex("tickets", "update"));
+      expect(legsAfter(del, "document_intents").slice(0, 4), status).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"], ["user_id", "d-1"]]);
+      const up = callIndex("document_intents", "upsert");
+      if (status === "PENDING_IFC") {
+        expect(up).toBeGreaterThan(del);
+        expect(state.calls[up].args[0]).toMatchObject({ document_id: "doc-1", user_id: "d-2", kind: "edit", source: "ticket", ticket_id: "t1" });
+      } else {
+        expect(up, status).toBe(-1); // under review: registered on the next return to REVISION_REQ
+      }
+    }
+    // FINAL_DRAFT: the wholesale clear covers it — no per-drafter delete, no new registration
+    state.calls = []; state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", metadata: { source_document: { id: "doc-1" } } })];
+    expect((await post({ ticketId: "t1", actionType: "reassign_drafter", comment: "x", assignment: { id: "d-2", name: "Sam" } })).status).toBe(200);
+    expect(legsAfter(callIndex("document_intents", "delete"), "document_intents")).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"]]);
+    expect(callIndex("document_intents", "upsert")).toBe(-1);
+    // and the retirement is not inside the DRAFTING / REVISION_REQ branch any more
+    const route = src("app/api/tickets/workflow-action/route.ts");
+    expect(route).toContain("if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {");
+    expect(route).toContain('newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");');
+  });
   it("route: an Admin reassigns the ENGINEER reviewer at PENDING_FINAL_APPROVAL (the existing override now proven end to end)", async () => {
     state.user = { id: "a-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter"), member("e-1", "Engineer-2"), member("e-2", "Engineer-3")];
@@ -747,12 +796,25 @@ describe("WF-24 / CHAIN-3 — ONE management tier; attention is derived from the
   });
   it("the badge hook and the portal evaluate under the org's own policy and use the visibility scope, not the tier", () => {
     const hook = src("hooks/useTicketNotifications.ts");
-    expect(hook).toContain("isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes })");
+    expect(hook).toContain("isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount })");
+    // GAP-2 / DEC-12: the count the ticket page evaluates under — fetched the same way ([id] page), passed through the context
+    expect(hook).toContain(".select('uid', { count: 'exact', head: true })");
+    expect(hook).toContain(".eq('status', 'active')");
+    expect(hook).toContain("if (alive && typeof count === 'number') setActiveMemberCount(count);");
     expect(hook).toContain("setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));");
     expect(hook).toContain("isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')");
     expect(hook).toContain("void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});");
     const portal = src("app/(protected)/requests/page.tsx");
-    expect(portal).toContain("ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes })");
+    expect(portal).toContain("ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount })");
+    expect(portal).toContain(".select('uid', { count: 'exact', head: true })");
+    expect(portal).toContain("if (alive && typeof count === 'number') setActiveMemberCount(count);");
+    // DEC-14: the tiles re-pointed off the retired stage carry labels that name what they count
+    expect(portal).toContain("slot4Count = activeTickets.filter(t => t.status === 'PENDING_FINAL_APPROVAL').length;");
+    expect(portal).toContain("return { slot2: 'Team Queue', slot3: 'Drawing Review', slot4: 'Final Approvals' };");
+    expect(portal).not.toContain("slot4: 'New Requests'");
+    expect(portal).toContain("slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_TEAM').length;");
+    expect(portal).toContain("return { slot2: 'Engineering Review', slot3: 'Unassigned Pool', slot4: 'Revision Status' };");
+    expect(portal).not.toContain("slot2: 'Pending Approval'");
     expect(portal).toContain("setEngineeringFirstTypes(flaggedRequestTypes(data.data, 'engineeringFirst'));");
     expect(portal).toContain("const isSupervisorView = isQueueViewer(roles);");
     // the attention context carries the same type-level inputs the ticket page passes the engine
@@ -769,6 +831,16 @@ describe("WF-24 / CHAIN-3 — ONE management tier; attention is derived from the
     expect(isActionRequired(t, { uid: "d-9", roles: ["Drafter"] })).toBe(true); // without the input the old badge lied
     // the queue owner is still on the hook: "Flag for Engineering Review" is live
     expect(isActionRequired(t, { uid: "s-1", roles: ["DraftingSupervisor"], engineeringFirstTypes: ["ISO"] })).toBe(true);
+  });
+  it("WF-24 × DEC-12: a Drafter who filed the request, org of 3+ — the page disables the pick-up, and the badge (given the count the hook and portal now fetch) does not flag them", () => {
+    const t = ticket({ status: "PENDING_ASSIGNMENT", assignedDrafterId: null, requesterId: "d-9" });
+    const page = acts(t, "Drafter", "d-9", undefined, { activeMemberCount: 3 });
+    expect(page.find((a) => a.action === "self_assign")?.disabledReason).toMatch(/second person/);
+    expect(page.filter((a) => !a.optional && !a.disabledReason)).toEqual([]);
+    expect(isActionRequired(t, { uid: "d-9", roles: ["Drafter"], activeMemberCount: 3 })).toBe(false);
+    expect(isActionRequired(t, { uid: "d-9", roles: ["Drafter"] })).toBe(true); // without the count the badge counted what the page refused
+    expect(isActionRequired(t, { uid: "d-9", roles: ["Drafter"], activeMemberCount: 2 })).toBe(true); // a two-person shop: the loop is legitimate
+    expect(isActionRequired(t, { uid: "d-1", roles: ["Drafter"], activeMemberCount: 3 })).toBe(true); // another drafter is unaffected
   });
   it("WF-24: co-review at PENDING_REVIEW is on the requester's behalf — every engineer and manager is no longer badged for every ticket in review", () => {
     const t = ticket({ status: "PENDING_REVIEW", requesterId: "req-1" });

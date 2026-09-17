@@ -147,10 +147,22 @@ export function useTicketNotifications() {
   // the badge flagged a Drafter the page showed as view-only.
   const [engineeringFirstTypes, setEngineeringFirstTypes] = useState<string[]>([]);
   const [closeWithoutReviewTypes, setCloseWithoutReviewTypes] = useState<string[] | undefined>(undefined);
+  // GAP-2 / DEC-12: separation of duties is active at 3+ members, and it
+  // DOES change the answer — a Drafter who filed the request is offered only
+  // a disabled pick-up in the queue, so the page shows them view-only; the
+  // badge must evaluate under the same count or it counts what the page
+  // refuses (the unclearable-badge class WF-24 was opened for).
+  const [activeMemberCount, setActiveMemberCount] = useState<number | undefined>(undefined);
   useEffect(() => {
     let alive = true;
     if (!activeOrgId) return;
     void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});
+    void supabase
+      .from('org_members')
+      .select('uid', { count: 'exact', head: true })
+      .eq('org_id', activeOrgId)
+      .eq('status', 'active')
+      .then(({ count }) => { if (alive && typeof count === 'number') setActiveMemberCount(count); }, () => {});
     void supabase
       .from('org_configurations')
       .select('data')
@@ -285,7 +297,7 @@ export function useTicketNotifications() {
     };
 
     for (const t of tickets) {
-      const actionReq = isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes });
+      const actionReq = isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount });
       const unread = !!uid && !!t.unreadBy?.includes(uid);
       if (!actionReq && !unread) continue;
       if (actionReq) ar++; else ur++;
@@ -338,7 +350,7 @@ export function useTicketNotifications() {
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
     return { items: out, actionRequiredCount: ar, unreadCount: ur, sectionCounts };
-  }, [tickets, notifs, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes]);
+  }, [tickets, notifs, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount]);
 
   return {
     /** The unified feed every surface renders. */

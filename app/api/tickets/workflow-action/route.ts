@@ -491,24 +491,38 @@ export async function POST(req: NextRequest) {
     const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)
       ?.source_document as { id?: string } | undefined;
     if (srcDoc?.id) {
-      if (newStatus === "DRAFTING" || newStatus === "REVISION_REQ") {
-        const drafterId =
-          (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
-        const drafterName =
-          (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
-        // WF-18: a reassignment hands the ticket to a different drafter, so
-        // the PREVIOUS drafter's ticket-sourced intent is retired now rather
-        // than lingering on the coordination surfaces until its TTL — two
-        // drafters were shown editing for one ticket.
-        if (action.action === "reassign_drafter" && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
-          await supabaseAdmin
-            .from("document_intents")
-            .delete()
-            .eq("document_id", srcDoc.id)
-            .eq("ticket_id", body.ticketId)
-            .eq("source", "ticket")
-            .eq("user_id", ticket.assignedDrafterId);
-        }
+      const drafterId =
+        (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
+      const drafterName =
+        (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
+      const isReassign = action.action === "reassign_drafter";
+      // Statuses where the ticket's intents are cleared wholesale (below).
+      const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";
+      // WF-18: a reassignment hands the ticket to a different drafter, so
+      // the PREVIOUS drafter's ticket-sourced intent is retired now rather
+      // than lingering on the coordination surfaces until its TTL — two
+      // drafters were shown editing for one ticket. Reassignment never
+      // moves the status, and it is offered at every live status with a
+      // drafter (PENDING_REVIEW, PENDING_FINAL_APPROVAL and PENDING_IFC
+      // included), so the retirement runs for all of them — not only the
+      // two statuses that register an intent.
+      if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
+        await supabaseAdmin
+          .from("document_intents")
+          .delete()
+          .eq("document_id", srcDoc.id)
+          .eq("ticket_id", body.ticketId)
+          .eq("source", "ticket")
+          .eq("user_id", ticket.assignedDrafterId);
+      }
+      // The new drafter is registered where the ticket is on a drafter's
+      // bench: entering DRAFTING / REVISION_REQ (every assignment), and on
+      // reassignment at PENDING_IFC (the package is being issued). A
+      // reassignment while the draft is under review registers nothing —
+      // the next return to REVISION_REQ does.
+      const registersDrafter =
+        newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");
+      if (registersDrafter) {
         if (drafterId) {
           const { data: docRow } = await supabaseAdmin
             .from("documents")
@@ -533,7 +547,7 @@ export async function POST(req: NextRequest) {
             { onConflict: "document_id,user_id,kind,source" },
           );
         }
-      } else if (newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT") {
+      } else if (clearsAll) {
         await supabaseAdmin
           .from("document_intents")
           .delete()

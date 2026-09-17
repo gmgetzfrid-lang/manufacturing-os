@@ -189,6 +189,10 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   let currentAttachments = [...(ticket.attachments || [])];
   if (input.redlineAttachment) currentAttachments = [...currentAttachments, input.redlineAttachment];
 
+  // WF-9: set only by thread ACTIVITY (attach_file) — the people the activity
+  // tells, as opposed to the readers a transition resets `unread_by` to.
+  let activityRecipients: string[] | null = null;
+
   switch (input.actionType) {
     case "save_progress":
       break;
@@ -196,8 +200,26 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     // DEC-14; approve_team is the only writer of PENDING_ASSIGNMENT.)
     case "attach_file":
       // WF-9: the attachment rides the same compare-and-set write as every
-      // transition; the status does not move.
+      // transition; the status does not move. It is ACTIVITY, so it ADDS
+      // readers and never removes them: the default reset above would have
+      // wiped the WF-19 queue pool and the assigned engineer out of
+      // `unread_by` (the inbox's "unread activity" list, the portal dot and
+      // the badge count all read that column) the moment anyone attached a
+      // file. Everyone with a stake is told — requester, drafter, engineer
+      // and followers, minus the actor (the comment route's set) — and a
+      // reader whose earlier alert is merely outstanding keeps the marker
+      // without being re-told.
       if (input.attachment) currentAttachments = [...currentAttachments, input.attachment];
+      activityRecipients = Array.from(
+        new Set(
+          [ticket.requesterId, ticket.assignedDrafterId, ticket.assignedEngineerId, ...(ticket.watchers ?? [])].filter(
+            (id): id is string => !!id && id !== actorUid,
+          ),
+        ),
+      );
+      updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...activityRecipients])).filter(
+        (u) => u !== actorUid,
+      );
       break;
     case "cancel_request":
       // DEC-14: a terminal exit off the main flow, with the reason in the
@@ -365,7 +387,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   if (nowTerminal && !wasTerminal) updates.closed_at = new Date().toISOString();
   else if (!nowTerminal && wasTerminal) updates.closed_at = null;
 
-  const recipients = (updates.unread_by as string[]).filter((u) => u && u !== actorUid);
+  const recipients = (activityRecipients ?? (updates.unread_by as string[])).filter((u) => u && u !== actorUid);
 
   return { updates, historyEntry, newStatus, recipients, newComment };
 }

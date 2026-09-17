@@ -594,7 +594,7 @@ instead.
 
 **Risk:** medium — changes revision numbering on reopened tickets.
 
-*Landed 2026-09-17 (roles-and-permissions Round E): `reopen_ticket` increments `revision_count`, resets `draft_iteration`, nulls `deliverable_rev`; `approve_minor_correction` at `PENDING_FINAL_APPROVAL` stamps `engineer_approved_at`; `/api/verify-ticket` treats a reopened ticket as back under review (last issue = `revision_count`). See `WF-21`.*
+*Landed 2026-09-17 (roles-and-permissions Round E): `reopen_ticket` increments `revision_count`, resets `draft_iteration`, nulls `deliverable_rev`; `approve_minor_correction` at `PENDING_FINAL_APPROVAL` stamps `engineer_approved_at`; `/api/verify-ticket` treats a reopened ticket as back under review only with evidence of an issue — the last issued number is read from the "… — issued Rev N" history line, never from `revision_count` (a bumped cycle count alone is not evidence). See `WF-21`.*
 
 <a id="dec-16"></a>
 ## DEC-16 · The `requesterRole` snapshot
