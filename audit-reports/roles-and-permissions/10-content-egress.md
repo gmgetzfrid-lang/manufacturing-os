@@ -474,7 +474,7 @@ hiding it is cosmetic and would need controller state the modal doesn't hold.
 ## EGRESS-8 · `listShareLinks` exposes live tokens to members who cannot read the document
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security / confidentiality
 - **Locations:**
@@ -486,6 +486,14 @@ hiding it is cosmetic and would need controller state the modal doesn't hold.
 **Mechanism.** The `document_shares` SELECT policy gates on org membership, not on whether the member can read the shared document. `listShareLinks` returns every column including `token`. So a member who is denied read on a restricted drawing can still enumerate its live share tokens via PostgREST and fetch `/api/share/file?token=…` — an intra-org parallel to `EGRESS-1`'s cross-org leak. `EGRESS-1`'s creator-authority re-check on `/api/share/file` narrows this (the share serves on the *creator's* authority, not the enumerator's), but the token itself should not be visible to someone who cannot see the document.
 
 **Done when.** A member who cannot read a document cannot retrieve its share rows' tokens; the SELECT policy (or the query) applies a document-read decision, or tokens are omitted from the member-visible projection.
+
+**Resolution (2026-09-17, Round E).** Both halves. DATABASE (`supabase/migrations/20261066_rp_roundE_share_list_read_decision.sql`): `document_shares_org_select` is re-created as *active membership of the row's org* AND (*`created_by = auth.uid()`* OR *the document is readable to the caller*) — the `EXISTS (SELECT 1 FROM documents d … node_visible(d.visibility, d.acl_index, d.org_id, d.owner_user_id, d.collection_id, d.library_id))` block is byte-carried from the `20261037` INSERT policy, org join included, so the two verbs cannot drift apart (line-diffed by the test). The creator arm is deliberate and documented in the file: a creator must still see — and therefore revoke, since the checked `.select("id")` revoke needs SELECT — a share on a document they have since lost read access to (`20261026`'s rationale: that is the share that most needs revoking); that token is one they minted and it no longer serves, because `/api/share/resolve` and `/api/share/file` re-check the creator's current authority. Narrowing, not widening — no pre-apply inventory (`DEC-2` applies to widening); one result set carries 4 probes + 5 aggregate counts (including the two `20261052` carry-overs). APP: new `app/api/share/list/route.ts` lists a document's shares with the service role under the **caller's** own read decision (`loadPrincipal` + `readableControlledDocIds`, controller short-circuit as in `node_visible`, fail-closed on a lookup error): readable → every row with tokens; not readable → only the caller's own rows and **`token: null` on every one**; not a member → 403. `lib/documentShares.listShareLinks` now calls that route with the session bearer and returns `{ readable, shares }` — the client-side `SELECT *` on `document_shares` is gone; `DocumentShare.token` is `string | null`. `components/documents/ShareLinkModal.tsx` shows a notice instead of the Create panel when the document is unreadable (the INSERT policy would refuse anyway), and for a token-less row renders no URL, copy, QR or open — only the metadata and Revoke. Tests: `lib/__tests__/shareListRoute.test.ts` — 7 route cases (401 / 400 / 404 / 403 with no share read, readable member org-joined, unreadable member: response body contains no token at all — not even their own, controller path without an ACL lookup, fail-closed), 2 source pins (fail on the pre-fix lib and modal), 3 migration-shape tests (single policy in one transaction, byte-carry against `20261037`, the one-result-set protocol with deparse-safe probes).
+
+**Done-when.** ✓ A member who cannot read a document cannot retrieve its share rows' tokens — the app path withholds every token now; direct PostgREST reads are closed once `20261066` is applied. ✓ The SELECT policy applies a document-read decision (migration) AND tokens are omitted from the member-visible projection (route).
+
+**Pending migration:** `20261066_rp_roundE_share_list_read_decision.sql` (`DEC-30` — the database half is not closed until it is pasted).
+
+**Scope / residual.** Under `20261066` the creator arm still shows a creator their OWN token after they lose read access (required for the checked revoke); it serves nothing. Until the migration is applied, a hostile member using PostgREST directly can still enumerate tokens — the application path is closed now. The public `/share/[token]` routes are unchanged (`EGRESS-1`).
 
 ---
 

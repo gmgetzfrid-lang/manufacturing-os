@@ -7,7 +7,9 @@ import { supabase } from "@/lib/supabase";
 
 export interface DocumentShare {
   id: string;
-  token: string;
+  /** null when the server withheld it: the caller cannot read the document
+   *  (EGRESS-8), so the link is unusable and only revocation remains. */
+  token: string | null;
   orgId: string;
   documentId: string;
   createdBy: string;
@@ -56,13 +58,28 @@ export async function createShareLink(input: {
   return rowToShare(data as Record<string, unknown>);
 }
 
-export async function listShareLinks(documentId: string): Promise<DocumentShare[]> {
-  const { data } = await supabase
-    .from("document_shares")
-    .select("*")
-    .eq("document_id", documentId)
-    .order("created_at", { ascending: false });
-  return ((data ?? []) as Array<Record<string, unknown>>).map(rowToShare);
+export interface ShareLinkListing {
+  /** Whether the caller can currently read the document. When false, only the
+   *  caller's own links are listed and none of them carries a token. */
+  readable: boolean;
+  shares: DocumentShare[];
+}
+
+export async function listShareLinks(documentId: string): Promise<ShareLinkListing> {
+  // Listed by the server (/api/share/list), never by a client-side SELECT:
+  // the route applies the caller's OWN read decision on the document and
+  // withholds tokens from anyone who cannot read it (EGRESS-8). Migration
+  // 20261066 states the same rule at the database for direct PostgREST reads.
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not authenticated");
+  const res = await fetch(`/api/share/list?documentId=${encodeURIComponent(documentId)}`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const out = (await res.json().catch(() => ({}))) as {
+    readable?: boolean; shares?: Array<Record<string, unknown>>; error?: string;
+  };
+  if (!res.ok) throw new Error(out.error || "Failed to load share links");
+  return { readable: out.readable === true, shares: (out.shares ?? []).map(rowToShare) };
 }
 
 export async function revokeShareLink(id: string, actorUserId: string): Promise<void> {
@@ -84,7 +101,7 @@ export async function revokeShareLink(id: string, actorUserId: string): Promise<
 function rowToShare(r: Record<string, unknown>): DocumentShare {
   return {
     id: r.id as string,
-    token: r.token as string,
+    token: (r.token as string | null) ?? null,
     orgId: r.org_id as string,
     documentId: r.document_id as string,
     createdBy: r.created_by as string,

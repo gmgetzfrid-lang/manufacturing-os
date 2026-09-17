@@ -37,6 +37,10 @@ export default function ShareLinkModal({
   createdBy, createdByName,
 }: Props) {
   const [shares, setShares] = useState<DocumentShare[]>([]);
+  // EGRESS-8: whether the caller can read the document. When not, the server
+  // lists only the caller's own links and withholds every token — nothing
+  // below renders a URL it cannot use, and no new link can be created.
+  const [readable, setReadable] = useState(true);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +52,9 @@ export default function ShareLinkModal({
   const refresh = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const list = await listShareLinks(documentId);
-      setShares(list);
+      const listing = await listShareLinks(documentId);
+      setReadable(listing.readable);
+      setShares(listing.shares);
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, [documentId]);
@@ -101,7 +106,17 @@ export default function ShareLinkModal({
             </div>
           )}
 
-          <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
+          {!readable && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                You can&rsquo;t currently read this document, so its share links aren&rsquo;t shown and no new link can be created.
+                Links you created are listed below without their URL &mdash; revoke any that are no longer needed.
+              </span>
+            </div>
+          )}
+
+          {readable && <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
             <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Create new</div>
             <input
               value={note}
@@ -133,7 +148,7 @@ export default function ShareLinkModal({
             <div className="text-[10px] text-[var(--color-text-muted)]">
               Anyone with the resulting URL can open the document until it expires or you revoke it. Every access is counted.
             </div>
-          </div>
+          </div>}
 
           <div>
             <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Existing links ({shares.length})</div>
@@ -144,20 +159,29 @@ export default function ShareLinkModal({
             ) : (
               <ul className="space-y-2">
                 {shares.map((s) => {
-                  const url = `${baseUrl}${s.token}`;
+                  // No token → the server withheld it (EGRESS-8): render no URL,
+                  // no copy / QR / open — only the metadata and Revoke.
+                  const url = s.token ? `${baseUrl}${s.token}` : null;
                   const isRevoked = !!s.revokedAt;
                   const isExpired = !!s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
                   const dead = isRevoked || isExpired;
+                  const usable = !!url && readable && !dead;
                   return (
                     <li key={s.id} className={`rounded-lg border p-3 ${dead ? "border-[var(--color-border)] bg-slate-50/50 opacity-60" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
                       <div className="flex items-center gap-2">
-                        <input
-                          readOnly
-                          value={url}
-                          onClick={(e) => (e.target as HTMLInputElement).select()}
-                          className="flex-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[11px] font-mono text-[var(--color-text)]"
-                        />
-                        {!dead && (
+                        {url ? (
+                          <input
+                            readOnly
+                            value={url}
+                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                            className="flex-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[11px] font-mono text-[var(--color-text)]"
+                          />
+                        ) : (
+                          <div className="flex-1 px-2 py-1 rounded border border-dashed border-[var(--color-border)] text-[11px] italic text-[var(--color-text-faint)]">
+                            Link hidden &mdash; you can&rsquo;t read this document
+                          </div>
+                        )}
+                        {usable && url && (
                           <>
                             <button
                               onClick={async () => {
@@ -185,14 +209,16 @@ export default function ShareLinkModal({
                             >
                               <ExternalLink className="w-3.5 h-3.5" />
                             </a>
-                            <button
-                              onClick={() => void revoke(s.id)}
-                              className="p-1.5 rounded-md bg-rose-100 hover:bg-rose-200 text-rose-700"
-                              title="Revoke"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
                           </>
+                        )}
+                        {!dead && (
+                          <button
+                            onClick={() => void revoke(s.id)}
+                            className="p-1.5 rounded-md bg-rose-100 hover:bg-rose-200 text-rose-700"
+                            title="Revoke"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </div>
                       <div className="mt-2 text-[10px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -204,7 +230,7 @@ export default function ShareLinkModal({
                         {isRevoked && <span className="text-rose-700">revoked</span>}
                         <span className="inline-flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" /> {s.accessCount}</span>
                       </div>
-                      {qrFor === s.id && !dead && (
+                      {qrFor === s.id && usable && url && (
                         <div className="mt-2 flex justify-center animate-in fade-in">
                           <QrBadge value={url} size={140} caption="Scan to open this share link" />
                         </div>
