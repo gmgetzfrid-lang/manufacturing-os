@@ -531,6 +531,8 @@ model worse. See `GAP-1`.
 
 *Landed 2026-09-03 (roles-and-permissions Round D3): stages 1–2. Stage 1 was `WF-15` (`20261038`). Stage 2: `policyAllows(…, resource?)` with `{tokens, when}` rules in `lib/capabilityPolicy.ts`; `getActions`, holds, the simulator and the SQL evaluator (`20261052`: `org_capability_allows_for` + the 3-argument wrapper) moved together; the route refuses a scoped-out approval and an out-of-group reviewer pick; the permissions console edits request-type overrides. See `DRAFT-1`, `WF-13`, `GAP-1`. Stage 3 (the engineer gate as a capability) is open — next round.*
 
+*Landed 2026-09-17 (roles-and-permissions Round E): stage 3. `ticket.engineer_gate_exempt` ("Approve own request without an engineer", default `["Admin","Manager","Supervisor","Engineer","DocCtrl"]` — byte-identical to the hardcoded test, pinned over every role × collection; the id lists the EXEMPT roles in the `ticket.*` namespace the evaluators share, rather than the sketched `requests.requires_engineer_approval`) is consulted by `engineerApprovalRequired` / `requiresEngineerApproval` in `lib/workflow.ts` alongside the `DEC-16` disjunction — snapshot OR current still fails closed; the capability only decides which roles are exempt, and a personal grant or a request-type override of it is honoured. Migration `20261057` re-creates `org_capability_allows_for` from `20261052` with the one added CASE row (lineDiff-pinned); the WF-23 census in `rpPhase4Migration.test.ts` now reads the newest evaluator and pins `20261038` as historical. Tests: `sweepRoundE_policyServer.test.ts`.*
+
 <a id="dec-14"></a>
 ## DEC-14 · `CANCELED`, `NEW`, `PENDING_ENG_INITIAL`
 

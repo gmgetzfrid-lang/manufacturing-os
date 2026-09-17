@@ -1,8 +1,9 @@
 // Roles-and-permissions Phase 4 — the ticket workflow's database rails
 // (WF-2, WF-5, WF-15, WF-23 + the tickets DELETE rail). Shape pins on
 // 20261038, every assertion scoped to its own statement (the Phase-7a
-// mutation lesson), plus the WF-23 census: the SQL fallback CASE must agree
-// with lib/capabilityPolicy.ts CAPABILITY_DEFS capability-for-capability.
+// mutation lesson), plus the WF-23 census: the SQL fallback CASE of the LIVE
+// evaluator (see LIVE_EVALUATOR) must agree with lib/capabilityPolicy.ts
+// CAPABILITY_DEFS capability-for-capability.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -22,20 +23,34 @@ function between(text: string, from: string, to: string): string {
   return text.slice(a, b);
 }
 
-const capFn = between(sql, "CREATE OR REPLACE FUNCTION org_capability_allows",
+// The live evaluator is whichever migration LAST defined it: 20261038 wrote
+// org_capability_allows, 20261052 moved the body into org_capability_allows_for
+// (the 3-argument name became a wrapper), and 20261057 re-created _for with
+// the DEC-13 stage 3 row. The WF-23 census reads the newest; 20261038's body
+// is pinned below as HISTORICAL (superseded, unchanged on disk).
+const LIVE_EVALUATOR = "20261057_rp_roundE_engineer_gate_capability.sql";
+const liveSql = readFileSync(join(process.cwd(), "supabase", "migrations", LIVE_EVALUATOR), "utf8");
+const capFn = between(liveSql, "CREATE OR REPLACE FUNCTION org_capability_allows_for", "COMMIT;");
+const historicalCapFn = between(sql, "CREATE OR REPLACE FUNCTION org_capability_allows",
   "CREATE OR REPLACE FUNCTION ticket_insert_integrity");
 const insertFn = between(sql, "CREATE OR REPLACE FUNCTION ticket_insert_integrity",
   "DROP TRIGGER IF EXISTS trg_ticket_insert_integrity");
 const updateFn = between(sql, "CREATE OR REPLACE FUNCTION ticket_update_guard",
   "DROP TRIGGER IF EXISTS trg_ticket_update_guard");
 
-describe("WF-23 — org_capability_allows fallback mirrors CAPABILITY_DEFS", () => {
-  // Parse WHEN '<cap>' THEN '<json>'::jsonb pairs out of the fallback CASE.
-  const caseBlock = between(capFn, "v_tokens := CASE p_cap", "END;");
-  const sqlDefaults = new Map<string, string[]>();
+// Parse WHEN '<cap>' THEN '<json>'::jsonb pairs out of a fallback CASE.
+function caseDefaults(fn: string): Map<string, string[]> {
+  const caseBlock = between(fn, "v_tokens := CASE p_cap", "END;");
+  const out = new Map<string, string[]>();
   for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) {
-    sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
+    out.set(m[1], JSON.parse(m[2]) as string[]);
   }
+  return out;
+}
+
+describe("WF-23 — org_capability_allows fallback mirrors CAPABILITY_DEFS (the LIVE evaluator)", () => {
+  const caseBlock = between(capFn, "v_tokens := CASE p_cap", "END;");
+  const sqlDefaults = caseDefaults(capFn);
 
   it("every TS capability appears in the SQL CASE with IDENTICAL role tokens", () => {
     for (const def of CAPABILITY_DEFS) {
@@ -59,6 +74,14 @@ describe("WF-23 — org_capability_allows fallback mirrors CAPABILITY_DEFS", () 
     expect(capFn).toMatch(/t = 'Engineer' AND EXISTS/);
     expect(capFn).toMatch(/v_val \? 'grants'/);
     expect(capFn).toMatch(/SECURITY DEFINER SET search_path = public/);
+  });
+
+  it("20261038 is HISTORICAL: its 17-row CASE is a strict subset of the live one — nothing changed, only ticket.engineer_gate_exempt was added (20261057)", () => {
+    const historical = caseDefaults(historicalCapFn);
+    expect(historical.size).toBe(17);
+    expect(historical.has("ticket.engineer_gate_exempt")).toBe(false);
+    for (const [cap, tokens] of historical) expect(sqlDefaults.get(cap), cap).toEqual(tokens);
+    expect([...sqlDefaults.keys()].filter((c) => !historical.has(c))).toEqual(["ticket.engineer_gate_exempt"]);
   });
 });
 

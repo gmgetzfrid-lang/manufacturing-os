@@ -520,7 +520,7 @@ intermittent unexplained 409s during approval.
 ## WF-10 · The 60-second policy cache is never invalidated on the server — a revoked person keeps acting
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (currently masked by `WF-1`)
 - **Blast radius:** security
 - **Locations:**
@@ -564,12 +564,56 @@ the next action."*
 2. `loadCapabilityPolicy` never caches a result whose read errored.
 3. A sessionless read cannot poison the server cache with an empty policy.
 
+**Resolution (2026-09-17, Round E).**
+
+- **Invalidation on write.** `POST /api/admin/capability-policy` (`WF-11`)
+  calls `invalidateCapabilityPolicy(orgId)` after every write — in the same
+  process as `/api/tickets/workflow-action`, which the browser's
+  `cache.delete` never reached.
+- **A short server TTL with a version stamp.** `lib/capabilityPolicy.ts`: a
+  cache entry is `{at, policy, version}` with
+  `version = org_configurations.updated_at`; `loadCapabilityPolicyEntry(orgId, client)`
+  honours `SERVER_CACHE_TTL_MS = 5_000` when a client is passed (every server
+  caller passes `supabaseAdmin`) and the browser's 60 s otherwise (the browser
+  only draws buttons from it). The workflow route reads the versioned entry
+  and writes `policyVersion` into each transition's audit `authority`
+  (`WF-16`), so a decision can be matched to the `CAPABILITY_POLICY_CHANGED`
+  row it was made under.
+- **The residual window, exactly.** On the instance that served the write:
+  zero — the next authority decision reads fresh. On every OTHER warm
+  serverless instance: at most 5 s after the write (its entry ages out); a
+  cold instance reads fresh. A write that bypasses the route (SQL editor, a
+  controller's direct PATCH — audited by 20261056) is seen by every warm
+  instance within the same 5 s. The previous bound was 60 s per warm instance
+  with no invalidation signal anywhere.
+- **No poisoning.** A sessionless read (no `client` on the server — the shared
+  browser singleton has no session in a route handler) returns the empty
+  policy for that call and is never cached
+  (`sessionless = !client && typeof window === "undefined"`). An errored read
+  still returns defaults without caching (`WF-1` done-when 2).
+- **Tests** (`sweepRoundE_policyServer.test.ts`): the 5 s TTL with fake timers
+  (4.999 s cached, 5.001 s fresh) and the version stamp;
+  `invalidateCapabilityPolicy`; the route's write invalidates a primed cache;
+  a sessionless read is not cached and a following client read sees the stored
+  policy; an errored read is not cached; `parseStoredCapabilityPolicy` reads
+  both shapes; the residual-window comment and the route's versioned read
+  pinned by source.
+
+**Done-when.** 1 ✓ on the instance that served the revocation (immediate);
+on other warm instances within 5 s — stated as the residual, not claimed
+closed. 2 ✓ (from `WF-1`, re-pinned here). 3 ✓.
+
+**Scope / residual.** The 5 s cross-instance window is the trade-off against a
+policy read per action; a shared invalidation channel, or reading the policy
+inside the transition's transaction, would close it and is not built. The
+browser-side 60 s cache is unchanged and governs only which buttons are drawn.
+
 ---
 
 ## WF-11 · Policy guardrails are client-side only — a DocCtrl can rewrite the policy and self-grant `ticket.manage`
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:**
@@ -622,6 +666,70 @@ and, once `WF-1` is fixed, `checkout.force_release` at the database.
 2. Critical capabilities require Admin, not merely controller.
 3. A self-grant of a critical capability is refused.
 4. Every policy change writes an audit row that a direct PATCH cannot skip.
+
+**Resolution (2026-09-17, Round E).** The guardrails moved to the server and
+the database.
+
+- **The route.** `app/api/admin/capability-policy/route.ts` (POST) is the only
+  write path: bearer auth → active membership in `orgId` → the controller tier
+  by the role COLLECTION (`memberHoldsAny(member, ["Admin","DocCtrl"])`,
+  matching `is_org_controller`). `save` replaces the role grid only (grants are
+  preserved server-side — the editor no longer re-reads them); a change to a
+  CRITICAL capability's effective entry requires Admin (a DocCtrl controller
+  edits the rest of the grid; writing the shipped default explicitly is not a
+  change). `grant` / `revoke` are Admin-only, a self-grant (`uid === caller`)
+  is refused, the target must be an active member, the expiry must parse and
+  lie in the future, and the server stamps `grantedBy` / `grantedAt`.
+  `validateCapabilityPolicy` runs on the RESULT with the service-role client.
+  The write is compare-and-set on the row's `updated_at` (409 on a concurrent
+  write; a first-ever policy is an INSERT), this process's policy cache is
+  invalidated (`WF-10`), and a `CAPABILITY_POLICY_CHANGED` row with
+  `{op, via: "route", before, after, pruned, grant | revoked}` is written by
+  the server — an audit failure is surfaced as a 500, never swallowed.
+- **The browser.** `saveCapabilityPolicy` / `addUserGrant` / `revokeUserGrant`
+  in `lib/capabilityPolicy.ts` now POST to the route with the session bearer
+  (`postPolicyChange`); no direct `org_configurations` / `audit_logs` write
+  remains in the client module (pinned). `CapabilityPolicyEditor` and
+  `ViewAsSimulator` call the same helpers; the editor's pre-check is kept only
+  so it can say why before a round-trip.
+- **The database.** Migration `20261056_rp_roundE_capability_policy_write_guard.sql`
+  — `capability_policy_write_guard()` (SECURITY DEFINER, `search_path` pinned)
+  BEFORE INSERT OR UPDATE on `org_configurations` WHEN `key = 'capability_policy'`:
+  service pass (`auth.uid() IS NULL` — the route), else `is_org_controller`
+  (defence in depth for the 20260831 key rails); every token list of a critical
+  capability (the bare list AND each rule's `tokens`) keeps `Admin` or `*`; a
+  change to a critical entry, or to `grants` at all, requires Admin
+  (`caller_holds_any_role`); a grant naming `auth.uid()` that was not already
+  stored is refused; and the write is audited in the same transaction
+  (`via: "direct_write"`). Narrowing only — no temp-table inventory needed.
+- **Tests** (`lib/__tests__/sweepRoundE_policyServer.test.ts`): 401/403 for no
+  bearer, non-member, non-controller; a headline-Manager / additive-DocCtrl
+  saves a non-critical change with CAS + pruning + audit; DocCtrl refused on a
+  critical change (403), the default written explicitly is not a change, Admin
+  allowed; server-side validation 400 (bare list and scoped rule); grant /
+  revoke Admin-only, self-grant 403, non-member 400, bad or past expiry 400;
+  a grant replaces the pair and is server-stamped; revoke audited; the INSERT
+  path; 409 on conflict with no audit row; an audit failure surfaced; the
+  browser helpers post the three shapes with the bearer and surface the
+  server's error; the 20261056 shape (header, service pass, controller check,
+  critical list == `CAPABILITY_DEFS critical: true` in order, rule-list rail,
+  grants rail, self-grant, audit insert, trigger clause, one-paste
+  verification, deparsed-safe probes).
+
+**Done-when.** 1 ✓ — `validateCapabilityPolicy` runs in the route, with
+`supabaseAdmin`, on every policy and grant write. 2 ✓ — critical capabilities
+are Admin's to change on the route and in the trigger; controller is not
+enough. 3 ✓ — a self-grant is refused on the route and in the trigger, and any
+grant is Admin-only, so the "View as… → grant yourself `ticket.manage`" path is
+closed. 4 ✓ — the route writes the audit row server-side; a direct PATCH is
+audited by the trigger in the same transaction, so it cannot skip the row.
+
+**Scope / residual.** Pending migration: `20261056` (`DEC-30` — the code half
+is live once deployed; until the paste is applied a controller's direct PATCH
+is gated by the 20260831 key rails only, with no content rail and no audit
+row). The inverse UI/DB drift variant (headline Manager, additive DocCtrl) is
+closed the other way round: the UI gate reads the collection (`ADD-1`, Round
+C1b) and the route reads it too. Grants stay unscoped (`WF-13` row 6, `WF-16`).
 
 ---
 
@@ -849,7 +957,7 @@ the configured type rather than a hardcoded string comparison.
 ## WF-16 · `UserGrant`s — no audit of grant *use*, no cleanup of expired grants, no scoping
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / access-control
 - **Locations:**
@@ -888,6 +996,46 @@ say a delegation was used.
 1. `audit_logs` records *why* an action was permitted (role versus grant).
 2. Two concurrent grant writes cannot lose one another.
 3. Expired grants are prunable and the pruning is itself audited.
+
+**Resolution (2026-09-17, Round E).**
+
+- **Grant USE is audited.** `lib/workflow.ts decisiveGrants(ticket, role, uid, policy, ctx, action)`
+  re-runs `getActions` with each of the actor's live grants removed in turn and
+  returns the grants without which the action would not be offered (a grant
+  redundant with the actor's roles is not named; two each-sufficient grants
+  are both named). `app/api/tickets/workflow-action/route.ts` writes
+  `details.authority = { via: "grant" | "role", grants?: [{cap, expiresAt, grantedBy, grantedAt, note}], identity?: ["requester" | "drafter" | "engineer"], roles, policyVersion }`
+  on every `TICKET_*` audit row (verified-sound item 5: the write stays
+  server-side; the field was added, nothing moved).
+- **Expired grants are pruned at write time, and the pruning is audited.** The
+  policy route (`WF-11`) drops every grant `grantActive` rejects on EVERY write
+  (`save`, `grant`, `revoke`) and records them under `details.pruned` of the
+  `CAPABILITY_POLICY_CHANGED` row; the response carries `pruned: n`.
+- **Concurrent grant writes.** The route's read-modify-write is compare-and-set
+  on `org_configurations.updated_at` — the loser gets a 409 ("reload and try
+  again"), never a silent overwrite — and `before` is read fresh, never through
+  the cache.
+- **Scoping — reserved.** Grants stay unscoped: a grant confers the capability
+  on every ticket (`WF-13` row 6; the `CapabilityPolicy.grants` doc comment),
+  so the audit `authority` names no resource for a grant. The simulator's
+  delegation panel now says so.
+- **Tests** (`sweepRoundE_policyServer.test.ts`): `decisiveGrants` (decisive,
+  redundant, none, two-sufficient); a Viewer admitted by a grant →
+  `via: "grant"` with the grant named and `policyVersion`; an Admin →
+  `via: "role"` with no grant named although one is stored; the assigned
+  drafter's own action carries `identity: ["drafter"]`; pruning and
+  `details.pruned` in the `WF-11` route tests; the audit call pinned by source.
+
+**Done-when.** 1 ✓ — role versus grant (plus identity relations and the policy
+version). 2 ✓ — compare-and-set; a lost update is a 409. 3 ✓ — pruned on every
+write and named in the audit row.
+
+**Scope / residual.** A grant is not deleted the moment it expires — only on
+the next policy write (the evaluator has ignored it since expiry, fail-closed);
+the 20261056 paste reports `expired grants stored` as an inventory count. "Who
+was authorised on March 3rd" is answered from the ticket's own audit row
+(`authority`) plus the `CAPABILITY_POLICY_CHANGED` history, not from a
+point-in-time policy snapshot (not built).
 
 ---
 

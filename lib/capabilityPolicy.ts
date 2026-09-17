@@ -19,7 +19,12 @@
 //     actions server-side with the org's policy, so a tampered client
 //     changes nothing.
 //   * Saves are guardrailed (critical capabilities must keep Admin) and
-//     audited with before/after.
+//     audited with before/after — ON THE SERVER (WF-11): the browser posts
+//     every policy and grant change to /api/admin/capability-policy, and a
+//     database trigger (20261056) holds the same rails against a direct
+//     write. The server-side cache is short-lived and invalidated on write
+//     (WF-10); a workflow decision admitted by a personal grant names the
+//     grant in its audit row (WF-16).
 //   * DEC-13 stage 2 (DRAFT-1 / WF-13 / GAP-1): a capability entry may be a
 //     list of RULES, each `{ tokens, when? }`. A rule with a `when` clause
 //     applies only to a matching RESOURCE (request type, unit, library,
@@ -46,6 +51,7 @@ export type CapabilityId =
   | "ticket.reopen"
   | "ticket.force_close"
   | "ticket.reassign_engineer"
+  | "ticket.engineer_gate_exempt" // DEC-13 stage 3: whose OWN requests need no engineer sign-off
   | "holds.open"
   | "holds.release"
   | "checkout.force_release"
@@ -93,6 +99,9 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
     description: "Close a ticket from any state.", defaultRoles: MGMT },
   { id: "ticket.reassign_engineer", area: "Requests", label: "Reassign engineer reviewer", critical: true,
     description: "Swap the assigned engineer at final approval.", defaultRoles: ["Admin"] },
+  { id: "ticket.engineer_gate_exempt", area: "Requests", label: "Approve own request without an engineer",
+    description: "Requesters holding one of these roles approve their own draft to IFC directly; everyone else's approval routes through a picked engineer (DEC-13 stage 3). Judged against BOTH the role stamped at filing AND the requester's current roles — an engineer is required if either says so (DEC-16).",
+    defaultRoles: [...MGMT, "Engineer", "DocCtrl"] },
   { id: "holds.open", area: "Holds", label: "Place a hold",
     description: "Open a do-not-advance hold on a document.", defaultRoles: ["*"] },
   { id: "holds.release", area: "Holds", label: "Release a hold",
@@ -298,23 +307,70 @@ export function normalizeCapabilityEntry(v: unknown): CapabilityEntry | undefine
 }
 
 // ── Load (cached) ──────────────────────────────────────────────────────────
+//
+// WF-10: two TTLs and a version stamp. The BROWSER keeps a policy for a
+// minute — it only draws buttons from it; authority is decided on the
+// server. A SERVER caller (one that passes its own client) keeps an entry for
+// SERVER_CACHE_TTL_MS, and the policy route deletes this process's entry on
+// every write, so on the instance that served the save a revocation is seen
+// by the very next authority decision. The residual window is exactly this:
+// a warm serverless instance OTHER than the one that served the write keeps
+// its entry for at most SERVER_CACHE_TTL_MS after the write (a cold instance
+// reads fresh), and a write that bypasses the route (SQL editor, a
+// controller's direct PATCH — audited by the 20261056 trigger) is seen by
+// every warm instance within the same bound. Each entry carries the row's
+// `updated_at` as its VERSION so an authority decision can name the policy
+// version it was made under (the workflow route's audit row does).
 
-const CACHE_TTL_MS = 60_000;
-const cache = new Map<string, { at: number; policy: CapabilityPolicy }>();
+const BROWSER_CACHE_TTL_MS = 60_000;
+/** How long a server process may act on a policy it has already read. */
+export const SERVER_CACHE_TTL_MS = 5_000;
+interface PolicyCacheEntry { at: number; policy: CapabilityPolicy; version: string | null }
+const cache = new Map<string, PolicyCacheEntry>();
 export function __resetCapabilityPolicyCache(): void { cache.clear(); }
+/** Drop one org's entry — the policy route calls this after every write. */
+export function invalidateCapabilityPolicy(orgId: string): void { cache.delete(orgId); }
+
+/** Parse a stored `org_configurations.data` blob into a policy. Two stored
+ *  shapes: canonical {caps, grants}, and the legacy flat {capId: roles[]}
+ *  from before per-person grants existed. Unknown capability ids and grants
+ *  without a person are dropped before evaluation. */
+export function parseStoredCapabilityPolicy(stored: unknown): CapabilityPolicy {
+  const raw = (stored && typeof stored === "object" ? stored : {}) as Record<string, unknown>;
+  const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;
+  const caps: CapabilityPolicy["caps"] = {};
+  for (const def of CAPABILITY_DEFS) {
+    const entry = normalizeCapabilityEntry(rawCaps[def.id]);
+    if (entry !== undefined) caps[def.id] = entry;
+  }
+  const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));
+  const grants = (Array.isArray(raw.grants) ? (raw.grants as UserGrant[]) : [])
+    .filter((g) => g && typeof g.uid === "string" && validIds.has(g.cap as string));
+  return { caps, grants };
+}
+
+export interface LoadedCapabilityPolicy { policy: CapabilityPolicy; version: string | null }
 
 /** `client` lets server routes pass their own (service-role) client — the
- *  shared browser client has no session in a route handler. */
-export async function loadCapabilityPolicy(
+ *  shared browser client has no session in a route handler. Returns the
+ *  policy with the version stamp it was read at (null = nothing stored, or
+ *  the read failed and the shipped defaults apply for this call only). */
+export async function loadCapabilityPolicyEntry(
   orgId: string,
   client?: Pick<typeof supabase, "from">,
-): Promise<CapabilityPolicy> {
+): Promise<LoadedCapabilityPolicy> {
+  const ttl = client ? SERVER_CACHE_TTL_MS : BROWSER_CACHE_TTL_MS;
   const hit = cache.get(orgId);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.policy;
+  if (hit && Date.now() - hit.at < ttl) return { policy: hit.policy, version: hit.version };
+  // WF-10 done-when 3: on the server the shared browser singleton has no
+  // session, so a call that forgot its client reads NOTHING under RLS. That
+  // is an empty policy for this call — never a cached one that would disable
+  // every stored narrowing and grant org-wide for the TTL.
+  const sessionless = !client && typeof window === "undefined";
   try {
     const { data, error } = await (client ?? supabase)
       .from("org_configurations")
-      .select("data")
+      .select("data, updated_at")
       .eq("org_id", orgId)
       .eq("key", "capability_policy")
       .maybeSingle();
@@ -322,29 +378,25 @@ export async function loadCapabilityPolicy(
     // for one call, but caching them for the TTL would let an org's stored
     // narrowing vanish for a minute after any transient failure (WF-1
     // done-when 2). Fail closed to defaults WITHOUT caching.
-    if (error) return {};
+    if (error) return { policy: {}, version: null };
     // The column is `data` — reading `value` (which does not exist) errored on
     // every call, so the catch below returned {} and the entire capability
     // layer was inert (DB-1). Both this read and the SQL org_capability_allows
     // must use `data`, or the two layers disagree about which column is real.
-    const raw = (data?.data as Record<string, unknown> | null) ?? {};
-    // Two stored shapes: canonical {caps, grants}, and the legacy flat
-    // {capId: roles[]} from before per-person grants existed.
-    const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;
-    const caps: CapabilityPolicy["caps"] = {};
-    for (const def of CAPABILITY_DEFS) {
-      const entry = normalizeCapabilityEntry(rawCaps[def.id]);
-      if (entry !== undefined) caps[def.id] = entry;
-    }
-    const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));
-    const grants = (Array.isArray(raw.grants) ? (raw.grants as UserGrant[]) : [])
-      .filter((g) => g && typeof g.uid === "string" && validIds.has(g.cap as string));
-    const policy: CapabilityPolicy = { caps, grants };
-    cache.set(orgId, { at: Date.now(), policy });
-    return policy;
+    const policy = parseStoredCapabilityPolicy(data?.data);
+    const version = typeof data?.updated_at === "string" ? data.updated_at : null;
+    if (!sessionless) cache.set(orgId, { at: Date.now(), policy, version });
+    return { policy, version };
   } catch {
-    return {}; // defaults apply
+    return { policy: {}, version: null }; // defaults apply
   }
+}
+
+export async function loadCapabilityPolicy(
+  orgId: string,
+  client?: Pick<typeof supabase, "from">,
+): Promise<CapabilityPolicy> {
+  return (await loadCapabilityPolicyEntry(orgId, client)).policy;
 }
 
 // ── Save (guardrailed + audited) ───────────────────────────────────────────
@@ -384,41 +436,62 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
   return null;
 }
 
+// WF-11: every write goes through POST /api/admin/capability-policy. The
+// server authenticates the caller, checks active membership and the
+// controller tier by the role COLLECTION, re-runs validateCapabilityPolicy
+// with the service-role client, requires Admin for a change to a critical
+// capability and for ANY grant change, refuses a self-grant, prunes expired
+// grants (WF-16), writes the before/after audit row and invalidates its own
+// cache (WF-10). The 20261056 trigger holds the same rails against a direct
+// write that skips the route. These helpers are the browser's only way in;
+// the rail below runs first only so the editor can say why before a
+// round-trip.
+
+export const CAPABILITY_POLICY_ROUTE = "/api/admin/capability-policy";
+
+/** The three writes the policy route accepts. `save` carries the role grid
+ *  only — grants are owned by the server and preserved across a save. */
+export type CapabilityPolicyChange =
+  | { op: "save"; orgId: string; caps: NonNullable<CapabilityPolicy["caps"]> }
+  | { op: "grant"; orgId: string; uid: string; cap: CapabilityId; expiresAt?: string | null; note?: string | null }
+  | { op: "revoke"; orgId: string; uid: string; cap: CapabilityId };
+
+async function postPolicyChange(change: CapabilityPolicyChange): Promise<CapabilityPolicy> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch(CAPABILITY_POLICY_ROUTE, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(change),
+  });
+  const json = (await res.json().catch(() => ({}))) as { error?: string; policy?: CapabilityPolicy };
+  if (!res.ok) throw new Error(json.error || `Policy change failed (${res.status})`);
+  cache.delete(change.orgId);
+  return json.policy ?? {};
+}
+
+/** Save the role grid. `policy.grants` is ignored: grants are changed only
+ *  through addUserGrant / revokeUserGrant and preserved by the server. The
+ *  actor is derived from the session on the server; the actor fields are
+ *  kept for call-site compatibility. */
 export async function saveCapabilityPolicy(input: {
   orgId: string;
   policy: CapabilityPolicy;
   actorUserId: string;
   actorEmail?: string | null;
 }): Promise<void> {
-  const err = validateCapabilityPolicy(input.policy);
+  const err = validateCapabilityPolicy({ caps: input.policy.caps });
   if (err) throw new Error(err);
-  const before = await loadCapabilityPolicy(input.orgId);
-  const { error } = await supabase
-    .from("org_configurations")
-    .upsert(
-      { org_id: input.orgId, key: "capability_policy", data: input.policy, updated_at: new Date().toISOString() },
-      { onConflict: "org_id,key" },
-    );
-  if (error) throw new Error(error.message);
-  cache.delete(input.orgId);
-  // Full before/after audit — a permission change is the one edit an IT
-  // department must always be able to reconstruct.
-  await supabase.from("audit_logs").insert({
-    action: "CAPABILITY_POLICY_CHANGED",
-    resource_type: "org_configuration",
-    resource_id: input.orgId,
-    org_id: input.orgId,
-    user_id: input.actorUserId,
-    user_email: input.actorEmail ?? null,
-    details: { before, after: input.policy },
-  }).then(() => undefined, () => undefined);
+  await postPolicyChange({ op: "save", orgId: input.orgId, caps: input.policy.caps ?? {} });
 }
 
-// ── Per-person delegation (read-modify-write on grants only) ───────────────
+// ── Per-person delegation (server-side read-modify-write on grants only) ───
 
 /** Delegate one capability to one person — temporary (expiresAt) or until
  *  revoked. Replaces any existing grant for the same (person, capability),
- *  so re-granting just updates the expiry. Roles/caps are untouched. */
+ *  so re-granting just updates the expiry. Roles/caps are untouched. Admin
+ *  only; a self-grant is refused; the grant is stamped by the server. */
 export async function addUserGrant(input: {
   orgId: string;
   uid: string;
@@ -428,22 +501,13 @@ export async function addUserGrant(input: {
   actorUserId: string;
   actorEmail?: string | null;
 }): Promise<void> {
-  const current = await loadCapabilityPolicy(input.orgId);
-  const grants = (current.grants ?? []).filter((g) => !(g.uid === input.uid && g.cap === input.cap));
-  grants.push({
-    cap: input.cap, uid: input.uid,
+  await postPolicyChange({
+    op: "grant", orgId: input.orgId, uid: input.uid, cap: input.cap,
     expiresAt: input.expiresAt ?? null, note: input.note ?? null,
-    grantedBy: input.actorUserId, grantedAt: new Date().toISOString(),
-  });
-  await saveCapabilityPolicy({
-    orgId: input.orgId,
-    policy: { caps: current.caps ?? {}, grants },
-    actorUserId: input.actorUserId,
-    actorEmail: input.actorEmail,
   });
 }
 
-/** Revoke one person's grant of one capability. */
+/** Revoke one person's grant of one capability (Admin only). */
 export async function revokeUserGrant(input: {
   orgId: string;
   uid: string;
@@ -451,14 +515,7 @@ export async function revokeUserGrant(input: {
   actorUserId: string;
   actorEmail?: string | null;
 }): Promise<void> {
-  const current = await loadCapabilityPolicy(input.orgId);
-  const grants = (current.grants ?? []).filter((g) => !(g.uid === input.uid && g.cap === input.cap));
-  await saveCapabilityPolicy({
-    orgId: input.orgId,
-    policy: { caps: current.caps ?? {}, grants },
-    actorUserId: input.actorUserId,
-    actorEmail: input.actorEmail,
-  });
+  await postPolicyChange({ op: "revoke", orgId: input.orgId, uid: input.uid, cap: input.cap });
 }
 
 /** All of one person's grants (live and expired — the UI labels expiry). */

@@ -9,9 +9,12 @@
 // of that type — "ASBUILT may only be approved by DocCtrl".
 //
 // Rails: critical capabilities can never lose Admin — on the base list OR on
-// any override (validateCapabilityPolicy rejects the save); identity rights
-// (a ticket's own requester/drafter/assigned engineer) are not configurable
-// by design; every save writes a before/after audit row. Defaults reproduce
+// any override (validateCapabilityPolicy rejects the save, here for the
+// message and again on the server — WF-11: the save is a POST to
+// /api/admin/capability-policy, where a critical capability is Admin's to
+// change); identity rights (a ticket's own requester/drafter/assigned
+// engineer) are not configurable by design; every save writes a
+// before/after audit row on the server. Defaults reproduce
 // historical behavior exactly, so an untouched policy changes nothing. A
 // capability with no override is stored in the legacy bare-list shape, so an
 // org that never adds one stores byte-identical policy JSON.
@@ -196,14 +199,15 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     }
     setSaving(true);
     try {
-      // Preserve any per-person grants — this editor only owns the role grid.
-      const stored = await loadCapabilityPolicy(activeOrgId);
-      await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps, grants: stored.grants ?? [] }, actorUserId: uid, actorEmail: userEmail });
+      // This editor only owns the role grid: the policy route preserves the
+      // per-person grants, re-validates, requires Admin for a critical
+      // capability and writes the before/after audit row (WF-11).
+      await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps }, actorUserId: uid, actorEmail: userEmail });
       __resetCapabilityPolicyCache();
       setBaseline(policy);
       setBaselineOverrides(overrides);
       setDirty(false);
-      setMsg({ tone: "ok", text: "Saved — enforced server-side on the next action. Change audited with before/after." });
+      setMsg({ tone: "ok", text: "Saved — validated and audited on the server; enforced on the next action." });
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
     } finally { setSaving(false); }
