@@ -809,7 +809,7 @@ deleted user with a stale name string still reads as owned.
 ## OWN-13 · Ownership writes swallow RLS refusals, then write a "success" audit row and notify the new owner
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / safety
 - **Locations:**
@@ -847,6 +847,14 @@ across six call sites.
 2. The audit row and the notification are emitted **only** after that
    confirmation.
 3. A refused write surfaces to the user as a visible error.
+
+**Resolution (2026-09-17, Round E).** The four writers were already checked writes since `OWN-14` (`setOwner`, `setLibraryOwnerTeam` in `lib/ownership.ts`; `setReviewControlPolicy` in `lib/reviewControl.ts`; `setReviewPolicy` in `lib/reviewCycles.ts` — each `.update(...).eq(...).select("id")`, an error throws, zero rows throws a message naming what was NOT changed, and the audit row / event / notification sit behind that check). Re-verified line by line this round and pinned by source. What was still missing for done-when 3: the Teams admin page swallowed a refused `setLibraryOwnerTeam` (`catch { void refresh(); }` — the toggle silently snapped back); it now surfaces the message through `appAlert` before refreshing. `ReviewSection`, `ReviewPolicyModal` and `ReviewControlModal` already surface theirs.
+- Tests: `roundEOwnership.test.ts` "OWN-13" — `setReviewControlPolicy` refused → throws, no `REVIEW_CONTROL_SET` audit row; `setReviewPolicy` refused → throws, no `policy_set` event, no recompute; a database error surfaces verbatim; the four writers pinned as checked; the UI callers pinned to surface (the swallowing catch is asserted absent). `checkedWrites.test.ts` (OWN-14) keeps covering `setOwner` / `setLibraryOwnerTeam`: refused → no audit row, no owner notification.
+- Files: `app/(protected)/admin/teams/page.tsx`.
+
+**Done-when.** ✓ 1. the four writers confirm the row was written before returning. ✓ 2. audit row and notification only after that confirmation. ✓ 3. a refused write is a visible error at every UI caller.
+
+**Scope / residual.** None on this surface; the pattern finding `OWN-14` remains the authority for other call sites.
 
 ---
 
@@ -943,7 +951,7 @@ a test covers a non-controller attempting it.
 ## OWN-16 · Six divergent implementations of the effective-owner chain; three silently ignore team-owned libraries
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / process
 - **Locations:**
@@ -977,6 +985,15 @@ consolidation as separate, human-approved work.
 
 **Done when.** All six paths resolve a team-owned library to the same owner, and
 `EffectiveOwner.source` reports `"team"` where the team fallback was used.
+
+**Resolution (2026-09-17, Round E).** Collapsed onto ONE exported resolver. `resolveEffectiveOwner(doc, folder, library, activeUids?, teamSupervisors?)` in `lib/ownership.ts` now carries the team rung itself (library `owner_team_id` → the supervisor from a `TeamSupervisorLookup`, gated by `activeUids` like every other rung, `source: "team"`); the new `teamSupervisorMap(orgId)` builds that lookup (teams + the supervisors' CURRENT display names). Every former copy is now a caller of it: `effectiveOwnerForDocument` (one resolver call, then the supervisor's live name), `resolveOwnerForNode` (a thin adapter, same signature), `lib/docControlRegister.ts` (the post-hoc team patch that labelled the source `"library"` is gone — selects `owner_team_id`, passes the map), `lib/reviewCycles.ts#scanAndNotifyReviews`, `lib/reviewControl.ts#scanReviews` and `lib/acknowledgments.ts#scanAndNotifyAcks` (each selects `owner_team_id` on the library row and adds `teamSupervisorMap(orgId)` to its existing `Promise.all`), and `lib/knowledgeAccess.ts#effectiveOwnerFor` (keeps its folder-lineage walk to pick the folder rung, then delegates the chain — the seventh copy DEL-2 had added). A census test (`lib/__tests__/roundEOwnership.test.ts` "OWN-16 census") walks `lib/`, `app/`, `components/`: no file but `lib/ownership.ts` may produce an `EffectiveOwner`-shaped `{ userId …, source: "…" }` or branch on `owner_team_id`; the resolver's call sites are pinned to exactly the five consumers, each proven (paren-balanced) to pass the fifth (team) argument; each scan / register consumer is pinned to select `owner_team_id` and call `teamSupervisorMap`.
+- Reproduced: before the change `scanAndNotifyReviews` on a team-owned library routed the review-due notice to the controllers while `loadDocControlRegister` named the supervisor (the test fixtures in "the four consumers route a team-owned library to its supervisor" fail on the base commit — `review_due` → `["ctrl"]`, register → supervisor).
+- Tests: `roundEOwnership.test.ts` — resolver unit cases (team rung, explicit-beats-team, inactive supervisor, legacy 3/4-arg calls byte-identical, `resolveOwnerForNode` adapter, `effectiveOwnerFor` lineage + team rung, `teamSupervisorMap`); scan-level: review nudge → supervisor not controllers, review-timeout escalation and ack-overdue escalation include the supervisor, the register names the supervisor with the live name, an inactive supervisor leaves it UNOWNED everywhere; the census. Existing `ownership.test.ts`, `rpPhase6Additive.test.ts`, `sweepRoundA*.test.ts` pins pass unchanged.
+- Files: `lib/ownership.ts`, `lib/docControlRegister.ts`, `lib/reviewCycles.ts`, `lib/reviewControl.ts`, `lib/acknowledgments.ts`, `lib/knowledgeAccess.ts`.
+
+**Done-when.** ✓ All six paths (and the seventh in `knowledgeAccess`) resolve a team-owned library to the same owner — the same function. ✓ `EffectiveOwner.source` reports `"team"` where the team fallback was used (the register no longer says `"library"`).
+
+**Scope / residual.** The SQL mirror `user_is_effective_owner` is unchanged (it already had the rung). `knowledgeAccess.effectiveOwnerFor` still walks folder ancestry for the folder rung where the SQL consults only the direct folder — a pre-existing DEL-2 choice, outside this finding. One extra `teams` read per scan / register load (skipped by the register when no library is team-owned).
 
 ---
 
@@ -1037,7 +1054,7 @@ a revision label cannot be rewritten by a member who could not have published it
 ## OWN-18 · `org`-subject grants publish in one evaluator and nowhere else
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / access-control
 - **Locations:**
@@ -1059,12 +1076,22 @@ UI-shows / database-refuses split as `OWN-6`. The org bucket *is* honored for
 **Done when.** An org-subject publish grant either works everywhere or is not
 offered in the drawer for the `publish` action.
 
+**Resolution (2026-09-17, Round E).** Org-subject grants now publish EVERYWHERE. Direction: the finding's mechanism is the `OWN-6` shape (a subject type the drawer offers and the raw evaluator honours, inert on the enforcing evaluators) and `OWN-6` was closed by making the grant live; the org bucket was already honoured by `acl_subject_has_action` / `can_manage_node` for the MORE sensitive `managePermissions` / `admin`; and `DEC-2`'s shape — route the strict checks onto the shared semantics, inventory first, widening recorded — is what landed. Hiding the subject for `publish` instead would have left stored org rules lighting the button and left the org bucket half-honoured across the ACL. App: `canPublishViaIndex` (`lib/permissions.ts`) gains the org arms — deny publish, deny admin, allow publish / admin-unless-denied — keyed by `principal.orgId`, mirroring users / roles / teams line for line (no `orgId` on the principal → no match, fails closed). SQL: `20261059_rp_roundE_org_subject_publish.sql` re-creates `user_can_publish_on_library` from the live `20261046` body with the same three arms keyed by `p_org::text` (shape test line-diffs it: only the org lines and their two comment lines differ). `RoleModelTree` lists org grants ("everyone in the org") so the one place publishers are listed no longer hides them. The drawer is unchanged (Org stays a subject type).
+- WIDENING (`DEC-2`): a library already carrying `allow.orgs.publish|admin` goes live for every active member of its org on apply. The migration captures the pre-apply inventory into a temp table BEFORE the DDL — libraries carrying such an allow, the active-member population of those orgs, libraries carrying an org DENY — and prints it with the probes in the single result set. Reversal if that population is unintended: drop the org arms (both evaluators) and hide `publish` for the Org subject in the drawer.
+- Tests: `roundEOwnership.test.ts` "OWN-18" — allow.orgs.publish grants, allow.orgs.admin grants unless admin denied, deny.orgs.publish wins over a user allow, a different org / no org never matches, the SQL body and the tree listing pinned; `roundEOwnershipMigrations.test.ts` — exact line-diff against `20261046`, probe hygiene, search_path pin, single-paste shape with the temp-table inventory.
+- Files: `lib/permissions.ts`, `components/permissions/RoleModelTree.tsx`, `supabase/migrations/20261059_rp_roundE_org_subject_publish.sql`.
+- Pending migration: `supabase/migrations/20261059_rp_roundE_org_subject_publish.sql` (code half RESOLVED; the SQL evaluator agrees only once applied).
+
+**Done-when.** ✓ An org-subject publish grant works everywhere: the raw evaluator (unchanged), `canPublishViaIndex` (mutators + button), `user_can_publish_on_library` (the guard) — once `20261059` is applied.
+
+**Scope / residual.** `acl_subject_in_bucket` (used by `node_visible` for read visibility) still has no org branch — a read-visibility question, not publish; recorded, not done here.
+
 ---
 
 ## OWN-19 · A granted publisher can rev-up but cannot supersede, archive, split or merge — the database allows all of it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -1087,12 +1114,22 @@ explanation, because the button simply is not rendered.
 mutators and the database actually enforce, or the difference is deliberate and
 explained in the UI.
 
+**Resolution (2026-09-17, Round E).** The Inspector's lifecycle affordances now follow the authority the mutators and the database enforce. `components/documents/InspectorPanel.tsx`: `canLifecycle = isController || canPublishEff`; the "Manage & lifecycle" section opens for `canManage || canLifecycle`; the lifecycle router button (split / merge / renumber / label), Supersede and Archive are gated on `canLifecycle`; Move is gated on `isController` (the only thing `/api/documents/move` admits — an owner used to see a button the route refused); Permissions stays `canManage` (controller-or-owner, `DEL-1`); DocClass / Delete stay controller-only, Request-deletion stays owner-only. Database: split / merge / supersede already reached `enforce_document_publish_guard` (source row → `'Superseded'`) and admitted a granted publisher; archive did not (no app check, not "advancing" at the guard — any active member could archive at the database). `20261060_rp_roundE_archive_publish_authority.sql` re-creates the guard from the live `20261046` body plus ONE disjunct — `→ 'Archived'` is advancing — so archiving takes the same publisher tier (controller / granted publisher / effective owner); the review gate is untouched (it keys on `current_version_id`), the service role passes as before, and for a non-controller the existing hold check now also stops an archive past an active hold (fails closed).
+- Inventory (temp table BEFORE the DDL, printed with the probes): libraries carrying any publish/admin allow (the publishers gaining affordances), documents Archived / not Archived, documents under an active hold (a non-controller archive is refused until release).
+- Tests: `roundEOwnership.test.ts` "OWN-19" — the gates pinned by source (`canLifecycle` on the router / Supersede / Archive, Move on `isController`, Permissions on `canManage`, the move route's refusal), the migration disjunct; `roundEOwnershipMigrations.test.ts` — exact line-diff against `20261046` (only the disjunct and its comment), verified-sound ordering (review gate → `is_org_controller` → publisher-or-owner → hold; service pass) pinned, probe hygiene.
+- Files: `components/documents/InspectorPanel.tsx`, `supabase/migrations/20261060_rp_roundE_archive_publish_authority.sql`.
+- Pending migration: `supabase/migrations/20261060_rp_roundE_archive_publish_authority.sql` (the UI half is RESOLVED on deploy; until applied, a non-publisher member can still archive at the database — exactly today's exposure, no wider).
+
+**Done-when.** ✓ The Inspector's lifecycle affordances match the authority the mutators and the database enforce: publish authority for supersede / archive / split / merge, controller for Move, controller-or-owner for Permissions.
+
+**Scope / residual.** `lib/revisions.ts#archiveDocument` still has no app-side authority check (the database is its only gate — consistent with `finalizeReviewedRevision`, recorded under `OWN-3`'s residual). The hold-check message ("before publishing a new revision") is reused for an archive; wording only.
+
 ---
 
 ## OWN-20 · Descendant `acl_index` goes stale when a library's ACL changes
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**
@@ -1113,12 +1150,21 @@ like everything else" — which is the natural remediation to reach for on `OWN-
 `acl_index`, or every consumer resolves the chain at read time rather than
 trusting the stored index.
 
+**Resolution (2026-09-17, Round E).** Changing a library's (or a folder's) ACL is now reflected in its descendants' `acl_index` at save time, through the existing `DEC-10` rebuild rather than a second implementation. `lib/aclIndexRebuild.ts#rebuildAclIndexes(sb, nowMs, scope?)` takes an optional `{ orgId, libraryId }` scope: one org, one library subtree (the library row, its folders, documents and sets — every read carries `library_id = …`), same chain merge, same expiry filter, same diff guard (only a node whose recomputed index differs is written), so a repeat call is a no-op; the unscoped cron path is byte-identical in behaviour. New route `app/api/acl/rebuild/route.ts` (POST `{ orgId, libraryId }`): session bearer → `supabaseAdmin.auth.getUser`; the caller must be an ACTIVE member of `orgId` (`loadPrincipal`) and the library must belong to it; the recompute runs as the service role (descendants may be rows the caller cannot read) and returns counts only. Authority is deliberately membership-level: the operation takes no input beyond "which library", re-derives stored indexes from stored ACLs and can only make them MORE faithful to rules a controller / owner already saved — nothing is exposed and no rule changes. `PermissionDrawer` gains a `libraryId` prop (the documents page passes its library; the permissions console passes `lib.id` for folders) and, after a successful library / folder save + audit row, POSTs the rebuild; a failure is said out loud ("Permissions saved — descendants not yet re-indexed … the nightly rebuild will apply it") and never undoes the save.
+- Reproduced: on the base commit the drawer's save updates `.eq("id", nodeId)` only; the new scoped-rebuild test's fixture (library rule changed, folder + document still indexed under the old rule) shows the stale descendants that a save left behind.
+- Tests: `lib/__tests__/roundEAclRebuild.test.ts` — scoped rebuild reads only the subtree (no `orgs` listing, every read `eq("library_id", L1)`), rewrites exactly the stale folder + document from the NEW chain and leaves fresh nodes and the sibling library alone, is idempotent (second run writes nothing), unscoped path unchanged; the route: 401 / 403 / 404 / 400, and 200 calls the rebuild with the scope and returns counts. `roundEOwnership.test.ts` "OWN-20" pins the drawer's POST and both hosts passing the library id.
+- Files: `lib/aclIndexRebuild.ts`, `app/api/acl/rebuild/route.ts` (new), `components/permissions/PermissionDrawer.tsx`, `app/(protected)/documents/[libraryId]/page.tsx`, `app/(protected)/admin/permissions/page.tsx`.
+
+**Done-when.** ✓ Changing a library's ACL is reflected in its descendants' `acl_index` (at save, through the rebuild; the nightly pass remains the backstop if the call fails).
+
+**Scope / residual.** Consumers still trust the stored index (the alternative branch of the done-when was not taken — `DEC-10` keeps `acl_index` a rebuilt cache). Document-set nodes edited from the drawer (`nodeType "set"`) have no descendants, so no rebuild is requested. A folder edited from a host that does not pass `libraryId` falls back to the nightly rebuild (both current hosts pass it; pinned).
+
 ---
 
 ## OWN-21 · Dead code and never-wired declarations on the ownership surface
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 
 > **Phase 0 dispositions landed (2026-08-24, commit `2af2ebe` + follow-up).**
 > Per `DEC-11`: `p_actor_role` removed from both `publish_revision` call sites
@@ -1177,12 +1223,21 @@ trusting the stored index.
 
 Every removal is recoverable from git; every retention has a recorded reason.
 
+**Resolution (2026-09-17, Round E).** The last open row lands: `revision_branches` resolution is now a controller-or-effective-owner act (`DEC-11`'s "real authority gap"). `20261061_rp_roundE_branch_resolution_authority.sql` re-creates `revision_branches_org_update` as active membership AND (`is_org_controller(org_id)` OR the document's effective owner via the database's own cascade `user_is_effective_owner(d.owner_user_id, d.collection_id, d.library_id, auth.uid())`); SELECT and INSERT are untouched (the publish path still opens the debt row; everyone still sees it). Narrowing — nobody gains. `lib/branches.ts#resolveBranch` already treated zero rows as a failure; its message now names both causes (a lost CAS race or a refusal) instead of claiming someone else resolved it. Every other row of the table has reached its `DEC-11` disposition: `p_actor_role` removed (`20261019`, `lib/revisions.ts`); `canBlindDrillAccess` / `filterDiscoverable` removed (pinned absent again this round); owner indexes added (`20261021`); `org_has_active_subscription()` kept (its app-side twin `assertOrgHasAccess` is wired per `DEC-18` — `SURF-15`); `owner_name` kept as a cache nothing branches on (`DEL-8`); `EffectiveOwner.source === "collection"` kept and live (`DEL-7` renders owner-source; the one resolver of `OWN-16` produces it). A census of `lib/ownership.ts` exports finds no zero-caller declarations left to remove.
+- Tests: `roundEOwnership.test.ts` "OWN-21" — the refusal message, the policy's two arms on top of membership, the `DEC-11` removals still absent; `roundEOwnershipMigrations.test.ts` — policy shape, deparsed-qual probe without casts, single-paste shape, SELECT / INSERT not re-created.
+- Files: `lib/branches.ts`, `supabase/migrations/20261061_rp_roundE_branch_resolution_authority.sql`.
+- Pending migration: `supabase/migrations/20261061_rp_roundE_branch_resolution_authority.sql` (until applied, any active member can still close a branch — today's exposure).
+
+**Done-when.** ✓ Removed: `p_actor_role`, `canBlindDrillAccess`, `filterDiscoverable`. ✓ Fixed as a defect: `revision_branches` resolution restricted to a controller or the document's effective owner (on apply). ✓ Added: the two owner indexes. ✓ Kept with a recorded reason: `org_has_active_subscription()`, `owner_name`, `EffectiveOwner.source === "collection"`.
+
+**Scope / residual.** The branch AUTHOR may no longer withdraw their own branch unless they are the effective owner or a controller — `DEC-11` says controller or owner, followed as written; the DocCtrl queue is where resolution happens.
+
 ---
 
 ## OWN-22 · The "Save As" library-creation path still births unowned libraries
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / accountability
 - **Locations:**
@@ -1206,6 +1261,14 @@ Admin/DocCtrl, and nobody notices until the unowned count is questioned.
 **Done when.** Either `createLibrary` accepts and writes an optional owner (with
 `setOwner` semantics — audit row + notification), or the Save-As flow visibly
 states the library will be unowned until assigned in the console.
+
+**Resolution (2026-09-17, Round E).** `lib/libraryCollections.ts#createLibrary` (the Save-As door) now births an OWNED library: the INSERT carries `owner_user_id = createdBy` (and `owner_name` from the new optional `createdByName`, null when the caller has none — names resolve live, `DEL-8`), and the same `OWNER_ASSIGNED` audit row `setOwner` writes follows (`details.at_creation: true`); no self-notification, exactly as `setOwner` skips one. Stamped on the insert rather than through `setOwner` because the library sensitive-column guard (`20261036`, BEFORE UPDATE) would refuse a non-controller creator's follow-up UPDATE and leave the library born, unowned and the flow erroring. `DocumentLinkPicker`'s prompt states the consequence ("You will be recorded as this library's accountable owner (reassignable under Admin → Permissions & ownership)").
+- Tests: `roundEOwnership.test.ts` "OWN-22" — the insert carries the owner columns, the audit row follows with the creator as actor and owner; a refused insert throws and writes no audit row; the prompt text pinned.
+- Files: `lib/libraryCollections.ts`, `components/documents/DocumentLinkPicker.tsx`.
+
+**Done-when.** ✓ `createLibrary` writes an owner with `setOwner` semantics (audit row; notification not applicable to a self-assignment) — the first alternative of the done-when; the flow also states it (the second).
+
+**Scope / residual.** The wizard path (`GAP-12`) is unchanged; the console's unowned count no longer grows from this door.
 
 ---
 
