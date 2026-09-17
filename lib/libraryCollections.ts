@@ -4,6 +4,10 @@
 import { supabase } from "@/lib/supabase";
 import { buildAclIndex, buildAclIndexFromChain } from "@/lib/acl";
 import { logAuditAction } from "@/lib/audit";
+import { notify } from "@/lib/inAppNotifications";
+import { getOrgControllers } from "@/lib/ownership";
+import { resolveActorPrincipal } from "@/lib/principal";
+import { isControllerPrincipal } from "@/lib/permissions";
 import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig, LibraryHomeConfig } from "@/types/schema";
 
 const TABLE = "collections";
@@ -149,15 +153,22 @@ export async function createFolder(input: CreateFolderInput): Promise<string> {
 /** Create a new library inline (Save-As style), mirroring the admin form's insert
  *  with sensible defaults. Gated to users who may create libraries.
  *
- *  OWN-22: the library is born OWNED — the creator is stamped as its
- *  accountable owner on the INSERT (the wizard path, GAP-12, prompts for one;
- *  this door did not, so its libraries routed every review reminder to
- *  Admin/DocCtrl). Stamped on the insert rather than via setOwner because the
- *  library's sensitive-column guard (20261036) would refuse a non-controller's
- *  follow-up UPDATE; the audit row is the same OWNER_ASSIGNED record setOwner
- *  writes, and setOwner never notifies a self-assignment either. */
-export async function createLibrary(input: { orgId: string; name: string; type?: string; createdBy: string; createdByName?: string | null }): Promise<{ id: string; name: string }> {
+ *  OWN-22: who owns a library born through this door follows the authority
+ *  the database enforces for library ownership (20261036: a controller, the
+ *  CURRENT owner, or an ACL manage-grant may set it; 20261062 mirrors that on
+ *  INSERT). A CONTROLLER creator is stamped as the accountable owner on the
+ *  insert (with the same OWNER_ASSIGNED audit row setOwner writes — no
+ *  self-notification, exactly as setOwner skips one). A NON-controller
+ *  creator (this door is reachable by Manager / Supervisor) is NOT stamped:
+ *  library ownership carries ACL-rewrite, publish, archive, dispose and
+ *  branch-resolution authority over the whole library, and a self-assigned
+ *  owner is the exact door 20261036 closed. Their library is born unowned,
+ *  the flow says so up front, and the org's controllers are told an owner is
+ *  needed (the console's unowned count shows it too, GAP-12). */
+export async function createLibrary(input: { orgId: string; name: string; type?: string; createdBy: string; createdByName?: string | null }): Promise<{ id: string; name: string; ownerUserId: string | null }> {
   const now = new Date().toISOString();
+  const principal = await resolveActorPrincipal({ uid: input.createdBy, orgId: input.orgId });
+  const creatorOwns = isControllerPrincipal(principal);
   const { data, error } = await supabase
     .from("libraries")
     .insert({
@@ -174,8 +185,8 @@ export async function createLibrary(input: { orgId: string; name: string; type?:
       default_new_acl: null,
       acl: null,
       org_id: input.orgId,
-      owner_user_id: input.createdBy,
-      owner_name: input.createdByName ?? null,
+      owner_user_id: creatorOwns ? input.createdBy : null,
+      owner_name: creatorOwns ? (input.createdByName ?? null) : null,
       created_at: now,
       created_by: input.createdBy,
       updated_at: now,
@@ -185,12 +196,28 @@ export async function createLibrary(input: { orgId: string; name: string; type?:
     .single();
   if (error || !data) throw new Error(error?.message || "Failed to create library");
   const created = data as { id: string; name: string };
-  await logAuditAction({
-    action: "OWNER_ASSIGNED", resourceType: "library", resourceId: created.id,
-    orgId: input.orgId, userId: input.createdBy,
-    details: { owner_user_id: input.createdBy, owner_name: input.createdByName ?? null, level: "library", at_creation: true },
-  }).catch(() => {});
-  return created;
+  if (creatorOwns) {
+    await logAuditAction({
+      action: "OWNER_ASSIGNED", resourceType: "library", resourceId: created.id,
+      orgId: input.orgId, userId: input.createdBy,
+      details: { owner_user_id: input.createdBy, owner_name: input.createdByName ?? null, level: "library", at_creation: true },
+    }).catch(() => {});
+    return { id: created.id, name: created.name, ownerUserId: input.createdBy };
+  }
+  // Unowned birth: the controllers (the fallback owners) are asked to assign
+  // one. Best-effort — the library exists either way and the register shows it.
+  try {
+    const controllers = (await getOrgControllers(input.orgId)).filter((u) => u !== input.createdBy);
+    await Promise.all(controllers.map((uid) => notify({
+      orgId: input.orgId, userId: uid, kind: "library_unowned",
+      title: `New library "${created.name}" has no owner`,
+      body: `${input.createdByName || "A member"} created it via Save-As. Assign an accountable owner under Admin → Permissions & ownership.`,
+      link: "/admin/permissions",
+      resourceType: "library", resourceId: created.id,
+      actorUserId: input.createdBy, actorName: input.createdByName ?? undefined,
+    })));
+  } catch { /* the library exists; the console's unowned count is the backstop */ }
+  return { id: created.id, name: created.name, ownerUserId: null };
 }
 
 /** Flat list of a library's folders for a picker (one-time fetch). */

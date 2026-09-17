@@ -309,8 +309,14 @@ export default function PermissionsDrawer(props: {
 
       if (nodeType !== "library") payload.visibility = visibility;
 
-      const { error } = await supabase.from(table).update(payload).eq("id", nodeId);
+      // OWN-14 / OWN-20: a checked write. An RLS / guard refusal returns 200
+      // with ZERO rows — the old unchecked form then logged NODE_ACL_CHANGED,
+      // ran the rebuild and told the user the permissions were saved.
+      const { data: saved, error } = await supabase.from(table).update(payload).eq("id", nodeId).select("id");
       if (error) throw new Error(error.message);
+      if (!saved || saved.length === 0) {
+        throw new Error(`Permissions were NOT saved — you don't have authority over this ${nodeType} (or it no longer exists).`);
+      }
 
       // Full before/after audit — a permission change must always be
       // reconstructable. Best-effort: the save above already committed.
@@ -341,7 +347,9 @@ export default function PermissionsDrawer(props: {
           const res = await fetch("/api/acl/rebuild", {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
-            body: JSON.stringify({ orgId: activeOrgId, libraryId: rebuildLibraryId }),
+            // The route takes the same authority the drawer needed for the save
+            // (controller / effective owner / manage-grant on this node's chain).
+            body: JSON.stringify({ orgId: activeOrgId, libraryId: rebuildLibraryId, ...(nodeType === "collection" ? { collectionId: nodeId } : {}) }),
           });
           const out = (await res.json().catch(() => ({}))) as { error?: string; errors?: string[] };
           if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
@@ -356,7 +364,9 @@ export default function PermissionsDrawer(props: {
       close();
     } catch (e) {
       console.error(e);
-      await appAlert({ message: "Failed to save permissions (check rules/network).", tone: "danger" });
+      // The refusal (or the network error) is said out loud, never a generic
+      // "check your rules" for a write the database turned down.
+      await appAlert({ message: `Failed to save permissions: ${(e as Error).message}`, tone: "danger" });
     } finally {
       setSaving(false);
     }

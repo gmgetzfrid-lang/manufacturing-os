@@ -417,7 +417,7 @@ and quiet for a release.
 
 **Risk:** medium.
 
-*Landed 2026-09-17 (roles-and-permissions Round E): the rebuild gained an on-demand scope — `rebuildAclIndexes(sb, now, { orgId, libraryId })` behind `POST /api/acl/rebuild`, called by the permission drawer after a library / folder save, same diff guard. The nightly pass stays the backstop; `acl_index` stays a rebuilt cache. See `OWN-20`.*
+*Landed 2026-09-17 (roles-and-permissions Round E): the rebuild gained an on-demand scope — `rebuildAclIndexes(sb, now, { orgId, libraryId })` behind `POST /api/acl/rebuild`, called by the permission drawer after a (checked) library / folder save and gated on the drawer's own save authority (controller / effective owner / manage grant on the node's chain), same diff guard. The nightly pass stays the backstop; `acl_index` stays a rebuilt cache. See `OWN-20`.*
 
 <a id="dec-11"></a>
 ## DEC-11 · Dispositions for the dead-code rosters

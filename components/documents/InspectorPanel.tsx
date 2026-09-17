@@ -37,6 +37,7 @@ import MarkupsSection from "@/components/documents/MarkupsSection";
 import type { DocumentMarkup } from "@/lib/markups";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
+import { lifecycleAffordances } from "@/lib/lifecycleAffordances";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
@@ -292,14 +293,14 @@ export default function InspectorPanel({
     })();
     return () => { alive = false; };
   }, [selectedDoc?.id, selectedDoc?.ownerUserId, selectedDoc?.ownerName, selectedDoc?.collectionId, selectedDoc?.libraryId, uid]);
-  const canManage = isController || isOwner;
-  const canPublishEff = canPublish || isOwner;
   // OWN-19: the lifecycle acts — supersede, archive, split / merge / renumber
   // — take PUBLISH authority (authorizePublish + the DB publish guard admit a
   // granted publisher), so their affordances follow canPublishEff, not
   // ownership. Move stays a controller act (/api/documents/move refuses
-  // everyone else) and Permissions stays controller-or-owner (DEL-1).
-  const canLifecycle = isController || canPublishEff;
+  // everyone else) and Permissions stays controller-or-owner (DEL-1). The
+  // gates are one pure function (lib/lifecycleAffordances.ts) so the model
+  // is tested behaviourally, not by the shape of this JSX.
+  const { canManage, canPublishEff, canLifecycle, canMove, sectionOpen } = lifecycleAffordances({ isController, isOwner, canPublish });
   // Authoritative lock only — a stale collaborator list with no lock holder is
   // NOT a checkout (see isDocumentCheckedOut).
   const isCheckedOut = isDocumentCheckedOut(selectedDoc);
@@ -913,7 +914,7 @@ export default function InspectorPanel({
 
       {/* MANAGE & LIFECYCLE — one header; each act is gated on the authority
           the mutator and the database enforce for it (OWN-19). */}
-      {(canManage || canLifecycle) && (
+      {sectionOpen && (
         <CollapsibleSection id="manage" title="Manage & lifecycle" icon={Wrench}>
           {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
           {canLifecycle && selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
@@ -926,9 +927,9 @@ export default function InspectorPanel({
               <Wrench className="w-3.5 h-3.5" /> Other lifecycle changes… <span className="font-normal text-[var(--color-text-muted)]">split · merge · renumber</span>
             </button>
           )}
-          {(isController || canManage) && (
+          {(canMove || canManage) && (
             <div className="grid grid-cols-2 gap-2">
-              {isController && (
+              {canMove && (
                 <button onClick={onMove} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
                   <ArrowRight className="w-3.5 h-3.5" /> Move
                 </button>

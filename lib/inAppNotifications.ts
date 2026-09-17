@@ -56,7 +56,8 @@ export type NotificationKind =
   | "access_recert_due"          // (to owner/Admin/DocCtrl) a library's access needs recertification
   | "orchestrator_message"       // a colleague sent this via the document-controller assistant
   | "security_export"            // (to other Admins/DocCtrl) a full workspace export was run
-  | "member_revoked";            // (to controllers) a member was suspended/removed; lists what became unowned (GAP-5)
+  | "member_revoked"             // (to controllers) a member was suspended/removed; lists what became unowned (GAP-5)
+  | "library_unowned";           // (to controllers) a library was created unowned through the Save-As door (OWN-22)
 
 export interface NotificationInput {
   orgId: string;

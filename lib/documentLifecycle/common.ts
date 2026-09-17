@@ -72,6 +72,11 @@ export async function withCompensation<T>(
  * creation stays consistent (the doc still exists, just retired). The partial
  * UNIQUE index on document_number excludes Archived, so the number is freed
  * for a retry.
+ *
+ * OWN-19: this UPDATE is 'advancing' at the database (20261060 — entering
+ * Archived takes the publisher tier). It passes because the target was born
+ * owned by the actor (createNewDocWithFirstVersion), so the guard's
+ * effective-owner arm admits them whatever their library authority.
  */
 export async function archiveRolledBackDoc(docId: string, actor: ActorContext): Promise<void> {
   const now = new Date().toISOString();
@@ -129,7 +134,20 @@ export async function sha256Hex(file: File): Promise<string> {
 /** Insert a brand-new document row + first version row + set
  *  current_version_id, all in one go. Returns the inserted document id.
  *  This is the building block used by split and merge to materialize
- *  new sheets. */
+ *  new sheets.
+ *
+ *  OWN-19: the target is born OWNED by the actor (document-level
+ *  owner_user_id / owner_name). The actor reached this call through the
+ *  Inspector's lifecycle gate (controller, granted publisher, or the
+ *  SOURCE's effective owner) — but a document-level owner of the source is
+ *  nobody on the target, and the compensation that archives a half-built
+ *  target when a later step fails (archiveRolledBackDoc) is an ordinary
+ *  client-session UPDATE that enforce_document_publish_guard now treats as
+ *  advancing (20261060). Stamping the actor makes them the target's
+ *  effective owner at the database, so the rollback passes the guard for
+ *  every actor the gate admits. The database's own cascade lets any member
+ *  first-assign an unowned, unrestricted document (DEC-6); the actor who
+ *  materialised the record is its accountable owner from the start. */
 export async function createNewDocWithFirstVersion(input: {
   orgId: string;
   libraryId: string;
@@ -181,6 +199,8 @@ export async function createNewDocWithFirstVersion(input: {
       unit_id: input.unitId ?? null,
       system_id: input.systemId ?? null,
       metadata: input.metadata ?? {},
+      owner_user_id: actor.actorUserId,
+      owner_name: input.actorName || actor.actorEmail || null,
       created_by: actor.actorUserId,
       updated_by: actor.actorUserId,
     })

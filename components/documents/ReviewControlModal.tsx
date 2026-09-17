@@ -179,11 +179,16 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         }
       }
       onSaved?.(); onClose();
+    } catch (e) {
+      // OWN-13: a refused policy write throws — surface it (a bare finally
+      // left it an unhandled rejection and the modal silently stayed open).
+      await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally { setBusy(false); }
   };
   const remove = async () => {
     setBusy(true);
     try { await setReviewControlPolicy({ level, id, orgId, control: null, actorId: uid, actorName: userName }); onSaved?.(); onClose(); }
+    catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
     finally { setBusy(false); }
   };
 

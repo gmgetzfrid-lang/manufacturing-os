@@ -1,6 +1,9 @@
 // Round E — OWN-20: descendant acl_index is recomputed when a library's (or a
 // folder's) ACL changes — through the SAME rebuild the nightly cron runs,
 // narrowed to one library subtree, diff-guarded, behind /api/acl/rebuild.
+// The route takes the drawer's own save authority (controller / effective
+// owner / managePermissions on the node's chain) — membership alone is not
+// a licence to run service-role subtree rebuilds in a loop.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -49,9 +52,13 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 vi.mock("@/lib/knowledgeAccess", () => ({
-  loadPrincipal: vi.fn(async (orgId: string, uid: string) =>
-    (state.tables.org_members ?? []).some((m) => m.org_id === orgId && m.uid === uid && m.status === "active")
-      ? { uid, orgId, role: "Drafter", roles: ["Drafter"], isController: false, teamIds: [] } : null),
+  loadPrincipal: vi.fn(async (orgId: string, uid: string) => {
+    const m = (state.tables.org_members ?? []).find((r) => r.org_id === orgId && r.uid === uid && r.status === "active");
+    if (!m) return null;
+    const roles = [...new Set([m.role as string, ...((m.roles as string[]) ?? [])])];
+    return { uid, orgId, role: m.role, roles, isController: roles.includes("Admin") || roles.includes("DocCtrl"),
+      teamIds: (state.tables.team_members ?? []).filter((t) => t.uid === uid).map((t) => t.team_id as string) };
+  }),
 }));
 vi.mock("@/lib/aclIndexRebuild", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/aclIndexRebuild")>();
@@ -131,27 +138,74 @@ describe("rebuildAclIndexes with a library scope", () => {
 });
 
 describe("POST /api/acl/rebuild", () => {
-  const member = (uid: string) => ({ org_id: "o1", uid, status: "active" });
+  const member = (uid: string, role = "Drafter", roles: string[] = [role]) => ({ org_id: "o1", uid, status: "active", role, roles });
   it("401 without a session; 403 for a non-member; 404 for a library outside the org", async () => {
     expect((await post({ orgId: "o1", libraryId: "L1" }, "")).status).toBe(401);
     state.user = { id: "u1" };
     state.tables.org_members = [];
     expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(403);
-    state.tables.org_members = [member("u1")];
+    state.tables.org_members = [member("u1", "Admin")];
     state.tables.libraries = [{ id: "L1", org_id: "other-org" }];
     expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(404);
     expect((await post({ orgId: "o1" })).status).toBe(400);
     expect(vi.mocked(rebuildAclIndexes)).not.toHaveBeenCalled();
   });
-  it("200: an active member triggers the scoped rebuild and gets counts back (no rows)", async () => {
+  it("403 for a plain active member: membership is not authority over the library (no rebuild runs)", async () => {
     seedStale();
     state.user = { id: "u1" };
     state.tables.org_members = [member("u1")];
+    const res = await post({ orgId: "o1", libraryId: "L1" });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/authority to change its permissions/);
+    expect(vi.mocked(rebuildAclIndexes)).not.toHaveBeenCalled();
+  });
+  it("200: a controller (by the role COLLECTION) triggers the scoped rebuild and gets counts back (no rows)", async () => {
+    seedStale();
+    state.user = { id: "u1" };
+    state.tables.org_members = [member("u1", "Manager", ["Manager", "DocCtrl"])];
     const res = await post({ orgId: "o1", libraryId: "L1" });
     expect(res.status).toBe(200);
     const out = await res.json();
     expect(vi.mocked(rebuildAclIndexes)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(rebuildAclIndexes).mock.calls[0][2]).toEqual({ orgId: "o1", libraryId: "L1" });
     expect(out).toEqual({ ok: true, rebuilt: { libraries: 0, folders: 1, documents: 1, sets: 0 }, errors: [] });
+  });
+  it("200: the library's owner, and the owning team's supervisor, hold the drawer's authority", async () => {
+    seedStale();
+    state.user = { id: "own" };
+    state.tables.org_members = [member("own")];
+    state.tables.libraries[0].owner_user_id = "own";
+    expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(200);
+    // team rung
+    seedStale();
+    state.tables.libraries[0].owner_team_id = "t1";
+    state.tables.teams = [{ id: "t1", supervisor_user_id: "own" }];
+    expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(200);
+    state.tables.teams = [{ id: "t1", supervisor_user_id: "someone-else" }];
+    expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(403);
+  });
+  it("200: a managePermissions grant on the library ACL; 403 when the grant is only read", async () => {
+    seedStale();
+    state.user = { id: "u1" };
+    state.tables.org_members = [member("u1")];
+    state.tables.libraries[0].acl = { rules: [allow("Drafter", "managePermissions")] };
+    expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(200);
+    state.tables.libraries[0].acl = { rules: [allow("Drafter", "read")] };
+    expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(403);
+  });
+  it("a folder save: the folder's owner, or a manage grant on the folder's chain, is admitted with collectionId; a foreign folder is 404", async () => {
+    seedStale();
+    state.user = { id: "fo" };
+    state.tables.org_members = [member("fo")];
+    state.tables.collections[0].owner_user_id = "fo";
+    expect((await post({ orgId: "o1", libraryId: "L1", collectionId: "F1" })).status).toBe(200);
+    // the same member without collectionId is not the LIBRARY's owner
+    expect((await post({ orgId: "o1", libraryId: "L1" })).status).toBe(403);
+    // manage grant on the folder itself
+    seedStale();
+    state.tables.collections[0].acl = { rules: [allow("Drafter", "managePermissions")] };
+    expect((await post({ orgId: "o1", libraryId: "L1", collectionId: "F1" })).status).toBe(200);
+    // a folder that belongs to another library
+    expect((await post({ orgId: "o1", libraryId: "L1", collectionId: "F2" })).status).toBe(404);
   });
 });
