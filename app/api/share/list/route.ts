@@ -11,7 +11,12 @@
 //   * the caller cannot → only the rows the caller created come back, and
 //     with NO token. They minted it, but it no longer serves (the /api/share/*
 //     routes re-check the creator's current authority), so the only use left
-//     is revoking it by id — which needs no token.
+//     is revoking it by id — which needs no token;
+//   * the caller is not an active member of the document's org → the SAME
+//     404 as a document that does not exist. The lookup runs with the service
+//     role, so a distinct 403 would tell any authenticated user whether a
+//     UUID exists in another tenant (EGRESS-1 collapses the cross-org case
+//     the same way).
 // Fails CLOSED: an unreadable decision (lookup error) is "cannot read".
 // 20261066 states the same rule at the database for direct PostgREST reads.
 
@@ -41,7 +46,8 @@ export async function GET(req: NextRequest) {
   const orgId = doc.org_id as string;
 
   const principal = await loadPrincipal(orgId, user.id);
-  if (!principal) return bad("Not an active member of this document's organization", 403);
+  // Same status AND body as the missing-document branch above: no existence oracle.
+  if (!principal) return bad("Document not found", 404);
 
   // The caller's read decision on THIS document. Controllers read everything
   // (node_visible's short-circuit); everyone else goes through the ACL chain.

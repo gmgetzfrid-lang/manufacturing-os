@@ -12,11 +12,18 @@
 // This test replays the whole migration set (schema.sql + numbered files, in
 // order, statements in textual order, DO-loop policies included) and:
 //   * classifies every function and policy that reads org_members by family;
-//   * FAILS if any live definition is headline-only — a headline-only read
-//     cannot reappear without failing CI;
+//   * FAILS if any live definition is headline-only, and FAILS if ANY live
+//     body — additive or not — carries one of the headline idioms the audit
+//     found (`SELECT role INTO v_role`, `v_role IN (…)`, `v_role = 'Admin'`),
+//     so a headline decision hidden in a body that also touches the
+//     collection is caught too. The classifier is textual: a NOVEL mixed
+//     body that reads `roles` for one decision and `role` for another still
+//     needs a reviewer;
 //   * pins the collection funnels and the five DEC-2 sites to the additive
-//     family, DB-3's backfill ahead of every additive conversion, and
-//     ROLE_RANK byte-for-byte (DEC-2: do NOT reorder it).
+//     family, the conversion itself (20261040 converts four sites and does
+//     not touch node_visible; 20261041 converts node_visible alone, after
+//     it), DB-3's backfill ahead of every additive conversion, and ROLE_RANK
+//     byte-for-byte (DEC-2: do NOT reorder it).
 // Set PRINT_AUTHORITY_CENSUS=<path> to write the census table (Markdown) there.
 
 import { describe, it, expect } from "vitest";
@@ -106,28 +113,40 @@ function dynamicEvents(block: string, at: number, file: string): Ev[] {
   return out;
 }
 
+const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)([\s\S]*?)(\$\w*\$)([\s\S]*?)\4/gi;
+const dropFnRe = /DROP\s+FUNCTION\s+IF\s+EXISTS\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)/gi;
+const polRe = /CREATE\s+POLICY\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?(\w+)"?([\s\S]*?);/gi;
+const dropPolRe = /DROP\s+POLICY\s+IF\s+EXISTS\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?(\w+)"?/gi;
+const doRe = /\bDO\s+(\$\w*\$)([\s\S]*?)\1\s*;/gi;
+
+/** Every create / drop event one file performs, in textual statement order. */
+function fileEvents(file: string): Ev[] {
+  const txt = stripSqlComments(readFileSync(file, "utf8"));
+  const short = file.replace(root + "/supabase/", "");
+  const events: Ev[] = [];
+  for (const m of txt.matchAll(fnRe)) {
+    events.push({ at: m.index ?? 0, kind: "create", def: { kind: "function", key: `${m[1]}/${arityOf(m[2])}`, file: short, body: m[3] + m[5], dropped: false, dynamic: false } });
+  }
+  for (const m of txt.matchAll(dropFnRe)) events.push({ at: m.index ?? 0, kind: "drop", key: `${m[1]}/${arityOf(m[2])}`, defKind: "function" });
+  for (const m of txt.matchAll(polRe)) {
+    events.push({ at: m.index ?? 0, kind: "create", def: { kind: "policy", key: `${m[2]}.${m[1]}`, file: short, body: m[3], dropped: false, dynamic: false } });
+  }
+  for (const m of txt.matchAll(dropPolRe)) events.push({ at: m.index ?? 0, kind: "drop", key: `${m[2]}.${m[1]}`, defKind: "policy" });
+  for (const m of txt.matchAll(doRe)) events.push(...dynamicEvents(m[2], m.index ?? 0, short));
+  return events.sort((a, b) => a.at - b.at);
+}
+
+/** The definitions one file CREATEs, keyed like the census. */
+function createsOf(file: string): Map<string, Def> {
+  const out = new Map<string, Def>();
+  for (const ev of fileEvents(file)) if (ev.kind === "create") out.set(`${ev.def.kind} ${ev.def.key}`, ev.def);
+  return out;
+}
+
 function census(): Map<string, Def> {
   const final = new Map<string, Def>();
-  const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)([\s\S]*?)(\$\w*\$)([\s\S]*?)\4/gi;
-  const dropFnRe = /DROP\s+FUNCTION\s+IF\s+EXISTS\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)/gi;
-  const polRe = /CREATE\s+POLICY\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?(\w+)"?([\s\S]*?);/gi;
-  const dropPolRe = /DROP\s+POLICY\s+IF\s+EXISTS\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?(\w+)"?/gi;
-  const doRe = /\bDO\s+(\$\w*\$)([\s\S]*?)\1\s*;/gi;
   for (const file of migrationFiles()) {
-    const txt = stripSqlComments(readFileSync(file, "utf8"));
-    const short = file.replace(root + "/supabase/", "");
-    const events: Ev[] = [];
-    for (const m of txt.matchAll(fnRe)) {
-      events.push({ at: m.index ?? 0, kind: "create", def: { kind: "function", key: `${m[1]}/${arityOf(m[2])}`, file: short, body: m[3] + m[5], dropped: false, dynamic: false } });
-    }
-    for (const m of txt.matchAll(dropFnRe)) events.push({ at: m.index ?? 0, kind: "drop", key: `${m[1]}/${arityOf(m[2])}`, defKind: "function" });
-    for (const m of txt.matchAll(polRe)) {
-      events.push({ at: m.index ?? 0, kind: "create", def: { kind: "policy", key: `${m[2]}.${m[1]}`, file: short, body: m[3], dropped: false, dynamic: false } });
-    }
-    for (const m of txt.matchAll(dropPolRe)) events.push({ at: m.index ?? 0, kind: "drop", key: `${m[2]}.${m[1]}`, defKind: "policy" });
-    for (const m of txt.matchAll(doRe)) events.push(...dynamicEvents(m[2], m.index ?? 0, short));
-    events.sort((a, b) => a.at - b.at);
-    for (const ev of events) {
+    for (const ev of fileEvents(file)) {
       if (ev.kind === "create") final.set(`${ev.def.kind} ${ev.def.key}`, ev.def);
       else {
         const prev = final.get(`${ev.defKind} ${ev.key}`);
@@ -175,6 +194,27 @@ describe("authority-function census (DB-7)", () => {
     ].join("\n")).toEqual([]);
   });
 
+  it("the headline idioms the audit found cannot reappear in ANY live body — additive ones included", () => {
+    // familyOf says "additive" as soon as a body mentions the collection, so a
+    // headline decision could hide next to a collection read. These are the
+    // exact idioms the DB-7 census recorded (20260708 / 20260713 / 20260812 /
+    // 20260822 / 20261037); no live body may carry them, whatever its family.
+    const idioms = [/\bv_role\s+IN\s*\(/i, /SELECT\s+role\s+INTO\s+v_role\b/i, /\bv_role\s*=\s*'(Admin|DocCtrl)'/i];
+    const hits: string[] = [];
+    for (const d of census().values()) {
+      if (d.dropped) continue;
+      for (const re of idioms) if (re.test(d.body)) hits.push(`${d.kind} ${d.key}  (${d.file}): ${re}`);
+    }
+    expect(hits, [
+      "A live body decides on the headline role through an idiom DEC-2 retired.",
+      "Pair the decision with the collection (unnest(v_roles) / is_org_controller / caller_holds_any_role):",
+      ...hits,
+    ].join("\n")).toEqual([]);
+    // and the pin bites: the pre-DEC-2 node_visible body (20261037) carries two of them
+    const pre = createsOf(join(root, "supabase", "migrations", "20261037_rp_phase3b_read_ownership_and_version_integrity.sql")).get("function node_visible/6")!;
+    expect(idioms.filter((re) => re.test(pre.body))).toHaveLength(2);
+  });
+
   it("the collection funnels are live, additive, and read `roles` directly or through an earlier funnel", () => {
     const final = census();
     const direct = /(?<![\w'])roles(?![\w'])/;
@@ -198,27 +238,49 @@ describe("authority-function census (DB-7)", () => {
     expect(final.get("function is_org_controller/1")!.body).toMatch(/role in \('Admin', 'DocCtrl'\) or roles && array\['Admin', 'DocCtrl'\]::text\[\]/i);
   });
 
-  it("DEC-2: the five publish-path sites evaluate the controller tier through the collection, node_visible last and separately", () => {
-    const sites: Array<[Def["kind"], string, string]> = [
+  it("DEC-2: the five publish-path sites evaluate the controller tier through the collection; 20261040 converted four, 20261041 node_visible alone, after them", () => {
+    const firstWave: Array<[Def["kind"], string, string]> = [
       ["function", "enforce_document_publish_guard/0", "is_org_controller"],
       ["function", "user_can_publish_on_library/3", "roles"],
       ["function", "publish_revision/11", "roles"],
       ["policy", "document_review_signoffs.doc_review_signoff_update", "is_org_controller"],
       ["policy", "document_acknowledgments.doc_ack_update", "is_org_controller"],
-      ["function", "node_visible/6", "is_org_controller"],
     ];
+    const nodeVisible: [Def["kind"], string, string] = ["function", "node_visible/6", "is_org_controller"];
+    const sites = [...firstWave, nodeVisible];
+    const via = (body: string, funnel: string) => new RegExp(`(?<![\\w'])${funnel}(?![\\w'])`).test(body);
+    // (a) the LIVE definitions: additive, through the named funnel, at or after the conversion
     const final = census();
-    for (const [kind, key, via] of sites) {
+    for (const [kind, key, funnel] of sites) {
       expect(fam(kind, key), key).toBe("additive");
       const d = final.get(`${kind} ${key}`)!;
-      expect(d.body, key).toMatch(new RegExp(`(?<![\\w'])${via}(?![\\w'])`));
+      expect(via(d.body, funnel), `${key} does not read ${funnel}`).toBe(true);
       expect(migrationOf(d.file) >= "20261040", `${key} final definition predates the DEC-2 conversion: ${d.file}`).toBe(true);
     }
-    // node_visible's conversion is its own migration, after the other four
-    expect(final.get("function node_visible/6")!.file).toBe("migrations/20261041_rp_phase5_node_visible_additive.sql");
-    const others = ["enforce_document_publish_guard/0", "user_can_publish_on_library/3", "publish_revision/11"]
-      .map((k) => final.get(`function ${k}`)!.file);
-    for (const f of others) expect(f).not.toContain("20261041");
+    expect(migrationOf(final.get("function node_visible/6")!.file) >= "20261041").toBe(true);
+    // (b) the CONVERSION itself, pinned on the migrations that performed it (not on whatever
+    //     file happens to hold the final definition): 20261040 converts the four sites with
+    //     additive bodies and does not touch node_visible; 20261041 converts node_visible and
+    //     nothing else; and 20261040 replays before 20261041.
+    const files = migrationFiles();
+    const f40 = files.find((f) => f.endsWith("/20261040_rp_phase5_additive_publish_path.sql"));
+    const f41 = files.find((f) => f.endsWith("/20261041_rp_phase5_node_visible_additive.sql"));
+    expect(f40).toBeDefined();
+    expect(f41).toBeDefined();
+    expect(files.indexOf(f40!)).toBeLessThan(files.indexOf(f41!));
+    const c40 = createsOf(f40!), c41 = createsOf(f41!);
+    for (const [kind, key, funnel] of firstWave) {
+      const d = c40.get(`${kind} ${key}`);
+      expect(d, `20261040 must convert ${key}`).toBeDefined();
+      expect(familyOf(d!.body), `20261040's ${key}`).toBe("additive");
+      expect(via(d!.body, funnel), `20261040's ${key} does not read ${funnel}`).toBe(true);
+    }
+    expect(c40.has("function node_visible/6"), "20261040 must not touch node_visible").toBe(false);
+    const nv = c41.get("function node_visible/6");
+    expect(nv, "20261041 must convert node_visible").toBeDefined();
+    expect(familyOf(nv!.body)).toBe("additive");
+    expect(via(nv!.body, "is_org_controller")).toBe(true);
+    expect([...c41.keys()], "20261041 converts node_visible and nothing else").toEqual(["function node_visible/6"]);
     // the headline-only census the finding recorded is gone from every one of them
     for (const [kind, key] of sites) {
       expect(final.get(`${kind} ${key}`)!.body).not.toMatch(/SELECT role INTO v_role/);
@@ -233,8 +295,9 @@ describe("authority-function census (DB-7)", () => {
     const txt = readFileSync(join(root, "supabase", backfill!), "utf8");
     expect(txt).toMatch(/UPDATE org_members\s+SET roles = ARRAY\[role\]/);
     expect(txt).toMatch(/UPDATE org_members\s+SET roles = roles \|\| ARRAY\[role\]/);
-    // every additive conversion of a DEC-2 site is a later file
-    const converted = rows.filter((r) => r.family === "additive" && r.file >= "migrations/20261040");
+    // every additive conversion of a DEC-2 site is a later NUMBERED file (schema.sql sorts
+    // after "migrations/" as a string, so filter by prefix, not by string order)
+    const converted = rows.filter((r) => r.family === "additive" && r.file.startsWith("migrations/") && migrationOf(r.file) >= "20261040");
     expect(converted.length).toBeGreaterThan(5);
     for (const r of converted) expect(migrationOf(r.file) > "20261024", r.key).toBe(true);
   });

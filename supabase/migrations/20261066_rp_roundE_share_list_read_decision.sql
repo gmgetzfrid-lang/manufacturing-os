@@ -59,11 +59,23 @@ COMMIT;
 --    Expect ok = true on every probe row. Inventory rows are aggregate counts
 --    only (n), never customer rows; the two 20261052 carry-over counts ride
 --    here per the 2026-09-17 protocol note.
-SELECT 'document_shares_org_select is the only SELECT policy on document_shares' AS check,
+--    Probe 2 counts by cmd alone (no policyname): permissive policies OR
+--    together, so a surviving permissive SELECT or FOR ALL policy — e.g.
+--    20260623's document_shares_org_member if 20261022 was never applied —
+--    would re-open the listing while this policy still exists. If probe 2 is
+--    false, list the policies (SELECT policyname, cmd FROM pg_policies WHERE
+--    tablename = 'document_shares') and apply 20261022 first.
+SELECT 'document_shares_org_select exists (FOR SELECT)' AS check,
        (SELECT COUNT(*) = 1 FROM pg_policies
          WHERE tablename = 'document_shares' AND cmd = 'SELECT'
            AND policyname = 'document_shares_org_select') AS ok,
        NULL::text AS n
+UNION ALL
+SELECT 'it is the ONLY permissive policy admitting SELECT on document_shares (no other SELECT / FOR ALL policy to OR with it)',
+       (SELECT COUNT(*) = 1 FROM pg_policies
+         WHERE tablename = 'document_shares' AND cmd IN ('SELECT', 'ALL')
+           AND permissive = 'PERMISSIVE'),
+       NULL
 UNION ALL
 SELECT 'SELECT applies the document-read decision, org-joined (node_visible, 6-arg)',
        (SELECT qual LIKE '%node_visible(d.visibility, d.acl_index, d.org_id, d.owner_user_id, d.collection_id, d.library_id)%'

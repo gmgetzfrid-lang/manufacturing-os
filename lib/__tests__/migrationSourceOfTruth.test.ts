@@ -1,19 +1,24 @@
 // One source of truth for the database (DB-8).
 //
 // supabase/REMEDIATION_APPLY_ALL.sql advertised itself "safe to RE-RUN": every
-// statement was CREATE OR REPLACE, frozen on the day it was written. A re-run
-// after a later migration silently restored the frozen bodies of seven
-// authority functions (is_org_controller, can_manage_node, …) over the live
-// hardening — no error, no record. Two more files had the same shape:
-// APPLY_roles-and-permissions_2026-08-24.sql (publish_revision and
-// org_capability_allows frozen at 20261019/20261025) and CATCHUP_2026-05-28.sql
-// (three checkout_messages policies). All three are now guarded stubs.
+// statement was CREATE OR REPLACE, frozen on the day it was written, so a
+// re-run after a later migration silently restores the frozen bodies over the
+// live hardening — no error, no record. At retirement 7 of its 23 definitions
+// had already drifted from the live sequence (comments stripped, whitespace
+// collapsed, case-folded): can_manage_node and is_org_admin back to
+// headline-only bodies, doc_is_visible, documents_guard_access_change and
+// three policies. Two more files had the same shape:
+// APPLY_roles-and-permissions_2026-08-24.sql (4 of 8 drifted: publish_revision
+// and org_capability_allows frozen at 20261019/20261025, two document_shares
+// policies) and CATCHUP_2026-05-28.sql (3 of 31: the checkout_messages
+// policies). All three are now guarded stubs.
 //
 // This test keeps it that way: every .sql file under supabase/ that is NOT a
 // numbered migration (and not schema.sql, the pre-migration baseline) must
 // define NO function, policy or trigger that the numbered sequence defines.
 // "Byte-identical today" is not an exemption — that is exactly the fork-in-
-// waiting the finding describes — so the rule is any overlap at all.
+// waiting the finding describes — so the rule is any overlap at all (on the
+// pre-retirement tree this named all 62 overlapping definitions: 23 + 8 + 31).
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";

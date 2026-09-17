@@ -7,11 +7,13 @@
 -- It was a SECOND SOURCE OF TRUTH: every statement was CREATE OR REPLACE /
 -- DROP+CREATE, frozen on the day it was written, so a re-run after later
 -- migrations silently restored the frozen bodies over the live hardening —
--- no error, no record. On the day of retirement it forked from the numbered
--- sequence at: the three checkout_messages policies
--- (live: 20260727 and 20261046 — checkout_messages_own_update now reads the
--- role collection) — 3 of its 31 definitions; the other 28 were byte-identical
--- copies of numbered migrations.
+-- no error, no record. On the day of retirement, compared definition by
+-- definition against the live numbered sequence (comments stripped,
+-- whitespace collapsed, case folded), 3 of its 31 distinct definitions had
+-- forked: the three checkout_messages policies (live: 20260727 and 20261046 —
+-- checkout_messages_own_update now reads the role collection); the other 28
+-- still matched their numbered migrations modulo comments, case and
+-- whitespace: forks-in-waiting.
 --
 -- The numbered files in supabase/migrations/ (NNNNNNNN_*.sql, applied in
 -- order) are the ONLY source of truth. lib/__tests__/migrationSourceOfTruth

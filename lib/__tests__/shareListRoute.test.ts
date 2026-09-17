@@ -3,7 +3,8 @@
 //
 //   * /api/share/list lists a document's shares under the CALLER's own read
 //     decision: readable → every row with tokens; not readable → only the
-//     caller's own rows, every token withheld; not a member → 403. The
+//     caller's own rows, every token withheld; not a member → the SAME 404 as
+//     a document that does not exist (no cross-org existence oracle). The
 //     decision fails CLOSED on a lookup error.
 //   * lib/documentShares.listShareLinks goes through that route (no more
 //     client-side SELECT of document_shares), and the modal renders no URL,
@@ -13,7 +14,7 @@
 //     read-decision block byte-for-byte from the 20261037 INSERT policy.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 
@@ -91,12 +92,19 @@ describe("GET /api/share/list — the listing is gated by the caller's own read 
     expect(state.calls.filter((c) => c.table === "document_shares")).toHaveLength(0);
   });
 
-  it("403 for a caller who is not an active member of the document's org — no share row is read", async () => {
+  it("a caller who is not an active member of the document's org gets the SAME 404 as a missing document — no share row is read, no existence oracle", async () => {
     state.user = { id: "u9" };
     state.principal = null;
-    const res = await get("doc1");
-    expect(res.status).toBe(403);
+    const missing = await get("doc-missing");
+    const foreign = await get("doc1");
+    expect(foreign.status).toBe(404);
+    expect(foreign.status).toBe(missing.status);
+    expect(await foreign.text()).toBe(await missing.text());
     expect(state.calls.filter((c) => c.table === "document_shares")).toHaveLength(0);
+    // the route never answers 403: nothing distinguishes "exists in another org" from "does not exist"
+    const src = readFileSync(join(process.cwd(), "app/api/share/list/route.ts"), "utf8");
+    expect(src).not.toMatch(/bad\([^)]*,\s*403\)/);
+    expect(src.match(/bad\("Document not found", 404\)/g)).toHaveLength(2);
   });
 
   it("a member who can read the document gets every row, tokens included, org-joined", async () => {
@@ -231,7 +239,7 @@ describe("20261066 — document_shares SELECT applies the document-read decision
   it("ends with ONE result set: probes (check, ok) unioned with aggregate-only inventory (n as text), deparse-safe patterns", () => {
     const tail = m66.slice(m66.indexOf("── Verification"));
     expect(tail.match(/;\s*$/g)).toHaveLength(1);
-    expect(tail.match(/\bSELECT '/g)!.length).toBeGreaterThanOrEqual(9);
+    expect(tail.match(/\bSELECT '/g)!.length).toBeGreaterThanOrEqual(10);
     expect(tail.match(/UNION ALL/g)!.length).toBe(tail.match(/\bSELECT '/g)!.length - 1);
     expect(tail).toMatch(/AS check,[\s\S]*AS ok,\s*\n\s*NULL::text AS n/);
     for (const x of tail.matchAll(/qual LIKE '((?:[^']|'')*)'/g)) {
@@ -243,5 +251,25 @@ describe("20261066 — document_shares SELECT applies the document-read decision
     // narrowing, not widening: no pre-apply TEMP TABLE is needed and none is claimed
     expect(m66).not.toMatch(/TEMP TABLE/);
     expect(m66).toMatch(/NARROWS: strictly fewer rows are visible/);
+  });
+
+  it("the 'only policy' probe counts by cmd alone — a surviving permissive SELECT / FOR ALL policy would OR with the new one", () => {
+    const tail = m66.slice(m66.indexOf("── Verification"));
+    const probes = tail.split(/\nUNION ALL\n/);
+    const exists = probes.find((x) => x.includes("document_shares_org_select exists"))!;
+    const only = probes.find((x) => x.includes("ONLY permissive policy admitting SELECT"))!;
+    expect(exists).toMatch(/COUNT\(\*\) = 1[\s\S]*cmd = 'SELECT'[\s\S]*policyname = 'document_shares_org_select'/);
+    expect(only).toMatch(/COUNT\(\*\) = 1[\s\S]*tablename = 'document_shares'[\s\S]*cmd IN \('SELECT', 'ALL'\)[\s\S]*permissive = 'PERMISSIVE'/);
+    expect(only).not.toMatch(/policyname/);
+    // the sequence itself leaves exactly one permissive policy admitting SELECT on document_shares
+    // (20261022 dropped the 20260623 FOR ALL policy), so the probe is true on a fully-migrated database
+    const dir = join(process.cwd(), "supabase", "migrations");
+    const live = new Map<string, string>();
+    for (const f of readdirSync(dir).filter((x) => /^\d{8}/.test(x) && x.endsWith(".sql")).sort()) {
+      const txt = readFileSync(join(dir, f), "utf8").replace(/--[^\n]*/g, "");
+      for (const m of txt.matchAll(/DROP POLICY IF EXISTS (\w+) ON document_shares/g)) live.delete(m[1]);
+      for (const m of txt.matchAll(/CREATE POLICY (\w+) ON document_shares FOR (\w+)/g)) live.set(m[1], m[2]);
+    }
+    expect([...live.entries()].filter(([, cmd]) => cmd === "SELECT" || cmd === "ALL")).toEqual([["document_shares_org_select", "SELECT"]]);
   });
 });

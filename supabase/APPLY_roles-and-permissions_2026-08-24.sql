@@ -7,11 +7,15 @@
 -- It was a SECOND SOURCE OF TRUTH: every statement was CREATE OR REPLACE /
 -- DROP+CREATE, frozen on the day it was written, so a re-run after later
 -- migrations silently restored the frozen bodies over the live hardening —
--- no error, no record. On the day of retirement it forked from the numbered
--- sequence at: publish_revision (live: 20261049),
--- org_capability_allows (live: 20261052 — the resource-dimension wrapper),
--- document_shares_insert (live: 20261037) and document_shares_update (live:
--- 20261026) — 4 of its 8 definitions.
+-- no error, no record. On the day of retirement, compared definition by
+-- definition against the live numbered sequence (comments stripped,
+-- whitespace collapsed, case folded), 4 of its 8 definitions had forked:
+-- publish_revision (live: 20261049), org_capability_allows (live: 20261052 —
+-- the resource-dimension wrapper), document_shares_insert (live: 20261037)
+-- and document_shares_update (live: 20261026); 5 once 20261066 lands, which
+-- redefines document_shares_org_select. The other three
+-- (document_shares_delete, access_requests_admin_select, acl_index_denies)
+-- still matched modulo case and whitespace: forks-in-waiting.
 --
 -- The numbered files in supabase/migrations/ (NNNNNNNN_*.sql, applied in
 -- order) are the ONLY source of truth. lib/__tests__/migrationSourceOfTruth
