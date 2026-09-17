@@ -461,7 +461,7 @@ touches only `lib/workflow.ts:74-75`.** It is also the prerequisite for `WF-7`.
 ## WF-9 · Attachment and comment writes bypass the workflow route entirely
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / access-control
 - **Locations:**
@@ -514,6 +514,12 @@ intermittent unexplained 409s during approval.
 2. The upload affordance is derived from available actions, not a hardcoded role
    list.
 3. A concurrent upload and approval cannot lose either party's history entry.
+
+**Resolution (2026-09-17, Round E).** The three direct writers are gone from the ticket page; each write now rides a server route with compare-and-set on the ticket. (1) **Attachments** — `attach_file` is a workflow ACTION in `lib/workflow.ts`, offered to the ticket's participants by identity (requester / assigned drafter / assigned engineer), to the drafting pool only while the ticket is unassigned (the `WF-8` scoping), and to the `ticket.manage` tier — never to an arbitrary Drafter or Requester across every ticket; it is `optional` (never an attention item, `WF-24`) and absent on terminal tickets. `computeTransition` (`lib/ticketTransitions.ts`, `attachment` input) appends the file and the "File Uploaded" history line without moving the status; `app/api/tickets/workflow-action/route.ts` validates the record (name, type ∈ Source/Reference/Draft/Final, storage URL → 400 otherwise), applies it on the `(status, last_modified)` compare-and-set every transition uses, writes the `TICKET_ATTACH_FILE` audit row naming the file, and fans out as every transition does. The page's `handleFileUpload` still uploads the bytes to storage, then posts `attach_file`; a 409 is reported as "someone else updated this request", never silently. The upload affordance is `availableActions.some(a => a.action === 'attach_file')` — the hardcoded `['Drafter','Requester','Admin']` list is gone, so the assigned drafter whose headline is Engineer-2/DocCtrl now sees the button and a foreign Drafter does not. (2) **Comment root-cause category** — `/api/tickets/comment` PATCH accepts `category` (author or Admin, compare-and-set on `last_modified`, `ticket_comments.category` kept in lockstep, `TICKET_ROOT_CAUSE_UPDATE` audited server-side with the previous value); `handleUpdateCategory` calls it with optimistic rollback. (3) **Watchers** — new `app/api/tickets/watch/route.ts`: membership-checked, only ever adds/removes the CALLER, compare-and-set on `last_modified` (and bumps it, so a transition racing the follow fails its own CAS instead of overwriting the array), one re-read on conflict then 409; `toggleWatch` calls it. Tests — `lib/__tests__/sweepRoundE_A.test.ts` "WF-9": the engine authority matrix (participants ✓, pool while unassigned ✓, management ✓, foreign Drafter/Requester/Engineer/DocCtrl ✗, terminal ✗); the transition; route 403 for a foreign drafter with no write, 400 without the record or with a bad type, 200 for the assigned drafter with the `id`/`status`/`last_modified` CAS legs and the audit row observed, 409 under a forced concurrent write with no audit row; comment PATCH 200 (CAS + table mirror + audit) / 403 / 400; watch route 401 / 403 / 200 / idempotent / unfollow removes only the caller / 409 after the re-read; and source pins that the page no longer writes `attachments`, `comments` or `watchers` itself. `lib/__tests__/workflow.test.ts` exact action lists updated for the new participant action.
+
+**Done-when.** 1 ✓ — adding an attachment is `getActions` + the route's compare-and-set; there is no removal path in the app (verified: the page never filters or deletes `attachments`), so nothing to route. 2 ✓ — `canAttach` is derived from the engine's actions, no role list. 3 ✓ — whichever of a concurrent upload and approval lands second fails the `(status, last_modified)` CAS with 409 and re-reads; neither history entry is lost (pinned by the forced-conflict route test).
+
+**Scope / residual.** Deliberate authority shape, recorded: attaching is now also available to the assigned ENGINEER by identity and to `ticket.manage` holders (Manager/Supervisor by default) where the old list said `Admin` — the org-configurable override tier, consistent with every other transition; `Requester`-role members lose the org-wide upload they had on other people's tickets (the finding's hole). Not touched: the bulk "mark urgent" write in `app/(protected)/requests/page.tsx` (the chain-reaction note's second `last_modified` clobberer) and the `unread_by` clear on open — both write unguarded columns and are outside this done-when; the `WF-2` trigger guard is unchanged.
 
 ---
 
@@ -894,7 +900,7 @@ say a delegation was used.
 ## WF-17 · Dead statuses, dead capabilities, dead code paths
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** hardening pass — **SURVIVES**. Confirmed alongside the other census findings in this area: dead capabilities (`admin.analytics_view`, `admin.archive_view` — `WF-20`), dead code (`canBlindDrillAccess` — `OWN-21`), dead columns (`outcome_ref` — `LIFE-10`, `inapp_enabled`/`push_enabled` — `drafting-flow/EDGE-14`) and dead SLA machinery (`drafting-flow/EDGE-7`).
@@ -937,12 +943,20 @@ decorative** — precisely the failure mode that
 4. `approve_initial`'s dead client path and `metadata.minor_correction` have
    their recorded dispositions.
 
+**Resolution (2026-09-17, Round E — `DEC-14` and `DEC-11` landed).** **`CANCELED` is implemented:** `cancel_request` (`lib/workflow.ts`) is offered to the requester by identity and to the `ticket.manage` tier at `PENDING_ASSIGNMENT` and `DRAFTING` only, requires a comment (the reason lands in the thread and the history line), is `optional` (never an attention item), and moves the ticket to `CANCELED` (`lib/ticketTransitions.ts`: `closed_at` stamped, notification event `ticket_closed`); the route audits it as `TICKET_CANCEL_REQUEST`. `CANCELED` is terminal — no reopen, no force close, no attachments — and `WorkflowDiagramModal` now says who cancels and that a new request is filed instead. **`NEW` and `PENDING_ENG_INITIAL` are gone:** from the `TicketStatus` union (`types/schema.ts`), the engine (the whole initial-review case, and with it the only producer of `approve_initial` — its `computeTransition` branch is deleted too), `lib/ticketRouting.ts` (the engineer entry pool), `lib/ticketAttention.ts`, the portal's colour map and slot counts, the dashboard widget's legend and pipeline, the open-status lists in `lib/impact.ts` and `app/api/intake/resolve/route.ts`, and two stale comments (`lib/search.ts`, `EngineerPickerModal`). Migration **`20261053_rp_roundE_dead_statuses.sql`**: inventories rows in the two statuses into a TEMP TABLE before the transaction (aggregate counts), moves them to `PENDING_ASSIGNMENT` with an appended history line saying why, flips the column DEFAULT from schema.sql's `'NEW'` to `PENDING_ASSIGNMENT`, and ends in ONE result set (4 probes + the two migrated counts + the queue size after). No CHECK constraint exists on `tickets.status` and none is added (the restore path re-inserts historical rows verbatim; the column is guarded by `ticket_update_guard` and the route). **`DEC-11` dispositions:** `ticket.initial_review`, `ticket.eng_review`, `ticket.final_approve` carry `dormant: true` + a `dormantNote` (`lib/capabilityPolicy.ts`), and `CapabilityPolicyEditor` renders those rows at half opacity with a DORMANT tag and the note as the tooltip — the defaults are untouched, so the SQL mirror still matches; the dead `approve_initial → assign` client rewrite is deleted from `initiateWorkflowAction`; `metadata.minor_correction` is kept (provenance). Tests — `lib/__tests__/sweepRoundE_A.test.ts` "WF-17": the cancel matrix (who / where / `requiresComment`; terminal `CANCELED` offers nothing), the transition, the route (200 with a reason and the audit row; 400 without; 403 for a stranger), the no-literal census across fourteen files plus the union itself, the dormant marks and the editor rendering, and the migration's shape (temp table before `BEGIN`, the two-status `UPDATE`, the `SET DEFAULT`, no CHECK/DROP/function/policy, exactly one final statement, aggregate-only). `capabilityPolicy.test.ts`, `ticketTransitions.test.ts` and `ticketRouting.test.ts` no longer exercise the retired stage.
+
+**Done-when.** 1 ✓ — a requester cancels their own open request with a reason from `PENDING_ASSIGNMENT` or `DRAFTING`; audited (`TICKET_CANCEL_REQUEST` + history + thread). 2 ✓ code / ⏳ migration — no code path names the two statuses (pinned); the row inventory and move are `20261053`, whose result set records the counts — not done until it is pasted. 3 ✓ — the three capabilities are `dormant: true`, rendered greyed with the tooltip. 4 ✓ — `approve_initial`'s client path is deleted (no producer, no consumer); `metadata.minor_correction` stays, per `DEC-11`, and is pinned as kept.
+
+**Pending migration:** `supabase/migrations/20261053_rp_roundE_dead_statuses.sql` (not a widening; one paste; the two inventory counts ride in its single result set).
+
+**Scope / residual.** `supabase/schema.sql` still declares `status … DEFAULT 'NEW'` as the pre-migration baseline of record — the live default is changed by the migration, not by editing the baseline. A restore of a pre-Round-E backup could re-insert a `NEW`/`PENDING_ENG_INITIAL` row through the service role; re-running `20261053`'s `UPDATE` (idempotent) moves it. `ticket.eng_review` / `ticket.final_approve` are dormant as BASE lists only: a request-type override on either row still governs who may be picked as the reviewer (`DEC-13` stage 2) — said in their `dormantNote`.
+
 ---
 
 ## WF-18 · The "Reassign" button always 403s
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / ux
 - **Locations:**
@@ -968,12 +982,18 @@ management + DraftingSupervisor, so they would fail twice over.
 **Done when.** An authorized user can reassign a ticket's drafter after
 assignment, the new assignee is notified, and the change is audited.
 
+**Resolution (2026-09-17, Round E).** Root cause confirmed exactly as recorded: `handleReassignClick` posted `assign` with a hand-built label, and `assign` is offered only at `PENDING_ASSIGNMENT`, the one status a ticket with `assignedDrafterId` can never be in — so the route's `allowed.find` never matched. The fix is a real engine action, **`reassign_drafter`** (`lib/workflow.ts`): offered to `ticket.assign` holders (management + DraftingSupervisor by default; DocCtrl only if the org grants it) whenever a drafter is set and the ticket is not terminal — `DRAFTING`, `REVISION_REQ`, `PENDING_REVIEW`, `PENDING_FINAL_APPROVAL`, `PENDING_IFC`, `FINAL_DRAFT`; `requiresComment` (the reason); `optional` (never an attention item). `computeTransition` changes only the drafter slot (status untouched), sets `unread_by` to the new drafter, writes the history line "Reassigned to ⟨name⟩ [Reason: …]" and types the comment `Reassignment`; `classifyTransitionNotification` treats it as an assignment, so the new drafter gets "You were assigned to …" in-app and by email. The route applies the same input rail as `assign` (a drafter must be picked; the pick must be an active member holding `ticket.draft_work`; at 3+ members not the requester — `WF-14`), refuses reassigning to the current drafter (400), and audits `TICKET_REASSIGN_DRAFTER` with `from_drafter_id`, `to_drafter_id` and the reason. The page's Reassign button now renders from `availableActions.find(a => a.action === 'reassign_drafter')` and opens the existing reassignment modal (which collects the new drafter and the reason) with the engine's own action. Tests — `lib/__tests__/sweepRoundE_A.test.ts` "WF-18": the offer matrix; the transition; route 200 at `DRAFTING` and at `PENDING_FINAL_APPROVAL` with the update, the CAS legs, the audit details and the single notification to the new drafter observed; 400 for same-drafter / no reason / an assignee without drafting authority; 403 for a DocCtrl; and, proving the brief's wording end to end, an Admin's `reassign_engineer` at `PENDING_FINAL_APPROVAL` (200, `assigned_engineer_id` moved, audited, the new engineer notified). `rpPhase4Migration.test.ts`'s `WF-22` pin covers the widened rail.
+
+**Done-when.** ✓ — an authorized user (`ticket.assign`) can reassign the drafter after assignment; the new assignee is notified; the change is audited (audit row + history line + typed comment).
+
+**Scope / residual.** The engineer-reviewer reassignment (`reassign_engineer`) already existed and needed no change — it is now covered by a route test. A DocCtrl no longer sees a Reassign button that could only 403; they see it exactly when their org grants `ticket.assign`.
+
 ---
 
 ## WF-19 · Notification dead ends — nobody is told when a ticket (re-)enters the assignment queue
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / process
 - **Locations:**
@@ -1017,6 +1037,12 @@ with three jobs, so widening recipients also changes the unread UI.
 1. A ticket entering a queue state notifies whoever the routing policy names.
 2. Routing matches against the full role collection, not the headline.
 3. The post-action email drain succeeds in a default deployment.
+
+**Resolution (2026-09-17, Round E).** `app/api/tickets/workflow-action/route.ts` now resolves the assignment pool on EVERY entry into `PENDING_ASSIGNMENT` from another status — `resolveTicketRecipients(orgId, "PENDING_ASSIGNMENT", actor, supabaseAdmin)`, the same policy creation uses (DraftingSupervisor pool → Admin fallback, honouring `adminsAlsoReceiveWhenSupervisorSet`) — and unions it into both `updates.unread_by` (the unread badge and the follow list read that column) and the fan-out recipients, so the pool gets the in-app row and the preference-aware email through the route's existing server-side fan-out (the same `notifications` / `email_notifications` tables `lib/notify` writes; no new channel). `lib/ticketRouting.ts` gained an optional client parameter (`RoutingClient`, threaded to the member and config reads), because the shared browser client has no session in a route handler and would resolve nobody under RLS. With `approve_initial` gone (`WF-17`), `approve_team` is the only live writer of `PENDING_ASSIGNMENT`; a non-entry action in the queue (an attachment, say) does not re-notify. **Done-when 2** was already true since `ADD-1` (`byRole` reads `roles`, the held collection) and is now pinned: a Manager whose collection holds DraftingSupervisor is the supervisor routing tells. **Done-when 3:** both post-action drains (workflow-action and comment) now send `Bearer ${CRON_SECRET || <the caller's session token>}` — `SURF-5` made a session bearer a legitimate drain credential scoped to the caller's orgs, so a blank `CRON_SECRET` no longer turns every workflow email into a next-day cron delivery. Tests — `lib/__tests__/sweepRoundE_A.test.ts` "WF-19": engineering review complete → the DraftingSupervisor (headline and collection-held alike) is in `unread_by`, gets the bell row with the supersession metadata and the email row; Admins step aside when a supervisor exists and are the pool when none does; the actor is excluded; a queue non-entry re-notifies nobody; the client parameter is exercised; the drain-token pins. `ticketRouting.test.ts` gained the collection case and pins that the retired stage has no routing branch.
+
+**Done-when.** 1 ✓ — a ticket entering the queue notifies whoever the routing policy names. 2 ✓ — routing matches the full collection (since `ADD-1`; pinned now). 3 ✓ — the drain authorises with the caller's session when `CRON_SECRET` ships blank.
+
+**Scope / residual.** `lib/notify/dispatch.emit` itself still binds to the browser client, so its server-side callers (the hand-back route) remain best-effort — not this finding. Creation-time routing (`requests/new`, `CheckInPanel`, `transitionIn`) is unchanged and still correct. `PENDING_IFC` routing to the supervisor is a "told" nudge, not an action item (`WF-24`).
 
 ---
 
@@ -1070,7 +1096,7 @@ policy or the data moves behind a service-role route.
 ## WF-21 · `reopen_ticket` re-issues a duplicate deliverable revision, and `/verify-ticket` reports it as current
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / data-integrity
 - **Locations:**
@@ -1120,6 +1146,12 @@ on a ticket the engineer did approve.
 
 **Done when.** Two approvals of the same ticket cannot produce the same issued
 revision label, and a ticket back under review does not verify as current.
+
+**Resolution (2026-09-17, Round E — `DEC-15` landed).** `reopen_ticket` (`lib/ticketTransitions.ts`) now starts a new revision cycle: `revision_count + 1`, `draft_iteration = 0`, `deliverable_rev = null` (and `closed_at` cleared, as before), so after an issue at Rev 2 the next submission is `3A` and the next approval `3` — two approvals can no longer print the same label. `approve_minor_correction` at `PENDING_FINAL_APPROVAL` writes `engineer_approved_at` (the sign-off dot resolves); at `PENDING_REVIEW` it does not. `/api/verify-ticket` is reopen-aware: with no label on the row, a cycle count, and a live (non-terminal) status, the ticket is treated as back under review with the last issued number = `revision_count` (issued label = `revision_count + 1` at approval time, and the reopen added one), so a print of the last issue reads `revision_in_progress`, an older one `superseded`, and nothing reads `current`; a ticket closed again without a new issue stays `unknown`, and an ordinary issued row is `current` exactly as before. The reopen action's description tells the user a new cycle starts. Tests — `lib/__tests__/sweepRoundE_A.test.ts` "WF-21": the full lifecycle (issue 2 → reopen → 3A → 3), the minor-correction stamp at both stages, and the verify route driven end to end (reopened: `2` → `revision_in_progress`, `1` → `superseded`, `2A` → `draft_copy`; closed-again → `unknown`; ordinary issue → `current`; resubmitted `3A` → `revision_in_progress`; never issued → `unknown`). `ticketTransitions.test.ts`'s reopen case pins the three fields.
+
+**Done-when.** ✓ — two approvals of the same ticket cannot produce the same issued revision label; ✓ — a ticket back under review does not verify as current.
+
+**Scope / residual.** The `FINAL_DRAFT → reject_final → REVISION_REQ` path (an issued label still on the row while a new cycle is in draft, until the drafter's next `submit_draft` writes the letter rev) still verifies the old print as `current` for that interval — outside this finding (`drafting-flow/EDGE-2` territory); noted, not fixed here.
 
 ---
 
@@ -1210,7 +1242,7 @@ in `CapabilityId`, verified by a test rather than by inspection.
 ## WF-24 · Attention feed and workflow engine disagree about who must act
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -1236,6 +1268,12 @@ bell and `/inbox`. Aligning the definitions changes all three counts at once.
 **Done when.** The attention badge and the ticket page agree for every
 role/status combination — ideally because attention is derived from the engine
 rather than from a parallel table.
+
+**Resolution (2026-09-17, Round E — closes `CHAIN-3`'s residual).** Two changes. (1) **One management tier.** `lib/managementRoles.ts` is THE definition (`MANAGEMENT_ROLES = ["Admin","Manager","Supervisor"]`, `isManagementRole(role)`, `holdsManagementRole(roles)`); `lib/capabilityPolicy.ts`'s `MGMT` is built from it (defaults unchanged, so the SQL mirror `org_capability_allows_for` still matches — pinned), `lib/workflow.ts` re-exports it (the inline `Admin||Manager||Supervisor` is gone), and `lib/ticketAttention.ts` no longer holds a role table at all. DraftingSupervisor is NOT management (it holds `ticket.assign` explicitly — frozen in `workflow.test.ts`); the visibility scope that includes them (who sees the whole queue) is now named for what it is, `QUEUE_VIEW_ROLES` / `isQueueViewer`, used by the badge hook's fetch scope and the portal's supervisor board — unchanged behaviour, honest name. (2) **Attention is derived from the engine.** `isActionRequired(ticket, {uid, roles, policy?, activeMemberCount?})` calls `WorkflowEngine.getActions` and returns true exactly when the viewer is offered a live action that is neither `disabledReason` (separation of duties) nor `optional` — a new `WorkflowAction.optional` flag the engine sets on what is available but not what the ticket waits on: force close, `reassign_engineer`, `reassign_drafter`, `cancel_request`, `reopen_ticket`, `attach_file`, the management arms at `PENDING_ENG_TEAM` / `PENDING_FINAL_APPROVAL` while a named engineer holds the review, and a co-reviewer's close/reject on the requester's behalf at `FINAL_DRAFT`. The badge hook (`hooks/useTicketNotifications.ts`) and the portal (`app/(protected)/requests/page.tsx`) load the org's capability policy and pass it, so the badge and the ticket page evaluate the same inputs. Consequences, all deliberate: a DraftingSupervisor is flagged in the queue they own and nowhere the page shows them view-only (`PENDING_REVIEW`, `PENDING_FINAL_APPROVAL`, `PENDING_IFC` no longer count — `PENDING_IFC` remains a routed bell row, "told" not "must act"); management is no longer flagged at `PENDING_IFC` (the drafter's bench) or at final approval once an engineer holds it; DocCtrl's unclearable `FINAL_DRAFT` / `PENDING_IFC` flags are gone; a separation-of-duties-disabled action is not an item. Tests — `lib/__tests__/ticketAttention.test.ts` (rewritten): for nine roles × ten statuses × five identity variants the badge equals the page's live-action set; the supervisor and management cases; the org-policy case (a supervisor-only queue stops flagging drafters); SoD. `lib/__tests__/sweepRoundE_A.test.ts` "WF-24 / CHAIN-3": the single definition and its three consumers pinned by source; the badge hook and portal wiring; the three-surface queue coherence (everyone routing tells is offered `assign` and is flagged; the `WF-24` supervisor case).
+
+**Done-when.** ✓ — the attention badge and the ticket page agree for every role/status combination, because attention IS the engine (no parallel table), pinned by the matrix test.
+
+**Scope / residual.** Routing ("who is told") stays deliberately narrower than the engine ("who can act"): a Manager can assign and is flagged, but only the supervisor pool / Admin fallback is emailed — the routing policy's own product intent, recorded in `lib/ticketRouting.ts` and pinned as a subset relation, not unified. The badge hook does not fetch the active member count, so a SoD-disabled approval flags in the badge only when the engine would still offer another live action (feedback stays live), which is the same thing the page shows.
 
 ---
 
