@@ -3,6 +3,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { buildAclIndex, buildAclIndexFromChain } from "@/lib/acl";
+import { logAuditAction } from "@/lib/audit";
 import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig, LibraryHomeConfig } from "@/types/schema";
 
 const TABLE = "collections";
@@ -146,8 +147,16 @@ export async function createFolder(input: CreateFolderInput): Promise<string> {
 }
 
 /** Create a new library inline (Save-As style), mirroring the admin form's insert
- *  with sensible defaults. Gated to users who may create libraries. */
-export async function createLibrary(input: { orgId: string; name: string; type?: string; createdBy: string }): Promise<{ id: string; name: string }> {
+ *  with sensible defaults. Gated to users who may create libraries.
+ *
+ *  OWN-22: the library is born OWNED — the creator is stamped as its
+ *  accountable owner on the INSERT (the wizard path, GAP-12, prompts for one;
+ *  this door did not, so its libraries routed every review reminder to
+ *  Admin/DocCtrl). Stamped on the insert rather than via setOwner because the
+ *  library's sensitive-column guard (20261036) would refuse a non-controller's
+ *  follow-up UPDATE; the audit row is the same OWNER_ASSIGNED record setOwner
+ *  writes, and setOwner never notifies a self-assignment either. */
+export async function createLibrary(input: { orgId: string; name: string; type?: string; createdBy: string; createdByName?: string | null }): Promise<{ id: string; name: string }> {
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("libraries")
@@ -165,6 +174,8 @@ export async function createLibrary(input: { orgId: string; name: string; type?:
       default_new_acl: null,
       acl: null,
       org_id: input.orgId,
+      owner_user_id: input.createdBy,
+      owner_name: input.createdByName ?? null,
       created_at: now,
       created_by: input.createdBy,
       updated_at: now,
@@ -173,7 +184,13 @@ export async function createLibrary(input: { orgId: string; name: string; type?:
     .select("id, name")
     .single();
   if (error || !data) throw new Error(error?.message || "Failed to create library");
-  return data as { id: string; name: string };
+  const created = data as { id: string; name: string };
+  await logAuditAction({
+    action: "OWNER_ASSIGNED", resourceType: "library", resourceId: created.id,
+    orgId: input.orgId, userId: input.createdBy,
+    details: { owner_user_id: input.createdBy, owner_name: input.createdByName ?? null, level: "library", at_creation: true },
+  }).catch(() => {});
+  return created;
 }
 
 /** Flat list of a library's folders for a picker (one-time fetch). */

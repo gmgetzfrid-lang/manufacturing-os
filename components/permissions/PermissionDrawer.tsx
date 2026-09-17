@@ -132,6 +132,12 @@ export default function PermissionsDrawer(props: {
 
   nodeType: NodeType;
   nodeId: string;
+  /** OWN-20: the library this node belongs to (a folder's parent library; a
+   *  library node needs none — it is `nodeId`). After a library / folder
+   *  save, the descendants' stored `acl_index` is recomputed through
+   *  /api/acl/rebuild so an inherited change is enforced now, not at the
+   *  nightly rebuild. */
+  libraryId?: string;
 
   acl?: AccessControl | null;
   visibility?: "normal" | "hidden" | "private";
@@ -322,6 +328,30 @@ export default function PermissionsDrawer(props: {
             after: { acl: nextAcl, visibility },
           },
         }).then(() => undefined, () => undefined);
+      }
+      // OWN-20: a library / folder ACL change makes every descendant's stored
+      // acl_index stale (it is chain-resolved at write time and the database
+      // reads it directly). Recompute the subtree now — server-side, same
+      // code as the nightly pass, diff-guarded. Best-effort: the save above
+      // is already committed; a failure is said out loud, never hidden.
+      const rebuildLibraryId = nodeType === "library" ? nodeId : nodeType === "collection" ? props.libraryId : undefined;
+      if (rebuildLibraryId && activeOrgId) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch("/api/acl/rebuild", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
+            body: JSON.stringify({ orgId: activeOrgId, libraryId: rebuildLibraryId }),
+          });
+          const out = (await res.json().catch(() => ({}))) as { error?: string; errors?: string[] };
+          if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+          if (Array.isArray(out.errors) && out.errors.length) throw new Error(out.errors[0]);
+        } catch (e) {
+          await appAlert({
+            title: "Permissions saved — descendants not yet re-indexed",
+            message: `The change is saved, but the folders and documents under it could not be re-indexed right now (${(e as Error).message}). The nightly rebuild will apply it; until then an inherited change may not be enforced for them.`,
+          });
+        }
       }
       close();
     } catch (e) {

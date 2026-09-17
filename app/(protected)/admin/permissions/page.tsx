@@ -76,6 +76,8 @@ export default function PermissionsConsolePage() {
     nodeType: NodeType; nodeId: string; title: string;
     acl: AccessControl | null; visibility: "normal" | "hidden" | "private";
     aclChain: (AccessControl | undefined)[];
+    /** OWN-20: the folder's parent library — the drawer re-indexes its subtree after a save. */
+    libraryId?: string;
   } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -214,8 +216,8 @@ export default function PermissionsConsolePage() {
     } finally { setExporting(false); }
   }, [activeOrgId, libs, folders, libById, ownerFor, ownerLabel]);
 
-  const openDrawer = (nodeType: NodeType, node: NodeRow, title: string, chain: (AccessControl | undefined)[]) =>
-    setDrawer({ nodeType, nodeId: node.id, title, acl: node.acl, visibility: node.visibility, aclChain: chain });
+  const openDrawer = (nodeType: NodeType, node: NodeRow, title: string, chain: (AccessControl | undefined)[], libraryId?: string) =>
+    setDrawer({ nodeType, nodeId: node.id, title, acl: node.acl, visibility: node.visibility, aclChain: chain, libraryId });
 
   const nodeRow = (node: NodeRow, nodeType: NodeType, chain: (AccessControl | undefined)[], icon: React.ReactNode, indent: string, owner?: { userId: string | null; source: string | null }) => (
     <div key={node.id} className={`flex items-center gap-2 ${indent} py-1.5 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50`}>
@@ -303,7 +305,7 @@ export default function PermissionsConsolePage() {
                         {ownerChip(ownerFor(null, f.ownerUserId, lib))}
                         {ruleCount(f.acl) > 0 && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{ruleCount(f.acl)} rules</span>}
                         <button
-                          onClick={(e) => { e.preventDefault(); openDrawer("collection", f, f.name, [lib.acl ?? undefined]); }}
+                          onClick={(e) => { e.preventDefault(); openDrawer("collection", f, f.name, [lib.acl ?? undefined], lib.id); }}
                           className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold hover:border-[var(--color-accent-ring)]"
                         >
                           <KeyRound className="w-3 h-3 text-[var(--color-accent)]" /> {canEdit ? "Edit" : "View"}
@@ -353,6 +355,7 @@ export default function PermissionsConsolePage() {
           acl={drawer.acl}
           visibility={drawer.visibility}
           aclChain={drawer.aclChain}
+          libraryId={drawer.libraryId}
           canEdit={canEdit}
           title={drawer.title}
         />

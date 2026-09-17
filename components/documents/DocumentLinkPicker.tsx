@@ -70,7 +70,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 
   const addLibrary = async () => {
     if (!userId) return;
-    const name = await appPrompt({ title: "New library", placeholder: "Library name" });
+    const name = await appPrompt({ title: "New library", message: "You will be recorded as this library's accountable owner (reassignable under Admin → Permissions & ownership).", placeholder: "Library name" });
     if (!name?.trim()) return;
     try {
       const lib = await createLibrary({ orgId, name: name.trim(), createdBy: userId });

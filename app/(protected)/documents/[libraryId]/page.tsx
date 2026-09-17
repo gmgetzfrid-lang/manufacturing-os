@@ -4778,6 +4778,7 @@ export default function LibraryExplorerPage() {
           onClose={() => setShowPermissions(false)}
           nodeType={selectedDoc ? "document" : "collection"}
           nodeId={(selectedDoc?.id ?? renameFolderId) as string}
+          libraryId={libraryId}
           acl={selectedDoc?.acl ?? folderMap.get(renameFolderId ?? "")?.acl}
           visibility={
             (selectedDoc?.visibility ?? folderMap.get(renameFolderId ?? "")?.visibility) as NodeVisibility
