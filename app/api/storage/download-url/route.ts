@@ -87,6 +87,12 @@ export async function GET(req: NextRequest) {
             },
             aclChain: [doc.acl as AccessControl | undefined],
             visibility,
+            // GAP-15/DEC-7: ownership serves on its own, so an owner who is
+            // also a controller is NOT a bypass read (DEC-43). The explicit
+            // document owner is authoritative here (user_is_effective_owner
+            // says the same); the folder / library / team cascade is asked
+            // below, before any audit row is written.
+            effectiveOwnerUserId: (doc.owner_user_id as string | null) ?? null,
           };
           const allowed = canServeContent(contentCheck);
           // DOCACL-3 / DEC-43: controllers are unscoped by design (the
@@ -95,15 +101,26 @@ export async function GET(req: NextRequest) {
           // is a controller, write an audit row. Best-effort — a failed
           // audit insert never blocks the rail.
           if (allowed && controllerBypassDecided(contentCheck)) {
-            await supabaseAdmin.from("audit_logs").insert({
-              action: "CONTROLLER_RESTRICTED_READ",
-              resource_type: "document",
-              resource_id: docId,
-              org_id: orgId,
-              user_id: user.id,
-              user_email: user.email ?? null,
-              details: { path, visibility, roles: contentCheck.principal.roles },
-            }).then(() => undefined, () => undefined);
+            // Ownership that would have served the bytes anyway leaves no
+            // row: the same cascade the deny path consults. A lookup error
+            // records the read rather than skipping it.
+            const { data: isOwner } = await supabaseAdmin.rpc("user_is_effective_owner", {
+              p_doc_owner: (doc.owner_user_id as string | null) ?? null,
+              p_collection: (doc.collection_id as string | null) ?? null,
+              p_library: (doc.library_id as string | null) ?? null,
+              p_uid: user.id,
+            });
+            if (isOwner !== true) {
+              await supabaseAdmin.from("audit_logs").insert({
+                action: "CONTROLLER_RESTRICTED_READ",
+                resource_type: "document",
+                resource_id: docId,
+                org_id: orgId,
+                user_id: user.id,
+                user_email: user.email ?? null,
+                details: { path, visibility, roles: contentCheck.principal.roles },
+              }).then(() => undefined, () => undefined);
+            }
           }
           if (!allowed) {
             // GAP-15/DEC-7: ownership carries read access — the effective

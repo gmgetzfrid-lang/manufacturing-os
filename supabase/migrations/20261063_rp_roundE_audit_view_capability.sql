@@ -24,7 +24,12 @@
 -- captured FIRST, outside the transaction, and returned with the probes.
 -- On apply nothing changes for anyone: no org stores an admin.audit_view
 -- entry yet (probe below), so every org evaluates to the shipped default,
--- which is byte-identical to the list the overlay hardcoded.
+-- which is byte-identical to the list the overlay hardcoded. The AFTER rows
+-- do not re-run the BEFORE predicate: they ask the re-created evaluator
+-- itself (org_capability_allows_for, explicit uid) who it now admits, and
+-- count the members whose old five-role answer and new evaluator answer
+-- DIFFER — expected 0. A non-zero delta means a stored entry, a live grant
+-- or a headline-only row is changing who reads the trail: stop and look.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Pre-apply inventory (aggregate counts only; read BEFORE the change) ─────
@@ -212,9 +217,15 @@ SELECT 'search_path pinned on both evaluator entry points',
 UNION ALL
 SELECT inventory, n FROM rp_round_e_63_before
 UNION ALL
-SELECT 'AFTER: active members who can read the org-level audit trail (default list, no org overrides it yet)', COUNT(*)::text
-  FROM org_members
- WHERE status = 'active' AND (role = ANY(ARRAY['Admin','Manager','Supervisor','DocCtrl','Auditor']::text[]) OR roles && ARRAY['Admin','Manager','Supervisor','DocCtrl','Auditor']::text[])
+SELECT 'AFTER: active members the re-created evaluator admits to admin.audit_view (what the overlay now answers)', COUNT(*)::text
+  FROM org_members m
+ WHERE m.status = 'active' AND org_capability_allows_for(m.org_id, 'admin.audit_view', m.uid, '{}'::jsonb)
+UNION ALL
+SELECT 'AFTER: active members whose old five-role answer differs from the evaluator (expect 0 - nobody gains or loses the trail on apply)', COUNT(*)::text
+  FROM org_members m
+ WHERE m.status = 'active'
+   AND (m.role = ANY(ARRAY['Admin','Manager','Supervisor','DocCtrl','Auditor']::text[]) OR m.roles && ARRAY['Admin','Manager','Supervisor','DocCtrl','Auditor']::text[])
+       <> org_capability_allows_for(m.org_id, 'admin.audit_view', m.uid, '{}'::jsonb)
 UNION ALL
 SELECT 'AFTER: org-level authority-trail rows now behind the policy-driven overlay', COUNT(*)::text
   FROM audit_logs

@@ -655,7 +655,7 @@ defers it, it does not reject it.
 
 **Risk:** medium.
 
-*Landed 2026-09-17 (roles-and-permissions Round E): the deferred consolidation. ONE server-enforced admin gate — `lib/adminSurfaces.ts` (the registry: entry by role collection, any-member, or a capability with grants), `lib/adminGate.ts` `authorizeAdminSurface` (fail closed on a policy-load error), `/api/admin/gate`, and `app/(protected)/admin/layout.tsx` asking it before any admin page renders. Every registry entry mirrors what its page admitted, pinned by test, so no surface changed its admission; `admin.audit_view` (`20261063`) makes the audit page policy-driven at the page and at the database. See `SURF-9`, `WF-20`, `ROLE-5`; the API-route conversion is split off as `SURF-19` (DEC-31).*
+*Landed 2026-09-17 (roles-and-permissions Round E): the deferred consolidation. ONE server-enforced admin gate — `lib/adminSurfaces.ts` (the registry: entry by role collection, any-member, or a capability with grants), `lib/adminGate.ts` `authorizeAdminSurface` (fail closed on a policy-load error), `/api/admin/gate`, and `app/(protected)/admin/layout.tsx` asking it before any admin page renders. Every registry entry mirrors what its page admitted, pinned by test, with one deliberate narrowing — `/admin/storage` (entry = its stats API's Admin / Manager / DocCtrl set; the page never gated entry and is unusable without it) — and one presentation change (`/admin/libraries` / `/admin/requests` answer a non-controller with the denial screen instead of a redirect), both recorded in `SURF-9`'s resolution; `admin.audit_view` (`20261063`) makes the audit page policy-driven at the page and at the database. See `SURF-9`, `WF-20`, `ROLE-5`; the API-route conversion is split off as `SURF-19` (DEC-31).*
 
 <a id="dec-18"></a>
 ## DEC-18 · Is subscription state enforced server-side?
@@ -1668,8 +1668,13 @@ exposure is that a document controller can read the org's documents.
 
 **Implementation.** `lib/permissions.ts` `controllerBypassDecided` (pure) and
 the audit row in `app/api/storage/download-url/route.ts`, best-effort so a
-failed insert never blocks the rail. Reads through PostgREST are not audited:
-an RLS function cannot write per row without a side effect on every SELECT.
+failed insert never blocks the rail. The route passes the document's explicit
+owner into the evaluation (`effectiveOwnerUserId`) and asks
+`user_is_effective_owner` (the folder / library / team cascade) before
+writing, so ownership that would have served the bytes leaves no row; a
+cascade lookup error records the read rather than skipping it. Reads through
+PostgREST are not audited: an RLS function cannot write per row without a
+side effect on every SELECT.
 
 **Acceptance.** An unscoped controller behaves exactly as before; a
 controller download of a private/hidden document that the ACL does not admit

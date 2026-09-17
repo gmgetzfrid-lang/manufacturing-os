@@ -12,9 +12,16 @@
 // — is a DENIAL: this gate never fails open. Nav hiding is not a permission
 // model, and neither is a client-side policy read.
 //
+// A denial is only ever the GATE's answer. When the gate could not verify
+// the caller at all — no access token yet (the browser session is still
+// hydrating or a refresh is in flight) or a 401 — the screen says so, offers
+// a retry, and re-asks by itself when the session arrives or refreshes; it
+// never reads as "your role was removed".
+//
 // The pages' own role checks (writes, banners) are untouched: the registry
-// mirrors what each page admitted on 2026-09-17, so no surface changes who
-// may open it as a side-effect of the consolidation (DEC-17).
+// mirrors what each page admitted on 2026-09-17 — the one deliberate
+// narrowing (/admin/storage) and the redirect → denial-screen change for
+// /admin/libraries and /admin/requests are recorded in SURF-9 (DEC-17).
 
 import React from "react";
 import Link from "next/link";
@@ -28,7 +35,7 @@ import RouteLoader from "@/components/ui/RouteLoader";
 type GateState =
   | { status: "checking" }
   | { status: "allowed"; key: string }
-  | { status: "denied"; key: string | null; reason: string; retryable: boolean };
+  | { status: "denied"; key: string | null; reason: string; retryable: boolean; unverified: boolean };
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -37,11 +44,26 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const surfaceKey = surface?.key ?? null;
   const [gate, setGate] = React.useState<GateState>({ status: "checking" });
   const [attempt, setAttempt] = React.useState(0);
+  const gateRef = React.useRef(gate);
+  React.useEffect(() => { gateRef.current = gate; }, [gate]);
+
+  // A session that arrives or refreshes lets a gate that could not verify
+  // the caller (no token yet, a 401) ask again by itself. An admitted page
+  // is left alone — re-asking would unmount it behind the loader.
+  React.useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event !== "SIGNED_IN" && event !== "TOKEN_REFRESHED") return;
+      if (!session?.access_token) return;
+      if (gateRef.current.status === "allowed") return;
+      setAttempt((n) => n + 1);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   React.useEffect(() => {
     if (!activeOrgId || !uid) return; // the protected layout owns the membership screens
     if (!surfaceKey) {
-      setGate({ status: "denied", key: null, reason: "This admin page is not registered with the admin gate.", retryable: false });
+      setGate({ status: "denied", key: null, reason: "This admin page is not registered with the admin gate.", retryable: false, unverified: false });
       return;
     }
     let alive = true;
@@ -50,6 +72,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       try {
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token ?? "";
+        // No token yet: stay on "checking" and let the auth listener above
+        // re-ask once the session arrives — a bare 401 is not a denial.
+        if (!token) return;
         const res = await fetch(`/api/admin/gate?orgId=${encodeURIComponent(activeOrgId)}&surface=${encodeURIComponent(surfaceKey)}`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -59,14 +84,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         if (res.ok && body?.allowed === true && body?.surface === surfaceKey) {
           setGate({ status: "allowed", key: surfaceKey });
         } else {
+          // 401: the gate never evaluated the membership — the session could
+          // not be verified (expired, refresh in flight). Retryable, and worded
+          // as such rather than as the surface's denial.
+          const unverified = res.status === 401;
           setGate({
-            status: "denied", key: surfaceKey,
-            reason: body?.error || `The admin gate refused this page (HTTP ${res.status}).`,
-            retryable: res.status >= 500,
+            status: "denied", key: surfaceKey, unverified,
+            reason: unverified
+              ? "Your session could not be verified — it may have expired. Try again, or sign in again."
+              : body?.error || `The admin gate refused this page (HTTP ${res.status}).`,
+            retryable: unverified || res.status >= 500,
           });
         }
       } catch {
-        if (alive) setGate({ status: "denied", key: surfaceKey, reason: "Could not reach the admin gate — your permissions were not verified.", retryable: true });
+        if (alive) setGate({ status: "denied", key: surfaceKey, reason: "Could not reach the admin gate — your permissions were not verified.", retryable: true, unverified: true });
       }
     })();
     return () => { alive = false; };
@@ -81,7 +112,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="flex items-start gap-3">
           <ShieldAlert className="w-5 h-5 mt-0.5 shrink-0 text-rose-600" />
           <div className="min-w-0">
-            <div className="font-black">{surface ? `${surface.label}: not available to you` : "Not an admin page"}</div>
+            <div className="font-black">
+              {gate.unverified ? "Could not verify your access" : surface ? `${surface.label}: not available to you` : "Not an admin page"}
+            </div>
             <p className="mt-1 text-[var(--color-text-muted)]">{gate.reason}</p>
             <div className="mt-3 flex items-center gap-3 flex-wrap">
               {gate.retryable && (

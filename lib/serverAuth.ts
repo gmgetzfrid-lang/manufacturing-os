@@ -78,6 +78,28 @@ export async function authorizeOrgRole(
 }
 
 /**
+ * A PostgREST client that runs AS THE CALLER: the anon key plus the request's
+ * own bearer, so every read passes through RLS exactly as the caller's
+ * browser session would. For a route that decides ENTRY on the server but
+ * must never hand back more rows than the caller's own session could see
+ * (WF-20: the analytics data — `documents_acl_select` hides the private /
+ * hidden nodes the ACL does not admit them to, and a service-role read would
+ * not). Verify the caller with authorizeOrgRole / authorizeAdminSurface
+ * FIRST — this helper only carries their token, it does not check it.
+ */
+export function callerScopedClient(req: Request): SupabaseClient | AuthError {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  if (!supabaseUrl || !anonKey) return { error: "Server is missing Supabase credentials", status: 500 };
+  const accessToken = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!accessToken) return { error: "Missing access token", status: 401 };
+  return createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    auth: { persistSession: false },
+  });
+}
+
+/**
  * Server-side subscription gate for billable mutations (e.g. adding seats).
  * Returns null when the workspace may proceed, or an AuthError (402) when the
  * subscription has lapsed. Fail-open on lookup error so a transient DB issue

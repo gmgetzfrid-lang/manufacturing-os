@@ -73,14 +73,29 @@ describe("20261063 — org_capability_allows_for learns admin.audit_view; audit_
     expect(tail.trim().startsWith("-- ── Verification + inventory")).toBe(true);
     expect(tail).not.toMatch(/\b(UPDATE|INSERT|DELETE|ALTER|DROP|CREATE)\b/);
     expect(tail).toContain("SELECT inventory, n FROM rp_round_e_63_before");
-    // probes: 6 booleans cast to text; inventory: 2 AFTER aggregate counts (+ the temp table)
-    expect((tail.match(/\)::text/g) ?? []).length).toBe(8);
-    expect((tail.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(2);
+    // probes: 6 booleans cast to text; inventory: 3 AFTER aggregate counts (+ the temp table)
+    expect((tail.match(/\)::text/g) ?? []).length).toBe(9);
+    expect((tail.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(3);
     expect(tail).not.toMatch(/SELECT \*|SELECT data\b|SELECT uid|SELECT email/);
     // prosrc probes: the literal's delimiting quotes doubled, no bare casts in qual patterns
     expect(tail).toContain("prosrc LIKE '%WHEN ''admin.audit_view''");
     expect(tail).toContain("qual LIKE '%org_capability_allows(org_id, ''admin.audit_view''%'");
     expect(tail).not.toMatch(/qual LIKE '%[^']*::text\[\][^']*'/);
+  });
+  it("the AFTER rows ask the re-created evaluator (explicit uid) and count the before/after DELTA — not the BEFORE predicate again", () => {
+    const tail = m63.slice(m63.indexOf("COMMIT;") + "COMMIT;".length);
+    const evaluator = "org_capability_allows_for(m.org_id, 'admin.audit_view', m.uid, '{}'::jsonb)";
+    const admits = tail.slice(tail.indexOf("'AFTER: active members the re-created evaluator admits"), tail.indexOf("'AFTER: active members whose old five-role answer differs"));
+    expect(admits).toContain(`m.status = 'active' AND ${evaluator}`);
+    expect(admits).not.toContain("ARRAY['Admin','Manager','Supervisor','DocCtrl','Auditor']");
+    const delta = tail.slice(tail.indexOf("'AFTER: active members whose old five-role answer differs"), tail.indexOf("'AFTER: org-level authority-trail rows"));
+    expect(delta).toContain("(expect 0");
+    expect(delta).toMatch(/\(m\.role = ANY\(ARRAY\['Admin','Manager','Supervisor','DocCtrl','Auditor'\]::text\[\]\) OR m\.roles && ARRAY\['Admin','Manager','Supervisor','DocCtrl','Auditor'\]::text\[\]\)\s*\n\s*<> org_capability_allows_for\(m\.org_id, 'admin\.audit_view', m\.uid, '\{\}'::jsonb\)/);
+    // the old predicate appears in the tail ONLY inside the delta row
+    expect((tail.match(/roles && ARRAY\['Admin','Manager','Supervisor','DocCtrl','Auditor'\]/g) ?? []).length).toBe(1);
+    // the BEFORE predicate is unchanged (the delta compares against exactly it)
+    const before = m63.slice(m63.indexOf("CREATE TEMP TABLE rp_round_e_63_before AS"), m63.indexOf("\nBEGIN;"));
+    expect(before).toContain("(role = ANY(ARRAY['Admin','Manager','Supervisor','DocCtrl','Auditor']::text[]) OR roles && ARRAY['Admin','Manager','Supervisor','DocCtrl','Auditor']::text[])");
   });
   it("the pre-apply inventory counts the five-role readers and the (expected-zero) stored entries and grants", () => {
     const inv = between(m63, "CREATE TEMP TABLE rp_round_e_63_before AS", "\nBEGIN;");

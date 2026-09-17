@@ -209,7 +209,8 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
   it("each ENTRY / WRITES set is spelled identically in the page's own source (no surface changed who may open it)", () => {
     for (const s of ADMIN_SURFACES) {
       const page = src(`app/(protected)/admin/${s.key}/page.tsx`);
-      // storage's entry is its stats API's set (the page shows an error without it) — pinned below
+      // storage is the ONE deliberate narrowing (SURF-9's resolution states it): the page never gated
+      // entry, only its writes; its entry is its stats API's set — pinned below
       if (s.entry !== "*" && !s.cap && s.key !== "storage") expect(sourceHasRoleSet(page, s.entry), `${s.key} entry`).toBe(true);
       if (s.writes) expect(sourceHasRoleSet(page, s.writes), `${s.key} writes`).toBe(true);
     }
@@ -281,9 +282,11 @@ const state = vi.hoisted(() => ({
   actor: null as null | { userId: string; roles: string[] } | { error: string; status: number },
   rows: {} as Record<string, Array<Record<string, unknown>>>,
   errorTables: new Set<string>(),
-  calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  calls: [] as Array<{ table: string; method: string; args: unknown[]; client: "admin" | "caller" }>,
 }));
-function chain(table: string) {
+/** `client` says which Supabase client issued the call: the service-role
+ *  `admin` (the gate's own reads) or the `caller`-scoped one (RLS applies). */
+function chain(table: string, client: "admin" | "caller" = "admin") {
   const filters: Array<[string, unknown]> = [];
   const rows = () => (state.rows[table] ?? []).filter((r) => filters.every(([k, v]) => r[k] === v));
   const c: Record<string, unknown> = {};
@@ -292,7 +295,7 @@ function chain(table: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) =>
         resolve(state.errorTables.has(table) ? { data: null, error: { message: "boom" } } : { data: rows(), error: null });
       return (...args: unknown[]) => {
-        state.calls.push({ table, method: prop, args });
+        state.calls.push({ table, method: prop, args, client });
         if (prop === "eq") filters.push([String(args[0]), args[1]]);
         if (prop === "maybeSingle" || prop === "single") {
           if (state.errorTables.has(table)) return Promise.resolve({ data: null, error: { message: "boom" } });
@@ -311,6 +314,11 @@ vi.mock("@/lib/serverAuth", () => ({
     if ("error" in a) return a;
     if (!a.roles.some((r) => allowed.includes(r))) return { error: "Insufficient role", status: 403 };
     return { userId: a.userId, email: `${a.userId}@x.io`, orgId, role: a.roles[0] ?? "", roles: a.roles, admin: { from: (t: string) => chain(t) } };
+  }),
+  callerScopedClient: vi.fn((req: Request) => {
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    if (!bearer) return { error: "Missing access token", status: 401 };
+    return { from: (t: string) => chain(t, "caller") };
   }),
 }));
 import { GET as gateGet } from "@/app/api/admin/gate/route";
@@ -387,6 +395,45 @@ describe("/api/admin/analytics — the dashboard's data sits behind the same gat
     expect(await res.json()).toEqual({ tickets: [{ id: "t1", org_id: "o1" }], documents: [{ id: "d", org_id: "o1", status: "Issued" }] });
     expect(state.calls.some((c) => c.table === "tickets" && c.method === "eq" && c.args[1] === "o1")).toBe(true);
   });
+  it("the rows are read AS THE CALLER (their own bearer, RLS applied) — the service client decides the gate and reads nothing else", async () => {
+    state.actor = { userId: "m1", roles: ["Manager"] };
+    state.rows.tickets = [{ id: "t1", org_id: "o1" }];
+    state.rows.documents = [{ id: "d", org_id: "o1", status: "Issued" }];
+    expect((await analytics()).status).toBe(200);
+    const reads = state.calls.filter((c) => c.table === "tickets" || c.table === "documents");
+    expect(reads.length).toBeGreaterThan(0);
+    // never wider than the caller's own session: documents_acl_select must apply
+    expect(reads.every((c) => c.client === "caller")).toBe(true);
+    expect(state.calls.filter((c) => c.client === "admin").map((c) => c.table)).toEqual(
+      state.calls.filter((c) => c.client === "admin" && c.table === "org_configurations").map((c) => c.table),
+    );
+    // the caller-scoped client is built from the request's own bearer, by the shared helper — pinned at the source
+    const r = src("app/api/admin/analytics/route.ts");
+    expect(r).toContain("const asCaller = callerScopedClient(req);");
+    expect(r).toMatch(/asCaller\.from\("tickets"\)\.select\("\*"\)\.eq\("org_id", orgId\),\s*\n\s*asCaller\.from\("documents"\)/);
+    expect(r).not.toMatch(/actor\.admin\.from|supabaseAdmin/);
+  });
+  it("callerScopedClient (the real helper): anon key + the request's bearer, persistSession off; 401 without a bearer", async () => {
+    const real = await vi.importActual<typeof import("@/lib/serverAuth")>("@/lib/serverAuth");
+    const saved = { url: process.env.NEXT_PUBLIC_SUPABASE_URL, anon: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY };
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://supabase.test";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+    try {
+      const withBearer = real.callerScopedClient(new Request("http://x", { headers: { authorization: "Bearer abc" } }));
+      expect("error" in withBearer).toBe(false);
+      expect(typeof (withBearer as { from?: unknown }).from).toBe("function");
+      expect(real.callerScopedClient(new Request("http://x"))).toEqual({ error: "Missing access token", status: 401 });
+    } finally {
+      process.env.NEXT_PUBLIC_SUPABASE_URL = saved.url;
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = saved.anon;
+    }
+    const helper = src("lib/serverAuth.ts").slice(src("lib/serverAuth.ts").indexOf("export function callerScopedClient"));
+    const body = helper.slice(0, helper.indexOf("\n}\n") + 2);
+    expect(body).toContain("createClient(supabaseUrl, anonKey, {");
+    expect(body).toContain("global: { headers: { Authorization: `Bearer ${accessToken}` } },");
+    expect(body).toContain("auth: { persistSession: false },");
+    expect(body).not.toContain("serviceRoleKey");
+  });
 });
 
 describe("WF-20 — the layout is the one client gate, and it cannot fail open", () => {
@@ -399,6 +446,18 @@ describe("WF-20 — the layout is the one client gate, and it cannot fail open",
     expect(l).toMatch(/catch \{\s*\n\s*if \(alive\) setGate\(\{ status: "denied"/);
     expect(l).not.toMatch(/setAllowed\(true\)|status: "allowed"[^\n]*catch/);
     expect(l).toContain('cache: "no-store"');
+  });
+  it("an unverifiable session is never a denial: no token → stays checking; 401 → retryable and worded as such; a session arriving or refreshing re-asks by itself", () => {
+    const l = src("app/(protected)/admin/layout.tsx");
+    expect(l).toMatch(/const token = data\.session\?\.access_token \?\? "";\s*\n[^\n]*\n[^\n]*\n\s*if \(!token\) return;/);
+    expect(l).toContain("const unverified = res.status === 401;");
+    expect(l).toContain("retryable: unverified || res.status >= 500,");
+    expect(l).toContain('"Your session could not be verified — it may have expired. Try again, or sign in again."');
+    expect(l).toContain('{gate.unverified ? "Could not verify your access" : surface ? `${surface.label}: not available to you` : "Not an admin page"}');
+    expect(l).toMatch(/supabase\.auth\.onAuthStateChange\(\(event, session\) => \{\s*\n\s*if \(event !== "SIGNED_IN" && event !== "TOKEN_REFRESHED"\) return;\s*\n\s*if \(!session\?\.access_token\) return;\s*\n\s*if \(gateRef\.current\.status === "allowed"\) return;\s*\n\s*setAttempt\(\(n\) => n \+ 1\);/);
+    expect(l).toContain("return () => subscription.unsubscribe();");
+    // a 403 (the gate's real answer) is still not retryable
+    expect(l).not.toMatch(/retryable: true[^\n]*403|res\.status === 403/);
   });
   it("analytics and archive-view no longer read the policy in the browser; analytics data comes through the gated route", () => {
     const a = src("app/(protected)/admin/analytics/page.tsx");
@@ -433,5 +492,13 @@ describe("DOCACL-3 / DEC-43 — controllers are unscoped by design; a bypass-dec
     expect(r).toContain("if (allowed && controllerBypassDecided(contentCheck)) {");
     expect(r).toContain('action: "CONTROLLER_RESTRICTED_READ"');
     expect(r).toMatch(/details: \{ path, visibility, roles: contentCheck\.principal\.roles \},\s*\n\s*\}\)\.then\(\(\) => undefined, \(\) => undefined\);/);
+    // DEC-43 acceptance: a download ownership would have served leaves NO row —
+    // the explicit owner is part of the evaluation, the folder / library / team
+    // cascade is asked before the insert (and only then)
+    const check = r.slice(r.indexOf("const contentCheck = {"), r.indexOf("const allowed = canServeContent(contentCheck);"));
+    expect(check).toContain("effectiveOwnerUserId: (doc.owner_user_id as string | null) ?? null,");
+    const bypass = r.slice(r.indexOf("if (allowed && controllerBypassDecided(contentCheck)) {"), r.indexOf("if (!allowed) {"));
+    expect(bypass).toMatch(/const \{ data: isOwner \} = await supabaseAdmin\.rpc\("user_is_effective_owner", \{[\s\S]*?p_uid: user\.id,\s*\n\s*\}\);\s*\n\s*if \(isOwner !== true\) \{\s*\n\s*await supabaseAdmin\.from\("audit_logs"\)\.insert\(\{/);
+    expect((r.match(/supabaseAdmin\.rpc\("user_is_effective_owner"/g) ?? []).length).toBe(2);
   });
 });

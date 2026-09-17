@@ -9,7 +9,12 @@
 // which surface a member was allowed into.
 //
 // The ENTRY rule mirrors what each page did on 2026-09-17 (DEC-17: no
-// surface changes who may open it as a side-effect of consolidating):
+// surface changes who may open it as a side-effect of consolidating), with
+// ONE deliberate narrowing, stated in SURF-9's resolution: /admin/storage
+// never gated entry itself (only its writes), so any member could open it
+// and see a stats error; its entry is its stats API's set. Two pages that
+// redirected a non-controller (/admin/libraries, /admin/requests) now show
+// the gate's denial screen instead — the same admission, a different answer.
 //   * `entry: string[]` — the role collection must hold one of these
 //     (deny-if-none, by the FULL collection — heldRoles / memberHoldsAny);
 //   * `entry: "*"`     — any ACTIVE member may open it; the page itself
