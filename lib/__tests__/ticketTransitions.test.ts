@@ -130,9 +130,13 @@ describe("computeTransition — core behaviors", () => {
     expect(recipients).toEqual(["u-draft"]);
   });
 
-  it("close + reopen round-trip statuses", () => {
+  it("close + reopen round-trip statuses; reopen starts a new revision cycle (DEC-15)", () => {
     expect(computeTransition(mk({ status: "FINAL_DRAFT" }), { actionType: "close_ticket", actionLabel: "Close", actor, now: NOW }).newStatus).toBe("CLOSED");
-    expect(computeTransition(mk({ status: "CLOSED" }), { actionType: "reopen_ticket", actionLabel: "Reopen", comment: "missed sheet", actor, now: NOW }).newStatus).toBe("PENDING_REVIEW");
+    const reopened = computeTransition(mk({ status: "CLOSED", revisionCount: 1, draftIteration: 1, deliverableRev: "2" }), { actionType: "reopen_ticket", actionLabel: "Reopen", comment: "missed sheet", actor, now: NOW });
+    expect(reopened.newStatus).toBe("PENDING_REVIEW");
+    expect(reopened.updates.revision_count).toBe(2);
+    expect(reopened.updates.draft_iteration).toBe(0);
+    expect(reopened.updates.deliverable_rev).toBeNull();
   });
 
   it("save_progress changes no status", () => {
@@ -146,12 +150,12 @@ describe("computeTransition — core behaviors", () => {
 describe("computeTransition — comments, watchers, fan-out", () => {
   it("a comment is appended once (and not when it equals the pre-filled text)", () => {
     const withComment = computeTransition(mk(), {
-      actionType: "approve_initial", actionLabel: "Approve", comment: "looks good", actor, now: NOW,
+      actionType: "approve_team", actionLabel: "Approve", comment: "looks good", actor, now: NOW,
     });
     expect((withComment.updates.comments as unknown[]).length).toBe(1);
 
     const preFilled = computeTransition(mk(), {
-      actionType: "approve_initial", actionLabel: "Approve",
+      actionType: "approve_team", actionLabel: "Approve",
       comment: "template text", preFilledComment: "template text", actor, now: NOW,
     });
     expect(preFilled.updates.comments).toBeUndefined();
@@ -159,7 +163,7 @@ describe("computeTransition — comments, watchers, fan-out", () => {
 
   it("exposes newComment so the caller can mirror it into ticket_comments", () => {
     const withComment = computeTransition(mk(), {
-      actionType: "approve_initial", actionLabel: "Approve", comment: "looks good", actor, now: NOW,
+      actionType: "approve_team", actionLabel: "Approve", comment: "looks good", actor, now: NOW,
     });
     expect(withComment.newComment).toMatchObject({ text: "looks good", type: "General" });
     // No comment text → nothing to mirror.
@@ -182,7 +186,7 @@ describe("computeTransition — comments, watchers, fan-out", () => {
 
   it("the actor becomes a watcher; existing watchers are kept", () => {
     const t = mk({ watchers: ["u-req"] });
-    const { updates } = computeTransition(t, { actionType: "approve_initial", actionLabel: "Approve", actor, now: NOW });
+    const { updates } = computeTransition(t, { actionType: "approve_team", actionLabel: "Approve", actor, now: NOW });
     expect(updates.watchers).toEqual(expect.arrayContaining(["u-req", "u-admin"]));
   });
 
@@ -308,7 +312,7 @@ describe("classifyTransitionNotification", () => {
       .toBe("ticket_approved");
     expect(classifyTransitionNotification({ actionType: "reject", actionLabel: "Reject", ticketLabel: "T" }).eventType)
       .toBe("ticket_revision_requested");
-    expect(classifyTransitionNotification({ actionType: "approve_initial", actionLabel: "Approve Request", ticketLabel: "T" }).eventType)
+    expect(classifyTransitionNotification({ actionType: "approve_team", actionLabel: "Engineering Review Complete", ticketLabel: "T" }).eventType)
       .toBe("ticket_status_changed");
   });
 });

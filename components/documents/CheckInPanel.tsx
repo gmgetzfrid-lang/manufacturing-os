@@ -167,7 +167,7 @@ export default function CheckInPanel({
       const { data } = await supabase
         .from("tickets").select("id, ticket_id")
         .eq("org_id", doc.orgId!).eq("metadata->checkin->>episodeId", episode.id)
-        .neq("status", "CLOSED").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        .not("status", "in", '("CLOSED","CANCELED")').order("created_at", { ascending: false }).limit(1).maybeSingle();
       if (!alive || !data) return;
       resumedTicketRef.current = { id: (data as { id: string }).id, number: (data as { ticket_id: string }).ticket_id };
     })();

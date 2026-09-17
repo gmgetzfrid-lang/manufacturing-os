@@ -451,6 +451,8 @@ left ambiguous.
 
 ---
 
+*Landed 2026-09-17 (roles-and-permissions Round E): the three workflow rows — `NEW` / `PENDING_ENG_INITIAL` removed (union, engine, routing, attention, portal, widget, open-status lists; migration `20261053` moves any stragglers and flips the default), `CANCELED` implemented (`cancel_request`), and `ticket.initial_review` / `ticket.eng_review` / `ticket.final_approve` marked `dormant: true` with a `dormantNote`, rendered greyed with the tooltip in the capability editor; `metadata.minor_correction` kept. See `WF-17`.*
+
 # Workflow
 
 <a id="dec-12"></a>
@@ -564,6 +566,8 @@ cheaper to reintroduce than to keep half-alive.
 
 **Risk:** medium.
 
+*Landed 2026-09-17 (roles-and-permissions Round E): `cancel_request` from `PENDING_ASSIGNMENT` and `DRAFTING` for the requester identity and `ticket.manage`, comment required, audited, terminal — and terminal everywhere: the `LIFE-6` / `DEC-25` hold gate, the intent bridge and every live-work filter treat `CANCELED` exactly as `CLOSED` (fix pass); `NEW` and `PENDING_ENG_INITIAL` removed from every code path; migration `20261053` inventories (temp table, aggregate counts) and moves existing rows to `PENDING_ASSIGNMENT` with a history line, and sets the column default. See `WF-17`.*
+
 <a id="dec-15"></a>
 ## DEC-15 · Does a reopen start a new revision cycle?
 
@@ -595,6 +599,8 @@ bar reopen after issue and add an explicit "supersede this deliverable" action
 instead.
 
 **Risk:** medium — changes revision numbering on reopened tickets.
+
+*Landed 2026-09-17 (roles-and-permissions Round E): `reopen_ticket` increments `revision_count`, resets `draft_iteration`, nulls `deliverable_rev`; `approve_minor_correction` at `PENDING_FINAL_APPROVAL` stamps `engineer_approved_at`; `/api/verify-ticket` treats a reopened ticket as back under review only with evidence of an issue — the last issued number is read from the "… — issued Rev N" history line, never from `revision_count` (a bumped cycle count alone is not evidence). See `WF-21`.*
 
 <a id="dec-16"></a>
 ## DEC-16 · The `requesterRole` snapshot
@@ -913,6 +919,8 @@ happen silently.
 **Reversal.** None.
 
 **Risk:** medium.
+
+*Extended 2026-09-17 (roles-and-permissions Round E): the gate keys on the terminal transition (`CLOSED` or `CANCELED`), not on the close action's name, so `cancel_request` (`DEC-14`) meets the same 409 and the same release-or-keep resolution. See `WF-17`.*
 
 <a id="dec-26"></a>
 ## DEC-26 · Does an as-built ticket classify its own output?

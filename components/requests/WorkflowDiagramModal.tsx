@@ -33,7 +33,7 @@ const MAIN_FLOW: StageDef[] = [
 const BRANCHES: StageDef[] = [
   { status: "PENDING_ENG_TEAM", label: "Engineering review (optional)", blurb: "When an assigner flags a request, a specific engineer reviews the scope, then hands it back to assignment or returns it with questions. Not every request needs this." },
   { status: "REVISION_REQ", label: "Revision requested", blurb: "A reviewer sent it back. It loops to Drafting with the revision reason — fix and resubmit." },
-  { status: "CANCELED", label: "Canceled", blurb: "Withdrawn or returned to the requester. A terminal exit off the main flow." },
+  { status: "CANCELED", label: "Canceled", blurb: "Withdrawn by the requester (or management) with a reason, from the queue or during drafting. A terminal exit off the main flow — it is not reopened; file a new request instead." },
 ];
 
 const TONE: Record<string, string> = {

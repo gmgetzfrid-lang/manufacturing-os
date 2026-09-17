@@ -9,17 +9,31 @@
 //     — instead of being broadcast to every Admin in the workspace.
 //   * Workspaces that haven't set up a DraftingSupervisor still need
 //     SOMEONE to act, so we fall back to Admins.
-//   * Engineer initial-review states target engineers; assignment
-//     states target DraftingSupervisors; drafting states target the
-//     specific drafter who was assigned.
+//   * Assignment states target DraftingSupervisors; drafting states
+//     target the specific drafter who was assigned. (The engineer
+//     initial-review entry stage is gone — DEC-14.)
 //
 // This module is the single seam — every "who needs to know?" call
 // from the requests flow should go through here so the policy stays
-// in one file.
+// in one file. WF-19: the workflow route calls it on every RE-entry
+// into the assignment queue (engineering review complete), not only at
+// creation — passing its own service-role client, because the shared
+// browser client has no session inside a route handler.
+//
+// "Who is TOLD" (this file) is deliberately narrower than "who CAN act"
+// (lib/workflow.ts): everyone routed here holds `ticket.assign` under the
+// shipped defaults, but not every holder is pestered — Admins step aside
+// once a DraftingSupervisor exists. lib/__tests__/sweepRoundE_A.test.ts
+// pins that inclusion.
 
 import { supabase } from "@/lib/supabase";
 import type { OrgDraftingSettings, Role, TicketStatus } from "@/types/schema";
 import { heldRoles } from "@/lib/roleHeld";
+
+/** The client a caller may substitute for the shared browser client
+ *  (server routes pass supabaseAdmin — the browser client has no session
+ *  in a route handler, so under RLS it would resolve nobody). */
+export type RoutingClient = Pick<typeof supabase, "from">;
 
 interface MemberLite {
   uid: string;
@@ -33,8 +47,8 @@ interface MemberLite {
 
 /** Pull every active member of an org along with their role + names.
  *  One round-trip; callers can then filter in-memory. */
-export async function listActiveMembers(orgId: string): Promise<MemberLite[]> {
-  const { data, error } = await supabase
+export async function listActiveMembers(orgId: string, client: RoutingClient = supabase): Promise<MemberLite[]> {
+  const { data, error } = await client
     .from("org_members")
     .select("uid, role, roles, display_name, email")
     .eq("org_id", orgId)
@@ -48,8 +62,9 @@ export async function listActiveMembers(orgId: string): Promise<MemberLite[]> {
  *  to "Admins step aside once a DraftingSupervisor exists" when unset. */
 async function getRoutingConfig(
   orgId: string,
+  client: RoutingClient = supabase,
 ): Promise<{ adminsAlsoReceiveWhenSupervisorSet: boolean }> {
-  const { data } = await supabase
+  const { data } = await client
     .from("org_configurations")
     .select("data")
     .eq("org_id", orgId)
@@ -62,7 +77,6 @@ async function getRoutingConfig(
 /** Resolve the set of users who should be notified when a ticket
  *  enters a given status. Policy:
  *
- *  PENDING_ENG_INITIAL → engineers (any Engineer-N) + fallback Admin
  *  PENDING_ASSIGNMENT  → DraftingSupervisor + fallback Admin
  *  PENDING_DRAFTING    → caller passes assignee separately; nobody else
  *  PENDING_IFC         → DraftingSupervisor + originating engineer
@@ -75,18 +89,15 @@ export async function resolveTicketRecipients(
   orgId: string,
   status: TicketStatus,
   actorUserId?: string,
+  client: RoutingClient = supabase,
 ): Promise<MemberLite[]> {
   const [members, routing] = await Promise.all([
-    listActiveMembers(orgId),
-    getRoutingConfig(orgId),
+    listActiveMembers(orgId, client),
+    getRoutingConfig(orgId, client),
   ]);
   // ADD-1: a role pool is everyone HOLDING the role, not everyone whose headline it is.
   const byRole = (r: Role) => members.filter((m) => m.roles.includes(r));
-  const engineerRoles: Role[] = ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4"];
   const admins = byRole("Admin");
-
-  const fallbackToAdmins = (primary: MemberLite[]): MemberLite[] =>
-    primary.length > 0 ? primary : admins;
 
   // DraftingSupervisor-targeted states. With no supervisor in the org, Admins
   // are the fallback. Once a supervisor exists, Admins are normally dropped so
@@ -100,9 +111,6 @@ export async function resolveTicketRecipients(
 
   let pool: MemberLite[] = [];
   switch (status) {
-    case "PENDING_ENG_INITIAL":
-      pool = fallbackToAdmins(members.filter((m) => m.roles.some((r) => engineerRoles.includes(r))));
-      break;
     case "PENDING_ASSIGNMENT":
     case "PENDING_IFC":
       pool = supervisorTargeted();

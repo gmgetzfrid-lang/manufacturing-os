@@ -264,10 +264,14 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
               <React.Fragment key={area}>
                 <tr><td colSpan={TOKENS.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-4 pt-3 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-accent)]">{area}</td></tr>
                 {CAPABILITY_DEFS.filter((d) => d.area === area).map((d) => (
-                  <tr key={d.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
+                  // DEC-11 / WF-17: a dormant capability (no live status
+                  // consults its base list) renders greyed with the reason —
+                  // never as a live-looking control.
+                  <tr key={d.id} title={d.dormant ? d.dormantNote : undefined} className={`border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50 ${d.dormant ? "opacity-50" : ""}`}>
                     <td className="sticky left-0 bg-[var(--color-surface)] px-4 py-1.5">
                       <span className="font-medium text-[var(--color-text)]">{d.label}</span>
                       {d.critical && <span className="ml-1.5 text-[9px] font-black text-amber-600 dark:text-amber-400 cursor-help" title="Critical: Admin cannot be removed">CRITICAL</span>}
+                      {d.dormant && <span className="ml-1.5 text-[9px] font-black text-[var(--color-text-faint)] cursor-help" title={d.dormantNote}>DORMANT</span>}
                       {(overrides[d.id]?.length ?? 0) > 0 && <span className="ml-1.5 text-[9px] font-black text-sky-700 dark:text-sky-300 cursor-help" title="Request-type overrides below replace this row for tickets of those types">{overrides[d.id]?.length} OVERRIDE{(overrides[d.id]?.length ?? 0) > 1 ? "S" : ""}</span>}
                       <div className="text-[10px] text-[var(--color-text-faint)]">{d.description}</div>
                     </td>

@@ -75,7 +75,11 @@ describe("LIFE-6 — the hold knows its ticket; a close cannot be silent over it
   });
   it("the workflow-action route refuses a close over an open originating hold unless the closer releases it or records why it stays", () => {
     const r = src("app/api/tickets/workflow-action/route.ts");
-    const gate = r.slice(r.indexOf('if (body.actionType === "close_ticket" || body.actionType === "close_rfi") {'), r.indexOf("let baseQuery = supabaseAdmin"));
+    // Round E (WF-17): the gate keys on the TERMINAL TRANSITION, so a
+    // cancel_request meets it exactly as a close does.
+    const gate = r.slice(r.indexOf('if (TERMINAL_STATUSES.includes(String(newStatus))) {'), r.indexOf("let baseQuery = supabaseAdmin"));
+    expect(r).toContain('const TERMINAL_STATUSES: readonly string[] = ["CLOSED", "CANCELED"];');
+    expect(r).not.toContain('if (body.actionType === "close_ticket" || body.actionType === "close_rfi") {');
     expect(gate).toMatch(/\.eq\("origin_ticket_id", body\.ticketId\)\s*\n\s*\.is\("released_at", null\)/);
     expect(gate).toMatch(/code: "holds_open"/);
     expect(gate).toMatch(/if \(!resolution \|\| \(resolution\.action === "keep" && !reason\)\) \{/);

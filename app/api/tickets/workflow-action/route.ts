@@ -15,6 +15,7 @@ import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
+import { resolveTicketRecipients } from "@/lib/ticketRouting";
 
 // POST /api/tickets/workflow-action
 //
@@ -40,6 +41,10 @@ interface Body {
   engineer?: { id: string; name: string; email: string } | null;
   redlineAttachment?: TicketAttachment | null;
   finalAttachment?: TicketAttachment | null;
+  /** WF-9: the file an `attach_file` action adds. The bytes are already in
+   *  storage (client upload); the ticket row's attachments + history write
+   *  is what this route applies compare-and-set. */
+  attachment?: TicketAttachment | null;
   /** LIFE-6 / DEC-25: how the closer addressed the hold(s) this ticket
    *  opened — release them now, or keep them with a stated reason. Absent
    *  when a close would leave one open, the close is refused (409 holds_open). */
@@ -201,8 +206,22 @@ export async function POST(req: NextRequest) {
   // WF-22: a transition that requires an input is refused when it is missing —
   // an assignment-less "assign" used to no-op while still writing a success
   // audit row.
-  if (action.action === "assign" && !body.assignment?.id) {
+  if ((action.action === "assign" || action.action === "reassign_drafter") && !body.assignment?.id) {
     return NextResponse.json({ error: "Assigning requires picking a drafter" }, { status: 400 });
+  }
+  // WF-18: reassigning to the current drafter is a no-op that would still
+  // write an audit row and a notification — refuse it.
+  if (action.action === "reassign_drafter" && body.assignment?.id === ticket.assignedDrafterId) {
+    return NextResponse.json({ error: "That drafter is already assigned to this request" }, { status: 400 });
+  }
+  // WF-9: attaching a file requires the file record — name, type and the
+  // storage URL the client's upload returned.
+  const ATTACHMENT_TYPES = ["Source", "Reference", "Draft", "Final"];
+  if (action.action === "attach_file") {
+    const a = body.attachment;
+    if (!a?.url || !a.name || !ATTACHMENT_TYPES.includes(String(a.type))) {
+      return NextResponse.json({ error: "Attaching a file requires its name, type and storage URL" }, { status: 400 });
+    }
   }
 
   // Referenced people must be active members of the same org — and a picked
@@ -283,13 +302,41 @@ export async function POST(req: NextRequest) {
     engineer: body.engineer ?? undefined,
     redlineAttachment: body.redlineAttachment ?? undefined,
     finalAttachment: body.finalAttachment ?? undefined,
+    attachment: action.action === "attach_file" ? body.attachment ?? undefined : undefined,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
-  const { updates, newStatus, recipients, newComment } = computeTransition(ticket, input);
+  const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
+  let recipients = transitionRecipients;
+
+  // WF-19: a ticket (RE-)entering the assignment queue tells the queue's
+  // owners — the DraftingSupervisor pool, falling back to Admins, exactly as
+  // the routing policy resolves them at creation (lib/ticketRouting.ts). The
+  // default fan-out only knew requester + drafter, so every engineering-review
+  // round-trip landed in the queue silently. The pool joins `unread_by` too
+  // (the unread badge and the follow list read that column) and rides the
+  // same in-app + email path as every other recipient.
+  if (newStatus === "PENDING_ASSIGNMENT" && ticket.status !== "PENDING_ASSIGNMENT") {
+    try {
+      const pool = (await resolveTicketRecipients(ticket.orgId, "PENDING_ASSIGNMENT", caller.id, supabaseAdmin))
+        .map((m) => m.uid);
+      if (pool.length > 0) {
+        const unread = new Set<string>([...((updates.unread_by as string[] | undefined) ?? []), ...pool]);
+        unread.delete(caller.id);
+        updates.unread_by = Array.from(unread);
+        recipients = Array.from(new Set([...recipients, ...pool])).filter((u) => u !== caller.id);
+      }
+    } catch (e) {
+      console.warn("[workflow-action] assignment-queue routing failed (non-blocking)", e);
+    }
+  }
 
   // LIFE-6 / DEC-25: a ticket cannot close silently over a hold it opened.
   // The closer releases it now, or records why it stays — never auto-release.
-  if (body.actionType === "close_ticket" || body.actionType === "close_rfi") {
+  // WF-17: the gate keys on the TERMINAL TRANSITION, not the action name —
+  // `cancel_request` (DEC-14) ends the ticket exactly as a close does, so it
+  // meets the same 409 holds_open and the same release-or-keep resolution.
+  const TERMINAL_STATUSES: readonly string[] = ["CLOSED", "CANCELED"];
+  if (TERMINAL_STATUSES.includes(String(newStatus))) {
     const { data: openHolds, error: holdsErr } = await supabaseAdmin
       .from("document_holds")
       .select("id, document_id, reason, notes")
@@ -314,7 +361,7 @@ export async function POST(req: NextRequest) {
         const { data: released, error: relErr } = await supabaseAdmin
           .from("document_holds")
           .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
-                    released_reason: reason || `Released on close of ticket ${ticket.ticketId ?? body.ticketId}` })
+                    released_reason: reason || `Released on ${newStatus === "CANCELED" ? "cancellation" : "close"} of ticket ${ticket.ticketId ?? body.ticketId}` })
           .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
         if (relErr) return NextResponse.json({ error: `Couldn't release the hold: ${relErr.message}` }, { status: 500 });
         for (const h of holds) {
@@ -329,7 +376,7 @@ export async function POST(req: NextRequest) {
           await supabaseAdmin.from("audit_logs").insert({
             action: "HOLD_KEPT_ON_CLOSE", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
             user_id: caller.id, user_email: callerEmail ?? null,
-            details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId },
+            details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId, ticketOutcome: newStatus },
           }).then(() => undefined, () => undefined);
         }
       }
@@ -367,7 +414,15 @@ export async function POST(req: NextRequest) {
       console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);
     }
   }
-  const fanOutComment = [body.comment ?? null, handbackNote].filter((x): x is string => !!x && x.trim().length > 0).join("\n\n") || null;
+  const transitionNote = [body.comment ?? null, handbackNote].filter((x): x is string => !!x && x.trim().length > 0).join("\n\n") || null;
+  // WF-9: attaching a file is thread ACTIVITY, not a workflow transition —
+  // the ticket is in the same state waiting on the same person afterwards.
+  // It must not retire the outstanding workflow alerts ("you were assigned")
+  // or queue a status-change email; it leaves a comment-style bell row.
+  const isActivity = action.action === "attach_file";
+  const fanOutComment = isActivity
+    ? (body.attachment ? `Added ${body.attachment.type} file: ${body.attachment.name}` : null)
+    : transitionNote;
 
   let baseQuery = supabaseAdmin
     .from("tickets")
@@ -436,23 +491,60 @@ export async function POST(req: NextRequest) {
     user_id: caller.id,
     user_email: callerEmail,
     user_role: callerRole,
-    details: { from: ticket.status, to: newStatus, label: action.label, authority },
+    details: {
+      from: ticket.status, to: newStatus, label: action.label, authority,
+      // WF-9 / WF-18: the audit row names WHAT was attached or WHO now drafts.
+      ...(action.action === "attach_file" && body.attachment
+        ? { attachment: { id: body.attachment.id, name: body.attachment.name, type: body.attachment.type } }
+        : {}),
+      ...(action.action === "reassign_drafter" && body.assignment
+        ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
+        : {}),
+    },
   });
 
   // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
   // EDIT INTENT on the source document — visible on the coordination surfaces
   // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
-  // its own; no zombie-lock factory). Ticket closure clears it. Best-effort:
-  // never fails the transition; no-op on pre-migration envs.
+  // its own; no zombie-lock factory). Ticket closure — or cancellation, the
+  // other terminal exit (WF-17) — clears it. Best-effort: never fails the
+  // transition; no-op on pre-migration envs.
   try {
     const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)
       ?.source_document as { id?: string } | undefined;
     if (srcDoc?.id) {
-      if (newStatus === "DRAFTING" || newStatus === "REVISION_REQ") {
-        const drafterId =
-          (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
-        const drafterName =
-          (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
+      const drafterId =
+        (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
+      const drafterName =
+        (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
+      const isReassign = action.action === "reassign_drafter";
+      // Statuses where the ticket's intents are cleared wholesale (below).
+      const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";
+      // WF-18: a reassignment hands the ticket to a different drafter, so
+      // the PREVIOUS drafter's ticket-sourced intent is retired now rather
+      // than lingering on the coordination surfaces until its TTL — two
+      // drafters were shown editing for one ticket. Reassignment never
+      // moves the status, and it is offered at every live status with a
+      // drafter (PENDING_REVIEW, PENDING_FINAL_APPROVAL and PENDING_IFC
+      // included), so the retirement runs for all of them — not only the
+      // two statuses that register an intent.
+      if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
+        await supabaseAdmin
+          .from("document_intents")
+          .delete()
+          .eq("document_id", srcDoc.id)
+          .eq("ticket_id", body.ticketId)
+          .eq("source", "ticket")
+          .eq("user_id", ticket.assignedDrafterId);
+      }
+      // The new drafter is registered where the ticket is on a drafter's
+      // bench: entering DRAFTING / REVISION_REQ (every assignment), and on
+      // reassignment at PENDING_IFC (the package is being issued). A
+      // reassignment while the draft is under review registers nothing —
+      // the next return to REVISION_REQ does.
+      const registersDrafter =
+        newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");
+      if (registersDrafter) {
         if (drafterId) {
           const { data: docRow } = await supabaseAdmin
             .from("documents")
@@ -477,7 +569,7 @@ export async function POST(req: NextRequest) {
             { onConflict: "document_id,user_id,kind,source" },
           );
         }
-      } else if (newStatus === "CLOSED" || newStatus === "FINAL_DRAFT") {
+      } else if (clearsAll) {
         await supabaseAdmin
           .from("document_intents")
           .delete()
@@ -494,15 +586,21 @@ export async function POST(req: NextRequest) {
   // Failures here never fail the action (the transition is already committed);
   // they're logged for the maintenance cron's visibility.
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, comment: fanOutComment });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, comment: fanOutComment });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
+    // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
+    // 401 at the drain — so in a default deployment every workflow email
+    // waited for the daily cron. The caller's own session token is a
+    // legitimate drain credential (SURF-5 scopes it to their orgs, which
+    // include this ticket's), so it is the fallback.
     const drainUrl = new URL("/api/notifications/send-queued", req.url);
+    const drainToken = process.env.CRON_SECRET || authHeader.slice(7);
     after(async () => {
       try {
         await fetch(drainUrl, {
           method: "POST",
-          headers: { Authorization: `Bearer ${process.env.CRON_SECRET || ""}` },
+          headers: { Authorization: `Bearer ${drainToken}` },
         });
       } catch { /* cron fallback */ }
     });
@@ -522,14 +620,38 @@ async function fanOut(params: {
   actorUid: string;
   actorEmail: string;
   comment: string | null;
+  /** WF-9: true for thread activity (a file attachment) — no alert
+   *  supersede, no email, a comment-style bell row without metadata.action
+   *  (so the badge hook's stale-alert reconciliation leaves it alone). */
+  activity?: boolean;
 }) {
-  const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment } = params;
+  const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity } = params;
   if (recipients.length === 0) return;
 
   const ticketLabel = `${ticket.ticketId || ""} ${ticket.title}`.trim();
   const link = `/requests/${ticketId}`;
-  const cls = classifyTransitionNotification({ actionType: action.type, actionLabel: action.label, ticketLabel });
   const actorName = actorEmail.split("@")[0];
+
+  if (activity) {
+    await supabaseAdmin.from("notifications").insert(
+      recipients.map((uid) => ({
+        org_id: ticket.orgId,
+        user_id: uid,
+        kind: "ticket_comment",
+        title: `File added · ${ticketLabel}`,
+        body: comment || "A file was added to this request",
+        link,
+        resource_type: "ticket",
+        resource_id: ticketId,
+        actor_user_id: actorUid,
+        actor_name: actorName,
+        metadata: { activity: action.type, status: newStatus },
+      })),
+    );
+    return;
+  }
+
+  const cls = classifyTransitionNotification({ actionType: action.type, actionLabel: action.label, ticketLabel });
 
   // 0) Supersede earlier unread WORKFLOW alerts for this ticket. A workflow
   //    notification (one carrying metadata.action) says "the ticket is in state

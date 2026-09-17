@@ -1042,9 +1042,11 @@ export interface MarkupRequest {
 
 export type RequestType = string;
 
+/** DEC-14 / WF-17: `NEW` and `PENDING_ENG_INITIAL` were retired — every
+ *  request is born in `PENDING_ASSIGNMENT` (the insert trigger and every
+ *  creator say so) and migration 20261053 moved any stragglers there.
+ *  `CANCELED` is produced by `cancel_request` (terminal; no reopen). */
 export type TicketStatus =
-  | "NEW"
-  | "PENDING_ENG_INITIAL"
   | "PENDING_ENG_TEAM"
   | "PENDING_ASSIGNMENT"
   | "DRAFTING"

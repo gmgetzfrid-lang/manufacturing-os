@@ -188,7 +188,8 @@ describe("workflow-action route — the server half of the Phase 4 guards", () =
   });
 
   it("WF-22: assign without an assignee is a 400 (no more silent no-op audit rows)", () => {
-    expect(beforeTransition).toMatch(/action\.action === "assign" && !body\.assignment\?\.id/);
+    // Round E (WF-18): the same input rail covers reassign_drafter.
+    expect(beforeTransition).toMatch(/\(action\.action === "assign" \|\| action\.action === "reassign_drafter"\) && !body\.assignment\?\.id/);
   });
 
   it("WF-14: at 3+ members the picked engineer may not be requester, drafter, or caller", () => {

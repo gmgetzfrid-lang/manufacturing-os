@@ -164,7 +164,7 @@ headline.
 ## CHAIN-3 · "Who acts on this ticket?" is answered by three subsystems with three different models
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Partial (2026-09-02, Round D1 — re-verified):** two of the three "different resolutions" are now the same resolution: the workflow engine reads the caller's collection (`WF-7`) and the routing pools read every member's collection (`ADD-1`, Round C1b). What still differs is the three definitions of "management" — `MANAGEMENT_ROLES` (attention, includes DraftingSupervisor), `isManagementRole` (workflow, excludes it) and `MGMT` (capability defaults, excludes it) — which is exactly `WF-24`; this record closes when `WF-24` does.
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / access-control
@@ -195,6 +195,12 @@ better.
 
 **Done when.** The three surfaces agree for every role/status combination — see
 `WF-24`'s acceptance criteria.
+
+**Resolution (2026-09-17, Round E — with `WF-24`).** The residual named in the Round D1 partial — three definitions of "management" — is one: `lib/managementRoles.ts` (`MANAGEMENT_ROLES`, `isManagementRole`, `holdsManagementRole`) is read by the capability defaults (`MGMT`), the workflow engine (`isManagementRole`, re-exported) and the attention feed, which now holds no role table of its own and derives "must act" from `WorkflowEngine.getActions` (`WorkflowAction.optional` marks overrides/reassignment/cancellation/reopen/attachments as available-but-not-waited-on). The visibility scope that also includes DraftingSupervisor is named `QUEUE_VIEW_ROLES` and used only for what it is (who sees the whole queue). The three surfaces are checked against each other in `lib/__tests__/sweepRoundE_A.test.ts` "WF-24 / CHAIN-3": everyone routing tells at `PENDING_ASSIGNMENT` is offered `assign` by the engine and flagged by attention; the `WF-24` supervisor case (page offers nothing → badge off); and `lib/__tests__/ticketAttention.test.ts` walks nine roles × ten statuses × five identity variants asserting badge == page. The comment at the top of `lib/ticketAttention.ts` that claimed sync with routing is replaced by the actual relation: routing says who is TOLD, the engine says who CAN act, attention is the engine.
+
+**Done-when.** ✓ — the three surfaces agree for every role/status combination (`WF-24`'s acceptance, pinned).
+
+**Scope / residual.** "Told" ⊂ "can act" is kept as a deliberate product policy (the supervisor pool with Admin fallback, so Managers are not emailed about every request) and pinned as a subset, not collapsed; `WF-7` and `WF-19` carry the other two resolutions.
 
 ---
 

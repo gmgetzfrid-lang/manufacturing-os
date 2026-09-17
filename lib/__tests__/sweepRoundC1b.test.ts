@@ -83,7 +83,10 @@ describe("census — no client affordance gate reads the headline alone", () => 
   it("the ticket page's admin and requester affordances read the collection; the console's card lens stays display-only", () => {
     const t = src("app/(protected)/requests/[id]/page.tsx");
     expect(t).toContain("const isAdmin = hasAnyRole(['Admin', 'DocCtrl']);");
-    expect(t).toContain("{(hasAnyRole(['Drafter', 'Requester', 'Admin']) || uid === ticket.requesterId) && (");
+    // Round E (WF-9): the upload affordance is derived from the engine's
+    // `attach_file` action (evaluated on the full collection) — no role list.
+    expect(t).toContain("const canAttach = availableActions.some((a) => a.action === 'attach_file');");
+    expect(t).toContain("{canAttach && (");
     expect(src("app/(protected)/requests/page.tsx")).toContain("{hasAnyRole(['Manager', 'Admin']) && (");
   });
 });
@@ -133,7 +136,10 @@ describe("census — pool resolvers find additive holders", () => {
     const s = src("lib/ticketRouting.ts");
     expect(s).toContain('.select("uid, role, roles, display_name, email")');
     expect(s).toContain("const byRole = (r: Role) => members.filter((m) => m.roles.includes(r));");
-    expect(s).toContain("members.filter((m) => m.roles.some((r) => engineerRoles.includes(r)))");
+    // Round E (DEC-14): the engineer entry-stage pool is gone with PENDING_ENG_INITIAL;
+    // the surviving pools all resolve through the collection-aware byRole.
+    expect(s).not.toContain("PENDING_ENG_INITIAL");
+    expect(s).toContain('const supervisors = byRole("DraftingSupervisor");');
     expect(s).not.toMatch(/members\.filter\(\(m\) => m\.role === r\)/);
   });
   it("restore seeds the surviving collection, both routes", () => {

@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
   // Redline requests: open collision tickets that reference this link —
   // the org asking the company for markups against the conflict.
   const OPEN_STATUSES = [
-    "NEW", "PENDING_ENG_INITIAL", "PENDING_ENG_TEAM", "PENDING_ASSIGNMENT",
+    "PENDING_ENG_TEAM", "PENDING_ASSIGNMENT",
     "DRAFTING", "REVISION_REQ", "PENDING_REVIEW", "PENDING_FINAL_APPROVAL",
     "PENDING_IFC", "FINAL_DRAFT",
   ];

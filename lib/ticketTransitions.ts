@@ -31,6 +31,9 @@ export interface TransitionInput {
   engineer?: { id: string; name: string; email: string } | null;
   redlineAttachment?: TicketAttachment | null;
   finalAttachment?: TicketAttachment | null;
+  /** WF-9: the file an `attach_file` action adds (bytes already in storage;
+   *  the ticket row's attachments/history write is what rides the route). */
+  attachment?: TicketAttachment | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -134,7 +137,13 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     date: now,
   } as TicketHistoryEntry;
 
-  if (input.redlineAttachment && finalComment) {
+  if (input.actionType === "reassign_drafter" && input.assignment) {
+    // WF-18: the audit line names the new drafter AND carries the reason.
+    historyEntry.details = `Reassigned to ${input.assignment.name}${finalComment ? ` [Reason: ${finalComment}]` : ""}`;
+  } else if (input.actionType === "attach_file" && input.attachment) {
+    historyEntry.action = "File Uploaded";
+    historyEntry.details = `Uploaded ${input.attachment.type} file: ${input.attachment.name}`;
+  } else if (input.redlineAttachment && finalComment) {
     historyEntry.details = finalComment;
   } else if (finalComment) {
     historyEntry.details = finalComment;
@@ -168,7 +177,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       type:
         input.variant === "destructive" || input.actionType === "request_revision"
           ? "Revision"
-          : input.isReassigning
+          : input.isReassigning || input.actionType === "reassign_drafter"
             ? "Reassignment"
             : "General",
       category: input.category || null,
@@ -180,11 +189,42 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   let currentAttachments = [...(ticket.attachments || [])];
   if (input.redlineAttachment) currentAttachments = [...currentAttachments, input.redlineAttachment];
 
+  // WF-9: set only by thread ACTIVITY (attach_file) — the people the activity
+  // tells, as opposed to the readers a transition resets `unread_by` to.
+  let activityRecipients: string[] | null = null;
+
   switch (input.actionType) {
     case "save_progress":
       break;
-    case "approve_initial":
-      updates.status = "PENDING_ASSIGNMENT";
+    // (approve_initial is gone with the NEW / PENDING_ENG_INITIAL stage —
+    // DEC-14; approve_team is the only writer of PENDING_ASSIGNMENT.)
+    case "attach_file":
+      // WF-9: the attachment rides the same compare-and-set write as every
+      // transition; the status does not move. It is ACTIVITY, so it ADDS
+      // readers and never removes them: the default reset above would have
+      // wiped the WF-19 queue pool and the assigned engineer out of
+      // `unread_by` (the inbox's "unread activity" list, the portal dot and
+      // the badge count all read that column) the moment anyone attached a
+      // file. Everyone with a stake is told — requester, drafter, engineer
+      // and followers, minus the actor (the comment route's set) — and a
+      // reader whose earlier alert is merely outstanding keeps the marker
+      // without being re-told.
+      if (input.attachment) currentAttachments = [...currentAttachments, input.attachment];
+      activityRecipients = Array.from(
+        new Set(
+          [ticket.requesterId, ticket.assignedDrafterId, ticket.assignedEngineerId, ...(ticket.watchers ?? [])].filter(
+            (id): id is string => !!id && id !== actorUid,
+          ),
+        ),
+      );
+      updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...activityRecipients])).filter(
+        (u) => u !== actorUid,
+      );
+      break;
+    case "cancel_request":
+      // DEC-14: a terminal exit off the main flow, with the reason in the
+      // comment thread and the history line.
+      updates.status = "CANCELED";
       break;
     case "request_eng_review":
       // WF-22: the status may only advance WITH its engineer — an
@@ -218,6 +258,15 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         updates.status = "DRAFTING";
       }
       break;
+    case "reassign_drafter":
+      // WF-18: the status stays where it is; only the drafter slot changes,
+      // and the new assignee is the one told.
+      if (input.assignment) {
+        updates.assigned_drafter_id = input.assignment.id;
+        updates.assigned_drafter_name = input.assignment.name;
+        updates.unread_by = [input.assignment.id];
+      }
+      break;
     case "submit_draft": {
       updates.status = "PENDING_REVIEW";
       // Autonomous deliverable rev: submission i of cycle N reads "N<letter>"
@@ -244,6 +293,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.status = "PENDING_IFC";
       updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
       historyEntry.action = `Approved with minor correction — issued Rev ${updates.deliverable_rev}`;
+      // WF-21 / DEC-15: at the engineer sign-off stage this IS the engineer's
+      // approval — stamp it, or the sign-off indicator stays "pending" forever.
+      if (ticket.status === "PENDING_FINAL_APPROVAL") updates.engineer_approved_at = now;
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "request_final_engineer_approval":
@@ -300,7 +352,14 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.status = "CLOSED";
       break;
     case "reopen_ticket":
+      // WF-21 / DEC-15: a reopen starts a NEW revision cycle. Without this
+      // the next approval re-issued the same label (Rev 2 twice for two
+      // different packages) and /api/verify-ticket called the superseded
+      // print "current" while the drawing was back under review.
       updates.status = "PENDING_REVIEW";
+      updates.revision_count = (ticket.revisionCount || 0) + 1;
+      updates.draft_iteration = 0;
+      updates.deliverable_rev = null;
       break;
   }
 
@@ -328,7 +387,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   if (nowTerminal && !wasTerminal) updates.closed_at = new Date().toISOString();
   else if (!nowTerminal && wasTerminal) updates.closed_at = null;
 
-  const recipients = (updates.unread_by as string[]).filter((u) => u && u !== actorUid);
+  const recipients = (activityRecipients ?? (updates.unread_by as string[])).filter((u) => u && u !== actorUid);
 
   return { updates, historyEntry, newStatus, recipients, newComment };
 }
@@ -353,8 +412,8 @@ export function classifyTransitionNotification(params: {
     actionType === "request_final_engineer_approval" ||
     actionType === "request_eng_review" ||
     actionType === "reassign_engineer";
-  const isAssignment = actionType === "assign" || actionType === "self_assign";
-  const isClosed = actionType === "close_ticket" || actionType === "close_rfi";
+  const isAssignment = actionType === "assign" || actionType === "self_assign" || actionType === "reassign_drafter";
+  const isClosed = actionType === "close_ticket" || actionType === "close_rfi" || actionType === "cancel_request";
   const isApproved =
     actionType === "approve_draft_ifc" ||
     actionType === "engineer_approve_final" ||

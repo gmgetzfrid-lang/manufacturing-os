@@ -67,8 +67,8 @@ describe("getInitialStatus — assignment-first routing", () => {
 describe("PENDING_ASSIGNMENT — the entry queue", () => {
   const t = mk({ status: "PENDING_ASSIGNMENT" });
 
-  it("Admin can assign, flag for engineering review, or force close", () => {
-    expect(actionsOf(t, "Admin")).toEqual(["assign", "close_ticket", "request_eng_review"].sort());
+  it("Admin can assign, flag for engineering review, or force close (and, as management, attach a file — WF-9 — or cancel — DEC-14)", () => {
+    expect(actionsOf(t, "Admin")).toEqual(["assign", "attach_file", "cancel_request", "close_ticket", "request_eng_review"].sort());
   });
 
   it("DraftingSupervisor can assign and flag (the queue owner)", () => {
@@ -81,8 +81,8 @@ describe("PENDING_ASSIGNMENT — the entry queue", () => {
     expect(flag?.requiresComment).toBe(true);
   });
 
-  it("Drafter can self-assign (pick up from the pool)", () => {
-    expect(actionsOf(t, "Drafter")).toEqual(["self_assign"]);
+  it("Drafter can self-assign (pick up from the pool) — and attach to the unassigned ticket they may work (WF-8 pool)", () => {
+    expect(actionsOf(t, "Drafter")).toEqual(["attach_file", "self_assign"]);
   });
 
   it("Viewer gets no workflow actions", () => {
@@ -95,9 +95,9 @@ describe("PENDING_ASSIGNMENT — the entry queue", () => {
 });
 
 describe("PENDING_ENG_TEAM — scoped engineering review", () => {
-  it("the assigned engineer can complete or return", () => {
+  it("the assigned engineer can complete or return (and attach, by identity)", () => {
     const t = mk({ status: "PENDING_ENG_TEAM", assignedEngineerId: "eng-1" });
-    expect(actionsOf(t, "Engineer-1", "eng-1")).toEqual(["approve_team", "reject"].sort());
+    expect(actionsOf(t, "Engineer-1", "eng-1")).toEqual(["approve_team", "attach_file", "reject"].sort());
   });
 
   it("a DIFFERENT engineer cannot act when one is assigned", () => {
@@ -119,14 +119,14 @@ describe("PENDING_ENG_TEAM — scoped engineering review", () => {
 describe("DRAFTING — the assigned drafter's stage", () => {
   it("assigned drafter can stage files; submit only once a Draft file exists", () => {
     const noDraft = mk({ status: "DRAFTING", assignedDrafterId: "d-1" });
-    expect(actionsOf(noDraft, "Drafter", "d-1")).toEqual(["save_progress"]);
+    expect(actionsOf(noDraft, "Drafter", "d-1")).toEqual(["attach_file", "save_progress"]);
 
     const withDraft = mk({
       status: "DRAFTING",
       assignedDrafterId: "d-1",
       attachments: [{ id: "a1", name: "x.pdf", url: "u", type: "Draft", status: "staged" } as never],
     });
-    expect(actionsOf(withDraft, "Drafter", "d-1")).toEqual(["save_progress", "submit_draft"].sort());
+    expect(actionsOf(withDraft, "Drafter", "d-1")).toEqual(["attach_file", "save_progress", "submit_draft"].sort());
   });
 
   it("RFIs can be answered & closed by the drafter", () => {
@@ -155,6 +155,45 @@ describe("PENDING_REVIEW — the engineer-approval fork", () => {
     expect(actionsOf(t, "Engineer-1", "eng-9")).toContain("approve_draft_ifc");
   });
 
+  it("WF-24: co-review on the requester's behalf is OPTIONAL (the ticket waits on the requester); with no requester it is required", () => {
+    const withRequester = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
+    for (const role of ["Engineer-1", "Admin", "Manager"] as const) {
+      const acts = WorkflowEngine.getActions(withRequester, role, "other");
+      for (const a of ["approve_draft_ifc", "approve_minor_correction", "request_revision"]) {
+        expect(acts.find((x) => x.action === a)?.optional, `${role}/${a}`).toBe(true);
+      }
+    }
+    // the requester's own review is never optional
+    expect(WorkflowEngine.getActions(withRequester, "Viewer", "u-1").find((a) => a.action === "request_revision")?.optional).toBeUndefined();
+    // no requester to act: the co-review IS the review (mirrors FINAL_DRAFT's on-behalf close)
+    const orphan = mk({ status: "PENDING_REVIEW", requesterId: "", requesterRole: "Viewer" });
+    const acts = WorkflowEngine.getActions(orphan, "Engineer-1", "eng-9");
+    expect(acts.find((a) => a.action === "approve_draft_ifc")?.optional).toBeUndefined();
+    expect(acts.find((a) => a.action === "request_revision")?.optional).toBeUndefined();
+  });
+
+  it("WF-24: a requester KNOWN to have left (current collection []) is nobody to act on behalf of — the co-review and the on-behalf close are required again; unknown (null / undefined) or any held role assumes present", () => {
+    const review = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
+    const final = mk({ status: "FINAL_DRAFT", requesterId: "u-1" });
+    for (const role of ["Engineer-1", "Admin", "Manager"] as const) {
+      const gone = WorkflowEngine.getActions(review, role, "other", undefined, { requesterRoles: [] });
+      for (const a of ["approve_draft_ifc", "approve_minor_correction", "request_revision"]) {
+        expect(gone.find((x) => x.action === a)?.optional, `${role}/${a}`).toBeUndefined();
+      }
+      const goneFinal = WorkflowEngine.getActions(final, role, "other", undefined, { requesterRoles: [] });
+      expect(goneFinal.find((x) => x.action === "close_ticket")?.optional, role).toBeUndefined();
+      expect(goneFinal.find((x) => x.action === "reject_final")?.optional, role).toBeUndefined();
+      for (const rr of [null, undefined, ["Viewer"]] as const) {
+        expect(WorkflowEngine.getActions(review, role, "other", undefined, { requesterRoles: rr }).find((x) => x.action === "approve_draft_ifc")?.optional, `${role}/${String(rr)}`).toBe(true);
+        expect(WorkflowEngine.getActions(final, role, "other", undefined, { requesterRoles: rr }).find((x) => x.action === "close_ticket")?.optional, `${role}/${String(rr)}`).toBe(true);
+      }
+    }
+    // the requester's own review / close is never optional, whatever the collection says
+    expect(WorkflowEngine.getActions(review, "Viewer", "u-1", undefined, { requesterRoles: ["Viewer"] }).find((x) => x.action === "request_revision")?.optional).toBeUndefined();
+    expect(WorkflowEngine.getActions(final, "Viewer", "u-1", undefined, { requesterRoles: ["Viewer"] }).find((x) => x.action === "close_ticket")?.optional).toBeUndefined();
+    // no requester at all: required on both stages
+    expect(WorkflowEngine.getActions(mk({ status: "FINAL_DRAFT", requesterId: "" }), "Engineer-1", "other").find((x) => x.action === "close_ticket")?.optional).toBeUndefined();
+  });
   it("minor-correction fast approve exists ONLY for actors who could approve directly (WF-3)", () => {
     const t = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
     // WF-3 closure: a Viewer-tier requester cannot self-approve, so their
@@ -179,9 +218,9 @@ describe("PENDING_REVIEW — the engineer-approval fork", () => {
 describe("PENDING_FINAL_APPROVAL — engineer sign-off", () => {
   const t = mk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "eng-1" });
 
-  it("the assigned engineer can approve, minor-correct, send back to drafter, or return to requester", () => {
+  it("the assigned engineer can approve, minor-correct, send back to drafter, or return to requester (and attach)", () => {
     expect(actionsOf(t, "Engineer-1", "eng-1")).toEqual(
-      ["engineer_approve_final", "approve_minor_correction", "engineer_request_revision", "engineer_return_to_requester"].sort(),
+      ["engineer_approve_final", "approve_minor_correction", "engineer_request_revision", "engineer_return_to_requester", "attach_file"].sort(),
     );
   });
 
@@ -197,7 +236,7 @@ describe("PENDING_FINAL_APPROVAL — engineer sign-off", () => {
 describe("closure & resurrection", () => {
   it("requester acknowledges & closes at FINAL_DRAFT", () => {
     const t = mk({ status: "FINAL_DRAFT", requesterId: "u-1" });
-    expect(actionsOf(t, "Viewer", "u-1")).toEqual(["close_ticket", "reject_final"].sort());
+    expect(actionsOf(t, "Viewer", "u-1")).toEqual(["attach_file", "close_ticket", "reject_final"].sort());
   });
 
   it("CLOSED offers reopen to management and the requester — and nothing else", () => {
