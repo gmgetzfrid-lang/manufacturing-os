@@ -15,7 +15,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ALL_ROLES } from "@/types/schema";
+import { ALL_ROLES, type Role } from "@/types/schema";
+import { pickerRoster, addableRoles, capabilitiesAdded, DORMANT_ROLES, isDormantRole, pickerNote, READ_ONLY_ROLE_NOTE, CONTRACTOR_ROLE_NOTE } from "@/lib/roleCapabilities";
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
@@ -75,6 +76,52 @@ describe("role pickers the first census did not cover", () => {
       .flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));
     expect(new Set(roles)).toEqual(new Set(ALL_ROLES));
     expect(roles.length).toBe(ALL_ROLES.length);
+  });
+});
+
+// ROLE-4: the add-role picker shows the WHOLE roster. `addableRoles` (the
+// "never an empty add" guardrail) hid every role that added no capability —
+// once a member held anything granting create_requests, all seven of
+// Requester / the five department labels / Contractor vanished, and one
+// Engineer tier hid the other three, with no explanation. The picker now
+// renders `pickerRoster`: three labelled groups whose union is exactly the
+// roster minus what is held, every hidden-before role carrying its reason.
+describe("the add-role picker offers the whole roster, grouped and explained (ROLE-4)", () => {
+  it("for every single-role collection the three groups partition ALL_ROLES minus the held role", () => {
+    for (const held of ALL_ROLES) {
+      const r = pickerRoster([held]);
+      const all = [...r.adds, ...r.addsNothing, ...r.dormant];
+      expect(new Set(all).size).toBe(all.length);
+      expect(new Set(all)).toEqual(new Set(ALL_ROLES.filter((x) => x !== held)));
+      expect(r.dormant).toEqual(DORMANT_ROLES.filter((x) => x !== held));
+      for (const x of r.adds) { expect(isDormantRole(x)).toBe(false); expect(capabilitiesAdded(x, [held]).length).toBeGreaterThan(0); }
+      for (const x of r.addsNothing) { expect(isDormantRole(x)).toBe(false); expect(capabilitiesAdded(x, [held])).toEqual([]); }
+      // the guardrail's answer survives inside the first group
+      expect(r.adds).toEqual(addableRoles([held]).filter((x) => !isDormantRole(x)));
+    }
+    expect(pickerRoster([...ALL_ROLES])).toEqual({ adds: [], addsNothing: [], dormant: [] });
+  });
+  it("a Drafter is offered the seven that used to vanish, each with its reason; a second Engineer tier says it is a label", () => {
+    const r = pickerRoster(["Drafter"]);
+    for (const x of ["Requester", "Contractor", "Viewer"] as Role[]) expect(r.addsNothing).toContain(x);
+    expect(r.adds).toContain("Auditor"); // adds `audit` over a Drafter — offered, and still explained as a restriction
+    for (const x of DORMANT_ROLES) expect(r.dormant).toContain(x);
+    expect(pickerNote("Viewer", ["Drafter"])).toBe(READ_ONLY_ROLE_NOTE);
+    expect(pickerNote("Auditor", ["Drafter"])).toBe(READ_ONLY_ROLE_NOTE);
+    expect(pickerNote("Contractor", ["Drafter"])).toBe(CONTRACTOR_ROLE_NOTE);
+    expect(pickerNote("Safety", ["Drafter"])).toMatch(/Use a team instead/);
+    expect(pickerNote("Engineer-2", ["Engineer-1"])).toMatch(/tiers are labels/);
+    expect(pickerNote("DocCtrl", ["Drafter"])).toBeNull(); // adds something, needs no excuse
+    expect(pickerNote("Supervisor", ["Admin"])).toMatch(/Adds nothing this member doesn't already have/);
+  });
+  it("the members page renders the three groups from pickerRoster (source pin)", () => {
+    const src = read("app/(protected)/admin/users/page.tsx");
+    expect(src).toContain("const roster = pickerRoster(current);");
+    expect(src).toContain("{ title: 'Roles that add new access', hint: null, roles: roster.adds, dim: false },");
+    expect(src).toContain("roles: roster.addsNothing, dim: false },");
+    expect(src).toContain("{ title: 'Dormant department labels', hint: DORMANT_ROLE_NOTE, roles: roster.dormant, dim: true },");
+    expect(src).toContain("const note = pickerNote(r, current) ?? roleDisplayNote(r);");
+    expect(src).not.toMatch(/const options = addableRoles\(current\);/);
   });
 });
 

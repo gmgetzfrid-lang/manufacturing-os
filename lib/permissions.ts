@@ -219,6 +219,30 @@ export function canServeContent(params: {
   return decision.can("download") || decision.can("read");
 }
 
+/** DOCACL-3 / DEC-43: did the CONTROLLER bypass decide this content read?
+ *  True when the principal is a controller (Admin / DocCtrl by collection)
+ *  AND the same person stripped of the controller roles would NOT be served
+ *  the bytes — i.e. the node is restricted against them and only the
+ *  recovery rail let them through. Controllers are unscoped by design; the
+ *  mitigation is that such reads are AUDITED at the bytes-egress point
+ *  (app/api/storage/download-url). Pure: one extra evaluation, no I/O. */
+export function controllerBypassDecided(params: {
+  principal: Principal;
+  aclChain?: (AccessControl | undefined)[];
+  visibility?: NodeVisibility;
+  effectiveOwnerUserId?: string | null;
+}): boolean {
+  const { principal } = params;
+  if (!isControllerPrincipal(principal)) return false;
+  const stripped = heldRoles(principal).filter((r) => !isControllerRole(r));
+  const asMember: Principal = {
+    ...principal,
+    role: stripped[0] ?? ("Viewer" as Role),
+    roles: stripped.length > 0 ? stripped : ["Viewer" as Role],
+  };
+  return !canServeContent({ ...params, principal: asMember });
+}
+
 // canBlindDrillAccess and filterDiscoverable were removed under DEC-11: both
 // were exported with zero callers, pure, and trivially restorable from git.
 // The blind-drill capability itself lives on in lib/acl.ts (canBlindDrill)

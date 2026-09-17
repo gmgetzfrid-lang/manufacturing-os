@@ -140,7 +140,9 @@ describe("CHAIN-1 — restrictions bind on ANY held role; grants follow any held
 
   it("source pins: the two UI restriction sites evaluate the collection", () => {
     const page = readFileSync(join(process.cwd(), "app", "(protected)", "documents", "[libraryId]", "page.tsx"), "utf8");
-    expect(page).toMatch(/canEdit=\{isController \|\| !hasAnyRole\(\["Viewer", "Auditor"\]\)\}/);
+    // Round E / ROLE-5: the same deny-if-any, through the ONE read-only helper,
+    // and without the controller escape (the DB assets overlay never had one).
+    expect(page).toMatch(/canEdit=\{!holdsReadOnlyRole\(roles\)\}/);
     expect(page).not.toMatch(/activeRole !== "Viewer" && activeRole !== "Auditor"/);
     const sidebar = readFileSync(join(process.cwd(), "components", "navigation", "Sidebar.tsx"), "utf8");
     expect(sidebar).toMatch(/hasAnyRole\(\['Viewer', 'Contractor'\]\)/);

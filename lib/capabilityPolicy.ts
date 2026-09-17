@@ -57,7 +57,8 @@ export type CapabilityId =
   | "holds.release"
   | "checkout.force_release"
   | "admin.analytics_view"
-  | "admin.archive_view";
+  | "admin.archive_view"
+  | "admin.audit_view";
 
 export interface CapabilityDef {
   id: CapabilityId;
@@ -127,6 +128,13 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
     description: "Open /admin/analytics.", defaultRoles: [...MGMT, "DocCtrl"] },
   { id: "admin.archive_view", area: "Metrics", label: "Archive browser",
     description: "Open /admin/archive-view.", defaultRoles: ["Admin", "DocCtrl"] },
+  // ROLE-5: Auditor's admission to the audit log used to be a hardcoded set on
+  // the page; it is now this capability, read by the admin gate AND by the
+  // audit_logs SELECT overlay at the database (20261063) — widen or narrow
+  // freely, delegate it to a person with a grant.
+  { id: "admin.audit_view", area: "Admin", label: "Audit log",
+    description: "Open /admin/audit — the org-level authority trail. Enforced at the database, which reads this policy.",
+    defaultRoles: [...MGMT, "DocCtrl", "Auditor"] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or
@@ -366,6 +374,33 @@ export function parseStoredCapabilityPolicy(stored: unknown): CapabilityPolicy {
 }
 
 export interface LoadedCapabilityPolicy { policy: CapabilityPolicy; version: string | null }
+
+/** The strict (fail-closed) admin-gate loader reads the SAME shape with the
+ *  SAME rule as the cached one — one parser, two names. */
+export const normalizeStoredPolicy = parseStoredCapabilityPolicy;
+
+/** SURF-9 / WF-20: the FAIL-CLOSED loader for the admin gate. Unlike
+ *  `loadCapabilityPolicy` (which answers "defaults" on a read error so a
+ *  transient failure never blocks a workflow action) this one reports the
+ *  error, so a gate that cannot read the policy DENIES instead of admitting
+ *  on the shipped defaults. Never cached: a gate decision is always fresh. */
+export async function loadCapabilityPolicyStrict(
+  orgId: string,
+  client: Pick<typeof supabase, "from">,
+): Promise<{ ok: true; policy: CapabilityPolicy } | { ok: false; error: string }> {
+  try {
+    const { data, error } = await client
+      .from("org_configurations")
+      .select("data")
+      .eq("org_id", orgId)
+      .eq("key", "capability_policy")
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message || "policy read failed" };
+    return { ok: true, policy: normalizeStoredPolicy(data?.data) };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "policy read threw" };
+  }
+}
 
 /** `client` lets server routes pass their own (service-role) client — the
  *  shared browser client has no session in a route handler. Returns the

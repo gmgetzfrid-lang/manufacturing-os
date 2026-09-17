@@ -13,7 +13,7 @@
 //     to the live 20261038 body.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import {
@@ -212,9 +212,12 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
     expect(r).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);
     // the only policyAllows call sites, every one resource-aware or deliberately base-only
+    // (Round E / SURF-9: the two admin pages' client reads moved into the ONE
+    // server admin gate — lib/adminSurfaces.ts — which is base-only by design)
     const sites = ["lib/workflow.ts", "lib/holds.ts", "components/permissions/ViewAsSimulator.tsx", "app/api/tickets/workflow-action/route.ts",
-      "app/(protected)/admin/archive-view/page.tsx", "app/(protected)/admin/analytics/page.tsx"];
+      "lib/adminSurfaces.ts"];
     for (const f of sites) expect(src(f)).toMatch(/policyAllows\(/);
+    for (const f of ["app/(protected)/admin/archive-view/page.tsx", "app/(protected)/admin/analytics/page.tsx"]) expect(src(f)).not.toMatch(/policyAllows\(/);
   });
 });
 
@@ -404,17 +407,25 @@ describe("20261052 — org_capability_allows_for + the 3-argument wrapper", () =
     expect(forFn).toContain("v_tokens := v_entry;");
     expect(forFn).toContain("p_resource := COALESCE(p_resource, '{}'::jsonb);");
   });
-  it("the default CASE is byte-identical to the 20261038 body and mirrors CAPABILITY_DEFS as of Round D3 (17 rows; Round E's 20261057 added the stage-3 row)", () => {
+  it("the default CASE is byte-identical to the live 20261038 body, and the NEWEST re-creation of the evaluator mirrors CAPABILITY_DEFS", () => {
     const caseNew = between(forFn, "v_tokens := CASE p_cap", "END;");
     const caseLive = between(liveFn, "v_tokens := CASE p_cap", "END;");
     expect(caseNew).toBe(caseLive);
-    const sqlDefaults = new Map<string, string[]>();
-    for (const m of caseNew.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
-    for (const [cap, tokens] of sqlDefaults) expect(CAPABILITY_DEFS.find((d) => d.id === cap)?.defaultRoles, cap).toEqual(tokens);
-    expect(sqlDefaults.size).toBe(17);
-    // the only capability this (historical) CASE lacks is DEC-13 stage 3's —
-    // the live census now runs against 20261057 (rpPhase4Migration.test.ts)
-    expect(CAPABILITY_DEFS.map((d) => d.id).filter((id) => !sqlDefaults.has(id))).toEqual(["ticket.engineer_gate_exempt"]);
+    const parse = (c: string) => {
+      const m = new Map<string, string[]>();
+      for (const x of c.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) m.set(x[1], JSON.parse(x[2]) as string[]);
+      return m;
+    };
+    // every default this migration ships is still what CAPABILITY_DEFS says
+    for (const [id, roles] of parse(caseNew)) expect(CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles, id).toEqual(roles);
+    // and the LIVE evaluator — the last migration that re-creates it — carries every capability
+    const dir = join(process.cwd(), "supabase", "migrations");
+    const live = readdirSync(dir).filter((f) => /^\d{8}/.test(f) && f.endsWith(".sql")).sort()
+      .filter((f) => readFileSync(join(dir, f), "utf8").includes("CREATE OR REPLACE FUNCTION org_capability_allows_for")).pop()!;
+    const liveFor = mig(live).slice(mig(live).indexOf("CREATE OR REPLACE FUNCTION org_capability_allows_for"));
+    const liveDefaults = parse(between(liveFor, "v_tokens := CASE p_cap", "END;"));
+    for (const def of CAPABILITY_DEFS) expect(liveDefaults.get(def.id), `${def.id} in ${live}`).toEqual(def.defaultRoles);
+    expect(liveDefaults.size).toBe(CAPABILITY_DEFS.length);
   });
   it("the token loop and the grants loop are byte-identical to the live body", () => {
     const loopsNew = between(forFn, "FOR t IN SELECT jsonb_array_elements_text(v_tokens) LOOP", "END;\n$$;");

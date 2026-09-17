@@ -252,7 +252,7 @@ describe("DEC-17 carve-out mirror — the plot-plan pages", () => {
   it("controller checks read the role collection; read-only roles get DISABLED flip controls with a reason, never hidden", () => {
     const detail = src("app/(protected)/plot-plans/[id]/page.tsx");
     expect(detail).toMatch(/const isController = hasAnyRole\(\["Admin", "DocCtrl"\]\);/);
-    expect(detail).toMatch(/const canFlip = !hasAnyRole\(\["Viewer", "Auditor"\]\);/);
+    expect(detail).toMatch(/const canFlip = !holdsReadOnlyRole\(roles\);/); // Round E / ROLE-5: the one helper
     expect((detail.match(/disabled=\{!canFlip\}/g) ?? []).length).toBe(2);
     expect((detail.match(/if \(!uid \|\| !activeOrgId \|\| !canFlip\) return;/g) ?? []).length).toBe(2);
     expect(detail).not.toMatch(/activeRole === "Admin" \|\| activeRole === "DocCtrl"/);

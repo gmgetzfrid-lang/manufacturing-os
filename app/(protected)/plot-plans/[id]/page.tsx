@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
+import { holdsReadOnlyRole } from "@/lib/roleHeld";
 import { getPlotPlan, saveMarkers } from "@/lib/plotPlans";
 import { listAssets, type Asset } from "@/lib/assets";
 import { STATE_CONFIG, WHITEBOARD_STATES, nextState, setEquipmentState } from "@/lib/whiteboard";
@@ -23,14 +24,15 @@ import type { PlotPlan, PlotPlanMarker, WhiteboardState } from "@/types/schema";
 export default function PlotPlanBoard() {
   const params = useParams();
   const id = String(params?.id ?? "");
-  const { activeOrgId, uid, userEmail, activeRole, hasAnyRole } = useRole();
+  const { activeOrgId, uid, userEmail, activeRole, roles, hasAnyRole } = useRole();
   const { showToast } = useToast();
   const isController = hasAnyRole(["Admin", "DocCtrl"]);
   // DEC-17 carve-out mirror: the whiteboard flip is open to every working
-  // member, but read-only roles are denied — deny-if-any (CHAIN-1). The
-  // database enforces the same rule; the controls render disabled with a
+  // member, but read-only roles are denied — deny-if-any (CHAIN-1), through
+  // the ONE read-only helper every restriction-style check uses (ROLE-5).
+  // The database enforces the same rule; the controls render disabled with a
   // reason, never hidden (DEC-12).
-  const canFlip = !hasAnyRole(["Viewer", "Auditor"]);
+  const canFlip = !holdsReadOnlyRole(roles);
   const FLIP_BLOCKED = "Read-only roles (Viewer, Auditor) can't change equipment state.";
 
   const [plan, setPlan] = useState<PlotPlan | null>(null);

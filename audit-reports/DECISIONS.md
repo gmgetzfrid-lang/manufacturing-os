@@ -76,6 +76,7 @@ about the system.
 | [DEC-39](#dec-39) | Warn before expiry; the non-response record lives on the **ticket**, not the bell | medium | `GAP-113`, `GAP-106` |
 | [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
 | [DEC-42](#dec-42) | Supabase identity linking is **required**; the unique index is the backstop, not the mechanism | medium | `IDENT-1`, `IDENT-2`, `IDENT-3` |
+| [DEC-43](#dec-43) | Controllers are **unscoped by design**; a bypass-decided read of a restricted node is audited at the bytes egress | low | `DOCACL-3`, `DEC-2` |
 
 ---
 
@@ -665,6 +666,8 @@ PostgREST; the `/admin/settings` gate and its API agree.
 defers it, it does not reject it.
 
 **Risk:** medium.
+
+*Landed 2026-09-17 (roles-and-permissions Round E): the deferred consolidation. ONE server-enforced admin gate — `lib/adminSurfaces.ts` (the registry: entry by role collection, any-member, or a capability with grants), `lib/adminGate.ts` `authorizeAdminSurface` (fail closed on a policy-load error), `/api/admin/gate`, and `app/(protected)/admin/layout.tsx` asking it before any admin page renders. Every registry entry mirrors what its page admitted, pinned by test, with one deliberate narrowing — `/admin/storage` (entry = its stats API's Admin / Manager / DocCtrl set; the page never gated entry and is unusable without it) — and one presentation change (`/admin/libraries` / `/admin/requests` answer a non-controller with the denial screen instead of a redirect), both recorded in `SURF-9`'s resolution; `admin.audit_view` (`20261063`) makes the audit page policy-driven at the page and at the database. See `SURF-9`, `WF-20`, `ROLE-5`; the API-route conversion is split off as `SURF-19` (DEC-31).*
 
 <a id="dec-18"></a>
 ## DEC-18 · Is subscription state enforced server-side?
@@ -1654,3 +1657,46 @@ provider (none stated), the unique indexes must then key on
 `(provider, email)` instead — a different data model, decided then.
 
 **Risk:** medium — a project-setting dependency the repo cannot enforce.
+
+<a id="dec-43"></a>
+## DEC-43 · Can a document controller be scoped?
+
+**Decision. No. `Admin` and `DocCtrl` stay unscoped — every controller sees
+and may publish every document in the org. The one mitigation is a record:
+when a controller is served the bytes of a restricted node ONLY because of
+the controller tier, an `audit_logs` row (`CONTROLLER_RESTRICTED_READ`) is
+written at the download egress.**
+
+> Made during the roles-and-permissions Round E (2026-09-17) under the
+> protocol's fail-safe rule, closing `DOCACL-3` as accepted-by-design.
+
+**Rationale.** `DEC-2` made the controller tier the recovery rail on purpose:
+the publish path, the review guard, ack rows and `node_visible` all route
+through `is_org_controller` so that a member holding `DocCtrl` anywhere in
+their collection can always reach and repair a document. A scoped `DocCtrl`
+is a controller who can be configured out of the thing they must recover —
+the exact class of failure `DEC-2` exists to prevent — and the change would
+land inside `node_visible`, the function every document read passes through.
+No facility has stated a per-area document-controller requirement; the
+exposure is that a document controller can read the org's documents.
+
+**Implementation.** `lib/permissions.ts` `controllerBypassDecided` (pure) and
+the audit row in `app/api/storage/download-url/route.ts`, best-effort so a
+failed insert never blocks the rail. The route passes the document's explicit
+owner into the evaluation (`effectiveOwnerUserId`) and asks
+`user_is_effective_owner` (the folder / library / team cascade) before
+writing, so ownership that would have served the bytes leaves no row; a
+cascade lookup error records the read rather than skipping it. Reads through
+PostgREST are not audited: an RLS function cannot write per row without a
+side effect on every SELECT.
+
+**Acceptance.** An unscoped controller behaves exactly as before; a
+controller download of a private/hidden document that the ACL does not admit
+them to leaves a `CONTROLLER_RESTRICTED_READ` row; a download the ACL (or
+ownership) would have served anyway leaves none.
+
+**Reversal.** A stated per-area controller requirement AND `DEC-5` (stable
+role ids) — then scope lives on the id, is checked in `node_visible` after
+the `Admin` branch, and an unscoped controller keeps today's behaviour.
+
+**Risk:** low.

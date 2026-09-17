@@ -83,21 +83,14 @@ const toDate = (date: unknown): Date => {
 
 // --- COMPONENT ---
 export default function AnalyticsPage() {
-  const { activeOrgId, activeRole, roles, uid } = useRole();
-  // Policy-gated (default: Admin/Manager/Supervisor/DocCtrl). This page was
-  // previously reachable by ANY member via direct URL — nav hiding is not a
-  // permission model.
-  const [allowed, setAllowed] = React.useState<boolean | null>(null);
-  React.useEffect(() => {
-    if (!activeOrgId || !activeRole) return;
-    let alive = true;
-    void import("@/lib/capabilityPolicy").then(async ({ loadCapabilityPolicy, policyAllows }) => {
-      const p = await loadCapabilityPolicy(activeOrgId);
-      if (alive) setAllowed(policyAllows(p, "admin.analytics_view", activeRole, roles, uid ?? undefined));
-    }).catch(() => { if (alive) setAllowed(true); });
-    return () => { alive = false; };
-  }, [activeOrgId, activeRole, roles, uid]);
+  const { activeOrgId } = useRole();
+  // SURF-9 / WF-20: entry is decided by the admin layout's SERVER gate
+  // (admin.analytics_view — role tokens, then a per-person grant, fail
+  // closed on a policy-load error). The client-side policy read that used
+  // to live here failed OPEN on error and could not stop the data fetch;
+  // the data now comes through /api/admin/analytics under the same gate.
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   
   // STATE
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -115,11 +108,20 @@ export default function AnalyticsPage() {
 
     const fetchData = async () => {
       setLoading(true);
+      setLoadError(null);
       try {
-        const { data: ticketsData } = await supabase
-          .from('tickets')
-          .select('*')
-          .eq('org_id', activeOrgId);
+        const { data: sess } = await supabase.auth.getSession();
+        const token = sess.session?.access_token ?? "";
+        const res = await fetch(`/api/admin/analytics?orgId=${encodeURIComponent(activeOrgId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        const body = (await res.json().catch(() => null)) as { tickets?: Record<string, unknown>[]; documents?: Record<string, unknown>[]; error?: string } | null;
+        if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ticketsData = (body?.tickets ?? []) as any[];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const docsData = (body?.documents ?? []) as any[];
         setTickets((ticketsData || []).map(r => ({
           id: r.id, orgId: r.org_id, ticketId: r.ticket_id,
           title: r.title, description: r.description, unit: r.unit,
@@ -133,10 +135,6 @@ export default function AnalyticsPage() {
           archivedAt: r.archived_at ?? null, metadata: r.metadata ?? null,
         } as Ticket)));
 
-        const { data: docsData } = await supabase
-          .from('documents')
-          .select('id, org_id, status, document_number, title')
-          .eq('org_id', activeOrgId);
         setDocuments((docsData || []).map(r => ({
           id: r.id, orgId: r.org_id, status: r.status,
           documentNumber: r.document_number, title: r.title,
@@ -144,6 +142,7 @@ export default function AnalyticsPage() {
 
       } catch (e) {
         console.error("Analytics Load Error:", e);
+        setLoadError((e as Error).message || "Analytics could not be loaded.");
       } finally {
         setLoading(false);
       }
@@ -344,8 +343,8 @@ export default function AnalyticsPage() {
   }, [selectedUser, tickets, viewMode, metrics]);
 
 
-  if (allowed === false) {
-    return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">Analytics is limited to management and document control. An Admin can change this under Admin → Permissions → Action permissions.</div>;
+  if (loadError) {
+    return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">Analytics could not be loaded: {loadError}</div>;
   }
   if (loading) {
     return <div className="p-8 text-center text-[var(--color-text-muted)] animate-pulse">Loading Analytics Engine...</div>;

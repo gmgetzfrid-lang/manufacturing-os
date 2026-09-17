@@ -24,7 +24,13 @@ import { Spinner } from "@/components/ui/Spinner";
 
 // Auditor included: the role exists FOR audit review — it was defined with an
 // "audit" capability yet locked out of the one page that shows the trail.
-const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl", "Auditor"]);
+// ROLE-5 / SURF-9: admission is the `admin.audit_view` capability (default
+// Admin / Manager / Supervisor / DocCtrl / Auditor), decided by the admin
+// layout's SERVER gate — role tokens by collection, then a per-person grant
+// — and enforced at the database by the audit_logs SELECT overlay, which
+// reads the same policy (20261063). The hardcoded set that used to live
+// here could not be reconfigured and disagreed with the policy the moment
+// an Admin edited it.
 
 interface AuditRow {
   id: string;
@@ -92,9 +98,7 @@ const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>>
 };
 
 export default function AuditLogPage() {
-  const { activeOrgId, activeRole, roles, userEmail } = useRole();
-  // ADD-1: authority by the role COLLECTION, never the headline alone.
-  const canRead = roles.some((r) => ADMIN_ROLES.has(r));
+  const { activeOrgId } = useRole();
 
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -195,21 +199,6 @@ export default function AuditLogPage() {
     const deletes = [...byAction.entries()].filter(([k]) => /DELET|ARCHIVE|REVERS|FORCE/.test(k)).reduce((s, [, n]) => s + n, 0);
     return { total: filtered.length, topAction, topUser, deletes };
   }, [filtered]);
-
-  if (!canRead) {
-    return (
-      <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm flex items-center gap-3">
-          <div className="p-3 bg-slate-900 rounded-xl"><ScrollText className="w-6 h-6 text-white" /></div>
-          <div>
-            <h1 className="text-xl font-black text-[var(--color-text)]">Audit Log</h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class roles only. Ask your workspace admin if you need access.</p>
-            <div className="text-xs text-[var(--color-text-faint)] mt-2">Signed in as {userEmail || "—"} ({activeRole || "—"})</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <PageShell width="work">

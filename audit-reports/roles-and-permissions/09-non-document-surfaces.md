@@ -6,7 +6,7 @@ Everything outside the document library and the drafting workflow: membership,
 admin pages, projects, teams, holds, retention, signatures, restore, cron and
 notifications.
 
-**16 findings** — 2 CRITICAL, 6 HIGH, 8 MEDIUM.
+**19 findings** — 2 CRITICAL, 7 HIGH, 8 MEDIUM, 2 LOW.
 
 > See [`../README.md`](../README.md) for the resolution protocol. Code in
 > `Remediation` blocks is **illustrative, untested, and not a patch.** Line
@@ -430,7 +430,7 @@ names.
 ## SURF-9 · Every `/admin/*` surface is gated differently, and most are UI-only
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Partial (2026-09-01, Phase 6 / DEC-17):** the two entries that were genuine exposure are closed at the database — `audit_logs` (org-level authority trail readable only by the roles the page claims, document-level history unchanged) and the asset registry tables (RESTRICTIVE write overlays for the roles the page claims) — and the `/admin/settings` gate now matches its Admin-only API (`20261045`). Pre-flight 2026-09-02 carve-out: the plot-plan whiteboard flip (`assets.whiteboard_state`, offered to every working member with no role gate) would have been refused by a page-roles overlay, so the `assets` UPDATE overlay admits any active member holding no read-only role (Viewer/Auditor denied, deny-if-any per `CHAIN-1` — done-when 2 still holds) and a BEFORE UPDATE guard (`assets_guard_registry`) confines such a member to the flip columns; INSERT/DELETE and the other four tables keep the page roles. The plot-plan pages mirror it (flip controls disabled with a reason for read-only roles, `DEC-12`) and their controller checks now read the role collection (`DEC-2`). **`20261045` applied & verified live 2026-09-02** (9/9; inventory: 4 org-level audit rows now admin-class only). The consolidation of the other eighteen surfaces is deferred by DEC-17, not rejected; this finding stays OPEN for that.
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
@@ -490,6 +490,18 @@ hook means twenty surfaces changing behaviour at once with no reviewer, which
 2. A Viewer cannot write `assets`, `asset_types`, `asset_photos` or `plot_plans`.
 3. The `/admin/settings` client gate matches its Admin-only API.
 4. The remaining seventeen rows stay documented in the table above, unchanged.
+
+**Resolution (2026-09-17, Round E).** The deferred consolidation (DEC-17: "stays available as separate work") is done, as ONE server-enforced gate with the census turned into a registry. `lib/adminSurfaces.ts` `ADMIN_SURFACES` is the single statement of who may ENTER each of the twenty `/admin/*` surfaces — `entry: string[]` (by the FULL role collection), `entry: "*"` (any active member; the page renders read-only and gates its writes by the documented `writes` set), or `cap` (a capability-policy decision: role tokens, then a live per-person grant — `admin.analytics_view`, `admin.archive_view`, and the new `admin.audit_view` from ROLE-5). `lib/adminGate.ts` `authorizeAdminSurface(req, orgId, surface)` verifies the bearer, loads the active membership and its collection (`authorizeOrgRole`, SURF-10), reads the capability policy with the service client through a STRICT loader for a capability surface — a policy that cannot be read is a **503 denial, never an admission on the shipped defaults** — and decides with `adminSurfaceAllows`. `/api/admin/gate` serves it; `app/(protected)/admin/layout.tsx` asks it for the current pathname's surface before rendering ANY admin page and renders children only on a 200 whose surface matches — a 403, a 503, a network failure or an unregistered `/admin` path is a denial screen (with the surface's message, a retry on 5xx, and "an Admin can change this under Permissions" for capability surfaces). A session the gate could not verify is NOT a denial: with no access token yet the layout stays on "Checking access…", a 401 is shown as "Could not verify your access" with a retry, and the layout subscribes to `onAuthStateChange` so a session that arrives or refreshes re-asks by itself (an admitted page is never re-asked). Every registry entry mirrors what its page admitted on 2026-09-17 — the page's own role constants are pinned equal to the registry by test — with ONE deliberate narrowing and one presentation change, both stated here so nobody reads this as "zero admission changes": (a) **`/admin/storage`** never gated entry itself (only `canPurge` for its writes), so any active member could open it and see a stats error because `/api/admin/storage-stats` admits Admin / Manager / DocCtrl; its registry entry is pinned to that stats API's set — the page is unusable without it, and a member outside it (a Drafter, say) now sees "Storage & Backup is limited to Admin, Manager and Document Control" instead of an error (the test's `storage` exemption points at this sentence); (b) **`/admin/libraries`** and **`/admin/requests`** used to `router.push('/dashboard')` for a non-controller — the same admission now answers with the gate's denial screen instead of a silent redirect. Otherwise the consolidation changed no surface's admission except that three are now policy-driven end to end and the two fail-open client reads are gone (WF-20). The pages' own write gates and banners stay; the analytics data moved behind `/api/admin/analytics` under the gate.
+- Tests: `lib/__tests__/roundE_D_rolesAdmin.test.ts` — the registry covers exactly the set of `app/(protected)/admin/*/page.tsx` directories (fs scan) with keys = path segments; `adminSurfaceForPath`; every entry/writes set is spelled identically in the page's source and the storage entry equals its stats API; the API routes behind storage / restore / data-export / billing use the surface's set; the three capability surfaces' entries equal their capability defaults; `adminSurfaceAllows` (collection, `"*"`, empty, cap default / narrowed / grant live / expired / wrong uid); the gate route (401 / 400 / 403 pass-through, role surface by collection with no policy read, capability surface default / narrowed / granted, **503 fail-closed** with a role surface still answering); the layout source pins (incl. the no-token / 401 / auth-listener path and that a 403 stays non-retryable).
+- Reproduced: the table above was re-walked at the base commit — twenty pages, each with its own client expression; `admin.analytics_view` / `admin.archive_view` with zero references under `app/api/`.
+
+**Done-when.**
+1. ✓ (Phase 6) A Viewer cannot read `audit_logs` via PostgREST — the RESTRICTIVE SELECT overlay stands and now reads the policy (`20261063`, ROLE-5).
+2. ✓ (Phase 6) A Viewer cannot write the asset tables.
+3. ✓ (Phase 6) The `/admin/settings` gate matches its Admin-only API — and is now one registry row (`entry: ["Admin"]`).
+4. ✓ The remaining rows are no longer merely documented: every one is a registry entry evaluated by the same server gate; the table above is kept as the historical census (DEC-17's "leave the rest documented" is superseded by this consolidation, recorded in DEC-17's landed line).
+
+**Scope / residual.** DEC-31 split: the eighteen API route files behind the surfaces still call `authorizeOrgRole` with their own role constants (pinned equal to the registry); converting them to call `authorizeAdminSurface` directly is `SURF-19`. The route census in `SURF-16` (`/api/admin/create-user`) is untouched. **Pending migration:** none for this finding (`20261063` belongs to ROLE-5).
 
 ---
 
@@ -821,6 +833,32 @@ WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
 **Mechanism.** With no SELECT or UPDATE policy for `authenticated`, every client read/update of `email_notifications` returns zero rows. So the documented burst-dedupe (`dispatch.ts:105-106`) never fires — duplicate emails are only prevented by the server-side claim, not the client dedupe — and the `/admin/settings` dead-letter panel shows an empty failed-queue and its "requeue failed" button silently matches nothing.
 
 **Done when.** A carefully-scoped SELECT/UPDATE policy (or a server route) lets an org's admins see and requeue their own failed rows, and `queueEmail`'s dedupe sees its own recent rows — without re-opening the cross-tenant read `SURF-5` closed.
+
+---
+
+## SURF-19 · The API routes behind an admin surface still carry their own role constants instead of calling the admin gate
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** access-control / consistency
+- **Locations:**
+  - `app/api/admin/storage-stats/route.ts`, `purge`, `shed`, `shed/commit`, `archives`, `orphans`, `archive-settings`, `archive-cancel`, `ticket-shed`, `ticket-shed/commit`, `ticket-shed/restore` — `const *_ROLES = [...]` + `authorizeOrgRole(req, orgId, ROLES)`
+  - `app/api/admin/restore/{begin,apply,apply-table,preview}/route.ts` — `RESTORE_ROLES = ["Admin"]`
+  - `app/api/data-export/{run,runs,destinations,destinations/[id],destinations/[id]/test}/route.ts` — `ADMIN_ROLES = ["Admin","Manager","DocCtrl"]`
+  - `app/api/stripe/{checkout,portal}/route.ts` — `ADMIN_ROLES = ["Admin","Manager"]`
+  - the gate they should call: `lib/adminGate.ts` `authorizeAdminSurface(req, orgId, surfaceKey)`
+- **Related:** `SURF-9` (split from, per DEC-31), `WF-20`, `SURF-16`
+
+**Mechanism.** Round E consolidated every `/admin/*` PAGE onto one server gate and one registry (`lib/adminSurfaces.ts`), and pinned each API route's role constant EQUAL to the registry's `entry` / `writes` set for its surface (`lib/__tests__/roundE_D_rolesAdmin.test.ts`, "the API routes behind a surface use the surface's role set"). The routes themselves still evaluate their own copy of the set through `authorizeOrgRole`. Nothing is exposed — the sets agree and the test refuses drift — but there are two evaluators for one decision, and a future capability-driven surface (an `admin.storage_manage`, say) could be added to the registry without the route noticing.
+
+**Failure scenario.** An admin narrows or delegates a future capability surface in the console; the page obeys (the gate), the route behind it does not (its constant) — or the reverse, if someone edits a route constant and the pinned test is weakened rather than the registry updated.
+
+**Remediation.** Replace each route's `authorizeOrgRole(req, orgId, ROLES)` with `authorizeAdminSurface(req, orgId, "<surface>")`, choosing the surface whose `entry` (read routes) or `writes` (mutating routes) the constant currently equals; delete the constants; drop the "API routes behind a surface" pin once no constant remains. Add `writes`-level evaluation to the gate (an `intent: "enter" | "write"` argument) so a mutating route is held to the writes set. Eighteen files — a session of its own under DEC-31.
+
+**Done when.**
+1. No route under `app/api/admin/**`, `app/api/data-export/**` or `app/api/stripe/**` declares its own admin role constant; each calls `authorizeAdminSurface`.
+2. The registry is the only place an admin surface's role set is spelled, and a route test proves a registry change moves the route's answer.
 
 ---
 

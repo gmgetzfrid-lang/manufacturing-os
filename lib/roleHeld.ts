@@ -30,6 +30,22 @@ export function memberHoldsAny(
   return allowed.some((a) => held.includes(a));
 }
 
+/** ROLE-5 / CHAIN-1: the two roles whose presence RESTRICTS. Every
+ *  restriction-style check in the app — the document edit gate, the
+ *  plot-plan whiteboard flip, the `assets` UPDATE overlay at the database
+ *  (20261045) — subtracts the SAME way: deny-if-any across the full held
+ *  collection, with no headline shortcut and no controller escape. A member
+ *  holding `["Drafter","Viewer"]` is read-only on those surfaces until
+ *  Viewer is removed; the role picker says so before it is added. The
+ *  capability policy governs workflow authority separately (a Viewer who
+ *  also holds Drafter still drafts — remove Drafter to stop that). */
+export const READ_ONLY_ROLES: readonly string[] = ["Viewer", "Auditor"];
+
+/** True when ANY held role is a read-only role (deny-if-any). */
+export function holdsReadOnlyRole(held: readonly string[] | null | undefined): boolean {
+  return (held ?? []).some((r) => READ_ONLY_ROLES.includes(r));
+}
+
 /** The PostgREST `.or(...)` filter for "active members holding any of these
  *  roles": the headline column OR the collection overlaps. Values are quoted
  *  so role names with a hyphen (`Engineer-1`) survive both list syntaxes.

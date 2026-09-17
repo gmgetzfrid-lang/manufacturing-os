@@ -29,9 +29,20 @@ import {
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
+import { DORMANT_ROLES } from "@/lib/roleCapabilities";
 
-const TOKENS = ["*", "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor", "Engineer", "Drafter", "Requester", "Viewer", "Contractor", "Auditor"];
-const TOKEN_LABEL: Record<string, string> = { "*": "Everyone", DraftingSupervisor: "DraftingSup", Engineer: "Engineer (all tiers)" };
+/** Every token the grid and the override rows can set. ROLE-1 / DEC-3: the
+ *  five dormant department labels are addressable here too — the one job
+ *  they keep is to be NAMED, and a request-type override ("INCIDENT
+ *  requests are reviewed by Safety") is how a department becomes a
+ *  reviewing group without a new role. Every role in ALL_ROLES is reachable:
+ *  the four Engineer tiers through the single `Engineer` token (DEC-4). */
+export const POLICY_TOKENS: readonly string[] = ["*", "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor", "Engineer", "Drafter", "Requester", "Viewer", "Contractor", "Auditor", ...DORMANT_ROLES];
+const TOKENS = POLICY_TOKENS;
+const TOKEN_LABEL: Record<string, string> = {
+  "*": "Everyone", DraftingSupervisor: "DraftingSup", Engineer: "Engineer (all tiers)",
+  ...Object.fromEntries(DORMANT_ROLES.map((r) => [r, `${r} (dept)`])),
+};
 
 /** One editable override row: a rule scoped to exactly one request type. */
 interface Override { type: string; tokens: string[] }

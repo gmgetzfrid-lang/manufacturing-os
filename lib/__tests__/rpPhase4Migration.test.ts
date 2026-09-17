@@ -2,18 +2,27 @@
 // (WF-2, WF-5, WF-15, WF-23 + the tickets DELETE rail). Shape pins on
 // 20261038, every assertion scoped to its own statement (the Phase-7a
 // mutation lesson), plus the WF-23 census: the SQL fallback CASE of the LIVE
-// evaluator (see LIVE_EVALUATOR) must agree with lib/capabilityPolicy.ts
+// evaluator (the newest migration re-creating it) must agree with lib/capabilityPolicy.ts
 // CAPABILITY_DEFS capability-for-capability.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { CAPABILITY_DEFS } from "@/lib/capabilityPolicy";
 
-const sql = readFileSync(
-  join(process.cwd(), "supabase", "migrations", "20261038_rp_phase4_ticket_workflow_rails.sql"),
-  "utf8",
-);
+const migrationsDir = join(process.cwd(), "supabase", "migrations");
+const sql = readFileSync(join(migrationsDir, "20261038_rp_phase4_ticket_workflow_rails.sql"), "utf8");
+
+// The WF-23 census must read the LIVE evaluator: every later migration that
+// re-creates it (20261052 added the resource dimension as
+// org_capability_allows_for; Round E's 20261063 added admin.audit_view)
+// carries the whole CASE forward, so the newest re-creation is the one the
+// database runs. 20261038's own body is still pinned below for its rails.
+const liveEvaluatorFile = readdirSync(migrationsDir)
+  .filter((f) => /^\d{8}/.test(f) && f.endsWith(".sql")).sort()
+  .filter((f) => readFileSync(join(migrationsDir, f), "utf8").includes("CREATE OR REPLACE FUNCTION org_capability_allows_for"))
+  .pop();
+const liveSql = liveEvaluatorFile ? readFileSync(join(migrationsDir, liveEvaluatorFile), "utf8") : sql;
 
 function between(text: string, from: string, to: string): string {
   const a = text.indexOf(from);
@@ -23,14 +32,14 @@ function between(text: string, from: string, to: string): string {
   return text.slice(a, b);
 }
 
-// The live evaluator is whichever migration LAST defined it: 20261038 wrote
-// org_capability_allows, 20261052 moved the body into org_capability_allows_for
-// (the 3-argument name became a wrapper), and 20261057 re-created _for with
-// the DEC-13 stage 3 row. The WF-23 census reads the newest; 20261038's body
-// is pinned below as HISTORICAL (superseded, unchanged on disk).
-const LIVE_EVALUATOR = "20261057_rp_roundE_engineer_gate_capability.sql";
-const liveSql = readFileSync(join(process.cwd(), "supabase", "migrations", LIVE_EVALUATOR), "utf8");
-const capFn = between(liveSql, "CREATE OR REPLACE FUNCTION org_capability_allows_for", "COMMIT;");
+// The live evaluator is whichever migration LAST defined it (liveEvaluatorFile
+// above — 20261038 wrote org_capability_allows, 20261052 moved the body into
+// org_capability_allows_for, Round E's 20261057 and 20261063 each added a CASE
+// row). 20261038's own body is pinned below as HISTORICAL (superseded,
+// unchanged on disk).
+const capFn = liveEvaluatorFile
+  ? liveSql.slice(liveSql.indexOf("CREATE OR REPLACE FUNCTION org_capability_allows_for"), liveSql.indexOf("$$;", liveSql.indexOf("CREATE OR REPLACE FUNCTION org_capability_allows_for")) + 3)
+  : between(sql, "CREATE OR REPLACE FUNCTION org_capability_allows", "CREATE OR REPLACE FUNCTION ticket_insert_integrity");
 const historicalCapFn = between(sql, "CREATE OR REPLACE FUNCTION org_capability_allows",
   "CREATE OR REPLACE FUNCTION ticket_insert_integrity");
 const insertFn = between(sql, "CREATE OR REPLACE FUNCTION ticket_insert_integrity",
