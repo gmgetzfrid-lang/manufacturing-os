@@ -353,8 +353,16 @@ No migration.
 | `DRAFT-5` | **RESOLVED** (decision) — the pull model stays the default and says so; clear the list for supervisor-only assignment; engineering-first types are never picked up before their review |
 
 **Hand-applied migration (DEC-30):** `20261052_rp_phase7_capability_resource_dimension.sql`
-— printed for the SQL editor; not a widening (the 3-argument entry point
-returns exactly what it did). Apply → verification (5) → inventory (2 counts).
+— **applied & verified live 2026-09-17 (5/5 true)**; not a widening (the
+3-argument entry point returns exactly what it did). Its two informational
+inventory counts ride in the next migration's single-paste result set.
+
+**Protocol change (2026-09-17, efficiency):** from here each migration is ONE
+paste — DDL in a transaction, then a single final `SELECT` that unions the
+verification probes and the inventory counts (the editor shows only the last
+result set, so the rows appearing at all proves the DDL ran). A widening
+migration captures its pre-apply inventory into a temp table inside the same
+script before the DDL, so `DEC-2`'s "inventory before apply" still holds.
 
 Open from `DEC-13`: stage 3 (the engineer gate as a real capability) — next round.
 

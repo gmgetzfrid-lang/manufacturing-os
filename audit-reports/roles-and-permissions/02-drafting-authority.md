@@ -122,7 +122,8 @@ same shape).
   adds `org_capability_allows_for(p_org, p_cap, p_uid, p_resource jsonb)` with
   the same resolution rule and re-creates the 3-argument
   `org_capability_allows` as a wrapper passing `'{}'` (every existing policy and
-  trigger keeps its signature and its answer).
+  trigger keeps its signature and its answer). **Applied & verified live
+  2026-09-17 (5/5).**
 - **Server refusal.** `app/api/tickets/workflow-action/route.ts` evaluates
   `getActions` with the resource (a scoped-out Manager gets 403), validates an
   engineer **pick** against the scoped `ticket.eng_review` /
