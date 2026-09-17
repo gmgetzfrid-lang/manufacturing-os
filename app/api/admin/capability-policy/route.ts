@@ -21,8 +21,8 @@
 //   6. this process's policy cache is invalidated (WF-10) and a before/after
 //      CAPABILITY_POLICY_CHANGED row is written — a client cannot skip it.
 //
-// The 20261056 trigger holds rails 1–3 against a direct write that bypasses
-// this route, and audits such a write itself.
+// The 20261056 trigger holds rails 1–3 against a direct INSERT, UPDATE or
+// DELETE that bypasses this route, and audits such a write itself.
 //
 // Body: { op: "save", orgId, caps }
 //     | { op: "grant", orgId, uid, cap, expiresAt?, note? }
@@ -171,8 +171,10 @@ export async function POST(req: NextRequest) {
         : bad(`Couldn't save the policy: ${insErr.message}`, 500);
     }
   }
-  // WF-10: the instance that served the write forgets the old policy now;
-  // every other warm instance ages its entry out within SERVER_CACHE_TTL_MS.
+  // WF-10: this instance forgets the old policy now. The instance serving
+  // /api/tickets/workflow-action is a separate function on Vercel (the cache
+  // is not shared across route functions), so the bound that holds there is
+  // the TTL: it ages its entry out within SERVER_CACHE_TTL_MS (5 s).
   invalidateCapabilityPolicy(orgId);
 
   // Full before/after audit — a permission change is the one edit an IT

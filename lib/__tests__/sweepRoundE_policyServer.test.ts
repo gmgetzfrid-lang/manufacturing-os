@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { NextRequest } from "next/server";
 import {
   CAPABILITY_DEFS, policyAllows, tokensFor, loadCapabilityPolicy, loadCapabilityPolicyEntry, invalidateCapabilityPolicy,
-  __resetCapabilityPolicyCache, SERVER_CACHE_TTL_MS, parseStoredCapabilityPolicy, CAPABILITY_POLICY_ROUTE,
+  __resetCapabilityPolicyCache, SERVER_CACHE_TTL_MS, parseStoredCapabilityPolicy, normalizeCapabilityEntry, CAPABILITY_POLICY_ROUTE,
   saveCapabilityPolicy, addUserGrant, revokeUserGrant,
   type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
@@ -292,7 +292,9 @@ describe("WF-10 — loadCapabilityPolicy on the server", () => {
   });
   it("the residual window is documented exactly and the workflow route reads the versioned entry", () => {
     const cp = src("lib/capabilityPolicy.ts");
-    expect(cp).toMatch(/a warm serverless instance OTHER than the one that served the write keeps\n\/\/ its entry for at most SERVER_CACHE_TTL_MS after the write/);
+    expect(cp).toMatch(/any instance holds a stale entry for at most SERVER_CACHE_TTL_MS after a write\n\/\/ \(a cold instance reads fresh\)/);
+    expect(cp).toMatch(/is its own serverless function, so the instance serving\n\/\/ \/api\/tickets\/workflow-action never shares this Map/);
+    expect(cp).not.toMatch(/on the instance that served the (save|write|revocation)/);
     expect(cp).toContain("const sessionless = !client && typeof window === \"undefined\";");
     expect(cp).toContain("if (!sessionless) cache.set(orgId, { at: Date.now(), policy, version });");
     const r = src("app/api/tickets/workflow-action/route.ts");
@@ -505,50 +507,103 @@ describe("WF-11 — the policy route: who may write, and what", () => {
 describe("20261056 — the write guard at the database", () => {
   const m56 = mig("20261056_rp_roundE_capability_policy_write_guard.sql");
   const fn = between(m56, "CREATE OR REPLACE FUNCTION capability_policy_write_guard", "DROP TRIGGER IF EXISTS");
-  it("is a pinned SECURITY DEFINER trigger function with the service pass and the controller check", () => {
+  it("is a pinned SECURITY DEFINER trigger function: the service pass, the key test for INSERT/UPDATE/DELETE, the controller check", () => {
     expect(fn).toMatch(/RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public/);
-    expect(fn).toContain("IF auth.uid() IS NULL THEN RETURN NEW; END IF;");
-    expect(fn).toContain("IF NEW.key <> 'capability_policy' THEN RETURN NEW; END IF;");
-    expect(fn).toMatch(/IF NOT is_org_controller\(NEW\.org_id\) THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin or DocCtrl may change the capability policy'/);
-    expect(fn).toContain("v_admin := caller_holds_any_role(NEW.org_id, ARRAY['Admin']::text[]);");
+    expect(fn).toContain("v_had := CASE WHEN TG_OP = 'INSERT' THEN false ELSE OLD.key = 'capability_policy' END;");
+    expect(fn).toContain("v_has := CASE WHEN TG_OP = 'DELETE' THEN false ELSE NEW.key = 'capability_policy' END;");
+    expect(fn).toMatch(/IF auth\.uid\(\) IS NULL OR NOT \(v_had OR v_has\) THEN\s*\n\s*IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;\s*\n\s*RETURN NEW;\s*\n\s*END IF;/);
+    expect(fn).toContain("v_org := CASE WHEN TG_OP = 'DELETE' THEN OLD.org_id ELSE NEW.org_id END;");
+    expect(fn).toMatch(/IF NOT is_org_controller\(v_org\) THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin or DocCtrl may change the capability policy'/);
+    expect(fn).toContain("v_admin := caller_holds_any_role(v_org, ARRAY['Admin']::text[]);");
+    expect(fn).toContain("v_old := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD.data END;");
+    expect(fn).toContain("v_new := CASE WHEN TG_OP = 'DELETE' THEN NULL ELSE NEW.data END;");
+    // the function ends by returning the row it was handed — OLD on a delete
+    expect(fn).toMatch(/IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;\s*\n\s*RETURN NEW;\s*\n\s*END;\s*\n\$\$;/);
   });
-  it("its critical list is CAPABILITY_DEFS critical: true, in order; Admin stays on the bare list AND on every rule; a change is Admin's", () => {
+  it("a DELETE of the policy row is Admin's; a re-key or a move of the row is refused for every session writer", () => {
+    expect(fn).toMatch(/IF TG_OP = 'UPDATE' AND \(NEW\.key IS DISTINCT FROM OLD\.key OR NEW\.org_id IS DISTINCT FROM OLD\.org_id\) THEN\s*\n\s*RAISE EXCEPTION 'The capability policy row cannot be re-keyed or moved to another org'/);
+    expect(fn).toMatch(/IF TG_OP = 'DELETE' THEN\s*\n(?:\s*--[^\n]*\n)*\s*IF NOT v_admin THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin may delete the capability policy/);
+    // the re-key rail sits BEFORE the controller check, so it is the first
+    // thing a re-key meets whoever the writer is
+    expect(fn.indexOf("cannot be re-keyed or moved")).toBeLessThan(fn.indexOf("IF NOT is_org_controller(v_org) THEN"));
+  });
+  it("reads the stored shape exactly as parseStoredCapabilityPolicy does (`caps ?? flat`, never both) — no COALESCE over the flat key", () => {
+    expect(fn).toContain("v_flat := COALESCE(jsonb_typeof(v_new->'caps'), 'null') = 'null';");
+    expect(fn).toContain("v_caps := CASE WHEN v_flat THEN v_new ELSE v_new->'caps' END;");
+    expect(fn).toContain("v_old_caps := CASE WHEN COALESCE(jsonb_typeof(v_old->'caps'), 'null') = 'null' THEN v_old ELSE v_old->'caps' END;");
+    expect(fn).toContain("v_entry := v_caps->v_cap;");
+    expect(fn).toContain("v_old_entry := v_old_caps->v_cap;");
+    expect(fn).not.toMatch(/COALESCE\([^)]*->'caps'->v_cap/);
+    // a flat critical key beside `caps` is refused, not read either way
+    expect(fn).toMatch(/IF NOT v_flat AND v_new \? v_cap THEN\s*\n\s*RAISE EXCEPTION 'A critical capability \(%\) must be stored under caps, not beside it'/);
+    expect(fn.indexOf("must be stored under caps")).toBeLessThan(fn.indexOf("v_entry := v_caps->v_cap;"));
+  });
+  it("the TS rule it mirrors: a present non-null `caps` hides every flat key (whatever its type); only an absent or null `caps` is the flat shape", () => {
+    // the write the COALESCE let through: caps {} + the old value as a flat key
+    expect(parseStoredCapabilityPolicy({ caps: {}, "ticket.manage": ["Admin"], grants: [] }).caps).toEqual({});
+    expect(parseStoredCapabilityPolicy({ caps: [], "ticket.manage": ["Admin"], grants: [] }).caps).toEqual({});
+    expect(parseStoredCapabilityPolicy({ caps: "x", "ticket.manage": ["Admin"], grants: [] }).caps).toEqual({});
+    expect(parseStoredCapabilityPolicy({ caps: null, "ticket.manage": ["Admin"] }).caps).toEqual({ "ticket.manage": ["Admin"] });
+    expect(parseStoredCapabilityPolicy({ "ticket.manage": ["Admin"] }).caps).toEqual({ "ticket.manage": ["Admin"] });
+    expect(parseStoredCapabilityPolicy({ caps: { "ticket.manage": ["Admin"] }, "ticket.manage": ["Admin", "Viewer"] }).caps).toEqual({ "ticket.manage": ["Admin"] });
+  });
+  it("its critical list is CAPABILITY_DEFS critical: true, in order; a change is Admin's; Admin stays on the bare list AND on every rule; a mixed list is refused", () => {
     const critical = CAPABILITY_DEFS.filter((d) => d.critical).map((d) => `'${d.id}'`).join(", ");
     expect(fn).toContain(`FOREACH v_cap IN ARRAY ARRAY[${critical}] LOOP`);
-    expect(fn).toContain("v_entry := COALESCE(NEW.data->'caps'->v_cap, NEW.data->v_cap);");
     expect(fn).toMatch(/IF v_entry IS DISTINCT FROM v_old_entry AND NOT v_admin THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin may change a critical capability/);
+    // rule list iff some element is not a string — normalizeCapabilityEntry's
+    // `every string` test, not "the first element is an object"
+    expect(fn).toContain("IF EXISTS (SELECT 1 FROM jsonb_array_elements(v_entry) AS e(val) WHERE jsonb_typeof(e.val) <> 'string') THEN");
+    expect(fn).not.toMatch(/jsonb_typeof\(v_entry->0\)/);
+    expect(fn).toMatch(/IF jsonb_typeof\(v_rule\) <> 'object' THEN\s*\n\s*RAISE EXCEPTION 'A critical capability \(%\) mixes role tokens with rules'/);
     expect(fn).toContain("IF v_tokens IS NULL OR jsonb_typeof(v_tokens) <> 'array' OR NOT (v_tokens ? 'Admin' OR v_tokens ? '*') THEN");
     expect(fn).toContain("ELSIF NOT (v_entry ? 'Admin' OR v_entry ? '*') THEN");
     expect((fn.match(/Admin cannot be removed from a critical capability/g) ?? []).length).toBe(2);
+    // why the mix is refused: the parser keeps the rule and DROPS the token,
+    // so 'Admin' among the tokens is not Admin on the list
+    expect(normalizeCapabilityEntry(["Admin", { tokens: ["DocCtrl"] }])).toEqual([{ tokens: ["DocCtrl"] }]);
+    expect(normalizeCapabilityEntry(["Admin", "DocCtrl"])).toEqual(["Admin", "DocCtrl"]);
   });
-  it("grants: any change requires Admin; a new grant to auth.uid() is a refused self-grant; the direct write is audited in-transaction", () => {
-    expect(fn).toContain("IF COALESCE(NEW.data->'grants', '[]'::jsonb) IS DISTINCT FROM COALESCE(v_old->'grants', '[]'::jsonb) THEN");
+  it("grants: any change requires Admin; a new grant to auth.uid() is a refused self-grant; the direct write is audited in-transaction with op insert | update | delete", () => {
+    expect(fn).toContain("IF COALESCE(v_new->'grants', '[]'::jsonb) IS DISTINCT FROM COALESCE(v_old->'grants', '[]'::jsonb) THEN");
     expect(fn).toMatch(/IF NOT v_admin THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin may grant or revoke a personal permission'/);
     expect(fn).toContain("IF v_grant->>'uid' = auth.uid()::text");
     expect(fn).toContain("AND NOT (COALESCE(v_old->'grants', '[]'::jsonb) @> jsonb_build_array(v_grant)) THEN");
     expect(fn).toContain("RAISE EXCEPTION 'A personal permission cannot be granted to yourself'");
     expect(fn).toContain("INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)");
-    expect(fn).toContain("VALUES ('CAPABILITY_POLICY_CHANGED', 'org_configuration', NEW.org_id::text, NEW.org_id, auth.uid(), v_email, v_role,");
-    expect(fn).toContain("jsonb_build_object('op', lower(TG_OP), 'via', 'direct_write', 'before', v_old, 'after', NEW.data)");
-    expect(fn).toContain("v_old := CASE WHEN TG_OP = 'UPDATE' THEN OLD.data ELSE NULL END;");
+    expect(fn).toContain("VALUES ('CAPABILITY_POLICY_CHANGED', 'org_configuration', v_org::text, v_org, auth.uid(), v_email, v_role,");
+    expect(fn).toContain("jsonb_build_object('op', lower(TG_OP), 'via', 'direct_write', 'before', v_old, 'after', v_new)");
+    // the audit insert is reached on every op, outside the DELETE/else split
+    expect(fn.indexOf("INSERT INTO audit_logs")).toBeGreaterThan(fn.lastIndexOf("END IF;\n\n  -- The audit row"));
   });
-  it("installs BEFORE INSERT OR UPDATE keyed to the capability_policy row; narrowing only (no TEMP TABLE needed)", () => {
+  it("installs ONE trigger BEFORE INSERT OR UPDATE OR DELETE, FOR EACH ROW, with no WHEN clause; narrowing only (no TEMP TABLE needed)", () => {
     const trg = between(m56, "CREATE TRIGGER trg_capability_policy_write_guard", ";");
-    expect(trg).toMatch(/BEFORE INSERT OR UPDATE ON org_configurations\s*\n\s*FOR EACH ROW\s*\n\s*WHEN \(NEW\.key = 'capability_policy'\)\s*\n\s*EXECUTE FUNCTION capability_policy_write_guard\(\)/);
+    expect(trg).toMatch(/BEFORE INSERT OR UPDATE OR DELETE ON org_configurations\s*\n\s*FOR EACH ROW\s*\n\s*EXECUTE FUNCTION capability_policy_write_guard\(\)/);
+    expect(trg).not.toMatch(/WHEN/);
+    expect((m56.match(/CREATE TRIGGER/g) ?? []).length).toBe(1);
     expect(m56).toContain("DROP TRIGGER IF EXISTS trg_capability_policy_write_guard ON org_configurations;");
     expect(m56).toMatch(/Widening: no/);
     expect(m56).not.toMatch(/TEMP TABLE/);
   });
-  it("one paste: BEGIN/COMMIT around the DDL, one final SELECT — 6 probes (ok), 4 aggregate counts (n text), read-only, deparsed-safe", () => {
+  it("one paste: BEGIN/COMMIT around the DDL, one final SELECT — 7 probes (ok), 4 aggregate counts (n text), read-only, deparsed-safe", () => {
     expect(m56.indexOf("BEGIN;")).toBeLessThan(m56.indexOf("CREATE OR REPLACE FUNCTION"));
     expect(m56.indexOf("COMMIT;")).toBeGreaterThan(m56.indexOf("CREATE TRIGGER"));
     expect(m56.indexOf("COMMIT;")).toBeLessThan(m56.indexOf("-- ── Verification"));
     const tail = m56.slice(m56.indexOf("COMMIT;") + "COMMIT;".length);
     expect((noLiterals(tail).match(/;/g) ?? []).length).toBe(1);
-    expect((tail.match(/UNION ALL/g) ?? []).length).toBe(9);
+    expect((tail.match(/UNION ALL/g) ?? []).length).toBe(10);
     expect(tail).toMatch(/AS check,[\s\S]*AS ok,[\s\S]*NULL::text AS n/);
     expect(noLiterals(tail)).not.toMatch(/\b(UPDATE|INSERT|DELETE|ALTER|DROP)\b/);
     expect(tail).toContain("tgname = 'trg_capability_policy_write_guard'");
+    // pg_get_triggerdef deparses the events as INSERT OR DELETE OR UPDATE and
+    // schema-qualifies the table; a trigger with no WHEN has a NULL tgqual
+    expect(tail).toContain("AND tgqual IS NULL");
+    expect(tail).toContain("pg_get_triggerdef(oid) LIKE '%BEFORE INSERT OR DELETE OR UPDATE ON public.org_configurations FOR EACH ROW EXECUTE FUNCTION %capability_policy_write_guard()%'");
+    expect(tail).toContain("prosrc LIKE '%IF auth.uid() IS NULL OR NOT (v_had OR v_has) THEN%'");
+    expect(tail).toContain("prosrc LIKE '%Only an Admin may delete the capability policy%'");
+    expect(tail).toContain("prosrc LIKE '%cannot be re-keyed or moved to another org%'");
+    expect(tail).toContain("prosrc LIKE '%must be stored under caps, not beside it%'");
+    expect(tail).toContain("prosrc LIKE '%mixes role tokens with rules%'");
     expect(tail).toContain("pg_get_function_identity_arguments(p.oid) = 'p_org uuid, p_roles text[]'");
     expect(tail).toContain("policyname IN ('org_config_cap_policy_insert', 'org_config_cap_policy_update', 'org_config_cap_policy_delete')");
     // pg_policies probes never LIKE a bare cast (deparsed qual/with_check)

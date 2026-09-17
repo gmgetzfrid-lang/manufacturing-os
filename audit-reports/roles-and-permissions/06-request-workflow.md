@@ -567,9 +567,13 @@ the next action."*
 **Resolution (2026-09-17, Round E).**
 
 - **Invalidation on write.** `POST /api/admin/capability-policy` (`WF-11`)
-  calls `invalidateCapabilityPolicy(orgId)` after every write — in the same
-  process as `/api/tickets/workflow-action`, which the browser's
-  `cache.delete` never reached.
+  calls `invalidateCapabilityPolicy(orgId)` after every write, dropping the
+  writing instance's own entry — a server-side drop the browser's
+  `cache.delete` never was. It is not the bound: on the Vercel deployment
+  (`vercel.json`) each App Router route is its own serverless function, so
+  the instance serving `/api/tickets/workflow-action` never shares the
+  module-level cache with the one that served the write. The bound that
+  holds everywhere is the TTL below.
 - **A short server TTL with a version stamp.** `lib/capabilityPolicy.ts`: a
   cache entry is `{at, policy, version}` with
   `version = org_configurations.updated_at`; `loadCapabilityPolicyEntry(orgId, client)`
@@ -579,13 +583,14 @@ the next action."*
   and writes `policyVersion` into each transition's audit `authority`
   (`WF-16`), so a decision can be matched to the `CAPABILITY_POLICY_CHANGED`
   row it was made under.
-- **The residual window, exactly.** On the instance that served the write:
-  zero — the next authority decision reads fresh. On every OTHER warm
-  serverless instance: at most 5 s after the write (its entry ages out); a
-  cold instance reads fresh. A write that bypasses the route (SQL editor, a
-  controller's direct PATCH — audited by 20261056) is seen by every warm
-  instance within the same 5 s. The previous bound was 60 s per warm instance
-  with no invalidation signal anywhere.
+- **The residual window, exactly.** Any instance serving an authority
+  decision — a warm `/api/tickets/workflow-action` function included — holds
+  a stale entry for at most 5 s after the write (its entry ages out); a cold
+  instance reads fresh. There is no instance on which the workflow route's
+  window is zero: the cross-function cache is not shared on Vercel. A write
+  that bypasses the route (SQL editor, a controller's direct PATCH or DELETE
+  — audited by 20261056) is seen within the same 5 s. The previous bound was
+  60 s per warm instance with no invalidation anywhere.
 - **No poisoning.** A sessionless read (no `client` on the server — the shared
   browser singleton has no session in a route handler) returns the empty
   policy for that call and is never cached
@@ -599,9 +604,11 @@ the next action."*
   both shapes; the residual-window comment and the route's versioned read
   pinned by source.
 
-**Done-when.** 1 ✓ on the instance that served the revocation (immediate);
-on other warm instances within 5 s — stated as the residual, not claimed
-closed. 2 ✓ (from `WF-1`, re-pinned here). 3 ✓.
+**Done-when.** 1 ✓ within 5 s on every instance (`SERVER_CACHE_TTL_MS`) —
+not on the very next decision: a warm workflow-action instance may admit
+under the old policy for up to 5 s after the revocation, and no instance is
+exempt (the cross-function cache is not shared on Vercel). That 5 s is the
+residual, stated, not claimed closed. 2 ✓ (from `WF-1`, re-pinned here). 3 ✓.
 
 **Scope / residual.** The 5 s cross-instance window is the trade-off against a
 policy read per action; a shared invalidation channel, or reading the policy
@@ -693,15 +700,36 @@ the database.
   `ViewAsSimulator` call the same helpers; the editor's pre-check is kept only
   so it can say why before a round-trip.
 - **The database.** Migration `20261056_rp_roundE_capability_policy_write_guard.sql`
-  — `capability_policy_write_guard()` (SECURITY DEFINER, `search_path` pinned)
-  BEFORE INSERT OR UPDATE on `org_configurations` WHEN `key = 'capability_policy'`:
-  service pass (`auth.uid() IS NULL` — the route), else `is_org_controller`
-  (defence in depth for the 20260831 key rails); every token list of a critical
-  capability (the bare list AND each rule's `tokens`) keeps `Admin` or `*`; a
-  change to a critical entry, or to `grants` at all, requires Admin
-  (`caller_holds_any_role`); a grant naming `auth.uid()` that was not already
-  stored is refused; and the write is audited in the same transaction
-  (`via: "direct_write"`). Narrowing only — no temp-table inventory needed.
+  — `capability_policy_write_guard()` (SECURITY DEFINER, `search_path` pinned),
+  ONE trigger BEFORE INSERT OR UPDATE OR DELETE on `org_configurations` with
+  no WHEN clause (a WHEN can name OLD or NEW, not both across the three
+  events); the function's own key test gates the row written, the row
+  deleted, or a row whose key moves to or from `capability_policy`: service
+  pass (`auth.uid() IS NULL` — the route); a re-key or a move to another org
+  is refused outright (either erases the policy for the org exactly as a
+  delete would, past a guard keyed to `NEW.key`); then `is_org_controller`
+  (defence in depth for the 20260831 key rails); a DELETE of the row requires
+  Admin (the loader reads "no row" as the shipped defaults — the widest
+  change there is); the entries are read exactly as
+  `parseStoredCapabilityPolicy` reads them (`raw.caps ?? raw`: a present,
+  non-null `caps` holds them whatever its type, only an absent or null `caps`
+  is the legacy flat shape — never both, and a flat critical key beside
+  `caps` is refused rather than read); every token list of a critical
+  capability (the bare list AND each rule's `tokens`) keeps `Admin` or `*`,
+  a list is a rule list iff some element is not a string
+  (`normalizeCapabilityEntry`), and a list mixing tokens with rules is
+  refused (the parser drops the tokens, so `Admin` among them is not Admin
+  on the list); a change to a critical entry, or to `grants` at all,
+  requires Admin (`caller_holds_any_role`); a grant naming `auth.uid()` that
+  was not already stored is refused; and every op is audited in the same
+  transaction (`via: "direct_write"`, `op: insert | update | delete`,
+  `after: null` on a delete). Narrowing only — no temp-table inventory
+  needed. Exercised on a throwaway PostgreSQL 16 with stub `auth.uid()` and
+  helpers: the paste applies with 7/7 probes true, and 24 scenarios behave
+  as described (the `{caps: {}, "<critical>": <old value>}` write, `caps: []`
+  beside a flat key, the DocCtrl DELETE, both re-key directions, the org
+  move and the mixed list all refused; the legacy flat shape still read; the
+  Admin DELETE audited with `op: delete`).
 - **Tests** (`lib/__tests__/sweepRoundE_policyServer.test.ts`): 401/403 for no
   bearer, non-member, non-controller; a headline-Manager / additive-DocCtrl
   saves a non-critical change with CAS + pruning + audit; DocCtrl refused on a
@@ -711,23 +739,42 @@ the database.
   a grant replaces the pair and is server-stamped; revoke audited; the INSERT
   path; 409 on conflict with no audit row; an audit failure surfaced; the
   browser helpers post the three shapes with the bearer and surface the
-  server's error; the 20261056 shape (header, service pass, controller check,
-  critical list == `CAPABILITY_DEFS critical: true` in order, rule-list rail,
-  grants rail, self-grant, audit insert, trigger clause, one-paste
-  verification, deparsed-safe probes).
+  server's error; the 20261056 shape (header, service pass, the
+  INSERT/UPDATE/DELETE key test, controller check, the delete and re-key
+  rails, the `caps ?? flat` read pinned against `parseStoredCapabilityPolicy`
+  on the same inputs and no COALESCE over the flat key, critical list ==
+  `CAPABILITY_DEFS critical: true` in order, the rule-list rail with the
+  mixed-list refusal pinned against `normalizeCapabilityEntry`, grants rail,
+  self-grant, audit insert with `op`/`after: null`, the single no-WHEN
+  trigger, one-paste verification with 7 probes incl. the deparsed
+  `INSERT OR DELETE OR UPDATE` order and `tgqual IS NULL`, deparsed-safe
+  probes).
 
 **Done-when.** 1 ✓ — `validateCapabilityPolicy` runs in the route, with
 `supabaseAdmin`, on every policy and grant write. 2 ✓ — critical capabilities
-are Admin's to change on the route and in the trigger; controller is not
-enough. 3 ✓ — a self-grant is refused on the route and in the trigger, and any
-grant is Admin-only, so the "View as… → grant yourself `ticket.manage`" path is
-closed. 4 ✓ — the route writes the audit row server-side; a direct PATCH is
-audited by the trigger in the same transaction, so it cannot skip the row.
+are Admin's to change on the route and in the trigger, which reads the
+stored shape exactly as the parser does (`caps ?? flat`, never both) and
+covers the moves that erase the row (DELETE: Admin; re-key or org move:
+refused); controller is not enough on any path. 3 ✓ — a self-grant is
+refused on the route and in the trigger, and any grant is Admin-only, so the
+"View as… → grant yourself `ticket.manage`" path is closed. 4 ✓ — the route
+writes the audit row server-side; a direct INSERT, UPDATE or DELETE is
+audited by the trigger in the same transaction, and the re-key or move that
+would erase the row without a DELETE is refused, so no policy change skips
+the row.
 
 **Scope / residual.** Pending migration: `20261056` (`DEC-30` — the code half
 is live once deployed; until the paste is applied a controller's direct PATCH
 is gated by the 20260831 key rails only, with no content rail and no audit
-row). The inverse UI/DB drift variant (headline Manager, additive DocCtrl) is
+row, and a controller's direct DELETE of the row resets the org to the
+shipped defaults unaudited). `org_capability_allows_for` (20261038 →
+20261057) reads `COALESCE(caps->cap, flat->cap)` — a flat key beside `caps`
+that the app parser ignores; pre-existing and untouched here (the
+evaluator's re-creation is 20261057's one-line diff). The trigger's
+caps-shape rail keeps a session writer from storing such a row and the route
+always writes the canonical `{caps, grants}`, so the two readers agree on
+every critical entry that can be stored. The inverse UI/DB drift variant
+(headline Manager, additive DocCtrl) is
 closed the other way round: the UI gate reads the collection (`ADD-1`, Round
 C1b) and the route reads it too. Grants stay unscoped (`WF-13` row 6, `WF-16`).
 

@@ -311,14 +311,15 @@ export function normalizeCapabilityEntry(v: unknown): CapabilityEntry | undefine
 // WF-10: two TTLs and a version stamp. The BROWSER keeps a policy for a
 // minute — it only draws buttons from it; authority is decided on the
 // server. A SERVER caller (one that passes its own client) keeps an entry for
-// SERVER_CACHE_TTL_MS, and the policy route deletes this process's entry on
-// every write, so on the instance that served the save a revocation is seen
-// by the very next authority decision. The residual window is exactly this:
-// a warm serverless instance OTHER than the one that served the write keeps
-// its entry for at most SERVER_CACHE_TTL_MS after the write (a cold instance
-// reads fresh), and a write that bypasses the route (SQL editor, a
-// controller's direct PATCH — audited by the 20261056 trigger) is seen by
-// every warm instance within the same bound. Each entry carries the row's
+// SERVER_CACHE_TTL_MS, and the policy route drops its own instance's entry on
+// every write. The bound that holds everywhere is the TTL, not the drop: on
+// Vercel each App Router route is its own serverless function, so the instance serving
+// /api/tickets/workflow-action never shares this Map with the one that served
+// the write. The residual window is exactly this:
+// any instance holds a stale entry for at most SERVER_CACHE_TTL_MS after a write
+// (a cold instance reads fresh), and a write that bypasses the route (SQL
+// editor, a controller's direct PATCH — audited by the 20261056 trigger) is
+// seen within the same bound. Each entry carries the row's
 // `updated_at` as its VERSION so an authority decision can name the policy
 // version it was made under (the workflow route's audit row does).
 
@@ -328,7 +329,8 @@ export const SERVER_CACHE_TTL_MS = 5_000;
 interface PolicyCacheEntry { at: number; policy: CapabilityPolicy; version: string | null }
 const cache = new Map<string, PolicyCacheEntry>();
 export function __resetCapabilityPolicyCache(): void { cache.clear(); }
-/** Drop one org's entry — the policy route calls this after every write. */
+/** Drop one org's entry from THIS instance's cache — the policy route calls
+ *  this after every write; other instances age theirs out (SERVER_CACHE_TTL_MS). */
 export function invalidateCapabilityPolicy(orgId: string): void { cache.delete(orgId); }
 
 /** Parse a stored `org_configurations.data` blob into a policy. Two stored
