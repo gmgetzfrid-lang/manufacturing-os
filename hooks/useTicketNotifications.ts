@@ -6,8 +6,9 @@ import {
   listMyNotifications, markRead, markAllRead, markManyRead, type NotificationRow,
 } from '@/lib/inAppNotifications';
 import {
-  isActionRequired, attentionLabel, isManagementRole, isEngineerRole,
+  isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
 } from '@/lib/ticketAttention';
+import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Single source of truth for "what needs my attention right now".
@@ -136,6 +137,16 @@ export function useTicketNotifications() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [notifs, setNotifs] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // WF-24: "must act" is derived from the workflow engine under the org's
+  // OWN capability policy — the same inputs the ticket page evaluates — so
+  // the badge cannot count a ticket the page will show as view-only.
+  const [policy, setPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    if (!activeOrgId) return;
+    void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});
+    return () => { alive = false; };
+  }, [activeOrgId]);
   // Unique per hook instance so multiple consumers (sidebar/bell/inbox) don't
   // collide on the same realtime channel name.
   const channelId = useId().replace(/[^a-z0-9]/gi, '');
@@ -158,7 +169,7 @@ export function useTicketNotifications() {
       try {
         // 1) My tickets, scoped by role (same visibility rules as the portal).
         let list: Ticket[] = [];
-        if (isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
+        if (isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
           const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         } else if (roles.includes('Drafter')) {
@@ -256,7 +267,7 @@ export function useTicketNotifications() {
     };
 
     for (const t of tickets) {
-      const actionReq = isActionRequired(t, { uid, roles });
+      const actionReq = isActionRequired(t, { uid, roles, policy });
       const unread = !!uid && !!t.unreadBy?.includes(uid);
       if (!actionReq && !unread) continue;
       if (actionReq) ar++; else ur++;
@@ -309,7 +320,7 @@ export function useTicketNotifications() {
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
     return { items: out, actionRequiredCount: ar, unreadCount: ur, sectionCounts };
-  }, [tickets, notifs, uid, roles]);
+  }, [tickets, notifs, uid, roles, policy]);
 
   return {
     /** The unified feed every surface renders. */

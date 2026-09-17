@@ -354,7 +354,7 @@ export async function searchRevisions(params: RevisionSearchParams): Promise<Rev
 //
 // Search across drafting tickets. Covers questions like "drawings
 // awaiting engineering over 7 days" — combine query="" with
-// status="PENDING_ENG_INITIAL" + createdBefore=now-7d, then sort by
+// status="PENDING_ENG_TEAM" + createdBefore=now-7d, then sort by
 // created_at.
 
 export interface TicketRow {

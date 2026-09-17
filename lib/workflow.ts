@@ -1,5 +1,6 @@
 import { Role, TicketStatus, Ticket } from "@/types/schema";
 import { policyAllows, scopedTokensFor, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
+import { isManagementRole } from "@/lib/managementRoles";
 
 export interface WorkflowAction {
   label: string;
@@ -14,6 +15,13 @@ export interface WorkflowAction {
    *  button is indistinguishable from a bug), and the server route refuses
    *  it with the same message. */
   disabledReason?: string;
+  /** WF-24: the action is AVAILABLE but the ticket is not waiting on THIS
+   *  actor for it — a management override of an assigned reviewer, a
+   *  reassignment, a cancellation, a reopen, a file attachment, force close.
+   *  The attention feed (lib/ticketAttention.ts) derives "must act" from the
+   *  engine and ignores optional actions, so the badge and the ticket page
+   *  agree by construction. */
+  optional?: boolean;
 }
 
 /** Optional evaluation context for getActions (WF-7, GAP-2, WF-15).
@@ -67,9 +75,10 @@ export function isEngineerRole(role?: Role | string): boolean {
   return !!role && role.includes("Engineer");
 }
 
-export function isManagementRole(role?: Role | string): boolean {
-  return role === "Admin" || role === "Manager" || role === "Supervisor";
-}
+// WF-24 / CHAIN-3: the management tier is defined ONCE, in
+// lib/managementRoles.ts; the engine, the capability defaults and the
+// attention feed all read that definition.
+export { isManagementRole };
 
 export function isDocCtrlRole(role?: Role | string): boolean {
   return role === "DocCtrl";
@@ -188,37 +197,29 @@ export const WorkflowEngine = {
     const engineeringFirstPending = (ctx?.engineeringFirstTypes ?? []).includes(ticket.requestType)
       && !ticket.engineerReviewRequestedAt && !ticket.assignedEngineerId;
     const ENG_FIRST_REASON = 'This request type routes through engineering first: flag it for engineering review before a drafter is assigned.';
+    const isTerminal = ticket.status === 'CLOSED' || ticket.status === 'CANCELED';
+    // WF-24: when a specific engineer holds the review, management's arm is
+    // an OVERRIDE — the ticket waits on the engineer, not on every manager.
+    const engineerOverride = !!ticket.assignedEngineerId && !isAssignedEngineerIdentity;
+    // DEC-14 / WF-17: the requester (or the management tier) can withdraw a
+    // request that has not yet been drafted to completion, with a reason.
+    const cancelRequest = (): void => {
+      if (isRequesterIdentity || isManagement) {
+        actions.push({
+          label: 'Cancel Request',
+          action: 'cancel_request',
+          variant: 'destructive',
+          requiresComment: true,
+          optional: true,
+          description: 'Withdraw this request. Your reason is recorded; the request is closed as canceled and cannot be reopened.',
+        });
+      }
+    };
 
     switch (ticket.status) {
-      // --- INITIAL REVIEW STAGE ---
-      case 'NEW':
-      case 'PENDING_ENG_INITIAL':
-        if (isManagement || allows('ticket.initial_review')) {
-           actions.push({
-             label: 'Approve Request (To Assignment)',
-             action: 'approve_initial',
-             variant: 'success',
-             description: 'Accepts the request and moves it to the assignment queue.'
-           });
-
-           // Now requires picking a SPECIFIC engineer — was previously broadcast.
-           actions.push({
-             label: 'Flag for Engineering Review',
-             action: 'request_eng_review',
-             variant: 'secondary',
-             requiresComment: true,
-             requiresEngineerPick: true,
-             description: 'Route to a specific engineer for scope review before assigning a drafter.'
-           });
-
-           actions.push({
-             label: 'Reject / Return to Requester',
-             action: 'reject',
-             variant: 'destructive',
-             requiresComment: true
-           });
-        }
-        break;
+      // (The former NEW / PENDING_ENG_INITIAL initial-review stage is gone —
+      // DEC-14: every request is born in the assignment queue, and no live
+      // status consults `ticket.initial_review`, which is marked dormant.)
 
       // --- ENGINEERING REVIEW (Optional Loop) ---
       // Now scoped to the assigned engineer when one exists. Management
@@ -233,13 +234,15 @@ export const WorkflowEngine = {
               label: 'Engineering Review Complete',
               action: 'approve_team',
               variant: 'success',
-              description: 'Engineering has verified the scope. Ready for assignment.'
+              description: 'Engineering has verified the scope. Ready for assignment.',
+              ...(engineerOverride ? { optional: true } : {}),
             });
             actions.push({
               label: 'Return with Questions',
               action: 'reject',
               variant: 'destructive',
-              requiresComment: true
+              requiresComment: true,
+              ...(engineerOverride ? { optional: true } : {}),
             });
           }
         }
@@ -281,11 +284,13 @@ export const WorkflowEngine = {
                 : {}),
           });
         }
+        cancelRequest();
         break;
 
       // --- DRAFTING STAGE ---
       case 'DRAFTING':
       case 'REVISION_REQ':
+        if (ticket.status === 'DRAFTING') cancelRequest();
         if (canActAsDrafter) {
           actions.push({
             label: 'Save Progress (Stage Files)',
@@ -397,12 +402,14 @@ export const WorkflowEngine = {
             ? isAssignedEngineerIdentity || isManagement
             : allows('ticket.final_approve') || isManagement;
           if (canActHere) {
+            const override = engineerOverride ? { optional: true } : {};
             actions.push({
               label: 'Approve as Engineer (Issue for Construction)',
               action: 'engineer_approve_final',
               variant: 'success',
               description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+              ...override,
             });
             actions.push({
               label: 'Approve with Minor Correction',
@@ -411,20 +418,23 @@ export const WorkflowEngine = {
               requiresComment: true,
               description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+              ...override,
             });
             actions.push({
               label: 'Request Revision (Send Back to Drafter)',
               action: 'engineer_request_revision',
               variant: 'warning',
               requiresComment: true,
-              description: 'Send back to the drafter with revision notes.'
+              description: 'Send back to the drafter with revision notes.',
+              ...override,
             });
             actions.push({
               label: 'Return to Requester for Clarification',
               action: 'engineer_return_to_requester',
               variant: 'destructive',
               requiresComment: true,
-              description: 'Send back to the original requester instead of the drafter.'
+              description: 'Send back to the original requester instead of the drafter.',
+              ...override,
             });
           }
         }
@@ -451,11 +461,15 @@ export const WorkflowEngine = {
       // --- CLOSURE (acknowledgment by requester) ---
       case 'FINAL_DRAFT':
          if (canActAsRequester || allows('ticket.direct_approve') || isManagement) {
+             // WF-24: the ticket waits on the REQUESTER's acknowledgement;
+             // a co-reviewer or manager closing on their behalf is optional.
+             const onBehalf = canActAsRequester ? {} : { optional: true };
              actions.push({
                label: 'Acknowledge & Close', action: 'close_ticket', variant: 'success',
                ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+               ...onBehalf,
              });
-             actions.push({ label: 'Reject Final (Re-Open)', action: 'reject_final', variant: 'destructive', requiresComment: true });
+             actions.push({ label: 'Reject Final (Re-Open)', action: 'reject_final', variant: 'destructive', requiresComment: true, ...onBehalf });
          }
          break;
 
@@ -471,17 +485,23 @@ export const WorkflowEngine = {
             action: 'reopen_ticket',
             variant: 'outline',
             requiresComment: true,
-            description: 'Move back to review status. All attachments and history are preserved; the comment you add becomes the reopen reason.',
+            optional: true,
+            description: 'Move back to review status and start a new revision cycle (DEC-15): the next submission is a new draft rev and the next approval a new issued rev. All attachments and history are preserved; the comment you add becomes the reopen reason.',
           });
         }
+        break;
+
+      // --- CANCELED (terminal, DEC-14) --- nothing: a withdrawn request is
+      // not resurrected; the requester files a new one.
+      case 'CANCELED':
         break;
     }
 
     // GLOBAL OVERRIDES
-    if (allows('ticket.force_close') && ticket.status !== 'CLOSED') {
+    if (allows('ticket.force_close') && !isTerminal) {
        const hasClose = actions.some(a => a.action === 'close_ticket');
        if (!hasClose) {
-         actions.push({ label: 'Force Close (Admin)', action: 'close_ticket', variant: 'ghost' });
+         actions.push({ label: 'Force Close (Admin)', action: 'close_ticket', variant: 'ghost', optional: true });
        }
     }
 
@@ -493,7 +513,43 @@ export const WorkflowEngine = {
         action: 'reassign_engineer',
         variant: 'ghost',
         requiresEngineerPick: true,
+        optional: true,
         description: 'Admin override: pick a different engineer to review.'
+      });
+    }
+
+    // WF-18: reassignment of the DRAFTER once one is assigned — the queue
+    // owners (`ticket.assign`) may hand an in-flight ticket to a different
+    // drafter (the first one quit, is out, or is overloaded). `assign` is
+    // only offered in the queue, so the old client-side "Reassign" (which
+    // posted `assign` at DRAFTING) could never pass the route. Requires the
+    // reason; the route validates the pick exactly as an assignment.
+    if (allows('ticket.assign') && ticket.assignedDrafterId && !isTerminal) {
+      actions.push({
+        label: 'Reassign Drafter',
+        action: 'reassign_drafter',
+        variant: 'ghost',
+        requiresComment: true,
+        optional: true,
+        description: 'Hand this request to a different drafter. The status does not change; the new drafter is notified and the reason is recorded.',
+      });
+    }
+
+    // WF-9: attaching a file is a ticket write like any other — offered to the
+    // ticket's participants (requester / assigned drafter / assigned engineer
+    // by identity), to the drafting pool while the ticket is unassigned, and
+    // to the management tier; never to an arbitrary role across every ticket.
+    // The page derives its upload affordance from THIS action and the route
+    // applies it compare-and-set, so a foreign drafter can no longer attach a
+    // "Draft" to someone else's ticket and a concurrent upload cannot clobber
+    // an approval's history entry.
+    if (!isTerminal && (isRequesterIdentity || isDrafterIdentity || isAssignedEngineerIdentity || canActAsDrafter || isManagement)) {
+      actions.push({
+        label: 'Add File',
+        action: 'attach_file',
+        variant: 'outline',
+        optional: true,
+        description: 'Attach a source, draft or reference file to this request.',
       });
     }
 

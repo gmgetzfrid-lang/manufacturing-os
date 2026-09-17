@@ -131,12 +131,15 @@ export async function POST(req: NextRequest) {
     await fanOut({ ticket, ticketId: body.ticketId, comment, mentions, recipients: newUnreadBy, actorUid: caller.id, actorEmail: callerEmail });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
+    // WF-19 done-when 3: a blank CRON_SECRET must not leave the drain
+    // unauthorised — the caller's session token drains their own orgs.
     const drainUrl = new URL("/api/notifications/send-queued", req.url);
+    const drainToken = process.env.CRON_SECRET || authHeader.slice(7);
     after(async () => {
       try {
         await fetch(drainUrl, {
           method: "POST",
-          headers: { Authorization: `Bearer ${process.env.CRON_SECRET || ""}` },
+          headers: { Authorization: `Bearer ${drainToken}` },
         });
       } catch { /* cron fallback */ }
     });
@@ -191,16 +194,26 @@ async function authorizeCommentChange(req: NextRequest, body: { ticketId?: strin
 }
 
 export async function PATCH(req: NextRequest) {
-  let body: { ticketId?: string; commentId?: string; text?: string };
+  // WF-9: a comment's text OR its root-cause category (the Admin's
+  // classification) — both were whole-array client writes; the category one
+  // bypassed every check and every compare-and-set until now.
+  let body: { ticketId?: string; commentId?: string; text?: string; category?: string | null };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
   const text = (body.text ?? "").trim();
-  if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
+  const hasCategory = Object.prototype.hasOwnProperty.call(body, "category");
+  if (!text && !hasCategory) return NextResponse.json({ error: "text or category is required" }, { status: 400 });
+  if (hasCategory && body.category !== null && typeof body.category !== "string") {
+    return NextResponse.json({ error: "category must be a string or null" }, { status: 400 });
+  }
+  const category = hasCategory ? ((body.category ?? "").trim() || null) : undefined;
 
   const auth = await authorizeCommentChange(req, body);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const editedAt = new Date().toISOString();
-  const next = auth.comments.map((c) => (c.id === body.commentId ? { ...c, text, editedAt } : c));
+  const next = auth.comments.map((c) => (c.id === body.commentId
+    ? { ...c, ...(text ? { text, editedAt } : {}), ...(category !== undefined ? { category } : {}) }
+    : c));
   // CAS on the ticket's last_modified as read: a concurrent workflow action
   // rewriting the comments array must not be clobbered by this whole-array
   // write (the exact split-brain post_ticket_comment was built to prevent).
@@ -218,7 +231,17 @@ export async function PATCH(req: NextRequest) {
   }
 
   // Keep the table in lockstep (best-effort pre-migration).
-  await supabaseAdmin.from("ticket_comments").update({ body: text, edited_at: editedAt }).eq("id", body.commentId!).then(() => {});
+  await supabaseAdmin.from("ticket_comments")
+    .update({ ...(text ? { body: text, edited_at: editedAt } : {}), ...(category !== undefined ? { category } : {}) })
+    .eq("id", body.commentId!).then(() => {});
+  // The root-cause classification is audited server-side (it used to be a
+  // client-logged row a closed tab could skip).
+  if (category !== undefined) {
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "TICKET_ROOT_CAUSE_UPDATE", resource_type: "ticket", resource_id: body.ticketId!, org_id: auth.ticket.orgId,
+      user_id: auth.callerId, details: { commentId: body.commentId, previousCategory: (auth.target.category as string | null) ?? null, newCategory: category },
+    }).then(() => undefined, () => undefined);
+  }
 
   return NextResponse.json({ ok: true });
 }

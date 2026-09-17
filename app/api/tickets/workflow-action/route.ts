@@ -15,6 +15,7 @@ import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
+import { resolveTicketRecipients } from "@/lib/ticketRouting";
 
 // POST /api/tickets/workflow-action
 //
@@ -40,6 +41,10 @@ interface Body {
   engineer?: { id: string; name: string; email: string } | null;
   redlineAttachment?: TicketAttachment | null;
   finalAttachment?: TicketAttachment | null;
+  /** WF-9: the file an `attach_file` action adds. The bytes are already in
+   *  storage (client upload); the ticket row's attachments + history write
+   *  is what this route applies compare-and-set. */
+  attachment?: TicketAttachment | null;
   /** LIFE-6 / DEC-25: how the closer addressed the hold(s) this ticket
    *  opened — release them now, or keep them with a stated reason. Absent
    *  when a close would leave one open, the close is refused (409 holds_open). */
@@ -179,8 +184,22 @@ export async function POST(req: NextRequest) {
   // WF-22: a transition that requires an input is refused when it is missing —
   // an assignment-less "assign" used to no-op while still writing a success
   // audit row.
-  if (action.action === "assign" && !body.assignment?.id) {
+  if ((action.action === "assign" || action.action === "reassign_drafter") && !body.assignment?.id) {
     return NextResponse.json({ error: "Assigning requires picking a drafter" }, { status: 400 });
+  }
+  // WF-18: reassigning to the current drafter is a no-op that would still
+  // write an audit row and a notification — refuse it.
+  if (action.action === "reassign_drafter" && body.assignment?.id === ticket.assignedDrafterId) {
+    return NextResponse.json({ error: "That drafter is already assigned to this request" }, { status: 400 });
+  }
+  // WF-9: attaching a file requires the file record — name, type and the
+  // storage URL the client's upload returned.
+  const ATTACHMENT_TYPES = ["Source", "Reference", "Draft", "Final"];
+  if (action.action === "attach_file") {
+    const a = body.attachment;
+    if (!a?.url || !a.name || !ATTACHMENT_TYPES.includes(String(a.type))) {
+      return NextResponse.json({ error: "Attaching a file requires its name, type and storage URL" }, { status: 400 });
+    }
   }
 
   // Referenced people must be active members of the same org — and a picked
@@ -261,9 +280,33 @@ export async function POST(req: NextRequest) {
     engineer: body.engineer ?? undefined,
     redlineAttachment: body.redlineAttachment ?? undefined,
     finalAttachment: body.finalAttachment ?? undefined,
+    attachment: action.action === "attach_file" ? body.attachment ?? undefined : undefined,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
-  const { updates, newStatus, recipients, newComment } = computeTransition(ticket, input);
+  const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
+  let recipients = transitionRecipients;
+
+  // WF-19: a ticket (RE-)entering the assignment queue tells the queue's
+  // owners — the DraftingSupervisor pool, falling back to Admins, exactly as
+  // the routing policy resolves them at creation (lib/ticketRouting.ts). The
+  // default fan-out only knew requester + drafter, so every engineering-review
+  // round-trip landed in the queue silently. The pool joins `unread_by` too
+  // (the unread badge and the follow list read that column) and rides the
+  // same in-app + email path as every other recipient.
+  if (newStatus === "PENDING_ASSIGNMENT" && ticket.status !== "PENDING_ASSIGNMENT") {
+    try {
+      const pool = (await resolveTicketRecipients(ticket.orgId, "PENDING_ASSIGNMENT", caller.id, supabaseAdmin))
+        .map((m) => m.uid);
+      if (pool.length > 0) {
+        const unread = new Set<string>([...((updates.unread_by as string[] | undefined) ?? []), ...pool]);
+        unread.delete(caller.id);
+        updates.unread_by = Array.from(unread);
+        recipients = Array.from(new Set([...recipients, ...pool])).filter((u) => u !== caller.id);
+      }
+    } catch (e) {
+      console.warn("[workflow-action] assignment-queue routing failed (non-blocking)", e);
+    }
+  }
 
   // LIFE-6 / DEC-25: a ticket cannot close silently over a hold it opened.
   // The closer releases it now, or records why it stays — never auto-release.
@@ -414,7 +457,16 @@ export async function POST(req: NextRequest) {
     user_id: caller.id,
     user_email: callerEmail,
     user_role: callerRole,
-    details: { from: ticket.status, to: newStatus, label: action.label },
+    details: {
+      from: ticket.status, to: newStatus, label: action.label,
+      // WF-9 / WF-18: the audit row names WHAT was attached or WHO now drafts.
+      ...(action.action === "attach_file" && body.attachment
+        ? { attachment: { id: body.attachment.id, name: body.attachment.name, type: body.attachment.type } }
+        : {}),
+      ...(action.action === "reassign_drafter" && body.assignment
+        ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
+        : {}),
+    },
   });
 
   // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
@@ -475,12 +527,18 @@ export async function POST(req: NextRequest) {
     await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, comment: fanOutComment });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
+    // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
+    // 401 at the drain — so in a default deployment every workflow email
+    // waited for the daily cron. The caller's own session token is a
+    // legitimate drain credential (SURF-5 scopes it to their orgs, which
+    // include this ticket's), so it is the fallback.
     const drainUrl = new URL("/api/notifications/send-queued", req.url);
+    const drainToken = process.env.CRON_SECRET || authHeader.slice(7);
     after(async () => {
       try {
         await fetch(drainUrl, {
           method: "POST",
-          headers: { Authorization: `Bearer ${process.env.CRON_SECRET || ""}` },
+          headers: { Authorization: `Bearer ${drainToken}` },
         });
       } catch { /* cron fallback */ }
     });

@@ -36,13 +36,17 @@ describe("capability policy — defaults reproduce legacy behavior", () => {
     expect(actionsFor(t, "Viewer" as Role)).toHaveLength(0);
   });
 
-  it("initial review: engineers and management act; force close for management only", () => {
-    const t = ticket({ status: "PENDING_ENG_INITIAL" });
-    expect(actionsFor(t, "Engineer-2" as Role)).toContain("approve_initial");
-    expect(actionsFor(t, "Supervisor" as Role)).toContain("approve_initial");
-    expect(actionsFor(t, "Drafter" as Role)).not.toContain("approve_initial");
+  it("engineering review: the pool acts when unassigned; force close for management only (the initial-review stage is gone — DEC-14)", () => {
+    const t = ticket({ status: "PENDING_ENG_TEAM" });
+    expect(actionsFor(t, "Engineer-2" as Role)).toContain("approve_team");
+    expect(actionsFor(t, "Supervisor" as Role)).toContain("approve_team");
+    expect(actionsFor(t, "Drafter" as Role)).not.toContain("approve_team");
     expect(actionsFor(t, "Manager" as Role)).toContain("close_ticket");
     expect(actionsFor(t, "Engineer-2" as Role)).not.toContain("close_ticket");
+    // No status offers approve_initial any more — the capability behind it is dormant.
+    for (const status of ["PENDING_ASSIGNMENT", "PENDING_ENG_TEAM", "DRAFTING", "PENDING_REVIEW"] as const) {
+      expect(actionsFor(ticket({ status }), "Admin" as Role, "a")).not.toContain("approve_initial");
+    }
   });
 
   it("final approval: assigned engineer by identity, management override, other engineers excluded when assigned", () => {

@@ -21,6 +21,15 @@
 //   draft_copy           the printed rev is a review draft (1A/2B) that was
 //                        never an issued deliverable
 //   unknown              ticket predates rev tracking / no rev on the QR
+//
+// WF-21 / DEC-15: a REOPENED ticket starts a new revision cycle — the
+// workflow nulls deliverable_rev and bumps revision_count, so the row no
+// longer carries a label to compare against. The last issued number is then
+// revision_count itself (issued label = revision_count + 1 at approval time,
+// and reopen added one), and the ticket is back under review: a print of the
+// last issue reads revision_in_progress, an older one superseded — never
+// "current" while the drawing is being re-worked. Only a live (non-terminal)
+// status counts: a ticket closed again without a new issue stays unknown.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -33,6 +42,7 @@ const REV_RE = /^\d+[A-Z]{0,3}$/;
 
 const cycleOf = (rev: string): number => parseInt(rev, 10);
 const isIssued = (rev: string): boolean => /^\d+$/.test(rev);
+const TERMINAL = new Set(["CLOSED", "CANCELED"]);
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -60,17 +70,20 @@ export async function GET(req: NextRequest) {
   };
 
   const currentRev = t.deliverable_rev;
-  const inReview = !!currentRev && !isIssued(currentRev);
+  // WF-21: reopened = no label on the row, a cycle count, and a live status.
+  const reopened = !currentRev && (t.revision_count ?? 0) > 0 && !!t.status && !TERMINAL.has(t.status);
+  const inReview = (!!currentRev && !isIssued(currentRev)) || reopened;
   // The latest ISSUED number: the current rev itself when issued, else the
-  // cycle before the one now in review (2A in review → latest issue is 1).
+  // cycle before the one now in review (2A in review → latest issue is 1);
+  // on a reopened ticket, the cycle count (see the header).
   const latestIssued = currentRev
     ? isIssued(currentRev)
       ? currentRev
       : cycleOf(currentRev) > 1 ? String(cycleOf(currentRev) - 1) : null
-    : null;
+    : reopened ? String(t.revision_count) : null;
 
   let verdict: "current" | "revision_in_progress" | "superseded" | "draft_copy" | "unknown";
-  if (!printedRev || !currentRev) {
+  if (!printedRev || (!currentRev && !reopened)) {
     verdict = "unknown";
   } else if (!isIssued(printedRev)) {
     // A letter rev (1A) on paper was a review draft — never an issued deliverable.

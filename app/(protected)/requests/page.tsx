@@ -42,8 +42,9 @@ import {
 } from 'lucide-react';
 import {
   isActionRequired as ticketNeedsAction,
-  isManagementRole,
+  isQueueViewer,
 } from '@/lib/ticketAttention';
+import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 
 // =========================================================================================
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
@@ -105,8 +106,6 @@ const calculateDaysOpen = (date: unknown) => {
 
 const getStatusColor = (status: TicketStatus): string => {
   switch (status) {
-    case 'NEW': return 'bg-blue-50 text-blue-700 border-blue-200';
-    case 'PENDING_ENG_INITIAL': return 'bg-indigo-50 text-indigo-700 border-indigo-200';
     case 'PENDING_ENG_TEAM': return 'bg-indigo-50 text-indigo-700 border-indigo-200';
     case 'PENDING_ASSIGNMENT': return 'bg-purple-50 text-purple-700 border-purple-200'; 
     case 'DRAFTING': return 'bg-blue-50 text-blue-700 border-blue-200'; 
@@ -161,7 +160,7 @@ export default function RequestPortal() {
   // people knew with one they never asked for. Never hijack the landing
   // view.) A user's last pick is remembered.
   const [viewMode, setViewMode] = useState<'table' | 'grid' | 'team'>('table');
-  const isSupervisorView = isManagementRole(roles);
+  const isSupervisorView = isQueueViewer(roles);
   useEffect(() => {
     try {
       const saved = localStorage.getItem('requests.viewMode');
@@ -221,11 +220,20 @@ export default function RequestPortal() {
   // HELPER: ACTION REQUIRED CHECKER
   // --------------------------------------------------------------------
   // Delegates to the shared rule in lib/ticketAttention so the portal's "action
-  // needed" badges, the sidebar count, and the header bell stay identical — and
-  // so supervisors get the PENDING_IFC flag the routing layer already sends them.
+  // needed" badges, the sidebar count, and the header bell stay identical.
+  // WF-24: that rule is derived from the workflow engine under the org's own
+  // capability policy, so a row is marked exactly when the ticket page would
+  // offer this viewer a live action.
+  const [capPolicy, setCapPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    if (!activeOrgId) return;
+    void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setCapPolicy(p); }).catch(() => {});
+    return () => { alive = false; };
+  }, [activeOrgId]);
   const isActionRequired = useCallback(
-    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles }),
-    [uid, roles],
+    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles, policy: capPolicy }),
+    [uid, roles, capPolicy],
   );
 
 
@@ -342,14 +350,14 @@ export default function RequestPortal() {
       slot4Count = tickets.filter(t => t.requesterId === uid && t.status === 'CLOSED').length; 
     }
     else if (['Manager', 'Admin', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) {
-      slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_INITIAL').length;
+      slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_TEAM').length;
       slot3Count = activeTickets.filter(t => t.status === 'PENDING_ASSIGNMENT').length; 
       slot4Count = activeTickets.filter(t => t.status === 'REVISION_REQ').length; 
     }
     else if (activeRole.includes('Engineer')) {
       slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_TEAM').length; 
       slot3Count = activeTickets.filter(t => t.status === 'PENDING_REVIEW').length; 
-      slot4Count = activeTickets.filter(t => t.status === 'PENDING_ENG_INITIAL').length; 
+      slot4Count = activeTickets.filter(t => t.status === 'PENDING_FINAL_APPROVAL').length; 
     }
     else if (activeRole === 'DocCtrl') {
       slot2Count = activeTickets.filter(t => t.status === 'PENDING_IFC').length; 
@@ -503,7 +511,7 @@ export default function RequestPortal() {
       drafting: count(g.tickets, (t) => t.status === 'DRAFTING'),
       revision: count(g.tickets, (t) => t.status === 'REVISION_REQ'),
       awaitingIfc: count(g.tickets, (t) => t.status === 'PENDING_IFC'),
-      review: count(g.tickets, (t) => ['PENDING_REVIEW', 'PENDING_FINAL_APPROVAL', 'PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_ASSIGNMENT'].includes(t.status)),
+      review: count(g.tickets, (t) => ['PENDING_REVIEW', 'PENDING_FINAL_APPROVAL', 'PENDING_ENG_TEAM', 'PENDING_ASSIGNMENT'].includes(t.status)),
       actionable: count(g.tickets, (t) => isActionRequired(t)),
       overdue: count(g.tickets, (t) => !!t.targetCompletionAt && new Date(t.targetCompletionAt as string) < new Date()),
       stale: count(g.tickets, (t) => calculateDaysOpen(t.lastModified) > 7),

@@ -32,6 +32,7 @@
 //     org_capability_allows_for — read the SAME shape with the SAME rule.
 
 import { supabase } from "@/lib/supabase";
+import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
 
 export type CapabilityId =
   | "ticket.manage"            // management override tier (approve anywhere, force close)
@@ -60,19 +61,30 @@ export interface CapabilityDef {
   defaultRoles: string[];
   /** Admin can never be removed from a critical capability. */
   critical?: boolean;
+  /** DEC-11 / WF-17: the capability is KEPT but no live status consults its
+   *  base list — the editor renders the row greyed with `dormantNote` as the
+   *  tooltip, never as a live-looking control (a decorative control is the
+   *  exact failure the permissions console was built to remove). */
+  dormant?: boolean;
+  dormantNote?: string;
 }
 
-const MGMT = ["Admin", "Manager", "Supervisor"];
+// WF-24 / CHAIN-3: the management tier is defined ONCE (lib/managementRoles.ts).
+const MGMT = [...MANAGEMENT_ROLES];
 
 export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "ticket.manage", area: "Requests", label: "Management override", critical: true,
     description: "The management tier: co-approve at any review stage, override assigned reviewers, force-close.",
     defaultRoles: MGMT },
   { id: "ticket.initial_review", area: "Requests", label: "Initial review (approve / flag / reject)",
-    description: "Act on brand-new requests before assignment.", defaultRoles: [...MGMT, "Engineer"] },
+    description: "Act on brand-new requests before assignment.", defaultRoles: [...MGMT, "Engineer"],
+    dormant: true,
+    dormantNote: "Dormant: every request is born in the assignment queue (DEC-14 retired the NEW / PENDING_ENG_INITIAL stages), so no status consults this list. Kept for a future \"return to unassigned engineer pool\" action (DEC-11)." },
   { id: "ticket.eng_review", area: "Requests", label: "Engineering scope review",
     description: "Complete an engineering review when no specific engineer is assigned (the assigned engineer always can).",
-    defaultRoles: ["Engineer"] },
+    defaultRoles: ["Engineer"],
+    dormant: true,
+    dormantNote: "Dormant base list: a review is only ever requested WITH a named engineer (WF-22), who then acts by identity. A request-type override on this row still governs who may be PICKED as the reviewer (DEC-13)." },
   { id: "ticket.assign", area: "Requests", label: "Assign drafters",
     description: "Run the assignment queue.", defaultRoles: [...MGMT, "DraftingSupervisor"] },
   { id: "ticket.self_assign", area: "Requests", label: "Self-assign drafting work",
@@ -86,7 +98,9 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
     description: "Approve a draft to IFC without being the requester.", defaultRoles: ["Engineer"] },
   { id: "ticket.final_approve", area: "Requests", label: "Final engineering approval",
     description: "Sign off at the final-approval stage when unassigned (the assigned engineer always can).",
-    defaultRoles: ["Engineer"] },
+    defaultRoles: ["Engineer"],
+    dormant: true,
+    dormantNote: "Dormant base list: final approval is only ever requested WITH a named engineer (WF-22), who then acts by identity. A request-type override on this row still governs who may be PICKED as the reviewer (DEC-13)." },
   { id: "ticket.reopen", area: "Requests", label: "Reopen closed tickets",
     description: "Resurrect a closed ticket (its requester always can).", defaultRoles: MGMT },
   { id: "ticket.force_close", area: "Requests", label: "Force close", critical: true,

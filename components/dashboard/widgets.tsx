@@ -276,9 +276,7 @@ function timeAgo(iso: string | null | undefined): string {
 
 // Ticket status → short label + badge classes (mirrors the request portal).
 const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
-  NEW: { label: "New", cls: "bg-blue-50 text-blue-700 border-blue-200" },
-  PENDING_ENG_INITIAL: { label: "Eng review", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  PENDING_ENG_TEAM: { label: "Eng team", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  PENDING_ENG_TEAM: { label: "Eng review", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
   PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-purple-50 text-purple-700 border-purple-200" },
   DRAFTING: { label: "Drafting", cls: "bg-blue-50 text-blue-700 border-blue-200" },
   PENDING_REVIEW: { label: "In review", cls: "bg-yellow-50 text-yellow-700 border-yellow-200" },
@@ -441,7 +439,7 @@ function DraftingRequestsBody() {
     ]);
     const byStatus = new Map<string, number>();
     for (const r of ((statusRes.data ?? []) as Array<{ status: string | null }>)) {
-      const s = r.status ?? "NEW";
+      const s = r.status ?? "PENDING_ASSIGNMENT";
       byStatus.set(s, (byStatus.get(s) ?? 0) + 1);
     }
     const open = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
@@ -454,8 +452,7 @@ function DraftingRequestsBody() {
   const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
   // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
   const pipeline: Segment[] = [
-    { label: "New", count: by(["NEW"]) },
-    { label: "Eng review", count: by(["PENDING_ENG_INITIAL", "PENDING_ENG_TEAM"]) },
+    { label: "Eng review", count: by(["PENDING_ENG_TEAM"]) },
     { label: "Unassigned", count: by(["PENDING_ASSIGNMENT"]) },
     { label: "Drafting", count: by(["DRAFTING"]) },
     { label: "In review", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },

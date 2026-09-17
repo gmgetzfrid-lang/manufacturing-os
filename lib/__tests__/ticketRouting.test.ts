@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mutable fixture the supabase mock reads from. vi.hoisted so the mock factory
 // (which is hoisted above imports) can close over it.
 const h = vi.hoisted(() => ({
-  members: [] as Array<{ uid: string; role: string; display_name?: string | null; email?: string | null }>,
+  members: [] as Array<{ uid: string; role: string; roles?: string[]; display_name?: string | null; email?: string | null }>,
   routing: null as null | { adminsAlsoReceiveWhenSupervisorSet?: boolean },
   selectedColumns: { org_members: "" },
 }));
@@ -93,16 +93,20 @@ describe("resolveTicketRecipients", () => {
     expect(uids(out)).toEqual(["admin1", "super1"]);
   });
 
-  it("PENDING_ENG_INITIAL goes to engineers, falling back to Admins when none", async () => {
+  it("WF-19 done-when 2: the supervisor pool matches the FULL role collection, not the headline", async () => {
+    // A Manager whose additive collection includes DraftingSupervisor IS the
+    // supervisor — the headline-only match silently fell back to Admins and
+    // the actual supervisor was never told.
     h.members = [
-      { uid: "admin1", role: "Admin" },
-      { uid: "eng1", role: "Engineer-1" },
-      { uid: "eng4", role: "Engineer-4" },
+      { uid: "admin1", role: "Admin", roles: ["Admin"] },
+      { uid: "mgr-sup", role: "Manager", roles: ["Manager", "DraftingSupervisor"] },
     ];
-    expect(uids(await resolveTicketRecipients("org-1", "PENDING_ENG_INITIAL"))).toEqual(["eng1", "eng4"]);
+    expect(uids(await resolveTicketRecipients("org-1", "PENDING_ASSIGNMENT"))).toEqual(["mgr-sup"]);
+  });
 
-    h.members = [{ uid: "admin1", role: "Admin" }, { uid: "v", role: "Viewer" }];
-    expect(uids(await resolveTicketRecipients("org-1", "PENDING_ENG_INITIAL"))).toEqual(["admin1"]);
+  it("the retired PENDING_ENG_INITIAL entry stage has no routing branch (DEC-14)", async () => {
+    h.members = [{ uid: "admin1", role: "Admin" }, { uid: "eng1", role: "Engineer-1" }];
+    expect(await resolveTicketRecipients("org-1", "PENDING_ENG_INITIAL" as never)).toEqual([]);
   });
 
   it("never notifies the actor about their own action", async () => {

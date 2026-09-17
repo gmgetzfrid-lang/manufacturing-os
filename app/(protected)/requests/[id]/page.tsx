@@ -884,9 +884,13 @@ export default function TicketDetailView() {
   const [pendingRedlineBlob, setPendingRedlineBlob] = useState<Blob | null>(null);
   const [isReassigning, setIsReassigning] = useState(false);
 
-  const handleReassignClick = () => {
+  // WF-18: the Reassign button used to post `assign` at DRAFTING, where the
+  // engine never offers it — a guaranteed 403. It now carries the engine's
+  // own `reassign_drafter` action (offered to `ticket.assign` holders once a
+  // drafter is set), so the button exists exactly when the route will accept it.
+  const handleReassignClick = (action: WorkflowAction) => {
     setIsReassigning(true);
-    setPendingAction({ action: 'assign', label: 'Reassign Ticket', variant: 'warning' });
+    setPendingAction(action);
     setShowAssignModal(true);
   };
 
@@ -1167,17 +1171,18 @@ export default function TicketDetailView() {
       return c;
     });
 
+    // WF-9: the classification rides the comment route (author or Admin,
+    // compare-and-set on the ticket, audited server-side) instead of a
+    // whole-array client write of `tickets.comments`.
+    const prevComments = ticket.comments;
+    setTicket((prev) => prev ? { ...prev, comments: updatedComments } : prev);
+    setEditingCommentId(null);
     try {
-      await supabase.from('tickets').update({ comments: updatedComments }).eq('id', ticketId);
-      await logAuditAction({
-        action: 'TICKET_ROOT_CAUSE_UPDATE', resourceId: ticketId, resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
-        details: { commentId, newCategory: editCategoryVal }
-      });
-      setEditingCommentId(null);
+      await callCommentApi('PATCH', { ticketId, commentId, category: editCategoryVal });
     } catch (e) {
+      setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
       console.error("Failed to update category", e);
-      await appAlert({ message: "Failed to update root cause.", tone: "danger" });
+      await appAlert({ message: `Failed to update root cause: ${e instanceof Error ? e.message : String(e)}`, tone: "danger" });
     }
   };
 
@@ -1196,26 +1201,34 @@ export default function TicketDetailView() {
         status: type === 'Source' ? 'submitted' : 'staged',
         size: formatBytes(file.size), uploadedBy: userEmail || 'Unknown', uploadedAt: new Date().toISOString()
       };
-      const now = new Date().toISOString();
-      const historyEntry = { action: 'File Uploaded', user: userEmail || 'Unknown', role: activeRole, date: now, details: `Uploaded ${type} file: ${file.name}` };
-      const currentAttachments = ticket.attachments || [];
-      const currentHistory = ticket.history || [];
-      await supabase.from('tickets').update({
-        attachments: [...currentAttachments, newAttachment],
-        last_modified: now,
-        history: [...currentHistory, historyEntry],
-      }).eq('id', ticketId);
-
-      await logAuditAction({
-        action: 'TICKET_FILE_UPLOAD', resourceId: ticketId, resourceType: 'ticket',
-        orgId: activeOrgId, userId: uid || 'unknown', userEmail: userEmail || 'unknown', userRole: activeRole,
-        details: { fileName: file.name, fileType: type, fileSize: file.size }
+      // WF-9: the bytes are in storage; the ticket row's attachments +
+      // history write is a workflow action (`attach_file`) — the same
+      // authority evaluation, compare-and-set, server audit row and history
+      // entry as every transition. A stale tab can no longer clobber an
+      // approval's history, and only the ticket's participants can attach.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not authenticated");
+      const res = await fetch('/api/tickets/workflow-action', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ ticketId, actionType: 'attach_file', attachment: newAttachment }),
       });
+      if (res.status === 409) {
+        throw new Error("This request was just updated by someone else, so the file was not attached. The latest state is loading — please try again.");
+      }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error || `Upload failed (HTTP ${res.status})`);
+      }
 
       setIsUploading(false);
       setFileToUpload(null);
       setUploadProgress(0);
-    } catch (err) { console.error(err); await appAlert({ message: "Upload failed. Please try again.", tone: "danger" }); setIsUploading(false); }
+    } catch (err) {
+      console.error(err);
+      await appAlert({ message: err instanceof Error ? err.message : "Upload failed. Please try again.", tone: "danger" });
+      setIsUploading(false);
+    }
   };
 
   const initiateWorkflowAction = async (action: WorkflowAction) => {
@@ -1226,6 +1239,8 @@ export default function TicketDetailView() {
       await appAlert({ message: action.disabledReason, tone: "danger" });
       return;
     }
+    // WF-18: reassignment collects the new drafter AND the reason in one modal.
+    if (action.action === 'reassign_drafter') { handleReassignClick(action); return; }
     if (action.requiresFile) {
       const hasFiles = ticket.attachments && ticket.attachments.length > 0;
       if (!hasFiles) { await appAlert({ message: "Compliance Check Failed: You must upload at least one file before proceeding.", tone: "danger" }); return; }
@@ -1255,16 +1270,12 @@ export default function TicketDetailView() {
       setPendingAction(action);
       setShowCommentModal(true);
     } 
-    // MERGED FLOW: Approval now directly triggers Assignment
-    else if (action.action === 'assign' || action.action === 'approve_initial') { 
-      // If approving, we swap the action to 'assign' so the backend logic moves it straight to DRAFTING
-      const effectiveAction = action.action === 'approve_initial' 
-        ? { ...action, action: 'assign', label: 'Approve & Assign' } 
-        : action;
-      
-      setPendingAction(effectiveAction); 
-      setShowAssignModal(true); 
-    } 
+    // Assignment opens the drafter picker. (The former approve_initial →
+    // assign rewrite is gone with the NEW stage — DEC-14 / WF-17.)
+    else if (action.action === 'assign') {
+      setPendingAction(action);
+      setShowAssignModal(true);
+    }
     else { executeWorkflowAction(action); }
   };
 
@@ -1546,13 +1557,26 @@ export default function TicketDetailView() {
     }
   };
 
+  // WF-9: following rides a server route (membership-checked, only ever the
+  // caller's own follow, compare-and-set on the ticket) — the whole-array
+  // client write could clobber a concurrent workflow transition.
   const toggleWatch = async () => {
     if (!ticket || !uid) return;
-    const current = ticket.watchers ?? [];
-    const next = current.includes(uid)
-      ? current.filter((w) => w !== uid)
-      : [...current, uid];
-    await supabase.from("tickets").update({ watchers: next }).eq("id", ticketId);
+    const watching = !(ticket.watchers ?? []).includes(uid);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+      const res = await fetch('/api/tickets/watch', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ ticketId, watching }),
+      });
+      const j = await res.json().catch(() => ({})) as { error?: string; watchers?: string[] };
+      if (!res.ok) throw new Error(j.error || `Couldn't update (HTTP ${res.status})`);
+      if (Array.isArray(j.watchers)) setTicket((prev) => prev ? { ...prev, watchers: j.watchers } : prev);
+    } catch (err) {
+      await appAlert({ message: `Couldn't update your follow: ${err instanceof Error ? err.message : String(err)}`, tone: "danger" });
+    }
   };
 
   const getStatusStyle = (status: TicketStatus) => {
@@ -1581,6 +1605,13 @@ export default function TicketDetailView() {
     closeWithoutReviewTypes,
     requesterRoles,
   });
+  // WF-9 / WF-18: the upload affordance and the Reassign button are derived
+  // from the engine's actions, never from a role list of their own — they
+  // exist exactly when the route will accept the write. Both have their own
+  // UI, so they are not rendered as generic action buttons.
+  const canAttach = availableActions.some((a) => a.action === 'attach_file');
+  const reassignAction = availableActions.find((a) => a.action === 'reassign_drafter');
+  const buttonActions = availableActions.filter((a) => a.action !== 'attach_file' && a.action !== 'reassign_drafter');
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
   
   // LOGIC: DRAFTS SORTING & VERSIONING
@@ -1806,7 +1837,7 @@ export default function TicketDetailView() {
             >
               <QrCode className="w-4 h-4" /> <span className="hidden sm:inline">Traveler</span>
             </button>
-            {(hasAnyRole(['Drafter', 'Requester', 'Admin']) || uid === ticket.requesterId) && (
+            {canAttach && (
               <>
                 <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                   {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />} 
@@ -1856,18 +1887,19 @@ export default function TicketDetailView() {
               </>
             )}
 
-            {isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' && (
+            {reassignAction && (
               <button 
-                onClick={handleReassignClick}
+                onClick={() => handleReassignClick(reassignAction)}
+                title={reassignAction.description}
                 className="px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
               >
                 <UserPlus className="w-4 h-4 mr-2" /> Reassign
               </button>
             )}
-            {availableActions.length === 0 ? (
+            {buttonActions.length === 0 ? (
                <div className="flex items-center px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-faint)] italic"><ShieldAlert className="w-4 h-4 mr-2" /> View Only - No Actions Available</div>
             ) : (
-              availableActions.map((action, idx) => (
+              buttonActions.map((action, idx) => (
                 action.disabledReason ? (
                   // Separation-of-duties: the action stays VISIBLE but disabled,
                   // with the reason spelled out — a vanished button reads as a bug.

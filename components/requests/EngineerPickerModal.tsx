@@ -4,7 +4,7 @@
 //
 // Used by two workflow actions:
 //   1. "Flag for Engineering Review" — supervisor flags a ticket from
-//      PENDING_ENG_INITIAL to PENDING_ENG_TEAM and picks WHO reviews
+//      PENDING_ASSIGNMENT to PENDING_ENG_TEAM and picks WHO reviews
 //   2. "Send for Engineer Final Approval" — a Viewer-tier requester
 //      can't sign off on engineering work directly; they pick the
 //      engineer who will do the IFC sign-off
