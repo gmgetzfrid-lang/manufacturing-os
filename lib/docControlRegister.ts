@@ -9,7 +9,7 @@
 // pills shown elsewhere.
 
 import { supabase } from "@/lib/supabase";
-import { resolveEffectiveOwner } from "@/lib/ownership";
+import { resolveEffectiveOwner, teamSupervisorMap } from "@/lib/ownership";
 import { reviewStatusFor, daysUntilReview, type ReviewStatus } from "@/lib/reviewCycles";
 import { getAckSummaries, ackStatusFor, type AckSummary, type AckStatus } from "@/lib/acknowledgments";
 import { getReviewSummaries, type ReviewSummary } from "@/lib/reviewControl";
@@ -138,46 +138,24 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   const libMap = new Map((libs ?? []).map((l) => [(l as OwnerCols).id, l as OwnerCols]));
   const colMap = new Map((cols ?? []).map((c) => [(c as OwnerCols).id, c as OwnerCols]));
 
-  // Team-owned libraries: the team's supervisor is the effective owner. The
-  // register previously ignored owner_team_id entirely and reported every
-  // team-owned document as "Unowned" — contradicting the notification router.
-  const teamIds = [...new Set(((libs ?? []) as Array<Record<string, unknown>>)
-    .map((l) => (l.owner_team_id as string | null) ?? null)
-    .filter((t): t is string => !!t))];
-  const teamSupervisor = new Map<string, { userId: string; name: string }>();
-  if (teamIds.length) {
-    const { data: teams } = await supabase.from("teams")
-      .select("id, name, supervisor_user_id").in("id", teamIds);
-    const supIds = [...new Set(((teams ?? []) as Array<Record<string, unknown>>)
-      .map((t) => (t.supervisor_user_id as string | null) ?? null)
-      .filter((u): u is string => !!u))];
-    const { data: sups } = supIds.length
-      ? await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).eq("status", "active").in("uid", supIds)
-      : { data: [] };
-    const supName = new Map(((sups ?? []) as Array<Record<string, unknown>>)
-      .map((m) => [m.uid as string, (m.display_name as string) || (m.email as string) || "Supervisor"]));
-    for (const t of ((teams ?? []) as Array<Record<string, unknown>>)) {
-      const sup = (t.supervisor_user_id as string | null) ?? null;
-      // GAP-5 / OWN-12: a supervisor who is not an ACTIVE member is not an owner.
-      if (sup && supName.has(sup)) teamSupervisor.set(t.id as string, { userId: sup, name: supName.get(sup) ?? (t.name as string) ?? "Supervisor" });
-    }
-  }
+  // OWN-16: the team rung comes from the ONE resolver (team-owned library →
+  // the team's supervisor, ACTIVE members only via activeUids). The register
+  // used to patch it in afterwards and label the source "library".
+  const teamSupervisors = ((libs ?? []) as Array<Record<string, unknown>>).some((l) => !!l.owner_team_id)
+    ? await teamSupervisorMap(orgId)
+    : new Map();
 
   const rows: RegisterRow[] = docs.map((d) => {
     const libraryId = d.library_id as string;
     const collectionId = (d.collection_id as string | null) ?? null;
     const lib = libMap.get(libraryId);
-    let owner = resolveEffectiveOwner(
+    const owner = resolveEffectiveOwner(
       { owner_user_id: (d.owner_user_id as string | null) ?? null, owner_name: (d.owner_name as string | null) ?? null },
       collectionId ? colMap.get(collectionId) ?? null : null,
       lib ?? null,
       activeUids,
+      teamSupervisors,
     );
-    if (!owner.userId) {
-      const teamId = lib?.owner_team_id ?? null;
-      const sup = teamId ? teamSupervisor.get(teamId) : undefined;
-      if (sup) owner = { userId: sup.userId, name: sup.name, source: "library" };
-    }
     const nextReviewDate = (d.next_review_date as string | null) ?? null;
     const ack = ackMap.get(d.id as string) ?? null;
     const review = reviewMap.get(d.id as string) ?? null;

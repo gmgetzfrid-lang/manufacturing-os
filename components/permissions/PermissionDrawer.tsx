@@ -132,6 +132,12 @@ export default function PermissionsDrawer(props: {
 
   nodeType: NodeType;
   nodeId: string;
+  /** OWN-20: the library this node belongs to (a folder's parent library; a
+   *  library node needs none — it is `nodeId`). After a library / folder
+   *  save, the descendants' stored `acl_index` is recomputed through
+   *  /api/acl/rebuild so an inherited change is enforced now, not at the
+   *  nightly rebuild. */
+  libraryId?: string;
 
   acl?: AccessControl | null;
   visibility?: "normal" | "hidden" | "private";
@@ -303,8 +309,14 @@ export default function PermissionsDrawer(props: {
 
       if (nodeType !== "library") payload.visibility = visibility;
 
-      const { error } = await supabase.from(table).update(payload).eq("id", nodeId);
+      // OWN-14 / OWN-20: a checked write. An RLS / guard refusal returns 200
+      // with ZERO rows — the old unchecked form then logged NODE_ACL_CHANGED,
+      // ran the rebuild and told the user the permissions were saved.
+      const { data: saved, error } = await supabase.from(table).update(payload).eq("id", nodeId).select("id");
       if (error) throw new Error(error.message);
+      if (!saved || saved.length === 0) {
+        throw new Error(`Permissions were NOT saved — you don't have authority over this ${nodeType} (or it no longer exists).`);
+      }
 
       // Full before/after audit — a permission change must always be
       // reconstructable. Best-effort: the save above already committed.
@@ -323,10 +335,38 @@ export default function PermissionsDrawer(props: {
           },
         }).then(() => undefined, () => undefined);
       }
+      // OWN-20: a library / folder ACL change makes every descendant's stored
+      // acl_index stale (it is chain-resolved at write time and the database
+      // reads it directly). Recompute the subtree now — server-side, same
+      // code as the nightly pass, diff-guarded. Best-effort: the save above
+      // is already committed; a failure is said out loud, never hidden.
+      const rebuildLibraryId = nodeType === "library" ? nodeId : nodeType === "collection" ? props.libraryId : undefined;
+      if (rebuildLibraryId && activeOrgId) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch("/api/acl/rebuild", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
+            // The route takes the same authority the drawer needed for the save
+            // (controller / effective owner / manage-grant on this node's chain).
+            body: JSON.stringify({ orgId: activeOrgId, libraryId: rebuildLibraryId, ...(nodeType === "collection" ? { collectionId: nodeId } : {}) }),
+          });
+          const out = (await res.json().catch(() => ({}))) as { error?: string; errors?: string[] };
+          if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+          if (Array.isArray(out.errors) && out.errors.length) throw new Error(out.errors[0]);
+        } catch (e) {
+          await appAlert({
+            title: "Permissions saved — descendants not yet re-indexed",
+            message: `The change is saved, but the folders and documents under it could not be re-indexed right now (${(e as Error).message}). The nightly rebuild will apply it; until then an inherited change may not be enforced for them.`,
+          });
+        }
+      }
       close();
     } catch (e) {
       console.error(e);
-      await appAlert({ message: "Failed to save permissions (check rules/network).", tone: "danger" });
+      // The refusal (or the network error) is said out loud, never a generic
+      // "check your rules" for a write the database turned down.
+      await appAlert({ message: `Failed to save permissions: ${(e as Error).message}`, tone: "danger" });
     } finally {
       setSaving(false);
     }

@@ -79,7 +79,14 @@ export default function AdminTeamsPage() {
     if (!selected || !uid) return;
     const teamId = owned ? null : selected.id;
     setLibraries((prev) => prev.map((l) => (l.id === libId ? { ...l, owner_team_id: teamId } : l)));
-    try { await setLibraryOwnerTeam({ libraryId: libId, orgId: activeOrgId, teamId, actorId: uid }); } catch { void refresh(); }
+    try { await setLibraryOwnerTeam({ libraryId: libId, orgId: activeOrgId, teamId, actorId: uid }); }
+    catch (e) {
+      // OWN-13: a refused write is a visible error, never a toggle that
+      // quietly snaps back — the checked write in setLibraryOwnerTeam throws
+      // when the row did not change, and the person must see why.
+      await appAlert({ message: (e as Error).message, tone: "danger" });
+      void refresh();
+    }
   };
 
   useEffect(() => { void refresh(); }, [refresh]);

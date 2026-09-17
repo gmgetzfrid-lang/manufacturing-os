@@ -87,17 +87,25 @@ async function readAll<T>(
 
 const MAX_ERRORS = 50;
 
+/** OWN-20: narrow a rebuild to one org, or to one library's subtree (the
+ *  library row, its folders, documents and sets). The drawer asks for this
+ *  right after a library / folder ACL save, so descendants do not stay stale
+ *  until the nightly pass. Same chain merge, same diff guard — only the
+ *  population read and written changes. */
+export interface RebuildScope { orgId: string; libraryId?: string }
+
 /**
  * Recompute and persist `acl_index` for every library, folder, document and
- * document set in every org. Returns the number of nodes whose index actually
- * changed, plus every error encountered — the cron surfaces those in its
- * `errors` list so a stale (possibly fail-open) index is never a silent
- * success. `nowMs` is the expiry clock; pass a fixed value for deterministic
- * tests.
+ * document set in every org (or, with `scope`, one org / one library subtree).
+ * Returns the number of nodes whose index actually changed, plus every error
+ * encountered — the cron surfaces those in its `errors` list so a stale
+ * (possibly fail-open) index is never a silent success. `nowMs` is the expiry
+ * clock; pass a fixed value for deterministic tests.
  */
 export async function rebuildAclIndexes(
   sb: SupabaseClient,
   nowMs: number,
+  scope?: RebuildScope,
 ): Promise<RebuildCounts> {
   const counts: RebuildCounts = { libraries: 0, folders: 0, documents: 0, sets: 0, orgs: 0, errors: [] };
   const note = (msg: string) => {
@@ -106,21 +114,38 @@ export async function rebuildAclIndexes(
   };
 
   let orgIds: string[];
-  try {
-    orgIds = (await readAll<{ id: string }>((from, to) => sb.from("orgs").select("id").range(from, to), "orgs")).map((o) => o.id);
-  } catch (e) {
-    note((e as Error).message);
-    return counts;
+  if (scope) {
+    orgIds = [scope.orgId];
+  } else {
+    try {
+      orgIds = (await readAll<{ id: string }>((from, to) => sb.from("orgs").select("id").range(from, to), "orgs")).map((o) => o.id);
+    } catch (e) {
+      note((e as Error).message);
+      return counts;
+    }
   }
+  const libScope = scope?.libraryId ?? null;
 
   for (const orgId of orgIds) {
     let libRows: LibRow[], folderRows: FolderRow[], docRows: DocRow[], setRows: SetRow[];
     try {
       [libRows, folderRows, docRows, setRows] = await Promise.all([
-        readAll<LibRow>((f, t) => sb.from("libraries").select("id, acl, acl_index").eq("org_id", orgId).range(f, t), `libraries(org ${orgId})`),
-        readAll<FolderRow>((f, t) => sb.from("collections").select("id, library_id, path_ids, acl, acl_index").eq("org_id", orgId).range(f, t), `collections(org ${orgId})`),
-        readAll<DocRow>((f, t) => sb.from("documents").select("id, library_id, collection_id, acl, acl_index").eq("org_id", orgId).range(f, t), `documents(org ${orgId})`),
-        readAll<SetRow>((f, t) => sb.from("document_sets").select("id, library_id, acl, acl_index").eq("org_id", orgId).range(f, t), `document_sets(org ${orgId})`),
+        readAll<LibRow>((f, t) => {
+          const q = sb.from("libraries").select("id, acl, acl_index").eq("org_id", orgId);
+          return (libScope ? q.eq("id", libScope) : q).range(f, t);
+        }, `libraries(org ${orgId})`),
+        readAll<FolderRow>((f, t) => {
+          const q = sb.from("collections").select("id, library_id, path_ids, acl, acl_index").eq("org_id", orgId);
+          return (libScope ? q.eq("library_id", libScope) : q).range(f, t);
+        }, `collections(org ${orgId})`),
+        readAll<DocRow>((f, t) => {
+          const q = sb.from("documents").select("id, library_id, collection_id, acl, acl_index").eq("org_id", orgId);
+          return (libScope ? q.eq("library_id", libScope) : q).range(f, t);
+        }, `documents(org ${orgId})`),
+        readAll<SetRow>((f, t) => {
+          const q = sb.from("document_sets").select("id, library_id, acl, acl_index").eq("org_id", orgId);
+          return (libScope ? q.eq("library_id", libScope) : q).range(f, t);
+        }, `document_sets(org ${orgId})`),
       ]);
     } catch (e) {
       // Never rebuild an org from partial data — a missing table's rules

@@ -13,6 +13,7 @@ import { searchDocuments, type DocumentRow } from "@/lib/search";
 import { createDocumentWithFile } from "@/lib/revisions";
 import { createFolder, createLibrary, listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
+import { useRole } from "@/components/providers/RoleContext";
 
 export default function DocumentLinkPicker({ orgId, userId, canManage = false, excludeIds = [], onPick, onClose }: {
   orgId: string;
@@ -24,6 +25,9 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 }) {
   const [tab, setTab] = useState<"browse" | "upload">("browse");
   const [libraries, setLibraries] = useState<{ id: string; name: string }[]>([]);
+  // OWN-22: the creator's display name rides along as the owner-name cache
+  // (DEL-8 — consumers still resolve names live).
+  const { member, userEmail } = useRole();
 
   useEffect(() => {
     let alive = true;
@@ -70,10 +74,13 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 
   const addLibrary = async () => {
     if (!userId) return;
-    const name = await appPrompt({ title: "New library", placeholder: "Library name" });
+    // OWN-22: ownership follows the authority the database enforces for it —
+    // a controller creator is recorded as the owner; anyone else's library is
+    // born unowned (Document Control is asked to assign one).
+    const name = await appPrompt({ title: "New library", message: "Admins and Document Control are recorded as the new library's accountable owner. Otherwise it is created unowned — its review reminders go to Document Control until an owner is assigned under Admin → Permissions & ownership — and Document Control is asked to assign one.", placeholder: "Library name" });
     if (!name?.trim()) return;
     try {
-      const lib = await createLibrary({ orgId, name: name.trim(), createdBy: userId });
+      const lib = await createLibrary({ orgId, name: name.trim(), createdBy: userId, createdByName: member?.displayName ?? userEmail ?? null });
       setLibraries((p) => [...p, { id: lib.id, name: lib.name }].sort((a, b) => a.name.localeCompare(b.name)));
       setUpLibraryId(lib.id);
     } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }

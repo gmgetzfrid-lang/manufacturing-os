@@ -180,7 +180,10 @@ export async function resolveBranch(input: {
     .select("*")
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!data) throw new Error("Branch was already resolved by someone else.");
+  // OWN-21 / DEC-11: resolution is a controller-or-effective-owner act at
+  // the database (revision_branches_org_update). A refusal is zero rows, the
+  // same signal as the CAS losing — say both, never claim someone else did it.
+  if (!data) throw new Error("Branch was not resolved — it was already resolved by someone else, or resolving it takes a controller or the document's owner.");
 
   const branch = rowToBranch(data as Record<string, unknown>);
 

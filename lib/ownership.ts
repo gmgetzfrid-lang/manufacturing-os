@@ -12,6 +12,15 @@ import { logAuditAction } from "@/lib/audit";
 
 type Level = "library" | "collection" | "document";
 interface OwnerCols { owner_user_id?: string | null; owner_name?: string | null }
+/** A library row as the resolver sees it: the explicit owner columns PLUS the
+ *  owning team (OWN-16 — the team rung is part of the one chain, so a caller
+ *  that fetches a library without `owner_team_id` gets a type error, not a
+ *  silently "unowned" team-owned library). */
+export interface LibraryOwnerCols extends OwnerCols { owner_team_id?: string | null }
+/** The team rung's input: a team's supervisor and, when the caller resolved
+ *  it, the supervisor's CURRENT display name (never a snapshot — DEL-8). */
+export interface TeamSupervisor { userId: string | null; name?: string | null }
+export type TeamSupervisorLookup = ReadonlyMap<string, TeamSupervisor>;
 
 export interface EffectiveOwner {
   userId: string | null;
@@ -19,19 +28,28 @@ export interface EffectiveOwner {
   source: Level | "team" | null; // where the owner was set; "team" = a team-owned library's supervisor; null = falls back to Admin/DocCtrl
 }
 
-/** Most-specific set owner wins (document > folder > library). null = no explicit
- *  owner, i.e. responsibility sits with the org's Admin/DocCtrl.
+/** THE effective-owner chain — document > folder > library > the library's
+ *  owning team's supervisor. null = no explicit owner, i.e. responsibility
+ *  sits with the org's Admin/DocCtrl.
+ *
+ *  OWN-16: this is the ONE app-side implementation of the chain (the database
+ *  mirror is `user_is_effective_owner`). Every consumer — the notification
+ *  scans, the register, the knowledge boundary, the permissions console —
+ *  calls this with the library's `owner_team_id` and a `teamSupervisors`
+ *  lookup, so the team rung can no longer be forgotten by one caller and
+ *  honoured by the next. A census test pins that no second chain exists.
  *
  *  GAP-5 / OWN-12: when `activeUids` is supplied, a level whose owner is NOT an
  *  active member is skipped — the resolution falls through to the next level
- *  and ultimately to null, so a departed or suspended owner is never the
- *  effective owner for an authority decision or a notification route. The
- *  database's `user_is_effective_owner` applies the same fall-through. */
+ *  (the team supervisor included) and ultimately to null, so a departed or
+ *  suspended owner is never the effective owner for an authority decision or
+ *  a notification route. The database applies the same fall-through. */
 export function resolveEffectiveOwner(
   doc?: OwnerCols | null,
   folder?: OwnerCols | null,
-  library?: OwnerCols | null,
+  library?: LibraryOwnerCols | null,
   activeUids?: ReadonlySet<string> | null,
+  teamSupervisors?: TeamSupervisorLookup | null,
 ): EffectiveOwner {
   const levels: [OwnerCols | null | undefined, Level][] = [[doc, "document"], [folder, "collection"], [library, "library"]];
   for (const [lvl, source] of levels) {
@@ -39,7 +57,39 @@ export function resolveEffectiveOwner(
     if (activeUids && !activeUids.has(lvl.owner_user_id)) continue;
     return { userId: lvl.owner_user_id, name: lvl.owner_name ?? null, source };
   }
+  // Team rung: a team-owned library resolves to the owning team's supervisor.
+  const teamId = library?.owner_team_id ?? null;
+  const sup = teamId && teamSupervisors ? teamSupervisors.get(teamId) : undefined;
+  if (sup?.userId && (!activeUids || activeUids.has(sup.userId))) {
+    return { userId: sup.userId, name: sup.name ?? null, source: "team" };
+  }
   return { userId: null, name: null, source: null };
+}
+
+/** OWN-16: the team rung's lookup for an org — team id → supervisor uid plus
+ *  the supervisor's CURRENT display name. One read of `teams`, one of the
+ *  supervisors' membership rows. A read error yields an empty map, so a
+ *  team-owned library then resolves as unowned (falls to the controllers) —
+ *  never to a guessed person. */
+export async function teamSupervisorMap(orgId: string | null | undefined): Promise<Map<string, TeamSupervisor>> {
+  const out = new Map<string, TeamSupervisor>();
+  if (!orgId) return out;
+  const { data: teams, error } = await supabase.from("teams").select("id, supervisor_user_id").eq("org_id", orgId);
+  const rows = (teams ?? []) as Array<Record<string, unknown>>;
+  if (error || rows.length === 0) return out;
+  const supIds = [...new Set(rows.map((t) => (t.supervisor_user_id as string | null) ?? null).filter((u): u is string => !!u))];
+  const names = new Map<string, string | null>();
+  if (supIds.length) {
+    const { data: sups } = await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).in("uid", supIds);
+    for (const m of (sups ?? []) as Array<Record<string, unknown>>) {
+      names.set(m.uid as string, (m.display_name as string) || (m.email as string) || null);
+    }
+  }
+  for (const t of rows) {
+    const sup = (t.supervisor_user_id as string | null) ?? null;
+    out.set(t.id as string, { userId: sup, name: sup ? (names.get(sup) ?? null) : null });
+  }
+  return out;
 }
 
 /** The subset of `uids` that are ACTIVE members of `orgId` (any uid when orgId
@@ -62,14 +112,14 @@ export async function activeMemberUids(orgId: string | null | undefined, uids: A
 export function resolveOwnerForNode(
   doc: OwnerCols | null | undefined,
   folder: OwnerCols | null | undefined,
-  library: { owner_user_id?: string | null; owner_team_id?: string | null } | null | undefined,
+  library: LibraryOwnerCols | null | undefined,
   teamSupervisorId?: string | null,
 ): { userId: string | null; source: Level | "team" | null } {
-  if (doc?.owner_user_id) return { userId: doc.owner_user_id, source: "document" };
-  if (folder?.owner_user_id) return { userId: folder.owner_user_id, source: "collection" };
-  if (library?.owner_user_id) return { userId: library.owner_user_id, source: "library" };
-  if (library?.owner_team_id && teamSupervisorId) return { userId: teamSupervisorId, source: "team" };
-  return { userId: null, source: null };
+  // OWN-16: a thin adapter over the ONE chain — never a second copy of it.
+  const teamId = library?.owner_team_id ?? null;
+  const teams: TeamSupervisorLookup | null = teamId && teamSupervisorId ? new Map([[teamId, { userId: teamSupervisorId }]]) : null;
+  const r = resolveEffectiveOwner(doc, folder, library, null, teams);
+  return { userId: r.userId, source: r.source };
 }
 
 export interface OwnershipRegisterRow {
@@ -129,16 +179,15 @@ export async function effectiveOwnerForDocument(doc: {
   // GAP-5 / OWN-12: only ACTIVE members can be effective owners; an inactive
   // owner at any level falls through to the next (and the team rung, and null).
   const active = await activeMemberUids(orgId, [doc.ownerUserId, folder?.owner_user_id, (lib as OwnerCols | null)?.owner_user_id, sup]);
-  const explicit = resolveEffectiveOwner({ owner_user_id: doc.ownerUserId, owner_name: doc.ownerName }, folder, (lib as OwnerCols) ?? null, active);
-  if (explicit.userId) return explicit;
+  // OWN-16: ONE resolver call carries every rung, the team rung included.
+  const teams: TeamSupervisorLookup | null = teamId ? new Map([[teamId, { userId: sup }]]) : null;
+  const eff = resolveEffectiveOwner({ owner_user_id: doc.ownerUserId, owner_name: doc.ownerName }, folder, (lib as LibraryOwnerCols) ?? null, active, teams);
+  if (eff.source !== "team" || !eff.userId) return eff;
 
-  // Team-owned library → the team's supervisor is the effective owner.
-  if (sup && active.has(sup)) {
-    const { data: m } = await supabase.from("org_members").select("display_name, email").eq("uid", sup).maybeSingle();
-    const name = (m?.display_name as string) || (m?.email as string) || teamName || "Supervisor";
-    return { userId: sup, name, source: "team" };
-  }
-  return { userId: null, name: null, source: null };
+  // Team rung: the supervisor's CURRENT display name (the row carries none).
+  const { data: m } = await supabase.from("org_members").select("display_name, email").eq("uid", eff.userId).maybeSingle();
+  const name = (m?.display_name as string) || (m?.email as string) || teamName || "Supervisor";
+  return { ...eff, name };
 }
 
 /** Assign (or clear) a library's owning team/department. The team's supervisor

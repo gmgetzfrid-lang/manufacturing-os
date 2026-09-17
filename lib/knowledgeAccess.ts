@@ -17,6 +17,7 @@
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { evaluateAclChain } from "@/lib/acl";
+import { resolveEffectiveOwner, type TeamSupervisor } from "@/lib/ownership";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 export interface KnowledgePrincipal {
@@ -95,8 +96,9 @@ function chainReadable(
 export async function loadDcLandscape(orgId: string): Promise<{
   libraries: Map<string, ContainerNode & { name: string; owner_team_id?: string | null }>;
   folders: Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>;
-  /** team id → supervisor uid, the last rung of the ownership cascade. */
-  teamSupervisors: Map<string, string>;
+  /** team id → supervisor, the last rung of the ownership cascade (the
+   *  shape the one resolver takes — OWN-16). */
+  teamSupervisors: Map<string, TeamSupervisor>;
 }> {
   // collections is select("*") so the trash filter works before AND after
   // migration 20261011 (naming deleted_at explicitly would 42703 pre-migration).
@@ -115,9 +117,9 @@ export async function loadDcLandscape(orgId: string): Promise<{
       owner_team_id: (l.owner_team_id as string | null) ?? null,
     });
   }
-  const teamSupervisors = new Map<string, string>();
+  const teamSupervisors = new Map<string, TeamSupervisor>();
   for (const t of teamsRes.data ?? []) {
-    if (t.supervisor_user_id) teamSupervisors.set(t.id as string, t.supervisor_user_id as string);
+    if (t.supervisor_user_id) teamSupervisors.set(t.id as string, { userId: t.supervisor_user_id as string });
   }
   const folders = new Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>();
   for (const c of foldersRes.data ?? []) {
@@ -137,27 +139,32 @@ export async function loadDcLandscape(orgId: string): Promise<{
 
 /** DEL-2: the effective owner of a node — document owner, else the nearest
  *  owning folder up the lineage, else the library owner, else the owning
- *  team's supervisor. Mirrors user_is_effective_owner / resolveEffectiveOwner. */
+ *  team's supervisor. The lineage walk picks the folder rung; the chain
+ *  itself is the ONE resolver (OWN-16), which mirrors user_is_effective_owner. */
 export function effectiveOwnerFor(
   docOwner: string | null | undefined,
   folderId: string | null | undefined,
   libraryId: string | null | undefined,
   landscape: Pick<Awaited<ReturnType<typeof loadDcLandscape>>, "libraries" | "folders" | "teamSupervisors">,
 ): string | null {
-  if (docOwner) return docOwner;
+  let folderOwner: string | null = null;
   let cur = folderId ?? null;
   const seen = new Set<string>();
   while (cur && !seen.has(cur)) {
     seen.add(cur);
     const f = landscape.folders.get(cur);
     if (!f) break;
-    if (f.owner_user_id) return f.owner_user_id;
+    if (f.owner_user_id) { folderOwner = f.owner_user_id; break; }
     cur = f.parent_id ?? null;
   }
   const lib = libraryId ? landscape.libraries.get(libraryId) : undefined;
-  if (lib?.owner_user_id) return lib.owner_user_id;
-  if (lib?.owner_team_id) return landscape.teamSupervisors.get(lib.owner_team_id) ?? null;
-  return null;
+  return resolveEffectiveOwner(
+    docOwner ? { owner_user_id: docOwner } : null,
+    folderOwner ? { owner_user_id: folderOwner } : null,
+    lib ? { owner_user_id: lib.owner_user_id ?? null, owner_team_id: lib.owner_team_id ?? null } : null,
+    null,
+    landscape.teamSupervisors,
+  ).userId;
 }
 
 /** Build the ACL chain for a folder: library ACL, then ancestors top-down,

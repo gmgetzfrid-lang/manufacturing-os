@@ -417,6 +417,8 @@ and quiet for a release.
 
 **Risk:** medium.
 
+*Landed 2026-09-17 (roles-and-permissions Round E): the rebuild gained an on-demand scope — `rebuildAclIndexes(sb, now, { orgId, libraryId })` behind `POST /api/acl/rebuild`, called by the permission drawer after a (checked) library / folder save and gated on the drawer's own save authority (controller / effective owner / manage grant on the node's chain), same diff guard. The nightly pass stays the backstop; `acl_index` stays a rebuilt cache. See `OWN-20`.*
+
 <a id="dec-11"></a>
 ## DEC-11 · Dispositions for the dead-code rosters
 
@@ -444,6 +446,8 @@ left ambiguous.
 **Reversal.** Per item; all removals are recoverable from git.
 
 **Risk:** low.
+
+*Landed 2026-09-17 (roles-and-permissions Round E): the `revision_branches` row — resolution restricted to `is_org_controller(org_id)` OR the document's effective owner (`user_is_effective_owner`), migration `20261061`; `lib/branches.ts#resolveBranch` names a refusal. Every row of this table now has a commit or a recorded rationale — see `OWN-21`.*
 
 ---
 

@@ -160,6 +160,10 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
       await setReviewPolicy({ level: scope, id: targetId, orgId, policy, userId: uid, userName });
       setMode("view");
       await load(); onChanged?.();
+    } catch (e) {
+      // OWN-13: a refused write throws — say so (a bare finally left it an
+      // unhandled rejection and the form silently stayed in edit mode).
+      await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally { setBusy(false); }
   };
   const clearPolicy = async () => {
@@ -170,6 +174,8 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
     try {
       await setReviewPolicy({ level: scope, id: targetId, orgId, policy: null, userId: uid, userName });
       setMode("view"); await load(); onChanged?.();
+    } catch (e) {
+      await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally { setBusy(false); }
   };
 

@@ -18,7 +18,7 @@ import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
-import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers } from "@/lib/ownership";
+import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
@@ -605,12 +605,13 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
   if (!rows.length) return 0;
 
   const docIds = uniq(rows.map((r) => r.document_id as string));
-  const [{ data: docs }, { data: libs }, { data: cols }, controllers, { data: activeRows }] = await Promise.all([
+  const [{ data: docs }, { data: libs }, { data: cols }, controllers, { data: activeRows }, teamSupervisors] = await Promise.all([
     supabase.from("documents").select("id, library_id, collection_id, review_control, owner_user_id, owner_name").in("id", docIds),
-    supabase.from("libraries").select("id, review_control, owner_user_id, owner_name").eq("org_id", orgId),
+    supabase.from("libraries").select("id, review_control, owner_user_id, owner_name, owner_team_id").eq("org_id", orgId),
     supabase.from("collections").select("id, review_control, owner_user_id, owner_name").eq("org_id", orgId),
     getOrgControllers(orgId),
     supabase.from("org_members").select("uid").eq("org_id", orgId).eq("status", "active"),
+    teamSupervisorMap(orgId), // OWN-16: the team rung of the one chain
   ]);
   // GAP-5 / OWN-12: an inactive owner never receives the escalation — the
   // resolver falls through and the controllers get it instead.
@@ -662,8 +663,9 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
         const owner = resolveEffectiveOwner(
           { owner_user_id: doc.owner_user_id as string | null, owner_name: doc.owner_name as string | null },
           doc.collection_id ? (colMap.get(doc.collection_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined) : null,
-          libMap.get(doc.library_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined,
+          libMap.get(doc.library_id as string) as { owner_user_id?: string | null; owner_name?: string | null; owner_team_id?: string | null } | undefined,
           activeUids,
+          teamSupervisors,
         );
         const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
         await Promise.all(escalateTo.map((uid) =>

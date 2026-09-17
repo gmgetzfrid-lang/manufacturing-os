@@ -99,7 +99,7 @@ export function canWithAclChain(params: {
  * the index keeps app-side and DB-side authority reading the SAME source, so
  * a writer that updates only one column can no longer fork security.
  * Semantics mirror the SQL: an explicit publish deny wins; then any
- * publish|admin allow via user, role, or team grants.
+ * publish|admin allow via user, role, team, or org grants.
  */
 export function canPublishViaIndex(
   idx: import("@/types/schema").AclIndex | null | undefined,
@@ -112,25 +112,33 @@ export function canPublishViaIndex(
   // additively-held role binds, and an allow naming one grants.
   const roles = heldRoles(p) as string[];
   const teams = p.teamIds ?? [];
+  // OWN-18: an org-subject rule ("everyone in the org") is a first-class
+  // subject in the drawer, the raw evaluator and can_manage_node — so the
+  // publish evaluators honour the `orgs` bucket too (allow AND deny, keyed by
+  // the org id), exactly as user_can_publish_on_library does.
+  const org = p.orgId ?? null;
   const has = (m: Record<string, string[]> | undefined, act: string, id: string) =>
     Array.isArray(m?.[act]) && (m[act] as string[]).includes(id);
   const deniedPublish =
     has(idx.deny?.users, "publish", uid) ||
     roles.some((r) => has(idx.deny?.roles, "publish", r)) ||
-    teams.some((t) => has(idx.deny?.teams, "publish", t));
+    teams.some((t) => has(idx.deny?.teams, "publish", t)) ||
+    (!!org && has(idx.deny?.orgs, "publish", org));
   if (deniedPublish) return false;
   // OWN-8 / DEC-8: an 'admin' allow grants publish only when 'admin' is not
-  // itself explicitly denied (user / ANY held role / team) — mirrors
+  // itself explicitly denied (user / ANY held role / team / org) — mirrors
   // user_can_publish_on_library's v_admin_denied.
   const deniedAdmin =
     has(idx.deny?.users, "admin", uid) ||
     roles.some((r) => has(idx.deny?.roles, "admin", r)) ||
-    teams.some((t) => has(idx.deny?.teams, "admin", t));
+    teams.some((t) => has(idx.deny?.teams, "admin", t)) ||
+    (!!org && has(idx.deny?.orgs, "admin", org));
   const allowActs = deniedAdmin ? ["publish"] : ["publish", "admin"];
   return allowActs.some((a) =>
     has(idx.allow?.users, a, uid) ||
     roles.some((r) => has(idx.allow?.roles, a, r)) ||
-    teams.some((t) => has(idx.allow?.teams, a, t)),
+    teams.some((t) => has(idx.allow?.teams, a, t)) ||
+    (!!org && has(idx.allow?.orgs, a, org)),
   );
 }
 
