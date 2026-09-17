@@ -497,7 +497,7 @@ hazard, and the next agent should not have to re-derive it.
 ## DB-7 · The authority-function census — what reads what
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** model-complexity
 - **Re-verified:** Re-read in the hardening pass. **This is an authority-function census, not a defect** — nothing to refute. Use it as the map before changing any policy.
@@ -562,12 +562,79 @@ the first fix was meant to help.**
    `SELECT uid, role, roles FROM org_members WHERE roles && ARRAY['Admin','DocCtrl'] AND role NOT IN ('Admin','DocCtrl')`.
 4. `ROLE_RANK` is byte-identical to its current value.
 
+**Resolution (2026-09-17, Round E).** The census is now a TEST — `lib/__tests__/authorityCensus.test.ts` — so a headline-only read cannot reappear. It replays `supabase/schema.sql` + every numbered migration in order (statements in textual order, `DROP FUNCTION` / `DROP POLICY` honoured, and the `DO`-loop policy rewrites of `20261045` / `20261046` parsed as creates keyed by their `FOREACH … ARRAY[…]` / `VALUES (tbl, pol, roles)` lists) and classifies every live function and policy that touches `org_members` into one of three families: **additive** (reads `roles`, or calls a collection funnel — `is_org_controller`, `caller_holds_any_role`, `is_org_admin`, `is_org_admin_or_manager`, `org_capability_allows` / `_for`, `acl_index_denies`), **membership-only** (`uid` / `status` only), or **headline-only** (the bare `role` column and nothing collection-shaped; `v_role`, `author_role` and the JSON key `'role'` are not reads of the column). The test **fails if any live definition is headline-only**; pins the seven funnels to the additive family (the five that read `roles` directly do, `is_org_admin` and the 3-arg `org_capability_allows` delegate to a funnel) and `is_org_controller`'s check byte-shape; pins the six DEC-2 sites additive with final definitions at or after `20261040` — `node_visible` alone in `20261041`, and none of them carries `SELECT role INTO v_role` any more; pins `20261024`'s two-branch backfill ahead of every conversion; and pins `ROLE_RANK` byte-for-byte. Negative-tested by deleting `20261046`'s DO loop from a scratch copy: the test named all eight side-table `_write` policies as headline-only. `PRINT_AUTHORITY_CENSUS=<path>` writes the table below.
+
+**Census (final definitions at 2026-09-17).** 44 functions — 32 additive, 12 membership-only, **0 headline-only**; 215 policies — 111 additive, 104 membership-only, **0 headline-only** (40 of them created by DO loops). The record's original headline-only table, re-censused:
+
+| Site (audit: headline-only) | Now | Final definition |
+|---|---|---|
+| `node_visible/6` | additive — `is_org_controller` short-circuit, allow-bucket match over every held role | `20261041` |
+| `can_manage_node/2` | additive — `is_org_controller` + `COALESCE(roles, ARRAY[role])`, deny-if-any | `20261046` |
+| `user_can_publish_on_library/3` | additive — `v_roles && ARRAY['Admin','DocCtrl']`, role subjects over `unnest(v_roles)` | `20261046` |
+| `enforce_document_publish_guard/0` | additive — `is_org_controller(NEW.org_id)` | `20261046` |
+| `publish_revision/11` | additive — inline `role IN (…) OR roles && ARRAY[…]` on `p_actor` (service-role callers name their actor; `OWN-3`) | `20261049` |
+| `doc_review_signoff_update` / `doc_ack_update` | additive — `is_org_controller(org_id)` | `20261040` |
+| `teams_admin_write` | additive — `caller_holds_any_role(org_id, ARRAY['Admin','Manager'])` | `20261046` |
+
+The additive-aware four are unchanged in family: `is_org_controller/1` (`20260814`), `is_org_admin_or_manager/1` (`20260817`), `org_capability_allows/3` (now the `20261052` wrapper over `org_capability_allows_for/4`), `acl_index_denies/4` (`20261025`). Every function the census classifies (policies are in the test's output; none is headline-only):
+
+| Function | Family | Final definition |
+|---|---|---|
+| `acl_index_denies/4` | additive | `migrations/20261025_fix_capability_and_deny_column_typos.sql` |
+| `apply_milestone_moves/3` | additive | `migrations/20260907_milestone_batch_move.sql` |
+| `assets_guard_registry_columns/0` | additive | `migrations/20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql` |
+| `caller_holds_any_role/2` | additive | `migrations/20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql` |
+| `caller_is_active_member/1` | membership-only | `migrations/20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql` |
+| `can_manage_node/2` | additive | `migrations/20261046_rp_phase6_sweep_authority_by_collection.sql` |
+| `can_manage_project/1` | additive | `migrations/20261047_rp_phase6_sweep_integrity_rails.sql` |
+| `collections_guard_access_change/0` | additive | `migrations/20261044_rp_phase6_owner_delegation.sql` |
+| `documents_guard_access_change/0` | additive | `migrations/20261044_rp_phase6_owner_delegation.sql` |
+| `enforce_checkout_release_guard/0` | additive | `migrations/20260901_db_hard_enforcement.sql` |
+| `enforce_checkout_session_guard/0` | additive | `migrations/20261029_dc_phase3_permissive_rls.sql` |
+| `enforce_document_ack_guard/0` | additive | `migrations/20261047_rp_phase6_sweep_integrity_rails.sql` |
+| `enforce_document_lock_guard/0` | additive | `migrations/20261029_dc_phase3_permissive_rls.sql` |
+| `enforce_document_move_guard/0` | additive | `migrations/20261011_collections_guard_and_trash.sql` |
+| `enforce_document_publish_guard/0` | additive | `migrations/20261046_rp_phase6_sweep_authority_by_collection.sql` |
+| `enforce_document_retention_guard/0` | additive | `migrations/20261043_rp_phase6_legal_hold_and_force_release.sql` |
+| `enforce_library_sensitive_columns/0` | additive | `migrations/20261036_rp_phase3_publish_path.sql` |
+| `force_release_document/2` | membership-only | `migrations/20261043_rp_phase6_legal_hold_and_force_release.sql` |
+| `is_org_admin_or_manager/1` | additive | `migrations/20260817_org_members_escalation_and_config.sql` |
+| `is_org_admin/1` | additive | `migrations/20261046_rp_phase6_sweep_authority_by_collection.sql` |
+| `is_org_assign_drafters/1` | additive | `migrations/20260818_followups_rls.sql` |
+| `is_org_controller/1` | additive | `migrations/20260814_documents_delete_controllers.sql` |
+| `is_project_member/1` | membership-only | `migrations/20261047_rp_phase6_sweep_integrity_rails.sql` |
+| `is_project_owner/1` | membership-only | `migrations/20261047_rp_phase6_sweep_integrity_rails.sql` |
+| `issue_document_number/1` | membership-only | `migrations/20260806_intelligence_layer.sql` |
+| `member_is_active/2` | membership-only | `migrations/20261042_rp_phase6_revocation_and_succession.sql` |
+| `my_org_ids/0` | membership-only | `schema.sql` |
+| `my_team_ids/0` | membership-only | `migrations/20261042_rp_phase6_revocation_and_succession.sql` |
+| `next_ticket_number/2` | membership-only | `migrations/20260724_ticket_numbering.sql` |
+| `node_visible/6` | additive | `migrations/20261041_rp_phase5_node_visible_additive.sql` |
+| `org_capability_allows_for/4` | additive | `migrations/20261052_rp_phase7_capability_resource_dimension.sql` |
+| `org_capability_allows/3` | additive | `migrations/20261052_rp_phase7_capability_resource_dimension.sql` |
+| `org_members_sync_role_collection/0` | additive | `migrations/20261046_rp_phase6_sweep_authority_by_collection.sql` |
+| `post_ticket_comment/4` | membership-only | `migrations/20260810_archive_invariants.sql` |
+| `prevent_last_admin_removal/0` | additive | `migrations/20261046_rp_phase6_sweep_authority_by_collection.sql` |
+| `project_visible_to_me/1` | additive | `migrations/20260913_projects_rls_recursion_fix.sql` |
+| `publish_revision/11` | additive | `migrations/20261049_rp_phase7_handback_related_ticket.sql` |
+| `revoke_member/2` | additive | `migrations/20261043_rp_phase6_legal_hold_and_force_release.sql` |
+| `revup_rollback_orphan/2` | membership-only | `migrations/20261027_dc_phase1_unguarded_doors.sql` |
+| `teams_guard_supervisor_change/0` | additive | `migrations/20261046_rp_phase6_sweep_authority_by_collection.sql` |
+| `ticket_insert_integrity/0` | additive | `migrations/20261038_rp_phase4_ticket_workflow_rails.sql` |
+| `user_can_publish_doc/2` | additive | `migrations/20261037_rp_phase3b_read_ownership_and_version_integrity.sql` |
+| `user_can_publish_on_library/3` | additive | `migrations/20261046_rp_phase6_sweep_authority_by_collection.sql` |
+| `user_owns_project/1` | membership-only | `migrations/20261013_project_controls_program.sql` |
+
+**Done-when.** (1) ✓ the five sites evaluate the controller tier through the collection — four via `is_org_controller`, `publish_revision` inline-additive on its named actor (as `OWN-3` recorded), pinned by the test; `node_visible` landed last and separately (`20261041`), pinned. (2) ✓ `DB-3`'s backfill landed first (`20261024`, applied live 2026-08-24) — the test pins its two `UPDATE` branches and its position ahead of every additive conversion. (3) ✓ the widening inventory was run and recorded (`OWN-3`, operator-run 2026-09-01, aggregate: **0** members holding Admin/DocCtrl additively under a higher headline). (4) ✓ `ROLE_RANK` byte-identical — pinned by the test.
+
+**Scope / residual.** No migration; nothing was converted here (`DEC-31` — the census is the deliverable, the conversions landed in Phases 5–6 and are what it certifies). The classifier is textual: a body that reads `roles` for one decision and `role` alone for another classifies additive — the DEC-2 site pins cover the known mixed case (`node_visible` pairs its single-role `acl_subject_in_bucket` call with the `unnest(v_roles)` pass). A policy created dynamically is classified by its whole DO block. Any package that adds a headline-only read to a migration will fail this test; that is the point.
+
 ---
 
 ## DB-8 · `REMEDIATION_APPLY_ALL.sql` is a second source of truth that a re-run restores over later hardening
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security / integrity-of-record
 - **Locations:**
@@ -602,6 +669,12 @@ table/policy DDL that is genuinely idempotent.
 **Done when.** Re-running the script on a fully-migrated database leaves every
 function byte-identical to its final migration definition, or the script no
 longer defines functions at all.
+
+**Resolution (2026-09-17, Round E).** The prospective hazard had become real: on the day of retirement `supabase/REMEDIATION_APPLY_ALL.sql` forked from the live sequence at **20 of its 23 definitions** — `doc_is_visible`, `my_project_ids`, `is_org_controller`, `acl_subject_has_action`, `can_manage_node`, `documents_guard_access_change`, `is_org_admin`, `is_org_admin_or_manager`, eleven policies and the `documents_guard_access` trigger — so a re-run would have reverted `can_manage_node` to the headline-only body and `is_org_admin` to `role = 'Admin'`. All three out-of-sequence scripts are retired as **guarded no-ops**: the named file; `supabase/APPLY_roles-and-permissions_2026-08-24.sql` (same mechanism, surfaced by the new test — `publish_revision` frozen at `20261019` vs live `20261049`, `org_capability_allows` frozen at `20261025` vs the `20261052` resource-dimension wrapper, so a re-run would have silently switched request-type-scoped rules off, and the `document_shares` INSERT / UPDATE policies frozen before `20261026` / `20261037`); and `supabase/migrations/CATCHUP_2026-05-28.sql` (3 forks — the `checkout_messages` policies; `checkout_messages_own_update` reads the collection since `20261046`). Each stub is a header comment naming what it was, where it forked, and where the truth lives, plus a single `DO $$ … RAISE EXCEPTION 'RETIRED (DB-8) …' $$` so a paste refuses loudly instead of reverting silently; the stubs are kept (rather than the files deleted) so a bookmark or runbook that still points at one meets the refusal. The original texts remain in git history. `lib/__tests__/migrationSourceOfTruth.test.ts` walks every `.sql` under `supabase/` and fails if any file outside `supabase/migrations/NNNNNNNN_*.sql` (`schema.sql`, the baseline, excepted) defines a function, policy or trigger that the numbered sequence defines — "byte-identical today" is not an exemption, that is exactly the fork-in-waiting this finding describes — and asserts the three stubs carry the guard and no DDL. It failed on the pre-change tree naming 27 forks across the three files; it passes after.
+
+**Done-when.** ✓ *"or the script no longer defines functions at all"* — none of the three defines anything; a re-run raises before touching the database. (The first alternative, regenerating the bundle mechanically, was not taken: the numbered files ARE the bundle, applied in order.)
+
+**Scope / residual.** Repo-only, no migration. `supabase/schema.sql` legitimately predates every re-definition and is not advertised as re-runnable; it stays the baseline and is outside this finding. The `DIAGNOSE_*.sql` probes are read-only and pass the test as-is. The README's 2026-08-24 note that the APPLY script was pasted remains true as history. A future consolidated paste (the integrator's "one combined migration paste") must be assembled from the numbered files at paste time, never committed as a file — the test enforces that.
 
 ---
 
