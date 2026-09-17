@@ -294,6 +294,12 @@ export default function InspectorPanel({
   }, [selectedDoc?.id, selectedDoc?.ownerUserId, selectedDoc?.ownerName, selectedDoc?.collectionId, selectedDoc?.libraryId, uid]);
   const canManage = isController || isOwner;
   const canPublishEff = canPublish || isOwner;
+  // OWN-19: the lifecycle acts — supersede, archive, split / merge / renumber
+  // — take PUBLISH authority (authorizePublish + the DB publish guard admit a
+  // granted publisher), so their affordances follow canPublishEff, not
+  // ownership. Move stays a controller act (/api/documents/move refuses
+  // everyone else) and Permissions stays controller-or-owner (DEL-1).
+  const canLifecycle = isController || canPublishEff;
   // Authoritative lock only — a stale collaborator list with no lock holder is
   // NOT a checkout (see isDocumentCheckedOut).
   const isCheckedOut = isDocumentCheckedOut(selectedDoc);
@@ -905,11 +911,12 @@ export default function InspectorPanel({
         </CollapsibleSection>
       )}
 
-      {/* MANAGE & LIFECYCLE — admin/owner actions behind one header. */}
-      {canManage && (
+      {/* MANAGE & LIFECYCLE — one header; each act is gated on the authority
+          the mutator and the database enforce for it (OWN-19). */}
+      {(canManage || canLifecycle) && (
         <CollapsibleSection id="manage" title="Manage & lifecycle" icon={Wrench}>
           {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
-          {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
+          {canLifecycle && selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
             <button
               onClick={() => setModifyOpen(true)}
               disabled={selectedDoc.status === "Archived"}
@@ -919,14 +926,20 @@ export default function InspectorPanel({
               <Wrench className="w-3.5 h-3.5" /> Other lifecycle changes… <span className="font-normal text-[var(--color-text-muted)]">split · merge · renumber</span>
             </button>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={onMove} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-              <ArrowRight className="w-3.5 h-3.5" /> Move
-            </button>
-            <button onClick={onPermissions} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-              <Lock className="w-3.5 h-3.5" /> Permissions
-            </button>
-          </div>
+          {(isController || canManage) && (
+            <div className="grid grid-cols-2 gap-2">
+              {isController && (
+                <button onClick={onMove} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+                  <ArrowRight className="w-3.5 h-3.5" /> Move
+                </button>
+              )}
+              {canManage && (
+                <button onClick={onPermissions} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+                  <Lock className="w-3.5 h-3.5" /> Permissions
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Document-class override (controller-only): the per-document
               declaration that drives the MOC gate + check-in routing. */}
@@ -938,9 +951,9 @@ export default function InspectorPanel({
               fileName={selectedDoc.name ?? null}
             />
           )}
-          {/* Lifecycle actions */}
+          {/* Lifecycle actions — publish authority (OWN-19) */}
           <div className="grid grid-cols-2 gap-2">
-            {onSupersede && (
+            {canLifecycle && onSupersede && (
               <button
                 onClick={onSupersede}
                 disabled={selectedDoc.status === "Archived" || selectedDoc.status === "Superseded"}
@@ -949,7 +962,7 @@ export default function InspectorPanel({
                 <Layers className="w-3.5 h-3.5" /> Supersede
               </button>
             )}
-            {onArchive && (
+            {canLifecycle && onArchive && (
               <button
                 onClick={onArchive}
                 className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-bold transition-all ${

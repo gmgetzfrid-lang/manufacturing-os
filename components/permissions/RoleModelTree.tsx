@@ -159,7 +159,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
         })));
         const teamNameById = new Map((((t.data ?? []) as Array<Record<string, unknown>>)).map((r) => [String(r.id), String(r.name)]));
         setLibs((((l.data ?? []) as Array<Record<string, unknown>>)).map((r) => {
-          const idx = (r.acl_index as { allow?: { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]> } } | null) ?? null;
+          const idx = (r.acl_index as { allow?: { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]>; orgs?: Record<string, string[]> } } | null) ?? null;
           const grants = [
             ...(idx?.allow?.users?.publish ?? []).map((u) => supName.get(u) ?? "user grant"),
             ...(idx?.allow?.users?.admin ?? []).map((u) => `${supName.get(u) ?? "user"} (admin)`),
@@ -170,6 +170,10 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
             // not teams hid real publishers from the one place they're listed.
             ...(idx?.allow?.teams?.publish ?? []).map((x) => `team: ${teamNameById.get(x) ?? "team"}`),
             ...(idx?.allow?.teams?.admin ?? []).map((x) => `team: ${teamNameById.get(x) ?? "team"} (admin)`),
+            // OWN-18: org-subject grants are live publish authority too
+            // (canPublishViaIndex + user_can_publish_on_library read allow.orgs).
+            ...(idx?.allow?.orgs?.publish ?? []).map(() => "everyone in the org"),
+            ...(idx?.allow?.orgs?.admin ?? []).map(() => "everyone in the org (admin)"),
           ];
           const ownerUserId = (r.owner_user_id as string | null) ?? null;
           // Owner EXISTENCE comes from owner_user_id; owner_name is a
