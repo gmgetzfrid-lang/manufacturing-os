@@ -391,8 +391,17 @@ self-grant rail, a no-role sentinel in `controllerBypassDecided`, the ninth
 
 **Hand-applied migrations (DEC-30, one paste for the round):** `20261053`,
 `20261056`, `20261057`, `20261059` (widening), `20261060` (widening), `20261061`,
-`20261062`, `20261063` (widening), `20261066` — printed as ONE script whose
-final result set carries every probe and inventory count.
+`20261062`, `20261063` (widening), `20261066` — ONE script whose final result
+set carries every probe and inventory count. **Applied & verified live
+2026-09-17: every probe true (4 + 7 + 5 + 5 + 4 + 4 + 6 + 6 + 5).** Inventory
+(aggregate): no ticket in a retired status; no stored capability policy, grant
+or rule list yet; no org-subject grants and no library `acl_index` at all (the
+`20261059` / `20261060` widenings changed nobody's answer on apply); 691
+documents whose archive now takes publish authority, 0 archived, 0 under hold;
+0 branch debts; 0 libraries self-owned by a non-controller and **4 with no
+owner** (the `OWN-22` register population); 3 members hold the audit trail
+before and after `20261063` (0 differ), 4 org-level trail rows behind the
+overlay; 0 share rows.
 
 ### Phase 2 — database honesty (the trap phase)
 

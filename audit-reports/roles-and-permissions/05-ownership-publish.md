@@ -1275,6 +1275,8 @@ states the library will be unowned until assigned in the console.
 
 **Scope / residual.** No widening: a non-controller gains nothing they did not have (they could already create a library here; they are no longer made its owner), and the INSERT rail closes the raw-API door the finding did not name. The wizard path (`GAP-12`) is unchanged (controller-gated; it assigns through `setOwner`). The console's unowned count still grows from a non-controller's Save-As — by design, with a notification instead of a silent birth; `GAP-12`'s console is where it is assigned.
 
+*Live inventory at apply (2026-09-17, `20261062`): 0 libraries self-owned by a non-controller creator; 4 libraries with no owner (user or team) — the register / console population the record describes.*
+
 ---
 
 ## Verified sound — do not break
