@@ -259,7 +259,7 @@ member doesn't already have — use a team to record department."*
 ## ROLE-5 · `Viewer` and `Auditor` are the only roles that subtract, and they do it inconsistently
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control
 - **Locations:**
@@ -298,6 +298,16 @@ layer rather than living in a hardcoded set.
 **Done when.**
 - Holding `Viewer` alongside another role produces a read-only member, or `Viewer` no longer implies read-only.
 - Audit-page access is configurable through the capability policy.
+
+**Resolution (2026-09-17, Round E).** The two subtracting roles now subtract the SAME way at every restriction-style check, and the audit page's admission is a capability. (1) `lib/roleHeld.ts` `READ_ONLY_ROLES = ["Viewer","Auditor"]` / `holdsReadOnlyRole(held)` — deny-if-any across the full collection (CHAIN-1), no headline shortcut, and no controller escape: the document edit gate (`app/(protected)/documents/[libraryId]/page.tsx`, `canEdit={!holdsReadOnlyRole(roles)}` — it used to let a controller past the restriction while the plot-plan page and the database did not), the plot-plan whiteboard flip (`app/(protected)/plot-plans/[id]/page.tsx`, `canFlip = !holdsReadOnlyRole(roles)`) and the `assets` UPDATE overlay at the database (`20261045`, unchanged) all answer identically; the members page shows a **read-only** badge on any member holding a read-only role beside others, and the add-role picker states the consequence before Viewer / Auditor is added (ROLE-4). (2) `Auditor`'s audit-page admission is the new capability `admin.audit_view` (`lib/capabilityPolicy.ts`, area "Admin", default `Admin / Manager / Supervisor / DocCtrl / Auditor` — the set the page hardcoded), evaluated by the one server admin gate (SURF-9: role tokens by collection, then a per-person grant, fail closed) and, at the database, by the `audit_logs_admin_trail` SELECT overlay re-created to call `org_capability_allows(org_id, 'admin.audit_view', auth.uid())` (`20261063`; the evaluator's default CASE gains the one line). The page's hardcoded `ADMIN_ROLES` set is gone. Widen, narrow or delegate it from the permissions console like every other capability; the simulator shows it.
+- Tests: `lib/__tests__/roundE_D_rolesAdmin.test.ts` — "ROLE-5" describe (`holdsReadOnlyRole` cases incl. `["Admin","Auditor"]`; the three sites and the `20261045` overlay pinned; no hand-spelled pair anywhere; `admin.audit_view` default, narrowing, per-person grant, the surface's cap, the loader keeping a stored entry); the gate route test admits `["Requester","Auditor"]` and a Drafter with a grant to `audit`; `lib/__tests__/roundE_D_migration.test.ts` (20261063 shape: evaluator byte-faithful to 20261052 + exactly one CASE line; CASE mirrors `CAPABILITY_DEFS`; overlay predicate verbatim from 20261045). Updated pins: `rpPhase5Additive.test.ts` (edit gate), `rpPhase6Additive.test.ts` (flip), `sweepRoundD3.test.ts` and `rpPhase4Migration.test.ts` (the SQL-mirror census now reads the NEWEST re-creation of the evaluator).
+- Reproduced: at the base commit `app/(protected)/admin/audit/page.tsx:27` hardcoded the set and `CAPABILITY_DEFS` had no audit capability; `documents/[libraryId]/page.tsx:4125` carried `isController ||` while `plot-plans/[id]/page.tsx:33` did not — two different subtractions for the same pair.
+
+**Done-when.**
+1. ✓ Holding `Viewer` alongside another role produces a read-only member on every restriction-style surface — document editing, equipment state (app and DB) — whatever else is held, controllers included. Stated residual: "read-only" means those restriction-style checks; workflow authority is governed by the capability policy (a `["Drafter","Viewer"]` member still drafts — remove Drafter to stop that), and the picker and the badge say so.
+2. ✓ Audit-page access is configurable through the capability policy — `admin.audit_view`, enforced by the admin gate and by the database (pending the migration).
+
+**Scope / residual.** `Contractor`'s reduced navigation is a different restriction (Viewer + Contractor, `components/navigation/Sidebar.tsx`) and already deny-if-any — untouched. The record's `readOnly` boolean / `content.edit` capability alternatives were not needed: the helper is the single point of definition. **Pending migration:** `supabase/migrations/20261063_rp_roundE_audit_view_capability.sql` (widening-capable — an Admin may now widen the trail's readers; pre-apply inventory captured in the paste; on apply nothing changes for anyone because no org stores an `admin.audit_view` entry yet — the probe says so).
 
 ---
 

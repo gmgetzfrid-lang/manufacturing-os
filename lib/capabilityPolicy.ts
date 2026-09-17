@@ -50,7 +50,8 @@ export type CapabilityId =
   | "holds.release"
   | "checkout.force_release"
   | "admin.analytics_view"
-  | "admin.archive_view";
+  | "admin.archive_view"
+  | "admin.audit_view";
 
 export interface CapabilityDef {
   id: CapabilityId;
@@ -104,6 +105,13 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
     description: "Open /admin/analytics.", defaultRoles: [...MGMT, "DocCtrl"] },
   { id: "admin.archive_view", area: "Metrics", label: "Archive browser",
     description: "Open /admin/archive-view.", defaultRoles: ["Admin", "DocCtrl"] },
+  // ROLE-5: Auditor's admission to the audit log used to be a hardcoded set on
+  // the page; it is now this capability, read by the admin gate AND by the
+  // audit_logs SELECT overlay at the database (20261063) — widen or narrow
+  // freely, delegate it to a person with a grant.
+  { id: "admin.audit_view", area: "Admin", label: "Audit log",
+    description: "Open /admin/audit — the org-level authority trail. Enforced at the database, which reads this policy.",
+    defaultRoles: [...MGMT, "DocCtrl", "Auditor"] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or
@@ -303,6 +311,47 @@ const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, { at: number; policy: CapabilityPolicy }>();
 export function __resetCapabilityPolicyCache(): void { cache.clear(); }
 
+/** Parse a stored `org_configurations.data` blob into a policy. Two stored
+ *  shapes: canonical {caps, grants}, and the legacy flat {capId: roles[]}
+ *  from before per-person grants existed. Shared by the cached loader and
+ *  the strict one so both read the SAME shape with the SAME rule. */
+export function normalizeStoredPolicy(rawData: unknown): CapabilityPolicy {
+  const raw = (rawData as Record<string, unknown> | null) ?? {};
+  const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;
+  const caps: CapabilityPolicy["caps"] = {};
+  for (const def of CAPABILITY_DEFS) {
+    const entry = normalizeCapabilityEntry(rawCaps[def.id]);
+    if (entry !== undefined) caps[def.id] = entry;
+  }
+  const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));
+  const grants = (Array.isArray(raw.grants) ? (raw.grants as UserGrant[]) : [])
+    .filter((g) => g && typeof g.uid === "string" && validIds.has(g.cap as string));
+  return { caps, grants };
+}
+
+/** SURF-9 / WF-20: the FAIL-CLOSED loader for the admin gate. Unlike
+ *  `loadCapabilityPolicy` (which answers "defaults" on a read error so a
+ *  transient failure never blocks a workflow action) this one reports the
+ *  error, so a gate that cannot read the policy DENIES instead of admitting
+ *  on the shipped defaults. Never cached: a gate decision is always fresh. */
+export async function loadCapabilityPolicyStrict(
+  orgId: string,
+  client: Pick<typeof supabase, "from">,
+): Promise<{ ok: true; policy: CapabilityPolicy } | { ok: false; error: string }> {
+  try {
+    const { data, error } = await client
+      .from("org_configurations")
+      .select("data")
+      .eq("org_id", orgId)
+      .eq("key", "capability_policy")
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message || "policy read failed" };
+    return { ok: true, policy: normalizeStoredPolicy(data?.data) };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "policy read threw" };
+  }
+}
+
 /** `client` lets server routes pass their own (service-role) client — the
  *  shared browser client has no session in a route handler. */
 export async function loadCapabilityPolicy(
@@ -327,19 +376,7 @@ export async function loadCapabilityPolicy(
     // every call, so the catch below returned {} and the entire capability
     // layer was inert (DB-1). Both this read and the SQL org_capability_allows
     // must use `data`, or the two layers disagree about which column is real.
-    const raw = (data?.data as Record<string, unknown> | null) ?? {};
-    // Two stored shapes: canonical {caps, grants}, and the legacy flat
-    // {capId: roles[]} from before per-person grants existed.
-    const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;
-    const caps: CapabilityPolicy["caps"] = {};
-    for (const def of CAPABILITY_DEFS) {
-      const entry = normalizeCapabilityEntry(rawCaps[def.id]);
-      if (entry !== undefined) caps[def.id] = entry;
-    }
-    const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));
-    const grants = (Array.isArray(raw.grants) ? (raw.grants as UserGrant[]) : [])
-      .filter((g) => g && typeof g.uid === "string" && validIds.has(g.cap as string));
-    const policy: CapabilityPolicy = { caps, grants };
+    const policy = normalizeStoredPolicy(data?.data);
     cache.set(orgId, { at: Date.now(), policy });
     return policy;
   } catch {
