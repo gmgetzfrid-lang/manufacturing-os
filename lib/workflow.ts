@@ -368,12 +368,19 @@ export const WorkflowEngine = {
           });
         } else if (allows('ticket.direct_approve') || isManagement) {
           // Direct approvers (engineers by default) and management can co-review.
+          // WF-24: the ticket waits on the REQUESTER's review; a co-reviewer
+          // acting on their behalf is optional — exactly as the on-behalf
+          // close at FINAL_DRAFT — so every engineer and manager is not
+          // badged for every ticket in review. With no requester to act,
+          // the co-review IS the review and stays required.
+          const onBehalf = ticket.requesterId ? { optional: true } : {};
           actions.push({
             label: 'Approve (Issue for Construction)',
             action: 'approve_draft_ifc',
             variant: 'success',
             description: 'Accepts the draft. Drafter will be notified to issue IFC.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+            ...onBehalf,
           });
           actions.push({
             label: 'Approve with Minor Correction',
@@ -382,12 +389,14 @@ export const WorkflowEngine = {
             requiresComment: true,
             description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+            ...onBehalf,
           });
           actions.push({
             label: 'Request Revision',
             action: 'request_revision',
             variant: 'warning',
-            requiresComment: true
+            requiresComment: true,
+            ...onBehalf,
           });
         }
         break;

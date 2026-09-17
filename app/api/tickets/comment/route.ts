@@ -154,6 +154,12 @@ export async function POST(req: NextRequest) {
 // Server-enforced (author or Admin only) so the JSONB and the ticket_comments
 // table stay in lockstep — the previous client-side writes updated only the
 // JSONB and silently diverged the table.
+//
+// WF-9: TWO authorities, not one. Editing or deleting a comment's TEXT is the
+// author's (or an Admin's). Classifying a revision comment's ROOT CAUSE is a
+// document-control judgement — Admin or DocCtrl, the same rule the ticket
+// page's category pencil renders under — and the author holds no claim to it:
+// a Drafter cannot reclassify their own revision.
 
 type JsonComment = Record<string, unknown> & { id?: string };
 
@@ -188,10 +194,17 @@ async function authorizeCommentChange(req: NextRequest, body: { ticketId?: strin
   const isAuthor = target.authorUid === caller.id || (!!callerEmail && target.user === callerEmail);
   // ADD-1: authority by the role COLLECTION, never the headline alone.
   const isAdmin = memberHoldsAny(member, ["Admin"]);
-  if (!isAuthor && !isAdmin) return { error: "Only the author or an Admin can change this comment", status: 403 as const };
+  const canEditText = isAuthor || isAdmin;
+  const canClassify = memberHoldsAny(member, CLASSIFY_ROLES);
 
-  return { ticket, comments, target, callerId: caller.id, readLastModified: (row as { last_modified?: string | null }).last_modified ?? null };
+  return { ticket, comments, target, callerId: caller.id, canEditText, canClassify, readLastModified: (row as { last_modified?: string | null }).last_modified ?? null };
 }
+
+/** Who classifies a revision's root cause — mirrored by the ticket page's
+ *  `isAdmin = hasAnyRole(['Admin', 'DocCtrl'])` pencil gate. */
+const CLASSIFY_ROLES = ["Admin", "DocCtrl"];
+const TEXT_DENIED = "Only the author or an Admin can change this comment";
+const CLASSIFY_DENIED = "Only an Admin or Document Controller can classify a root cause";
 
 export async function PATCH(req: NextRequest) {
   // WF-9: a comment's text OR its root-cause category (the Admin's
@@ -209,6 +222,8 @@ export async function PATCH(req: NextRequest) {
 
   const auth = await authorizeCommentChange(req, body);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (text && !auth.canEditText) return NextResponse.json({ error: TEXT_DENIED }, { status: 403 });
+  if (category !== undefined && !auth.canClassify) return NextResponse.json({ error: CLASSIFY_DENIED }, { status: 403 });
 
   const editedAt = new Date().toISOString();
   const next = auth.comments.map((c) => (c.id === body.commentId
@@ -252,6 +267,7 @@ export async function DELETE(req: NextRequest) {
 
   const auth = await authorizeCommentChange(req, body);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!auth.canEditText) return NextResponse.json({ error: TEXT_DENIED }, { status: 403 });
 
   const next = auth.comments.filter((c) => c.id !== body.commentId);
   let casQuery = supabaseAdmin

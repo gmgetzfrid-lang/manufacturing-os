@@ -310,7 +310,11 @@ export async function POST(req: NextRequest) {
 
   // LIFE-6 / DEC-25: a ticket cannot close silently over a hold it opened.
   // The closer releases it now, or records why it stays — never auto-release.
-  if (body.actionType === "close_ticket" || body.actionType === "close_rfi") {
+  // WF-17: the gate keys on the TERMINAL TRANSITION, not the action name —
+  // `cancel_request` (DEC-14) ends the ticket exactly as a close does, so it
+  // meets the same 409 holds_open and the same release-or-keep resolution.
+  const TERMINAL_STATUSES: readonly string[] = ["CLOSED", "CANCELED"];
+  if (TERMINAL_STATUSES.includes(String(newStatus))) {
     const { data: openHolds, error: holdsErr } = await supabaseAdmin
       .from("document_holds")
       .select("id, document_id, reason, notes")
@@ -335,7 +339,7 @@ export async function POST(req: NextRequest) {
         const { data: released, error: relErr } = await supabaseAdmin
           .from("document_holds")
           .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
-                    released_reason: reason || `Released on close of ticket ${ticket.ticketId ?? body.ticketId}` })
+                    released_reason: reason || `Released on ${newStatus === "CANCELED" ? "cancellation" : "close"} of ticket ${ticket.ticketId ?? body.ticketId}` })
           .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
         if (relErr) return NextResponse.json({ error: `Couldn't release the hold: ${relErr.message}` }, { status: 500 });
         for (const h of holds) {
@@ -350,7 +354,7 @@ export async function POST(req: NextRequest) {
           await supabaseAdmin.from("audit_logs").insert({
             action: "HOLD_KEPT_ON_CLOSE", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
             user_id: caller.id, user_email: callerEmail ?? null,
-            details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId },
+            details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId, ticketOutcome: newStatus },
           }).then(() => undefined, () => undefined);
         }
       }
@@ -388,7 +392,15 @@ export async function POST(req: NextRequest) {
       console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);
     }
   }
-  const fanOutComment = [body.comment ?? null, handbackNote].filter((x): x is string => !!x && x.trim().length > 0).join("\n\n") || null;
+  const transitionNote = [body.comment ?? null, handbackNote].filter((x): x is string => !!x && x.trim().length > 0).join("\n\n") || null;
+  // WF-9: attaching a file is thread ACTIVITY, not a workflow transition —
+  // the ticket is in the same state waiting on the same person afterwards.
+  // It must not retire the outstanding workflow alerts ("you were assigned")
+  // or queue a status-change email; it leaves a comment-style bell row.
+  const isActivity = action.action === "attach_file";
+  const fanOutComment = isActivity
+    ? (body.attachment ? `Added ${body.attachment.type} file: ${body.attachment.name}` : null)
+    : transitionNote;
 
   let baseQuery = supabaseAdmin
     .from("tickets")
@@ -472,8 +484,9 @@ export async function POST(req: NextRequest) {
   // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
   // EDIT INTENT on the source document — visible on the coordination surfaces
   // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
-  // its own; no zombie-lock factory). Ticket closure clears it. Best-effort:
-  // never fails the transition; no-op on pre-migration envs.
+  // its own; no zombie-lock factory). Ticket closure — or cancellation, the
+  // other terminal exit (WF-17) — clears it. Best-effort: never fails the
+  // transition; no-op on pre-migration envs.
   try {
     const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)
       ?.source_document as { id?: string } | undefined;
@@ -483,6 +496,19 @@ export async function POST(req: NextRequest) {
           (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
         const drafterName =
           (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
+        // WF-18: a reassignment hands the ticket to a different drafter, so
+        // the PREVIOUS drafter's ticket-sourced intent is retired now rather
+        // than lingering on the coordination surfaces until its TTL — two
+        // drafters were shown editing for one ticket.
+        if (action.action === "reassign_drafter" && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
+          await supabaseAdmin
+            .from("document_intents")
+            .delete()
+            .eq("document_id", srcDoc.id)
+            .eq("ticket_id", body.ticketId)
+            .eq("source", "ticket")
+            .eq("user_id", ticket.assignedDrafterId);
+        }
         if (drafterId) {
           const { data: docRow } = await supabaseAdmin
             .from("documents")
@@ -507,7 +533,7 @@ export async function POST(req: NextRequest) {
             { onConflict: "document_id,user_id,kind,source" },
           );
         }
-      } else if (newStatus === "CLOSED" || newStatus === "FINAL_DRAFT") {
+      } else if (newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT") {
         await supabaseAdmin
           .from("document_intents")
           .delete()
@@ -524,7 +550,7 @@ export async function POST(req: NextRequest) {
   // Failures here never fail the action (the transition is already committed);
   // they're logged for the maintenance cron's visibility.
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, comment: fanOutComment });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, comment: fanOutComment });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
@@ -558,14 +584,38 @@ async function fanOut(params: {
   actorUid: string;
   actorEmail: string;
   comment: string | null;
+  /** WF-9: true for thread activity (a file attachment) — no alert
+   *  supersede, no email, a comment-style bell row without metadata.action
+   *  (so the badge hook's stale-alert reconciliation leaves it alone). */
+  activity?: boolean;
 }) {
-  const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment } = params;
+  const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity } = params;
   if (recipients.length === 0) return;
 
   const ticketLabel = `${ticket.ticketId || ""} ${ticket.title}`.trim();
   const link = `/requests/${ticketId}`;
-  const cls = classifyTransitionNotification({ actionType: action.type, actionLabel: action.label, ticketLabel });
   const actorName = actorEmail.split("@")[0];
+
+  if (activity) {
+    await supabaseAdmin.from("notifications").insert(
+      recipients.map((uid) => ({
+        org_id: ticket.orgId,
+        user_id: uid,
+        kind: "ticket_comment",
+        title: `File added · ${ticketLabel}`,
+        body: comment || "A file was added to this request",
+        link,
+        resource_type: "ticket",
+        resource_id: ticketId,
+        actor_user_id: actorUid,
+        actor_name: actorName,
+        metadata: { activity: action.type, status: newStatus },
+      })),
+    );
+    return;
+  }
+
+  const cls = classifyTransitionNotification({ actionType: action.type, actionLabel: action.label, ticketLabel });
 
   // 0) Supersede earlier unread WORKFLOW alerts for this ticket. A workflow
   //    notification (one carrying metadata.action) says "the ticket is in state

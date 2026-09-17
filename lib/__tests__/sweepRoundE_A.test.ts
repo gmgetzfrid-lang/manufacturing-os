@@ -108,6 +108,8 @@ const ticketRow = (over: Record<string, unknown> = {}) => ({
 });
 const updateOf = (table: string) => state.calls.filter((c) => c.table === table && c.method === "update").map((c) => c.args[0] as Record<string, unknown>);
 const insertsOf = (table: string) => state.calls.filter((c) => c.table === table && c.method === "insert").flatMap((c) => (Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Array<Record<string, unknown>>);
+const callIndex = (table: string, method: string) => state.calls.findIndex((c) => c.table === table && c.method === method);
+const legsAfter = (i: number, table: string) => state.calls.slice(i + 1).filter((c) => c.table === table && c.method === "eq").map((c) => c.args as [string, unknown]);
 const casLegs = () => {
   // the eq() filters recorded on the tickets UPDATE chain, after the update call
   const i = state.calls.findIndex((c) => c.table === "tickets" && c.method === "update");
@@ -192,7 +194,7 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     expect((await res.json()).conflict).toBe(true);
     expect(insertsOf("audit_logs")).toHaveLength(0);
   });
-  it("comment route PATCH: the root-cause category is author-or-Admin, compare-and-set, mirrored to the table and audited", async () => {
+  it("comment route PATCH: the root-cause category is Admin-or-DocCtrl (the page's pencil gate), compare-and-set, mirrored to the table and audited", async () => {
     state.user = { id: "a-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("v-1", "Viewer")];
     state.rows.tickets = [ticketRow({ comments: [{ id: "c-1", text: "leak", user: "req-1@x.io", role: "Requester", category: null, authorUid: "req-1" }] })];
@@ -211,6 +213,65 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     // neither text nor category → 400
     state.user = { id: "a-1" };
     expect((await commentPatch(req("/api/tickets/comment", "PATCH", { ticketId: "t1", commentId: "c-1" }))).status).toBe(400);
+  });
+  it("comment route PATCH: two authorities — the AUTHOR edits their text but cannot reclassify it; a DocCtrl classifies but cannot edit another's text", async () => {
+    const comment = { id: "c-1", text: "leak", user: "req-1@x.io", role: "Requester", category: "Vendor data", authorUid: "req-1" };
+    state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("c-1", "DocCtrl"), member("d-1", "Drafter")];
+    const patch = (body: Record<string, unknown>) => commentPatch(req("/api/tickets/comment", "PATCH", { ticketId: "t1", commentId: "c-1", ...body }));
+    // the author: text yes, category no
+    state.user = { id: "req-1" }; state.rows.tickets = [ticketRow({ comments: [comment] })];
+    const own = await patch({ category: "Design change" });
+    expect(own.status).toBe(403);
+    expect((await own.json()).error).toMatch(/Admin or Document Controller can classify/);
+    expect(updateOf("tickets")).toHaveLength(0);
+    state.calls = []; state.rows.tickets = [ticketRow({ comments: [comment] })];
+    expect((await patch({ text: "leak at flange" })).status).toBe(200);
+    expect((updateOf("tickets")[0].comments as Array<{ text: string; category: string }>)[0]).toMatchObject({ text: "leak at flange", category: "Vendor data" });
+    // a DocCtrl: category yes (audited), text on someone else's comment no
+    state.calls = []; state.user = { id: "c-1" }; state.rows.tickets = [ticketRow({ comments: [comment] })];
+    expect((await patch({ category: "Design change" })).status).toBe(200);
+    expect(insertsOf("audit_logs").find((a) => a.action === "TICKET_ROOT_CAUSE_UPDATE")?.details).toMatchObject({ previousCategory: "Vendor data", newCategory: "Design change" });
+    state.calls = []; state.rows.tickets = [ticketRow({ comments: [comment] })];
+    const foreignText = await patch({ text: "rewritten" });
+    expect(foreignText.status).toBe(403);
+    expect((await foreignText.json()).error).toMatch(/Only the author or an Admin/);
+    expect(updateOf("tickets")).toHaveLength(0);
+    // a Drafter who is neither: both refused
+    state.calls = []; state.user = { id: "d-1" }; state.rows.tickets = [ticketRow({ comments: [comment] })];
+    expect((await patch({ category: "x" })).status).toBe(403);
+    expect((await patch({ text: "x" })).status).toBe(403);
+    expect(updateOf("tickets")).toHaveLength(0);
+    // an Admin holds both
+    state.calls = []; state.user = { id: "a-1" }; state.rows.tickets = [ticketRow({ comments: [comment] })];
+    expect((await patch({ text: "fixed", category: "Field change" })).status).toBe(200);
+    expect((updateOf("tickets")[0].comments as Array<{ text: string; category: string }>)[0]).toMatchObject({ text: "fixed", category: "Field change" });
+    // the page's pencil renders under the same rule
+    expect(src("app/(protected)/requests/[id]/page.tsx")).toContain("const isAdmin = hasAnyRole(['Admin', 'DocCtrl']);");
+    expect(src("app/api/tickets/comment/route.ts")).toContain('const CLASSIFY_ROLES = ["Admin", "DocCtrl"];');
+  });
+  it("route: attaching a file is ACTIVITY, not a transition — no alert supersede, no email, a comment-style bell row without metadata.action", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
+    state.rows.tickets = [ticketRow()];
+    state.rows.notifications = [{ id: "n-1", user_id: "d-1", resource_id: "t1", read_at: null, metadata: { action: "assign", status: "DRAFTING" } }];
+    const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { ...file, type: "Reference", name: "vendor.pdf" } });
+    expect(res.status).toBe(200);
+    expect(updateOf("tickets")[0].unread_by).toEqual(["d-1"]);
+    // the drafter's outstanding "you were assigned" alert is NOT retired
+    expect(state.calls.filter((c) => c.table === "notifications" && c.method === "update")).toHaveLength(0);
+    // one activity row for the other participant, comment-style: no metadata.action for the stale-alert reconciliation to act on
+    const rows = insertsOf("notifications");
+    expect(rows.map((n) => n.user_id)).toEqual(["d-1"]);
+    expect(rows[0]).toMatchObject({ kind: "ticket_comment", title: "File added · REQ-1 x", body: "Added Reference file: vendor.pdf", metadata: { activity: "attach_file", status: "DRAFTING" } });
+    expect((rows[0].metadata as Record<string, unknown>).action).toBeUndefined();
+    expect(insertsOf("email_notifications")).toEqual([]);
+    // a real transition still supersedes and emails (the contrast)
+    state.calls = []; state.user = { id: "d-1" };
+    state.rows.tickets = [ticketRow({ attachments: [file] })];
+    expect((await post({ ticketId: "t1", actionType: "submit_draft" })).status).toBe(200);
+    expect(state.calls.filter((c) => c.table === "notifications" && c.method === "update")).toHaveLength(1);
+    expect(insertsOf("notifications")[0]).toMatchObject({ kind: "ticket_status", metadata: { action: "submit_draft", status: "PENDING_REVIEW" } });
+    expect(insertsOf("email_notifications").map((e) => e.to_user_id)).toEqual(["req-1"]);
   });
   it("watch route: membership-checked, only the caller's own follow, compare-and-set on last_modified, idempotent, 409 on repeated conflict", async () => {
     expect((await watchPost(req("/api/tickets/watch", "POST", { ticketId: "t1", watching: true }, ""))).status).toBe(401);
@@ -301,6 +362,84 @@ describe("WF-17 / DEC-14 — cancel_request exists; NEW and PENDING_ENG_INITIAL 
     state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })];
     expect((await post({ ticketId: "t1", actionType: "cancel_request", comment: "x" })).status).toBe(403);
     expect(updateOf("tickets")).toHaveLength(0);
+  });
+  it("route: cancel_request meets the LIFE-6 / DEC-25 hold gate — 409 holds_open with no write; release or keep-with-reason lands with the HOLD_* audit row", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
+    state.rows.document_holds = [{ id: "h-1", document_id: "doc-1", reason: "Field Verification Needed", notes: null, origin_ticket_id: "t1", released_at: null }];
+    for (const status of ["PENDING_ASSIGNMENT", "DRAFTING"]) {
+      state.calls = []; state.rows.tickets = [ticketRow({ status, assigned_drafter_id: status === "DRAFTING" ? "d-1" : null })];
+      const blocked = await post({ ticketId: "t1", actionType: "cancel_request", comment: "scope withdrawn" });
+      expect(blocked.status, status).toBe(409);
+      expect(await blocked.json()).toMatchObject({ code: "holds_open", holds: [{ id: "h-1", documentId: "doc-1" }] });
+      expect(updateOf("tickets")).toHaveLength(0);
+      expect(insertsOf("audit_logs")).toEqual([]);
+      // keep without a reason is still blocked
+      expect((await post({ ticketId: "t1", actionType: "cancel_request", comment: "scope withdrawn", holdResolution: { action: "keep" } })).status).toBe(409);
+      expect(updateOf("tickets")).toHaveLength(0);
+    }
+    // release on cancel
+    state.calls = []; state.rows.tickets = [ticketRow({ status: "DRAFTING" })];
+    const released = await post({ ticketId: "t1", actionType: "cancel_request", comment: "scope withdrawn", holdResolution: { action: "release", reason: "verified in the field" } });
+    expect(released.status).toBe(200);
+    expect((await released.json()).status).toBe("CANCELED");
+    expect(updateOf("tickets")[0].status).toBe("CANCELED");
+    expect(updateOf("document_holds")[0]).toMatchObject({ released_by: "req-1", released_reason: "verified in the field" });
+    expect(insertsOf("audit_logs").find((a) => a.action === "HOLD_RELEASED")?.details).toMatchObject({ holdId: "h-1", viaTicketClose: "t1" });
+    expect(insertsOf("audit_logs").find((a) => a.action === "TICKET_CANCEL_REQUEST")?.details).toMatchObject({ from: "DRAFTING", to: "CANCELED" });
+    // keep with a reason on cancel: the hold stays, the reason and the outcome are on the record
+    state.calls = []; state.rows.tickets = [ticketRow({ status: "DRAFTING" })];
+    const kept = await post({ ticketId: "t1", actionType: "cancel_request", comment: "scope withdrawn", holdResolution: { action: "keep", reason: "hold owned by the area owner" } });
+    expect(kept.status).toBe(200);
+    expect(updateOf("document_holds")).toHaveLength(0);
+    expect(insertsOf("audit_logs").find((a) => a.action === "HOLD_KEPT_ON_CLOSE")?.details).toMatchObject({ holdId: "h-1", keptBecause: "hold owned by the area owner", ticketId: "t1", ticketOutcome: "CANCELED" });
+    // a release with no stated reason names the cancellation, not a close
+    state.calls = []; state.rows.tickets = [ticketRow({ status: "DRAFTING" })];
+    expect((await post({ ticketId: "t1", actionType: "cancel_request", comment: "x", holdResolution: { action: "release" } })).status).toBe(200);
+    expect(updateOf("document_holds")[0].released_reason).toBe("Released on cancellation of ticket REQ-1");
+    // the page's release-or-keep prompt is generic to the 409, so the cancel button gets it for free
+    expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/if \(res\.status === 409 && !holdResolution\) \{[\s\S]*if \(j\.code === 'holds_open'\) \{/);
+  });
+  it("route: cancelling a ticket that is DRAFTING against a source document clears the drafter's ticket-sourced edit intent, as a close does", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
+    state.rows.tickets = [ticketRow({ status: "DRAFTING", metadata: { source_document: { id: "doc-1", documentNumber: "P-100" } } })];
+    expect((await post({ ticketId: "t1", actionType: "cancel_request", comment: "withdrawn" })).status).toBe(200);
+    const del = callIndex("document_intents", "delete");
+    expect(del).toBeGreaterThan(callIndex("tickets", "update"));
+    expect(legsAfter(del, "document_intents")).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"]]);
+    expect(src("app/api/tickets/workflow-action/route.ts")).toContain('} else if (newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT") {');
+  });
+  it("CANCELED is terminal on every live-work surface: no open-ticket query or filter excludes only CLOSED", () => {
+    const files = [
+      "app/(protected)/requests/page.tsx", "app/(protected)/requests/[id]/page.tsx", "app/(protected)/admin/analytics/page.tsx",
+      "lib/inbox.ts", "hooks/useTicketNotifications.ts", "components/documents/CheckInPanel.tsx",
+      "components/dashboard/widgets.tsx", "app/(protected)/coordination/page.tsx", "app/(protected)/inbox/page.tsx",
+    ];
+    for (const f of files) {
+      const t = src(f);
+      expect(t, f).not.toMatch(/\.neq\(\s*['"]status['"]\s*,\s*['"]CLOSED['"]\s*\)/);
+      expect(t, f).not.toMatch(/status\s*!==?\s*['"]CLOSED['"]/);
+    }
+    const term = "not('status', 'in', '(\"CLOSED\",\"CANCELED\")')";
+    const termDq = 'not("status", "in", \'("CLOSED","CANCELED")\')';
+    expect(src("app/(protected)/requests/page.tsx").split(term).length - 1).toBe(2);
+    expect(src("hooks/useTicketNotifications.ts").split(term).length - 1).toBe(2);
+    expect(src("lib/inbox.ts").split(termDq).length - 1).toBe(3);
+    expect(src("components/documents/CheckInPanel.tsx")).toContain(termDq);
+    const portal = src("app/(protected)/requests/page.tsx");
+    expect(portal).toContain("const activeTickets = tickets.filter(t => !isTerminalTicketStatus(t.status));");
+    expect(portal).toContain("const isStale = daysOpen > 14 && !isTerminalTicketStatus(ticket.status);");
+    expect(portal).toContain("if (!includeClosed) rows = rows.filter((r) => !isTerminalTicketStatus(r.status as string));");
+    expect(portal).toContain("if (isTerminalTicketStatus(t.status) && !includeClosed) continue;");
+    expect(portal).toContain("const includeClosed = showClosed || filters.status === 'ALL' || isTerminalTicketStatus(filters.status);");
+    expect(portal).toContain('<option value="CANCELED">Canceled</option>');
+    expect(portal).toMatch(/case 'CANCELED': return 'bg-rose-50/);
+    expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/case 'CANCELED': return 'bg-rose-50/);
+    const analytics = src("app/(protected)/admin/analytics/page.tsx");
+    expect(analytics).toContain("const activeTickets = tickets.filter(t => !isTerminalTicketStatus(t.status)).length;");
+    expect(analytics).toContain("const staleTickets = tickets.filter(t => !isTerminalTicketStatus(t.status) && getDaysDiff(t.lastModified) > 7).length;");
+    expect(src("lib/ticketShed.ts")).toContain("export const isTerminalTicketStatus = (status: string | null | undefined): boolean =>");
   });
   it("no code path names the retired statuses as a literal; the union, the engine, routing, attention and the page are clean", () => {
     const files = [
@@ -426,6 +565,23 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
     state.rows.org_members.push(member("c-1", "DocCtrl")); state.user = { id: "c-1" };
     expect((await post({ ticketId: "t1", actionType: "reassign_drafter", comment: "x", assignment: { id: "d-2", name: "Sam" } })).status).toBe(403);
   });
+  it("route: a reassignment retires the PREVIOUS drafter's ticket-sourced edit intent before registering the new drafter's", async () => {
+    state.user = { id: "a-1" };
+    state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter"), member("d-2", "Drafter")];
+    state.rows.tickets = [ticketRow({ status: "DRAFTING", metadata: { source_document: { id: "doc-1", documentNumber: "P-100" } } })];
+    expect((await post({ ticketId: "t1", actionType: "reassign_drafter", comment: "out sick", assignment: { id: "d-2", name: "Sam" } })).status).toBe(200);
+    const del = callIndex("document_intents", "delete");
+    const up = callIndex("document_intents", "upsert");
+    expect(del).toBeGreaterThan(-1);
+    expect(up).toBeGreaterThan(del);
+    expect(legsAfter(del, "document_intents").slice(0, 4)).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"], ["user_id", "d-1"]]);
+    expect(state.calls[up].args[0]).toMatchObject({ document_id: "doc-1", user_id: "d-2", kind: "edit", source: "ticket", ticket_id: "t1" });
+    // an ordinary entry into DRAFTING (assign) deletes nothing — there is no previous drafter
+    state.calls = []; state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, metadata: { source_document: { id: "doc-1" } } })];
+    expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-1", name: "Hector" } })).status).toBe(200);
+    expect(callIndex("document_intents", "delete")).toBe(-1);
+    expect(callIndex("document_intents", "upsert")).toBeGreaterThan(-1);
+  });
   it("route: an Admin reassigns the ENGINEER reviewer at PENDING_FINAL_APPROVAL (the existing override now proven end to end)", async () => {
     state.user = { id: "a-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter"), member("e-1", "Engineer-2"), member("e-2", "Engineer-3")];
@@ -539,8 +695,9 @@ describe("WF-21 / DEC-15 — a reopen starts a new revision cycle, and the QR en
       const u = new URL("https://app/api/verify-ticket"); u.searchParams.set("t", T); u.searchParams.set("r", r);
       return (await (await GET(new NextRequest(u))).json()) as Record<string, unknown>;
     };
-    const row = (over: Record<string, unknown>) => ({ id: T, ticket_id: "REQ-1", title: "x", unit: "U", status: "PENDING_REVIEW", deliverable_rev: null, revision_count: 2, last_modified: LM, ...over });
-    state.rows.tickets = [row({})]; // reopened after Rev 2 was issued
+    const issued2 = [{ action: "Submitted for review — Rev 2A" }, { action: "Approve (Issue for Construction) — issued Rev 2" }, { action: "Reopen Ticket" }];
+    const row = (over: Record<string, unknown>) => ({ id: T, ticket_id: "REQ-1", title: "x", unit: "U", status: "PENDING_REVIEW", deliverable_rev: null, revision_count: 2, last_modified: LM, history: issued2, ...over });
+    state.rows.tickets = [row({})]; // reopened after Rev 2 was issued — the history line is the evidence
     expect((await verify("2")).verdict).toBe("revision_in_progress");
     expect((await verify("2")).latestIssuedRev).toBe("2");
     expect((await verify("2")).inReview).toBe(true);
@@ -552,8 +709,20 @@ describe("WF-21 / DEC-15 — a reopen starts a new revision cycle, and the QR en
     expect((await verify("2")).verdict).toBe("current");
     state.rows.tickets = [row({ status: "PENDING_REVIEW", deliverable_rev: "3A", revision_count: 2 })]; // the resubmission after the reopen
     expect((await verify("2")).verdict).toBe("revision_in_progress");
-    state.rows.tickets = [row({ status: "DRAFTING", deliverable_rev: null, revision_count: 0 })]; // never issued
+    state.rows.tickets = [row({ status: "DRAFTING", deliverable_rev: null, revision_count: 0, history: [] })]; // never issued
     expect((await verify("1")).verdict).toBe("unknown");
+    // bumped but never issued: "Return with Questions" at PENDING_ENG_TEAM (reject → REVISION_REQ, revision_count 1, no label)
+    // is not a reopen — nothing was ever issued, so the QR endpoint must not assert an issue that never happened
+    state.rows.tickets = [row({ status: "REVISION_REQ", deliverable_rev: null, revision_count: 1, history: [{ action: "Return with Questions", details: "scope unclear" }] })];
+    expect(await verify("1")).toMatchObject({ verdict: "unknown", latestIssuedRev: null, inReview: false });
+    expect((await verify("2")).verdict).toBe("unknown");
+    // the same shape with no history column at all (pre-history rows) is unknown too
+    state.rows.tickets = [row({ status: "REVISION_REQ", deliverable_rev: null, revision_count: 1, history: null })];
+    expect((await verify("1")).verdict).toBe("unknown");
+    // the label comes from the evidence, not the cycle count: reopened after Rev 2, then a further revision requested (count 3)
+    state.rows.tickets = [row({ status: "REVISION_REQ", deliverable_rev: null, revision_count: 3 })];
+    expect(await verify("2")).toMatchObject({ verdict: "revision_in_progress", latestIssuedRev: "2" });
+    expect((await verify("3")).verdict).toBe("unknown");
   });
 });
 
@@ -578,12 +747,39 @@ describe("WF-24 / CHAIN-3 — ONE management tier; attention is derived from the
   });
   it("the badge hook and the portal evaluate under the org's own policy and use the visibility scope, not the tier", () => {
     const hook = src("hooks/useTicketNotifications.ts");
-    expect(hook).toContain("isActionRequired(t, { uid, roles, policy })");
+    expect(hook).toContain("isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes })");
+    expect(hook).toContain("setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));");
     expect(hook).toContain("isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')");
     expect(hook).toContain("void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});");
     const portal = src("app/(protected)/requests/page.tsx");
-    expect(portal).toContain("ticketNeedsAction(ticket, { uid, roles, policy: capPolicy })");
+    expect(portal).toContain("ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes })");
+    expect(portal).toContain("setEngineeringFirstTypes(flaggedRequestTypes(data.data, 'engineeringFirst'));");
     expect(portal).toContain("const isSupervisorView = isQueueViewer(roles);");
+    // the attention context carries the same type-level inputs the ticket page passes the engine
+    const att = src("lib/ticketAttention.ts");
+    expect(att).toContain("engineeringFirstTypes: ctx.engineeringFirstTypes,");
+    expect(att).toContain("closeWithoutReviewTypes: ctx.closeWithoutReviewTypes,");
+  });
+  it("DRAFT-2 × WF-24: an engineering-first type — the page disables the Drafter's pick-up, and the badge (given the same input) does not flag them", () => {
+    const t = ticket({ status: "PENDING_ASSIGNMENT", assignedDrafterId: null, requestType: "ISO" });
+    const page = acts(t, "Drafter", "d-9", undefined, { engineeringFirstTypes: ["ISO"] });
+    expect(page.find((a) => a.action === "self_assign")?.disabledReason).toMatch(/engineering first/);
+    expect(page.filter((a) => !a.optional && !a.disabledReason)).toEqual([]);
+    expect(isActionRequired(t, { uid: "d-9", roles: ["Drafter"], engineeringFirstTypes: ["ISO"] })).toBe(false);
+    expect(isActionRequired(t, { uid: "d-9", roles: ["Drafter"] })).toBe(true); // without the input the old badge lied
+    // the queue owner is still on the hook: "Flag for Engineering Review" is live
+    expect(isActionRequired(t, { uid: "s-1", roles: ["DraftingSupervisor"], engineeringFirstTypes: ["ISO"] })).toBe(true);
+  });
+  it("WF-24: co-review at PENDING_REVIEW is on the requester's behalf — every engineer and manager is no longer badged for every ticket in review", () => {
+    const t = ticket({ status: "PENDING_REVIEW", requesterId: "req-1" });
+    for (const [role, uid] of [["Engineer-2", "e-9"], ["Admin", "a-1"], ["Manager", "m-1"]] as const) {
+      expect(names(t, role, uid), role).toEqual(expect.arrayContaining(["approve_draft_ifc", "request_revision"]));
+      expect(isActionRequired(t, { uid, roles: [role] }), role).toBe(false);
+    }
+    expect(isActionRequired(t, { uid: "req-1", roles: ["Requester"] })).toBe(true);
+    const orphan = ticket({ status: "PENDING_REVIEW", requesterId: "" });
+    expect(isActionRequired(orphan, { uid: "e-9", roles: ["Engineer-2"] })).toBe(true);
+    expect(isActionRequired(orphan, { uid: "a-1", roles: ["Admin"] })).toBe(true);
   });
   it("the three surfaces agree at the queue: everyone routing tells is offered `assign`; attention flags exactly the engine's actors", async () => {
     state.rows.org_members = [member("a-1", "Admin"), member("sup-1", "DraftingSupervisor"), member("m-1", "Manager"), member("d-1", "Drafter"), member("v-1", "Viewer")];

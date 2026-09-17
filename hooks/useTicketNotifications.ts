@@ -9,6 +9,7 @@ import {
   isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
 } from '@/lib/ticketAttention';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { flaggedRequestTypes } from '@/lib/requestTypes';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Single source of truth for "what needs my attention right now".
@@ -141,10 +142,27 @@ export function useTicketNotifications() {
   // OWN capability policy — the same inputs the ticket page evaluates — so
   // the badge cannot count a ticket the page will show as view-only.
   const [policy, setPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  // DRAFT-2 / WF-15: the type-level flags the ticket page evaluates too — an
+  // "engineering first" type disables pick-up in the queue, so without them
+  // the badge flagged a Drafter the page showed as view-only.
+  const [engineeringFirstTypes, setEngineeringFirstTypes] = useState<string[]>([]);
+  const [closeWithoutReviewTypes, setCloseWithoutReviewTypes] = useState<string[] | undefined>(undefined);
   useEffect(() => {
     let alive = true;
     if (!activeOrgId) return;
     void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});
+    void supabase
+      .from('org_configurations')
+      .select('data')
+      .eq('org_id', activeOrgId)
+      .eq('key', 'drafting')
+      .maybeSingle()
+      .then(({ data: cfgRow }) => {
+        if (!alive) return;
+        setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));
+        const closeTypes = flaggedRequestTypes(cfgRow?.data, 'closeWithoutReview');
+        setCloseWithoutReviewTypes(closeTypes.length > 0 ? closeTypes : undefined);
+      }, () => {});
     return () => { alive = false; };
   }, [activeOrgId]);
   // Unique per hook instance so multiple consumers (sidebar/bell/inbox) don't
@@ -170,7 +188,7 @@ export function useTicketNotifications() {
         // 1) My tickets, scoped by role (same visibility rules as the portal).
         let list: Ticket[] = [];
         if (isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         } else if (roles.includes('Drafter')) {
           const [assigned, pool] = await Promise.all([
@@ -184,7 +202,7 @@ export function useTicketNotifications() {
           }
           list = Array.from(map.values());
         } else {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         }
 
@@ -267,7 +285,7 @@ export function useTicketNotifications() {
     };
 
     for (const t of tickets) {
-      const actionReq = isActionRequired(t, { uid, roles, policy });
+      const actionReq = isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes });
       const unread = !!uid && !!t.unreadBy?.includes(uid);
       if (!actionReq && !unread) continue;
       if (actionReq) ar++; else ur++;
@@ -320,7 +338,7 @@ export function useTicketNotifications() {
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
     return { items: out, actionRequiredCount: ar, unreadCount: ur, sectionCounts };
-  }, [tickets, notifs, uid, roles, policy]);
+  }, [tickets, notifs, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes]);
 
   return {
     /** The unified feed every surface renders. */

@@ -128,17 +128,17 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     // Tickets assigned to me as drafter or engineer
     supabase.from("tickets").select("*").eq("org_id", orgId)
       .or(`assigned_drafter_id.eq.${userId},assigned_engineer_id.eq.${userId}`)
-      .neq("status", "CLOSED")
+      .not("status", "in", '("CLOSED","CANCELED")')
       .order("last_modified", { ascending: false }).limit(25),
     // Tickets where I have unread activity
     supabase.from("tickets").select("*").eq("org_id", orgId)
       .contains("unread_by", [userId])
-      .neq("status", "CLOSED")
+      .not("status", "in", '("CLOSED","CANCELED")')
       .order("last_modified", { ascending: false }).limit(25),
     // Tickets I'm watching
     supabase.from("tickets").select("*").eq("org_id", orgId)
       .contains("watchers", [userId])
-      .neq("status", "CLOSED")
+      .not("status", "in", '("CLOSED","CANCELED")')
       .order("last_modified", { ascending: false }).limit(25),
     // My active checkouts
     supabase.from("checkout_sessions").select("*").eq("org_id", orgId)

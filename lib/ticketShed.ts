@@ -10,6 +10,10 @@
 
 export const TERMINAL_TICKET_STATUSES = ["CLOSED", "CANCELED"] as const;
 export type TerminalTicketStatus = (typeof TERMINAL_TICKET_STATUSES)[number];
+/** True for either terminal status. WF-17: every "live work" surface reads
+ *  THIS predicate — a `!== 'CLOSED'` check kept a canceled request active. */
+export const isTerminalTicketStatus = (status: string | null | undefined): boolean =>
+  (TERMINAL_TICKET_STATUSES as readonly string[]).includes((status || "").toUpperCase());
 
 export interface TicketAttachmentLite {
   url?: string | null; // R2 storage key

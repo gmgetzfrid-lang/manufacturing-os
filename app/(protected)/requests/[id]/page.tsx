@@ -1585,6 +1585,7 @@ export default function TicketDetailView() {
       case 'PENDING_IFC': return 'bg-teal-100 text-teal-800 border-teal-200';
       case 'REVISION_REQ': return 'bg-amber-100 text-amber-800 border-amber-200';
       case 'PENDING_ASSIGNMENT': return 'bg-purple-100 text-purple-800 border-purple-200';
+      case 'CANCELED': return 'bg-rose-50 text-rose-700 border-rose-200 line-through decoration-rose-300';
       default: return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
     }
   };

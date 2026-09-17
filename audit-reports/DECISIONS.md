@@ -560,7 +560,7 @@ cheaper to reintroduce than to keep half-alive.
 
 **Risk:** medium.
 
-*Landed 2026-09-17 (roles-and-permissions Round E): `cancel_request` from `PENDING_ASSIGNMENT` and `DRAFTING` for the requester identity and `ticket.manage`, comment required, audited, terminal; `NEW` and `PENDING_ENG_INITIAL` removed from every code path; migration `20261053` inventories (temp table, aggregate counts) and moves existing rows to `PENDING_ASSIGNMENT` with a history line, and sets the column default. See `WF-17`.*
+*Landed 2026-09-17 (roles-and-permissions Round E): `cancel_request` from `PENDING_ASSIGNMENT` and `DRAFTING` for the requester identity and `ticket.manage`, comment required, audited, terminal — and terminal everywhere: the `LIFE-6` / `DEC-25` hold gate, the intent bridge and every live-work filter treat `CANCELED` exactly as `CLOSED` (fix pass); `NEW` and `PENDING_ENG_INITIAL` removed from every code path; migration `20261053` inventories (temp table, aggregate counts) and moves existing rows to `PENDING_ASSIGNMENT` with a history line, and sets the column default. See `WF-17`.*
 
 <a id="dec-15"></a>
 ## DEC-15 · Does a reopen start a new revision cycle?
@@ -913,6 +913,8 @@ happen silently.
 **Reversal.** None.
 
 **Risk:** medium.
+
+*Extended 2026-09-17 (roles-and-permissions Round E): the gate keys on the terminal transition (`CLOSED` or `CANCELED`), not on the close action's name, so `cancel_request` (`DEC-14`) meets the same 409 and the same release-or-keep resolution. See `WF-17`.*
 
 <a id="dec-26"></a>
 ## DEC-26 · Does an as-built ticket classify its own output?

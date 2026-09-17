@@ -59,6 +59,14 @@ export interface AttentionContext {
   /** The org's active member count, when known (separation-of-duties
    *  disables an action the viewer cannot take; absent = not applied). */
   activeMemberCount?: number;
+  /** DRAFT-2: the org's "engineering first" request types — the ticket page
+   *  passes them, and without them the badge flagged a Drafter to pick up a
+   *  ticket the page showed as disabled. Read with
+   *  `flaggedRequestTypes(cfg, 'engineeringFirst')` from the drafting row. */
+  engineeringFirstTypes?: string[];
+  /** WF-15: request types that close from DRAFTING without review — the
+   *  same configured option list, so the inputs match the page's. */
+  closeWithoutReviewTypes?: string[];
 }
 
 /**
@@ -76,6 +84,8 @@ export function isActionRequired(ticket: Ticket, ctx: AttentionContext): boolean
   const actions = WorkflowEngine.getActions(ticket, headline, uid, ctx.policy ?? undefined, {
     userRoles: roles.length > 0 ? [...roles] : undefined,
     activeMemberCount: ctx.activeMemberCount,
+    engineeringFirstTypes: ctx.engineeringFirstTypes,
+    closeWithoutReviewTypes: ctx.closeWithoutReviewTypes,
   });
   return actions.some((a) => !a.optional && !a.disabledReason);
 }

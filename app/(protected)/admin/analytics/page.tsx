@@ -22,6 +22,7 @@ import {
   MousePointerClick
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
+import { isTerminalTicketStatus } from '@/lib/ticketShed';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
 
@@ -156,12 +157,13 @@ export default function AnalyticsPage() {
     // 1. Ticket Metrics
     const totalTickets = tickets.length;
     const closedTickets = tickets.filter(t => t.status === 'CLOSED').length;
-    const activeTickets = totalTickets - closedTickets;
+    // WF-17: a canceled request is not active work either.
+    const activeTickets = tickets.filter(t => !isTerminalTicketStatus(t.status)).length;
     
     const ticketsWithRevisions = tickets.filter(t => (t.revisionCount || 0) > 0).length;
     const globalRevisionRate = totalTickets > 0 ? ticketsWithRevisions / totalTickets : 0;
     
-    const staleTickets = tickets.filter(t => t.status !== 'CLOSED' && getDaysDiff(t.lastModified) > 7).length;
+    const staleTickets = tickets.filter(t => !isTerminalTicketStatus(t.status) && getDaysDiff(t.lastModified) > 7).length;
 
     // 2. Document Metrics
     const totalDocs = documents.length;

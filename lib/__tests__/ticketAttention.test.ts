@@ -10,9 +10,9 @@
 // page showed as "View Only — No Actions Available").
 
 import { describe, it, expect } from "vitest";
-import { isActionRequired, isQueueViewer, isEngineerRole, QUEUE_VIEW_ROLES } from "@/lib/ticketAttention";
+import { isActionRequired, isQueueViewer, isEngineerRole, QUEUE_VIEW_ROLES, type AttentionContext } from "@/lib/ticketAttention";
 import { MANAGEMENT_ROLES, holdsManagementRole } from "@/lib/managementRoles";
-import { WorkflowEngine } from "@/lib/workflow";
+import { WorkflowEngine, type WorkflowContext } from "@/lib/workflow";
 import type { Ticket, Role, TicketStatus } from "@/types/schema";
 
 function mk(over: Partial<Ticket> = {}): Ticket {
@@ -62,14 +62,35 @@ describe("WF-24 — the badge and the ticket page agree: attention is the engine
     mk({ requesterId: "me" }),
     mk({ assignedDrafterId: "me" }),
     mk({ assignedEngineerId: "me" }),
+    mk({ requesterId: "" }),
   ];
-  it("for every role × status × identity, the badge is true exactly when the page offers a live action", () => {
-    for (const role of roles) for (const status of statuses) for (const v of variants) {
+  // The ticket page evaluates the engine under the org's type-level flags and
+  // member count as well as the policy; the badge must take the SAME inputs
+  // (a matrix fed only {uid, roles} could not see an engineering-first type
+  // disabling pick-up — the badge flagged what the page showed disabled).
+  const pageContexts: Array<Omit<WorkflowContext, "userRoles" | "requesterRoles">> = [
+    {},
+    { engineeringFirstTypes: ["ISO"] },
+    { closeWithoutReviewTypes: ["ISO"] },
+    { activeMemberCount: 3 },
+    { engineeringFirstTypes: ["ISO"], closeWithoutReviewTypes: ["ISO"], activeMemberCount: 3 },
+  ];
+  it("for every role × status × identity × page context, the badge is true exactly when the page offers a live action", () => {
+    for (const role of roles) for (const status of statuses) for (const v of variants) for (const pc of pageContexts) {
       const t = { ...v, status };
-      const page = WorkflowEngine.getActions(t, role, "me", undefined, { userRoles: [role] })
+      const page = WorkflowEngine.getActions(t, role, "me", undefined, { userRoles: [role], ...pc })
         .some((a) => !a.optional && !a.disabledReason);
-      expect(isActionRequired(t, ctx([role])), `${role} @ ${status} (${JSON.stringify({ r: v.requesterId, d: v.assignedDrafterId, e: v.assignedEngineerId })})`).toBe(page);
+      const attention: AttentionContext = { uid: "me", roles: [role], ...pc };
+      expect(isActionRequired(t, attention), `${role} @ ${status} ${JSON.stringify(pc)} (${JSON.stringify({ r: v.requesterId, d: v.assignedDrafterId, e: v.assignedEngineerId })})`).toBe(page);
     }
+  });
+  it("DRAFT-2: an engineering-first type — the Drafter is NOT flagged in the queue (pick-up disabled on the page); the queue owner still is (flag for engineering review is live)", () => {
+    const t = mk({ status: "PENDING_ASSIGNMENT", requestType: "ISO" });
+    expect(isActionRequired(t, ctx(["Drafter"]))).toBe(true);
+    expect(isActionRequired(t, { uid: "me", roles: ["Drafter"], engineeringFirstTypes: ["ISO"] })).toBe(false);
+    expect(isActionRequired(t, { uid: "me", roles: ["DraftingSupervisor"], engineeringFirstTypes: ["ISO"] })).toBe(true);
+    // a different type is untouched
+    expect(isActionRequired(t, { uid: "me", roles: ["Drafter"], engineeringFirstTypes: ["PID"] })).toBe(true);
   });
   it("a DraftingSupervisor is flagged in the queue they own and NOWHERE the page shows them view-only", () => {
     expect(isActionRequired(mk({ status: "PENDING_ASSIGNMENT" }), ctx(["DraftingSupervisor"]))).toBe(true);
@@ -93,10 +114,10 @@ describe("WF-24 — the badge and the ticket page agree: attention is the engine
 });
 
 describe("supervisor / admin attention", () => {
-  it("management is flagged in the queue and at review; NOT at PENDING_IFC (the drafter's bench — the page offers nothing there)", () => {
-    for (const status of ["PENDING_ASSIGNMENT", "PENDING_REVIEW"] as TicketStatus[]) {
-      expect(isActionRequired(mk({ status }), ctx(["Admin"])), status).toBe(true);
-    }
+  it("management is flagged in the queue; at review only when there is no requester to act (co-review is on the requester's behalf); NOT at PENDING_IFC (the drafter's bench — the page offers nothing there)", () => {
+    expect(isActionRequired(mk({ status: "PENDING_ASSIGNMENT" }), ctx(["Admin"]))).toBe(true);
+    expect(isActionRequired(mk({ status: "PENDING_REVIEW" }), ctx(["Admin"]))).toBe(false);
+    expect(isActionRequired(mk({ status: "PENDING_REVIEW", requesterId: "" }), ctx(["Admin"]))).toBe(true);
     expect(isActionRequired(mk({ status: "PENDING_IFC", assignedDrafterId: "someone-else" }), ctx(["Admin"]))).toBe(false);
     expect(isActionRequired(mk({ status: "PENDING_IFC", assignedDrafterId: "someone-else" }), ctx(["DraftingSupervisor"]))).toBe(false);
   });
@@ -132,16 +153,19 @@ describe("personal-assignment attention", () => {
     expect(isActionRequired(mk({ status: "PENDING_REVIEW", requesterId: "me" }), ctx(["Requester"]))).toBe(true);
     expect(isActionRequired(mk({ status: "FINAL_DRAFT", requesterId: "me" }), ctx(["Requester"]))).toBe(true);
   });
-  it("a co-reviewer closing on the requester's behalf is optional: FINAL_DRAFT is the requester's item, not every engineer's", () => {
-    expect(isActionRequired(mk({ status: "FINAL_DRAFT", requesterId: "other" }), ctx(["Engineer-2"]))).toBe(false);
-    expect(isActionRequired(mk({ status: "FINAL_DRAFT", requesterId: "other" }), ctx(["Manager"]))).toBe(false);
+  it("a co-reviewer acting on the requester's behalf is optional: PENDING_REVIEW and FINAL_DRAFT are the requester's items, not every engineer's and manager's", () => {
+    for (const status of ["PENDING_REVIEW", "FINAL_DRAFT"] as TicketStatus[]) {
+      expect(isActionRequired(mk({ status, requesterId: "other" }), ctx(["Engineer-2"])), status).toBe(false);
+      expect(isActionRequired(mk({ status, requesterId: "other" }), ctx(["Manager"])), status).toBe(false);
+    }
   });
 });
 
 describe("engineer attention", () => {
-  it("flags the open team / approval gates and co-review", () => {
+  it("flags the open team / approval gates; co-review only where no requester can act", () => {
     expect(isActionRequired(mk({ status: "PENDING_ENG_TEAM" }), ctx(["Engineer-2"]))).toBe(true);
-    expect(isActionRequired(mk({ status: "PENDING_REVIEW" }), ctx(["Engineer-2"]))).toBe(true);
+    expect(isActionRequired(mk({ status: "PENDING_REVIEW" }), ctx(["Engineer-2"]))).toBe(false);
+    expect(isActionRequired(mk({ status: "PENDING_REVIEW", requesterId: "" }), ctx(["Engineer-2"]))).toBe(true);
   });
   it("stops nagging the pool once another engineer claims the ticket", () => {
     expect(isActionRequired(mk({ status: "PENDING_ENG_TEAM", assignedEngineerId: "eng-x" }), ctx(["Engineer-2"]))).toBe(false);

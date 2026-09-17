@@ -45,6 +45,8 @@ import {
   isQueueViewer,
 } from '@/lib/ticketAttention';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { flaggedRequestTypes } from '@/lib/requestTypes';
+import { isTerminalTicketStatus } from '@/lib/ticketShed';
 
 // =========================================================================================
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
@@ -115,6 +117,7 @@ const getStatusColor = (status: TicketStatus): string => {
     case 'FINAL_DRAFT': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
     case 'PENDING_FINAL_APPROVAL': return 'bg-lime-50 text-lime-700 border-lime-200';
     case 'CLOSED': return 'bg-gray-100 text-gray-500 border-gray-200 decoration-slate-400';
+    case 'CANCELED': return 'bg-rose-50 text-rose-700 border-rose-200 line-through decoration-rose-300';
     default: return 'bg-[var(--color-surface)] text-gray-900 border-gray-200';
   }
 };
@@ -143,14 +146,19 @@ export default function RequestPortal() {
   // --- STATE ---
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  // When true, the fetch drops the `.neq('status','CLOSED')` filter so
-  // closed tickets show up. Lets a user find a previously completed
-  // request to pull old drafts or reopen it.
+  // When true, the fetch drops the terminal-status filter (CLOSED and
+  // CANCELED — WF-17) so finished tickets show up. Lets a user find a
+  // previously completed request to pull old drafts or reopen it.
   const [showClosed, setShowClosed] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [processingBulk, setProcessingBulk] = useState<boolean>(false);
   const [requestTypeOptions, setRequestTypeOptions] = useState<SelectOption[]>([]);
+  // DRAFT-2 / WF-15: the type-level flags the ticket page evaluates, read
+  // from the same drafting row, so a row's "action needed" marker matches
+  // the page (an engineering-first type disables pick-up in the queue).
+  const [engineeringFirstTypes, setEngineeringFirstTypes] = useState<string[]>([]);
+  const [closeWithoutReviewTypes, setCloseWithoutReviewTypes] = useState<string[] | undefined>(undefined);
 
   // --- STATE: VIEW & UI ---
   // 'team' is the supervisor lens: active work grouped by the drafter it sits
@@ -208,6 +216,9 @@ export default function RequestPortal() {
         if (data?.data) {
           const cfg = data.data as OrgDraftingSettings;
           if (cfg.requestTypes?.options) setRequestTypeOptions(cfg.requestTypes.options);
+          setEngineeringFirstTypes(flaggedRequestTypes(data.data, 'engineeringFirst'));
+          const closeTypes = flaggedRequestTypes(data.data, 'closeWithoutReview');
+          setCloseWithoutReviewTypes(closeTypes.length > 0 ? closeTypes : undefined);
         }
       } catch (e) {
         console.error("Failed to load filter config", e);
@@ -232,19 +243,19 @@ export default function RequestPortal() {
     return () => { alive = false; };
   }, [activeOrgId]);
   const isActionRequired = useCallback(
-    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles, policy: capPolicy }),
-    [uid, roles, capPolicy],
+    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes }),
+    [uid, roles, capPolicy, engineeringFirstTypes, closeWithoutReviewTypes],
   );
 
 
   // --------------------------------------------------------------------
   // EFFECT: DATA SYNC ENGINE
   // --------------------------------------------------------------------
-  // "Any" means any — so ALL and CLOSED both pull closed tickets. The
-  // "Show Closed" toggle additionally forces closed into narrow status views
-  // (e.g. show Drafting + Closed together). Specific open statuses skip the
-  // closed rows entirely unless that toggle is on.
-  const includeClosed = showClosed || filters.status === 'ALL' || filters.status === 'CLOSED';
+  // "Any" means any — so ALL, CLOSED and CANCELED all pull finished tickets.
+  // The "Show Closed" toggle additionally forces them into narrow status
+  // views (e.g. show Drafting + Closed together). Specific open statuses skip
+  // the finished rows entirely unless that toggle is on.
+  const includeClosed = showClosed || filters.status === 'ALL' || isTerminalTicketStatus(filters.status);
   useEffect(() => {
     if (!uid || !activeOrgId) {
       setTickets([]);
@@ -286,7 +297,7 @@ export default function RequestPortal() {
 
         if ((['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'] as Role[]).some((r) => roles.includes(r)) || roles.some((r) => r.includes('Engineer'))) {
           let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId);
-          if (!includeClosed) q = q.neq('status', 'CLOSED');
+          if (!includeClosed) q = q.not('status', 'in', '("CLOSED","CANCELED")');
           const { data } = await q.order('last_modified', { ascending: false });
           rows = (data || []) as Record<string, unknown>[];
         } else if (roles.includes('Drafter')) {
@@ -299,10 +310,10 @@ export default function RequestPortal() {
             map.set(r.id as string, r as Record<string, unknown>);
           }
           rows = Array.from(map.values());
-          if (!includeClosed) rows = rows.filter((r) => r.status !== 'CLOSED');
+          if (!includeClosed) rows = rows.filter((r) => !isTerminalTicketStatus(r.status as string));
         } else {
           let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid);
-          if (!includeClosed) q = q.neq('status', 'CLOSED');
+          if (!includeClosed) q = q.not('status', 'in', '("CLOSED","CANCELED")');
           const { data } = await q.order('last_modified', { ascending: false });
           rows = (data || []) as Record<string, unknown>[];
         }
@@ -332,7 +343,7 @@ export default function RequestPortal() {
   // MEMO: ROLE-AWARE METRICS ENGINE
   // --------------------------------------------------------------------
   const metrics: DashboardMetrics = useMemo(() => {
-    const activeTickets = tickets.filter(t => t.status !== 'CLOSED'); 
+    const activeTickets = tickets.filter(t => !isTerminalTicketStatus(t.status)); 
     
     const myActionItems = tickets.filter(t => isActionRequired(t)).length;
     let slot2Count = 0;
@@ -411,7 +422,7 @@ export default function RequestPortal() {
 
       // Filters. A narrow status hides everything else, except that "Show
       // Closed" lets closed rows ride alongside the selected status.
-      if (filters.status !== 'ALL' && ticket.status !== filters.status && !(showClosed && ticket.status === 'CLOSED')) return false;
+      if (filters.status !== 'ALL' && ticket.status !== filters.status && !(showClosed && isTerminalTicketStatus(ticket.status))) return false;
       if (filters.type !== 'ALL' && ticket.requestType !== filters.type) return false;
       
       // Assignment Filter
@@ -492,7 +503,7 @@ export default function RequestPortal() {
     const UNASSIGNED = '__unassigned__';
     const groups = new Map<string, { id: string | null; name: string; tickets: Ticket[] }>();
     for (const t of filteredTickets) {
-      if (t.status === 'CLOSED' && !includeClosed) continue; // live work by default; included when the user asks for closed
+      if (isTerminalTicketStatus(t.status) && !includeClosed) continue; // live work by default; included when the user asks for closed
       const key = t.assignedDrafterId || UNASSIGNED;
       if (!groups.has(key)) {
         groups.set(key, {
@@ -878,7 +889,7 @@ export default function RequestPortal() {
               <button onClick={() => pickView('grid')} title="Cards" className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><LayoutGrid className="w-5 h-5" /></button>
             </div>
             <Select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className="w-44"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></Select>
-            <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="w-44"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></Select>
+            <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="w-44"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option><option value="CANCELED">Canceled</option></Select>
             <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${isFilterPanelOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]'}`}><SlidersHorizontal className="w-4 h-4 mr-2" />More Filters</button>
             <button
               onClick={() => setShowClosed((v) => !v)}
@@ -1029,7 +1040,7 @@ export default function RequestPortal() {
                     <tbody className="bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
                       {paginatedTickets.map((ticket) => {
                          const daysOpen = calculateDaysOpen(ticket.createdAt);
-                         const isStale = daysOpen > 14 && ticket.status !== 'CLOSED';
+                         const isStale = daysOpen > 14 && !isTerminalTicketStatus(ticket.status);
                          const isUrgent = ticket.status === 'REVISION_REQ' || ticket.requestType === 'RFI' || ticket.priority === 1;
                          const isSelected = selectedTicketIds.has(ticket.id!);
                          const isUnread = ticket.unreadBy?.includes(uid || '');
@@ -1074,8 +1085,8 @@ export default function RequestPortal() {
                                 <span className="font-medium text-[var(--color-text)]">{toDate(ticket.lastModified).toLocaleDateString()}</span>
                                 {ticket.targetCompletionAt && (() => {
                                   const due = new Date(ticket.targetCompletionAt as string);
-                                  const past = due < new Date() && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
-                                  const soon = !past && due.getTime() - Date.now() < 24 * 60 * 60 * 1000 && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
+                                  const past = due < new Date() && !isTerminalTicketStatus(ticket.status);
+                                  const soon = !past && due.getTime() - Date.now() < 24 * 60 * 60 * 1000 && !isTerminalTicketStatus(ticket.status);
                                   return (
                                     <span className={`font-bold flex items-center mt-0.5 ${past ? "text-red-600" : soon ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
                                       <Clock className="w-3 h-3 mr-1" />

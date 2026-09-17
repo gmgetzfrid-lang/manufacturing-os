@@ -155,6 +155,23 @@ describe("PENDING_REVIEW — the engineer-approval fork", () => {
     expect(actionsOf(t, "Engineer-1", "eng-9")).toContain("approve_draft_ifc");
   });
 
+  it("WF-24: co-review on the requester's behalf is OPTIONAL (the ticket waits on the requester); with no requester it is required", () => {
+    const withRequester = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
+    for (const role of ["Engineer-1", "Admin", "Manager"] as const) {
+      const acts = WorkflowEngine.getActions(withRequester, role, "other");
+      for (const a of ["approve_draft_ifc", "approve_minor_correction", "request_revision"]) {
+        expect(acts.find((x) => x.action === a)?.optional, `${role}/${a}`).toBe(true);
+      }
+    }
+    // the requester's own review is never optional
+    expect(WorkflowEngine.getActions(withRequester, "Viewer", "u-1").find((a) => a.action === "request_revision")?.optional).toBeUndefined();
+    // no requester to act: the co-review IS the review (mirrors FINAL_DRAFT's on-behalf close)
+    const orphan = mk({ status: "PENDING_REVIEW", requesterId: "", requesterRole: "Viewer" });
+    const acts = WorkflowEngine.getActions(orphan, "Engineer-1", "eng-9");
+    expect(acts.find((a) => a.action === "approve_draft_ifc")?.optional).toBeUndefined();
+    expect(acts.find((a) => a.action === "request_revision")?.optional).toBeUndefined();
+  });
+
   it("minor-correction fast approve exists ONLY for actors who could approve directly (WF-3)", () => {
     const t = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
     // WF-3 closure: a Viewer-tier requester cannot self-approve, so their
