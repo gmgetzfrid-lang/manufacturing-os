@@ -520,7 +520,7 @@ intermittent unexplained 409s during approval.
 ## WF-10 · The 60-second policy cache is never invalidated on the server — a revoked person keeps acting
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED (currently masked by `WF-1`)
 - **Blast radius:** security
 - **Locations:**
@@ -564,7 +564,7 @@ the next action."*
 2. `loadCapabilityPolicy` never caches a result whose read errored.
 3. A sessionless read cannot poison the server cache with an empty policy.
 
-**Resolution (2026-09-17, Round E).**
+**Partial (2026-09-17, Round E).**
 
 - **Invalidation on write.** `POST /api/admin/capability-policy` (`WF-11`)
   calls `invalidateCapabilityPolicy(orgId)` after every write, dropping the
@@ -604,16 +604,22 @@ the next action."*
   both shapes; the residual-window comment and the route's versioned read
   pinned by source.
 
-**Done-when.** 1 ✓ within 5 s on every instance (`SERVER_CACHE_TTL_MS`) —
-not on the very next decision: a warm workflow-action instance may admit
-under the old policy for up to 5 s after the revocation, and no instance is
-exempt (the cross-function cache is not shared on Vercel). That 5 s is the
-residual, stated, not claimed closed. 2 ✓ (from `WF-1`, re-pinned here). 3 ✓.
+**Done-when.** 1 ✗ NOT MET as written — a revocation is seen by every
+server-side authority decision within `SERVER_CACHE_TTL_MS` (5 s), not on
+the very next decision: a warm workflow-action instance may admit under the
+old policy for up to 5 s after the revocation, and no instance is exempt
+(the cross-function cache is not shared on Vercel). Meeting it as written
+needs a shared invalidation channel or a policy read inside the transition's
+transaction; neither is built, so the finding stays OPEN on this item alone.
+2 ✓ (from `WF-1`, re-pinned here). 3 ✓.
 
-**Scope / residual.** The 5 s cross-instance window is the trade-off against a
-policy read per action; a shared invalidation channel, or reading the policy
-inside the transition's transaction, would close it and is not built. The
-browser-side 60 s cache is unchanged and governs only which buttons are drawn.
+**Scope / residual.** Done-when 1 is the open remainder: the 5 s
+cross-instance window is the trade-off against a policy read per action, and
+closing it as written needs a shared invalidation channel or a policy read
+inside the transition's transaction — neither is built, so the finding stays
+OPEN on that item while the mechanism it describes (60 s per warm instance,
+never invalidated) is gone and done-when 2 and 3 hold. The browser-side 60 s
+cache is unchanged and governs only which buttons are drawn.
 
 ---
 
@@ -684,9 +690,20 @@ the database.
   preserved server-side — the editor no longer re-reads them); a change to a
   CRITICAL capability's effective entry requires Admin (a DocCtrl controller
   edits the rest of the grid; writing the shipped default explicitly is not a
-  change). `grant` / `revoke` are Admin-only, a self-grant (`uid === caller`)
-  is refused, the target must be an active member, the expiry must parse and
-  lie in the future, and the server stamps `grantedBy` / `grantedAt`.
+  change). "Change" is judged by what the evaluator would answer, not by the
+  JSON's shape (`canonicalEntry`): the editor re-emits a stored rule list as
+  base + one rule per request type + the rest, so a stored multi-type clause,
+  a conditional rule ahead of the unconditional one, or an absent
+  unconditional rule (the base is the shipped default, written out) is no
+  change for a DocCtrl's untouched grid; conditional rules keep their order
+  (first match wins), so swapping two rules that can both match a resource,
+  or any token change, is still Admin's. `grant` / `revoke` are Admin-only,
+  a self-grant (`uid === caller`) is refused, the target must be an active
+  member, the expiry must parse and lie in the future and is stored as
+  ISO 8601 (`Date.parse` accepts forms the SQL evaluator's `::timestamptz`
+  cast does not — a stored one of those would make
+  `org_capability_allows_for` raise for that person on every holds or
+  force-release check), and the server stamps `grantedBy` / `grantedAt`.
   `validateCapabilityPolicy` runs on the RESULT with the service-role client.
   The write is compare-and-set on the row's `updated_at` (409 on a concurrent
   write; a first-ever policy is an INSERT), this process's policy cache is
@@ -712,31 +729,54 @@ the database.
   Admin (the loader reads "no row" as the shipped defaults — the widest
   change there is); the entries are read exactly as
   `parseStoredCapabilityPolicy` reads them (`raw.caps ?? raw`: a present,
-  non-null `caps` holds them whatever its type, only an absent or null `caps`
-  is the legacy flat shape — never both, and a flat critical key beside
-  `caps` is refused rather than read); every token list of a critical
+  non-null `caps` holds them, only an absent or null `caps` is the legacy
+  flat shape — never both; a present `caps` that is not an object is
+  refused, since the parser would read it as "no entries" and the paste's
+  inventory could not read the row; and a flat critical key beside `caps`
+  is refused rather than read); every token list of a critical
   capability (the bare list AND each rule's `tokens`) keeps `Admin` or `*`,
   a list is a rule list iff some element is not a string
   (`normalizeCapabilityEntry`), and a list mixing tokens with rules is
   refused (the parser drops the tokens, so `Admin` among them is not Admin
   on the list); a change to a critical entry, or to `grants` at all,
-  requires Admin (`caller_holds_any_role`); a grant naming `auth.uid()` that
-  was not already stored is refused; and every op is audited in the same
-  transaction (`via: "direct_write"`, `op: insert | update | delete`,
-  `after: null` on a delete). Narrowing only — no temp-table inventory
-  needed. Exercised on a throwaway PostgreSQL 16 with stub `auth.uid()` and
-  helpers: the paste applies with 7/7 probes true, and 24 scenarios behave
-  as described (the `{caps: {}, "<critical>": <old value>}` write, `caps: []`
-  beside a flat key, the DocCtrl DELETE, both re-key directions, the org
-  move and the mixed list all refused; the legacy flat shape still read; the
-  Admin DELETE audited with `op: delete`).
+  requires Admin (`caller_holds_any_role`); a grant naming `auth.uid()` is
+  refused unless that EXACT grant is already stored — jsonb equality against
+  a stored element, never containment (`@>` read a stored temporary or
+  expired grant minus its `expiresAt` as "already stored", so an Admin could
+  re-issue their own delegation as a standing one — refuted on PG16 and
+  fixed in this pass); and every op is audited in the same transaction
+  (`via: "direct_write"`, `op: insert | update | delete`, `after: null` on a
+  delete). The paste's rule-list inventory reads each row as the parser
+  does, so a non-object `caps` or `data` written before the trigger yields
+  no entries instead of aborting the paste after its COMMIT. Narrowing only
+  — no temp-table inventory needed. Exercised on a throwaway PostgreSQL 16
+  with stub `auth.uid()` and helpers: the paste applies with 7/7 probes
+  true, and the scenarios behave as described — the earlier 24 (the
+  `{caps: {}, "<critical>": <old value>}` write, `caps: []` beside a flat
+  key, the DocCtrl DELETE, both re-key directions, the org move and the
+  mixed list all refused; the legacy flat shape still read; the Admin DELETE
+  audited with `op: delete`) plus the fix-pass set: an Admin's own temporary
+  grant re-written without its expiry, their own expired grant revived, and
+  their own grant extended are refused; re-storing their own grants verbatim
+  beside a grant to someone else, and dropping their own, pass; a brand-new
+  self-grant is refused; a stored non-array `grants` does not trip the scan;
+  `caps: []` and `caps: "x"` are refused while `caps: {}` passes; and with a
+  pre-trigger `caps: []` row and a scalar `data` row present, the paste's
+  tail still returns its 7 probes and 4 counts.
 - **Tests** (`lib/__tests__/sweepRoundE_policyServer.test.ts`): 401/403 for no
   bearer, non-member, non-controller; a headline-Manager / additive-DocCtrl
   saves a non-critical change with CAS + pruning + audit; DocCtrl refused on a
   critical change (403), the default written explicitly is not a change, Admin
-  allowed; server-side validation 400 (bare list and scoped rule); grant /
+  allowed; a DocCtrl's untouched grid round-tripped through the editor's
+  `splitPolicyForEditor` / `joinPolicyFromEditor` (a multi-type clause ahead
+  of the unconditional rule, an entry with no unconditional rule, an opaque
+  unit rule) saves as no change and `tokensFor` answers the same at every
+  probed resource, while a token change, a dropped scoped rule and a swap of
+  two overlapping rules are refused for the DocCtrl and allowed for an Admin;
+  server-side validation 400 (bare list and scoped rule); grant /
   revoke Admin-only, self-grant 403, non-member 400, bad or past expiry 400;
-  a grant replaces the pair and is server-stamped; revoke audited; the INSERT
+  a grant replaces the pair and is server-stamped, and a loose parseable
+  expiry is stored as ISO 8601; revoke audited; the INSERT
   path; 409 on conflict with no audit row; an audit failure surfaced; the
   browser helpers post the three shapes with the bearer and surface the
   server's error; the 20261056 shape (header, service pass, the
@@ -744,11 +784,13 @@ the database.
   rails, the `caps ?? flat` read pinned against `parseStoredCapabilityPolicy`
   on the same inputs and no COALESCE over the flat key, critical list ==
   `CAPABILITY_DEFS critical: true` in order, the rule-list rail with the
-  mixed-list refusal pinned against `normalizeCapabilityEntry`, grants rail,
-  self-grant, audit insert with `op`/`after: null`, the single no-WHEN
-  trigger, one-paste verification with 7 probes incl. the deparsed
-  `INSERT OR DELETE OR UPDATE` order and `tgqual IS NULL`, deparsed-safe
-  probes).
+  mixed-list refusal pinned against `normalizeCapabilityEntry`, the
+  caps-object rail ahead of the entry loop, grants rail, the exact-match
+  self-grant test with no containment operator, audit insert with
+  `op`/`after: null`, the single no-WHEN trigger, one-paste verification with
+  7 probes incl. the deparsed `INSERT OR DELETE OR UPDATE` order,
+  `tgqual IS NULL`, the exact-match and caps-object probes and the
+  parser-faithful inventory read, deparsed-safe probes).
 
 **Done-when.** 1 ✓ — `validateCapabilityPolicy` runs in the route, with
 `supabaseAdmin`, on every policy and grant write. 2 ✓ — critical capabilities
@@ -756,7 +798,10 @@ are Admin's to change on the route and in the trigger, which reads the
 stored shape exactly as the parser does (`caps ?? flat`, never both) and
 covers the moves that erase the row (DELETE: Admin; re-key or org move:
 refused); controller is not enough on any path. 3 ✓ — a self-grant is
-refused on the route and in the trigger, and any grant is Admin-only, so the
+refused on the route (every self-targeted grant or revoke) and in the
+trigger (any grant naming the writer that is not already stored exactly as
+written — a stored temporary or expired delegation cannot be re-issued to
+oneself as a standing one), and any grant is Admin-only, so the
 "View as… → grant yourself `ticket.manage`" path is closed. 4 ✓ — the route
 writes the audit row server-side; a direct INSERT, UPDATE or DELETE is
 audited by the trigger in the same transaction, and the re-key or move that
@@ -777,6 +822,13 @@ every critical entry that can be stored. The inverse UI/DB drift variant
 (headline Manager, additive DocCtrl) is
 closed the other way round: the UI gate reads the collection (`ADD-1`, Round
 C1b) and the route reads it too. Grants stay unscoped (`WF-13` row 6, `WF-16`).
+The route's critical-change comparison is sound, not complete: a DocCtrl save
+that reorders an opaque (unit / library / discipline) rule relative to a
+request-type rule of a critical capability — which the editor's join does
+whenever the stored list had the opaque rule first — is refused as a change,
+because first-match precedence between two rules that can both match one
+resource genuinely changed; that ordering is the editor's, pre-existing, and
+not touched here.
 
 ---
 

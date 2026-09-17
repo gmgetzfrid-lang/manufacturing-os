@@ -31,6 +31,7 @@ import {
   isEngineerRole, isManagementRole, isDocCtrlRole,
 } from "@/lib/workflow";
 import type { Ticket, Role } from "@/types/schema";
+import { splitPolicyForEditor, joinPolicyFromEditor } from "@/components/permissions/CapabilityPolicyEditor";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const mig = (f: string) => readFileSync(join(process.cwd(), "supabase", "migrations", f), "utf8");
@@ -378,6 +379,50 @@ describe("WF-11 — the policy route: who may write, and what", () => {
     expect(updates("org_configurations")).toHaveLength(1);
   });
 
+  it("done-when 2 by semantics, not shape: a DocCtrl's untouched grid round-tripped through the editor's split/join is no change; a token change, a dropped rule or a swap of two overlapping rules still is", async () => {
+    const stored: CapabilityPolicy = { caps: {
+      // a multi-type clause, ordered AHEAD of the unconditional rule
+      "ticket.manage": [{ tokens: ["Admin"], when: { requestType: ["ASBUILT", "REDLINE"] } }, { tokens: ["Admin", "Manager", "Supervisor"] }],
+      // no unconditional rule at all: the base is the shipped default, which the editor writes out
+      "ticket.force_close": [{ tokens: ["Admin", "DocCtrl"], when: { requestType: ["RFI"] } }],
+      // an opaque (unit-scoped) rule the editor cannot render rides along verbatim
+      "checkout.force_release": [{ tokens: ["Admin", "DocCtrl"] }, { tokens: ["Admin"], when: { unit: ["U-100"] } }],
+    }, grants: [] };
+    state.rows.org_configurations = [config(stored)];
+    state.user = { id: "c1" };
+    const s = splitPolicyForEditor(stored);
+    const untouched = joinPolicyFromEditor(s.base, s.overrides, s.opaque);
+    // none of these round-trips byte-identically — a JSON.stringify comparison called each a change
+    expect(JSON.stringify(untouched["ticket.manage"])).not.toBe(JSON.stringify(stored.caps!["ticket.manage"]));
+    expect(JSON.stringify(untouched["ticket.force_close"])).not.toBe(JSON.stringify(stored.caps!["ticket.force_close"]));
+    const ok = await policy({ op: "save", orgId: "o1", caps: untouched });
+    expect(ok.status).toBe(200);
+    const written = ((await ok.json()) as { policy: CapabilityPolicy }).policy;
+    const probes = [null, { requestType: "ASBUILT" }, { requestType: "REDLINE" }, { requestType: "RFI" }, { requestType: "ISO" }, { unit: "U-100" }, { requestType: "ASBUILT", unit: "U-100" }];
+    for (const cap of ["ticket.manage", "ticket.force_close", "ticket.reassign_engineer", "checkout.force_release"] as const) {
+      for (const r of probes) expect(tokensFor(written, cap, r)).toEqual(tokensFor(stored, cap, r));
+    }
+    // a token change inside a scoped rule of a critical capability
+    state.calls = [];
+    const widened = { ...untouched, "ticket.manage": [{ tokens: ["Admin", "Manager", "Supervisor"] }, { tokens: ["Admin", "DocCtrl"], when: { requestType: ["ASBUILT"] } }, { tokens: ["Admin"], when: { requestType: ["REDLINE"] } }] };
+    const r1 = await policy({ op: "save", orgId: "o1", caps: widened });
+    expect(r1.status).toBe(403);
+    expect((await r1.json()).error).toMatch(/Management override/);
+    // dropping a scoped rule
+    expect((await policy({ op: "save", orgId: "o1", caps: { ...untouched, "ticket.manage": [{ tokens: ["Admin", "Manager", "Supervisor"] }] } })).status).toBe(403);
+    // swapping two rules that can both match one resource: first match wins, so the answer for ASBUILT changes
+    const overlapping: CapabilityPolicy = { caps: { "ticket.manage": [{ tokens: ["Admin", "Manager", "Supervisor"] }, { tokens: ["Admin"], when: { requestType: ["ASBUILT"] } }, { tokens: ["Admin", "DocCtrl"], when: { requestType: ["ASBUILT"] } }] } };
+    state.rows.org_configurations = [config(overlapping)];
+    const swapped = { "ticket.manage": [{ tokens: ["Admin", "Manager", "Supervisor"] }, { tokens: ["Admin", "DocCtrl"], when: { requestType: ["ASBUILT"] } }, { tokens: ["Admin"], when: { requestType: ["ASBUILT"] } }] };
+    expect(tokensFor(overlapping, "ticket.manage", { requestType: "ASBUILT" })).toEqual(["Admin"]);
+    expect((await policy({ op: "save", orgId: "o1", caps: swapped })).status).toBe(403);
+    expect(updates("org_configurations")).toHaveLength(0);
+    // the same swap from an Admin passes
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: swapped })).status).toBe(200);
+    expect(updates("org_configurations")).toHaveLength(1);
+  });
+
   it("done-when 1: validateCapabilityPolicy runs on the server — an Admin removing Admin from a critical capability gets 400 and nothing is written", async () => {
     state.user = { id: "a1" };
     const res = await policy({ op: "save", orgId: "o1", caps: { "ticket.force_close": ["Manager"] } });
@@ -428,6 +473,14 @@ describe("WF-11 — the policy route: who may write, and what", () => {
     expect(d.grant).toEqual(g);
     expect(d.pruned).toEqual([STORED.grants![0]]);
     expect(policyAllows(after, "ticket.assign", "Viewer", null, "v1")).toBe(true);
+    // the expiry is stored as ISO 8601 whatever parseable form arrived: the SQL
+    // evaluator casts it ::timestamptz, which does not read every Date.parse form
+    state.calls = [];
+    const loose = await policy({ op: "grant", orgId: "o1", uid: "v1", cap: "ticket.assign", expiresAt: "Sep 17 2099 10:00:00 GMT+0000" });
+    expect(loose.status).toBe(200);
+    const storedGrant = ((await loose.json()) as { policy: CapabilityPolicy }).policy.grants!.find((x) => x.uid === "v1")!;
+    expect(storedGrant.expiresAt).toBe("2099-09-17T10:00:00.000Z");
+    expect((updates("org_configurations")[0].data as CapabilityPolicy).grants!.find((x) => x.uid === "v1")!.expiresAt).toBe("2099-09-17T10:00:00.000Z");
   });
 
   it("revoke removes the pair and names it in the audit row; a first-ever policy is INSERTed", async () => {
@@ -527,7 +580,7 @@ describe("20261056 — the write guard at the database", () => {
     // thing a re-key meets whoever the writer is
     expect(fn.indexOf("cannot be re-keyed or moved")).toBeLessThan(fn.indexOf("IF NOT is_org_controller(v_org) THEN"));
   });
-  it("reads the stored shape exactly as parseStoredCapabilityPolicy does (`caps ?? flat`, never both) — no COALESCE over the flat key", () => {
+  it("reads the stored shape exactly as parseStoredCapabilityPolicy does (`caps ?? flat`, never both) — no COALESCE over the flat key; a present non-object `caps` is refused", () => {
     expect(fn).toContain("v_flat := COALESCE(jsonb_typeof(v_new->'caps'), 'null') = 'null';");
     expect(fn).toContain("v_caps := CASE WHEN v_flat THEN v_new ELSE v_new->'caps' END;");
     expect(fn).toContain("v_old_caps := CASE WHEN COALESCE(jsonb_typeof(v_old->'caps'), 'null') = 'null' THEN v_old ELSE v_old->'caps' END;");
@@ -537,6 +590,10 @@ describe("20261056 — the write guard at the database", () => {
     // a flat critical key beside `caps` is refused, not read either way
     expect(fn).toMatch(/IF NOT v_flat AND v_new \? v_cap THEN\s*\n\s*RAISE EXCEPTION 'A critical capability \(%\) must be stored under caps, not beside it'/);
     expect(fn.indexOf("must be stored under caps")).toBeLessThan(fn.indexOf("v_entry := v_caps->v_cap;"));
+    // a present `caps` that is not an object is refused before any entry is read
+    // (the parser would read "no entries"; the paste's inventory could not read the row)
+    expect(fn).toMatch(/IF NOT v_flat AND jsonb_typeof\(v_new->'caps'\) <> 'object' THEN\s*\n\s*RAISE EXCEPTION 'caps must be an object of capability entries/);
+    expect(fn.indexOf("caps must be an object")).toBeLessThan(fn.indexOf("FOREACH v_cap IN ARRAY"));
   });
   it("the TS rule it mirrors: a present non-null `caps` hides every flat key (whatever its type); only an absent or null `caps` is the flat shape", () => {
     // the write the COALESCE let through: caps {} + the old value as a flat key
@@ -564,11 +621,16 @@ describe("20261056 — the write guard at the database", () => {
     expect(normalizeCapabilityEntry(["Admin", { tokens: ["DocCtrl"] }])).toEqual([{ tokens: ["DocCtrl"] }]);
     expect(normalizeCapabilityEntry(["Admin", "DocCtrl"])).toEqual(["Admin", "DocCtrl"]);
   });
-  it("grants: any change requires Admin; a new grant to auth.uid() is a refused self-grant; the direct write is audited in-transaction with op insert | update | delete", () => {
+  it("grants: any change requires Admin; a grant to auth.uid() is a refused self-grant unless that EXACT grant is already stored (element equality, never containment); the direct write is audited in-transaction with op insert | update | delete", () => {
     expect(fn).toContain("IF COALESCE(v_new->'grants', '[]'::jsonb) IS DISTINCT FROM COALESCE(v_old->'grants', '[]'::jsonb) THEN");
     expect(fn).toMatch(/IF NOT v_admin THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin may grant or revoke a personal permission'/);
     expect(fn).toContain("IF v_grant->>'uid' = auth.uid()::text");
-    expect(fn).toContain("AND NOT (COALESCE(v_old->'grants', '[]'::jsonb) @> jsonb_build_array(v_grant)) THEN");
+    // exact element match: containment (@>) read a stored temporary or expired
+    // grant minus its expiresAt as "already stored", so an Admin could re-issue
+    // their own delegation as a standing one
+    expect(fn).toContain("AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v_old->'grants') = 'array' THEN v_old->'grants' ELSE '[]'::jsonb END) AS o(val)");
+    expect(fn).toContain("WHERE o.val = v_grant) THEN");
+    expect(fn).not.toContain("@> jsonb_build_array");
     expect(fn).toContain("RAISE EXCEPTION 'A personal permission cannot be granted to yourself'");
     expect(fn).toContain("INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)");
     expect(fn).toContain("VALUES ('CAPABILITY_POLICY_CHANGED', 'org_configuration', v_org::text, v_org, auth.uid(), v_email, v_role,");
@@ -604,6 +666,14 @@ describe("20261056 — the write guard at the database", () => {
     expect(tail).toContain("prosrc LIKE '%cannot be re-keyed or moved to another org%'");
     expect(tail).toContain("prosrc LIKE '%must be stored under caps, not beside it%'");
     expect(tail).toContain("prosrc LIKE '%mixes role tokens with rules%'");
+    expect(tail).toContain("prosrc LIKE '%WHERE o.val = v_grant) THEN%'");
+    expect(tail).toContain("prosrc NOT LIKE '%@> jsonb_build_array(v_grant)%'");
+    expect(tail).toContain("prosrc LIKE '%caps must be an object of capability entries%'");
+    // the rule-list inventory reads the row as the parser does; a non-object
+    // `caps` or `data` yields no entries instead of aborting the paste
+    expect(tail).toContain("jsonb_each(CASE WHEN jsonb_typeof(c.data->'caps') = 'object' THEN c.data->'caps'");
+    expect(tail).toContain("WHEN COALESCE(jsonb_typeof(c.data->'caps'), 'null') <> 'null' THEN '{}'::jsonb");
+    expect(tail).not.toContain("jsonb_each(COALESCE(");
     expect(tail).toContain("pg_get_function_identity_arguments(p.oid) = 'p_org uuid, p_roles text[]'");
     expect(tail).toContain("policyname IN ('org_config_cap_policy_insert', 'org_config_cap_policy_update', 'org_config_cap_policy_delete')");
     // pg_policies probes never LIKE a bare cast (deparsed qual/with_check)

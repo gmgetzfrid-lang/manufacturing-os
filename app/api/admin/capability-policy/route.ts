@@ -10,10 +10,12 @@
 //   1. bearer auth; active membership in the org; the controller tier
 //      (Admin / DocCtrl) BY THE ROLE COLLECTION, matching is_org_controller;
 //   2. `save` replaces the role grid only — grants are preserved server-side;
-//      a change to a CRITICAL capability's entry requires Admin;
+//      a change to a CRITICAL capability's entry requires Admin — a change
+//      in what the evaluator would answer, not in the JSON's shape;
 //   3. `grant` / `revoke` change one person's delegation — Admin only, a
-//      self-grant is refused, the target must be an active member, and the
-//      server stamps grantedBy / grantedAt;
+//      self-grant is refused, the target must be an active member, the
+//      expiry is stored as ISO 8601, and the server stamps
+//      grantedBy / grantedAt;
 //   4. validateCapabilityPolicy runs on the RESULT; expired grants are pruned
 //      on every write and the pruning is named in the audit row (WF-16);
 //   5. the write is compare-and-set on the row's updated_at (two concurrent
@@ -31,8 +33,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  CAPABILITY_DEFS, defaultCapabilityPolicy, grantActive, normalizeCapabilityEntry,
-  parseStoredCapabilityPolicy, validateCapabilityPolicy, invalidateCapabilityPolicy,
+  CAPABILITY_DEFS, RESOURCE_KEYS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
+  parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -50,10 +52,33 @@ interface Body {
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
-/** The entry a policy EFFECTIVELY holds for one capability: an absent key is
- *  the shipped default, so writing the default explicitly is not a change. */
-function effectiveEntry(policy: CapabilityPolicy, id: CapabilityId): unknown {
-  return policy.caps?.[id] ?? defaultCapabilityPolicy()[id];
+/** The entry a policy EFFECTIVELY holds for one capability, in a form that
+ *  is equal exactly when the evaluator (tokensFor) would answer the same for
+ *  every resource — not when the JSON is byte-identical. The editor's
+ *  split/join re-emits a stored rule list as [base, one rule per request
+ *  type, ...the rest] (CapabilityPolicyEditor), so a stored multi-type
+ *  clause, a conditional rule ahead of the unconditional one, or an absent
+ *  unconditional rule (the base is the shipped default, which the editor
+ *  writes out) would otherwise read as a change a DocCtrl never made.
+ *  Sound rather than complete: conditional rules keep their relative ORDER
+ *  (first match wins, so swapping two rules that can both match a resource
+ *  IS a change and stays Admin's); a single-key clause with n values becomes
+ *  n consecutive rules (what the editor emits — mutually exclusive, so their
+ *  order is immaterial and kept as listed); token lists and `when` lists are
+ *  sets. An absent key is the shipped default, so writing the default
+ *  explicitly is not a change. */
+function canonicalEntry(policy: CapabilityPolicy, id: CapabilityId): string {
+  const asSet = (xs: readonly string[]) => [...new Set(xs)].sort();
+  const entry = policy.caps?.[id];
+  const base = asSet(baseTokensFor(policy, id));
+  if (!isRuleArray(entry)) return JSON.stringify({ base, rules: [] });
+  const rules = entry.filter(ruleIsConditional).flatMap((r) => {
+    const keys = RESOURCE_KEYS.filter((k) => (r.when?.[k]?.length ?? 0) > 0);
+    const tokens = asSet(r.tokens);
+    if (keys.length === 1) return (r.when?.[keys[0]] ?? []).map((v) => ({ tokens, when: { [keys[0]]: [v] } }));
+    return [{ tokens, when: Object.fromEntries(keys.map((k) => [k, asSet(r.when?.[k] ?? [])])) }];
+  });
+  return JSON.stringify({ base, rules });
 }
 
 export async function POST(req: NextRequest) {
@@ -106,10 +131,11 @@ export async function POST(req: NextRequest) {
     }
     after = { caps, grants: liveGrants };
     // WF-11 done-when 2: a critical capability's entry is Admin's to change —
-    // a DocCtrl controller may edit the rest of the grid.
+    // a DocCtrl controller may edit the rest of the grid. "Change" is what
+    // the evaluator would answer differently, not a different JSON shape.
     const criticalChanged = CAPABILITY_DEFS
       .filter((d) => d.critical)
-      .filter((d) => JSON.stringify(effectiveEntry(before, d.id)) !== JSON.stringify(effectiveEntry(after, d.id)));
+      .filter((d) => canonicalEntry(before, d.id) !== canonicalEntry(after, d.id));
     if (criticalChanged.length > 0 && !isAdmin) {
       return bad(`Only an Admin may change a critical capability (${criticalChanged.map((d) => d.label).join(", ")})`, 403);
     }
@@ -127,9 +153,15 @@ export async function POST(req: NextRequest) {
         .from("org_members").select("uid")
         .eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle();
       if (!target) return bad("The person is not an active member of this workspace", 400);
-      const expiresAt = body.expiresAt == null || body.expiresAt === "" ? null : str(body.expiresAt);
-      if (expiresAt !== null && Number.isNaN(Date.parse(expiresAt))) return bad("The expiry date is invalid", 400);
-      if (expiresAt !== null && Date.parse(expiresAt) <= Date.now()) return bad("The expiry date is in the past", 400);
+      // Stored as ISO 8601: Date.parse accepts forms the SQL evaluator's
+      // ::timestamptz cast does not ("Sep 17 2026 10:00:00 GMT+0000"), and a
+      // stored one of those would make org_capability_allows_for raise for
+      // this person on every holds / force-release check.
+      const rawExpiry = body.expiresAt == null || body.expiresAt === "" ? null : str(body.expiresAt);
+      const expiresMs = rawExpiry === null ? null : Date.parse(rawExpiry);
+      if (expiresMs !== null && Number.isNaN(expiresMs)) return bad("The expiry date is invalid", 400);
+      if (expiresMs !== null && expiresMs <= Date.now()) return bad("The expiry date is in the past", 400);
+      const expiresAt = expiresMs === null ? null : new Date(expiresMs).toISOString();
       const grant: UserGrant = {
         cap, uid, expiresAt, note: str(body.note) || null,
         grantedBy: caller.id, grantedAt: nowIso,

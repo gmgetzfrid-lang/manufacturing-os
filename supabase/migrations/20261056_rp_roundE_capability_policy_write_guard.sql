@@ -22,7 +22,10 @@
 --   * a DELETE of the row requires Admin;
 --   * the entries are read the way parseStoredCapabilityPolicy reads them
 --     (`raw.caps ?? raw`): a present, non-null `caps` holds them, and only
---     an absent or null `caps` is the legacy flat shape — never both. A flat
+--     an absent or null `caps` is the legacy flat shape — never both. A
+--     present `caps` that is not an object is refused (the parser reads an
+--     array or scalar there as "no entries", nothing writes that shape on
+--     purpose, and the inventory below could not read the row). A flat
 --     critical key beside `caps` is refused: the parser cannot see it, but
 --     org_capability_allows_for's COALESCE can, and a COALESCE here let a
 --     non-Admin reset every capability to its default with
@@ -35,8 +38,12 @@
 --     drop the tokens, so 'Admin' among them is not Admin on the list;
 --   * a change to a critical capability's entry, or to `grants` at all,
 --     requires Admin (caller_holds_any_role) — controller is not enough;
---   * a grant naming the writer themself that was not already stored is a
---     SELF-GRANT and is refused;
+--   * a grant naming the writer themself is a SELF-GRANT and is refused
+--     unless that exact grant is already stored — jsonb equality against a
+--     stored element (same cap, uid, expiry, note), never containment,
+--     which would read a stored temporary or expired grant minus its
+--     expiresAt as "already stored" and let the writer re-issue their own
+--     delegation as a standing one;
 --   * the write is AUDITED here (CAPABILITY_POLICY_CHANGED, before/after,
 --     via = 'direct_write', user_id = the writer, op = insert | update |
 --     delete) — a direct PATCH or DELETE cannot skip the row.
@@ -107,13 +114,19 @@ BEGIN
     -- Critical capabilities: a change is Admin's, and Admin stays on EVERY
     -- list (the bare list, or each rule's tokens). The entries are read the
     -- way parseStoredCapabilityPolicy reads them (`raw.caps ?? raw`): a
-    -- present, non-null `caps` holds them — whatever its type; an array or
-    -- scalar there yields no entries, as the parser's indexing does — and
-    -- only an absent or null `caps` is the legacy flat shape. A flat
-    -- critical key BESIDE `caps` is invisible to the parser but visible to
-    -- org_capability_allows_for's COALESCE, so it is refused rather than
-    -- read either way.
+    -- present, non-null `caps` holds them, and only an absent or null
+    -- `caps` is the legacy flat shape. A present `caps` that is not an
+    -- object is refused: the parser's indexing would read an array or
+    -- scalar there as "no entries" (every capability at its default), no
+    -- writer means that, and the inventory below reads the row as an
+    -- object. A flat critical key BESIDE `caps` is invisible to the parser
+    -- but visible to org_capability_allows_for's COALESCE, so it is refused
+    -- rather than read either way.
     v_flat := COALESCE(jsonb_typeof(v_new->'caps'), 'null') = 'null';
+    IF NOT v_flat AND jsonb_typeof(v_new->'caps') <> 'object' THEN
+      RAISE EXCEPTION 'caps must be an object of capability entries (got a JSON %)', jsonb_typeof(v_new->'caps')
+        USING ERRCODE = 'check_violation';
+    END IF;
     v_caps := CASE WHEN v_flat THEN v_new ELSE v_new->'caps' END;
     v_old_caps := CASE WHEN COALESCE(jsonb_typeof(v_old->'caps'), 'null') = 'null' THEN v_old ELSE v_old->'caps' END;
     FOREACH v_cap IN ARRAY ARRAY['ticket.manage', 'ticket.force_close', 'ticket.reassign_engineer', 'checkout.force_release'] LOOP
@@ -150,8 +163,13 @@ BEGIN
       END IF;
     END LOOP;
 
-    -- Grants: any change is Admin's; a grant to oneself that was not already
-    -- stored is refused.
+    -- Grants: any change is Admin's; a grant to oneself is refused unless
+    -- that EXACT grant is already stored — jsonb equality against each
+    -- stored element, never containment (@>), which reads a stored
+    -- temporary or expired grant minus its expiresAt as "already stored"
+    -- and lets the writer re-issue their own delegation as a standing one.
+    -- Re-storing one's own grants verbatim beside a change to someone
+    -- else's passes; dropping one's own is a revocation and passes.
     IF COALESCE(v_new->'grants', '[]'::jsonb) IS DISTINCT FROM COALESCE(v_old->'grants', '[]'::jsonb) THEN
       IF NOT v_admin THEN
         RAISE EXCEPTION 'Only an Admin may grant or revoke a personal permission'
@@ -160,7 +178,8 @@ BEGIN
       IF jsonb_typeof(v_new->'grants') = 'array' THEN
         FOR v_grant IN SELECT jsonb_array_elements(v_new->'grants') LOOP
           IF v_grant->>'uid' = auth.uid()::text
-             AND NOT (COALESCE(v_old->'grants', '[]'::jsonb) @> jsonb_build_array(v_grant)) THEN
+             AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v_old->'grants') = 'array' THEN v_old->'grants' ELSE '[]'::jsonb END) AS o(val)
+                             WHERE o.val = v_grant) THEN
             RAISE EXCEPTION 'A personal permission cannot be granted to yourself'
               USING ERRCODE = 'insufficient_privilege';
           END IF;
@@ -214,17 +233,20 @@ SELECT 'service pass + controller check are in the body',
           FROM pg_proc WHERE proname = 'capability_policy_write_guard'),
        NULL
 UNION ALL
-SELECT 'the four critical ids, the self-grant refusal and the audit insert are in the body',
+SELECT 'the four critical ids, the exact-match self-grant refusal (no containment) and the audit insert are in the body',
        (SELECT prosrc LIKE '%''ticket.manage'', ''ticket.force_close'', ''ticket.reassign_engineer'', ''checkout.force_release''%'
               AND prosrc LIKE '%cannot be granted to yourself%'
+              AND prosrc LIKE '%WHERE o.val = v_grant) THEN%'
+              AND prosrc NOT LIKE '%@> jsonb_build_array(v_grant)%'
               AND prosrc LIKE '%CAPABILITY_POLICY_CHANGED%'
           FROM pg_proc WHERE proname = 'capability_policy_write_guard'),
        NULL
 UNION ALL
-SELECT 'the delete rail, the re-key rail, the caps-shape rail and the mixed-list rail are in the body',
+SELECT 'the delete rail, the re-key rail, the two caps-shape rails and the mixed-list rail are in the body',
        (SELECT prosrc LIKE '%Only an Admin may delete the capability policy%'
               AND prosrc LIKE '%cannot be re-keyed or moved to another org%'
               AND prosrc LIKE '%must be stored under caps, not beside it%'
+              AND prosrc LIKE '%caps must be an object of capability entries%'
               AND prosrc LIKE '%mixes role tokens with rules%'
           FROM pg_proc WHERE proname = 'capability_policy_write_guard'),
        NULL
@@ -256,9 +278,18 @@ UNION ALL
 SELECT 'inventory (deferred from 20261052): stored capability policies', NULL,
        (SELECT COUNT(*) FROM org_configurations WHERE key = 'capability_policy')::text
 UNION ALL
+-- The rule-list count reads each row as parseStoredCapabilityPolicy does:
+-- a present non-null `caps` wins whatever its type (an object yields its
+-- entries, anything else none), and only an absent or null `caps` is the
+-- flat shape, read only when `data` is itself an object. A non-object
+-- there (a row written before the trigger) yields no entries instead of
+-- aborting the paste with "cannot call jsonb_each on a non-object".
 SELECT 'inventory (deferred from 20261052): rule-list entries already stored', NULL,
        (SELECT COUNT(*) FROM org_configurations c,
-               jsonb_each(COALESCE(c.data->'caps', c.data)) e
+               jsonb_each(CASE WHEN jsonb_typeof(c.data->'caps') = 'object' THEN c.data->'caps'
+                               WHEN COALESCE(jsonb_typeof(c.data->'caps'), 'null') <> 'null' THEN '{}'::jsonb
+                               WHEN jsonb_typeof(c.data) = 'object' THEN c.data
+                               ELSE '{}'::jsonb END) e
          WHERE c.key = 'capability_policy'
            AND jsonb_typeof(e.value) = 'array'
            AND jsonb_array_length(e.value) > 0
