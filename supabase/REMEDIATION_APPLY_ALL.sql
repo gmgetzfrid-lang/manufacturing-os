@@ -3,7 +3,7 @@
 -- ============================================================================
 -- This file was the consolidated "safe to RE-RUN" remediation bundle
 -- (push_subscriptions, orphan-table RLS, ACL overlays, controller deletes,
--- org_members escalation guard) and re-created seven authority functions.
+-- org_members escalation guard) and re-created eight authority functions.
 --
 -- It was a SECOND SOURCE OF TRUTH: every statement was CREATE OR REPLACE /
 -- DROP+CREATE, frozen on the day it was written, so a re-run after later

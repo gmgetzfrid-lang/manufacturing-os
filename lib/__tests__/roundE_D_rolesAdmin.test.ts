@@ -479,6 +479,11 @@ describe("DOCACL-3 / DEC-43 — controllers are unscoped by design; a bypass-dec
     const allowDrafter = acl([{ effect: "allow", subject: { type: "role", id: "Drafter" }, actions: ["read"] }]);
     expect(controllerBypassDecided({ principal: P("Admin", ["Admin", "Drafter"]), aclChain: [allowDrafter], ...priv })).toBe(false);
     expect(controllerBypassDecided({ principal: P("Admin", ["Admin", "Requester"]), aclChain: [allowDrafter], ...priv })).toBe(true);
+    // a controller holding NOTHING else is not a Viewer: an ACL granting
+    // role:Viewer does not make the bypass look ACL-served
+    const allowViewer = acl([{ effect: "allow", subject: { type: "role", id: "Viewer" }, actions: ["read"] }]);
+    expect(controllerBypassDecided({ principal: P("Admin"), aclChain: [allowViewer], ...priv })).toBe(true);
+    expect(controllerBypassDecided({ principal: P("Admin", ["Admin", "Viewer"]), aclChain: [allowViewer], ...priv })).toBe(false);
     // not a controller / not restricted / effective owner → false
     expect(controllerBypassDecided({ principal: P("Manager", ["Manager"]), aclChain: [], ...priv })).toBe(false);
     expect(controllerBypassDecided({ principal: P("Admin"), aclChain: [], visibility: "normal" })).toBe(false);

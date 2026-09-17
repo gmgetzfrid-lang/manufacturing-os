@@ -30,11 +30,11 @@ database functions underneath all of it.
 
 ## Findings
 
-**132 findings** — 18 CRITICAL, 45 HIGH, 65 MEDIUM, 4 LOW — plus **15 gap
+**133 findings** — 18 CRITICAL, 45 HIGH, 65 MEDIUM, 5 LOW — plus **15 gap
 specs**, of which 12 are buildable. *(Originally 124; the resolution session
 added `LIFE-15`, `OWN-22`, `DB-8`, `CHAIN-7` in Phase 0 and `EGRESS-7`,
-`EGRESS-8`, `SURF-17`, `SURF-18` in Phase 1, all found while working their
-neighbours.)*
+`EGRESS-8`, `SURF-17`, `SURF-18` in Phase 1, and `SURF-19` in Round E, all found
+while working their neighbours.)*
 
 > **3 findings here carry `Status: REFUTED`** — `DRAFT-4`, `EGRESS-4`, `ROLE-6`. An independent pass disproved them; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue them as work.**
 
@@ -364,7 +364,35 @@ result set, so the rows appearing at all proves the DDL ran). A widening
 migration captures its pre-apply inventory into a temp table inside the same
 script before the DDL, so `DEC-2`'s "inventory before apply" still holds.
 
-Open from `DEC-13`: stage 3 (the engineer gate as a real capability) — next round.
+Open from `DEC-13`: stage 3 (the engineer gate as a real capability) — landed in Round E (package B).
+
+### Round E (2026-09-17) — the fleet: five packages in parallel over the last 28
+
+Five implementers worked disjoint packages in worktrees cut from the same base,
+each followed by an adversarial reviewer and a fix pass (twice where the
+re-review still found a major); the integrator merged the five branches, closed
+the reviewer minors that were still open, and ran the loop once on the merged
+tree (tsc 0, eslint 0, 173 files / 2185 tests, `next build` 0).
+
+| Package | Items | Outcome |
+|---|---|---|
+| A — workflow write paths | `WF-9`, `WF-17`, `WF-18`, `WF-19`, `WF-21`, `WF-24`, `CHAIN-3` | **RESOLVED** — attachments / comment categories / watchers ride the workflow route (compare-and-set, audited); `cancel_request` → `CANCELED` and `NEW` / `PENDING_ENG_INITIAL` retired (`DEC-14`, `DEC-11`); `reassign_drafter` (the button that always 403'd); the assignment pool is told on every (re-)entry to the queue; `reopen_ticket` never re-issues a label (`DEC-15`); ONE management tier (`lib/managementRoles.ts`) and an attention feed derived from the engine (badge = page, matrix-pinned). Migration `20261053` |
+| B — policy server side | `WF-11`, `WF-16`, `DEC-13` stage 3; `WF-10` | **RESOLVED / landed**; `WF-10` **partial** — saves and grants go through `/api/admin/capability-policy` (Admin-only for critical capabilities and any grant, exact-match self-grant refusal, before/after audit) and a database write guard (`20261056`); grant USE is audited on the workflow route and expired grants are swept at save; `ticket.engineer_gate_exempt` makes the engineer gate a real capability, byte-identical by default (`20261057`). `WF-10`'s residual is the 5-second server cache bound on other instances, stated in the record |
+| C — ownership | `OWN-13`, `OWN-16`, `OWN-18`, `OWN-19`, `OWN-20`, `OWN-21`, `OWN-22` | **RESOLVED** — one effective-owner resolver (census-pinned), refused ownership writes surface and never audit/notify, org-subject grants publish everywhere (`20261059`, widening), granted publishers reach supersede / archive / split / merge (`20261060`, widening), on-demand `acl_index` rebuild behind a gated route, dead declarations removed, Save-As libraries born owned with an INSERT rail (`20261061`, `20261062`) |
+| D — roster + admin surfaces | `ROLE-1`…`ROLE-5`, `SURF-9`, `WF-20`, `DOCACL-3` | **RESOLVED** (`DOCACL-3` by decision, `DEC-43`: controllers stay unscoped; a bypass-decided read is audited at the bytes) — the department roles are addressable policy tokens, tiers are labels, the picker shows the full roster, subtracting roles subtract one way; ONE server-enforced admin gate (`lib/adminGate.ts`, `/api/admin/gate`, the admin layout) with `admin.audit_view` as a real capability (`20261063`, widening). The API-route conversion is split off as `SURF-19` |
+| E — database + egress | `DB-7`, `DB-8`, `EGRESS-8` | **RESOLVED** — the authority-function census is a test; the retired remediation bundle is a guarded no-op with a source-of-truth test; share-link tokens are filtered by readability on the server and at the database (`20261066`) |
+
+**Integration notes.** `20261063` re-creates the evaluator from `20261057` (both
+Round E rows, folded at merge — its shape test diffs against `20261057`); the
+five reviewer minors still open after the fix passes were closed here (the
+unread-marker union and member count in the attention feed, the exact-match
+self-grant rail, a no-role sentinel in `controllerBypassDecided`, the ninth
+`OWN-13` call site, two census pins).
+
+**Hand-applied migrations (DEC-30, one paste for the round):** `20261053`,
+`20261056`, `20261057`, `20261059` (widening), `20261060` (widening), `20261061`,
+`20261062`, `20261063` (widening), `20261066` — printed as ONE script whose
+final result set carries every probe and inventory count.
 
 ### Phase 2 — database honesty (the trap phase)
 

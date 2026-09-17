@@ -32,7 +32,7 @@ notifications.
 - **Locations:**
   - `supabase/schema.sql:1050` — the original `CREATE POLICY "org_members_write" ON org_members FOR ALL`
   - `supabase/migrations/20260817_org_members_escalation_and_config.sql:44-53` — **drops it and recreates it as `FOR INSERT` only.** No DELETE policy is ever created, here or anywhere else in the migration set.
-  - `supabase/REMEDIATION_APPLY_ALL.sql:196-202` — the consolidated file does the same
+  - `supabase/REMEDIATION_APPLY_ALL.sql:1-14` — the consolidated file did the same at lines 196–202 of its retired text (since Round E / `DB-8` the file is a guarded no-op stub; the citation is re-pointed at the stub header)
   - `app/(protected)/admin/users/page.tsx:178` — the UI delete, with optimistic local removal
   - `supabase/schema.sql:1013` — RLS is on
 - **Related:** `OWN-12`, `SURF-2`, `SURF-14`

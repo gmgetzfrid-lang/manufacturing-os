@@ -19,7 +19,7 @@ to proceed is a finding.
 - **Blast radius:** ux / adoption
 - **Locations:**
   - `app/(protected)/requests/[id]/page.tsx` — a search for `waiting`, `awaiting`, `next step` or `action required` across the whole 2,077-line page returns **zero hits**
-  - `lib/ticketAttention.ts:115-128` — `attentionLabel`: *"Needs a drafter assigned"*, *"Needs engineer sign-off"*, *"Issue the IFC package"* — plain English, already written
+  - `lib/ticketAttention.ts:95-107` (re-pointed: roles-and-permissions Round E rewrote the file, `WF-24`) — `attentionLabel`: *"Needs a drafter assigned"*, *"Needs engineer sign-off"*, *"Issue the IFC package"* — plain English, already written
   - `hooks/useTicketNotifications.ts:265` — its **only** consumer, as the subtitle in the bell feed
   - `app/(protected)/requests/[id]/page.tsx:1488` — what the ticket page shows instead: `{ticket.status.replace(/_/g, ' ')}`
 - **Related:** `UI-2`, `FRIC-1`
@@ -214,7 +214,7 @@ result is already on screen, and the list does not use it.
 - **Blast radius:** ux
 - **Locations:**
   - `app/(protected)/requests/[id]/page.tsx:1488` — `{ticket.status.replace(/_/g, ' ')}`
-  - `lib/ticketAttention.ts:115-128` — plain-English equivalents exist for every status
+  - `lib/ticketAttention.ts:95-107` (re-pointed: roles-and-permissions Round E rewrote the file, `WF-24`) — plain-English equivalents exist for every status
   - `components/requests/WorkflowDiagramModal.tsx:27` — a second set of plain-English blurbs, also written, also unused outside the modal
 - **Related:** `UI-1`, `UI-2`
 - **Re-verified:** hardening pass — **SURVIVES**. `ticket.status.replace(/_/g, ' ')` is the primary on-screen vocabulary (`requests/[id]/page.tsx:1488`), while the human phrasing in `attentionLabel` (`ticketAttention.ts:115-124`) is used only as a feed subtitle.
@@ -270,7 +270,7 @@ user does not have, and step 4 fails without saying so.
 1. **`components/requests/WorkflowDiagramModal.tsx`** — an honest, complete,
    plain-English map of the process, per status. **The content is right; only its
    placement is wrong** (`UI-2`). Do not remove it while fixing discoverability.
-2. **`attentionLabel`** (`lib/ticketAttention.ts:115-128`) — the correct plain
+2. **`attentionLabel`** (`lib/ticketAttention.ts:95-107` (re-pointed: roles-and-permissions Round E rewrote the file, `WF-24`)) — the correct plain
    phrasing for every state, already written and already used in the bell. `UI-1`
    is about routing it to more surfaces, not rewriting it.
 3. **The sidebar entry** — *"Drafting Requests"*, hinted *"Drafting & design

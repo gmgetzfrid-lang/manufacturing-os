@@ -235,10 +235,15 @@ export function controllerBypassDecided(params: {
   const { principal } = params;
   if (!isControllerPrincipal(principal)) return false;
   const stripped = heldRoles(principal).filter((r) => !isControllerRole(r));
+  // A controller with NO other role is evaluated as holding no role at all —
+  // never as a Viewer, or an ACL that grants role:Viewer would make the
+  // bypass look ACL-served. The sentinel matches no role token; "*" and
+  // uid / team subjects still evaluate as they would for anyone.
+  const NO_ROLE = "__no_role__" as Role;
   const asMember: Principal = {
     ...principal,
-    role: stripped[0] ?? ("Viewer" as Role),
-    roles: stripped.length > 0 ? stripped : ["Viewer" as Role],
+    role: stripped[0] ?? NO_ROLE,
+    roles: stripped.length > 0 ? stripped : [NO_ROLE],
   };
   return !canServeContent({ ...params, principal: asMember });
 }

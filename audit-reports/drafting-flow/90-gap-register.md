@@ -610,7 +610,7 @@ pattern the page already uses twice.
 ### Design
 
 **Almost all of the content already exists.** `attentionLabel`
-(`lib/ticketAttention.ts:115-128`) has the plain-English phrase for every status
+(`lib/ticketAttention.ts:95-107` (re-pointed: roles-and-permissions Round E rewrote the file, `WF-24`)) has the plain-English phrase for every status
 and is currently rendered only in the notification bell. The current holder is
 derivable from `assignedDrafterId` / `assignedEngineerId` / `requesterId` and the
 status. Elapsed time is `last_modified`.

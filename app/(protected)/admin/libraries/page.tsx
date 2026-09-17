@@ -166,7 +166,10 @@ export default function LibraryAdminPage() {
       setEditingLib(null);
     } catch (err) {
       console.error("Failed to save library", err);
-      await appAlert({ message: "Error saving library. Please check your permissions.", tone: "danger" });
+      // OWN-13: a refused ownership write (assignLibraryOwner throws the
+      // writer's own refusal) is shown as itself, not as a generic hint.
+      const why = (err as { message?: unknown } | null)?.message;
+      await appAlert({ message: typeof why === "string" && why ? `Error saving library: ${why}` : "Error saving library. Please check your permissions.", tone: "danger" });
     } finally {
       setSaving(false);
     }

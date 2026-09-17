@@ -85,12 +85,13 @@ describe("WF-23 — org_capability_allows fallback mirrors CAPABILITY_DEFS (the 
     expect(capFn).toMatch(/SECURITY DEFINER SET search_path = public/);
   });
 
-  it("20261038 is HISTORICAL: its 17-row CASE is a strict subset of the live one — nothing changed, only ticket.engineer_gate_exempt was added (20261057)", () => {
+  it("20261038 is HISTORICAL: its 17-row CASE is a strict subset of the live one — nothing changed; Round E added ticket.engineer_gate_exempt (20261057) and admin.audit_view (20261063)", () => {
     const historical = caseDefaults(historicalCapFn);
     expect(historical.size).toBe(17);
     expect(historical.has("ticket.engineer_gate_exempt")).toBe(false);
+    expect(historical.has("admin.audit_view")).toBe(false);
     for (const [cap, tokens] of historical) expect(sqlDefaults.get(cap), cap).toEqual(tokens);
-    expect([...sqlDefaults.keys()].filter((c) => !historical.has(c))).toEqual(["ticket.engineer_gate_exempt"]);
+    expect([...sqlDefaults.keys()].filter((c) => !historical.has(c)).sort()).toEqual(["admin.audit_view", "ticket.engineer_gate_exempt"]);
   });
 });
 

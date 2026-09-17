@@ -2669,7 +2669,7 @@
       "locations": [
         "lib/ticketAttention.ts:84",
         "lib/ticketAttention.ts:106",
-        "lib/ticketAttention.ts:124",
+        "lib/ticketAttention.ts:103",
         "lib/workflow.ts:301",
         "lib/workflow.ts:319",
         "lib/capabilityPolicy.ts:70",
@@ -3082,7 +3082,7 @@
       ],
       "locations": [
         "app/(protected)/requests/[id]/page.tsx",
-        "lib/ticketAttention.ts:115-128",
+        "lib/ticketAttention.ts:95-107",
         "hooks/useTicketNotifications.ts:265",
         "app/(protected)/requests/[id]/page.tsx:1488"
       ],
@@ -3188,7 +3188,7 @@
       ],
       "locations": [
         "app/(protected)/requests/[id]/page.tsx:1488",
-        "lib/ticketAttention.ts:115-128",
+        "lib/ticketAttention.ts:95-107",
         "components/requests/WorkflowDiagramModal.tsx:27"
       ],
       "has_verifier_correction": false,

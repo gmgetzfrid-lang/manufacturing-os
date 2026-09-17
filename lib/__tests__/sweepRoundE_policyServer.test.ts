@@ -220,13 +220,15 @@ describe("20261057 — the SQL default CASE gains the engineer-gate row, byte-fa
     expect(m57).not.toMatch(/DROP FUNCTION/);
     expect(fn57).toMatch(/SECURITY DEFINER SET search_path = public/);
   });
-  it("the CASE mirrors CAPABILITY_DEFS capability-for-capability (18 rows) and still denies unknowns", () => {
+  it("the CASE mirrors CAPABILITY_DEFS capability-for-capability (18 rows as of this migration; 20261063 carries the row forward and adds admin.audit_view) and still denies unknowns", () => {
     const caseBlock = between(fn57, "v_tokens := CASE p_cap", "END;");
     const sqlDefaults = new Map<string, string[]>();
     for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
-    for (const def of CAPABILITY_DEFS) expect(sqlDefaults.get(def.id), def.id).toEqual(def.defaultRoles);
-    expect(sqlDefaults.size).toBe(CAPABILITY_DEFS.length);
-    expect(CAPABILITY_DEFS.length).toBe(18);
+    for (const [id, roles] of sqlDefaults) expect(CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles, id).toEqual(roles);
+    expect(sqlDefaults.size).toBe(18);
+    // the only capability this (superseded) CASE lacks is package D's — the live census is rpPhase4Migration.test.ts
+    expect(CAPABILITY_DEFS.map((d) => d.id).filter((id) => !sqlDefaults.has(id))).toEqual(["admin.audit_view"]);
+    expect(CAPABILITY_DEFS.length).toBe(19);
     expect(caseBlock).toMatch(/ELSE '\[\]'::jsonb/);
   });
   it("one paste: BEGIN/COMMIT around the DDL, then ONE final SELECT of probes (ok boolean) and aggregate counts (n text)", () => {
@@ -746,6 +748,6 @@ describe("WF-16 — grant use is audited on the workflow route", () => {
   it("the audit write stays server-side and carries the authority field (verified-sound item 5)", () => {
     const r = src("app/api/tickets/workflow-action/route.ts");
     expect(r).toContain("const usedGrants = decisiveGrants(ticket, callerRole, caller.id, capPolicy, engineCtx, action.action);");
-    expect(r).toContain("details: { from: ticket.status, to: newStatus, label: action.label, authority },");
+    expect(r).toMatch(/details: \{\s*\n\s*from: ticket\.status, to: newStatus, label: action\.label, authority,/);
   });
 });

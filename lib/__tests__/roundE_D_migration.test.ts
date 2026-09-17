@@ -28,8 +28,9 @@ function lineDiff(a: string, b: string) {
 const ADDED = `      WHEN 'admin.audit_view'         THEN '["Admin","Manager","Supervisor","DocCtrl","Auditor"]'::jsonb`;
 
 describe("20261063 — org_capability_allows_for learns admin.audit_view; audit_logs_admin_trail reads the policy", () => {
-  const fn63 = between(m63, "CREATE OR REPLACE FUNCTION org_capability_allows_for", "-- ── 2. the audit trail overlay reads the policy");
-  const fn57 = between(m57, "CREATE OR REPLACE FUNCTION org_capability_allows_for", "-- The 3-argument entry point every existing policy and trigger calls");
+  const fn63 = m63.slice(m63.indexOf("CREATE OR REPLACE FUNCTION org_capability_allows_for"), m63.indexOf("$$;", m63.indexOf("CREATE OR REPLACE FUNCTION org_capability_allows_for")) + 3) + "\n";
+  // 20261057 does not re-create the wrapper, so its function ends at its own $$;
+  const fn57 = m57.slice(m57.indexOf("CREATE OR REPLACE FUNCTION org_capability_allows_for"), m57.indexOf("$$;", m57.indexOf("CREATE OR REPLACE FUNCTION org_capability_allows_for")) + 3) + "\n";
 
   it("the evaluator body is the 20261057 body (20261052 + the stage-3 row) plus exactly one CASE line — nothing removed, nothing else added", () => {
     const { onlyInA, onlyInB } = lineDiff(fn57.trimEnd(), fn63.trimEnd());

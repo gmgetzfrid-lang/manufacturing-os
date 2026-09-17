@@ -255,6 +255,7 @@ describe("authority-function census (DB-7)", () => {
       expect(fam(kind, key), key).toBe("additive");
       const d = final.get(`${kind} ${key}`)!;
       expect(via(d.body, funnel), `${key} does not read ${funnel}`).toBe(true);
+      expect(d.file.startsWith("migrations/"), `${key} final definition must live in the numbered sequence, not a snapshot: ${d.file}`).toBe(true);
       expect(migrationOf(d.file) >= "20261040", `${key} final definition predates the DEC-2 conversion: ${d.file}`).toBe(true);
     }
     expect(migrationOf(final.get("function node_visible/6")!.file) >= "20261041").toBe(true);
@@ -295,11 +296,20 @@ describe("authority-function census (DB-7)", () => {
     const txt = readFileSync(join(root, "supabase", backfill!), "utf8");
     expect(txt).toMatch(/UPDATE org_members\s+SET roles = ARRAY\[role\]/);
     expect(txt).toMatch(/UPDATE org_members\s+SET roles = roles \|\| ARRAY\[role\]/);
-    // every additive conversion of a DEC-2 site is a later NUMBERED file (schema.sql sorts
-    // after "migrations/" as a string, so filter by prefix, not by string order)
+    // The DEC-2 conversions (20261040, 20261041) replay AFTER the backfill — pinned on
+    // the migration ORDER, not on a filter that presupposes it. (An earlier form filtered
+    // rows to >= 20261040 and then asserted > 20261024, which could never fail.) Additive
+    // bodies that predate the backfill exist and are fine: they reach the collection
+    // through a funnel (is_org_controller, …) whose FINAL body is pinned above, or read
+    // COALESCE(roles, ARRAY[role]) — the funnel pins are where "never denied" is proven.
+    const ordered = migrationFiles().map((f) => f.replace(root + "/supabase/", ""));
+    const at = (prefix: string) => ordered.findIndex((f) => f.startsWith(`migrations/${prefix}`));
+    expect(at("20261024_")).toBeGreaterThanOrEqual(0);
+    expect(at("20261040_")).toBeGreaterThan(at("20261024_"));
+    expect(at("20261041_")).toBeGreaterThan(at("20261040_"));
+    expect(at("20261046_")).toBeGreaterThan(at("20261041_"));
     const converted = rows.filter((r) => r.family === "additive" && r.file.startsWith("migrations/") && migrationOf(r.file) >= "20261040");
     expect(converted.length).toBeGreaterThan(5);
-    for (const r of converted) expect(migrationOf(r.file) > "20261024", r.key).toBe(true);
   });
 
   it("ROLE_RANK is byte-identical (DEC-2: the additive fix, NOT a reorder)", () => {
