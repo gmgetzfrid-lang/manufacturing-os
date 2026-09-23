@@ -19,13 +19,15 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/supabase", () => {
-  function chain() {
+  function chain(table: string) {
     const c: Record<string, unknown> = {};
     const handler: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
         if (prop === "then") {
+          // HLD-1: requestAcks reads document_holds first (lib/holdGate.ts) —
+          // this world has none, so the assignment proceeds.
           return (resolve: (v: unknown) => void) =>
-            resolve({ data: state.existing, error: null });
+            resolve({ data: table === "document_holds" ? [] : state.existing, error: null });
         }
         return (...args: unknown[]) => {
           if (prop === "upsert") {
@@ -38,7 +40,7 @@ vi.mock("@/lib/supabase", () => {
     };
     return new Proxy(c, handler);
   }
-  return { supabase: { from: () => chain() } };
+  return { supabase: { from: (table: string) => chain(table) } };
 });
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn() }));
 vi.mock("@/lib/notify/dispatch", () => ({
