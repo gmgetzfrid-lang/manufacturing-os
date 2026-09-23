@@ -161,7 +161,7 @@ with `my_org_ids()` (schema.sql:1031-1034) returning every org where the caller 
 ## DCK-4 · A failed lock-claim write is reported to the user as "you joined someone else's checkout", leaving an active session on a document that reads as free
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CheckoutFlowModal.tsx:368-381`, `components/documents/CheckoutFlowModal.tsx:383-442`, `lib/checkoutEpisodes.ts:752-778`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: an ACL 'write' deny makes documents_deny_write_guard (RESTRICTIVE FOR UPDATE) filter the row out, so the update returns zero rows and NO error — indistinguishable from losing the CAS race. The join branch returns early (`setProcessing(false); return;`) without calling reconcileDocumentCheckoutState, leaving an active checkout_sessions row on a document whose checked_out_by is still NULL. Precondition (an ACL write-deny on the folder) narrows reachability but the swallowed-error/false-message mechanism is exactly as described.
@@ -192,6 +192,17 @@ components/documents/CheckoutFlowModal.tsx:368-381 — no `error` binding:
 - [ ] On a failed write the session insert is rolled back or the user is told the checkout did not complete, rather than being told they joined
 - [ ] quickHold at lib/checkoutEpisodes.ts:752-764 gets the same treatment — its "held"/"joined" return value carries the same ambiguity
 
+**Resolution (2026-09-23, Round F).** Reproduced against `ba7bfcb`: `components/documents/CheckoutFlowModal.tsx` destructured only `data` from the CAS claim and `lib/checkoutEpisodes.ts` `quickHold` did the same, so a REFUSED write (an ACL write deny under `documents_deny_write_guard`, an RLS filter, a transport error) read as "someone else holds the lock". Fixed at the seam both sites share: `classifyLockClaim(result)` in `lib/checkoutEpisodes.ts` returns `held` / `joined` / `failed` (an error wins over any row), and `abortFailedLockClaim` rolls a failed attempt back — the session row this attempt opened is ended (`status = checked_in`, `released_reason = "Checkout did not complete — the lock claim failed"`, keyed by the inserted id) and the episode this attempt CREATED is sealed as `reconciled` (best-effort; a stray active episode is harmless — the next checkout joins it). Both call sites now read the full `{ data, error }`: on `failed` they roll back and throw `"The checkout did not complete — the lock could not be claimed: <db error>"`, which the modal toasts as "Checkout failed" — no "joined the checkout" thread line, no join notification to the crew, no `CHECK_OUT{joined:true}` audit row, no "Joined an active checkout" toast. A genuine CAS miss (no error, no row) still joins exactly as before. The CAS predicate itself (`checked_out_by IS NULL OR = me`) and the insert-then-reselect episode race path are untouched (Report 01 substrate).
+- Files: `lib/checkoutEpisodes.ts` (`classifyLockClaim`, `abortFailedLockClaim`, `quickHold`), `components/documents/CheckoutFlowModal.tsx`
+- Tests: `lib/__tests__/checkoutRoundF.test.ts` — "DCK-4": the pure verdict; `quickHold` under a refused `documents` UPDATE rolls back `checkout_sessions-2`, seals the episode it opened, posts no "joined", and throws with the database's message; a no-row/no-error claim is still a join.
+
+**Done-when.**
+- ✓ Both call sites destructure `error` and distinguish a CAS miss (no error, no row → `joined`) from a failed write (`failed`).
+- ✓ On a failed write the session insert is rolled back (ended, with the honest reason) AND the user is told the checkout did not complete — never "you joined".
+- ✓ `quickHold` gets the same treatment through the same two helpers; its `"held" | "joined"` return is now derived from the verdict and it throws on `failed`.
+
+**Scope / residual.** The rollback is a second write under the same RLS session; if the session UPDATE is itself refused the throw says so ("could not be rolled back"), and `reconcileDocumentCheckoutState` (the modal's Release Lock repair) heals the remainder. No migration.
+
 ---
 
 <a id="dck-5"></a>
@@ -199,7 +210,7 @@ components/documents/CheckoutFlowModal.tsx:368-381 — no `error` binding:
 ## DCK-5 · Force-release has two surfaces with two different audit behaviours — the Inspector path writes no audit row at all, and the popover path writes the FORCE_RELEASE record before the release is attempted
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CheckoutStatusCell.tsx:191-236`, `components/documents/CheckoutStatusCell.tsx:206-217`, `app/(protected)/documents/[libraryId]/page.tsx:1186-1204`, `components/documents/InspectorPanel.tsx:765-773`, `lib/checkoutEpisodes.ts:602-682`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified. `grep -rn onForceUnlock` shows a single wiring, so there is no second audit-writing path for the Inspector drawer, and the popover's audit row is committed before the release is even attempted — a rejected or partially-failed release still leaves a FORCE_RELEASE record.
@@ -234,6 +245,17 @@ CheckoutStatusCell.tsx:206 writes the audit first (`// 1. Audit Log`) and releas
 - [ ] The confirm dialog collects a reason and it reaches both released_reason and the audit details
 - [ ] The existing CheckoutStatusCell pre-write is removed so the event is not double-logged
 
+**Resolution (2026-09-23, Round F).** Reproduced: `CheckoutStatusCell.handleForceRelease` wrote `FORCE_RELEASE` BEFORE calling `forceReleaseDocument`, and the library page's `handleForceUnlock` (the Inspector's "Force Release Lock") wrote nothing; neither collected a reason. Built on the `force_release_document` RPC that `20261043` (SURF-4) already made the single transactional write — no second write added. `forceReleaseDocument` now takes `actorEmail` / `actorRole` / `reason` and writes the `FORCE_RELEASE` audit row ITSELF, via `logCheckoutEvent`, only after the RPC has confirmed the release for this document — details carry `reason`, `previousHolderId` (from the RPC), `endedSessions`, `releasedUsers` (id + name of every session it ended), `episodeId` and `checkoutNumber`. A refused RPC (or an answer for another document) throws before anything is recorded: no audit row, no thread alert, no episode close, no victim notification. Both surfaces collect the reason with `appPrompt` (required, ≥ 3 characters; the popover and the page each refuse a blank) and pass it to the RPC's `p_reason` (→ `released_reason` on every ended session, `20261043`) and to the audit details, so the register and the audit trail say the same thing. The popover's pre-write is removed; a refusal is shown (`appAlert` on the popover, the page's error strip on the Inspector path) instead of `console.error`.
+- Files: `lib/checkoutEpisodes.ts` (`forceReleaseDocument`), `components/documents/CheckoutStatusCell.tsx`, `app/(protected)/documents/[libraryId]/page.tsx` (`handleForceUnlock`)
+- Tests: `lib/__tests__/checkoutRoundF.test.ts` — "DCK-5": a refused RPC records nothing; a successful RPC is followed by exactly one `FORCE_RELEASE` row (ordered after the RPC in the event timeline) carrying the reason, the holder and the ended sessions, with the same reason on the RPC's `p_reason`; a mismatched answer records nothing. `lib/__tests__/checkoutAffordances.test.ts` pins `lib/checkoutEpisodes.ts` as the ONLY `type: "FORCE_RELEASE"` writer under `app/`, `components/`, `lib/`.
+
+**Done-when.**
+- ✓ `forceReleaseDocument` writes the `FORCE_RELEASE` audit row itself, after the release succeeds; both surfaces record identically and a failed release records nothing.
+- ✓ The confirm dialog collects a reason on both surfaces; it reaches `released_reason` (through the RPC) and the audit details.
+- ✓ The `CheckoutStatusCell` pre-write is removed — one row per force-release.
+
+**Scope / residual.** The modal's own "Release Lock" repair (`reconcileDocumentCheckoutState`) is state repair, not a force-release, and writes no `FORCE_RELEASE` — unchanged. The Inspector's button is now also gated on the `checkout.force_release` capability (DCK-13). No migration.
+
 ---
 
 <a id="dck-6"></a>
@@ -241,7 +263,7 @@ CheckoutStatusCell.tsx:206 writes the audit first (`// 1. Audit Log`) and releas
 ## DCK-6 · The documented DB backstop for the checkout lock does not exist — it was deliberately removed in 20260812 and never replaced, and documentGuards.ts still claims it is there
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/documentGuards.ts:10-18`, `supabase/migrations/20260713_document_publish_guard.sql:60-66`, `supabase/migrations/20260812_per_library_publish_authority.sql:133-146`, `supabase/migrations/20260816_owner_publish_access.sql:32-88`, `supabase/migrations/20260822_review_completion_guard.sql:21-96`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The factual claim is exactly right — I confirmed 20260822 is the newest redefinition and it has no lock branch (the hold branch survives, so the comment is only half-stale). Severity lowered to MEDIUM because the removal was an explicit, documented product decision, not an oversight, and the residual gap is reachable only by someone who already holds library publish authority or effective ownership (the trigger still enforces that) — i.e. exactly the population the app itself lets override the lock via DCK-8's override-with-reason path. What genuinely survives is a defense-in-depth loss plus a misleading source comment.
@@ -274,6 +296,16 @@ Compare 20260713_document_publish_guard.sql:60-66 which had:
 - [ ] lib/documentGuards.ts:10-18 no longer claims a DB trigger enforces the lock, OR the lock check is restored in a new migration that recreates enforce_document_publish_guard() with the 20260822 body plus the checked_out_by test
 - [ ] If restored, the restored check honors the same override semantics the app uses (publisher-with-reason passes, hold never passes) so the override-with-note flow does not start failing at the DB
 
+**Resolution (2026-09-23, Round F).** Verified against `ba7bfcb` (`grep -l enforce_document_publish_guard supabase/migrations`): the newest body is `20261060_rp_roundE_archive_publish_authority.sql` — it checks review completion, per-library publish authority, ownership and holds, and has NO `checked_out_by` branch; the lock is tested at the database only inside the `publish_revision` RPC (`20260828` → `20261040`, `v_doc.checked_out_by <> p_actor` unless `p_override_lock` / controller `p_force`). Taken as the first alternative in the done-when: `lib/documentGuards.ts`'s header no longer claims a defense-in-depth trigger enforces the lock — it now states exactly which rule lives where (hold → trigger; lock → RPC only; trigger lock branch removed on purpose in `20260812` and never restored), so the next reader is not misled. The trigger is deliberately NOT re-created here: `enforce_document_publish_guard` is P4 REVIEW's file this wave (its guard body must start from `20261060`, which is live), and restoring the lock branch would have to honour the override-with-reason semantics the app carries only in `authorizePublish` — that is a design change for the lifecycle/review packages, not a comment fix.
+- Files: `lib/documentGuards.ts` (header comment only; the file is outside this package's plan — reported under `filesOutsidePlan`)
+- Tests: `lib/__tests__/checkoutAffordances.test.ts` pins that the stale claim is gone and the corrected description is present.
+
+**Done-when.**
+- ✓ `lib/documentGuards.ts:10-18` no longer claims a DB trigger enforces the lock (first alternative taken; the lock check is NOT restored in a migration).
+- — Not applicable: the "if restored" override-semantics criterion; nothing was restored. Recorded here so a later package that does restore it knows the constraint: publisher-with-reason must pass, a hold never.
+
+**Scope / residual.** Defense-in-depth for a direct `documents.current_version_id` PATCH by someone who already holds publish authority stays absent at the trigger; the RPC path (every app publish) still refuses. Left for P3/P4 to weigh with the `20261060` body in hand. No migration.
+
 ---
 
 <a id="dck-7"></a>
@@ -281,7 +313,7 @@ Compare 20260713_document_publish_guard.sql:60-66 which had:
 ## DCK-7 · The expiry sweep runs from the browser on every library and /checkouts page load, swallows the rejection when it cannot release other people's sessions, and sends "your checkout auto-released" notifications regardless
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:1032-1122`, `lib/projects.ts:1059-1078`, `lib/projects.ts:1104-1117`, `app/(protected)/checkouts/page.tsx:64`, `app/(protected)/documents/[libraryId]/page.tsx:352-355`, `supabase/migrations/20260901_db_hard_enforcement.sql:109-121`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. All three mechanics confirmed, including that `.in("id", ids)` is one statement so a single guard rejection aborts the batch and the sweeper's own expired hold survives too. Lowered to MEDIUM because the finding's "forever" overstates it: app/api/cron/maintenance/route.ts runs the same sweep nightly with a service-role client, and the guard's first line is `IF auth.uid() IS NULL THEN RETURN NEW; END IF;` — so the stuck sessions and the duplicate notifications are bounded by ≤24h, not permanent.
@@ -310,6 +342,17 @@ and lib/projects.ts:1116: `if (inserts.length > 0) await db.from("notifications"
 - [ ] The client-side sweep either scopes itself to the caller's own sessions (`.eq("user_id", uid)`) or is removed in favour of the cron, so it cannot fail wholesale on other people's rows
 - [ ] The notification insert is driven by the rows the UPDATE actually changed (a `.select()` on the update), not by the pre-update selection
 - [ ] A non-missing-schema sweep error surfaces somewhere a human sees it, rather than console.warn on a page the user is not looking at
+
+**Resolution (2026-09-23, Round F).** Reproduced at `lib/projects.ts` `autoReleaseExpiredAdHoc`: one org-wide batch UPDATE under the RLS client, `console.warn` on refusal, notifications built from the pre-update selection. Fixed on all three limbs. (1) The browser sweep is the CALLER'S OWN: without `opts.client` the function requires `opts.userId` and adds `.eq("user_id", uid)` to the selection — no userId, no sweep (returns 0, touches nothing). The release guard cannot refuse a caller's own session, so the batch can no longer abort wholesale on someone else's row. The cron path (`{ client }`, no org) is unchanged and remains the authoritative enforcer. (2) The UPDATE now RETURNS (`.select("id, document_id, org_id, user_id, library_id")`) and the notifications — and the DCK-9 `CHECK_IN` audit rows — are built only from the rows it actually changed; the LIFE-14 `.is("outcome", null)` rail is preserved (pinned by `lifeSweep2.test.ts`). (3) A sweep write that fails for any reason other than the missing outcome schema THROWS (`"Expired checkouts were NOT released: …"`): `/checkouts` shows it in its error strip, the library page shows it in its page banner (`setError`, replacing the `.catch(() => undefined)`), the cron records it in `result.errors`. Both page callers pass `{ userId: uid }`.
+- Files: `lib/projects.ts` (`autoReleaseExpiredAdHoc`), `app/(protected)/checkouts/page.tsx`, `app/(protected)/documents/[libraryId]/page.tsx`
+- Tests: `lib/__tests__/checkoutRoundF.test.ts` — "DCK-7": no userId → nothing; with a userId the selection is scoped and notifications + audit rows come from the RETURNING rows (a row the UPDATE did not change gets no notice); a refused write throws and notifies nobody; the cron path sweeps every org without a user filter.
+
+**Done-when.**
+- ✓ The client-side sweep scopes itself to the caller's own sessions (`.eq("user_id", uid)`), and does nothing without a caller.
+- ✓ The notification insert is driven by the rows the UPDATE actually changed (RETURNING), not by the pre-update selection.
+- ✓ A non-missing-schema sweep error is thrown and surfaced where a human sees it (page error strip / banner, cron `errors`).
+
+**Scope / residual.** The post-release fan-out (notifications, the DCK-9 audit rows) stays non-blocking — the sessions are already released when it runs, and a failed notice must not re-fail a completed release; it logs. No migration.
 
 ---
 
@@ -354,7 +397,7 @@ lib/revisions.ts:544: `p_override_lock: lockedByOther,`
 ## DCK-9 · Three of the five release paths leave the check-in register blank or write an audit action nothing renders — the "every check-in records what came of it" contract holds only for the modal
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/StaleCheckoutBanner.tsx:75-96`, `lib/projects.ts:388-414`, `lib/projects.ts:1059-1078`, `lib/timeline.ts:256-268`, `app/(protected)/activity/page.tsx:195`, `supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql:18-29`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The load-bearing half is correct: three release paths write no outcome, so the register line is blank, and CHECKOUT_RELEASED has zero readers. Lowered to MEDIUM because "an audit action nothing renders" is overstated — lib/timeline.ts:296 `default: return r.action.replace(/_/g, " ").toLowerCase();` does render it as "checkout released"; the defect is that it is mis-bucketed in the activity pulse, not invisible. Also note lib/projects.ts:1068 (the sweep, one of the cited locations) *does* write `outcome: "auto_released"`, so the count of genuinely-blank paths is stale-banner / project-bulk / force-release.
@@ -386,6 +429,17 @@ lib/timeline.ts:260-268 lists CHECK_OUT / CHECK_IN / DOCUMENT_CHECKOUT / DOCUMEN
 - [ ] releaseAllCheckoutsForProject records an outcome per session and writes a CHECK_IN audit row per document, and stops discarding its update error
 - [ ] The expiry sweep writes a CHECK_IN (or ABANDON) audit row so an auto-release is visible in the document's history, not only in a notification
 
+**Resolution (2026-09-23, Round F).** Reproduced on the three paths the verifier confirmed blank (stale banner, project bulk release, sweep) and the renderers. (a) `components/projects/StaleCheckoutBanner.tsx` releases through `finishMySession` with an explicit register outcome (`all_clear`, "Released from the stale-checkout banner (no changes)") — which also settles the lock/episode (clear, transfer or rebuild) the same way every other surface does — and logs `CHECK_IN` via `logCheckoutEvent` (`details.via = "stale_checkout_banner"`); the unrecognised `CHECKOUT_RELEASED` write and the direct session UPDATE are gone. (b) `releaseAllCheckoutsForProject` (now exported for tests) ends each session with `outcome: "auto_released"` and `outcome_note: <reason>` (the project's state change ended it — nobody chose it; the existing "Auto-released" register label plus the note, no new vocabulary), writes one `CHECK_IN` audit row per document naming every session it ended (`details.releasedSessions`, `via: "project_release"`, `projectId`, `reason`), and its write is CHECKED: a refusal throws (`"The project's active checkouts were NOT released: …"`); `transitionProjectStatus` still notifies the audience of the status change and then re-throws that refusal, so a Manager who cannot release another user's session (the release guard) is told instead of believing it happened. (c) The expiry sweep writes a `CHECK_IN` row per released session (`outcome: "auto_released"`; under the RLS client `user_id` is the caller — the `audit_logs_insert` policy requires `user_id = auth.uid()` — and under the cron `user_id` is NULL with `user_email: "system"`, the holder named in `details.releasedUserId`). Renderers: legacy `CHECKOUT_RELEASED` rows now read "Checked in (released from the stale-checkout banner)" in `lib/timeline.ts`, count in the activity pulse's lock bucket (`app/(protected)/activity/page.tsx:195`) and carry a chip in `/admin/audit`; an auto-released `CHECK_IN` reads "Checked in (auto-released)".
+- Files: `components/projects/StaleCheckoutBanner.tsx`, `lib/projects.ts` (`releaseAllCheckoutsForProject`, `transitionProjectStatus`, `autoReleaseExpiredAdHoc`), `lib/timeline.ts`, `app/(protected)/activity/page.tsx`, `app/(protected)/admin/audit/page.tsx` (one map entry; outside this package's plan)
+- Tests: `lib/__tests__/checkoutRoundF.test.ts` — "DCK-9" (outcome + note, one `CHECK_IN` per document with the session list, refusal thrown with no audit row, nothing active → 0) and the sweep's audit rows under "DCK-7"; `lib/__tests__/timelineHolds.test.ts` — the banner writes through `finishMySession` with `all_clear` + `CHECK_IN`, no `action: "CHECKOUT_RELEASED"` writer remains anywhere under `app/`, `components/`, `lib/`, and the renderer maps.
+
+**Done-when.**
+- ✓ The stale banner releases through `finishMySession` with `all_clear` and logs `CHECK_IN`; `CHECKOUT_RELEASED` is no longer written.
+- ✓ `releaseAllCheckoutsForProject` records an outcome per session, writes a `CHECK_IN` per document, and no longer discards its update error.
+- ✓ The expiry sweep writes a `CHECK_IN` row per auto-released session, visible in the document's history.
+
+**Scope / residual.** The project release is still ONE batch statement: for an actor without `checkout.force_release` a refusal on any other user's session refuses the whole batch — now loudly. Splitting it per session (own sessions first) is a wave-2 nicety, not a correctness gap. No migration.
+
 ---
 
 <a id="dck-10"></a>
@@ -393,7 +447,7 @@ lib/timeline.ts:260-268 lists CHECK_OUT / CHECK_IN / DOCUMENT_CHECKOUT / DOCUMEN
 ## DCK-10 · forceReleaseDocument ignores the error from the session-ending write, then clears the lock unconditionally — a rejected force-release still frees the document while every session stays active
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checkoutEpisodes.ts:602-682`, `lib/checkoutEpisodes.ts:616-626`, `lib/checkoutEpisodes.ts:630-640`, `supabase/migrations/20260901_db_hard_enforcement.sql:109-121`, `components/documents/CheckoutStatusCell.tsx:238`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified the documents UPDATE is not itself blocked: documents_org_access permits any org member, documents_deny_write_guard only bites on ACL denies, and neither trg_document_publish_guard (current_version_id/status only) nor documents_guard_access (visibility/acl only) fires on lock columns. So the sessions stay active while the lock is cleared. The premise also holds — capabilityPolicy.ts:89-91 marks checkout.force_release critical (Admin unremovable) but DocCtrl can be narrowed out, while CheckoutStatusCell.tsx:238 still shows the button on a hardcoded role check.
@@ -426,6 +480,17 @@ followed immediately at 630-640 by the unconditional documents clear.
 - [ ] The document clear is ordered after (and conditional on) the session write succeeding, or the whole operation moves into a single RPC
 - [ ] The force-release UI gate reads the same checkout.force_release capability the DB enforces instead of a hardcoded role pair
 
+**Resolution (2026-09-23, Round F — record-only close; this id was assigned to no Round F package, and its residual is the DCK-13 line the plan names).** Verified against `ba7bfcb`, no code beyond DCK-13's. The code defect no longer reproduces: roles-and-permissions `SURF-4` (migration `20261043`, **applied & verified live**) replaced the two split writes with the `force_release_document` RPC — the session close and the lock clear are ONE transaction, the release guard fires inside it, and `lib/checkoutEpisodes.ts` `forceReleaseDocument` reads `{ data, error }` from the RPC and THROWS (`"Force release was refused — the lock was NOT cleared: …"`) before any episode close, thread alert or notification; a refusal leaves both the sessions and the lock exactly as they were. The UI-gate half — the hardcoded `Admin`/`DocCtrl` pair on `CheckoutStatusCell.tsx` that showed the button to people the database then refused — closes with `DCK-13` this round: the button is drawn from `policyAllows(policy, "checkout.force_release", …)` (`lib/checkoutAffordances.ts`, `useForceReleaseAllowed`), and `DCK-5` makes a refusal visible (`appAlert` / page error) with nothing recorded.
+- Resolved by: `SURF-4` (`20261043`) for the write ordering; `DCK-13` for the gate; `DCK-5` for the surfaced refusal.
+- Tests: `lib/__tests__/checkoutRoundF.test.ts` "DCK-5" (a refused RPC records nothing and throws); `lib/__tests__/checkoutAffordances.test.ts` (the gate follows the policy: narrowing hides, widening shows, grants light).
+
+**Done-when.**
+- ✓ The session-ending update's error is checked and thrown before any documents column is touched — the RPC is one transaction; the app throws on its error.
+- ✓ The document clear is conditional on the session write succeeding — the whole operation moved into a single RPC (`20261043`).
+- ✓ The force-release UI gate reads the `checkout.force_release` capability the DB enforces (DCK-13).
+
+**Scope / residual.** None. No migration beyond `20261043` (live).
+
 ---
 
 <a id="dck-11"></a>
@@ -433,7 +498,7 @@ followed immediately at 630-640 by the unconditional documents clear.
 ## DCK-11 · A single undefined-column error anywhere in the checkout path permanently disables episodes for the whole process, silently detaching new sessions and thread messages from the register
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/checkoutEpisodes.ts:130-142`, `lib/checkoutEpisodes.ts:155-168`, `lib/checkoutEpisodes.ts:380-392`, `lib/checkoutEpisodes.ts:206`, `lib/checkoutEpisodes.ts:264`, `app/api/cron/maintenance/route.ts:27`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the flag is a process/tab-lifetime latch with no production reset path, and the error classifier is over-broad (a bare 42703/PGRST204 for any column trips it). After it flips, ensureActiveEpisode returns null, new sessions get no episode_id and postEpisodeSystemMessage drops the episode tag, silently detaching everything from the register.
@@ -467,6 +532,17 @@ let episodeSchemaMissing = false;
 - [ ] The flag is scoped per client/request rather than per module, or is time-boxed so it re-probes instead of latching for the process lifetime
 - [ ] Flipping the flag emits something visible (a console.error plus a one-time toast or server log) rather than degrading silently
 
+**Resolution (2026-09-23, Round F).** Reproduced: `isMissingEpisodeSchema` short-circuited on a bare `42P01 / 42703 / PGRST204 / PGRST205`, and `episodeSchemaMissing` was a module-scope boolean with no production reset. Both halves fixed in `lib/checkoutEpisodes.ts`. The classifier now REQUIRES the message to name the episode schema (`checkout_episodes` or `episode_id`) before a code — or a schema-cache phrase — counts; Postgres and PostgREST both name the missing object, so a genuine pre-migration error still classifies while a `PGRST204` for `checkout_messages.kind` no longer does (it is thrown, as it should be). The latch is TIME-BOXED: `EPISODE_SCHEMA_RECHECK_MS` (5 min) — after the window every helper re-probes, so a transient misclassification can no longer detach a whole browser tab's or server process's sessions and thread messages from the register for its lifetime; a genuinely pre-migration environment simply re-latches every few minutes at the cost of one failed query. Flipping is LOUD: the first flip of each window logs `console.error("[checkoutEpisodes] episode schema unavailable — …", cause)` — the server log / browser console says why sessions stopped being episode-tagged. `resetEpisodeSchemaFlag` / `episodeSchemaIsMissing` keep their contracts (the modal's `episodesSupported` read is unchanged).
+- Files: `lib/checkoutEpisodes.ts`
+- Tests: `lib/__tests__/checkoutEpisodes.test.ts` (the classifier: named errors classify, bare or unrelated codes do not — the old "bare code → true" expectations were rewritten, which is the failing-before/passing-after evidence); `lib/__tests__/checkoutRoundF.test.ts` — "DCK-11": latches on a real `42P01` naming `checkout_episodes`, logs once, skips the query while latched, re-probes after the window (fake timers); an unrelated `42703` throws and does not latch.
+
+**Done-when.**
+- ✓ The bare-code short-circuit is removed: a code match must also name `checkout_episodes` / `episode_id`.
+- ✓ The flag is time-boxed and re-probes instead of latching for the process lifetime. (It is still module-scoped rather than per-request — the window bounds the blast radius to five minutes per process; a per-client flag would need every helper to thread a client through and is not what the failure needed.)
+- ✓ Flipping emits a `console.error` with the cause (server log / browser console). No toast: the flip happens inside lib helpers with no UI in hand, and the modal already shows the "episodes unsupported" state.
+
+**Scope / residual.** `isMissingOutcomeSchema` keeps its bare-code shape — it does not latch anything; it retries the same write without the outcome columns — so it is outside this finding (DEC-31). No migration.
+
 ---
 
 <a id="dck-12"></a>
@@ -474,7 +550,7 @@ let episodeSchemaMissing = false;
 ## DCK-12 · The check-in outcome register — the walkdown attestation trail the MOC gate feeds — has exactly one reader and answers none of the questions its migration was written for
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261012_doc_class_and_checkin_outcomes.sql:47-51`, `components/documents/CheckoutHistoryPanel.tsx:148-151`, `components/documents/CheckInPanel.tsx:337-349`, `lib/checkinOutcomes.ts:110-120`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. No query in the tree filters or orders by `outcome`, so the index built for "who last verified this?" has no user; outcome_ref is write-only. The only nuance: lib/projectExport.ts:41 and lib/inbox.ts:144 do `select("*")` on checkout_sessions, so the columns leave the system in a raw project dump — neither reads or renders them, which does not change the finding.
@@ -503,6 +579,17 @@ The only consumer, components/documents/CheckoutHistoryPanel.tsx:150: `outcome: 
 - [ ] FIELD_VERIFIED is added to the audit renderer maps (timeline.ts summarizeAudit, admin/audit ACTION_META, TimelineFeed) so the attestation is legible in the history it is written to
 - [ ] Either the index earns its keep through a real reader, or it and the parallel audit write are consolidated to one record
 
+**Resolution (2026-09-23, Round F).** Verified against `ba7bfcb` before touching anything: the reader the index was built for now EXISTS — `components/documents/CheckoutHistoryPanel.tsx` queries `checkout_sessions … .eq("document_id") .in("outcome", ["field_verified","discrepancy"]) .order("ended_at")` (the exact shape `checkout_sessions_outcome_idx` serves) and renders "Last field-verified against Rev N on <date> by <who>" — or "superseded by a field discrepancy reported by …" — as a strip ABOVE the collapsed Checkout History header inside the Inspector's checkout section, i.e. where the drawing is looked at, without expanding any episode (landed with the LIFE-* register work; this round records it against this finding). What was still missing was legibility of the parallel `FIELD_VERIFIED` audit row, and that is fixed: `lib/timeline.ts` `summarizeAudit` renders it as "Field verified against Rev N"; the activity pulse counts it as a lock event (`app/(protected)/activity/page.tsx:195`); `/admin/audit`'s chip map (`ACTION_STYLE`) and `components/documents/TimelineFeed.tsx`'s icon map carry it. The audit row and the session outcome are deliberately NOT consolidated: the session row is the register (queryable per document/outcome through the index), the audit row is the immutable attestation event in the org-level trail; each now has a real reader.
+- Files: `lib/timeline.ts`, `app/(protected)/activity/page.tsx`, `app/(protected)/admin/audit/page.tsx` and `components/documents/TimelineFeed.tsx` (one map entry each; both outside this package's plan — reported)
+- Tests: `lib/__tests__/timelineHolds.test.ts` — `summarizeAudit` for `FIELD_VERIFIED` with and without a rev; the activity bucket, the admin chip map and the TimelineFeed case are pinned by source.
+
+**Done-when.**
+- ✓ A query reads the index as intended (last `field_verified` per document with rev and date) and is surfaced on the document (the strip above Checkout History in the Inspector), not only inside an expanded episode — verified present at `CheckoutHistoryPanel.tsx` (`fieldVerification`).
+- ✓ `FIELD_VERIFIED` is in every audit renderer map (`timeline.ts` `summarizeAudit`, `/admin/audit` `ACTION_STYLE`, `TimelineFeed`, and the activity pulse bucket).
+- ✓ The index earns its keep through that reader; the two records are kept (register vs. attestation event), each with a consumer.
+
+**Scope / residual.** No cross-document "last verified" report/register column exists yet (the per-document strip answers the question at the drawing); an org-wide PSI-accuracy report is a build item, not this finding. No migration.
+
 ---
 
 <a id="dck-13"></a>
@@ -510,7 +597,7 @@ The only consumer, components/documents/CheckoutHistoryPanel.tsx:150: `outcome: 
 ## DCK-13 · The checkout.force_release capability is defined, editable and DB-enforced, but no checkout surface reads it — the buttons are gated on hardcoded ["Admin","DocCtrl"]
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:41`, `lib/capabilityPolicy.ts:89-91`, `supabase/migrations/20260901_db_hard_enforcement.sql:109-121`, `components/documents/CheckoutStatusCell.tsx:238`, `components/documents/InspectorPanel.tsx:156`, `lib/documentGuards.ts:61`, `lib/holds.ts:88-101`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contrast the finding draws is real: lib/holds.ts:86-105 has assertHoldCapability calling `policyAllows(policy, cap, role, extra, uid)` for holds.open/holds.release, so the pattern exists and was simply never applied to the checkout surfaces. Both the widening (delegation inert) and narrowing (button still shown, DB rejects — which is DCK-10's swallowed error) failures follow directly.
@@ -536,6 +623,17 @@ and lib/holds.ts:88-101, which shows the pattern the checkout surfaces should fo
 - [ ] The predicate honours additive roles[] the way is_org_controller does, so UI and DB agree on who is a controller
 - [ ] lib/documentGuards.ts:61's CONTROLLER_ROLES set is sourced from the same vocabulary rather than a literal in application code
 
+**Resolution (2026-09-23, Round F).** Reproduced: `CheckoutStatusCell.tsx` gated Force Release on the literal pair (OWN-3 had widened it to the collection, still a literal), `InspectorPanel.tsx` on `holdsAny(['Admin','DocCtrl'])`, `lib/documentGuards.ts` carried its own `CONTROLLER_ROLES` set. Fixed with the evaluator `lib/holds.ts` already uses: new pure `lib/checkoutAffordances.ts` — `canForceReleaseCheckout(policy, role, roles, uid)` = `policyAllows(policy, "checkout.force_release", …)` (role tokens, the additive `roles[]`, live per-person grants; a not-yet-loaded policy evaluates the shipped default, byte-identical to the old pair for an unconfigured org) and `holdAffordances` for the HLD-8 half. `CheckoutStatusCell` exports `useForceReleaseAllowed(orgId, role, roles, uid)` (loads the org policy through the browser-cached `loadCapabilityPolicy`, keyed by org) and draws "Admin Force Release" from it; `InspectorPanel` draws "Force Release Lock" from the same hook. Widening (a Drafting Supervisor delegated `checkout.force_release`, or a personal grant) now shows the button; narrowing (`[Admin]`) hides it from every DocCtrl the database would refuse — the silent half-release of DCK-10 can no longer be reached from the UI. `lib/documentGuards.ts` `isControllerRoleName` is sourced from `lib/permissions.ts` `isControllerRole` (the mirror of `is_org_controller`); the literal set is gone.
+- Files: `lib/checkoutAffordances.ts` (new), `components/documents/CheckoutStatusCell.tsx`, `components/documents/InspectorPanel.tsx`, `lib/documentGuards.ts` (outside this package's plan — reported)
+- Tests: `lib/__tests__/checkoutAffordances.test.ts` — defaults, the additive collection, narrowing, widening, a personal grant (live and expired), `isControllerRoleName ≡ isControllerRole` for every role, and source pins that the two surfaces gate on the capability and no literal pair remains.
+
+**Done-when.**
+- ✓ `CheckoutStatusCell` and `InspectorPanel` gate the force-release button on `policyAllows(policy, "checkout.force_release", …)` — the evaluator `holds.ts` uses.
+- ✓ The predicate honours additive `roles[]` (and grants) the way `is_org_controller` / `org_capability_allows` do.
+- ✓ `lib/documentGuards.ts`'s controller set is sourced from `lib/permissions.ts` rather than a literal.
+
+**Scope / residual.** The policy is read once per org per minute in the browser (WF-10); authority is decided by the database either way — the button is drawn from the same answer the trigger gives. DCK-10's residual (the same line) closes with this. No migration.
+
 ---
 
 <a id="dck-14"></a>
@@ -543,7 +641,7 @@ and lib/holds.ts:88-101, which shows the pattern the checkout surfaces should fo
 ## DCK-14 · checkout_episodes is updatable by any active org member, so a "sealed history record" can be rewritten or reopened, and a check-in race can seal an episode that still has live sessions
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260729_checkout_episodes.sql:85-92`, `supabase/schema.sql:1103-1104`, `lib/checkoutEpisodes.ts:334-355`, `lib/checkoutEpisodes.ts:485-539`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves hold. The RLS gap lets any active member PATCH a closed episode's status/close_reason/closed_by — the 'sealed record' has no immutability at the DB. And the race is asymmetric exactly as described: the documents update is protected by a CAS filter, the episode close is not, so an episode can be sealed 'checked_in' while a newcomer's session is still active on the same document.
@@ -569,5 +667,17 @@ lib/checkoutEpisodes.ts:525-533 — closeEpisode runs even when the guarded docu
 - [ ] A closed episode is immutable to non-service-role writers: a RESTRICTIVE policy or trigger rejects UPDATE when OLD.status = 'closed'
 - [ ] closeEpisode is conditional on the same evidence the documents clear is conditional on — e.g. it re-reads active sessions inside the close, or the close and the lock clear move into one RPC
 - [ ] A close that finds live sessions reconciles instead of sealing
+
+**Resolution (2026-09-23, Round F).** Reproduced both halves: `checkout_episodes_org_update` is `FOR UPDATE USING (member)` with no column restriction, and `finishMySession`'s close branch sealed on a session list that predates its own writes. DATABASE — migration `20261075_dc_roundF_checkout_episode_seal.sql` installs `trg_checkout_episode_guard` (`enforce_checkout_episode_guard`, BEFORE UPDATE, SECURITY DEFINER, `SET search_path = public`; a GUARD in the 20261029 shape, not a policy change, so a collaborator, a force-release or the sweep may still close an episode someone else opened): (1) `OLD.status = 'closed'` → refused for every signed-in writer — a sealed record cannot be rewritten or reopened; (2) `active → closed` while a `checkout_sessions` row with `episode_id = OLD.id` is still active → refused ("still has active sessions and cannot be sealed"); the service role passes (`auth.uid() IS NULL`), the seam every checkout guard uses. Not a widening; the inventory (aggregate, captured before the DDL) counts the residue the rail now prevents. APP — `closeEpisode` re-reads the episode's own active sessions inside the close, before the write, and returns `"closed" | "live_sessions" | "skipped"`; the database refusal text is matched (`EPISODE_LIVE_SESSIONS_RAIL`, pinned against the migration) and treated as the same verdict. `finishMySession` no longer seals over a racer: on `live_sessions` it runs `reconcileDocumentCheckoutState` (which hands the lock to the newcomer the guarded documents clear correctly left alone, or rebuilds the collaborator list) and posts "… checked in — someone else joined meanwhile, so the checkout stays open" instead of "checkout closed"; `episodeClosed` is only true when the seal happened. `forceReleaseDocument`, the sweep, `reconcileDocumentCheckoutState` and the DCK-4 rollback all go through the same guarded close.
+- Files: `supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql`, `lib/checkoutEpisodes.ts` (`closeEpisode`, `finishMySession`)
+- Tests: `lib/__tests__/checkoutRoundF.test.ts` — "DCK-14": last-one-out seals; a session that joined after the closer's fetch is NOT sealed over (no episode write, the lock is settled to the newcomer, the thread says the checkout stays open); the database rail's refusal reconciles instead of throwing; any other refusal still throws. `lib/__tests__/dcRoundFCheckoutMigration.test.ts` — the guard's two refusals, the service pass, the search_path pin, the one-result-set protocol (TEMP TABLE inventory before `BEGIN`, a single final `SELECT` of `(check, ok, n)`), the app/migration refusal-text lock-step, and that this file is the only definer.
+- **Pending migration:** `supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql` — the code half is live on the branch; done-when 1 holds only once the SQL is applied (DEC-30). The app half is safe on a pre-migration database (the re-read alone catches the race short of a same-instant join).
+
+**Done-when.**
+- ✓ A closed episode is immutable to non-service-role writers (trigger; pending apply).
+- ✓ `closeEpisode` is conditional on the same evidence the documents clear is conditional on — it re-reads active sessions inside the close, and the database refuses the seal on the same fact.
+- ✓ A close that finds live sessions reconciles (lock settled from the live rows, honest thread line) instead of sealing.
+
+**Scope / residual.** The close and the lock clear remain two statements (the "single RPC" alternative was not taken — the trigger closes the gap the RPC would have closed, without moving the transfer/rebuild logic out of the tested pure core). `checkout_episodes_org_update`'s breadth is untouched by design; the guard restricts only what the finding named.
 
 ---

@@ -257,6 +257,16 @@ components/documents/InspectorPanel.tsx:132-133 — `const canManageAssets = act
 - [ ] The hold queue link becomes /documents/{libraryId}?doc={documentId}, matching the notification link
 - [ ] A test asserts that a user holding only a UserGrant for holds.release sees the Release control
 
+**Partial (2026-09-23, Round F — P6 CHECKOUT, the checkout half: `InspectorPanel`).** Reproduced at `components/documents/InspectorPanel.tsx` (`canManageAssets` — a literal role list with an `includes('Engineer')` substring — gating `HoldStrip`'s `canEdit` and the place-first-hold section; `isController` gating Force Release). The Inspector now derives all three from the org's capability policy through the same evaluator `lib/holds.ts` uses: `holdAffordances(policy, role, roles, uid)` (`lib/checkoutAffordances.ts`, pure — `policyAllows` on `holds.open` / `holds.release`: role tokens, the additive `roles[]`, live per-person grants) feeds `canEdit={canOpenHold || canReleaseHold}` on the active-holds strip and `canOpenHold` on the place-first-hold section; `useForceReleaseAllowed` (DCK-13) feeds Force Release. A `UserGrant` for `holds.release` — the delegation the hold error text invites — now lights the Release control for that person; a role an admin widened `holds.open` to now sees the place-hold section; a narrowed policy hides what the database (`document_holds_update`, `assertHoldCapability`) would refuse. Ownership is deliberately no longer an input to the hold affordances: the DB policy and `assertHoldCapability` gate the write on the capability alone, so an owner outside the policy would be shown a control the write then refuses (with the shipped `"*"` default every member — owner included — still qualifies). Until the policy loads, the shipped defaults apply (identical to today for an unconfigured org).
+- Files: `components/documents/InspectorPanel.tsx`, `lib/checkoutAffordances.ts` (new)
+- Tests: `lib/__tests__/checkoutAffordances.test.ts` — a user holding ONLY a `UserGrant` for `holds.release` gets `canRelease: true` (and a stranger does not); a role outside the old literal lists but inside the policy is admitted; source pins that the Inspector's `HoldStrip` and place-hold section are gated on `canOpenHold` / `canReleaseHold` and no longer on `canManageAssets || isOwner`.
+- Left to P5 HOLDS (the holds half, per the Round F plan): `app/(protected)/admin/holds/page.tsx` (`ADMIN_ROLES` → policy; the `?doc=` deep link) and `components/documents/HoldStrip.tsx`. The status flips to RESOLVED when that half lands.
+
+**Done-when (checkout half).**
+- ◐ Both hold surfaces derive canOpen/canRelease from `loadCapabilityPolicy` + `policyAllows` — the Inspector does; the hold queue page is P5's.
+- — The hold queue link (`/documents/{libraryId}?doc={documentId}`) — P5's file.
+- ✓ A test asserts that a user holding only a `UserGrant` for `holds.release` sees the Release control (predicate level: `holdAffordances` → `canRelease: true`, wired to `HoldStrip`'s `canEdit` by pinned source).
+
 ---
 
 <a id="hld-9"></a>
@@ -322,7 +332,7 @@ lib/holds.ts:186 — `released_reason: input.releasedReason?.trim() || null,`  �
 ## HLD-11 · The document timeline discards the HOLD_OPENED / HOLD_RELEASED audit rows in favour of the mutable document_holds rows, so deleting or editing a hold row erases the hold from the document's visible history
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/timeline.ts:346-357`, `lib/timeline.ts:464-470`, `lib/timeline.ts:124-169`, `supabase/migrations/20260901_db_hard_enforcement.sql:103-105`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the timeline's only hold source is the mutable row, and the immutable audit twin is filtered out unconditionally. Partial mitigation the finding does not mention — the discarded HOLD_OPENED/HOLD_RELEASED audit rows still render in /admin/audit (page.tsx:69) and /activity (page.tsx:51), so the fact is recoverable org-wide, just not on the document's own timeline. MEDIUM still fits.
@@ -344,6 +354,17 @@ lib/timeline.ts:346-352 — `// Holds and the matching HOLD_OPENED / HOLD_RELEAS
 - [ ] The dedup keys on holdId (audit details.holdId ↔ document_holds.id) rather than on action name, so an audit row with no surviving hold row is still rendered
 - [ ] A HOLD_OPENED audit row whose hold row is gone renders as an explicit "hold record removed" event
 - [ ] released_reason is surfaced in the release event's summary line, not only in details
+
+**Resolution (2026-09-23, Round F).** Reproduced at `lib/timeline.ts` (both builders: `.filter((r) => r.action !== "HOLD_OPENED" && r.action !== "HOLD_RELEASED")`). Replaced with a pure `mergeHoldHistory(auditRows, holdRows)` used by `getDocumentTimeline` and the project timeline: the dedup keys on the HOLD ID (`audit.details.holdId` ↔ `document_holds.id`, which `logHoldEvent` has always written). An audit row whose hold row survives is dropped (the richer row renders it, as before); an audit row whose hold row is GONE renders — in the hold lane (`kind: "hold"`), as an explicit `HOLD_RECORD_REMOVED` event ("Hold opened — <reason> — hold record removed (the audit row is the only surviving evidence)" / "Hold released — <reason> — "<released reason>" — hold record removed"), keeping the audit twin's actor and carrying `originalAction` + `holdRecordRemoved: true` in details; an audit row with no `holdId` cannot be correlated and is kept as an ordinary audit event rather than dropped. `released_reason` is now in the release event's summary line (`Hold released — <reason> (Nd) — "<released reason>"`), not only in details. Deleting the mutable row can no longer make the document's own history show a hold never happened.
+- Files: `lib/timeline.ts` (`mergeHoldHistory`, `holdRowsToEvents`, `HOLD_RECORD_REMOVED`; `AuditRow` / `HoldRow` exported for the test)
+- Tests: `lib/__tests__/timelineHolds.test.ts` — surviving hold → audit dropped; deleted hold → explicit removed event in the hold lane with actor and reason; dedup by id not name (another surviving hold does not hide the deleted one); no-holdId row kept; non-hold rows pass through; released_reason in the summary; both builders route through the merge and the by-name filter is gone.
+
+**Done-when.**
+- ✓ The dedup keys on `holdId` rather than on action name, so an audit row with no surviving hold row is still rendered.
+- ✓ A `HOLD_OPENED` (and `HOLD_RELEASED`) audit row whose hold row is gone renders as an explicit "hold record removed" event.
+- ✓ `released_reason` is surfaced in the release event's summary line.
+
+**Scope / residual.** Rendering only — the row's mutability and controller-deletability are HLD-5's (P5, `20261073`). `TimelineFeed` draws `kind: "hold"` events with the existing hold icons, so the removed-record event needs no new renderer case. No migration.
 
 ---
 
