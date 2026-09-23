@@ -51,6 +51,17 @@ supabase/migrations/20260822_review_completion_guard.sql:36-40 — `v_advancing 
 - [ ] Download and doc-pack paths either refuse or stamp a HOLD banner rather than proceeding silently
 - [ ] The DB trigger's advance test is widened, or a second trigger added, so that status→Archived and revision_label rewrites on a held document are refused for non-controllers
 
+**Partial (2026-09-23, Round F).** P5 HOLDS. Reproduced on `ba7bfcb`: `grep -n "document_holds\|holdGate" lib/distributionAcks.ts lib/transmittals.ts lib/documentShares.ts lib/documentLifecycle/renumber.ts lib/retention.ts` returned nothing, and `correctRevisionLabel` (lib/revisions.ts:1101-1121) rewrote `document_versions.revision_label` and then `documents.rev` / `documents.revision` with `current_version_id` untouched, so the publish guard's advance test never saw it. Landed here — the shared helper, this package's own call site, and the database half:
+- **`lib/holdGate.ts` (new) — THE gate every other door calls.** `assertNotOnHold(documentId, { client?, action? })` reads the unreleased holds once (any `.from()` client: a route's service-role client, the shared browser client by default), decides through the pure `decideHoldGate`, and throws `HoldBlockedError` (`code: "on_hold"`, `.holds`, `.unreadable`) with one refusal sentence ("Document has an active hold (Client Review); release the hold before <action>."). **Fails closed:** an errored hold read is a hold — the `/verify-hold` and PKG-4 stance. `readActiveHolds` + `decideHoldGate` are exported for the download / doc-pack limbs that stamp a banner instead of refusing. No override parameter: the publish path's controller `canForceHold` stays the one deliberate rail.
+- **Distribution-ack assignment** (`lib/distributionAcks.ts` `requestAcks`): refused on a held document before any row is written. The DIST-10 recall close-out (`notify: false`) proceeds — it is the record of a recall already sent to holders of an OUTDATED copy, not an assignment against the held revision.
+- **Database half — migration `20261074_dc_roundF_held_document_label_rails.sql`.** status→Archived on a held document was already refused for a non-controller by 20261060 (→ Archived is advancing there; verified in the live body). The bare label rewrite was not: two small rails, `trg_document_hold_label_guard` (BEFORE UPDATE OF rev, revision ON documents — exempt when `current_version_id` moves, i.e. a publish-shaped write the publish guard governs) and `trg_version_hold_label_guard` (BEFORE UPDATE OF revision_label ON document_versions, keyed on the parent's hold), both controller- (`is_org_controller`) and service-role-exempt exactly as the publish guard is. Deliberately NOT a re-creation of `enforce_document_publish_guard` — P4 REVIEW extends that body this wave. Not a widening; inventory before apply: documents under an active hold.
+- Tests: `lib/__tests__/holds.test.ts` — "HLD-1 — lib/holdGate.ts" (decide pass / block / unreadable-blocks; `assertNotOnHold` throws on a held document and on a read error, passes a clean one, takes an injected client, scopes the read to unreleased holds of the document; `requestAcks` refuses before any `distribution_acks` write, fails closed, the recall close-out proceeds, an un-held assignment is unchanged) and "20261074 — held-document label rails" (both rails' shape, publish guard untouched, one-paste shape, the `correctRevisionLabel` path pinned). `lib/__tests__/requestAcksClock.test.ts` mock made table-aware (its world has no holds).
+
+**Done-when.** (This package's limbs.) (1) the helper exists ✓ and is called by distribution-ack assignment ✓; `correctRevisionLabel` / `renumberDocument` → P3 LIFECYCLE (wave 2), `disposeDocument` → P9 RECORDS (this wave, dispose-gate limb), transmittal issue → P7 TRANSMITTALS (wave 2), share-link creation → P1 SHARE (wave 2) — each cross-references here; (2) download / doc-pack banner-or-refuse → P8 FIELD (wave 2, via `readActiveHolds` + `decideHoldGate`) — not done here; (3) status→Archived ✓ (20261060, live), revision-label rewrites ✓ (20261074, pending apply) — refused for non-controllers.
+- **Pending migration:** `supabase/migrations/20261074_dc_roundF_held_document_label_rails.sql` (DEC-30 — the label rails do not exist until pasted).
+
+**Scope / residual.** Stays OPEN until the wave-2 limbs land; the finding closes when P1 / P3 / P7 / P8 record their call sites against `lib/holdGate.ts`. A hold placed by a lifecycle copy (`copyActiveHoldsToDoc`) is HLD-2 / P3.
+
 ---
 
 <a id="hld-2"></a>
@@ -148,7 +159,7 @@ lib/docPack.ts:92-94 — `const holderWarning = d.checked_out_by && (` `  \` ACT
 ## HLD-5 · document_holds rows are wholly mutable by anyone holding holds.release, with no column restriction, no trigger and an audit trail written only by the client — a hold can be released, re-dated, re-attributed or un-released leaving no record
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260901_db_hard_enforcement.sql:96-102`, `supabase/migrations/20260612_phase5_holds.sql:35-38`, `supabase/migrations/20260901_db_hard_enforcement.sql:103-105`, `lib/holds.ts:173-218`, `lib/audit.ts:129-150`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The absence of a trigger is confirmed by repo-wide search: the only `ON document_holds` statements in supabase/ are policies and indexes — no CREATE TRIGGER exists on that table. Because the default capability is '*', any active member (Viewer included) can PATCH released_at, released_by_name, opened_at, or set released_at back to NULL, and lib/holds.ts's own `assertHoldCapability` (lines 86-108) is app-side only and explicitly fails open on a policy-lookup error.
@@ -168,6 +179,18 @@ supabase/migrations/20260901_db_hard_enforcement.sql:96-102 — `-- Releasing = 
 - [ ] A BEFORE UPDATE trigger on document_holds rejects any change to opened_by / opened_by_name / opened_at / reason / org_id / document_id, refuses released_at → NULL, and forces released_by = auth.uid() and released_at = now()
 - [ ] The same trigger (or an AFTER trigger) writes the HOLD_RELEASED audit_logs row server-side so the trail cannot be skipped by writing outside lib/holds.ts
 - [ ] A test performs a direct PostgREST release and asserts both that it is refused for the forged columns and that an audit row exists for the legitimate one
+
+**Resolution (2026-09-23, Round F).** P5 HOLDS. Reproduced on `ba7bfcb`: `grep -n "TRIGGER" supabase/migrations/*.sql | grep -i document_holds` → nothing; the UPDATE policy (20260901:98-102) gated `holds.release` (shipped default `*`) and no column; `releaseHold` was the only writer of HOLD_RELEASED. Migration `20261073_dc_roundF_document_holds_integrity.sql` — function `enforce_document_hold_guard` + trigger `trg_document_hold_guard` (BEFORE UPDATE ON document_holds, the 20261030 / 20261032 shape):
+- **Identity immutable — for everyone, service role included** (the legal-hold delete guards' stance): `org_id`, `document_id`, `reason`, `opened_by`, `opened_by_name`, `opened_at`, `held_rev_label`, `held_version_id`. `origin_ticket_id` is NOT pinned (DEC-25 — the ticket route keeps it writable); `notes` / `expected_release_at` stay editable on an OPEN hold.
+- **No resurrection, no rewrite:** `released_at` → NULL is refused ("A released hold cannot be reopened; place a new hold instead."); once released, `released_at` / `released_by` / `released_by_name` / `released_reason` / `release_recorded_at` are frozen; release attribution cannot appear without a release.
+- **The release transition:** a non-blank `released_reason` is required (HLD-10's rule, held at the database). For a signed-in caller `released_by := auth.uid()`, `released_at := now()`, `released_by_name` from their membership (display name, else email) — attribution is the session, not the payload. The guard then INSERTs the HOLD_RELEASED `audit_logs` row itself (`user_role` = the role COLLECTION, DEC-2; details carry holdId, reason, releasedReason, durationMs and `source: "document_holds_guard"`) and stamps the new `release_recorded_at` column. A service-role write (`auth.uid()` NULL — the ticket close gate at `app/api/tickets/workflow-action/route.ts:339-378`, restores) must still name a releaser and a reason; it keeps its own attribution and writes its own audit row, as it does today (verified: `released_by: caller.id`, a reason always supplied).
+- **App (`lib/holds.ts` `releaseHold`):** writes HOLD_RELEASED only when the returned row carries no `release_recorded_at` — a pre-migration database (no such column) keeps today's app-side row; a 20261073 database gets exactly one row, the guard's. Never two.
+
+**Done-when.** (1) BEFORE UPDATE trigger rejects changes to opened_by / opened_by_name / opened_at / reason / org_id / document_id, refuses released_at → NULL, forces released_by = auth.uid() and released_at = now() ✓; (2) the trigger writes the HOLD_RELEASED row server-side ✓ (for signed-in writes; a service-role writer is server code that writes its own — stated, not skipped); (3) "a test performs a direct PostgREST release" — **no live database in this loop (DEC-30):** the forged-column refusals and the audit INSERT are pinned by shape in `lib/__tests__/holds.test.ts` "20261073 — document_holds integrity" (every identity column, the resurrection branch, the frozen release record, the reason rule, the session pin, the audit INSERT and its source marker, the service-role branch, the ticket route's contract), and the app-side dedupe is driven end-to-end against a mocked trigger that stamps `release_recorded_at` ("HLD-10 / HLD-5 — releaseHold"). The migration's own final SELECT (6 probes) is the live proof on paste.
+- Files: `supabase/migrations/20261073_dc_roundF_document_holds_integrity.sql`, `lib/holds.ts`. `searchPathPin` covers the pin; `authorityCensus` accepted the collection read.
+- **Pending migration:** `20261073` (DEC-30). Until pasted the forgery door is open exactly as before and the app still writes its own row.
+
+**Scope / residual.** INSERT is not this finding's subject: `opened_by` stays client-supplied on INSERT because `copyActiveHoldsToDoc` legitimately inserts another opener's hold on a split / merge (HLD-2 / P3), so the INSERT policy does not pin it — a forged HOLD_OPENED attribution is a residual for the HLD-2 record. A controller DELETE (20260901) still removes a hold row from the timeline — HLD-11 / P6.
 
 ---
 
@@ -206,7 +229,7 @@ lib/retention.ts:124-130 — `const ids = await scopeDocumentIds(input.scope, in
 ## HLD-7 · /api/verify-hold publicly returns the hold's free-text `reason` — contradicting the route's own stated contract — and reports the document's live revision, because a hold is not bound to the revision it stopped
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-hold/route.ts:48-61`, `app/api/verify-hold/route.ts:37-46`, `components/documents/HoldStrip.tsx:191-206`, `supabase/migrations/20260612_phase5_holds.sql:44-58`, `lib/physicalBridge.ts:152-155`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The facts hold, but the disclosure severity is overstated: lib/physicalBridge.ts:155 prints `Reason: ${input.reason}` in 13pt bold RED on the very card that carries the QR (and the notes on the next line), so anyone positioned to photograph or scan the tag can already read the sentence — the endpoint adds essentially no exposure beyond the physical artifact. The route's top-of-file contract at line 6 also states plainly 'Exposure is minimal: hold status + reason + document label', so it is only the later inline comment that reads as contradicted. The live-rev half is a genuine correctness bug but a mild one. LOW.
@@ -228,6 +251,17 @@ app/api/verify-hold/route.ts:48-56 — `// Minimal facts only — same contract 
 - [ ] The public payload returns the reason only when it is one of PREDEFINED_HOLD_REASONS, and otherwise a generic "On hold" category — matching the contract the comment already claims
 - [ ] document_holds gains a version_id (or held_rev_label) captured at open time; the card and the verify page both show the revision the hold was placed against, alongside the current one when they differ
 - [ ] The intelligence-audit entry at 06-document-acl-leaks.md:252 is corrected to note that `reason` is operator free text
+
+**Resolution (2026-09-23, Round F).** P5 HOLDS, holds half; the payload change also meets public-surfaces `VFY-6` done-when 1. Reproduced: the route returned `reason: (h.reason as string) ?? null` verbatim and `docRev` from the live document row; `document_holds` had no revision column.
+- **The revision a hold stopped** — migration `20261073` adds `held_rev_label TEXT` and `held_version_id UUID` (deliberately no FK: an ON DELETE SET NULL cascade would trip the identity pin; it is a recorded pointer), captured at INSERT by `enforce_document_hold_org_guard` from the document's `rev` / `current_version_id` when the client does not supply them (lifecycle copies and direct inserts get it too), then immutable. `lib/holds.ts` returns `HoldRecord` (DocumentHold + `heldRevLabel` / `heldVersionId`; null for holds placed before the migration — the rev they stopped is not knowable after the fact; the migration's after-apply inventory counts them).
+- **The public payload** — `/api/verify-hold` returns `reason: publicHoldReason(reason)` (a predefined picker reason verbatim, otherwise "On hold"; `lib/holds.ts`) and `heldRev` beside `docRev`; the select no longer fetches notes / names at all; the route's contract comment says what is disclosed, including the title fallback. The verdict contract (`active`) is untouched — PS-VERIFY owns it.
+- **The card and the inspector** — `HoldStrip` shows "at Rev N" on an active hold and prints the card with the held rev (`printHoldCard.docRev = heldRevLabel ?? current`); `/admin/holds` shows it in the row.
+
+**Done-when.** (1) the reason only when predefined, else a generic category ✓; (2) `held_rev_label` (+ `held_version_id`) captured at open ✓ — the verify PAGE and the card LAYOUT showing held-vs-current "alongside when they differ" live in `app/verify-hold/[holdId]/page.tsx` and `lib/physicalBridge.ts`, PS-VERIFY's files (wave 2); the payload field `heldRev` is there for it; (3) the intelligence entry corrected ✓ (note appended to `DACL-8`, audit-reports/intelligence/06-document-acl-leaks.md).
+- Files: `app/api/verify-hold/route.ts`, `lib/holds.ts`, `components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, migration `20261073`. Tests: `lib/__tests__/holds.test.ts` "HLD-7" (publicHoldReason for all four predefined reasons and operator text; route: a custom reason → "On hold", heldRev "3" beside docRev "5", notes / names absent, the exact key set; a predefined reason passes through; a pre-migration row → heldRev null, never the current rev; bad id → 400).
+- **Pending migration:** `20261073`.
+
+**Scope / residual.** Page and card rendering → PS-VERIFY (`VFY-6` items 2–3, `VFY-10`); the reason column split (reason_code / reason_text) is `VFY-6`'s call, not taken here.
 
 ---
 
@@ -257,6 +291,15 @@ components/documents/InspectorPanel.tsx:132-133 — `const canManageAssets = act
 - [ ] The hold queue link becomes /documents/{libraryId}?doc={documentId}, matching the notification link
 - [ ] A test asserts that a user holding only a UserGrant for holds.release sees the Release control
 
+**Partial (2026-09-23, Round F).** P5 HOLDS, holds half. Reproduced (`ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"])` at admin/holds:32; the queue link without `?doc=`).
+- **`holdControlsFor(policy, role, extraRoles, uid)`** (`lib/holds.ts`, pure) — `canOpen` / `canRelease` through the SAME `policyAllows` the database and `assertHoldCapability` use: role tokens, the additive collection, live per-person grants. Both hold surfaces call it: `/admin/holds` (`loadCapabilityPolicy` + `useRole().roles`, nothing offered until the policy is read, a read error → shipped defaults as every policy consumer does — the database enforces) and `HoldStrip` (reads `useRole().roles` for the collection; the `canEdit` prop is now a caller-side hard OFF that can hide controls but never grant them). No literal role list remains on either surface. `lib/adminSurfaces.ts`: the holds entry drops its `writes` role list (release authority is the capability; the SURF-9 mirror test skips a surface with no `writes`).
+- **The queue link** is `/documents/{libraryId}?doc={documentId}` — the notification's shape.
+
+**Done-when.** (1) both hold surfaces derive from the policy ✓ for the queue; ✓ for `HoldStrip` itself — but `InspectorPanel.tsx:444` still passes `canEdit={canManageAssets || isOwner}` (and gates the "place first hold" section at :899 the same way), so a grant-holder who is neither manager nor owner still sees the strip read-only in the inspector until **P6 CHECKOUT (HLD-8 checkout half, `InspectorPanel.tsx`)** passes the policy-derived value or drops the gate — that line is P6's file; (2) `?doc=` ✓; (3) a test asserts a UserGrant-only user sees Release ✓ (`holdControlsFor` — "HLD-8 / HLD-10 — holdControlsFor and the policy-derived audience": grant-only → canRelease, narrowed list hides the un-granted, the collection counts, the wildcard admits, an expired grant is dead; plus source pins that neither surface carries a literal and both fail closed until the policy loads).
+- Files: `lib/holds.ts`, `components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, `lib/adminSurfaces.ts` (one entry). No migration.
+
+**Scope / residual.** Stays OPEN for the InspectorPanel line (P6). With the shipped `*` default the strip now offers Place hold / Release to every active member the caller lets in — that is the policy the database already enforces (the UI was narrower than the policy, per the verifier); narrowing the shipped `holds.*` defaults is the drafting-flow gap-register item, not this finding.
+
 ---
 
 <a id="hld-9"></a>
@@ -264,7 +307,7 @@ components/documents/InspectorPanel.tsx:132-133 — `const canManageAssets = act
 ## HLD-9 · Nothing ties document_holds.org_id to the held document's org, while SELECT keys on the hold's org and every enforcement path keys on document_id — producing a hold that blocks a document its own org cannot see
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260612_phase5_holds.sql:44-58`, `supabase/migrations/20260901_db_hard_enforcement.sql:89-95`, `supabase/migrations/20260822_review_completion_guard.sql:77-81`, `lib/holds.ts:271-280`, `lib/documentLifecycle/common.ts:353-356`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and reachable: the INSERT policy (20260901:93-95) only checks `org_capability_allows(org_id, 'holds.open', auth.uid())` against the row's OWN org_id, so a member of org A can insert a hold carrying org A's id against any document UUID. Because the publish guard is SECURITY DEFINER and org-blind, org B's publish is blocked by a row org B's SELECT policy hides.
@@ -287,6 +330,14 @@ supabase/migrations/20260612_phase5_holds.sql:46-47 — `org_id UUID NOT NULL RE
 - [ ] The INSERT policy derives org_id from the document rather than trusting the submitted value
 - [ ] listActiveHoldsForDocument and the DB guard agree on scoping, or a backfill query is run to find existing mismatched rows
 
+**Resolution (2026-09-23, Round F).** P5 HOLDS. Mechanism confirmed on `ba7bfcb` (no constraint, no trigger; the INSERT policy checks the submitted org only). Migration `20261073`: `enforce_document_hold_org_guard` / `trg_document_hold_org_guard` (BEFORE INSERT, applies to everyone — a constraint, not an authority check) refuses a row whose `org_id` differs from the document's ("A hold must carry the org of the document it holds."), refuses an unknown document, and derives the HLD-7 columns; the INSERT policy is re-created as the live 20260901 body plus ONE conjunct binding `org_id` to the document's (the 20261032 PKG-5 shape — the subquery runs under the caller's documents RLS, so a document the caller cannot see resolves NULL and the row is refused: you cannot hold what you cannot see) and still calls the 3-argument `org_capability_allows` the 20261052 probe expects. On UPDATE the org / document identity is pinned by the HLD-5 guard, so agreement cannot drift. **Refuse rather than silently derive:** a wrong org is a caller bug worth surfacing; a rewritten value would hide it.
+
+**Done-when.** (1) a trigger rejects a mismatched row ✓ (INSERT; UPDATE pinned); (2) the INSERT policy binds org to the document ✓ (bound, not rewritten — the same effect, louder); (3) scoping agreement ✓ — `listActiveHoldsForDocument` and the DB guard both key on `document_id`, and every new row carries the document's org, so the by-org SELECT sees what the guard sees; existing mismatched rows are counted by the before-apply inventory (`h.org_id IS DISTINCT FROM d.org_id`) — such a row cannot be edited in place once identity is pinned; repair = delete and re-place (stated in the migration header).
+- Tests: `lib/__tests__/holds.test.ts` "20261073 — document_holds integrity" (policy lineDiff against 20260901: zero lines removed, exactly the one `AND` line added; the org guard's shape; no `auth.uid()` in it; the columns additive and idempotent).
+- Files: migration `20261073`. **Pending migration:** `20261073` (DEC-30 — the inventory count says whether any repair is needed; the SUSPECTED consequence stays unobserved until then).
+
+**Scope / residual.** `copyActiveHoldsToDoc` stamps `actor.orgId` (HLD-2 / P3) — now refused by the guard if it ever disagrees with the new document's org.
+
 ---
 
 <a id="hld-10"></a>
@@ -294,7 +345,7 @@ supabase/migrations/20260612_phase5_holds.sql:46-47 — `org_id UUID NOT NULL RE
 ## HLD-10 · Releasing a stop-work hold requires no reason, and the person who placed it is never told it was lifted — the release broadcast is fire-and-forget, swallows its own failure, and hardcodes ["Admin","DocCtrl"]
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/holds.ts:186`, `lib/holds.ts:208-215`, `lib/holds.ts:223-255`, `lib/holds.ts:252`, `components/documents/HoldStrip.tsx:320`, `app/(protected)/admin/holds/page.tsx:204`, `supabase/migrations/20260612_phase5_holds.sql:57`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four sub-claims hold. The opener is only reached if they happen to be Admin/DocCtrl or have manually subscribed — lib/notify/recipients.ts:23-31 resolves followers purely from the `subscriptions` table, and the only writer is the manual WatchButton (lib/subscriptions.ts:41), so nothing auto-follows the person who placed the hold.
@@ -314,6 +365,18 @@ lib/holds.ts:186 — `released_reason: input.releasedReason?.trim() || null,`  �
 - [ ] releaseHold rejects an empty releasedReason (mirroring revertToVersion), and both UIs disable Release until one is typed
 - [ ] notifyHoldChange adds the hold's opened_by to `audience.involved` so the person who stopped work is always told it resumed
 - [ ] The ["Admin","DocCtrl"] audience is read from the org's role model / capability policy rather than a literal array, and a failed emit is at least logged rather than silently swallowed
+
+**Resolution (2026-09-23, Round F).** P5 HOLDS. Reproduced (`released_reason: input.releasedReason?.trim() || null`; "Resolution (optional)" on both surfaces with Release enabled on empty; `catch { /* best-effort */ }`; `roles: ["Admin", "DocCtrl"]`; no `involved`).
+- **Reason required** — `releaseHold` refuses a blank `releasedReason` before any write (the input type is now required; mirrors `revertToVersion`); both UIs label the field required and keep Release disabled until typed; the 20261073 guard refuses a release without one at the database, so a write outside `lib/holds.ts` meets the same rule.
+- **The opener is told** — `notifyHoldChange` takes `involved`; the release passes `[row.opened_by]`.
+- **The audience is read from the policy, not a literal** — `holdPoolFromMembers(policy, members)` (pure) admits the members the org's `holds.release` entry names (role tokens expanded against the held collection, "Engineer" = every tier) plus live per-person grants; the shipped wildcard default (`*`) and an empty list fall back to the controller tier — `isControllerRole` from `lib/permissions.ts`, what `is_org_controller` means — because a stop-work broadcast to a whole org on every change is noise, and that pair is exactly the pool this module hard-coded before, so an unconfigured org's behaviour is unchanged. `emit` receives `involved` + `followers`, no `roles` key. Judgment recorded as a DEC-35 landed note: the escalation pool IS the policy's release pool; the wildcard means "no dedicated pool", not "tell everyone".
+- **A failed emit is logged** — `console.warn("[holds] hold_released notification failed (non-blocking)", e)`; the hold write is never undone by it.
+
+**Done-when.** (1) ✓; (2) ✓; (3) ✓.
+- Tests: `lib/__tests__/holds.test.ts` "HLD-10 / HLD-5 — releaseHold" (a blank / undefined reason throws before any call; opener + pool in `involved`, followers true, `roles` undefined; a failed emit is logged), "HLD-8 / HLD-10 — holdControlsFor and the policy-derived audience" (wildcard → controllers including an additive DocCtrl; named tokens expanded; grants added, expired dropped; no `roles: ["Admin", "DocCtrl"]` literal left in `lib/holds.ts`), and the source pins on both surfaces (required placeholder, disabled-until-typed).
+- Files: `lib/holds.ts`, `components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, migration `20261073` (the database half of the reason rule).
+
+**Scope / residual.** The service-role ticket-close release supplies its own reason ("Released on close of ticket …") and is unchanged.
 
 ---
 
@@ -412,7 +475,7 @@ lib/physicalBridge.ts:84 — `const url = \`${origin()}/assets/${encodeURICompon
 ## HLD-14 · expected_release_at is never written by any caller, so the "+Nd late" stale-hold indicator can never fire — and no cron or escalation exists for a hold that has been open for months
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/HoldStrip.tsx:14-17`, `components/documents/HoldStrip.tsx:268-270`, `components/documents/HoldStrip.tsx:284`, `app/(protected)/admin/holds/page.tsx:173-174`, `app/(protected)/admin/holds/page.tsx:194`, `lib/holds.ts:75`, `lib/holds.ts:122`, `vercel.json:3-13`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — the '+Nd late' badge is unreachable dead UI and no escalation exists. Severity is too high: nothing is corrupted or wrongly permitted, and the same need is served by the surface the finding itself points at — /admin/holds sorts oldest-first (lib/holds.ts:289 'oldest first — biggest blockers up top') and shows a 'Longest open' KPI. That is a missing proactive nudge plus a dead optional field, i.e. LOW.
@@ -432,5 +495,16 @@ components/documents/HoldStrip.tsx:14-17 — `//   - Stale indicator: when an ac
 - [ ] The hold picker offers an expected-release date (optional but prompted for the four predefined reasons) and passes it through openHold
 - [ ] An aging sweep inside the EXISTING /api/cron/maintenance route nudges the opener and the doc-control pool on holds past expected_release_at, and on holds older than a configured age when no date was set — no new vercel.json cron entry
 - [ ] The HoldStrip header comment matches what actually ships
+
+**Resolution (2026-09-23, Round F).** P5 HOLDS. Reproduced: no caller passed `expectedReleaseAt`; `grep -n "hold" app/api/cron/maintenance/route.ts` → two unrelated lines.
+- **The picker prompts** — a predefined reason now opens an inline confirm row with an optional "Expected release" date (min today) and places the hold on the second click; "Other…" carries the same optional date. `expectedReleaseIso(date)` (pure, `lib/holds.ts`) stores the END of that local day, so a hold expected "by Friday" is not late at 00:01 Friday; blank / malformed / impossible dates store nothing. The `CheckInPanel` offer (P6's file) is unchanged — a check-in's hold has no date and is nudged by age.
+- **The aging sweep** — `scanStaleHolds(orgId, now)` in `lib/holds.ts`, registered as the `hold-aging` compliance scan in the EXISTING `/api/cron/maintenance` route (one line; no third `vercel.json` entry — the route's own step-10 note says a third entry fails deployment). Per org, every open hold past `expected_release_at`, or with no date and older than `HOLD_AGING_DAYS` (30; env-overridable), tells the opener and the policy-derived release pool ONCE (deduped by `metadata.staleHoldId` on the notification, the `escalateStaleCheckouts` shape; kind `hold_opened`, category `sla`, link to the document). Failures surface as `hold-aging@<org>: …` in the cron result like every other scan.
+- **The header comment** now describes what ships: the indicator fires only for holds given a date; the cron nudges the rest by age.
+
+**Done-when.** (1) ✓ (optional, prompted for the four predefined reasons, offered on "Other…" too); (2) ✓ inside the existing route; (3) ✓.
+- Tests: `lib/__tests__/holds.test.ts` "HLD-14" (`expectedReleaseIso` end-of-day / blank / malformed / Feb 31; the scan nudges late + aged once with opener and pool, skips young / future / released / other-org / already-nudged, correct titles and link, idempotent second run; the route registers the scan and `vercel.json` still has two crons; `HoldStrip` passes `expectedReleaseIso` through and its header names the sweep).
+- Files: `components/documents/HoldStrip.tsx`, `lib/holds.ts`, `app/api/cron/maintenance/route.ts`. No migration.
+
+**Scope / residual.** The "configured age" is a deployment constant with an env override, not per-org configuration — a follow-up if a facility wants it per org. The 20261073 before-apply inventory counts the open holds with no date (the age-nudge population).
 
 ---

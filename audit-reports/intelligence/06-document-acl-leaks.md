@@ -259,6 +259,8 @@ app/api/verify/route.ts:5-10 asserts the threat model — `UNAUTHENTICATED by de
 
 > **Verifier correction.** 'for any document UUID' applies only to /api/verify. /api/verify-hold is keyed on a HOLD uuid (route.ts:21-31) and deliberately withholds notes and staff names (:50-54 comment and payload), and /api/verify-package is keyed on a PACKAGE uuid — both are still unauthenticated and org-unscoped, but neither turns an arbitrary document UUID into metadata. Severity MEDIUM is right: the exposure is revision-status metadata only, no files, no URLs.
 
+*Corrected 2026-09-23 (document-control Round F, `HLD-7` / public-surfaces `VFY-6`): the credit above was only half right — /api/verify-hold withheld `notes` and names but published `reason` verbatim, and `reason` is operator free text (no CHECK; the picker's "Other…" stores whatever was typed). The route now publishes the reason only when it is one of the predefined picker categories and says "On hold" otherwise (`lib/holds.ts` `publicHoldReason`).*
+
 **Done when.**
 
 - [ ] Verify surfaces refuse documents whose visibility is private/hidden, or answer only 'current / superseded' without the title for them
