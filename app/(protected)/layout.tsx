@@ -2,6 +2,7 @@
 
 import React from "react";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
+import { clearServiceWorkerSession, announceServiceWorkerSession } from "@/lib/swSession";
 import Sidebar from "@/components/navigation/Sidebar";
 import TopBar from "@/components/navigation/TopBar";
 import GlobalCommandPalette from "@/components/navigation/GlobalCommandPalette";
@@ -32,6 +33,14 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   // them as deps honestly without re-firing every render.
   const openMobileNav = React.useCallback(() => setMobileNavOpen(true), []);
   const closeMobileNav = React.useCallback(() => setMobileNavOpen(false), []);
+
+  // XEDGE-6: tell the service worker who is signed in. An identity it has
+  // not seen — or a different one than it remembered (another account on
+  // a shared tablet) — purges its runtime cache; the same one leaves Field
+  // Mode's cache alone. Best-effort: no worker, nothing to do.
+  React.useEffect(() => {
+    if (uid) void announceServiceWorkerSession(uid);
+  }, [uid]);
 
   // All four membership states are handled — the decision lives in
   // resolveProtectedView so the contract is pinned by lib/__tests__.
@@ -163,6 +172,8 @@ function NotAMemberScreen({ email }: { email: string | null }) {
               // walks the user straight back into the identity they are
               // trying to leave (IDENT-4).
               setPreferMicrosoft(false);
+              // XEDGE-6: the worker's cache must not outlive this session.
+              void clearServiceWorkerSession();
               void supabase.auth.signOut();
             }}
             className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow"

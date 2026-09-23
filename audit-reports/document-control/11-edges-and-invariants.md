@@ -143,6 +143,8 @@ app/api/admin/restore/apply-table/route.ts:38-43 `if (!table || !IMPORTABLE.has(
 - [ ] restored rows carry a `restored_from_backup_at` provenance column surfaced everywhere signatures and acknowledgments are displayed
 - [ ] a test asserts POST /apply-table with table "audit_logs" returns 400
 
+**Partial (2026-09-23, Round F).** `P2 EGRESS` limb only — the `download_audits` table itself. Migration `20261068_dc_roundF_download_audits_record.sql` makes it append-only for members at the database (SELECT for members, INSERT of the caller's own row, no UPDATE / DELETE policy; every row attributed by `user_id` or `share_id` / `transmittal_id`; `org_id` NOT NULL), so the restore path's immutability list has a rail to stand on rather than a convention — see `DIST-9` / `DRLS-8` and DEC-44 §1. Nothing here touches the restore routes, `lib/dataRestore.ts` or `SKIP_TABLES`: the audit / provenance / 400-on-`audit_logs` criteria (all four done-when items) are `P10 EDGES`'s, which lists `lib/dataRestore.ts (download_audits into IMMUTABLE_TABLES)` and the restore routes among its files; the org-boundary defect is admin-and-org `ORG-1` / `BKP-3`. Status stays OPEN for P10 to close.
+
 ---
 
 <a id="xedge-4"></a>
@@ -217,7 +219,7 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 ## XEDGE-6 · The service worker caches authenticated document bytes and signed-URL JSON in a device-wide cache that survives sign-out, ignoring Cache-Control: no-store
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:114-120`, `public/sw.js:156-177`, `public/sw.js:203-220`, `app/api/share/file/route.ts:145-151`, `app/api/storage/download-url/route.ts:144-153`
 - **Re-verified:** hardening pass — **SURVIVES**. `cachePut` tests only `response.ok` and `response.type !== "opaque"` (`sw.js:117`) — **no `Cache-Control` inspection at all** — so a `no-store` authenticated document response is written to durable Cache Storage.
@@ -241,6 +243,20 @@ public/sw.js:117 `if (!response || !response.ok || response.type === "opaque") r
 - [ ] sign-out (all five call sites) posts a message to the worker that deletes RUNTIME_CACHE, and the worker clears it on `clients.claim` when the session identity changes
 - [ ] `/api/storage/download-url` caps `expiresIn` server-side (e.g. 900s) instead of trusting the query parameter
 - [ ] a sw.test.ts case asserts a `no-store` response is never written to the cache
+
+**Resolution (2026-09-23, Round F).** DEC-44 §3: the worker caches no API response and its cache does not outlive the session. `public/sw.js` → `mfgos-v6` (the bump itself sweeps every cache a v5 worker filled with signed-URL JSON or share PDFs on activate). The whole cacheability decision is now `isCacheableResponse(request, response)`: complete, non-opaque, OK, **not** `Cache-Control: no-store` / `private` (honoured here because `cache.put()` stores whatever it is handed), and a cacheable request — `isCacheableRequest` refuses ANY same-origin `/api/` path not on `CACHEABLE_API_PREFIXES`, which is empty on purpose and documented as needing a stated reason per entry. `cachePut` goes through it, and the offline fallback in the data branch never consults the cache for an `/api/` request, so a leftover entry can never replay a stale signed URL. Sign-out: a `SIGN_OUT` message deletes `RUNTIME_CACHE` and the remembered identity; a `SESSION { id }` message compares `id` with the identity the worker last saw (kept as a one-entry `${VERSION}-session` cache so it survives the worker being stopped) and purges `RUNTIME_CACHE` when it is unknown or different. New `lib/swSession.ts` (`clearServiceWorkerSession()`, `announceServiceWorkerSession(uid)`, both best-effort, both reach the controller and the registration's workers, never throw) is posted from every sign-out site — `components/navigation/Sidebar.tsx`, `app/(protected)/profile/page.tsx`, `app/(protected)/layout.tsx` (the switch-account button), `components/subscription/SubscriptionGate.tsx` — before `supabase.auth.signOut()`, and the protected layout announces `uid` whenever it is known. The download-url half: `/api/storage/download-url` caps `expiresIn` at 3600 and answers `no-store` (`EGR-4` / `PKG-11`; the JSON is also refused by the worker as an `/api/` path). `/api/share/file`'s `no-store` is now honoured.
+- Files: `public/sw.js`, `lib/swSession.ts` (new), `components/navigation/Sidebar.tsx`, `app/(protected)/profile/page.tsx`, `app/(protected)/layout.tsx`, `components/subscription/SubscriptionGate.tsx` (+ the route half under `EGR-4`)
+- Tests: `lib/__tests__/sw.test.ts` (extended; the six v5 regression cases kept) — VERSION ≥ 6 and the activate sweep of a v5 cache; a plain HTML navigation still cached; a `no-store` response never written (navigation and sub-resource, still SERVED); `private` refused; an `/api/` JSON response with no cache header never written; an `/api/` request offline is a 503 with the cache never consulted; a non-API data GET still cached; `SIGN_OUT` deletes the runtime cache and the identity; `SESSION` unknown → purge, same → keep, changed → purge; `SKIP_WAITING` kept and junk ignored; `lib/swSession` (posts once to a controller / reaches a non-controlling registered worker / `false` on no API, no worker, or a throwing lookup); and a source pin that every `supabase.auth.signOut()` in the four files is preceded by `clearServiceWorkerSession()` and the layout announces `uid`.
+- Reproduced: at the base commit a temporary test loaded the v5 worker, fetched `/api/share/file?token=…` with `Cache-Control: no-store`, and observed `cache.put` called with that URL; the source carried no `SIGN_OUT` handling and `VERSION = "mfgos-v5"` (deleted after the fix; the new cases assert the inverse).
+- Verified: 46 tests green in the three new/extended files; full suite, `tsc`, `eslint` (`public/sw.js` included) green.
+
+**Done-when.**
+1. ✓ `cachePut` refuses any response whose `Cache-Control` contains `no-store` / `private`, and refuses `/api/` paths that are not explicitly allow-listed (allow-list empty).
+2. ✓ Sign-out posts `SIGN_OUT` and the worker deletes `RUNTIME_CACHE`; a changed session identity purges it. Two precisions: the finding's fifth site, `app/page.tsx:225`, does not exist at the base commit (the fifth `signOut` in the repo is the server-side probe client in `app/api/signatures/sign/route.ts`, which has no cache to clear) — the four real sites are wired and pinned by test; and "on `clients.claim`" is met by the page rather than the worker, because a worker cannot know who is signed in at claim — the protected layout announces the identity on every mount, i.e. immediately after claim, and the worker purges when that identity is unknown or different.
+3. ✓ `/api/storage/download-url` caps `expiresIn` server-side — at 3600 (the app's own default, DEC-44 §2) rather than the suggested 900; the JSON is `no-store` and the worker refuses it as an `/api/` path regardless.
+4. ✓ `sw.test.ts` asserts a `no-store` response is never written to the cache (and the `/api/`, `private`, offline-replay and sign-out cases besides).
+
+**Scope / residual.** Field Mode's offline behaviour for `/api/` data is gone by design (DEC-44 §3 reversal: a path goes on the allow-list only with a written reason its payload is safe to replay); HTML navigations and static assets still cache. Cache entries are still keyed by URL without `Vary` — moot now that nothing session-bound is stored. `app/api/share/file` itself is `P1 SHARE`'s.
 
 ---
 
