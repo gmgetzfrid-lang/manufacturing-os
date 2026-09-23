@@ -57,6 +57,9 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   CHECK_IN:              { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   ABANDON:               { icon: Unlock,        tone: "bg-amber-50 text-amber-700 border-amber-200" },
   FORCE_RELEASE:         { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
+  // DCK-12: the walkdown attestation and the legacy banner-release action.
+  FIELD_VERIFIED:        { icon: FileSignature, tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  CHECKOUT_RELEASED:     { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   JOIN:                  { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
   REV_UP:                { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },
   REV_BACKFILL:          { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },

@@ -68,7 +68,7 @@ export interface TimelineEvent {
   scope?: TimelineEventScope | null;
 }
 
-interface AuditRow {
+export interface AuditRow {
   id: string;
   action: string;
   resource_id: string;
@@ -105,7 +105,7 @@ interface VersionRow {
   source_file_name: string | null;
 }
 
-interface HoldRow {
+export interface HoldRow {
   id: string;
   org_id: string;
   document_id: string;
@@ -126,7 +126,8 @@ function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
   // release. Audit events with action HOLD_OPENED/HOLD_RELEASED
   // also exist (fired by lib/holds.ts), but those carry the actor
   // metadata; the version emitted here carries the duration and
-  // reason fields denormalized for the renderer.
+  // reason fields denormalized for the renderer. mergeHoldHistory
+  // (HLD-11) decides which of the two renders for each hold.
   const out: TimelineEvent[] = [];
   for (const r of rows) {
     out.push({
@@ -157,7 +158,9 @@ function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
         userId: r.released_by,
         userName: r.released_by_name,
         userEmail: null,
-        summary: `Hold released — ${r.reason} (${durationDays}d)`,
+        // HLD-11: the resolution the releaser typed is part of the story —
+        // in the summary line, not buried in details.
+        summary: `Hold released — ${r.reason} (${durationDays}d)${r.released_reason ? ` — "${r.released_reason}"` : ""}`,
         details: {
           holdId: r.id, reason: r.reason,
           releasedReason: r.released_reason, durationDays,
@@ -166,6 +169,53 @@ function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
     }
   }
   return out;
+}
+
+/** The audit action written when a HOLD_OPENED / HOLD_RELEASED audit row has
+ *  no surviving document_holds row: the hold happened, and its mutable record
+ *  was later deleted. Renders as an explicit event, never as silence. */
+export const HOLD_RECORD_REMOVED = "HOLD_RECORD_REMOVED";
+
+/**
+ * HLD-11: reconcile the two sources of hold history. The mutable
+ * document_holds row is the richer render (duration, reason) — but it is
+ * exactly that: mutable, and controller-deletable. The immutable audit rows
+ * used to be discarded BY ACTION NAME, so deleting a hold row erased the hold
+ * from the document's timeline. Now the dedup keys on the hold id
+ * (audit details.holdId ↔ document_holds.id):
+ *   · an audit row whose hold row survives is dropped (the row renders it);
+ *   · an audit row whose hold row is GONE renders as a "hold record removed"
+ *     event carrying the audit row's own reason/actor;
+ *   · an audit row with no holdId cannot be correlated and is kept as-is.
+ * Pure — unit-tested without a database.
+ */
+export function mergeHoldHistory(
+  auditRows: AuditRow[],
+  holdRows: HoldRow[],
+): { auditEvents: TimelineEvent[]; holdEvents: TimelineEvent[] } {
+  const surviving = new Set(holdRows.map((h) => h.id));
+  const auditEvents: TimelineEvent[] = [];
+  for (const r of auditRows) {
+    if (r.action !== "HOLD_OPENED" && r.action !== "HOLD_RELEASED") {
+      auditEvents.push(auditRowToEvent(r));
+      continue;
+    }
+    const holdId = typeof r.details?.holdId === "string" ? (r.details.holdId as string) : null;
+    if (holdId && surviving.has(holdId)) continue; // the hold row renders this fact
+    const ev = auditRowToEvent(r);
+    if (holdId) {
+      const reason = typeof r.details?.reason === "string" ? (r.details.reason as string) : "hold";
+      const releasedReason = typeof r.details?.releasedReason === "string" ? (r.details.releasedReason as string) : null;
+      ev.kind = "hold";
+      ev.action = HOLD_RECORD_REMOVED;
+      ev.summary = r.action === "HOLD_OPENED"
+        ? `Hold opened — ${reason} — hold record removed (the audit row is the only surviving evidence)`
+        : `Hold released — ${reason}${releasedReason ? ` — "${releasedReason}"` : ""} — hold record removed`;
+      ev.details = { ...(r.details ?? {}), originalAction: r.action, holdRecordRemoved: true };
+    }
+    auditEvents.push(ev);
+  }
+  return { auditEvents, holdEvents: holdRowsToEvents(holdRows) };
 }
 
 interface ProjectActivityRow {
@@ -251,14 +301,21 @@ function projectActivityRowToEvent(r: ProjectActivityRow): TimelineEvent {
 }
 
 /** Best-effort human summary for an audit row. Mirrors the action vocabulary
- *  used by lib/audit.ts so renderers don't reinvent strings. */
-function summarizeAudit(r: AuditRow): string {
+ *  used by lib/audit.ts so renderers don't reinvent strings. Exported for
+ *  the renderer-map tests (DCK-12). */
+export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string {
   const d = r.details || {};
   switch (r.action) {
     case "VIEW":         return `Viewed${d.fileName ? ` ${d.fileName}` : ""}`;
     case "DOWNLOAD":     return `Downloaded${d.fileName ? ` ${d.fileName}` : ""}`;
     case "CHECK_OUT":    return "Checked out";
-    case "CHECK_IN":     return "Checked in";
+    case "CHECK_IN":     return d.outcome === "auto_released" ? "Checked in (auto-released)" : "Checked in";
+    // DCK-12: the walkdown attestation — legible in the history it is
+    // written to, with the revision it attested against.
+    case "FIELD_VERIFIED": return `Field verified${d.rev ? ` against Rev ${d.rev}` : ""}`;
+    // DCK-9: rows the stale-checkout banner wrote before it went through the
+    // shared check-in. Nothing writes this action any more.
+    case "CHECKOUT_RELEASED": return "Checked in (released from the stale-checkout banner)";
     // Legacy names the checkout modal wrote before the CHECK_OUT/CHECK_IN
     // unification — old rows must keep reading correctly.
     case "DOCUMENT_CHECKOUT": return "Checked out";
@@ -344,17 +401,17 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
   if (holdResult.error) throw new Error(holdResult.error.message);
 
   // Holds and the matching HOLD_OPENED / HOLD_RELEASED audit rows
-  // describe the same fact pair. To avoid double-rendering, drop the
-  // audit rows whose action is one of the hold-event kinds — the
-  // hold rows themselves carry richer detail (duration, reason).
-  const auditEvents = ((auditResult.data as AuditRow[]) ?? [])
-    .filter((r) => r.action !== "HOLD_OPENED" && r.action !== "HOLD_RELEASED")
-    .map(auditRowToEvent);
+  // describe the same fact pair. HLD-11: dedup by HOLD ID, not by action
+  // name — an audit row whose hold row was deleted still renders.
+  const { auditEvents, holdEvents } = mergeHoldHistory(
+    (auditResult.data as AuditRow[]) ?? [],
+    (holdResult.data as HoldRow[]) ?? [],
+  );
 
   const events: TimelineEvent[] = [
     ...auditEvents,
     ...((versionResult.data as VersionRow[]) ?? []).map(versionRowToEvent),
-    ...holdRowsToEvents((holdResult.data as HoldRow[]) ?? []),
+    ...holdEvents,
   ];
 
   // Apply the per-document scope to every event. Constant per call,
@@ -461,16 +518,16 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
     if (docVersions.error) throw new Error(docVersions.error.message);
     if (docHolds.error) throw new Error(docHolds.error.message);
 
-    // Same dedup as getDocumentTimeline — drop the HOLD_* audit rows
-    // since the holds themselves carry richer detail.
-    const auditEvents = ((docAudit.data as AuditRow[]) ?? [])
-      .filter((r) => r.action !== "HOLD_OPENED" && r.action !== "HOLD_RELEASED")
-      .map(auditRowToEvent);
+    // Same dedup as getDocumentTimeline — by hold id (HLD-11).
+    const { auditEvents, holdEvents } = mergeHoldHistory(
+      (docAudit.data as AuditRow[]) ?? [],
+      (docHolds.data as HoldRow[]) ?? [],
+    );
 
     events.push(
       ...auditEvents,
       ...((docVersions.data as VersionRow[]) ?? []).map(versionRowToEvent),
-      ...holdRowsToEvents((docHolds.data as HoldRow[]) ?? []),
+      ...holdEvents,
     );
   }
 
