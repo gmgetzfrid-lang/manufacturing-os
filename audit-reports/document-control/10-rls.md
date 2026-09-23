@@ -278,7 +278,7 @@ A policy census across the document-control schema.
 ## DRLS-8 · `download_audits` — the record of who took a controlled drawing out — is rewritable and deletable by any active member
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:789-799`, `supabase/schema.sql:1090-1091`, `supabase/schema.sql:1084-1087`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. download_audits is the distribution record that /api/share/file writes to (app/api/share/file/route.ts:130-139) and that Document Control produces for PSM audits; it has strictly weaker protection than audit_logs sitting six lines above it in the same file.
@@ -300,6 +300,20 @@ schema.sql:1090 `CREATE POLICY "download_audits_org_access" ON download_audits F
 - [ ] `download_audits` accepts INSERT and SELECT from members and refuses UPDATE and DELETE
 - [ ] `org_id` is NOT NULL and the INSERT check pins `user_id = auth.uid()` for member-originated rows
 - [ ] A test deletes a download_audits row as a member and asserts refusal
+
+**Resolution (2026-09-23, Round F).** Same fix as `DIST-9` (one migration, DEC-44 §1): `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` drops `download_audits_org_access` and creates exactly `download_audits_select FOR SELECT USING (org_id IN (SELECT my_org_ids()))` and `download_audits_insert_own FOR INSERT WITH CHECK (org_id IN (SELECT my_org_ids()) AND user_id = auth.uid())` — the `audit_logs` shape six lines above it in `schema.sql`, applied here. No UPDATE or DELETE policy exists, so with RLS enabled a member's `DELETE /rest/v1/download_audits?…` and `PATCH … user_id=…` are refused by default-deny; an INSERT naming a colleague's uuid fails the WITH CHECK; an INSERT with a NULL `org_id` fails NOT NULL (or, in the fallback world, the `NOT VALID CHECK (org_id IS NOT NULL)`) and is in any case outside `my_org_ids()`. `org_id` is backfilled from the row's document before the NOT NULL step; the DEC-30 inventory (rows with NULL `org_id`, with and without a document to backfill from; rows whose `user_id` is not a member of the row org; the policy count) is captured before the transaction and returned with the probes. `user_id` becomes nullable only behind `CHECK download_audits_attributed` (a member, a share, or a transmittal), so "nothing binds the row to a real actor" is now "every row is bound to exactly the actor or channel that produced it".
+- Files: `supabase/migrations/20261068_dc_roundF_download_audits_record.sql`
+- Tests: `lib/__tests__/downloadAudits.test.ts` — the migration shape and the policy census that replays `schema.sql` + every numbered migration and proves the live set is exactly `{download_audits_insert_own: INSERT, download_audits_select: SELECT}` (a DO block that creates policies and names the table fails the census loudly rather than being guessed at).
+- Reproduced: `schema.sql:1103-1104` quoted verbatim; the census over `schema.sql` + all numbered migrations finds one `CREATE POLICY … ON download_audits` and no `ALTER TABLE download_audits` beyond `ENABLE ROW LEVEL SECURITY`; `org_id UUID REFERENCES orgs(id)` nullable, `user_id UUID NOT NULL` with no FK — all as the finding states.
+- Verified: `downloadAudits.test.ts` green; full suite, `tsc`, `eslint` green.
+- Pending migration: `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` — **not applied**. Its probe 2 (`no policy admits UPDATE, DELETE or ALL`) and probe 4 (`INSERT pins the row to the caller … AND to an org they belong to`) are the live proof of this finding's first two criteria.
+
+**Done-when.**
+1. ✓ (pending migration) `download_audits` accepts INSERT and SELECT from members and refuses UPDATE and DELETE — by the absence of any UPDATE / DELETE / ALL policy under RLS, proven in the replayed census and by the apply-time probe.
+2. ✓ (pending migration) `org_id` is NOT NULL (with the documented `NOT VALID` fallback when live rows have no document to backfill from — the probe says which) and the INSERT check pins `user_id = auth.uid()` for member-originated rows; service-role rows (share links, the transmittal portal) bypass RLS and carry `share_id` / `transmittal_id` instead.
+3. ✓ with a stated limit — no live database runs in this repo's test loop, so "deletes a row as a member and asserts refusal" is proven two ways rather than executed: the census test proves no policy admitting DELETE survives the replayed migration sequence (so RLS default-deny refuses the member's DELETE), and the migration's final result set asserts the same against `pg_policies` at apply time. A live `DELETE … RETURNING` under a member JWT after apply is the confirming check to record in this finding when the migration is pasted.
+
+**Scope / residual.** The service role can still UPDATE / DELETE (it bypasses RLS) — that is the retention job and the restore path; the restore path's immutability list is `XEDGE-3`'s `P10 EDGES` limb, and `download_audits` being append-only for members is the rail it stands on. `supabase/schema.sql` (P10's file) still carries the bootstrap `FOR ALL` policy; the numbered sequence is the source of truth. `lib/downloads.ts`'s unchecked insert is `P8`'s (`EGR-6`).
 
 ---
 

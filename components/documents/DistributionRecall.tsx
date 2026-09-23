@@ -12,6 +12,11 @@
 // close-out ("I have this revision") is the recall acknowledgment.
 // DIST-11: the holder list says when it is PARTIAL instead of asserting
 // completeness over a truncated slice.
+// DIST-9: a record that could not be READ is rendered as a gap, never as an
+// empty, green "all current"; copies that left through a share link or the
+// transmittal portal are listed as EXTERNAL — nobody here can nudge them, so
+// the nudge and the close-out rows reach members only and the panel says how
+// many external copies are outstanding.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { FileDown, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, BellRing, Loader2, Clock } from "lucide-react";
@@ -35,6 +40,7 @@ export default function DistributionRecall({
 }: DistributionRecallProps) {
   const [holders, setHolders] = useState<RecallHolder[]>([]);
   const [capped, setCapped] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
   const [acks, setAcks] = useState<DistributionAck[]>([]);
   const [open, setOpen] = useState(false);
   const [nudging, setNudging] = useState(false);
@@ -48,6 +54,7 @@ export default function DistributionRecall({
     ]);
     setHolders(recall.holders);
     setCapped(recall.capped);
+    setUnavailable(recall.unavailable);
     setAcks(ackRows);
   }, [documentId, currentVersionId]);
 
@@ -57,6 +64,7 @@ export default function DistributionRecall({
     (async () => {
       setHolders([]);
       setCapped(false);
+      setUnavailable(false);
       setAcks([]);
       setNudgedCount(null);
       setError(null);
@@ -66,8 +74,12 @@ export default function DistributionRecall({
     return () => { alive = false; };
   }, [load]);
 
-  if (holders.length === 0) return null;
+  if (holders.length === 0 && !unavailable) return null;
   const outdated = holders.filter((h) => !h.hasCurrent);
+  // DIST-9: external copies (share link / transmittal) have no account to
+  // notify — the nudge and the close-out rows reach members only.
+  const reachable = outdated.filter((h) => !h.external);
+  const externalOutdated = outdated.length - reachable.length;
   const ackByUid = new Map(acks.map((a) => [a.recipientUserId, a]));
   // The durable recall state: outdated holders who already carry an ack row
   // for the CURRENT version were recalled (by anyone, any session).
@@ -90,11 +102,11 @@ export default function DistributionRecall({
       // DIST-10: the close-out — one confirmable row per outdated holder on
       // the current version (silent: the nudge above IS the notification).
       // Re-sending reminds without resetting anyone's overdue clock (DIST-12).
-      if (currentVersionId && outdated.length > 0) {
+      if (currentVersionId && reachable.length > 0) {
         await requestAcks({
           orgId, documentId, libraryId, docLabel,
           versionId: currentVersionId, revLabel: currentRev,
-          recipients: outdated.map((h) => ({ uid: h.userId, email: h.userEmail })),
+          recipients: reachable.map((h) => ({ uid: h.userId, email: h.userEmail })),
           actorUserId: currentUserId,
           actorName: currentUserName || "Document Control",
           notify: false,
@@ -110,7 +122,11 @@ export default function DistributionRecall({
     }
   };
 
-  const shortName = (h: RecallHolder) => h.userEmail?.split("@")[0] ?? "someone";
+  const shortName = (h: RecallHolder) => h.external
+    ? (h.userId.startsWith("share:") ? "External copy via share link"
+      : h.userId.startsWith("transmittal:") ? "External copy via transmittal"
+      : "External copy")
+    : (h.userEmail?.split("@")[0] ?? "someone");
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -121,7 +137,11 @@ export default function DistributionRecall({
         <FileDown className="w-4 h-4 text-teal-600 shrink-0" />
         <span className="text-xs font-bold text-[var(--color-text)]">Copies in circulation</span>
         <span className="ml-auto flex items-center gap-1.5">
-          {outdated.length > 0 ? (
+          {unavailable ? (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+              record unavailable
+            </span>
+          ) : outdated.length > 0 ? (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
               {outdated.length} of {holders.length}{capped ? "+" : ""} outdated
             </span>
@@ -136,6 +156,13 @@ export default function DistributionRecall({
 
       {open && (
         <div className="px-3.5 pb-3 border-t border-[var(--color-border)] pt-2.5 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+          {/* DIST-9: a record that could not be READ is a gap in the
+              evidence, never an empty, confident-looking list. */}
+          {unavailable && (
+            <div className="text-[10px] font-bold text-amber-700 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" /> Distribution record unavailable — copies in circulation could not be read, so nobody can be recalled from here. Retry, or check the download record directly.
+            </div>
+          )}
           {/* DIST-11: honesty about truncation, like the transmittal pill. */}
           {capped && (
             <div className="text-[10px] font-bold text-amber-700 flex items-center gap-1">
@@ -166,6 +193,13 @@ export default function DistributionRecall({
           {holders.length > 10 && (
             <div className="text-[10px] text-[var(--color-text-faint)]">…and {holders.length - 10} more</div>
           )}
+          {/* DIST-9 / DIST-7: an external copy has no account behind it —
+              the gap is stated, not silently dropped from the recall. */}
+          {externalOutdated > 0 && (
+            <div className="mt-1 text-[10px] font-bold text-amber-700 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" /> {externalOutdated} external {externalOutdated === 1 ? "copy is" : "copies are"} outdated — {externalOutdated === 1 ? "it" : "they"} left through a share link or transmittal and cannot be notified from here; reach the recipient through that channel.
+            </div>
+          )}
 
           {/* DIST-10: recall state from the DATABASE — a second controller
               sees an outstanding recall instead of an innocent un-nudged
@@ -180,7 +214,7 @@ export default function DistributionRecall({
             <div className="mt-1 text-[11px] font-bold text-red-700">Recall not sent: {error}</div>
           )}
 
-          {outdated.length > 0 && (
+          {reachable.length > 0 && (
             nudgedCount !== null ? (
               <div className="mt-1.5 text-[11px] font-bold text-emerald-700 flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Recall sent to {nudgedCount} {nudgedCount === 1 ? "person" : "people"} — on the audit record.
@@ -193,8 +227,8 @@ export default function DistributionRecall({
               >
                 {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellRing className="w-3.5 h-3.5" />}
                 {recallOutstanding
-                  ? `Re-send recall — remind ${outdated.length} ${outdated.length === 1 ? "person" : "people"}`
-                  : `Recall outdated copies — notify ${outdated.length} ${outdated.length === 1 ? "person" : "people"}`}
+                  ? `Re-send recall — remind ${reachable.length} ${reachable.length === 1 ? "person" : "people"}`
+                  : `Recall outdated copies — notify ${reachable.length} ${reachable.length === 1 ? "person" : "people"}`}
               </button>
             )
           )}
