@@ -1,0 +1,370 @@
+{
+ "area": "admin-and-org",
+ "openCount": 55,
+ "runsAfter": "document-control P10 EDGES, P9 RECORDS, P5 HOLDS, P3 LIFECYCLE merge (shared files)",
+ "packages": [
+  {
+   "name": "P0 \u2014 Verify-and-record closures already landed elsewhere (no app code)",
+   "findings": [
+    "ALOG-1",
+    "ORG-2",
+    "ORG-3",
+    "ORG-6",
+    "ALOG-12",
+    "ALOG-13",
+    "BKP-6"
+   ],
+   "files": [
+    "audit-reports/admin-and-org/*.md",
+    "reverse pointer lines in audit-reports/roles-and-permissions/*.md and audit-reports/document-control/08-retention.md"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [],
+   "sequencingNotes": "Reproduce each Done-when against current code (DEC-29), cite file:line: ALOG-1\u2190R&P DB-1/WF-1 (20261025); ORG-2\u2190SURF-1/OWN-12/DEC-20 (20261042); ORG-3\u2190EGRESS-5/DEC-19 (20261023) + IDENT-6; ORG-6\u2190DB-6 (20261020); ALOG-12\u2190WF-11; ALOG-13\u2190DB-5; BKP-6\u2190DC XEDGE-4. Residuals move to owners: ORG-2 dw3 (schema.sql org_members_write documentary; DB-8 retired the bundles), ALOG-1 dw4 (schemaExpectations column probe \u2192 P2), ORG-6 (confirm acl_subject_in_bucket + next_ticket_number pinned), BKP-6 dw2 (UI requires prefix \u2192 P3), ALOG-13 dw2 (wizard no longer offers write/admin).",
+   "decisionsNeeded": [],
+   "alreadyResolvedElsewhere": [
+    "all seven"
+   ]
+  },
+  {
+   "name": "P1 \u2014 Restore boundary and archive layout (sequencing #1)",
+   "findings": [
+    "ORG-1",
+    "BKP-3",
+    "BKP-5",
+    "BKP-12",
+    "BKP-7",
+    "BKP-10",
+    "BKP-11 (restore half)",
+    "BKP-1 (restore half)",
+    "ALOG-8 (restore/apply site)"
+   ],
+   "files": [
+    "app/api/admin/restore/apply/route.ts",
+    "app/api/admin/restore/apply-table/route.ts",
+    "lib/dataRestore.ts (planRestore, CONFLICT_TARGETS, shared applyChunk)",
+    "app/(protected)/admin/restore/page.tsx",
+    "lib/clientBackup.ts",
+    "lib/__tests__/dataRestore.test.ts",
+    "lib/__tests__/restoreRemapDeep.test.ts",
+    "new lib/__tests__/restoreApplyRoute.test.ts"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "DC XEDGE-3 (P10 EDGES) touches the same restore files \u2014 build on it after merge",
+    "R&P SURF-8 IMMUTABLE_TABLES / restoredMemberRoles \u2014 build on, do not re-derive"
+   ],
+   "sequencingNotes": "ORG-1+BKP-3 first as one commit (planRestore iterates every envelope.tables key; apply never forces org_id) \u2192 BKP-12 (CONFLICT_TARGETS + codebook_config, document_equipment_suggestions, recently_viewed_docs, library_numbering + tripwire test vs schema PK/UNIQUE) \u2192 BKP-5 \u2192 BKP-7/BKP-10 (one archive layout: clientBackup emits data.json+files-manifest.json; restore page expects manifest.json+tables/). Do not edit admin/data-export/page.tsx (P3).",
+   "decisionsNeeded": [
+    "BKP-5: additive-only restore documented vs explicit overwrite repair mode (recommend additive + honest counts)",
+    "BKP-3 dw3: bound org-less child rows by validating the parent row"
+   ],
+   "alreadyResolvedElsewhere": [
+    "R&P SURF-8 halves"
+   ]
+  },
+  {
+   "name": "P2 \u2014 Export contract, file-key registry, schema expectations (sequencing #2, #5)",
+   "findings": [
+    "BKP-1",
+    "BKP-2",
+    "BKP-4",
+    "BKP-9",
+    "BKP-11 (RLS + export-nulling halves)",
+    "BKP-14",
+    "ALOG-1 dw4"
+   ],
+   "files": [
+    "lib/exportTables.ts",
+    "lib/dataExport.ts",
+    "lib/storageOrphans.ts (collector side only)",
+    "new lib/storageKeyRegistry.ts (one (table, column, extractor) registry incl. cost_documents.file_url and asset_files)",
+    "lib/schemaExpectations.ts (delete the phantom statements row; regenerate \u2014 112 CREATE TABLE names)",
+    "lib/__tests__/exportCoverage.test.ts",
+    "app/data-portability/page.tsx",
+    "new migration: narrow/drop export_destinations member SELECT policy (20260605:134-144)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DC P10 EDGES lands EGR-7 (=BKP-1 token redaction) and XEDGE-10 (=BKP-11) first \u2014 point BKP-1/BKP-11 at them and finish the remaining criteria",
+    "DC P9 RECORDS rewrites storageOrphans purge side (RET-7) \u2014 serialize"
+   ],
+   "sequencingNotes": "BKP-2 (cost_documents.file_url in neither collector \u2192 one registry), BKP-4 (3 org-less tables: orgs, project_members, curated_collection_items), BKP-14 regenerate from the scan.",
+   "decisionsNeeded": [
+    "BKP-4: keep exporting access_requests (has org_id now) or exclude",
+    "BKP-11: drop member SELECT policy vs non-credential view"
+   ],
+   "alreadyResolvedElsewhere": [
+    "BKP-2 pagination half \u2190 DC XEDGE-13"
+   ]
+  },
+  {
+   "name": "P3 \u2014 Export routes, scheduled exports, destination hygiene",
+   "findings": [
+    "BKP-8",
+    "BKP-13",
+    "BKP-6 residual",
+    "BILL-3 dw3"
+   ],
+   "files": [
+    "app/api/data-export/structured/route.ts",
+    "app/api/data-export/run/route.ts",
+    "app/api/data-export/run-scheduled/route.ts",
+    "app/api/data-export/destinations/route.ts",
+    "app/api/data-export/destinations/[id]/route.ts",
+    "lib/exportRunner.ts (retention deleted/failed counts on export_runs)",
+    "app/(protected)/admin/data-export/page.tsx (prefix required before retention_days)",
+    "new lib/__tests__/dataExportRoutes.test.ts"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "After DC P10 EDGES (XEDGE-7/8/9 same files)",
+    "Use lib/adminGate.ts authorizeAdminSurface (SURF-19 pattern) \u2014 no new constant, no new capability",
+    "Do NOT edit lib/downloads.ts / download_audits"
+   ],
+   "sequencingNotes": "Admin-only export satisfies BKP-8's ACL criterion by refusal (DEC-43). run-scheduled writes no audit row and never calls alertAdminsOfExport today. BKP-8 dw3: audit_logs bulk record.",
+   "decisionsNeeded": [
+    "BKP-13/BILL-9: null user_id vs system UUID for machine audit rows (ONE convention with P4)"
+   ],
+   "alreadyResolvedElsewhere": [
+    "BKP-6 core \u2190 DC XEDGE-4"
+   ]
+  },
+  {
+   "name": "P4 \u2014 Stripe webhook, entitlement, orgs billing columns",
+   "findings": [
+    "BILL-1",
+    "BILL-2",
+    "BILL-3 (except dw3)",
+    "BILL-4",
+    "BILL-6",
+    "BILL-8",
+    "BILL-9",
+    "ORG-9 (RLS + UNIQUE halves)"
+   ],
+   "files": [
+    "app/api/stripe/webhook/route.ts",
+    "app/api/stripe/checkout/route.ts",
+    "app/api/stripe/portal/route.ts",
+    "lib/subscription.ts",
+    "lib/stripe.ts (price id \u2192 plan map)",
+    "app/(protected)/admin/billing/page.tsx",
+    "new migration A: stripe_events ledger (unique event id) + UNIQUE partial index orgs(stripe_customer_id) WHERE NOT NULL \u2014 inventory duplicates first",
+    "new migration B: BEFORE UPDATE trigger on orgs pinning subscription_status/subscribed_plan/trial_ends_at/current_period_end/stripe_customer_id/stripe_subscription_id for non-service writers (orgs_admin_write from 20261046 stays)",
+    "new lib/__tests__/stripeWebhook.test.ts"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "DC P10 EDGES lands XEDGE-14 (=BILL-3 price-derived plan) first \u2014 build on it"
+   ],
+   "sequencingNotes": "BILL-9+BILL-4 (observable writes, non-2xx on failure so Stripe retries) \u2192 BILL-1/BILL-3 (status map incl. incomplete; CHECK constraint on subscription_status) \u2192 BILL-2/ORG-9/BILL-6 (migration B, then A after inventory) \u2192 BILL-8.",
+   "decisionsNeeded": [
+    "BILL-1: map incomplete/unknown to which non-access value",
+    "BILL-2 dw3: Stripe reconciliation now vs WONTFIX-for-now",
+    "BILL-4 ledger shape / ordering key",
+    "BILL-9 system audit row convention"
+   ],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "P5 \u2014 Subscription enforcement wiring, signup hygiene, cron housekeeping",
+   "findings": [
+    "BILL-10",
+    "ORG-9 (enforcement half)",
+    "BILL-14",
+    "ORG-12",
+    "ORG-8 residual"
+   ],
+   "files": [
+    "components/subscription/SubscriptionGate.tsx",
+    "lib/serverAuth.ts",
+    "app/api/cron/maintenance/route.ts (one step: prune_signup_attempts)",
+    "app/api/auth/signup/route.ts",
+    "app/api/auth/request-access/route.ts",
+    "supabase/migrations/20261010_signup_rate_limit.sql retention window vs 1-hour limiter (comment or new migration)",
+    "lib/__tests__/signupRoute.test.ts",
+    "lib/__tests__/requestAccessRoute.test.ts",
+    "lib/__tests__/sweepRoundA3.test.ts"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DEC-18 (enforcement off, env-gated); R&P SURF-15 wired one caller",
+    "cron/maintenance shared with DC P5 HOLDS and PS-VERIFY \u2014 one step, after those merge"
+   ],
+   "sequencingNotes": "ORG-12/BILL-14 = one cron step; ORG-8 residual = neutral acknowledgement on request-access / signup org-exists.",
+   "decisionsNeeded": [
+    "ORG-8: collapse the oracle vs WONTFIX",
+    "BILL-10/14 dw3: consequence of trial expiry while enforcement is off",
+    "Flip SUBSCRIPTION_ENFORCE now?"
+   ],
+   "alreadyResolvedElsewhere": [
+    "BILL-10 dw2 partial \u2190 SURF-15",
+    "ORG-8 rate limit \u2190 EGRESS-5"
+   ]
+  },
+  {
+   "name": "P6 \u2014 Storage quota, platform ceiling, branding upload key",
+   "findings": [
+    "BILL-5",
+    "BILL-7",
+    "BILL-11",
+    "BILL-12",
+    "BILL-13",
+    "ORG-5"
+   ],
+   "files": [
+    "app/api/admin/storage-stats/route.ts (POST lets Admin/DocCtrl of ANY org upsert the global platform_settings row; convert to lib/adminGate.ts \u2014 closes R&P SURF-19's named case)",
+    "lib/storageUsage.ts",
+    "lib/storageAlerts.ts",
+    "app/api/admin/archive-settings/route.ts",
+    "app/api/storage/upload-url/route.ts (branding-area authorization; ContentType allowlist + size cap)",
+    "app/api/storage/multipart/route.ts",
+    "app/(protected)/admin/storage/page.tsx (label region only)",
+    "components/branding/LogoUploadModal.tsx",
+    "lib/orgBranding.ts (branding upload audit row)",
+    "new migration: per-org storage ceiling / restrict the global row",
+    "lib/__tests__/storageAlerts.test.ts",
+    "lib/__tests__/storageKey.test.ts"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "After DC P9 RECORDS (RET-13 edits admin/storage/page.tsx)",
+    "DC PKG-1 (RESOLVED) hardened upload-url key semantics \u2014 build on assertSafeStorageKey"
+   ],
+   "sequencingNotes": "BILL-5 first (cross-tenant write of the platform ceiling) \u2192 BILL-12/13 \u2192 BILL-11+ORG-5.",
+   "decisionsNeeded": [
+    "BILL-5: per-org ceiling vs platform-operator role (new DEC)",
+    "BILL-11: enforce quota at upload vs advisory + honest copy (recommend advisory)",
+    "BILL-13: on-request walk vs cron-measured cached figure",
+    "ORG-5 dw2: ContentType allowlist / size cap values"
+   ],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "P7 \u2014 Audit-log integrity, write observability, the two viewers",
+   "findings": [
+    "ALOG-7",
+    "ALOG-10",
+    "ALOG-8 (purge, archive-cancel, PermissionDrawer sites)",
+    "ALOG-6",
+    "ALOG-11",
+    "ALOG-5 residual"
+   ],
+   "files": [
+    "lib/audit.ts (internals only; keep the exported signature)",
+    "new lib/auditActions.ts (registry the viewer reads; writers untouched \u2014 DEC-31)",
+    "app/(protected)/admin/audit/page.tsx",
+    "app/(protected)/activity/page.tsx (rule copy only)",
+    "app/api/admin/purge/route.ts",
+    "app/api/admin/archive-cancel/route.ts",
+    "components/permissions/PermissionDrawer.tsx:318-335",
+    "new migration A (ALOG-7): BEFORE INSERT trigger on audit_logs resolving user_email/user_role from org_members for authenticated callers, pinning timestamp",
+    "new migration B (ALOG-10): inventory NULL-org rows, then org_id NOT NULL + INSERT WITH CHECK without the NULL branch",
+    "new lib/__tests__/auditLog.test.ts"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "After DC P5 HOLDS (HLD-5 cites lib/audit.ts:129-150) and P3 LIFECYCLE (REV-12 cites :16-31) merge",
+    "ALOG-8's shed/ticket-shed/orphans sites \u2192 DC P9 RECORDS (RET-6/12/14/7); restore/apply site \u2192 A&O P1",
+    "DC DCK-9 cites activity/page.tsx:195 \u2014 keep to header copy"
+   ],
+   "sequencingNotes": "ALOG-7 and ALOG-10 first, then ALOG-8, then ALOG-11/ALOG-6; ALOG-5 residual = /activity states its rule (pointer to SURF-9/ROLE-5/DEC-17).",
+   "decisionsNeeded": [
+    "ALOG-7: trigger-resolved identity (recommended) vs UI label; existing rows",
+    "ALOG-10: NOT NULL + policy (needs inventory) vs query surface",
+    "ALOG-11 dw1: a registry the viewer reads suffices",
+    "ALOG-6: server-side paging vs stated bounds; audit the export"
+   ],
+   "alreadyResolvedElsewhere": [
+    "ALOG-5 PostgREST half \u2190 DEC-17/SURF-9/ROLE-5",
+    "ALOG-8 policy-writer sites \u2190 WF-11"
+   ]
+  },
+  {
+   "name": "P8 \u2014 Org-admin surfaces: library delete, membership/role audit, teams integrity, settings, palette",
+   "findings": [
+    "ALOG-3",
+    "ALOG-4",
+    "ORG-7 residual",
+    "ORG-13",
+    "ORG-11",
+    "ORG-4 residual"
+   ],
+   "files": [
+    "app/(protected)/admin/libraries/page.tsx:183-198",
+    "app/(protected)/admin/libraries/DeleteSafetyModal.tsx",
+    "app/(protected)/admin/users/page.tsx",
+    "app/api/admin/create-user/route.ts",
+    "app/(protected)/admin/settings/page.tsx:110",
+    "components/providers/ThemeProvider.tsx:183",
+    "components/providers/OrgBrandingProvider.tsx:38",
+    "lib/teams.ts",
+    "app/(protected)/admin/teams/page.tsx",
+    "new migration A (ORG-13): inventory cross-org team_members rows, then trigger team_members.org_id = teams.org_id",
+    "new migration B (ORG-7 + ALOG-3): revoke_member VERBATIM from 20261042 + ACL-rule pruning; optional library-delete audit trigger",
+    "new lib/__tests__/adminOrgSurfaces.test.ts"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "ORG-7 dw3 (listAccessGrants durable names) \u2192 lib/accessRecert.ts = DC RET-3 \u2192 defer to A&O P9",
+    "lib/orgBranding.ts is P6's",
+    "R&P SURF-16 team audit rows \u2014 verify ORG-13 dw4 first"
+   ],
+   "sequencingNotes": "ALOG-3 first (library delete cascades documents and revisions with no audit \u2014 service-role route that counts, audits, deletes in one transaction), ALOG-4, ORG-13 (inventory \u2192 migration), then ORG-7/ORG-11/ORG-4 residuals.",
+   "decisionsNeeded": [
+    "ALOG-4 dw2: audit the numbering write or record why not",
+    "ORG-7: prune vs flag per-user ACL rules on removal (acl_index rebuild via OWN-20's route either way)",
+    "ORG-13: composite FK vs trigger"
+   ],
+   "alreadyResolvedElsewhere": [
+    "ORG-7 halves \u2190 OWN-12/GAP-5 (20261042)",
+    "ORG-13 my_team_ids scoping \u2190 DEC-20; owner_team_id FK \u2190 20261045",
+    "ORG-4 page gate \u2190 DEC-17/SURF-9",
+    "ALOG-4 member remove/suspend/role removal \u2190 20261042 + users page ROLE_REMOVED"
+   ]
+  },
+  {
+   "name": "P9 \u2014 Permissions console truth and access recertification",
+   "findings": [
+    "ALOG-2",
+    "ALOG-14",
+    "ALOG-9 residual",
+    "ORG-10 residual"
+   ],
+   "files": [
+    "components/permissions/PermissionsExplorer.tsx (capability rows rendered from CAPABILITY_DEFS + stored policy; five named mismatches corrected)",
+    "components/permissions/CapabilityPolicyEditor.tsx:40 (POLICY_TOKENS single declaration \u2192 lib/roleCapabilities.ts; MGMT/ADMIN_ROLES derive from it)",
+    "lib/roleCapabilities.ts",
+    "components/permissions/ViewAsSimulator.tsx:74 (.eq('org_id', activeOrgId) + 'team memberships unavailable' state)",
+    "lib/accessRecert.ts:84-137 (surface insert errors; exclude expired rules from grant_count/grants_snapshot)",
+    "components/documents/AccessRecertModal.tsx:53-67",
+    "new migration (ALOG-2): access_recertification_events INSERT binds performed_by = auth.uid(), limited to owner/Admin/DocCtrl by collection; no UPDATE/DELETE for authenticated (replaces access_recert_events_member from 20260821:39-44)",
+    "lib/__tests__/accessRecert.test.ts",
+    "lib/__tests__/rolePickerCensus.test.ts"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "After DC P9 RECORDS (RET-3 rewrites lib/accessRecert.ts:59-76, :97-114) \u2014 extend its version",
+    "Do NOT edit admin/holds/page.tsx"
+   ],
+   "sequencingNotes": "ALOG-2 + its migration first, then ALOG-14, then the residuals.",
+   "decisionsNeeded": [
+    "ALOG-2 dw3: narrow recertifiers to owner/Admin/DocCtrl vs widen notification",
+    "ALOG-14: which of the five mismatched rows are intentional"
+   ],
+   "alreadyResolvedElsewhere": [
+    "ALOG-9 grid \u2190 ROLE-1",
+    "ORG-10 column bug \u2190 DB-2"
+   ]
+  }
+ ],
+ "crossAreaFileOverlaps": [
+  "exportTables/dataExport/dataRestore/restore routes/exportRunner/data-export routes/stripe webhook \u2194 DC P10 EDGES",
+  "lib/audit.ts \u2194 DC P5 (HLD-5) and P3 (REV-12)",
+  "lib/accessRecert.ts \u2194 DC P9 RET-3",
+  "admin/storage/page.tsx \u2194 DC RET-13",
+  "cron/maintenance \u2194 DC P5, PS-VERIFY",
+  "storage-stats route \u2194 R&P SURF-19"
+ ],
+ "notes": "Reports are a month behind the code: seven findings close by record (P0). ~10 migrations expected, four inventory-before-apply."
+}

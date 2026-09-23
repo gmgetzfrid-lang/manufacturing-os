@@ -1,0 +1,177 @@
+{
+ "area": "public-surfaces",
+ "openCount": 54,
+ "folding": {
+  "PKG-3 SHARE-LINKS": "into document-control P1 SHARE (wave 2)",
+  "PKG-2 VERIFY-ROUTES + PKG-6 FIELD-ASSET-LANDING": "PS-VERIFY package in document-control wave 2 (owns verify routes/pages, lib/physicalBridge.ts, assets page; DC P8 closes HLD-3/PKG-8/HLD-13 by pointer)",
+  "PKG-4 STAMP-PIPELINE": "PS-STAMP package in document-control wave 2 (owns lib/stamping.ts, lib/stampLayout.ts, lib/publicOrigin.ts, FullScreenViewer downloadWithMarkup; DC P8 closes PKG-13 by pointer)",
+  "PKG-1 SW-OFFLINE": "after DC P2 EGRESS merges (XEDGE-6 rewrites public/sw.js)",
+  "PKG-5 DRAFTING-DELIVERABLE-PRINT": "with the drafting-flow fleet (requests/[id]/page.tsx, lib/ticketTransitions.ts)"
+ },
+ "packages": [
+  {
+   "name": "PKG-1 SW-OFFLINE \u2014 service worker cache policy, update path, sign-out hygiene",
+   "findings": [
+    "OFF-1",
+    "OFF-2 (record-only \u2192 identity ORGSEL-2/SESS-4)",
+    "OFF-3",
+    "OFF-4",
+    "OFF-5",
+    "OFF-6",
+    "OFF-7",
+    "OFF-8",
+    "OFF-9",
+    "OFF-10",
+    "OFF-11",
+    "OFF-12",
+    "OFF-13",
+    "OFF-14",
+    "SHR-9"
+   ],
+   "files": [
+    "public/sw.js (build on P2 EGRESS's version: exclusion list /api/verify*, /api/share/*, /share/*, /api/storage/*, /api/transmittal, /d/*; never cache redirected navigations or URLs carrying code=/token=; bounded RUNTIME_CACHE with timestamp+LRU; per-asset shell precache via allSettled; navigate branch rethrows on wasAborted; remove install-time skipWaiting; VERSION bump)",
+    "lib/__tests__/sw.test.ts (write first)",
+    "components/pwa/ServiceWorkerManager.tsx (OFF-3 copy; OFF-4 controllerchange reload with timeout; offline derived from fetch failures)",
+    "app/offline/page.tsx (OFF-3 copy)",
+    "components/providers/RoleContext.tsx SIGNED_OUT block only (OFF-8: caches cleared before redirect)",
+    "package.json scripts + new scripts/stamp-sw-version.mjs (VERSION from VERCEL_GIT_COMMIT_SHA ?? VERCEL_DEPLOYMENT_ID at build; never commit a rewritten sw.js)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "DC P2 EGRESS (XEDGE-6) merged \u2014 build on its sw.js",
+    "OFF-1 dw3 (force-dynamic + no-store on verify routes) delivered by PS-VERIFY \u2014 same phase"
+   ],
+   "sequencingNotes": "OFF-14 tests first \u2192 exclusion list + cachePut rule (closes OFF-1/5/6/7/13/SHR-9) \u2192 OFF-10/12 \u2192 OFF-9 \u2192 OFF-4/11 \u2192 OFF-8 \u2192 OFF-3 copy. Keep sw.js header hard rules 1\u20132 and the RSC bypass.",
+   "decisionsNeeded": [
+    "OFF-3: copy fix (default) vs real offline store",
+    "OFF-9 cache budget numbers (default: 200 entries / 7 days)",
+    "OFF-4 remove install-time skipWaiting (default yes)",
+    "OFF-11 injection mechanism (prebuild script, default)"
+   ],
+   "alreadyResolvedElsewhere": [
+    "OFF-2 \u2190 identity ORGSEL-2/SESS-4"
+   ]
+  },
+  {
+   "name": "PS-VERIFY \u2014 the four unauthenticated verify endpoints, landing pages, equipment label target (PKG-2 + PKG-6)",
+   "findings": [
+    "VFY-1",
+    "VFY-2",
+    "VFY-3",
+    "VFY-4",
+    "VFY-5",
+    "VFY-6",
+    "VFY-7 (record-only \u2192 EGRESS-2, chooser residual)",
+    "VFY-8",
+    "VFY-9",
+    "VFY-10",
+    "VFY-11",
+    "VFY-12",
+    "VFY-13",
+    "VFY-14",
+    "PHYS-1",
+    "PHYS-4 (residual \u2192 WONTFIX by design, record)",
+    "PHYS-10",
+    "SHR-2 (record-only \u2192 EGRESS-2)",
+    "PHYS-3 (record-only \u2192 DC PKG-4/6/7b)",
+    "PHYS-6 (record-only \u2192 DC REV-1)",
+    "PHYS-7 (= DC HLD-13)",
+    "DC HLD-3, PKG-8 (record-only \u2192 DIST-2), DC HLD-13, DC PKG-12 (assets page/physicalBridge:262-270)"
+   ],
+   "files": [
+    "app/api/verify/route.ts (VFY-3 doc-only \u2192 never green; VFY-1 allow-list Issued/Locked; VFY-4 pure effective-date compare; VFY-14 typed select; VFY-12 cap + scan row; VFY-13 force-dynamic + no-store)",
+    "app/api/verify-package/route.ts (NOT_CURRENT_STATUSES from lib/aiBoundary; allow-list; one document_holds query, held sheets marked with their own label, fail closed on hold-read error; VFY-8 closed package; VFY-11 empty; VFY-2 legacy bare-UUID \u2192 non-green 'cannot confirm which printing')",
+    "app/api/verify-hold/route.ts (VFY-10/PHYS-10 other active holds; VFY-6 vocabulary filter; VFY-14 narrow select)",
+    "app/api/verify-ticket/route.ts (headers/select/limits ONLY \u2014 drafting-flow owns the verdict)",
+    "app/verify/[docId]/page.tsx",
+    "app/verify-package/[packageId]/page.tsx",
+    "app/verify-hold/[holdId]/page.tsx (green only at zero active holds)",
+    "new app/verify*/layout.tsx (robots noindex) + app/robots.ts",
+    "lib/downloads.ts buildVerifyUrl (~95-102) ONLY: undefined when no version resolves",
+    "new lib/verifyRateLimit.ts + lib/verifyScanLog.ts (signup_attempts pattern; fail-open on missing table)",
+    "new migration verify_scans (id, endpoint, target_id, verdict, ip, created_at; RLS on, no policies; index (ip, created_at); prune fn) + lib/schemaExpectations.ts row",
+    "app/api/cron/maintenance/route.ts (prune call only)",
+    "new lib/effectiveDateCore.ts (pure local-midnight compare; leave lib/effectiveDate.ts to DC REV-9)",
+    "lib/physicalBridge.ts (~84,99 label caption; ~170 hold-card line conditional) \u2014 PHYS-7/HLD-13 default (b): keep /assets/<tag>, fix the caption, protected page redirects a no-session scan to sign-in carrying the tag",
+    "app/(protected)/assets/[tag]/page.tsx (no-session redirect; PKG-12 region)",
+    "lib/__tests__/verifyRouteVerdict.test.ts, verifyPackageSnapshot.test.ts (extend); new verifyHold / verifyRateLimit tests"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DC P5 HOLDS assertNotOnHold (hold reads) merged",
+    "PHYS-1 dw4 footer hold line \u2192 DC P8 (HLD-1 download limb); VFY-6 column split \u2192 holds fleet (not done); VFY-4 timezone \u2192 pure helper now + DEC for a per-org timezone (record as new finding)",
+    "Defaults applied (user informed 2026-09-17): VFY-12 per-scan log with IP+UA, generous cap, 90-day prune; PHYS-7 option (b); VFY-2 legacy bare-UUID scan non-green (fail-safe)"
+   ],
+   "sequencingNotes": "VFY-1/PHYS-1 residuals first (verify-package) \u2192 VFY-13 (OFF-1 pair) \u2192 VFY-3 (doc-only green still live: isThisTheCurrentVersion = !versionId || \u2026) \u2192 VFY-2 residual \u2192 VFY-12 \u2192 LOWs \u2192 PHYS-7/HLD-13. Records for VFY-* in 01-verify-endpoints.md, PHYS-* in 03-physical-bridge.md, SHR-2 in 02-share-links.md; DC HLD-3/PKG-8/HLD-13/PKG-12 in the DC reports.",
+   "decisionsNeeded": [],
+   "alreadyResolvedElsewhere": [
+    "VFY-1/PHYS-1/VFY-5/VFY-9 \u2190 DC DIST-2 (residual on verify-package)",
+    "VFY-2 \u2190 DC PKG-2 (legacy residual)",
+    "SHR-2, VFY-7, PHYS-4 half \u2190 R&P EGRESS-2",
+    "PHYS-3 \u2190 DC PKG-4/PKG-6/7b",
+    "PHYS-6 \u2190 DC REV-1",
+    "VFY-10 = PHYS-10"
+   ]
+  },
+  {
+   "name": "PS-STAMP \u2014 stamping placement/rotation, publicOrigin contract, markup export (PKG-4)",
+   "findings": [
+    "SHR-8",
+    "PHYS-5",
+    "PHYS-11",
+    "PHYS-12 (= DC PKG-13)",
+    "PHYS-9 substrate (StampOptions controlState enum)"
+   ],
+   "files": [
+    "lib/stamping.ts (PHYS-12 page.getRotation(); SHR-8 title-block-aware fallback, no new dependency; PHYS-11 console.warn when verifyUrl absent; drawFooter derives 'UNCONTROLLED COPY' from an explicit controlState)",
+    "lib/stampLayout.ts",
+    "lib/__tests__/stampLayout.test.ts (extend) + new lib/__tests__/stampingRotation.test.ts (/Rotate 90 fixture)",
+    "lib/publicOrigin.ts (server fallback = VERCEL_PROJECT_PRODUCTION_URL, never a preview hostname; no origin \u2192 drop QR and the 'scan the QR' sentence)",
+    ".env.example:43-46",
+    "components/viewers/FullScreenViewer.tsx downloadWithMarkup (~977-1065: always stamp, '_markup_UNCONTROLLED' suffix, audit state 'uncontrolled') + QrBadge (~1291) from publicOrigin()",
+    "lib/markupExport.ts (cited by DC PKG-13)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "Defaults applied: SHR-8 title-block-aware fallback; PHYS-11 production-URL fallback; PHYS-9 controlState enum",
+    "publicOrigin server fallback also serves DC TRX-14/XEDGE-5, notifications NEDGE-11/DELIV-5, drafting-flow EDGE-9 \u2014 their files untouched"
+   ],
+   "sequencingNotes": "PHYS-5 first \u2192 PHYS-12 with fixture \u2192 SHR-8 \u2192 PHYS-11. Records in 03-physical-bridge.md / 02-share-links.md; DC PKG-13 by pointer.",
+   "decisionsNeeded": [],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "PKG-5 DRAFTING-DELIVERABLE-PRINT \u2014 the ticket deliverable print/download path",
+   "findings": [
+    "PHYS-2",
+    "PHYS-9"
+   ],
+   "files": [
+    "app/(protected)/requests/[id]/page.tsx (FileViewerModal ~510-700, 1685; download_audits inserts ~606/688 carry document_id/version_id, use the columns P2 EGRESS added, check {error})",
+    "types/schema.ts TicketAttachment rev?: string | null",
+    "lib/ticketTransitions.ts (stamp deliverable_rev onto the Final attachment(s) at issue \u2014 narrow)",
+    "new test: a historical Final attachment builds a verifyUrl without the current rev"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "PS-STAMP for PHYS-9 dw2",
+    "DC P2 EGRESS download_audits migration (PHYS-8 requests limb)",
+    "R&P WF-21 contract (integer=issued, letter=draft, absent=unknown); drafting-flow EDGE-2/SM-5/AUTHZ-12 own the verdict",
+    "Defaults applied: PHYS-2 write rev at issue; existing rev-less attachments print with no ?r= (CANNOT CONFIRM); PHYS-9 UNCONTROLLED COPY everywhere (WONTFIX the register)"
+   ],
+   "sequencingNotes": "Run with the drafting-flow fleet (same files).",
+   "decisionsNeeded": [],
+   "alreadyResolvedElsewhere": []
+  }
+ ],
+ "crossAreaFileOverlaps": [
+  "public/sw.js \u2194 DC XEDGE-6",
+  "share routes \u2194 DC P1 SHARE",
+  "verify routes/pages, physicalBridge, assets \u2194 DC P8/HLD-13/PKG-12",
+  "stamping \u2194 DC PKG-13",
+  "publicOrigin \u2194 DC TRX-14/XEDGE-5, notifications, drafting-flow",
+  "requests/[id]/page.tsx \u2194 drafting-flow",
+  "schemaExpectations, cron/maintenance \u2194 DC P5, A&O P5"
+ ],
+ "notes": "Eleven of 54 close by record. Defaults for the seven product decisions were stated to the user 2026-09-17 and apply unless overridden: PHYS-7 (b); share minting controller tier + granted publishers, never-expires removed, 90-day max; refuse shares to Draft/Superseded/Void/Archived/held; per-scan log with IP+UA pruned at 90 days; timezone pure helper + DEC; production-URL origin fallback; UNCONTROLLED COPY everywhere."
+}

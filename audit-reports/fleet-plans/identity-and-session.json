@@ -1,0 +1,64 @@
+{
+ "area": "identity-and-session",
+ "openCount": 2,
+ "packages": [
+  {
+   "name": "IS-P1 \u00b7 SESS-6 \u2014 activeRole: Role | null type flip (code only)",
+   "findings": [
+    "SESS-6"
+   ],
+   "files": [
+    "components/providers/RoleContext.tsx (type :67 \u2192 Role | null; seed :115 null; five setActiveRole('Viewer') sites :285 :311 :343 :416 :508)",
+    "app/(protected)/requests/page.tsx (:379 activeRole.includes('Engineer') runtime crash site \u2014 first; :374 :410; :630 :657 :674 audit userRole)",
+    "app/(protected)/documents/[libraryId]/page.tsx (13 sites: principal literal :1671; actorRole props; userRole props; InspectorPanel activeRole prop)",
+    "app/(protected)/requests/[id]/page.tsx (:1082 principal; :1358 audit; :1602 getActions; :1651 actorRole)",
+    "app/(protected)/documents/page.tsx (:187 computeCanRead)",
+    "app/(protected)/projects/page.tsx (:190)",
+    "app/(protected)/projects/[id]/page.tsx (:237)",
+    "app/(protected)/admin/users/page.tsx (:227)",
+    "components/viewers/SecureDocViewer.tsx (:58)",
+    "lib/__tests__/protectedGate.test.ts (pin the null seed + a tsc-shape test)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "Keep Principal.role: Role and WorkflowEngine.getActions(role: Role) unchanged; null-branch at the consumer (least-privileged: no actions, canRead false); audit payloads take activeRole ?? undefined",
+    "NEVER use activeRole?.includes( \u2014 lib/__tests__/sweepRoundC1b.test.ts HEADLINE_AUTHORITY census forbids it; use hasAnyRole / roles.some",
+    "Run only when no fleet owns documents/[libraryId]/page.tsx, requests/[id]/page.tsx, SecureDocViewer.tsx \u2014 after all document-control waves merge"
+   ],
+   "sequencingNotes": "One self-contained change (DEC-31 already split SESS-5\u2192SESS-6). Order: RoleContext flip \u2192 requests/page.tsx :379 \u2192 other 7 files \u2192 tests \u2192 records. Re-census 2026-09-17: 28 tsc errors in 8 files after the flip.",
+   "decisionsNeeded": [
+    "Audit payload null semantics: omit user_role (recommended)"
+   ],
+   "alreadyResolvedElsewhere": [
+    "documents/[libraryId]/page.tsx:4013 crash site rewritten by R&P Round C1b; admin/billing, data-export, assets dropped from the worklist by the same commit"
+   ]
+  },
+  {
+   "name": "IS-P2 \u00b7 IDENT-1 \u2014 apply the skipped 20261018 (ops + records)",
+   "findings": [
+    "IDENT-1"
+   ],
+   "files": [
+    "supabase/migrations/20261018_identity_email_unique.sql (apply, not edit)",
+    "audit-reports/identity-and-session/02-identity-collision.md",
+    "audit-reports/identity-and-session/README.md",
+    "audit-reports/DECISIONS.md (DEC-42 acceptance line)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "User paste-back of the counts-only STEP 0 + apply script (handed over 2026-09-17); DEC-42 dashboard check (identity linking ON)"
+   ],
+   "sequencingNotes": "BLOCKED\u2192RESOLVED after paste-back; if duplicates exist, the surviving uid per person is a human call.",
+   "decisionsNeeded": [
+    "Surviving uid per person if duplicates exist"
+   ],
+   "alreadyResolvedElsewhere": []
+  }
+ ],
+ "crossAreaFileOverlaps": [
+  "documents/[libraryId]/page.tsx (DC DCK-5/DCK-7/HLD-8/RG-12/XEDGE-5)",
+  "SecureDocViewer.tsx (DC EGR-4, projects-tab SEC-1)",
+  "requests/[id]/page.tsx (drafting-flow; PS PHYS-2)"
+ ],
+ "notes": "SESS-6 after the DC waves; IDENT-1 waits on the user."
+}

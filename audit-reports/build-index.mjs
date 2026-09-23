@@ -257,6 +257,9 @@ const README_COUNTS = [];
 
 const areas = readdirSync(ROOT)
   .filter((d) => !d.startsWith(".") && statSync(join(ROOT, d)).isDirectory())
+  // An area is a directory with numbered reports; fleet-plans/ (package maps
+  // for the resolution fleets) is not one and gets no findings.json.
+  .filter((d) => readdirSync(join(ROOT, d)).some((f) => /^\d\d-.*\.md$/.test(f)))
   .sort();
 
 for (const area of areas) {

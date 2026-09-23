@@ -1,0 +1,413 @@
+{
+ "area": "document-control",
+ "openCount": 114,
+ "waves": {
+  "1": [
+   "P2 EGRESS",
+   "P4 REVIEW",
+   "P5 HOLDS",
+   "P6 CHECKOUT",
+   "P9 RECORDS",
+   "P10 EDGES"
+  ],
+  "2": [
+   "P1 SHARE (+public-surfaces PKG-3)",
+   "P3 LIFECYCLE",
+   "P7 TRANSMITTALS",
+   "P8 FIELD",
+   "PS-VERIFY (public-surfaces PKG-2 + PKG-6)",
+   "PS-STAMP (public-surfaces PKG-4)"
+  ]
+ },
+ "recordOnlyCloses": {
+  "EGR-2": "P1",
+  "DIST-8": "P2 (\u2192 R&P SURF-12, 20261047 trg_document_ack_guard)",
+  "DRLS-12": "P6",
+  "DIST-5": "P6",
+  "HLD-4": "P8",
+  "HLD-6": "P9",
+  "RET-9": "P9",
+  "DRLS-11": "P9",
+  "TRX-11": "P7"
+ },
+ "packages": [
+  {
+   "name": "P1 SHARE \u2014 share links: status/hold refusal, durable revocation, external download record",
+   "findings": [
+    "DRLS-5",
+    "DRLS-7",
+    "DIST-6",
+    "DIST-7",
+    "EGR-3",
+    "REV-10 (route half)",
+    "EGR-5",
+    "EGR-6 (documentShares limb)",
+    "EGR-2 (record-only)"
+   ],
+   "files": [
+    "app/api/share/file/route.ts",
+    "app/api/share/resolve/route.ts",
+    "lib/documentShares.ts",
+    "components/documents/ShareLinkModal.tsx",
+    "app/share/[token]/page.tsx",
+    "new migration: document_shares revocation durable (revoked_at monotonic via BEFORE UPDATE extension of document_shares_anchor_immutable from 20261026; DELETE controller-only)",
+    "lib/__tests__/shareRoutes.test.ts (new)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "P2 EGRESS migration (download_audits.source + share_id, user_id nullable) \u2014 the share/file audit insert re-points at share_id (DIST-7 dw2); until merged the insert is error-checked but tolerant",
+    "P5 HOLDS lib/holdGate.ts assertNotOnHold for the hold refusal in share/file and share creation (HLD-1 dw1; EGR-5 dw2)",
+    "NOT_CURRENT_STATUSES from lib/aiBoundary.ts \u2014 reuse, no new set (DIST-2 lesson)",
+    "Wave 2: absorbs public-surfaces PKG-3 (SHR-1 record-only, SHR-3, SHR-4, SHR-5, SHR-6, SHR-7, SHR-10, SHR-11, SHR-12, SHR-13, PHYS-8, PHYS-13) \u2014 same files, fix once"
+   ],
+   "sequencingNotes": "Sequencing cluster 3 (per-table RLS decorative until permissive policies narrowed) \u2014 20261022 already split document_shares per verb; this only tightens revoked_at/DELETE. Order: route-side status/hold refusal (fail closed) \u2192 durable revocation migration \u2192 audit attribution \u2192 listing/modal."
+  },
+  {
+   "name": "P2 EGRESS \u2014 download_audits record integrity, presigned-URL lifetime, service-worker caching",
+   "findings": [
+    "DIST-9",
+    "DRLS-8",
+    "EGR-4",
+    "PKG-11",
+    "XEDGE-6",
+    "XEDGE-3 (audit/immutability residual only)",
+    "DIST-8 (record-only)"
+   ],
+   "files": [
+    "new migration 2026NNNN_dc_roundF_download_audits_record.sql (source, share_id, transmittal_id columns; user_id nullable behind CHECK (user_id OR share_id OR transmittal_id); org_id backfill from documents then NOT NULL (NOT VALID fallback); drop FOR ALL policy \u2192 SELECT members + INSERT WITH CHECK member AND user_id = auth.uid(); no UPDATE/DELETE policy)",
+    "lib/staleCopies.ts (getDocumentRecall reads the new shape with legacy fallback, flags external copies, returns unavailable when unreadable)",
+    "components/documents/DistributionRecall.tsx (render the gap; nudge members only)",
+    "new lib/presignedLifetime.ts (MAX 3600, MIN 60, resolvePresignedLifetime: absent\u2192default, non-integer\u2192refused, clamp)",
+    "app/api/storage/download-url/route.ts (400 on garbage, clamp, return granted expiresIn, Cache-Control no-store)",
+    "app/api/storage/resolve/route.ts (shared ceiling, no-store)",
+    "public/sw.js (isCacheableResponse refuses no-store/private and any /api/ path; VERSION bump purges; SIGN_OUT and SESSION messages) + new lib/swSession.ts posted from Sidebar, profile page, protected layout, SubscriptionGate",
+    "lib/__tests__/downloadAudits.test.ts, presignedLifetime.test.ts, sw.test.ts (new/extended); a policy census test replaying schema.sql + every migration proving the live download_audits policy set is exactly {insert_own: INSERT, select: SELECT}; a getSignedUrl census (every literal under app/api \u2264 ceiling)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DEC-30 inventory before apply: download_audits rows with NULL org_id; rows with NULL user_id (external attribution); count that would violate the new NOT NULL",
+    "A prior attempt (branch lost to a container recycle) landed exactly this design and recorded it as DEC-44 (1: append-only record, 2: long-lived access stays on the share surface, 3: sw caches no API response) \u2014 re-implement it; DEC-44 may already exist in audit-reports/DECISIONS.md only if that attempt's records survived (they did not; write it fresh)",
+    "lib/downloads.ts logDownloadAudit {error} check is P8's file (EGR-6 limb) \u2014 do not edit; note it",
+    "app/(protected)/requests/[id]/page.tsx writes ticket_id/attachment_*/filename/watermark_text columns that exist in no migration \u2014 drafting-flow EVID-5's table; pointer, not fixed here"
+   ],
+   "sequencingNotes": "This migration is a prerequisite for P1 (share/file attribution) and P7 (portal writes source='transmittal_portal') \u2014 land it first among the DC migrations. drafting-flow EVID-5 and public-surfaces SHR-5/PHYS-8 are the same table; cross-reference."
+  },
+  {
+   "name": "P3 LIFECYCLE \u2014 publish/retirement integrity and the documents-table rails",
+   "findings": [
+    "REV-6",
+    "REV-11",
+    "REV-12",
+    "REV-13",
+    "REV-14",
+    "REV-8",
+    "REV-9",
+    "REV-10 (lifecycle half: revoke shares on archive/split/merge)",
+    "HLD-2",
+    "DCK-8",
+    "DRLS-3",
+    "DRLS-13",
+    "DRLS-14"
+   ],
+   "files": [
+    "lib/revisions.ts",
+    "lib/documentLifecycle/common.ts",
+    "lib/documentLifecycle/split.ts",
+    "lib/documentLifecycle/merge.ts",
+    "lib/documentLifecycle/reverse.ts",
+    "lib/audit.ts (narrow; keep exported signature)",
+    "components/documents/SupersedeModal.tsx",
+    "components/documents/DocumentLinkPicker.tsx",
+    "lib/effectiveDate.ts + lib/__tests__/effectiveDate.test.ts",
+    "new migrations (up to 2): documents-table rails (DRLS-3 rev vs current version label consistency, DRLS-14 dangling current_version_id/pending_version_id, REV-14 unique supersession pairs) \u2014 inventory BEFORE apply"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "Round E package C landed lib/documentLifecycle/common.ts, renumber.ts, lib/branches.ts, docControlRegister.ts, DocumentLinkPicker.tsx and re-created enforce_document_publish_guard (20261060) / user_can_publish_on_library (20261059) \u2014 build on those bodies",
+    "P5 HOLDS assertNotOnHold for correctRevisionLabel / renumber (HLD-1 call sites here)",
+    "P4 REVIEW: roster-void helper (or the publisher bulk 'void' write 20261030 already permits) for REV-6 'void the roster'; the finalize-side half of REV-6 is REV-5 in P4",
+    "publish_revision base body = 20261049 (verify no later migration re-created it)",
+    "DEC-30 inventories: dangling current_version_id/pending_version_id (DRLS-14); documents whose rev differs from the current version's revision_label (DRLS-3); duplicate document_supersessions pairs (REV-14)"
+   ],
+   "sequencingNotes": "The 'route MORE traffic through publish_revision, never less' family. REV-5 and REV-6 are one defect with one fix split across P4/P3 \u2014 cross-reference. REV-9's shared 'today' helper is consumed by P8 (one line)."
+  },
+  {
+   "name": "P4 REVIEW \u2014 the review gate: ancestor-chain policy, per-slot completion, roster integrity",
+   "findings": [
+    "RG-3",
+    "RG-4",
+    "RG-6",
+    "RG-7",
+    "REV-5",
+    "RG-12",
+    "RG-5",
+    "RG-8",
+    "REV-7",
+    "RG-10",
+    "RG-11",
+    "RG-13",
+    "DRLS-6"
+   ],
+   "files": [
+    "lib/reviewControl.ts",
+    "lib/containerChain.ts",
+    "lib/docClass.ts",
+    "components/documents/ReviewGateSection.tsx",
+    "components/documents/RevUpModal.tsx",
+    "components/documents/ReviewControlModal.tsx",
+    "app/api/intake/upload/route.ts",
+    "components/projects/IntakePanel.tsx",
+    "types/schema.ts",
+    "new migration(s): review gate slots (guard body MUST start from 20261060's enforce_document_publish_guard and land after it \u2014 it is live)"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "Round E package C edited lib/reviewControl.ts and ReviewControlModal.tsx (OWN-13 refused review-policy writes) \u2014 build on them",
+    "DEC-21 / DEC-37 (independence per-library policy, per-slot; a person may hold many slots), DEC-16 (fail closed) govern RG-4/RG-8; DEC-36 (single container-chain resolver) governs RG-3",
+    "P3 owns lib/revisions.ts \u2014 the RG-13 call-site switch (~:871) is delegated to P3; record the split",
+    "DEC-30 inventories: active rows sharing (record_id, revision_label) including branches (REV-7); drafts in 'in_review' with zero primary rows (RG-7 guard change would freeze them)"
+   ],
+   "sequencingNotes": "Sequencing item 4 (the review gate is the product's central safety claim): RG-1/RG-2 are closed; this is what the guard COUNTS and how the policy is RESOLVED."
+  },
+  {
+   "name": "P5 HOLDS \u2014 hold integrity, the assertNotOnHold helper, hold card/verify",
+   "findings": [
+    "HLD-1 (helper + the holds-owned call sites)",
+    "HLD-5",
+    "HLD-9",
+    "HLD-10",
+    "HLD-14",
+    "HLD-7 (holds half)",
+    "HLD-8 (holds half)"
+   ],
+   "files": [
+    "lib/holds.ts",
+    "new lib/holdGate.ts (assertNotOnHold \u2014 the ONE shared helper every other package will call; server and client callable)",
+    "lib/distributionAcks.ts",
+    "components/documents/HoldStrip.tsx",
+    "app/(protected)/admin/holds/page.tsx",
+    "app/api/verify-hold/route.ts (holds half only; public-surfaces PKG-2 owns the verdict contract)",
+    "app/api/cron/maintenance/route.ts (one step)",
+    "new migration 2026NNNN_dc_roundF_document_holds_integrity.sql (trigger shape like 20261030/20261032; must leave origin_ticket_id writable by the ticket route \u2014 DEC-25)",
+    "lib/__tests__/holds.test.ts (new)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "20261047 LIFE-6 added document_holds.origin_ticket_id \u2014 the new trigger must leave it writable by the ticket route",
+    "DEC-25 (never auto-release; close blocked until hold addressed), DEC-35 (no facility vocabulary \u2014 audience from capability/config)",
+    "DEC-30 inventory: document_holds rows whose org_id differs from the document's org (HLD-9); open holds with released_reason NULL (informational)",
+    "P3's DRLS-3 documents trigger if the held-label rule is folded in (otherwise independent)"
+   ],
+   "sequencingNotes": "HLD-5 is the holds equivalent of RG-2/DIST-3 (server-side enforcement of the release transition). HLD-1 is cross-package: this package ships the helper and its own call sites; P1/P3/P7/P8/P9 wire their limbs in wave 2 and cross-reference."
+  },
+  {
+   "name": "P6 CHECKOUT \u2014 the lock, force-release, the check-in register and the dashboard",
+   "findings": [
+    "DCK-4",
+    "DCK-5",
+    "DCK-7",
+    "DCK-9",
+    "DCK-11",
+    "DCK-12",
+    "DCK-13",
+    "DCK-14",
+    "DCK-6",
+    "HLD-11",
+    "HLD-8 (checkout half)",
+    "DRLS-12 (record-only)",
+    "DIST-5 (record-only)"
+   ],
+   "files": [
+    "lib/checkoutEpisodes.ts",
+    "components/documents/CheckoutFlowModal.tsx",
+    "components/documents/CheckoutStatusCell.tsx",
+    "components/documents/InspectorPanel.tsx",
+    "app/(protected)/documents/[libraryId]/page.tsx",
+    "lib/projects.ts",
+    "app/(protected)/checkouts/page.tsx",
+    "components/projects/StaleCheckoutBanner.tsx",
+    "lib/timeline.ts",
+    "components/documents/CheckInPanel.tsx",
+    "app/(protected)/activity/page.tsx (:195 only)",
+    "new migration (\u22641)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "20261043 force_release_document RPC (SURF-4) is the base for DCK-5's audit ordering \u2014 do not re-add a second write",
+    "Report 01 substrate: the CAS predicate and the insert-then-reselect episode race path are verified sound \u2014 DCK-4/DCK-14 must not change them",
+    "DEC-35: checkout.force_release and holds.* capabilities exist in lib/capabilityPolicy.ts \u2014 read them, add no tokens",
+    "Round E packages C/D/A edited InspectorPanel.tsx, documents/[libraryId]/page.tsx, admin/audit/page.tsx, CheckInPanel.tsx, types/schema.ts \u2014 build on the merged tree"
+   ],
+   "sequencingNotes": "Cluster 3 (DCK-2/DCK-3 guards, DRLS-1) is closed; this is the app half report 01 left. DCK-13 and DCK-10's residual are the same line (CheckoutStatusCell canAdmin literal \u2014 collection-aware since OWN-3)."
+  },
+  {
+   "name": "P7 TRANSMITTALS \u2014 authority, immutability, portal token lifecycle, status truth",
+   "findings": [
+    "TRX-1",
+    "TRX-2",
+    "TRX-4 (portal_token redaction sub-item \u2192 P10/EGR-7)",
+    "TRX-5",
+    "TRX-6",
+    "EGR-8",
+    "TRX-3",
+    "TRX-7",
+    "TRX-8",
+    "TRX-9",
+    "TRX-10",
+    "TRX-12",
+    "TRX-14",
+    "XEDGE-5",
+    "TRX-13",
+    "TRX-11 (record-only)"
+   ],
+   "files": [
+    "lib/transmittals.ts",
+    "app/api/transmittal/route.ts",
+    "app/api/transmittal/send-email/route.ts",
+    "app/(protected)/transmittals/page.tsx",
+    "app/transmittal/[token]/page.tsx",
+    "lib/evidencePack.ts",
+    "components/documents/InspectorPanel.tsx (TransmittalTrail only)",
+    "types/schema.ts",
+    "lib/capabilityPolicy.ts (ONE new capability id for transmit authority, default = today's role list, SQL CASE row via a migration re-creating org_capability_allows_for from its NEWEST definition \u2014 20261063 \u2014 with lineDiff proof)",
+    "new migration: transmittals_guard extension (base = 20261027, one trigger not two) + INSERT policy draft-only"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "P2 EGRESS migration (download_audits.source/transmittal_id) before TRX-9's portal write",
+    "P5 HOLDS assertNotOnHold for the issue gate (TRX-3 / HLD-1 call site)",
+    "DEC-13 (policyAllows resource dimension, live) for a per-library transmit capability; DEC-35 (no hardcoded role list on the page)",
+    "DEC-30 inventory: issued transmittals with unpinned items (TRX-12 fallback population); issued rows whose creator is no longer active (TRX-6)",
+    "lib/publicOrigin.ts server fallback (TRX-14/XEDGE-5) is public-surfaces PKG-4's \u2014 consume it if merged, else a narrow local guard"
+   ],
+   "sequencingNotes": "EGR-1 (cluster 2) is closed and its 20261027 transmittals_guard is the base body to extend. Pairs: TRX-1's INSERT policy (draft-only) must ship with the composer change."
+  },
+  {
+   "name": "P8 FIELD \u2014 packs, prints, stamping consumers, downloads footer",
+   "findings": [
+    "PKG-7",
+    "PKG-9",
+    "PKG-8 (record-only \u2192 DIST-2)",
+    "HLD-3 (record-only \u2192 DIST-2)",
+    "PKG-12",
+    "PKG-13 (\u2192 pointer to public-surfaces PKG-4, which owns lib/stamping.ts)",
+    "HLD-13 (\u2192 pointer to PS-VERIFY, which owns lib/physicalBridge.ts)",
+    "DRLS-10",
+    "EGR-6 (downloads/docPack/MultiDocViewer insert checks)",
+    "PKG-10",
+    "HLD-1 (download/footer limb)",
+    "REV-9 (consumer of P3's helper)",
+    "HLD-4 (record-only)"
+   ],
+   "files": [
+    "lib/docPack.ts",
+    "lib/workPackages.ts",
+    "app/(protected)/packages/page.tsx",
+    "lib/downloads.ts (logDownloadAudit {error}; buildFooterNotice hold line)",
+    "components/viewers/MultiDocViewer.tsx",
+    "app/api/verify-package/route.ts \u2014 NOT edited (PS-VERIFY owns it; HLD-3/PKG-8 close by pointer)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "P5 HOLDS assertNotOnHold (HLD-1 banner/refusal limb)",
+    "P3 for REV-9's shared 'today' helper (one-line consumer)",
+    "Report 07 substrate + Phase 7b: filterPackDocs/assessPackDocs gate \u2192 snapshot \u2192 download \u2192 pins-last ordering (PKG-6) is verified sound \u2014 keep 'gate before any side-effect' and print snapshot = paper",
+    "DEC-40 (projects link by reference)"
+   ],
+   "sequencingNotes": "Wave 2. The verify-package half of item 2 was left hold-blind with an inline literal (the DIST-2 lesson) \u2014 PS-VERIFY finishes it with ONE shared helper; P8 must not touch the verify routes."
+  },
+  {
+   "name": "P9 RECORDS \u2014 retention, recertification, legal-hold records, archive/shed integrity",
+   "findings": [
+    "RET-6",
+    "RET-7",
+    "RET-8",
+    "RET-4",
+    "RET-5",
+    "DRLS-4",
+    "RET-3",
+    "RET-10",
+    "RET-11",
+    "RET-12",
+    "RET-13",
+    "RET-14",
+    "HLD-1 (dispose-gate limb)",
+    "HLD-6 (record-only)",
+    "RET-9 (record-only)",
+    "DRLS-11 (record-only)"
+   ],
+   "files": [
+    "lib/retention.ts",
+    "lib/retentionPolicy.ts",
+    "components/documents/RetentionSection.tsx",
+    "components/documents/RetentionPolicyModal.tsx",
+    "lib/accessRecert.ts (RET-3; admin-and-org ALOG-2 edits the same functions later \u2014 build so ALOG-2 can extend)",
+    "app/api/collections/delete/route.ts",
+    "app/api/collections/trash/route.ts",
+    "lib/serverRetention.ts",
+    "app/api/admin/shed/route.ts",
+    "app/api/admin/shed/commit/route.ts",
+    "app/api/admin/ticket-shed/* routes",
+    "app/api/admin/orphans/route.ts + lib/storageOrphans.ts (RET-7 org-scoped purge; collector side stays for admin-and-org BKP-2/9)",
+    "lib/reviewCycles.ts (DRLS-4 insert site)",
+    "app/(protected)/admin/storage/page.tsx (RET-13 Reclaim button region only)",
+    "new migration (\u22641): extend 20261043 enforce_document_retention_guard \u2014 never re-create from scratch"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "20261043 (SURF-3 documents retention guard, disposition events append-only) is live and is the base",
+    "P5 HOLDS helper for the dispose gate",
+    "DEC-30 inventories: document_review_events rows with NULL org_id (backfill query drafted in 20260812:57-61); document_versions rows sharing a file_url with a live row (RET-8); orphan keys outside any org prefix (RET-7)",
+    "DEC-20 / roles DEL-6 (owners recertify) \u2014 accessRecert changes keep the owner path"
+   ],
+   "sequencingNotes": "Sequencing item 6 (destructive, irreversible deletes): RET-1/XEDGE-4/XEDGE-13 are closed; RET-6/RET-7/RET-8 are the remaining 'a job can delete bytes it should not' class and go first \u2014 reproduce before acting, fail closed."
+  },
+  {
+   "name": "P10 EDGES \u2014 export/restore secrets, scheduled-export entitlement, billing edges, schema bootstrap census",
+   "findings": [
+    "XEDGE-2",
+    "EGR-7",
+    "XEDGE-10",
+    "XEDGE-9",
+    "XEDGE-7",
+    "XEDGE-8",
+    "XEDGE-14",
+    "XEDGE-11",
+    "XEDGE-12",
+    "PKG-14",
+    "HLD-12",
+    "XEDGE-3 (audit/immutability residual; the org-boundary defect is admin-and-org ORG-1/BKP-3)"
+   ],
+   "files": [
+    "lib/exportTables.ts (REDACT_COLUMNS: document_shares / project_intake_links / transmittals tokens \u2014 EGR-7 = admin-and-org BKP-1, fix once here and point BKP-1 at it)",
+    "lib/dataExport.ts",
+    "lib/dataRestore.ts (download_audits into IMMUTABLE_TABLES; never reinstate token columns)",
+    "app/api/admin/restore/begin/route.ts",
+    "lib/exportRunner.ts (XEDGE-9 SSRF-by-redirect)",
+    "app/api/data-export/run-scheduled/route.ts, destinations/route.ts, destinations/[id]/route.ts (XEDGE-7/8: entitlement re-check, disabled destinations)",
+    "app/api/stripe/webhook/route.ts (XEDGE-14: subscribed_plan from price id, not metadata \u2014 narrow; admin-and-org P4 owns the rest of the webhook later)",
+    "app/api/templates/generate/route.ts, lib/outputTemplates (XEDGE-11/12)",
+    "supabase/schema.sql (PKG-14: the bootstrap policy census \u2014 reconcile with lib/__tests__/migrationSourceOfTruth.test.ts from DB-8: schema.sql may DEFINE nothing a numbered migration later re-defines; regenerate or annotate)",
+    "lib/__tests__/exportCoverage.test.ts (extend)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "DEC-18 (assertOrgHasAccess wired, enforcement OFF by default) constrains XEDGE-7 \u2014 skipping scheduled exports for canceled workspaces is enforcement: implement behind the same SUBSCRIPTION_ENFORCE flag and record; admin-and-org BILL-10/ORG-9 are the same question",
+    "DB-8 (Round E): migrationSourceOfTruth.test.ts fails the build if a non-numbered file defines a function/policy/trigger a numbered migration later re-defines \u2014 PKG-14's 'schema.sql defines the policies' must be reconciled with it, not against it",
+    "admin-and-org ORG-1 / BKP-3 own the restore org-boundary defect; XEDGE-3 here is audit/immutability only",
+    "DEC-30: none required (no migration); the priceId\u2192plan map is configuration the user must supply \u2014 leave a documented map with the existing ids"
+   ],
+   "sequencingNotes": "Sequencing item 7 folds the remaining XEDGE-* in as extensions of listed findings: XEDGE-3 extends SURF-8 (closed), XEDGE-9/XEDGE-10 extend the export findings, XEDGE-12 extends XEDGE-1 (closed). Admin-and-org P1\u2013P4 run AFTER this package merges and build on it."
+  }
+ ],
+ "crossAreaFileOverlaps": [
+  "public-surfaces PKG-3 \u2194 P1 SHARE (fold in, wave 2)",
+  "public-surfaces PKG-2/PKG-6 \u2194 P8 FIELD verify routes, physicalBridge, assets page (PS-VERIFY owns them; P8 closes HLD-3/PKG-8/HLD-13 by pointer)",
+  "public-surfaces PKG-4 \u2194 P8 PKG-13 (PS-STAMP owns lib/stamping.ts/stampLayout.ts)",
+  "admin-and-org P1\u2013P4 \u2194 P10 EDGES (A&O runs after)",
+  "admin-and-org P9 ALOG-2 \u2194 P9 RECORDS RET-3 (lib/accessRecert.ts \u2014 A&O extends after)",
+  "admin-and-org P7 \u2194 lib/audit.ts (P3 narrow edit; A&O after)",
+  "drafting-flow EVID-5 \u2194 P2 download_audits table"
+ ],
+ "notes": "Wave 1 (2026-09-17) implementations were lost to a container recycle before review; re-run 2026-09-23 as one workflow per package, merged and pushed individually. All 114 OPEN ids assigned exactly once."
+}
