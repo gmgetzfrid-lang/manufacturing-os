@@ -501,7 +501,7 @@ lib/stamping.ts:118-119 — `const base = page.getViewport({ scale: 1 }); const 
 ## PKG-14 · supabase/schema.sql — the documented bootstrap — creates work_packages, work_package_documents and distribution_acks with RLS never enabled and no policies
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1262-1309`, `supabase/schema.sql:1011-1028`, `supabase/migrations/20260825_work_packages_acks.sql:57-58`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and schema.sql really is the from-scratch path: docs/ARCHITECTURE.md:947 `schema.sql ← cumulative create-from-scratch reference`. Because the migration uses CREATE TABLE IF NOT EXISTS, replaying migrations after schema.sql WOULD still run the ALTER … ENABLE RLS lines, so the gap only bites a deployment bootstrapped from schema.sql alone — which is exactly the documented path. MEDIUM is right.
@@ -524,5 +524,15 @@ supabase/schema.sql:1-2 — `-- Manufacturing OS — PostgreSQL schema for Supab
 
 - [ ] schema.sql enables RLS and defines the policies for every table it creates, or explicitly refuses to run without the migrations
 - [ ] a startup/CI assertion fails when any table in the public schema has RLS disabled
+
+**Resolution (2026-09-23, Round F).** Reproduced first: `supabase/schema.sql` created 46 tables and carried 22 `ENABLE ROW LEVEL SECURITY` lines — 24 tables (the three named here plus `document_holds`, `document_intents`, `revision_branches`, `projects`, `milestones`, the notification, subscription and export tables, …) were created with RLS off and no policy, and the header still read "Run this in the Supabase SQL editor to set up your database." Reconciled with DB-8 (the numbered migrations are the only source of truth; schema.sql must not become a second copy of the policies) by ANNOTATING and failing closed rather than regenerating: (1) the header now states in capitals that the file alone is NOT A COMPLETE INSTALL, that the migrations are MANDATORY and run after it in filename order, where the policies for the post-baseline tables live, and that the file must never be re-run on a live database; (2) a "BOOTSTRAP RLS" block at the end enables RLS on all 24 tables (idempotent; each line names the migration that carries its policies) — a database that has run only schema.sql now exposes NOTHING through PostgREST (deny-all until the migrations run) instead of every tenant's packages and acknowledgments; (3) the file ends with a "BOOTSTRAP CENSUS" `SELECT` — the last result set the SQL editor shows — listing every public table that is RLS-disabled or RLS-enabled with no policy ("locked — apply the migrations"), so the operator sees the gap instead of a silent success. CI assertion: `lib/__tests__/schemaBootstrapCensus.test.ts` fails the build when any `CREATE TABLE` in schema.sql lacks an ENABLE in schema.sql; when any table created anywhere under `supabase/` is never RLS-enabled in the sequence (it parses the `FOREACH … EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY')` loop `20260819` uses for the four cost tables, which a naive census reports as unprotected — verified: they are enabled there); when the header statement or the trailing census is missing; or when schema.sql GAINS a policy / function / trigger definition (the frozen baseline set is pinned: 4 functions, 27 policies, 0 triggers).
+- Files: `supabase/schema.sql`, `lib/__tests__/schemaBootstrapCensus.test.ts` (new).
+- Tests: the census file above (5 tests). No migration: the live database is base + migrations already (README phase history), and ENABLE RLS is idempotent state, not a body DB-8 tracks.
+
+**Done-when.**
+- [x] schema.sql enables RLS and defines the policies for every table it creates, or explicitly refuses to run without the migrations ✓ — it enables RLS on every table it creates (the policies stay in the migrations per DB-8), states that the migrations are mandatory, and surfaces what is still locked as its final result.
+- [x] a startup/CI assertion fails when any table in the public schema has RLS disabled ✓ — a static, repo-side census over schema.sql + every numbered migration; the live-side equivalent is the trailing SELECT. No test here can query the production database (DEC-30).
+
+**Scope / residual.** Chain reaction addressed: `document_intents` / `revision_branches` (the same deferral comment) are in the block. `HLD-12`'s schema.sql half closes on this.
 
 ---

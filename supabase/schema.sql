@@ -1,5 +1,30 @@
 -- Manufacturing OS — PostgreSQL schema for Supabase
--- Run this in the Supabase SQL editor to set up your database.
+--
+-- ⚠ THIS FILE ALONE IS NOT A COMPLETE INSTALL (PKG-14 / HLD-12).
+--
+-- It is the pre-migration BASELINE: the tables, and the RLS policies that
+-- existed before supabase/migrations/ began. Every table, function, policy
+-- and trigger added since — including the RLS policies for every table this
+-- file creates after the baseline block (document_holds, work_packages,
+-- distribution_acks, projects, milestones, notifications, export
+-- destinations, …) — lives ONLY in the numbered migrations, which are the
+-- single source of truth (DB-8; lib/__tests__/migrationSourceOfTruth.test.ts).
+--
+-- To set up a database: run this file FIRST, then EVERY file in
+-- supabase/migrations/ whose name starts with a date, in filename order.
+-- The migrations are MANDATORY, not optional hardening.
+--
+-- Fail-closed by construction: this file enables ROW LEVEL SECURITY on every
+-- table it creates (the "BOOTSTRAP RLS" block at the end), so a database
+-- that has run only this file exposes NOTHING through PostgREST — the tables
+-- whose policies live in the migrations are locked, not world-readable,
+-- until the migrations are applied. The final SELECT lists what is still
+-- locked or unprotected, and lib/__tests__/schemaBootstrapCensus.test.ts
+-- fails the build if a table is ever created anywhere under supabase/
+-- without RLS being enabled somewhere in the sequence.
+--
+-- Never re-run this file on a live database: its policy and function bodies
+-- are frozen at the baseline and would restore over later hardening (DB-8).
 
 -- ============================================================
 -- TABLES
@@ -1352,3 +1377,50 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS draft_iteration INT NOT NULL DEFAUL
 -- for anyone else). work_package_documents UPDATE policy so pin refresh
 -- works from the browser. See supabase/migrations/20260828_integrity_hardening.sql
 -- for the full function body + policies.
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- BOOTSTRAP RLS (PKG-14 / HLD-12) — every table this file creates has row
+-- level security ENABLED here. The POLICIES for the tables below live in the
+-- numbered migrations (the source of truth); until those run, these tables
+-- are locked — deny-all for authenticated — never world-open. Idempotent.
+-- lib/__tests__/schemaBootstrapCensus.test.ts requires an entry for every
+-- CREATE TABLE in this file.
+ALTER TABLE document_supersessions ENABLE ROW LEVEL SECURITY;     -- policies: 20260615
+ALTER TABLE plants ENABLE ROW LEVEL SECURITY;                     -- policies: 20260606
+ALTER TABLE units ENABLE ROW LEVEL SECURITY;                      -- policies: 20260606
+ALTER TABLE systems ENABLE ROW LEVEL SECURITY;                    -- policies: 20260606
+ALTER TABLE project_documents ENABLE ROW LEVEL SECURITY;          -- policies: 20260609
+ALTER TABLE document_assets ENABLE ROW LEVEL SECURITY;            -- policies: 20260609
+ALTER TABLE document_holds ENABLE ROW LEVEL SECURITY;             -- policies: 20260612 / 20260901
+ALTER TABLE milestones ENABLE ROW LEVEL SECURITY;                 -- policies: 20260614
+ALTER TABLE email_notifications ENABLE ROW LEVEL SECURITY;        -- policies: 20260605
+ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;   -- policies: 20260605
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;              -- policies: 20260621 / 20260723
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;              -- policies: 20260622
+ALTER TABLE export_destinations ENABLE ROW LEVEL SECURITY;        -- policies: 20260605
+ALTER TABLE export_runs ENABLE ROW LEVEL SECURITY;                -- policies: 20260605
+ALTER TABLE sla_defaults ENABLE ROW LEVEL SECURITY;               -- policies: 20260605
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;                   -- policies: 20260615
+ALTER TABLE project_members ENABLE ROW LEVEL SECURITY;            -- policies: 20260615
+ALTER TABLE project_activity ENABLE ROW LEVEL SECURITY;           -- policies: 20260615
+ALTER TABLE markup_requests ENABLE ROW LEVEL SECURITY;            -- policies: 20260615
+ALTER TABLE revision_branches ENABLE ROW LEVEL SECURITY;          -- policies: 20260823
+ALTER TABLE document_intents ENABLE ROW LEVEL SECURITY;           -- policies: 20260824
+ALTER TABLE work_packages ENABLE ROW LEVEL SECURITY;              -- policies: 20260825
+ALTER TABLE work_package_documents ENABLE ROW LEVEL SECURITY;     -- policies: 20260825
+ALTER TABLE distribution_acks ENABLE ROW LEVEL SECURITY;          -- policies: 20260825
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- BOOTSTRAP CENSUS (PKG-14 done-when 2) — the LAST result set the SQL editor
+-- shows. Every row is a table that is not yet serving: RLS disabled (never
+-- acceptable), or RLS enabled with no policy (locked — the migrations for it
+-- have not been applied). An empty result means the migrations are in.
+SELECT c.relname AS "table",
+       CASE WHEN NOT c.relrowsecurity THEN 'RLS DISABLED — unprotected'
+            ELSE 'locked — no policy yet: apply the migrations' END AS state
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'r'
+  AND (NOT c.relrowsecurity
+       OR NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname))
+ORDER BY 2, 1;

@@ -352,7 +352,7 @@ lib/timeline.ts:346-352 — `// Holds and the matching HOLD_OPENED / HOLD_RELEAS
 ## HLD-12 · The hold-enforcement and legal-hold-guard functions are SECURITY DEFINER with no SET search_path, and supabase/schema.sql creates document_holds with no RLS enabled and no policy
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260822_review_completion_guard.sql:21-22`, `supabase/migrations/20260826_legal_hold_delete_guard.sql:17-18`, `supabase/migrations/20260826_legal_hold_delete_guard.sql:37-38`, `supabase/migrations/20260828_integrity_hardening.sql:39-54`, `supabase/schema.sql:564-588`, `supabase/schema.sql:1011-1028`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every cited fact checks out. Two caveats on impact, not accuracy: the search_path vector needs a role able to CREATE a schema on the search_path, which `authenticated` normally lacks in Supabase; and any database that ran 20260612_phase5_holds.sql:79-85 has RLS + policy on document_holds, so the schema.sql gap bites only a bootstrap-from-schema.sql deployment. MEDIUM is still fair given the repo's own DIAGNOSE_sync_check.sql exists precisely because migration drift happens here.
@@ -374,6 +374,16 @@ supabase/migrations/20260822_review_completion_guard.sql:21-22 — `CREATE OR RE
 - [ ] enforce_document_publish_guard, enforce_legal_hold_delete_guard, enforce_legal_hold_version_delete_guard and publish_revision are re-created with SET search_path = public
 - [ ] schema.sql enables RLS on document_holds and carries the capability-gated policies, or its header states unambiguously that the migrations are mandatory and schema.sql alone is not a complete install
 - [ ] A check exists (script or test) that every SECURITY DEFINER function in supabase/ pins search_path
+
+**Resolution (2026-09-23, Round F).** Verified against current code first, limb by limb. (1) search_path: `enforce_document_publish_guard` is re-created by `20261060` with `SECURITY DEFINER SET search_path = public` at creation; `publish_revision`'s current 11-argument definition (`20261049`, from `20261019`) is pinned at creation — `lib/__tests__/searchPathPin.test.ts` asserts exactly this; `enforce_legal_hold_delete_guard()` and `enforce_legal_hold_version_delete_guard()` (last defined in `20260826` without the pin) are pinned after the fact by `20261020_pin_search_path.sql` (`ALTER FUNCTION … SET search_path = public`, lines 52-53), which the roles-and-permissions rounds recorded as applied live. So done-when 1 was already closed by DB-6 / `20261020` — record-only here, no re-creation (re-creating a live function only to restate a pin it already has would be the DB-8 fork risk for nothing). (2) schema.sql: fixed under `PKG-14` (the same defect on 24 tables) — `document_holds` now has `ENABLE ROW LEVEL SECURITY` in schema.sql's BOOTSTRAP RLS block (its capability-gated policies stay in `20260612` / `20260901`, the source of truth), and the header states unambiguously that the migrations are mandatory and schema.sql alone is not a complete install. (3) The check: `lib/__tests__/searchPathPin.test.ts` (DB-6) replays the whole migration set and fails when any live SECURITY DEFINER function's final definition is unpinned and not covered by `20261020`; `lib/__tests__/schemaBootstrapCensus.test.ts` (PKG-14) covers the RLS half.
+- Files: `supabase/schema.sql` (shared with PKG-14). Tests: `lib/__tests__/schemaBootstrapCensus.test.ts` (asserts `document_holds` is in the block); `lib/__tests__/searchPathPin.test.ts` (existing, unchanged — the standing check).
+
+**Done-when.**
+- [x] enforce_document_publish_guard, enforce_legal_hold_delete_guard, enforce_legal_hold_version_delete_guard and publish_revision are re-created with SET search_path = public ✓ — already true live: two at creation (`20261060`, `20261049`), two via `20261020`'s ALTER (equivalent — `pg_proc.proconfig` carries the pin either way); verified, not re-created.
+- [x] schema.sql enables RLS on document_holds and carries the capability-gated policies, or its header states unambiguously that the migrations are mandatory and schema.sql alone is not a complete install ✓ (RLS enabled; header statement; the policies deliberately stay in the migrations per DB-8).
+- [x] a check exists (script or test) that every SECURITY DEFINER function in supabase/ pins search_path ✓ (`searchPathPin.test.ts`).
+
+**Scope / residual.** None. Verification stays SUSPECTED as the record's verifier asked (the consequence needs a role able to create schemas on the search_path).
 
 ---
 
