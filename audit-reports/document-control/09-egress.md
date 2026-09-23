@@ -171,7 +171,7 @@ app/api/share/file/route.ts:139 — `source: stamped ? "share_link" : "share_lin
 ## EGR-4 · /api/storage/download-url lets the caller choose expiresIn with no clamp — a member can mint a 7-day credential-free URL to any document they can currently read
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/download-url/route.ts:144-153`, `lib/storage.ts:118-154`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified there is no clamp anywhere between parse and sign; SigV4's own 604800s maximum is the only bound, exactly the 7 days the finding claims. The ACL/visibility/deny checks above (lines 55-115) gate WHO may mint the URL at mint time, but they explicitly `catch { /* fail open */ }` and, more importantly, bind nothing to the resulting credential-free URL's lifetime.
@@ -193,6 +193,19 @@ app/api/storage/download-url/route.ts:144 — `const expiresIn = parseInt(req.ne
 - [ ] expiresIn is clamped server-side to a small ceiling (the app's own default of 3600 is the only value any caller uses) and non-numeric input is rejected rather than passed through as NaN
 - [ ] The same ceiling is applied at /api/storage/resolve:83 and /api/transmittal:74 so no issuer is looser than the others
 - [ ] Consider whether long-lived access should route through a revocable share link (which has expiry and revoked_at) instead of a presigned URL, since only the former can be withdrawn
+
+**Resolution (2026-09-23, Round F).** The lifetime is the server's decision (DEC-44 §2). New `lib/presignedLifetime.ts` — `PRESIGNED_MIN_SECONDS = 60`, `PRESIGNED_MAX_SECONDS = 3600`, `PRESIGNED_DEFAULT_SECONDS = 3600` and `resolvePresignedLifetime(raw)`: absent / blank → the default; anything that is not a plain integer (`abc`, `3600.5`, `1e3`, `NaN`, `+3600`) → refused; otherwise clamped into `[60, 3600]` with `clamped` reported. `app/api/storage/download-url/route.ts` resolves it right after the key check — before any lookup, so a bad request costs nothing — answers `400 { error }` on a refusal, signs with `expiresIn: lifetime.seconds`, and returns `{ url, expiresIn }` (the GRANTED window) under `Cache-Control: no-store`. `app/api/storage/resolve/route.ts` signs on `PRESIGNED_MAX_SECONDS`, returns `expiresIn` and is `no-store` too. `/api/transmittal` (`P7`'s file, not edited) already signs for 300; a **census test** walks every `route.ts` under `app/api`, finds every `getSignedUrl(` call and proves each lifetime is a numeric literal ≤ the ceiling or the shared resolver's answer with the file importing `lib/presignedLifetime` — so no issuer can drift looser than another without failing the suite. The `parseInt` is gone.
+- Files: `lib/presignedLifetime.ts` (new), `app/api/storage/download-url/route.ts`, `app/api/storage/resolve/route.ts`
+- Tests: `lib/__tests__/presignedLifetime.test.ts` — the resolver (constants pinned; absent → default; in-range as asked; `604800` / `3601` / `5` / `0` / `-1` clamped; nine non-integer forms refused with a reason), the download-url route driven end to end through the Proxy-chain mock (a week → signed for 3600, body `expiresIn: 3600`, `no-store`; four garbage forms → 400 with the presigner never called; absent → 3600, `5` → 60; no session → 401, nothing signed), the resolve route (3600, `no-store`, `expiresIn` reported), the `getSignedUrl` census (all five signing sites seen; every lifetime a literal ≤ 3600 or the resolver's; the download-url route no longer parses `expiresIn` itself). The `sweepRoundA3` / `roundE_D_rolesAdmin` source pins on the route's ACL block are untouched and green.
+- Reproduced: at the base commit a temporary route test signed `?expiresIn=604800` for `604800`, signed `?expiresIn=abc` for `NaN`, and returned no `Cache-Control` header — exactly the finding (the repro test was deleted after the fix; the new file carries the inverse assertions).
+- Verified: `presignedLifetime.test.ts` green; full suite, `tsc`, `eslint` green.
+
+**Done-when.**
+1. ✓ `expiresIn` is clamped server-side to `[60, 3600]` — the app's own default is the ceiling — and non-numeric input is rejected with 400 rather than passed through as NaN.
+2. ✓ The same ceiling applies at `/api/storage/resolve` (now `PRESIGNED_MAX_SECONDS`, previously the literal 3600) and `/api/transmittal` signs for 300 (< ceiling, not edited — `P7`'s file); the census test is what keeps every issuer under `app/api` on or under the ceiling from now on.
+3. ✓ Considered and decided — DEC-44 §2: long-lived or forwardable access belongs on the share surface (`document_shares`: an expiry and a `revoked_at`), never on a presigned URL. No in-repo caller has ever asked for more than 3600, so nothing is routed anywhere; a caller that wants a week now gets an hour and the `expiresIn` in the response says so.
+
+**Scope / residual.** `lib/dataExport.ts:85` signs export-manifest URLs for 24 hours under `lib/`, not `app/api` — that is the admin data-export path (`P10 EDGES` / admin-and-org `BKP-*`), outside this finding's routes and the census's scope by design; noted so it is not mistaken for an oversight. The verifier's correction stands: six client call sites pass `expiresIn=3600` explicitly and are unaffected.
 
 ---
 

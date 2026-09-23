@@ -406,7 +406,7 @@ lib/downloads.ts:82 — `parts.push(\`Rev ${doc.rev ?? "?"} at time of issue —
 ## PKG-11 · /api/storage/download-url takes the presigned-URL lifetime from an unclamped query parameter, so any member can mint a 7-day unauthenticated link to a drawing's bytes
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/download-url/route.ts:144-151`, `lib/docPack.ts:31-34`, `lib/downloads.ts:220`, `lib/downloads.ts:139`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Authorization is per-request (active membership + private/hidden ACL discover + explicit download-deny), but all of it is spent once: the minted URL carries no further authentication and survives membership revocation for its whole lifetime, up to SigV4's 7-day ceiling, and the bytes it serves are the raw unstamped original with no download_audits row. MEDIUM is a fair severity — it requires an authenticated member who already passes the ACL gate.
@@ -429,6 +429,18 @@ app/api/storage/download-url/route.ts:144 — `const expiresIn = parseInt(req.ne
 
 - [ ] expiresIn is clamped server-side (e.g. 60..3600) and non-numeric input falls back to the default
 - [ ] the lifetime actually granted is what gets written to download_audits.expires_at
+
+**Resolution (2026-09-23, Round F).** Closed with `EGR-4` (same route, same mechanism) — DEC-44 §2. `lib/presignedLifetime.ts` `resolvePresignedLifetime` clamps the caller's `expiresIn` into `[60, 3600]` (3600 = the app's own default, the only value any caller — `lib/docPack.ts:111`, `lib/storage.ts:129`, the four viewer / modal sites — has ever asked for) and refuses a non-integer; `app/api/storage/download-url/route.ts` answers 400 on a refusal, signs with the resolved seconds, and returns the GRANTED `expiresIn` under `Cache-Control: no-store`. One divergence from the illustrative remediation, stated: non-numeric input is refused with 400 rather than silently falling back to the default — a caller sending garbage is told so, and since every in-repo caller sends `3600` nothing legitimate changes.
+- Files: `lib/presignedLifetime.ts`, `app/api/storage/download-url/route.ts` (and `app/api/storage/resolve/route.ts` for the shared ceiling)
+- Tests: `lib/__tests__/presignedLifetime.test.ts` (see `EGR-4`: resolver, route end to end, the `getSignedUrl` census under `app/api`).
+- Reproduced: at the base commit `?expiresIn=604800` was signed for 604800 and `?expiresIn=abc` for `NaN` (temporary route test, deleted after the fix; the new file asserts the inverse).
+- Verified: green with the full suite, `tsc`, `eslint`.
+
+**Done-when.**
+1. ✓ `expiresIn` is clamped server-side to `60..3600`; non-numeric input is refused with 400 (louder than the suggested silent default — see the divergence above).
+2. ✗ Not done as written, and why: `download_audits.expires_at` is written by `lib/downloads.ts` (`P8 FIELD`'s file, the `EGR-6` limb — not edited here) as the **copy-validity stamp** of an uncontrolled download (`now + 24h`, only when `state === "uncontrolled"`), not as the URL's lifetime; writing the granted URL window into it would change what that column means to the stale-copy recall that reads it. What this round does instead: the route returns the granted `expiresIn` so any writer can record it, and after the clamp the real URL exposure (≤ 1 h) is strictly inside the 24 h the record already states — the record now **bounds** the exposure instead of understating it seven-fold, which is the harm the criterion was written against. If P8 wants the exact grant on the row, `logDownloadAudit` can take it from the route's response.
+
+**Scope / residual.** The presigned URL is still a bearer capability for its (now ≤ 1 h) window — that is the design, and DEC-44 §2 puts anything longer or forwardable on `document_shares`, which can be revoked. The "no download_audits row from this route" observation in the mechanism is unchanged and correct: the audit row is the downloader's (`lib/downloads.ts`), the route only signs.
 
 ---
 
