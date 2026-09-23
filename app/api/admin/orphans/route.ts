@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
   const actor = await authorizeOrgRole(req, orgId, ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   try {
-    const scan = await scanOrphans(actor.admin);
+    // RET-7: the walk, the totals and the listing are this org's prefix only.
+    const scan = await scanOrphans(actor.admin, orgId);
     // Cap the listing payload; totals stay complete.
     return NextResponse.json({ ...scan, orphans: scan.orphans.slice(0, 500) });
   } catch (e) {
@@ -44,12 +45,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "confirm: true is required to delete orphans." }, { status: 400 });
   }
   try {
-    const result = await deleteOrphans(actor.admin);
+    // RET-7: the delete set is this org's prefix only (re-scanned server-side).
+    const result = await deleteOrphans(actor.admin, orgId);
     await actor.admin.from("audit_logs").insert({
       action: "STORAGE_ORPHANS_PURGED",
       resource_type: "storage", resource_id: orgId,
       org_id: orgId, user_id: actor.userId,
-      details: { deleted: result.deleted, freedBytes: result.freedBytes, errors: result.errors.length },
+      details: { deleted: result.deleted, freedBytes: result.freedBytes, errors: result.errors.length, scope: result.scope },
     }).then(() => undefined, () => undefined);
     return NextResponse.json(result);
   } catch (e) {

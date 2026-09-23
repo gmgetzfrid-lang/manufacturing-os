@@ -16,14 +16,20 @@
 //   • a binary is re-uploaded only to a key the live stub actually owns (its own
 //     attachments[].url) and under the org prefix — no within/cross-org overwrite;
 //   • the zip is size/entry/decompression-bounded so a compression bomb can't OOM;
-//   • the archived flag is cleared ONLY when every binary re-uploaded.
+//   • the archived flag is cleared ONLY when every binary re-uploaded;
+//   • RET-14: a binary is written ONLY from the zip entry whose path is EXACTLY
+//     its key (no suffix fallback — the read-only viewer may guess, the path
+//     that writes authoritative storage may not) and ONLY when its bytes match
+//     the sha256 + size the producer recorded in files-manifest.json. A zip
+//     without that manifest, or a tampered entry, restores nothing for that
+//     ticket and leaves the stub intact.
 
 import { NextRequest, NextResponse } from "next/server";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import JSZip from "jszip";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
-import { findInBackup } from "@/lib/archive";
+import { exactEntryFor, bytesMatchManifest, type ManifestEntry } from "@/lib/restoreVerify";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // bounded work; never run unbounded on a hostile zip
@@ -96,6 +102,21 @@ export async function POST(req: NextRequest) {
   if (metaEntry) {
     try { fileMeta = JSON.parse(await zip.files[metaEntry].async("string")) as Record<string, string>; } catch { /* inference fallback */ }
   }
+  // RET-14: the integrity manifest the producer wrote is REQUIRED — without it
+  // no byte can be verified, and unverified bytes never reach authoritative
+  // storage. Fail closed with the reason.
+  let manifest: Record<string, ManifestEntry>;
+  const manifestEntry = entryPaths.find((p) => /(^|\/)files-manifest\.json$/.test(p));
+  if (!manifestEntry) {
+    return NextResponse.json({ error: "This archive has no files-manifest.json, so its attachment bytes cannot be verified. Nothing was restored." }, { status: 400 });
+  }
+  try {
+    const parsed = JSON.parse(await zip.files[manifestEntry].async("string")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    manifest = parsed as Record<string, ManifestEntry>;
+  } catch {
+    return NextResponse.json({ error: "This archive's files-manifest.json is unreadable, so its attachment bytes cannot be verified. Nothing was restored." }, { status: 400 });
+  }
 
   // Parse the snapshots, collecting the in-org ticket ids the zip references.
   const prefix = `orgs/${orgId}/`;
@@ -127,7 +148,7 @@ export async function POST(req: NextRequest) {
     for (const r of ((data ?? []) as StubRow[])) stubById.set(r.id, r);
   }
 
-  let restored = 0, partial = 0, filesUploaded = 0, filesMissing = 0, commentRows = 0,
+  let restored = 0, partial = 0, filesUploaded = 0, filesMissing = 0, filesMismatched = 0, commentRows = 0,
     skippedForeignKey = 0, notArchived = 0;
   let decompressed = 0;
   const errors: string[] = [];
@@ -145,13 +166,20 @@ export async function POST(req: NextRequest) {
 
     let ticketOk = true;
     for (const k of allowedKeys) {
-      const entry = findInBackup(entryPaths, k);
+      const entry = exactEntryFor(entryPaths, k);
       if (!entry) { ticketOk = false; filesMissing++; continue; }
       try {
         const bytes = await zip.files[entry].async("uint8array");
         decompressed += bytes.byteLength;
         if (decompressed > MAX_DECOMPRESSED) {
           return NextResponse.json({ error: "Archive decompresses to too much data; aborted.", restored, filesUploaded }, { status: 413 });
+        }
+        // Verify BEFORE the write: a tampered or mis-laid-out entry restores
+        // nothing for this ticket, and the stub (the recovery pointer) stays.
+        if (!bytesMatchManifest(bytes, manifest[k])) {
+          ticketOk = false; filesMismatched++;
+          errors.push(`verify ${k}: bytes do not match files-manifest.json — not written`);
+          continue;
         }
         await r2.send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: k, Body: bytes, ContentType: fileMeta[k] || inferContentType(k) }));
         filesUploaded++;
@@ -212,9 +240,9 @@ export async function POST(req: NextRequest) {
       action: "TICKET_ARCHIVE_RESTORE",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { restored, partial, filesUploaded, filesMissing, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors: errors.slice(0, 8) },
+      details: { restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors: errors.slice(0, 8) },
     });
   } catch { /* best-effort */ }
 
-  return NextResponse.json({ ok: true, restored, partial, filesUploaded, filesMissing, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors });
+  return NextResponse.json({ ok: true, restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors });
 }
