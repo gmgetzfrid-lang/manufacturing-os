@@ -692,6 +692,8 @@ log shows what enforcement would have blocked.
 
 **Risk:** low.
 
+*Landed 2026-09-23 (document-control Round F): the scheduled-export sweep's subscription and plan refusals (`XEDGE-7` / `XEDGE-8`, `lib/exportEntitlement.ts scheduledRunGate`) ride the same `SUBSCRIPTION_ENFORCE` flag — off: the would-be skip is logged and recorded on the run and the destination; on: a cancelled `export_runs` row is recorded and nothing is pushed. The "configurer still an active member" check in the same gate is not billing state and always applies.*
+
 <a id="dec-19"></a>
 ## DEC-19 · `access_requests` — build the surface or remove the feature?
 
@@ -1700,3 +1702,47 @@ role ids) — then scope lives on the id, is checked in `node_visible` after
 the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
+
+<a id="dec-44"></a>
+## DEC-44 · Bearer columns never leave the database and never come back from a backup
+
+**Decision. A column whose VALUE is a credential — a share token, a vendor
+intake token, a transmittal portal token, an encrypted destination
+credential — is nulled in every export and never reinstated by a restore.
+A restored share or intake link arrives with an unguessable placeholder
+token and REVOKED; a restored transmittal has no portal token; a restored
+export destination has no credentials and is DISABLED. People re-issue
+links and re-enter credentials; the software never revives them.**
+
+> Made during the document-control Round F (2026-09-23) closing `EGR-7`
+> and `XEDGE-10` (also admin-and-org `BKP-1`, projects-and-cost `INTK-6`).
+
+**Rationale.** `ai_connections` was already excluded from the backup on the
+rule "secrets never leave the database"; the token columns and the
+encrypted destination credentials were the same class and had simply never
+been treated as such. A backup is designed to be mailed around and pushed
+to third-party buckets nightly; a token inside it stays live against
+production long after the backup has aged, and an intake token is a WRITE
+credential. Re-minting on restore was rejected: a link nobody has been sent
+is dead anyway, and a live token minted by the restore would be a
+credential nobody chose to issue.
+
+**Implementation.** `lib/exportTables.ts REDACT_COLUMNS` (the map, with a
+reason per table) and `redactRow`, applied by `dumpTable` to every row;
+`lib/dataRestore.ts scrubRestoredRow`, applied inside `remapRow` so both
+restore paths get it; the manifest, notes and ZIP README name the redacted
+columns. `lib/__tests__/exportCoverage.test.ts` censuses every exported
+table for credential-named columns, so a future bearer column cannot ship
+un-redacted.
+
+**Acceptance.** No export artifact (ZIP, webhook, bucket, JSON download)
+contains a token or an `*_encrypted` value; a restore from any envelope —
+redacted or hand-edited — lands no presentable token and no usable
+credential; the tripwire fails the build for a new bearer column.
+
+**Reversal.** A stated requirement to restore share links live (none
+stated) — then the restore would have to re-mint AND re-notify every
+recipient, decided then.
+
+**Risk:** low — restored rows are dead until a person acts, which is the
+safe side for a credential.

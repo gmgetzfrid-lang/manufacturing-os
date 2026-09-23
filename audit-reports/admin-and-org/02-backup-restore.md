@@ -56,6 +56,8 @@ lib/exportTables.ts:50-54 lists `"project_intake_links"`, `"document_shares"`, `
 - [ ] the manifest notes that share/portal/intake links must be re-issued after a restore, and the restore path regenerates tokens instead of reinstating the old ones
 - [ ] a test asserts no exported row contains a value matching the share/portal/intake token shape
 
+*Cross-area note (2026-09-23, document-control Round F): the export half landed once under document-control `EGR-7` — `lib/exportTables.ts REDACT_COLUMNS` / `redactRow` applied by `dumpTable`, manifest + README naming the redacted columns, and `lib/dataRestore.ts scrubRestoredRow` (inside `remapRow`) so no restore path reinstates a token (`DEC-44`). BKP-1 closes by pointer to EGR-7 when admin-and-org P2 runs.*
+
 ---
 
 <a id="bkp-2"></a>
