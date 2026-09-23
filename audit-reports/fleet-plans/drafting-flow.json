@@ -1,0 +1,613 @@
+{
+ "area": "drafting-flow",
+ "openCount": 133,
+ "claimStatus": "unclaimed — no report file in audit-reports/drafting-flow/ carries a CLAIMED header (checked 2026-09-23); plan written from the merged tree at ba7bfcb (Round E live, migrations 20261053–20261066 applied)",
+ "packages": [
+  {
+   "name": "DF-P0 RECORD — verify-and-record closures already landed elsewhere (no app code)",
+   "findings": [
+    "AUTHZ-1",
+    "SM-1",
+    "AUTHZ-3",
+    "SM-2",
+    "PERS-1",
+    "AUTHZ-2",
+    "EVID-1",
+    "FRIC-7",
+    "UI-3",
+    "ROUTE-2",
+    "SM-8",
+    "SM-10",
+    "SM-12",
+    "SM-13",
+    "LEAK-8",
+    "LEAK-3",
+    "SM-5",
+    "LEAK-7",
+    "AUTHZ-6",
+    "AUTHZ-9",
+    "LEAK-2",
+    "ROUTE-10",
+    "HAND-3",
+    "PROJ-1",
+    "DCW-4",
+    "HAND-5",
+    "SM-11",
+    "PERS-5",
+    "EVID-2",
+    "LEAK-6",
+    "HAND-8",
+    "LEAK-4",
+    "PROJ-11",
+    "TIER-7",
+    "PERS-8",
+    "TIER-6",
+    "EDGE-11",
+    "ROUTE-5"
+   ],
+   "severityMix": "6 CRITICAL, 12 HIGH, 13 MEDIUM, 7 LOW",
+   "files": [
+    "audit-reports/drafting-flow/*.md (Resolution blocks with the pointer + quoted current code, per DEC-28/DEC-29; regenerate findings.json with node audit-reports/build-index.mjs)",
+    "reverse pointer lines in audit-reports/roles-and-permissions/*.md where the owning ID lives (WF-2, WF-3, WF-5, WF-6, WF-7, WF-8, WF-9, WF-14, WF-15, WF-17, WF-19, WF-21, WF-24, ADD-1, LIFE-1, LIFE-2, LIFE-3, LIFE-5, LIFE-14, OWN-4, SURF-12, DB-6)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "Nothing — reads the merged tree only. Each id is re-verified against current code before the record is written; any that does NOT hold becomes a residual note on the package named below, not a silent close.",
+    "Residuals explicitly handed on: SM-2/PERS-1/AUTHZ-2/EVID-1 → history entries are still rewritable in place and attachments/comments/metadata stay client-writable (DF-P1 under SM-9); LEAK-4 → requests/page.tsx priority writes and the page's unread_by write (DF-P9 under PERS-3); DCW-4 → a ticket with no source document still ends at an attachment (DF-P4, GAP-105 'publish as a new document in library X'); ROUTE-5 → PENDING_IFC re-entry never routes (DF-P3 under LEAK-1); TIER-7 → the 'declared minor-correction class' half (DF-P6)."
+   ],
+   "sequencingNotes": "Runs first and concurrently with everything (touches only audit-reports/). EDGE-11 is not a defect: it is the area's 'Verified sound — do not break' list; record it as such and make every later package's DEC-29 item-5 diff-check cite it (the comment route's PGRST202-only fallback test, server-side ticket numbering, the CAS on status + last_modified, the attention derivation from the engine).",
+   "decisionsNeeded": [],
+   "alreadyResolvedElsewhere": [
+    "AUTHZ-1, SM-1 → R&P WF-3 (lib/workflow.ts: approve_minor_correction is offered only in the direct-approver branch; lib/__tests__/workflow.test.ts)",
+    "AUTHZ-3 → R&P WF-5 / 20261038 ticket_insert_integrity (requester_role forced to a role the caller holds; requester_id := auth.uid())",
+    "SM-2, PERS-1, AUTHZ-2, EVID-1 → R&P WF-2 / 20261038 ticket_update_guard (22 workflow-owned columns refuse non-service writes; history may not shrink) + tickets_delete_controllers — residual to DF-P1",
+    "FRIC-7, UI-3, ROUTE-2 → R&P WF-24 / CHAIN-3 (lib/ticketAttention.ts isActionRequired derives from WorkflowEngine.getActions; lib/managementRoles.ts)",
+    "SM-8 → R&P WF-17 / DEC-14 (cancel_request from PENDING_ASSIGNMENT and DRAFTING; terminal everywhere; 20261053)",
+    "SM-10 → DEC-14 / 20261053: NEW and PENDING_ENG_INITIAL no longer exist, approve_initial is gone, the column default is PENDING_ASSIGNMENT — INVALID against current code",
+    "SM-12 → R&P WF-14 done-when 3 (workflow-action route refuses an assignee without ticket.draft_work)",
+    "SM-13, LEAK-8 → R&P WF-6 (route refuses submit_final without finalAttachment.url)",
+    "LEAK-3 → R&P WF-15 / 20261038 (request_type validated at insert; close-without-review is a configured type property)",
+    "SM-5, LEAK-7 → R&P WF-21 / DEC-15 (reopen_ticket starts a new cycle; /api/verify-ticket reads issue evidence from history)",
+    "AUTHZ-6 → R&P WF-8 (ticket.requester_review substitutes only when no requester exists)",
+    "AUTHZ-9 → R&P WF-7 / ADD-1 (callerRoles threaded into getActions and the picks)",
+    "LEAK-2, ROUTE-10 → R&P ADD-1 (lib/ticketRouting.ts pools read heldRoles(); lib/notify/recipients.ts reads the collection)",
+    "HAND-3, PROJ-1, DCW-4 → R&P LIFE-1 / GAP-6 / DEC-22 (20261049; /api/tickets/handback; RevUpModal pre-seeded from the ticket; 'not in register' state on close) — residual to DF-P4",
+    "HAND-5 → R&P OWN-4 (intake/upload runs hold, lock and creator-authority checks and demotes to review)",
+    "SM-11, PERS-5 → rowToTicket maps metadata (Round C2); the intent bridge in the route is live",
+    "EVID-2 → R&P SURF-12 / 20261047 trg_document_ack_guard (DC DIST-8 is the same record-only close)",
+    "LEAK-6 → R&P LIFE-14",
+    "HAND-8 → R&P LIFE-3 / GAP-7 / DEC-24 + drafting-flow LEAK-5 (20261051 markup store) — verify the pdf-lib failure branch in FullScreenViewer now surfaces instead of silently attaching the clean original; if it still falls back, the residual is PS-STAMP's downloadWithMarkup region, not this fleet's",
+    "LEAK-4 → R&P WF-9 (attach_file action; comment PATCH/DELETE compare-and-set; /api/tickets/watch) — residual to DF-P9",
+    "PROJ-11 → R&P LIFE-2 / DEC-23 (the related_ticket_id waiver is deleted; lib/reviewControl.ts effectiveModeForRevUp)",
+    "TIER-7 → R&P WF-3 + WF-14 — residual (a declared minor-correction class inside the delivery gate) to DF-P6",
+    "PERS-8 → R&P DB-6 / 20261020_pin_search_path.sql:32 ALTER FUNCTION my_org_ids() SET search_path (DC DRLS-11 closes by the same record)",
+    "TIER-6 → R&P LIFE-5 (lib/ticketHandback.ts mocOriginOf carries metadata.moc into RevUpModal presetMocOrigin; nothing is re-typed)",
+    "ROUTE-5 → R&P WF-19 (route calls resolveTicketRecipients on re-entry to PENDING_ASSIGNMENT) — residual to DF-P3"
+   ]
+  },
+  {
+   "name": "DF-P1 RAILS — Phase −1 residuals: the ticket row's remaining rails, the audit write that can fail loudly, the read_at evidence, the comment RPC identity",
+   "findings": [
+    "AUTHZ-8",
+    "AUTHZ-7",
+    "AUTHZ-11",
+    "AUTHZ-13",
+    "EVID-12",
+    "SM-7",
+    "EVID-13",
+    "EVID-6",
+    "PERS-7",
+    "SM-9",
+    "PERS-4",
+    "EDGE-9"
+   ],
+   "severityMix": "4 HIGH, 5 MEDIUM, 3 LOW",
+   "files": [
+    "new migration 2026NNNN_df_roundA_ticket_rails.sql — (a) ticket_update_guard re-created from its NEWEST body (20261038; lineDiff-pinned like 20261057) adding: existing history entries immutable (NEW.history[0..n-1] = OLD.history, append only), attachments/comments/metadata/watchers/unread_by writable by non-service callers only through the shapes the app still uses (unread_by: remove-own-uid only; everything else service-role) — inventory first: count non-service UPDATE shapes in the last 30 days of audit_logs/pg_stat is unobservable, so the guard is written tolerant and the census is the tests; (b) post_ticket_comment re-created from 20260726 stamping p_comment.authorUid/user/role from auth.uid() + org_members when auth.uid() IS NOT NULL, service role passes through, REVOKE EXECUTE FROM authenticated (the only caller is the comment route under supabaseAdmin); (c) document_intents.ticket_id FK → tickets(id) ON DELETE CASCADE (PERS-4 residual; the DELETE rail itself is 20261038); every referenced column ALTER TABLE … ADD COLUMN IF NOT EXISTS first (20261039 lesson)",
+    "app/api/tickets/workflow-action/route.ts — loadCapabilityPolicyStrict (503 'policy unreadable', never defaults) [AUTHZ-7]; attachment/finalAttachment/redlineAttachment url must match ^orgs/<ticket.orgId>/tickets/<ticket.ticketId>/ and be HEAD-able (or already listed on the ticket) [AUTHZ-11]; the audit insert is awaited, {error}-checked, carries deliverable_rev/attachment ids/content hashes, and a failed audit write returns 500 with the transition recorded as 'audit-unrecorded' in history (or the CAS write and the audit row move into one RPC — decide by the DEC-31 file count) [EVID-12, SM-7]; fanOut stops stamping read_at on other users' rows — supersession becomes metadata.superseded_at (no schema change) that the feed filters on [EVID-13]; email links built from an absolute origin [EDGE-9]",
+    "app/api/tickets/comment/route.ts — email links from an absolute origin [EDGE-9]; no other change (the RPC identity fix is the migration)",
+    "app/api/intake/upload/route.ts (redline branch ~:183 only: compare-and-set on last_modified for the attachments/history write) [SM-9] — DC P4 owns this file in wave 1; land this hunk after P4 merges",
+    "hooks/useTicketNotifications.ts (stale-alert reconciliation switches from read_at to the superseded marker — one filter; DF-P9 owns the rest of the hook, coordinate the hunk) [EVID-13]",
+    "lib/audit.ts (internals only: capture {error}, return {ok:boolean, error?:string}, keep every exported signature) [EVID-6, PERS-7] — DC P3 (wave 2) and admin-and-org P7 (later) also edit this file: land this hunk AFTER DC P3 merges, before A&O P7 starts",
+    "new migration (optional, only if AUTHZ-13's default below is taken): RESTRICTIVE SELECT on tickets for the Contractor collection (requester_id = auth.uid() OR assigned_* = auth.uid() OR auth.uid() = ANY(watchers)) — the org-wide member SELECT stays",
+    "lib/__tests__/ticketRails.test.ts (new: guard body census against the migration text; route attachment-key refusal; audit failure surfaces; no read_at write on foreign rows)"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "99-fix-sequencing Phase −1 items 1, 3, 4, 5 — items 1 and 3 are closed by 20261038/20261020 (DF-P0); this package is what those left",
+    "DC P3 LIFECYCLE (wave 2) for the lib/audit.ts hunk; DC P4 REVIEW (wave 1) for the intake/upload hunk — both are single hunks, everything else in this package runs now",
+    "public-surfaces PS-STAMP (wave 2) will give lib/publicOrigin.ts a server fallback (TRX-14/XEDGE-5); until it merges the two ticket routes use a narrow local guard (NEXT_PUBLIC_SITE_URL, else VERCEL_PROJECT_PRODUCTION_URL, else drop the link and say so) — do not edit lib/publicOrigin.ts here",
+    "admin-and-org P7 ALOG-7 (audit identity trigger) and its purge-route change build on this package's lib/audit.ts and read_at semantics; note in both records",
+    "DEC-30: the guard migration is applied by hand; code half RESOLVED with a Pending migration line",
+    "EVID-13 is the hard prerequisite of GAP-113 (DF-P7) — DF-P7 cannot start until this merges"
+   ],
+   "sequencingNotes": "Runs NOW, concurrently with DC wave 1, except the two single-hunk limbs named above. Lands before DF-P3/P4/P5/P6/P7 because each of those re-creates ticket_update_guard again from the then-newest body — one trigger, never two. EVID-13's marker must be honoured by DF-P9's hook change and DF-P7's consent record.",
+   "decisionsNeeded": [
+    "AUTHZ-13 — who sees which tickets? Proposed fail-safe default: no change for every member role (the org-wide SELECT is the existing product model, DOCACL-2); ONLY the Contractor collection is narrowed at the database to tickets they requested, are assigned to, or watch. Record as a new DEC.",
+    "EVID-12/SM-7 — audit write failure handling: proposed default = the transition is refused (500) when the audit row cannot be written, unless the two writes are made one RPC; never 'ok' with a missing row."
+   ],
+   "alreadyResolvedElsewhere": [
+    "AUTHZ-11 partial → R&P WF-9 (attachments ride the route) — the key/org validation is what remains",
+    "SM-9 partial → R&P WF-9 (comment PATCH/DELETE CAS; page whole-array writes removed) — intake/upload's write is what remains",
+    "PERS-4 partial → 20261038 tickets_delete_controllers (RESTRICTIVE) — the FK/orphan half is what remains",
+    "EDGE-9 is notifications DELIV-5 (same defect, same two routes) — fix once here, DELIV-5 closes by pointer"
+   ]
+  },
+  {
+   "name": "DF-P2 CREATE — one server-side ticket creation path with one field contract (the three creators become callers)",
+   "findings": [
+    "EDGE-8",
+    "EDGE-1",
+    "EDGE-13",
+    "ROUTE-11",
+    "ROUTE-4",
+    "FRIC-8",
+    "PERS-6",
+    "DCW-7",
+    "FRIC-3",
+    "HAND-7",
+    "EDGE-12"
+   ],
+   "severityMix": "2 HIGH, 8 MEDIUM, 1 LOW",
+   "files": [
+    "new app/api/tickets/create/route.ts — validates the shared contract, allocates the number AFTER validation (next_ticket_number RPC), inserts under service role while REPLICATING 20261038's ticket_insert_integrity checks (requester = caller, requester_role held, status = PENDING_ASSIGNMENT, request_type configured — service-role inserts bypass the trigger), resolves recipients with resolveTicketRecipients(…, supabaseAdmin), writes notification rows awaited and email rows preference-aware (the recipient's own row, readable under service role) with metadata.action/status so supersession works, returns the id [EDGE-8, EDGE-1, ROUTE-11, ROUTE-4, EDGE-12]",
+    "new lib/ticketCreate.ts — the contract type + pure validator shared by the three creators (title/description required; unit OPTIONAL with an explicit 'unit unknown — triage assigns' value; request_type from the configured list; source document ref canonical; custom categories) [FRIC-8, FRIC-3, DCW-7, PERS-6]",
+    "app/(protected)/requests/new/page.tsx — posts to the route; attachments are staged under a pending key (orgs/<org>/tickets/pending/<uuid>/) and re-keyed by the route after insert, or uploaded after the row exists — never before validation; no client-side emit; redirect on the route's 2xx, not a 500 ms timer [EDGE-13, EDGE-8]",
+    "lib/transitionIn.ts flagCollisionToDrafting → calls the route (drop the browser insert + emit)",
+    "components/documents/CheckInPanel.tsx createDraftingTicket → calls the route (DC P6 owns this file in wave 1 — this call-site switch lands after P6 merges; until then CheckInPanel keeps its insert and the finding stays partially open) [ROUTE-4, PERS-6]",
+    "lib/sourceDocRef.ts — canonical shape gains version_id (documents.current_version_id at capture) and revDrift compares version ids; the three producers pass it [HAND-7]; new components/requests/SourceDriftBanner.tsx mounted by DF-P9 (one line)",
+    "lib/ticketNumber.ts (no change expected; the route is the only caller that may allocate after validation) [EDGE-13]",
+    "lib/__tests__/ticketCreateRoute.test.ts (new: contract, number allocation after validation, service-role replication of the insert trigger, recipient/email rows, drift)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "DF-P1's route conventions (absolute-origin links, no read_at stamping) — reuse its helpers; DF-P1 should merge first but this package does not edit its files",
+    "DC P6 CHECKOUT (wave 1) for the CheckInPanel call-site hunk",
+    "R&P LIFE-9 / LIFE-15 landed the unit derivation and the canonical source_document shape — build on lib/sourceDocRef.ts, do not add a fourth producer shape",
+    "DEC-34: the like-in-kind declaration (DF-P6) will be one more field on THIS contract and one more signature call in THIS route — leave the seam (a `declaration` slot the validator ignores until DF-P6)",
+    "DEC-40: tickets.project_id (DF-P8) is one more optional field on this contract",
+    "notifications DELIV-9 owns the browser-side queueEmail dedupe for every OTHER producer; EDGE-12 closes here for ticket creation because no browser emit remains"
+   ],
+   "sequencingNotes": "Runs NOW, concurrently with DC wave 1 (its files are drafting-flow's; CheckInPanel is the one deferred hunk). Must merge BEFORE DF-P6 (declaration at intake) and DF-P8 (project_id at intake). 99-fix-sequencing Phase 2 item 1 forbids making unit or library required at intake (FRIC-3) — the contract makes unit optional and records the 'unknown' state explicitly.",
+   "decisionsNeeded": [
+    "FRIC-3/DCW-7 — is `unit` required at intake? Proposed default: optional; an explicit 'unit unknown' value the triage step is asked to resolve (a required field the requester cannot answer moves the dead end upstream — sequencing 'Do not' table).",
+    "EDGE-13 — a validation-failed submit today burns a request number; proposed default: allocate the number only after server-side validation succeeds (numbers stay gap-free), attachments upload after the row exists."
+   ],
+   "alreadyResolvedElsewhere": [
+    "PERS-6 partial → R&P LIFE-9 (check-in and transition-in derive unit from document metadata) — they still write '' not NULL and the contract is still three-way",
+    "HAND-7 partial → R&P LIFE-15 (one canonical source_document shape) — the shape carries rev text, no version id"
+   ]
+  },
+  {
+   "name": "DF-P3 ROUTING — Phase 1/2 leaks: routing on every re-entry, the drafterless REVISION_REQ, departed members, leak accounting (GAP-107), SLA escalation that fires (GAP-106)",
+   "findings": [
+    "LEAK-1",
+    "ROUTE-1",
+    "SM-6",
+    "ROUTE-6",
+    "ROUTE-3",
+    "EDGE-4",
+    "LEAK-9",
+    "EDGE-7",
+    "ROUTE-9"
+   ],
+   "severityMix": "3 HIGH, 4 MEDIUM, 2 LOW",
+   "files": [
+    "lib/ticketRouting.ts — resolveTicketRecipients gains the PENDING_IFC pool (supervisor pool + originating engineer as its own comment promises) and a REVISION_REQ-without-drafter pool (= the assignment pool); header comment corrected (the engineer-initial branch is gone) [LEAK-1, ROUTE-1, ROUTE-3]",
+    "app/api/tickets/workflow-action/route.ts — routing runs on EVERY status change into a routed status (PENDING_ASSIGNMENT, PENDING_IFC, drafterless REVISION_REQ), not only PENDING_ASSIGNMENT; watchers are notified even when unread_by is empty and self_assign supersedes the queue's 'needs a drafter' rows [LEAK-1, ROUTE-6]",
+    "lib/ticketTransitions.ts — `reject` from PENDING_ENG_TEAM with no drafter returns to PENDING_ASSIGNMENT (the queue that exists to hold it), not REVISION_REQ; a drafterless REVISION_REQ is unreachable afterwards (migration moves stragglers) [ROUTE-1, SM-6]; cancel_request / close_ticket carry a typed `outcome` (completed, withdrawn, duplicate, handled_out_of_band, rejected) [LEAK-9]",
+    "lib/workflow.ts — cancel_request requires the outcome category alongside the comment [LEAK-9]",
+    "types/schema.ts — Ticket.outcome, Ticket.slaWarnedAt (additive; rebase on DC P4 wave 1)",
+    "new migration 2026NNNN_df_roundA_outcome_and_departure.sql — tickets.outcome TEXT CHECK (…) + sla_warned_at TIMESTAMPTZ (ADD COLUMN IF NOT EXISTS, then guard re-created from newest body adding both as workflow-owned); inventory + move of drafterless REVISION_REQ rows to PENDING_ASSIGNMENT with a history line (20261053 pattern); trigger on org_members (BEFORE UPDATE OF status to non-active, BEFORE DELETE) that returns the departing member's open DRAFTING/REVISION_REQ tickets to PENDING_ASSIGNMENT with assigned_drafter_* cleared and a history line, and nulls assigned_engineer_* on PENDING_ENG_TEAM/PENDING_FINAL_APPROVAL rows back to the requester's review — never silent [EDGE-4]",
+    "new lib/ticketSla.ts — pure: warn/breach evaluation from target_completion_at, sla_defaults and the org's warn fraction; escalation recipients = the routed pool for the ticket's status (LEAK-1's resolver), not requester+drafter [EDGE-7, ROUTE-9]",
+    "app/api/cron/maintenance/route.ts — ONE step: stamp sla_breached_at / sla_warned_at, emit sla_warning (email + bell) through the existing dispatcher, escalate to the routed pool; NO new cron entry (the route's own :286-291 note) — DC P5 (wave 1) and admin-and-org P5 each add one step to this file: land this hunk after DC P5 merges",
+    "app/(protected)/admin/requests/page.tsx? NO — the leak-accounting count surface is a read-only block on /admin/analytics (admin.analytics_view) or a CSV; keep to one file, DF-P9 owns the request pages",
+    "lib/__tests__/ticketRouting.test.ts, ticketTransitions.test.ts, sweepRoundE_A.test.ts (extend); new lib/__tests__/ticketSla.test.ts, memberDeparture.test.ts"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "DF-P1 merged (this package edits the same route; P1's loader/audit/read_at changes must be in the base)",
+    "99-fix-sequencing pairs: LEAK-1 → GAP-106 (escalation must reach the queue owner, not the people who already know) — both are in this package, LEAK-1 first",
+    "DC P5 HOLDS (wave 1) for the cron/maintenance hunk; admin-and-org P5 also adds a step later — one hunk each, sequence by merge order",
+    "admin-and-org P8 re-creates revoke_member (migration B) — the departure trigger here is a SEPARATE trigger on org_members, not a change to revoke_member's body; note both ways; A&O P8 must not drop it",
+    "DEC-14 (landed) for GAP-107's outcome vocabulary; DEC-20 (landed: suspend + delete both work) is why EDGE-4 is live now",
+    "DEC-30 inventories before apply: drafterless REVISION_REQ rows; open tickets whose assigned_drafter_id / assigned_engineer_id is not an active member (EDGE-4 backlog — the trigger cannot fix rows already stranded; the migration moves them with a history line)"
+   ],
+   "sequencingNotes": "Phase 1 (LEAK-1, ROUTE-1/SM-6, ROUTE-6, GAP-107) and Phase 2 item 4 (GAP-106). Runs after DF-P1; concurrent with DC wave 1 except the cron hunk. The governing principle applies: none of these add a wait on a person — escalation is a clock. ROUTE-3's web-push half is notifications TAX-12/OS-11 (record the pointer); the follower-resolver half is corrected here by making the ticket routes the documented callers.",
+   "decisionsNeeded": [
+    "EDGE-4 — what happens to a departing member's in-flight tickets? Proposed fail-safe default: return them to the assignment queue with a history line and a queue notification (never block the removal — DEC-20 requires removal to work; never leave a ticket on a uid that cannot log in). Alternative (refuse removal until reassigned) rejected as the shoulder-tap generator.",
+    "GAP-106 — SLA warn fraction and escalation target: proposed default warn at 75% of the window, escalate breaches to the routed pool for the status + the requester; org-configurable later, no new cron entry.",
+    "GAP-107 — the outcome vocabulary: proposed default {completed, withdrawn, duplicate, handled_out_of_band, rejected}; free text stays in the comment."
+   ],
+   "alreadyResolvedElsewhere": [
+    "LEAK-1/ROUTE-5 partial → R&P WF-19 (re-entry to PENDING_ASSIGNMENT routes) — every other routed status is what remains",
+    "ROUTE-3 partial → DEC-14 removed the engineer-initial routing branch; the push channel is notifications TAX-12 (pointer)",
+    "EDGE-4 substrate → R&P SURF-1 / OWN-12 / DEC-20 (revoke_member, document-ownership succession) — tickets were never in that succession"
+   ]
+  },
+  {
+   "name": "DF-P4 LIBRARY — GAP-105: the ticket gets a library (the prerequisite for every library-scoped rule), plus the request-form config gate",
+   "findings": [
+    "DCW-1",
+    "DCW-5",
+    "DCW-3",
+    "AUTHZ-10"
+   ],
+   "severityMix": "1 HIGH, 3 MEDIUM",
+   "files": [
+    "new migration 2026NNNN_df_roundA_ticket_library.sql — tickets.library_id UUID REFERENCES libraries(id) ON DELETE SET NULL + index; backfill from metadata.source_document.id → documents.library_id (inventory first: count tickets with a source document whose library differs from any later assignment; count with no derivable library); guard re-created from newest body with library_id workflow-owned (set by the create route and the triage action only)",
+    "types/schema.ts — Ticket.libraryId (additive; rebase on DC P4 wave 1)",
+    "lib/ticketTransitions.ts — rowToTicket maps library_id; `assign` / `request_eng_review` at PENDING_ASSIGNMENT may carry a libraryId (triage sets it when none was derived) [DCW-1]",
+    "lib/workflow.ts — ticketResource gains libraryId (DEC-13 resource dimension already accepts it; the org can now scope ticket.* capabilities per library)",
+    "app/api/tickets/workflow-action/route.ts — accepts body.libraryId on the triage actions, validates it is a library in the ticket's org [DCW-1]",
+    "app/api/tickets/create/route.ts (DF-P2's route: derive library_id from the source document's library when present; never required at intake)",
+    "new components/requests/LibraryPicker.tsx (triage-time picker; visibility via the caller's own read decision — a library the assigner cannot see is not offered) mounted by DF-P9 in the assign modal (one line)",
+    "app/(protected)/requests/new/page.tsx source-document search — use the discover-without-read decision (lib/permissions canDiscover) so a requester can name a document they cannot open; the ticket carries the id and the page shows 'restricted — triage can open it' [DCW-5 — SUSPECTED: reproduce with a private library first; INVALID is a valid outcome]",
+    "lib/ticketHandback.ts + app/api/tickets/handback/route.ts — a ticket WITHOUT a source document but WITH a library_id offers 'Publish as a new document in <library>' through the same RevUpModal/revUpDocument path (DEC-22: never a new publish path) [DCW-4 residual from DF-P0]",
+    "lib/adminSurfaces.ts requests entry + app/(protected)/admin/requests/page.tsx (drop the client useEffect redirect; the admin layout gate is the gate) + new migration re-creating org_config_key_writes_ins/upd/del from 20260818 so the 'drafting' key admits exactly the registry's set [AUTHZ-10]",
+    "lib/__tests__/ticketLibrary.test.ts (new), rolePickerCensus/adminSurfaces tests (extend)"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "DF-P1 and DF-P3 merged (guard body lineage; route base)",
+    "DF-P2 merged (the create route is where derivation lives)",
+    "DC P4 REVIEW (wave 1) for types/schema.ts and for lib/containerChain.ts (DEC-36's single resolver — READ it to derive a document's library, never a second walk)",
+    "99-fix-sequencing Phase 2 item 1: GAP-105 is the prerequisite for GAP-103 (DF-P5) and GAP-104 (DF-P6); 'Do not make it required at intake'",
+    "DCW-3: sequencing 'Do not' table — 'Build a drawing-type taxonomy: the library is the better routing proxy and already inherits' → record DCW-3 WONTFIX-by-design with that citation once library_id exists (the proxy is real)",
+    "DEC-36's noted defect: the admin/requests editor's guard is client-side only with a direct upsert — AUTHZ-10 is that defect; fix before any routing data is stored (DF-P5 stores routing_control on libraries, not here, but the same page will grow the slot editor)"
+   ],
+   "sequencingNotes": "Phase 2 (the wiring prerequisites). Must wait for DC wave 1 (types/schema.ts, containerChain). Lands before DF-P5 and DF-P6.",
+   "decisionsNeeded": [
+    "AUTHZ-10 — who may edit the drafting request-form configuration? Proposed default: Admin, DocCtrl, DraftingSupervisor in BOTH the registry and the RLS policy (today the UI says Admin/DocCtrl and the database says Admin/Manager/Supervisor/DraftingSupervisor; Manager/Supervisor lose a right they could not reach anyway).",
+    "GAP-105 — when a ticket has no source document and triage sets no library, may it reach PENDING_IFC? Proposed default: yes (nothing changes for orgs that never configure a library rule); a library rule can only apply where a library is known, and 'unknown' is visible on the ticket."
+   ],
+   "alreadyResolvedElsewhere": [
+    "DCW-5's mechanism was strengthened by R&P DEL-2/DEC-7 (ownership carries read) and DOCACL-5 (discover vs read at the database) — reproduce before fixing"
+   ]
+  },
+  {
+   "name": "DF-P5 ROSTER — the keystone: GAP-112 routing table (no facility vocabulary) + GAP-103 parallel reviewer roster on the ticket",
+   "findings": [
+    "TIER-5",
+    "TIER-8",
+    "DCW-6",
+    "FRIC-4",
+    "FRIC-2",
+    "FRIC-5"
+   ],
+   "severityMix": "2 HIGH, 4 MEDIUM",
+   "files": [
+    "new migration 2026NNNN_df_roundB_routing_control.sql — routing_control JSONB on libraries, collections, documents mirroring 20261012 (doc_class) line for line: additive, idempotent, inherits per-table RLS, no new policies (DEC-36); slot shape {kind, mode: blocking|consent_window|notify_only, fill: {roles|users|capability}, independent_of[], waivable_by?, timeoutDays}",
+    "new lib/routingControl.ts — resolveEffectiveRoutingControl through lib/containerChain.ts (DC P4's DEC-36 resolver — ONE walk, never a second); declared-never-guessed; a load error BLOCKS the transition with a legible reason (docClass.ts's two properties copied, not just its shape) [DCW-6, TIER-8]; seeded default = today's behaviour expressed as slots (isEngineerRole / isManagementRole / isDocCtrlRole quarantined as the seed, not deleted — DEC-35)",
+    "new migration 2026NNNN_df_roundB_ticket_review_slots.sql — ticket_review_slots (ticket_id, slot_kind, mode, primaries[], alternates[], status, content_hash, signature_id, opened_at, satisfied_at, satisfied_by, independent_of) with append-only events; RLS: SELECT members of the org; INSERT/UPDATE service role only (the workflow route); signatures via /api/signatures/sign against {resourceType:'ticket'} (EVID-3 is closed, the ceremony is server-minted)",
+    "new lib/ticketRoster.ts — reuses lib/reviewControl.ts's mechanics by CALLING them (required primaries + alternates, content-hash binding to the Final/Draft attachment, invalidation on a new submission, timeout-driven alternate activation, auto-finalize on the last signature) — after DC P4 merges its per-slot completion + roster-integrity changes; never a copy of the roster code",
+    "lib/workflow.ts — PENDING_REVIEW / PENDING_FINAL_APPROVAL become ONE parallel wait: every unsatisfied blocking slot is an action offered to its occupants simultaneously; requesterAcceptance slot ('is this what I asked for', identity) is distinct from the technical slot ('is it correct', routed) [FRIC-2]; the assigner flags and the router resolves WHO — requiresEngineerPick survives only as the fallback for an org with no routing configured [FRIC-4]; a slot's disabledReason names the independence constraint that blocked it (DEC-37) [TIER-5]",
+    "lib/ticketTransitions.ts — submit_draft opens the roster (hash-bound); approve_* satisfy the actor's slot(s) and advance only when every blocking slot is satisfied; 'issue as-is' (drafter opt-in at submit) lets the last approval issue the approved Draft as the Final without a second drafter interrupt [FRIC-5]",
+    "app/api/tickets/workflow-action/route.ts — slot resolution + signature call per approval; independence enforced server-side per slot (DEC-12 threshold, DEC-37 per-slot)",
+    "types/schema.ts (RoutingControl, TicketReviewSlot; additive)",
+    "new components/requests/TicketRosterPanel.tsx (who must act, who did, who was told) mounted in requests/[id]/page.tsx by one line (DF-P9 owns the page — coordinate the mount hunk); new components/documents/RoutingControlSection.tsx next to ReviewControlModal (DC P4's file — a sibling component, not an edit) with the per-slot editor; admin/requests page grows nothing (routing is per container, DEC-36)",
+    "components/requests/EngineerPickerModal.tsx — fallback only (no routing configured); otherwise shows the resolved occupants read-only [FRIC-4]",
+    "lib/__tests__/routingControl.test.ts (the resolver against the SAME cases as docClass's), ticketRoster.test.ts, workflow.test.ts (extend: hop count for a two-slot ticket = one wait state)"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "DF-P4 merged (GAP-105: no library on the ticket means no library-scoped slot can be evaluated — sequencing pair GAP-105 → GAP-103)",
+    "DC P4 REVIEW (wave 1) merged: lib/reviewControl.ts per-slot completion (RG-4/RG-8), roster integrity (REV-7), lib/containerChain.ts (RG-3 / DEC-36), the review-gate guard body from 20261060 — this package CALLS those, it must not fork them; DC P3 (wave 2) is not needed but must not be in flight on lib/reviewControl.ts (it is not)",
+    "DEC-23 landed (the related_ticket_id waiver is deleted) — required before any ticket↔document review link (sequencing Phase 3 warning); verified in DF-P0 under PROJ-11",
+    "DEC-35 (no facility vocabulary: grep 'QAQC|B31|NDE|radiograph' over app lib components stays empty), DEC-36 (column on the three container tables; one resolver; fail closed), DEC-37 (one person many slots; independence per slot; approval slot independent_of drafter by default), DEC-12 (threshold), DEC-16 (fail closed)",
+    "DEC-13 stage 2 (live): a slot may be filled by a capability with a request-type override — reuse policyAllows with the ticket resource; add no capability tokens here",
+    "The keystone rule: nothing in DF-P6 ships before this merges"
+   ],
+   "sequencingNotes": "Phase 3 — the keystone (GAP-103, with GAP-112 as its configuration). Effort L. After DC wave 1 and DF-P4. 'Do not design it' — the roster mechanics exist in lib/reviewControl.ts; the work is making them reachable from the ticket (DCW-6). An org that has configured nothing behaves byte-for-byte as today (the seeded default slots reproduce the current serial behaviour: requester acceptance + hand-picked engineer where the gate applies). FRIC-2/FRIC-4/FRIC-5 are the Phase 5 friction items that dissolve here; re-check each against the code first (DEC-28).",
+   "decisionsNeeded": [
+    "FRIC-5 — may an approved draft be issued as-is without a second drafter step? Proposed fail-safe default: opt-in per ticket by the drafter at submit ('issue-ready'); default off = today's PENDING_IFC hop.",
+    "GAP-112 seed — the default slots for an unconfigured org: proposed = {requester_acceptance (identity, blocking), engineering (fill: Engineer roles, blocking where the gate applies, independent_of: [drafter]), management_override (optional)} — byte-for-byte today's behaviour; anything else is configuration.",
+    "Where the routing editor lives: proposed = a RoutingControlSection beside the existing ReviewControl editor on the library/folder/document (DEC-36), not on /admin/requests."
+   ],
+   "alreadyResolvedElsewhere": [
+    "HAND-1 / HAND-6 (the resolver fails open; only the immediate folder is consulted) are DC RG-6 / RG-3 in P4 wave 1 — this package consumes the fixed resolver; the ids close in DF-P11 by pointer",
+    "TIER-8's document-side vocabulary → R&P LIFE-12 (ticket and document approval bridged in records); the ticket-side roster is what remains"
+   ]
+  },
+  {
+   "name": "DF-P6 REVIEW-MODEL — Phase 4 in order: GAP-110 declaration → GAP-111 binding flag → TIER-1 inversion fix → GAP-101 work class → GAP-102 QA/QC without a stop → TIER-4 code dimension → GAP-104 doc-control release slot → TIER-7 residual",
+   "findings": [
+    "TIER-1",
+    "TIER-2",
+    "TIER-3",
+    "TIER-4",
+    "SM-3",
+    "DCW-2"
+   ],
+   "severityMix": "2 CRITICAL, 4 HIGH",
+   "files": [
+    "new migration 2026NNNN_df_roundB_declaration_and_gate.sql — tickets.like_in_kind_declared_at/_by/_statement/_signature_id (set at creation only, by the requester only, immutable: guard refuses any UPDATE of them for everyone incl. service role after insert), tickets.engineering_required BOOLEAN NOT NULL DEFAULT true (guard: true→false refused for every caller — DEC-33 ratchet), tickets.work_class TEXT (triage-set, from the org's configured list — DEC-35: no vocabulary in code), tickets.code_class TEXT (org-configured, TIER-4); INVENTORY before apply: open tickets and what engineering_required would be under the legacy gate vs DEC-33 (see decision); guard re-created from newest body",
+    "app/api/tickets/create/route.ts + lib/ticketCreate.ts (DF-P2's) — the declaration slot: typed statement ≥ ~20 chars, no canned text, run through /api/signatures/sign against {resourceType:'ticket', resourceId} and the returned id stored on the row; absent declaration ⇒ engineering_required = true (blank is the safe answer) [GAP-110, DEC-33, DEC-34]",
+    "app/(protected)/requests/new/page.tsx — the declaration UI (a sentence the requester composes; not a checkbox) + new components/requests/DeclarationCard.tsx rendering it attributed on the ticket (DF-P9 mounts it: one line)",
+    "lib/workflow.ts — the gate reads ticket.engineeringRequired, not ticket.requesterRole: every ISSUE transition (approve_draft_ifc, engineer_approve_final, submit_final, approve_minor_correction) requires the engineering slot satisfied when engineering_required; drafting is never blocked by it; request_eng_review sets engineering_required = true and it stays true; requiresEngineerApproval / engineerApprovalRequired are quarantined as the SEED for orgs whose in-flight tickets predate the column (DEC-35 pattern) [TIER-1, GAP-111]; a management 'engineer_approve_final' is recorded as an OVERRIDE (history + audit authority.override) and never stamps engineer_approved_at unless the actor holds an Engineer role or occupies the routed slot [SM-3]; approve_minor_correction is a declared minor-correction CLASS inside the delivery gate (typed note, same bar as check-in — TIER-7 residual)",
+    "lib/ticketTransitions.ts — request_eng_review writes engineering_required = true; assign/triage may set work_class + code_class; approve_minor_correction records the correction as a class [GAP-101, TIER-7]",
+    "app/api/tickets/workflow-action/route.ts — enforces the same; refuses any body that would lower engineering_required; work_class/code_class validated against the org's configured lists (org_configurations.data, not .value)",
+    "lib/capabilityPolicy.ts — CapabilityResource gains workClass, codeClass, libraryId (additive; absent `when` behaves exactly as today; the four DEC-13 call sites already build the resource from ticketResource(), so no evaluator changes) [TIER-4] — DC P7 (wave 2) edits this file for a transmit capability: land after it merges",
+    "lib/routingControl.ts / the GAP-112 slot editor (DF-P5's) — QA/QC is a notify_only slot + stop-work via the EXISTING holds surface (lib/holds.ts, DC P5's — reuse, no edit) and data completeness on the work class (required fields per class); no PENDING_QAQC status, no roster signature [GAP-102, TIER-3]; the document-control release slot per library on the roster, no PENDING_DOC_CTRL status [GAP-104, DCW-2]",
+    "types/schema.ts (additive Ticket fields)",
+    "lib/__tests__/reviewModel.test.ts (new: DEC-33 acceptance — a Manager's undeclared ticket cannot issue without the engineering slot; every issue transition gated incl. approve_minor_correction; drafting not blocked; declared ticket reaches IFC with no engineer and no new wait; request_eng_review is a ratchet), workflow.test.ts (extend), the DEC-35 grep census as a test"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "DF-P5 merged — BINDING: 99-fix-sequencing Phase 4 'Only after Phase 3. In this order.' (see decision 1 for the override the user may grant)",
+    "DF-P2 merged (declaration is a field on the create contract); DF-P4 merged (library on the ticket for GAP-104)",
+    "DF-P1 merged (the declaration lives in columns the guard protects — Phase −1 item 1: 'ship this before GAP-110/GAP-111 or the declaration is advisory too')",
+    "R&P EVID-3 / SURF-14 (closed): the signature ceremony is server-minted — DEC-34's prerequisite holds",
+    "DC P7 TRANSMITTALS (wave 2) for lib/capabilityPolicy.ts; DC P5 HOLDS (wave 1) for lib/holds.ts / lib/holdGate.ts reuse (GAP-102's stop-work)",
+    "DEC-13 stage 3 (live: ticket.engineer_gate_exempt) — becomes the SEED for engineering_required on legacy rows and is otherwise superseded by the column; record that in DEC-13's landed line",
+    "DEC-33, DEC-34, DEC-35, DEC-26 (as-built issue type — landed), sequencing pairs WF-15 → GAP-101 (WF-15 landed), GAP-103 → GAP-101/102/104",
+    "DEC-30 inventory before apply: in-flight tickets by status × whether the legacy gate required an engineer; that is the population a flag-day backfill would freeze"
+   ],
+   "sequencingNotes": "Phase 4, in the file's order. This is the inversion fix (TIER-1) and the single highest-value change in the area — it improves safety and reduces friction at once because DF-P5 made every requirement cost one wait state. 'Do not' table: no PENDING_QAQC, no QA/QC roster slot as a signature, no QAQC role, no PENDING_DOC_CTRL, no work class required at intake, do not rename TicketStatus values, do not delete the minor-correction path (convert it).",
+   "decisionsNeeded": [
+    "Ordering override — may GAP-110/GAP-111/TIER-1 ship BEFORE the roster (DF-P5)? They add no status and gate on the existing PENDING_FINAL_APPROVAL hop, so the eight-hop trap does not apply; but 99-fix-sequencing is binding. Proposed default: NO — honour the file (DF-P5 first). The user can grant the override in one line and DF-P6 splits its declaration/flag half out to run right after DF-P2.",
+    "engineering_required backfill for in-flight tickets — proposed fail-safe default: rows created before the migration get engineering_required = (legacy gate: engineerApprovalRequired(snapshot, current, org exempt list)) so no in-flight ticket changes behaviour; every NEW ticket defaults true unless declared (DEC-33). The alternative (true for all open rows) is a flag day that stalls every open Manager-requested ticket.",
+    "SM-3 — may the management tier still override an engineer's slot? Proposed default: yes, but recorded as an override in history and audit, never as engineer_approved_at, and only where the routing slot's waivable_by admits management (seed: not waivable).",
+    "GAP-101/TIER-4 vocabularies — proposed default: work_class and code_class option lists live in org_configurations 'drafting' beside request types (the existing editor), seeded empty; 'unset' is the safe (engineered) reading."
+   ],
+   "alreadyResolvedElsewhere": [
+    "AUTHZ-3 (client-stamped requester_role) → 20261038 — the gate's INPUT is honest now; TIER-1 is that the input is the wrong one",
+    "DEC-13 stage 3 made the exempt list configurable (R&P Round E) — it does not repoint the gate at the work",
+    "DEC-26 (as-built issue type from the ticket) landed with GAP-6 — GAP-101 does not re-derive it"
+   ]
+  },
+  {
+   "name": "DF-P7 CONSENT — GAP-113 availability record then GAP-109 consent windows: the clock that cannot form a backlog",
+   "findings": [
+    "FRIC-1",
+    "EVID-9",
+    "EVID-8"
+   ],
+   "severityMix": "1 HIGH, 2 MEDIUM",
+   "files": [
+    "new migration 2026NNNN_df_roundB_consent_window.sql — tickets.consent_window_opened_at, consent_window_recipients UUID[] (frozen at open), consent_window_warned_at, consent_window_expired_at, consent_window_slot TEXT (guard: workflow-owned); RPC open_consent_window(ticket, slot, recipients[]) SECURITY DEFINER SET search_path that inserts the notification rows AND stamps opened_at in ONE transaction — no rows, no timestamp (DEC-38); new append-only table ticket_notice_events (ticket_id, kind: delivered|warned|expired|objected|advanced, recipient, at, notification_id) — the record that survives any bell purge (DEC-39) [EVID-8 ticket half]",
+    "new lib/consentWindow.ts — pure evaluation (window length per slot mode from routing_control, warn fraction, empty-recipient ⇒ blocks and escalates to the assigner — 'ack_unsatisfiable' polarity); the three states kept apart (never delivered = blocks; delivered unopened; opened no objection) using read_at ONLY as the recipient's own act (EVID-13 landed in DF-P1)",
+    "app/api/tickets/workflow-action/route.ts — a transition into a consent_window slot calls the RPC and refuses the advance (409, visible reason) when it fails; a 'suppressed' email row is written when a recipient's preference turns email off, so the record says 'not emailed by their choice' rather than nothing [EVID-9 route limb]",
+    "app/api/cron/maintenance/route.ts — ONE step (warn at the fraction, expire, write 'advanced without objection' into ticket history naming everyone asked, advance the slot) — NO new cron entry; land after DC P5 (wave 1), admin-and-org P5 and PS-VERIFY hunks (each one step in this file)",
+    "lib/ticketTransitions.ts / lib/workflow.ts — an `object` action for a window recipient (blocking the advance, comment required) and the auto-advance path the cron takes (system actor, recorded)",
+    "new components/requests/ConsentWindowCard.tsx (who was told, when, opened or not, warned, expires) mounted by DF-P9 (one line)",
+    "lib/__tests__/consentWindow.test.ts (new: DEC-38 acceptance — a failed notification insert leaves the ticket un-advanced; empty recipient set never advances; the ticket's own history answers the regulator with no reference to the notifications table)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DF-P1 merged — EVID-13 is the HARD prerequisite of GAP-113 (DEC-38 warning box); DF-P3 merged — LEAK-1 resolves the recipients (GAP-113 depends on LEAK-1)",
+    "DF-P6 merged — GAP-109 depends on GAP-110 + GAP-111 (a declared/flagged state to attach a window mode to); 99-fix-sequencing Phase 4 item 3: 'immediately after TIER-1, before anything else keys off the class'",
+    "DEC-38 (no delivery record, no silent advance; awaited/error-checked/retried; same transaction; no new cron), DEC-39 (warn before expiry; record on the ticket; empty set blocks)",
+    "'Do not' table: never apply silence-is-consent to the highest work class — the seed puts consent_window only on slots the org configures; the seeded default is blocking everywhere",
+    "DC P5 / A&O P5 / PS-VERIFY each add one step to cron/maintenance — sequence by merge order; this is the third drafting-flow step (after DF-P3's SLA step)",
+    "EVID-8's document-side half (review/ack reminder history in lib/reviewControl.ts:585, lib/distributionAcks.ts, lib/acknowledgments.ts) is DC-owned (P4/P5): record the pointer; if DC leaves it, open a DC-side finding rather than editing those files here"
+   ],
+   "sequencingNotes": "Phase 4 item 3. After DF-P6 and DC wave 2. 'This is where the backlog actually goes away' — it converts 'wait for an engineer to say yes' into 'an engineer may object'. FRIC-1 closes here: escalation landed in DF-P3 (GAP-106), auto-advance lands here (GAP-109); both halves are clocks, not people.",
+   "decisionsNeeded": [
+    "GAP-109 — window length and warn fraction per slot mode: proposed default 3 working days, warn at 2/3; org-configurable on the slot; blocking remains the default mode for every seeded slot.",
+    "EVID-9 — should a recipient who turned email off produce a 'suppressed' row? Proposed default: yes (a row that says why nothing was sent); bounce/webhook evidence beyond 'handed to Resend' is notifications DELIV-4 (pointer)."
+   ],
+   "alreadyResolvedElsewhere": [
+    "FRIC-1's 'nothing escalates' half → DF-P3 (GAP-106); its 'nothing auto-advances' half is this package",
+    "EVID-9's delivery-status half (bounces, dead letters) → notifications DELIV-4 / DELIV-8 (their send-queued route; pointer); the admin purge route is admin-and-org P7's"
+   ]
+  },
+  {
+   "name": "DF-P8 PROJECTS — GAP-114: projects ↔ requests by reference (DEC-40), and the dead link columns",
+   "findings": [
+    "PROJ-4",
+    "PROJ-5",
+    "PROJ-6",
+    "PROJ-8",
+    "PROJ-10",
+    "PROJ-12",
+    "PROJ-13",
+    "PROJ-3",
+    "PROJ-7"
+   ],
+   "severityMix": "1 HIGH, 1 MEDIUM, 7 LOW",
+   "files": [
+    "new migration 2026NNNN_df_roundB_ticket_project.sql — tickets.project_id UUID REFERENCES projects(id) ON DELETE SET NULL + index (org-equality trigger like 20261047's rails); guard: project_id settable only via the route/RPC; backfill from metadata.intake_collision.projectId (inventory first) [PROJ-12, GAP-114]",
+    "types/schema.ts — Ticket.projectId (additive)",
+    "lib/ticketTransitions.ts / lib/workflow.ts / app/api/tickets/workflow-action/route.ts — a `link_project` action (management, requester, or a project member with canManage) writing project_id + a ProjectActivity row ('request_linked'); issue transitions write 'deliverable_issued' activity naming (document id, revision) when the hand-back published — a REFERENCE, never a copy",
+    "app/api/tickets/create/route.ts + lib/ticketCreate.ts (DF-P2's) — optional projectId at creation; the check-in creator passes the session's projectId and the route stamps checkout_sessions.linked_ticket_id on the originating session [PROJ-4, PROJ-10] (CheckInPanel hunk after DC P6)",
+    "lib/transitionIn.ts — writes project_id (the column) instead of only metadata; the toast carries a link to the ticket [PROJ-12]",
+    "new components/projects/ProjectRequestsCard.tsx — the project's open/closed requests with status, holder, and the issued deliverable as a live reference marked superseded when the register moved on; a member who cannot read the library sees that a deliverable exists and cannot open it (GAP-114's permission seam) — mounted in app/(protected)/projects/[id]/page.tsx by one line",
+    "lib/projectSnapshot.ts + the closeout gates block in app/(protected)/projects/[id]/page.tsx (~:121-200: one more gate row 'open drafting requests' — warnings, not walls, as the page already does) [PROJ-6]",
+    "lib/projects.ts createProjectFromTicket (~:781-808) — wired to a 'Create project from this request' action on the ticket page (DF-P9 mounts the button) so projects.linked_ticket_id has a writer, or the column and the writer are removed together (decision) [PROJ-13]",
+    "components/projects/ProjectDocumentsCard.tsx — the picker excludes Superseded/Archived by default and the register row shows the status badge as a warning [PROJ-8]",
+    "app/api/intake/upload/route.ts (~:225-239: an adopted intake document gets a project_documents row) [PROJ-5] — DC P4 owns this file in wave 1; land after it merges",
+    "lib/__tests__/ticketProject.test.ts (new)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DF-P2 merged (creation contract), DF-P4 merged (GAP-114 depends on GAP-105 — the deliverable reference resolves through the library), DF-P0's LIFE-1 record (GAP-114 depends on PROJ-1/HAND-3: the hand-back exists)",
+    "DC P6 CHECKOUT (wave 1) for CheckInPanel and lib/projects.ts (P6 edits projects.ts for DCK-*: rebase); DC P4 for intake/upload",
+    "DEC-40 (reference never copy; no project-local document record; a superseded revision must say so)",
+    "projects-and-cost and projects-tab have NO fleet plan yet: PM-1 (closeout is a label), PM-8 / projects-tab SEC-17 / intelligence DACL-11 (project_documents FOR ALL policy — PROJ-3 is the same defect, pointer: the migration belongs to the area that owns the project model; this fleet does not write it), INTK-* (intake) — coordinate; if their fleet is planned before this runs, hand PROJ-5/PROJ-6/PROJ-8 to it and keep only the ticket-side files here",
+    "intelligence has NO fleet plan yet: lib/orgGraph.ts is theirs — PROJ-7 (no ticket node) closes by pointer to intelligence WIRE-4 / WIRE-7 (ticket absent from the graph); not edited here",
+    "PROJ-2 was REFUTED — do not re-open it; GAP-114 is the build"
+   ],
+   "sequencingNotes": "Phase 5 (PROJ-* in severity order) — independent of the review model; can run right after DF-P2 + DF-P4 and DC wave 1, concurrently with DF-P5/P6/P7. The trap is the word 'push' (DEC-40).",
+   "decisionsNeeded": [
+    "PROJ-13 — projects.linked_ticket_id: wire the existing writer behind a ticket-page action, or drop the column and the writer? Proposed default: wire it (no schema change; the chip the project header already renders starts working).",
+    "GAP-114 — who may link a request to a project? Proposed default: the requester, the management tier, and a project member with canManage; linking writes one FK and one activity row.",
+    "PROJ-3 ownership — proposed default: projects-and-cost PM-8 owns the project_documents policy migration (one fix for four ids); this fleet records the pointer."
+   ],
+   "alreadyResolvedElsewhere": [
+    "PROJ-3 → same defect as projects-and-cost PM-8, projects-tab SEC-17, intelligence DACL-11 (OPEN; pointer, not resolved)",
+    "PROJ-7 → intelligence WIRE-4 / WIRE-7 (OPEN; pointer)"
+   ]
+  },
+  {
+   "name": "DF-P9 TICKET-PAGE — Phase 0 UI (GAP-108 'where is my request'), the request pages' remaining direct writes, the drafter picker, the attention feed cap",
+   "findings": [
+    "UI-1",
+    "UI-2",
+    "UI-4",
+    "UI-6",
+    "UI-7",
+    "FRIC-9",
+    "EDGE-6",
+    "ROUTE-8",
+    "PROJ-9",
+    "PERS-3",
+    "PERS-2",
+    "EDGE-3",
+    "ROUTE-7"
+   ],
+   "severityMix": "2 HIGH, 11 MEDIUM",
+   "files": [
+    "app/(protected)/requests/[id]/page.tsx (everything EXCEPT the FileViewerModal region ~510-700/1679, which DF-P10 owns): status header shows attentionLabel + the current holder(s) by name and how long (GAP-108) [UI-1]; the workflow map gets a visible affordance and is also linked from the request form [UI-2]; 'View Only — No Actions Available' replaced by a derived explanation ('waiting on <holder> for <label>'; 'you are the drafter — this step is the requester's'; a disabledReason renders its text) [UI-4]; display labels from a new lib/ticketStatusLabels.ts — enum values untouched [UI-7]; renders metadata.custom_categories, the source document (done — LIFE-13), the project link, and mounts DeclarationCard / TicketRosterPanel / ConsentWindowCard / SourceDriftBanner / LibraryPicker as one line each when those packages land [PROJ-9]; the drafter picker reads heldRoles() (roles contains 'Drafter' OR headline) and, when none, says so with the fix [EDGE-6, ROUTE-8]; the :976 unread_by write checks {error}; every remaining logAuditAction call site checks the DF-P1 result [PERS-3, PERS-2]",
+    "app/(protected)/requests/page.tsx — the queue opens on the action-required set for every role (myActionItems is already computed) with 'all' one click away [FRIC-9, UI-6]; the two priority-escalation writes (:652, :671) go through a `set_priority` workflow action (or check {error} + CAS on last_modified if the route is out of scope under DEC-31) and their audit rows are written after success [PERS-3]",
+    "components/requests/WorkflowDiagramModal.tsx (display labels; reachable from the form) [UI-2, UI-7]",
+    "lib/ticketAttention.ts — attentionLabel + a holdersFor(ticket, ctx) helper (identity + routed pool names) [UI-1]; no role table is added",
+    "hooks/useTicketNotifications.ts — terminal statuses excluded SERVER-SIDE for the drafter branch; open tickets ordered oldest-modified-first (or paged) so the longest-neglected are never the ones dropped; the cap reports truncation to the badge [EDGE-3, ROUTE-7] (notifications RT-3 / TRAIL-7 are the same file and defect — fix once here, they close by pointer; DF-P1's superseded-marker hunk lands first)",
+    "app/(protected)/requests/new/page.tsx — a link to the workflow map only (DF-P2 owns the rest of the form)",
+    "lib/__tests__/ticketAttention.test.ts (extend), new lib/__tests__/ticketStatusLabels.test.ts, sweepRoundC1b.test.ts HEADLINE_AUTHORITY census must stay green (never activeRole.includes)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "Nothing blocking — runs NOW, concurrently with DC wave 1 (these files are drafting-flow's; DC owns none of them). DF-P1's one hunk in the hook merges first or rebases.",
+    "DF-P10 PKG-5 edits the FileViewerModal region of the same file AFTER DC wave 2 — disjoint hunks; whichever lands second rebases",
+    "identity-and-session SESS-6 edits requests/page.tsx (:379 :374 :410 :630 :657 :674) and requests/[id]/page.tsx (:1082 :1358 :1602 :1651) AFTER every fleet merges — leave those lines' shape alone (activeRole → Role | null flip is theirs); do not introduce new activeRole.includes( sites",
+    "DF-P4/P5/P6/P7/P8 each hand this page ONE mount line for a new component — those packages own the components; this package owns the page",
+    "99-fix-sequencing Phase 0: 'Do not rename the enum values — display layer only'; UI-5 is REFUTED (skip; the only residue — submit disabled on isSubmitting alone — belongs to DF-P2's form)"
+   ],
+   "sequencingNotes": "Phase 0 — free, independent, immediately felt; lands first among code packages. Keep the page-side residuals (PERS-2/PERS-3) narrow: WF-9 already moved attachments and comments behind routes.",
+   "decisionsNeeded": [
+    "FRIC-9/UI-6 — the queue's default view: proposed default = 'needs me' for every role, 'all open' one click away; management sees the queue counts either way."
+   ],
+   "alreadyResolvedElsewhere": [
+    "PROJ-9's source-document half → R&P LIFE-13 (the ticket page shows its source document with drift) — custom categories and the project link are what remain",
+    "PERS-2/PERS-3 mostly → R&P WF-9 (attachments and comments ride the routes; comment PATCH/DELETE CAS) — the unread_by write and the priority writes are what remain",
+    "EDGE-6/ROUTE-8's engineer half → components/requests/EngineerPickerModal.tsx already reads the collection (Round C1b); the DRAFTER picker (requests/[id]/page.tsx:259 .eq('role','Drafter')) does not"
+   ]
+  },
+  {
+   "name": "DF-P10 PKG-5 DELIVERABLE-PRINT — public-surfaces PKG-5 folded in: the ticket deliverable print/download path and the public verify-ticket verdict",
+   "findings": [
+    "PHYS-2",
+    "PHYS-9",
+    "EVID-5",
+    "EDGE-2",
+    "AUTHZ-12"
+   ],
+   "severityMix": "1 CRITICAL, 1 MEDIUM, 1 LOW (+2 public-surfaces ids: PHYS-2, PHYS-9)",
+   "files": [
+    "app/(protected)/requests/[id]/page.tsx — FileViewerModal region only (~510-700, 1679): the QR encodes the attachment's OWN rev (TicketAttachment.rev), never the ticket's current rev; a historical Final with no rev prints with no ?r= and a 'cannot confirm which printing' footer; the two download_audits inserts (~606/688) are awaited, {error}-checked, and use the columns DC P2 EGRESS added (source, ticket_id/attachment_id as P2 shaped them — today ticket_id/attachment_*/filename/watermark_text exist in NO migration) [PHYS-2, EVID-5]; 'UNCONTROLLED COPY' everywhere on ticket deliverables per the PS default (Final = uncontrolled until it is a register revision) [PHYS-9]",
+    "types/schema.ts — TicketAttachment.rev?: string | null (additive)",
+    "lib/ticketTransitions.ts — approve_draft_ifc / engineer_approve_final / approve_minor_correction stamp deliverable_rev onto the Final attachment(s) at issue; submit_draft stamps the draft label onto the submitted Draft(s) — narrow, in the existing cases [PHYS-2]",
+    "app/api/verify-ticket/route.ts — the VERDICT (public-surfaces PS-VERIFY owns headers/select/limits only): CANCELED and any terminal status without an issue ⇒ 'withdrawn' (never current); a reopened ticket ⇒ revision_in_progress (WF-21 logic kept); an archived ticket ⇒ 'unknown'; the public response drops ticketStatus and unit (internal state) and keeps only revision-status facts; a per-scan log row and the rate limit come from PS-VERIFY's lib/verifyScanLog.ts / lib/verifyRateLimit.ts — consume, do not fork [EDGE-2, AUTHZ-12]",
+    "app/verify-ticket/[ticketId]/page.tsx — renders the new verdicts ('WITHDRAWN — do not use'; 'cannot confirm which printing')",
+    "lib/__tests__/verifyTicketVerdict.test.ts (new; a historical Final builds a verifyUrl without the current rev; CANCELED never green), ticketTransitions.test.ts (extend)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "DC P2 EGRESS (wave 1) — download_audits migration (source/share_id/transmittal_id; user_id nullable; INSERT WITH CHECK; no UPDATE/DELETE): EVID-5's 'deletable by any member' half closes there by pointer; the ticket-side columns this page writes must be reconciled with P2's shape (add ticket_id/attachment_id to P2's migration via a follow-up, or carry them in a details JSONB)",
+    "public-surfaces PS-STAMP (wave 2) — lib/stamping.ts drawFooter controlState + lib/publicOrigin.ts server fallback (PHYS-9 dw2); PS-VERIFY (wave 2) — verify-ticket headers/select/limits, verifyScanLog, verifyRateLimit (AUTHZ-12's unrated/unlogged half)",
+    "R&P WF-21 contract: integer = issued, letter = draft, absent = unknown — drafting-flow owns the verdict (public-surfaces plan says so)",
+    "Defaults applied per the PS plan (stated 2026-09-17): PHYS-2 write rev at issue; existing rev-less attachments print with no ?r= ('CANNOT CONFIRM'); PHYS-9 UNCONTROLLED COPY everywhere (the register WONTFIX)",
+    "DF-P9 owns the rest of requests/[id]/page.tsx — disjoint region; DF-P1 owns the transitions' other cases — disjoint hunks; land after both"
+   ],
+   "sequencingNotes": "Its own package (per the fold-in instruction). Waits for DC wave 2 (PS-STAMP, PS-VERIFY) and P2 from wave 1. Small; runs concurrently with DF-P5/P6/P7/P8. identity-and-session SESS-6 edits this page after everything merges.",
+   "decisionsNeeded": [
+    "AUTHZ-12 — should a scanned QR keep answering forever? Proposed default: yes for revision-status facts only (the field must be able to scan an old print); ticketStatus and unit leave the public payload; scans are logged and rate-limited (PS-VERIFY's substrate)."
+   ],
+   "alreadyResolvedElsewhere": [
+    "EDGE-2's reopened half → R&P WF-21 / DEC-15 (issue evidence from history) — the CANCELED/withdrawn and archived cases are what remain",
+    "EVID-5's policy half → DC P2 EGRESS download_audits migration (in flight; pointer)"
+   ]
+  },
+  {
+   "name": "DF-P11 AFTER-DC — storage/shed residuals and the findings whose files other fleets own: verify, point, and fix only what nobody else has",
+   "findings": [
+    "AUTHZ-4",
+    "AUTHZ-5",
+    "SM-4",
+    "HAND-1",
+    "HAND-6",
+    "HAND-4",
+    "HAND-9",
+    "HAND-11",
+    "HAND-12",
+    "HAND-13",
+    "HAND-2",
+    "EVID-4",
+    "EVID-7",
+    "EVID-10",
+    "EVID-11",
+    "EVID-14",
+    "EDGE-5",
+    "EDGE-10",
+    "EDGE-14"
+   ],
+   "severityMix": "9 HIGH, 8 MEDIUM, 2 LOW",
+   "files": [
+    "app/api/storage/resolve/route.ts — after DC P2 (wave 1): evaluate the caller's read/download decision exactly as /api/storage/download-url does (lib/permissions.ts controllerBypassDecided + the DEC-43 audit row) for document_versions-backed keys; ticket-attachment keys require the caller to be able to read the ticket (DF-P1's AUTHZ-13 rule) [AUTHZ-4]",
+    "app/api/admin/ticket-shed/commit/route.ts + app/api/admin/ticket-shed/route.ts + lib/ticketShed.ts — after DC P9 (wave 1, RET-14 edits commit): commit re-reads status and refuses (409, names the tickets) any row no longer terminal since produce [SM-4]; every key deleted must match ^orgs/<orgId>/tickets/ (assertSafeStorageKey + org prefix), keys outside it are reported, never deleted — the org-prefix guard restore already applies (DC RET-6 is the same class on the document shed: point both ways) [AUTHZ-5]",
+    "lib/capabilityPolicy.ts CAPABILITY_DEFS holds.release default + a migration re-creating org_capability_allows_for from its NEWEST definition (after DC P7's transmit capability lands — lineDiff-pinned) [HAND-2 residual: the '*' default]",
+    "components/documents/RevUpModal.tsx (~:732 the Approved-by free-text box) + lib/revisions.ts (~:893) + components/documents/VersionHistoryPanel.tsx (~:395) + lib/evidencePack.ts (~:62) — after DC P3/P4/P7 (wave 2): approved_by/approved_at DERIVE from the roster sign-offs (document_review_signoffs) or, with no roster, record the publisher's identity; the typed box becomes 'approval reference (publisher's note)' rendered as a claim, never as a stamp [EVID-4]",
+    "lib/evidencePack.ts — after DC P7: sections for e_signatures, document_review_signoffs, document_acknowledgments, distribution_acks; the 1000-row audit cap surfaces as 'truncated at N' [EVID-10]",
+    "lib/distributionAcks.ts — after DC P5: the module-level ackSchemaMissing latch becomes a per-call 'unavailable' result the panel renders distinctly from 'none requested' [EVID-7]",
+    "lib/acknowledgments.ts (~:439-446) — the roster UPDATE result is checked and a zero-row match surfaces to the signer; the signature→audit mirror in app/api/signatures/sign/route.ts already checks auditErr (Round C3) — verify and record [EVID-11] (components/permissions/PermissionDrawer.tsx:291-302 is A&O P7's region: pointer)",
+    "record-only closes after the owning fleet merges (verify each against the merged code): HAND-1 → DC RG-6; HAND-6 → DC RG-3; HAND-4 → DC DRLS-6 / RG-5 + R&P SURF-13; HAND-9 → DC REV-5 + RG-10 (projects-tab SEC-13 is the same); HAND-11 → DC REV-11; HAND-12 → DC RG-11; HAND-13 → DC DCK-6; EDGE-5 → admin-and-org P1 BKP-5 / BKP-12 (restore conflict targets — the ticket_id UNIQUE and the number counter must be in their conflict handling: state it in their record); EDGE-10 → admin-and-org P1 BKP-10; EDGE-14 → notifications TAX-9 / OS-10; EVID-14 → intelligence DWG-6",
+    "lib/__tests__/storageResolve.test.ts, ticketShedCommit.test.ts (new); evidencePack/distributionAcks tests (extend)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DC wave 1 merged (P2 storage/resolve, P5 distributionAcks + holds, P9 ticket-shed, P4 reviewControl/RevUpModal/intake, P6 documentGuards) and DC wave 2 merged (P3 revisions.ts, P7 evidencePack + capabilityPolicy) — this package edits only after the owner is done",
+    "admin-and-org P1 (BKP-5/BKP-10/BKP-12) and P7 (PermissionDrawer region, purge route) for the pointers; notifications and intelligence fleets (unplanned) for EDGE-14 / EVID-14 — those two stay OPEN-by-pointer until their fleets close the owning id; do not fix them in another area's files",
+    "DEC-25 (never auto-release; releasing a safety hold is deliberate) and DEC-35 (audience from capability/config) govern the holds.release default; DEC-43 governs the storage/resolve audit row",
+    "DEC-30: the holds.release CASE-row migration re-creates org_capability_allows_for from the newest definition with a lineDiff proof (20261057 pattern); inventory: orgs whose stored policy overrides holds.release (they are unaffected)"
+   ],
+   "sequencingNotes": "Runs LAST (after DC wave 2 and after DF-P1). Sequencing item order kept: AUTHZ-5/SM-4 are the 'a job can delete bytes it should not' class — reproduce before acting, fail closed (DC RET-* rule). Everything recorded by pointer is re-verified against the merged tree, not assumed (DEC-29).",
+   "decisionsNeeded": [
+    "HAND-2 — the shipped default for holds.release: proposed fail-safe default = Admin, DocCtrl, plus the hold's opener by identity (today: everyone). Narrowing is enforcement; the org's stored policy can widen it.",
+    "EVID-4 — what 'Approved' means on a revision with no configured roster: proposed default = the publisher's identity (derived, read-only), with the typed reference labelled as an unverified note; never a free-text name rendered as a stamp."
+   ],
+   "alreadyResolvedElsewhere": [
+    "EVID-11's signature→audit half → R&P SURF-14 / Round C3 (app/api/signatures/sign checks the audit insert) — the acknowledgment-roster half is what remains",
+    "HAND-2 substrate → DC HLD-5 (P5: release enforced server-side, column-restricted) — the '*' default is what remains",
+    "AUTHZ-5 substrate → DC RET-6 (same defect on the document shed; P9) — the ticket-shed commit is what remains",
+    "HAND-1, HAND-6, HAND-4, HAND-9, HAND-11, HAND-12, HAND-13, EDGE-5, EDGE-10 → the DC / A&O ids named above (in flight; record-only once merged)"
+   ]
+  }
+ ],
+ "crossAreaFileOverlaps": [
+  "app/(protected)/requests/[id]/page.tsx ↔ DF-P9 (owner, all but the viewer region) / DF-P10 PKG-5 (FileViewerModal region) / one mount line each from DF-P4, DF-P5, DF-P6, DF-P7, DF-P8 / identity-and-session SESS-6 (:1082 :1358 :1602 :1651, after every fleet merges)",
+  "app/(protected)/requests/page.tsx ↔ DF-P9 (owner) / identity-and-session SESS-6 (:379 :374 :410 :630 :657 :674, after every fleet merges)",
+  "app/(protected)/requests/new/page.tsx ↔ DF-P2 (owner: creation) / DF-P4 (source-document discover) / DF-P6 (declaration UI) / DF-P9 (workflow-map link only)",
+  "app/api/tickets/workflow-action/route.ts ↔ DF-P1 → DF-P3 → DF-P4 → DF-P5 → DF-P6 → DF-P7 → DF-P8 (strictly sequential, each rebases on the last)",
+  "lib/workflow.ts, lib/ticketTransitions.ts, types/schema.ts (Ticket) ↔ the same sequential chain; DF-P10 touches ticketTransitions' issue cases only; types/schema.ts is also DC P4 (wave 1) and DC P7 (wave 2) — additive edits, rebase",
+  "ticket_update_guard (20261038) ↔ re-created from the newest body by DF-P1, DF-P3, DF-P4, DF-P6, DF-P7, DF-P8 — one trigger, lineDiff-pinned each time; every referenced column ADD COLUMN IF NOT EXISTS first (20261039)",
+  "lib/audit.ts ↔ DC P3 LIFECYCLE (wave 2, narrow) → DF-P1 (internals, {error}) → admin-and-org P7 ALOG-7 (identity trigger) — in that order",
+  "app/api/cron/maintenance/route.ts ↔ DC P5 (one step) / admin-and-org P5 (one step) / PS-VERIFY / DF-P3 (SLA step) / DF-P7 (consent step) — one hunk each, by merge order; NO new cron entry ever",
+  "app/api/intake/upload/route.ts ↔ DC P4 REVIEW (wave 1) / DF-P1 (redline CAS hunk) / DF-P8 (project_documents row) — after P4",
+  "components/documents/CheckInPanel.tsx ↔ DC P6 CHECKOUT (wave 1) / DF-P2 (call the create route) / DF-P8 (projectId) — after P6",
+  "lib/transitionIn.ts ↔ DF-P2 / DF-P8 (projects-and-cost INTK-* unplanned — coordinate)",
+  "lib/reviewControl.ts, lib/containerChain.ts, components/documents/RevUpModal.tsx, ReviewControlModal.tsx ↔ DC P4 (wave 1) — DF-P5 CALLS reviewControl/containerChain after P4; DF-P11 edits RevUpModal's Approved-by box after wave 2",
+  "lib/capabilityPolicy.ts ↔ DC P7 TRANSMITTALS (wave 2: a transmit capability + CASE row) → DF-P6 (CapabilityResource fields) → DF-P11 (holds.release default + CASE row) — each re-creates org_capability_allows_for from the newest definition",
+  "lib/holds.ts, lib/holdGate.ts, lib/distributionAcks.ts ↔ DC P5 (wave 1) — DF-P6 reuses holds (no edit); DF-P11 edits distributionAcks after P5",
+  "app/api/storage/resolve/route.ts ↔ DC P2 EGRESS (wave 1: ceiling/no-store) → DF-P11 (ACL decision)",
+  "app/api/admin/ticket-shed/* ↔ DC P9 RECORDS (wave 1: RET-14) → DF-P11 (status recheck, org-prefix keys)",
+  "download_audits table ↔ DC P2 EGRESS migration (policy, columns) / DF-P10 (the requests-page inserts) / EVID-5",
+  "lib/evidencePack.ts ↔ DC P7 (wave 2, TRX-13) → DF-P11 (EVID-10, EVID-4)",
+  "lib/revisions.ts, lib/documentLifecycle/* ↔ DC P3 (wave 2) → DF-P11 (EVID-4 line only)",
+  "lib/acknowledgments.ts ↔ DC DIST-5/DIST-8 (record-only) / DF-P11 (EVID-11 update check)",
+  "lib/publicOrigin.ts ↔ public-surfaces PS-STAMP (wave 2, owner) — DF-P1 and DF-P10 consume it; local guard until it merges",
+  "app/api/verify-ticket/route.ts, app/verify-ticket/[ticketId]/page.tsx ↔ PS-VERIFY (headers/select/limits/scan log/rate limit) / DF-P10 (the verdict) — after PS-VERIFY",
+  "lib/stamping.ts ↔ PS-STAMP (owner) — DF-P10 consumes drawFooter's controlState",
+  "hooks/useTicketNotifications.ts ↔ DF-P9 (owner) / DF-P1 (superseded-marker hunk) / notifications RT-3, TRAIL-7 (same file, same defect — unplanned; close by pointer to DF-P9)",
+  "lib/notify/recipients.ts, lib/notify/dispatch.ts, lib/inAppNotifications.ts ↔ notifications fleet (unplanned; owner) — DF-P3 corrects one comment in recipients.ts only; EDGE-14 → TAX-9/OS-10 by pointer",
+  "app/api/tickets/comment/route.ts ↔ DF-P1 only (notifications DELIV-5 closes by pointer)",
+  "lib/projects.ts, app/(protected)/projects/[id]/page.tsx, lib/projectSnapshot.ts, components/projects/ProjectDocumentsCard.tsx ↔ DC P6 (projects.ts, wave 1) / DF-P8 / projects-and-cost PM-1, PM-8 (unplanned)",
+  "project_documents RLS ↔ projects-and-cost PM-8 / projects-tab SEC-17 / intelligence DACL-11 / drafting-flow PROJ-3 — one migration, owned by projects-and-cost (pointer)",
+  "lib/orgGraph.ts ↔ intelligence WIRE-4/WIRE-7 (owner) — PROJ-7 by pointer; lib/drawingAuditLog.ts, lib/orchestrator/tools.ts, app/api/knowledge/drawing/route.ts ↔ intelligence DWG-6 — EVID-14 by pointer",
+  "lib/dataRestore.ts, lib/clientBackup.ts, restore routes ↔ admin-and-org P1 (owner) — EDGE-5, EDGE-10 by pointer",
+  "org_members revoke_member / admin/users page ↔ admin-and-org P8 (owner) — DF-P3's departure trigger is a separate trigger on org_members (A&O P8 must keep it)",
+  "lib/adminSurfaces.ts (R&P Round E registry) ↔ DF-P4 (the requests entry) — R&P is closed; SURF-19 (API-route conversion) is R&P's remaining OPEN and untouched here",
+  "app/api/admin/purge/route.ts ↔ admin-and-org P7 — DF-P1's read_at semantics change what 'purge-eligible' means; state it in both records"
+ ],
+ "notes": "COVERAGE: all 133 OPEN drafting-flow ids (9 CRITICAL, 41 HIGH, 60 MEDIUM, 23 LOW) are assigned exactly once across the 12 packages (script-checked against findings.json; RESOLVED EVID-3, LEAK-5 and REFUTED FRIC-6, UI-5, PROJ-2, HAND-10 are excluded), plus public-surfaces PHYS-2 and PHYS-9 inside DF-P10. Thirty-eight ids close by record in DF-P0 (Round E and earlier landed them — every one is re-verified against the merged tree before the record is written) and nineteen more in DF-P11 are pointers to in-flight DC / A&O / notifications / intelligence ids that are re-verified after those fleets merge; the residual halves that do NOT close by record are named on the package that owns them. ROUND E ALREADY CLOSED: the blanket-tickets-RLS cluster (SM-2/PERS-1/AUTHZ-2/EVID-1 via 20261038), the minor-correction cluster (SM-1/AUTHZ-1/TIER-7 via WF-3), the rowToTicket-metadata cluster (SM-11/PERS-5), the headline-role cluster (LEAK-2/ROUTE-10/AUTHZ-9 via ADD-1; EDGE-6/ROUTE-8's DRAFTER picker is the one survivor → DF-P9), the attention cluster (FRIC-7/UI-3/ROUTE-2 via WF-24), NEW/PENDING_ENG_INITIAL (SM-10), CANCELED (SM-8), reopen numbering (SM-5/LEAK-7), requiresFile (SM-13/LEAK-8), RFI close (LEAK-3), the hand-back (HAND-3/PROJ-1/DCW-4). Still genuinely open at the core: TIER-1 (the gate still keys on who asked — DEC-13 stage 3 only made the exempt list configurable), DCW-1/DCW-2 (no library, no doc-control party), the SLA layer (no server reader), the creation path (browser fan-out), EVID-13 (read_at mass-stamp — the GAP-113 prerequisite), AUTHZ-7 (the route's policy loader still fails open; a strict loader exists for the admin gate). CONCURRENCY WITH THE DOCUMENT-CONTROL WAVES: run NOW alongside wave 1 — DF-P0 (records only), DF-P9 (request pages, attention hook, WorkflowDiagramModal: no DC file), DF-P1 (workflow/comment routes + migrations; its lib/audit.ts hunk waits for DC P3 in wave 2 and its intake/upload hunk for DC P4), DF-P2 (new create route, requests/new, transitionIn, sourceDocRef; its CheckInPanel hunk waits for DC P6), then DF-P3 after DF-P1 (its cron hunk waits for DC P5). WAIT FOR WAVE 1 (types/schema.ts is DC P4's; containerChain/reviewControl are P4's; projects.ts/CheckInPanel are P6's; storage/resolve is P2's; ticket-shed is P9's): DF-P4, DF-P5, DF-P8. WAIT FOR WAVE 2 (capabilityPolicy.ts and evidencePack.ts are P7's; revisions.ts/audit.ts are P3's; publicOrigin/stamping are PS-STAMP's; verify-ticket headers are PS-VERIFY's): DF-P6, DF-P7, DF-P10, DF-P11. THE CORE CHAIN IS SEQUENTIAL by the binding file and by shared files: DF-P1 → DF-P3 → DF-P4 (Phase 2, GAP-105) → DF-P5 (Phase 3, the keystone GAP-103 + GAP-112) → DF-P6 (Phase 4: GAP-110 → GAP-111 → TIER-1 → GAP-101 → GAP-102 → TIER-4 → GAP-104 → TIER-7) → DF-P7 (GAP-113 → GAP-109). DF-P8, DF-P9, DF-P10, DF-P11 run beside that chain at the points their dependencies allow. Pairs honoured: WF-15 → LEAK-3/GAP-101 (landed), GAP-105 → GAP-103/GAP-104, LEAK-1 → GAP-106 (both in DF-P3, LEAK-1 first), DEC-23 → any ticket↔document review link (verified closed before DF-P5), GAP-103 → GAP-101/102/104, EVID-13 → GAP-113 → GAP-109, WF-3 + WF-14 (landed). MIGRATIONS: about 13 hand-applied files across DF-P1(2), DF-P3(2), DF-P4(2), DF-P5(2), DF-P6(2), DF-P7(1), DF-P8(1), DF-P11(1); five carry inventory-before-apply queries (drafterless REVISION_REQ rows and stranded assignees; tickets with a derivable library; in-flight tickets under the legacy gate; metadata.intake_collision.projectId; orgs overriding holds.release). Every migration that touches tickets re-creates ticket_update_guard from the then-newest body, never adds a second trigger, and ADD COLUMN IF NOT EXISTS's every column it references (20261039). No new cron entry anywhere (the route's own warning); DF-P3 and DF-P7 each add one step. DECISIONS: sixteen product decisions are listed on the packages, each with a fail-safe default the agent applies unless the user overrides; the one ordering decision (may GAP-110/111/TIER-1 precede the roster) defaults to the binding file. SESS-6 (identity-and-session) edits requests/page.tsx and requests/[id]/page.tsx after every fleet merges — DF-P9, DF-P10 and every mount line must be in before it; no package here may add an activeRole.includes( site (sweepRoundC1b census)."
+}
