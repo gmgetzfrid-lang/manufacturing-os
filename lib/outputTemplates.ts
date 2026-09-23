@@ -187,6 +187,49 @@ export interface FilingTarget {
   numberTag?: string;
 }
 
+/** XEDGE-11: the server renders at most this many documents per call
+ *  (MAX_ROWS_PER_CALL in app/api/templates/generate/route.ts); a reviewed
+ *  batch of any size is sent in slices of this many. */
+export const RENDER_CHUNK = 25;
+
+type RenderDoc = { values: Record<string, string>; filename?: string };
+type RenderedFile = { name: string; contentType: string; base64: string };
+
+/** Split a batch into server-sized slices, in order. Pure. */
+export function chunkDocuments<T>(documents: readonly T[], size: number = RENDER_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < documents.length; i += size) out.push(documents.slice(i, i + size));
+  return out;
+}
+
+/** Render every slice of a batch as JSON (base64 files). Each slice is its
+ *  own production record on the server; the ids come back in order. */
+async function renderAllAsJson(input: {
+  orgId: string; templateId: string; sourceName?: string; mode?: string;
+  documents: RenderDoc[];
+}): Promise<{ generationIds: string[]; files: RenderedFile[]; perGeneration: Array<{ generationId: string | null; count: number }> }> {
+  const generationIds: string[] = [];
+  const files: RenderedFile[] = [];
+  const perGeneration: Array<{ generationId: string | null; count: number }> = [];
+  for (const slice of chunkDocuments(input.documents)) {
+    const out = await api<{ generationId: string | null; files: RenderedFile[] }>(
+      "/api/templates/generate",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          orgId: input.orgId, templateId: input.templateId, action: "render",
+          documents: slice, sourceName: input.sourceName, mode: input.mode,
+          returnJson: true,
+        }),
+      },
+    );
+    if (out.generationId) generationIds.push(out.generationId);
+    perGeneration.push({ generationId: out.generationId, count: out.files.length });
+    files.push(...out.files);
+  }
+  return { generationIds, files, perGeneration };
+}
+
 /** Render the reviewed documents and FILE each one into document control as
  *  a controlled document (rev 0), through the same path a manual upload
  *  takes — RLS, versioning, and audit all apply. Returns how many landed. */
@@ -198,25 +241,17 @@ export async function fileDocumentsToLibrary(input: {
   onProgress?: (done: number, total: number) => void;
 }): Promise<{ filed: number; errors: string[] }> {
   const { createDocumentWithFile } = await import("@/lib/revisions");
-  const out = await api<{
-    generationId: string | null;
-    files: Array<{ name: string; contentType: string; base64: string }>;
-  }>(
-    "/api/templates/generate",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        orgId: input.orgId, templateId: input.templateId, action: "render",
-        documents: input.documents, sourceName: input.sourceName, mode: input.mode,
-        returnJson: true,
-      }),
-    },
-  );
+  const out = await renderAllAsJson(input);
 
   const errors: string[] = [];
   let filed = 0;
+  // Filed counts are closed out per production record (one per slice):
+  // expand the slice sizes into a per-file generation id.
+  const generationOfFile: Array<string | null> = out.perGeneration.flatMap((g) => Array<string | null>(g.count).fill(g.generationId));
+  const filedPerGeneration = new Map<string, number>();
   for (let i = 0; i < out.files.length; i++) {
     const f = out.files[i];
+    const generationId = generationOfFile[i] ?? null;
     try {
       const bytes = Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0));
       const file = new File([bytes], f.name, { type: f.contentType });
@@ -235,6 +270,7 @@ export async function fileDocumentsToLibrary(input: {
         actorEmail: input.actorEmail,
       });
       filed++;
+      if (generationId) filedPerGeneration.set(generationId, (filedPerGeneration.get(generationId) ?? 0) + 1);
     } catch (e) {
       errors.push(`${f.name}: ${(e as Error).message}`);
     }
@@ -245,23 +281,53 @@ export async function fileDocumentsToLibrary(input: {
   // line someone needs months later. Best-effort — the documents are already
   // safely in document control, so a failed bookkeeping call must not read
   // as a failed filing run.
-  if (out.generationId) {
+  for (const generationId of out.generationIds) {
     await api("/api/templates/generate", {
       method: "POST",
       body: JSON.stringify({
         orgId: input.orgId, action: "filed",
-        generationId: out.generationId, filedCount: filed,
+        generationId, filedCount: filedPerGeneration.get(generationId) ?? 0,
       }),
     }).catch(() => undefined);
   }
   return { filed, errors };
 }
 
-/** Render the reviewed documents and download the file (or zip). */
+/** The download name from a Content-Disposition header: the UTF-8
+ *  `filename*` when present (XEDGE-2), else the plain `filename`. */
+export function downloadNameFromDisposition(disposition: string | null | undefined, fallback = "documents"): string {
+  const d = disposition ?? "";
+  const star = d.match(/filename\*=UTF-8''([^;]+)/i);
+  if (star) { try { return decodeURIComponent(star[1].trim()); } catch { /* fall through */ } }
+  const plain = d.match(/filename="?([^";]+)"?/);
+  return plain?.[1]?.trim() || fallback;
+}
+
+function triggerDownload(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Render the reviewed documents and download the file (or zip). A batch
+ *  within the server's per-call cap downloads exactly as before; a larger
+ *  batch is rendered in slices and assembled into ONE zip client-side. */
 export async function renderDocuments(input: {
   orgId: string; templateId: string; sourceName?: string; mode?: string;
   documents: Array<{ values: Record<string, string>; filename?: string }>;
 }): Promise<void> {
+  if (input.documents.length > RENDER_CHUNK) {
+    const out = await renderAllAsJson(input);
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    for (const f of out.files) zip.file(f.name, Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)));
+    const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+    triggerDownload(blob, `documents - ${out.files.length} documents.zip`);
+    return;
+  }
   const token = await authToken();
   const res = await fetch("/api/templates/generate", {
     method: "POST",
@@ -273,12 +339,5 @@ export async function renderDocuments(input: {
     throw new Error(data?.error || `HTTP ${res.status}`);
   }
   const blob = await res.blob();
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const match = disposition.match(/filename="?([^"]+)"?/);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = match?.[1] ?? "documents";
-  a.click();
-  URL.revokeObjectURL(url);
+  triggerDownload(blob, downloadNameFromDisposition(res.headers.get("content-disposition")));
 }

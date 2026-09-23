@@ -28,29 +28,61 @@ export interface Placeholder {
 
 /** docxtemplater-style single-brace tags: {scope_description}. Loop and
  *  section tags ({#items} {/items} {^empty}) are structural — the template
- *  author owns those, so they're reported separately, never AI-filled. */
-const TAG_RE = /\{([#^/]?)\s*([A-Za-z0-9_.\-]+)\s*\}/g;
+ *  author owns those, so they're reported separately, never AI-filled.
+ *  XEDGE-11: raw-XML tags ({@tag}) are recognised too, so the analyze step
+ *  can see them — docxtemplater splices their VALUE into the document as
+ *  literal OOXML, so they are never fill points and the renderer refuses them. */
+const TAG_RE = /\{([#^/@]?)\s*([A-Za-z0-9_.\-]+)\s*\}/g;
+
+/** A raw-XML tag anywhere in template text: `{@…}` with optional spacing. */
+const RAW_TAG_RE = /\{\s*@/;
 
 export interface FoundTags {
   /** Plain fill points the generator populates. */
   fields: string[];
   /** Loop/section names ({#rows}…{/rows}) — repeating blocks. */
   loops: string[];
+  /** Raw-XML tags ({@name}) — UNSAFE: they inject markup, never text. */
+  raw: string[];
 }
 
 export function findPlaceholders(templateText: string): FoundTags {
   const fields = new Set<string>();
   const loops = new Set<string>();
+  const raw = new Set<string>();
   for (const m of templateText.matchAll(TAG_RE)) {
     const marker = m[1];
     const name = m[2];
     if (!name || /^\d+$/.test(name)) continue;
-    if (marker === "#" || marker === "^" || marker === "/") loops.add(name);
+    if (marker === "@") raw.add(name);
+    else if (marker === "#" || marker === "^" || marker === "/") loops.add(name);
     else fields.add(name);
   }
   // A field that is also a loop name is the loop, not a field.
   for (const l of loops) fields.delete(l);
-  return { fields: [...fields], loops: [...loops] };
+  for (const r of raw) fields.delete(r);
+  return { fields: [...fields], loops: [...loops], raw: [...raw] };
+}
+
+/** True when `text` (tags already stripped) contains a raw-XML tag. */
+export function hasRawXmlTag(text: string): boolean {
+  return RAW_TAG_RE.test(text);
+}
+
+/** XEDGE-11: only the template's DECLARED placeholder tags reach the
+ *  renderer. A caller-invented key is dropped, never injected. Pure. */
+export function pickDeclaredValues(
+  values: Record<string, unknown> | null | undefined,
+  placeholders: ReadonlyArray<Pick<Placeholder, "tag">>,
+): Record<string, string> {
+  const declared = new Set(placeholders.map((p) => p.tag));
+  const out: Record<string, string> = {};
+  if (!values || typeof values !== "object") return out;
+  for (const [k, v] of Object.entries(values)) {
+    if (!declared.has(k)) continue;
+    out[k] = v == null ? "" : String(v);
+  }
+  return out;
 }
 
 const humanize = (tag: string): string => {
@@ -135,6 +167,36 @@ export function renderFilename(
   out = out.replace(/^[-\s.]+|[-\s.]+$/g, "");
   if (!out) out = index === undefined ? fallback : `${fallback}-${index + 1}`;
   return `${out.slice(0, 120)}.${ext}`;
+}
+
+/** XEDGE-2: an HTTP header value is a ByteString — a code point above 0xFF
+ *  makes the runtime throw when the response is constructed, and anything
+ *  above 0x7F is unreliable across clients. Fold to printable ASCII for the
+ *  legacy `filename=` parameter: strip combining marks (é → e), replace every
+ *  remaining non-ASCII or control character with "_", drop quotes. */
+export function asciiFoldFilename(name: string): string {
+  const folded = name.normalize("NFKD").replace(/[̀-ͯ]/g, "");
+  let out = "";
+  for (const ch of folded) {
+    const code = ch.codePointAt(0) ?? 0;
+    out += code >= 0x20 && code <= 0x7e && ch !== '"' ? ch : "_";
+  }
+  out = out.replace(/_{2,}/g, "_").trim();
+  return out || "document";
+}
+
+/** RFC 5987 / 8187 `ext-value` percent-encoding of a UTF-8 string. */
+function encodeRfc5987(s: string): string {
+  return encodeURIComponent(s).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/** A Content-Disposition value that never leaves the ASCII range: the
+ *  folded name for old clients plus the exact UTF-8 name as `filename*`
+ *  (RFC 6266), which every current browser prefers. Safe for any input —
+ *  em dashes, CJK, quotes and line breaks included. */
+export function contentDispositionAttachment(name: string): string {
+  const clean = name.replace(/[\r\n"]/g, "");
+  return `attachment; filename="${asciiFoldFilename(clean)}"; filename*=UTF-8''${encodeRfc5987(clean)}`;
 }
 
 /** Ensure every name in a batch is unique (Word refuses duplicates in a
