@@ -59,9 +59,11 @@ export default function CheckoutsPage() {
     setLoading(true);
     setError(null);
     try {
-      // Opportunistically auto-release expired ad-hoc checkouts on load —
-      // keeps the list honest without needing a server cron.
-      await autoReleaseExpiredAdHoc(activeOrgId);
+      // Opportunistically auto-release MY expired ad-hoc checkouts on load —
+      // keeps the list honest without needing a server cron. DCK-7: scoped
+      // to the caller's own sessions (the release guard refuses anyone
+      // else's); a refused sweep surfaces in the error strip below.
+      await autoReleaseExpiredAdHoc(activeOrgId, { userId: uid ?? null });
 
       const sessions = await listAllActiveCheckouts(activeOrgId);
       if (sessions.length === 0) {
@@ -120,7 +122,7 @@ export default function CheckoutsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeOrgId]);
+  }, [activeOrgId, uid]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 

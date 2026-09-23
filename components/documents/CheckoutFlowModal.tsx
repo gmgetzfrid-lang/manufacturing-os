@@ -19,6 +19,8 @@ import {
   activeCollaboratorNames,
   postEpisodeSystemMessage,
   quickHold,
+  classifyLockClaim,
+  abortFailedLockClaim,
 } from "@/lib/checkoutEpisodes";
 import { recordIntent } from "@/lib/intents";
 import {
@@ -365,7 +367,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       // -wins left an orphaned session + a mismatched collaborator list.
       // (The active_collaborators array is still a read-modify-write; that is
       // a benign list, not the authoritative lock.)
-      const { data: lockedRow } = await supabase
+      const claim = await supabase
         .from("documents")
         .update({
           checked_out_by: currentUser.uid,
@@ -379,6 +381,24 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .or(`checked_out_by.is.null,checked_out_by.eq.${currentUser.uid}`)
         .select("id")
         .maybeSingle();
+
+      // DCK-4: a null row means one of TWO things — the lock is held by
+      // someone else (a genuine CAS miss, no error) or the write itself
+      // FAILED (an ACL deny, an RLS filter, a transport error). The second
+      // must not be reported as "you joined": nobody holds the lock, and the
+      // session we just opened would sit on a document that reads as free.
+      const verdict = classifyLockClaim(claim);
+      if (verdict === "failed") {
+        await abortFailedLockClaim({
+          sessionId: insertedSession?.id as string,
+          userId: currentUser.uid,
+          userName,
+          episodeId: checkoutEpisode?.id ?? null,
+          episodeCreated: ensured?.created === true,
+        });
+        throw new Error(`The checkout did not complete — the lock could not be claimed: ${claim.error?.message ?? "write refused"}`);
+      }
+      const lockedRow = verdict === "held";
 
       if (!lockedRow) {
         // Someone else holds the lock (they had it already, or won the race).

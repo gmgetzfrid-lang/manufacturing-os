@@ -143,11 +143,18 @@ describe("activeCollaboratorNames", () => {
 });
 
 describe("isMissingEpisodeSchema", () => {
-  it("recognizes missing-table / missing-column codes", () => {
-    expect(isMissingEpisodeSchema({ code: "42P01", message: "x" })).toBe(true);
-    expect(isMissingEpisodeSchema({ code: "42703", message: "x" })).toBe(true);
-    expect(isMissingEpisodeSchema({ code: "PGRST204", message: "x" })).toBe(true);
-    expect(isMissingEpisodeSchema({ code: "PGRST205", message: "x" })).toBe(true);
+  it("recognizes missing-table / missing-column codes WHEN the error names the episode schema", () => {
+    expect(isMissingEpisodeSchema({ code: "42P01", message: 'relation "public.checkout_episodes" does not exist' })).toBe(true);
+    expect(isMissingEpisodeSchema({ code: "42703", message: 'column "episode_id" of relation "checkout_sessions" does not exist' })).toBe(true);
+    expect(isMissingEpisodeSchema({ code: "PGRST204", message: "Could not find the 'episode_id' column of 'checkout_messages' in the schema cache" })).toBe(true);
+    expect(isMissingEpisodeSchema({ code: "PGRST205", message: "Could not find the table 'public.checkout_episodes' in the schema cache" })).toBe(true);
+  });
+
+  it("DCK-11: a bare code for an UNRELATED column or table never trips the latch", () => {
+    expect(isMissingEpisodeSchema({ code: "42703", message: "x" })).toBe(false);
+    expect(isMissingEpisodeSchema({ code: "PGRST204", message: "Could not find the 'kind' column of 'checkout_messages' in the schema cache" })).toBe(false);
+    expect(isMissingEpisodeSchema({ code: "42P01", message: 'relation "public.document_intents" does not exist' })).toBe(false);
+    expect(isMissingEpisodeSchema({ code: "PGRST205", message: "x" })).toBe(false);
   });
 
   it("recognizes schema-cache messages mentioning the episode objects", () => {

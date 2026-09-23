@@ -11,17 +11,25 @@
 //      call `assertCanPublishRevision` before they touch the DB, re-fetching
 //      the AUTHORITATIVE lock + hold state (never trusting the possibly-stale
 //      `doc` the client passed in).
-//   2. A defense-in-depth Postgres trigger (see the matching migration)
-//      enforces the same rule at the DB layer for any path that bypasses
-//      the lib.
+//   2. At the database, the two rules are enforced by DIFFERENT things
+//      (DCK-6): the HOLD check lives in the publish-guard trigger
+//      (enforce_document_publish_guard, newest body 20261060), while the
+//      LOCK check lives only in the publish_revision RPC (20260828 and
+//      successors: `v_doc.checked_out_by <> p_actor` unless overridden). The
+//      trigger's own lock branch was removed on purpose in 20260812 ("we
+//      deliberately do NOT block on checked_out_by") and never restored, so
+//      a direct `documents.current_version_id` PATCH by someone who already
+//      holds publish authority is NOT stopped by the lock at the database —
+//      only by this module on the app path. Do not describe the trigger as a
+//      lock backstop; it is not one.
 //
 // The decision itself is a pure function (`evaluatePublishGuard`) so it can
 // be unit-tested exhaustively without a database.
 
 import { supabase } from "@/lib/supabase";
 import { listActiveHoldsForDocument } from "@/lib/holds";
-import { canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal, type Principal } from "@/lib/permissions";
-import type { AccessControl, DocumentHold } from "@/types/schema";
+import { canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal, isControllerRole, type Principal } from "@/lib/permissions";
+import type { AccessControl, DocumentHold, Role } from "@/types/schema";
 
 export type PublishBlockCode = "locked_by_other" | "on_hold";
 
@@ -62,10 +70,11 @@ export interface GuardDecision {
   blockingHolds?: DocumentHold[];
 }
 
-const CONTROLLER_ROLES = new Set(["Admin", "DocCtrl"]);
-
+/** DCK-13: the controller tier is spelled ONCE, in lib/permissions.ts
+ *  (`isControllerRole`, mirroring the database's `is_org_controller`) — this
+ *  module no longer carries its own literal copy of the pair. */
 export function isControllerRoleName(role?: string | null): boolean {
-  return !!role && CONTROLLER_ROLES.has(role);
+  return !!role && isControllerRole(role as Role);
 }
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
 import {
   Clock,
   Info,
@@ -15,6 +15,8 @@ import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { forceReleaseDocument, quickHold } from "@/lib/checkoutEpisodes";
+import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { canForceReleaseCheckout } from "@/lib/checkoutAffordances";
 import UserAvatar from "@/components/ui/UserAvatar";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
@@ -42,6 +44,30 @@ function timeAgo(date: Date) {
   interval = seconds / 60;
   if (interval > 1) return Math.floor(interval) + "m";
   return "now";
+}
+
+/** DCK-13: may this member force-release a checkout in this org? Reads the
+ *  org's capability policy (browser-cached a minute) and evaluates it the
+ *  way lib/holds.ts and the workflow route do — role tokens, additive
+ *  roles[], live per-person grants. Exported so the Inspector drawer draws
+ *  its "Force Release Lock" button from the same answer. */
+export function useForceReleaseAllowed(
+  orgId: string | null,
+  role: string | null,
+  roles: string[] | null,
+  uid: string | null,
+): boolean {
+  // Keyed by org so a switch never evaluates the previous org's policy
+  // (no synchronous reset inside the effect).
+  const [loaded, setLoaded] = useState<{ orgId: string; policy: CapabilityPolicy } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (!orgId) return;
+    void loadCapabilityPolicy(orgId).then((p) => { if (alive) setLoaded({ orgId, policy: p }); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [orgId]);
+  const policy = loaded && loaded.orgId === orgId ? loaded.policy : null;
+  return canForceReleaseCheckout(policy, role, roles, uid);
 }
 
 // Custom Tooltip/Popover Component
@@ -194,51 +220,54 @@ const CheckoutInfoPopover = ({
   const handleForceRelease = async () => {
     if (!docRecord.id || processing) return;
     // Force-release ends EVERY active session on this document and the
-    // holders get notified by name — never a one-click accident.
+    // holders get notified by name — never a one-click accident. DCK-5: the
+    // dialog collects the REASON; it reaches released_reason and the audit
+    // row alike, so the record says why a checkout was taken away.
     const holder = docRecord.checkedOutByName || "the current holder";
-    const confirmed = await appConfirm({
+    const reason = await appPrompt({
       title: "Force-release this checkout?",
-      message: `Every active session on this document ends immediately, and ${holder} (plus any collaborators) will be notified that you released it. Their unpublished work is not deleted, but their lock is gone. Only do this if the work is done or truly abandoned.`,
+      message: `Every active session on this document ends immediately, and ${holder} (plus any collaborators) will be notified that you released it. Their unpublished work is not deleted, but their lock is gone. Only do this if the work is done or truly abandoned. State why — it goes on the document's record.`,
+      placeholder: "Reason for releasing this lock (required)",
       tone: "danger",
       confirmLabel: "Force release",
     });
-    if (!confirmed) return;
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      await appAlert({ title: "Reason required", message: "A force-release is recorded on the document's control history — say why.", tone: "danger" });
+      return;
+    }
     setProcessing(true);
     try {
-      // 1. Audit Log
-      await logCheckoutEvent({
-        orgId: docRecord.orgId || 'unknown',
-        fileId: docRecord.id,
-        userId: currentUserId || 'unknown',
-        userEmail: currentUserEmail || 'unknown',
-        userRole: userRole || 'unknown',
-        type: "FORCE_RELEASE",
-        details: {
-          releasedUser: docRecord.checkedOutByName,
-          releasedUserId: docRecord.checkedOutBy
-        }
-      });
-
-      // 2. Release everything: ends every active session, closes the
-      //    checkout episode (close_reason 'force_released'), clears the lock
-      //    columns + collaborator list, and logs the system alert into the
-      //    episode's thread.
+      // Release everything: ends every active session, closes the checkout
+      // episode (close_reason 'force_released'), clears the lock columns +
+      // collaborator list, logs the system alert into the episode's thread,
+      // and writes the FORCE_RELEASE audit row AFTER the release succeeds
+      // (DCK-5) — a refused release records nothing.
       await forceReleaseDocument({
         orgId: docRecord.orgId || 'unknown',
         documentId: docRecord.id!,
         actorUserId: currentUserId || 'unknown',
         actorName: currentUserEmail?.split('@')[0] || 'Admin',
+        actorEmail: currentUserEmail ?? null,
+        actorRole: userRole ?? null,
+        reason: reason.trim(),
       });
 
       setProcessing(false);
       onClose();
     } catch (e) {
       console.error("Failed to force release:", e);
+      await appAlert({ title: "Force release refused", message: (e as Error).message, tone: "danger" });
       setProcessing(false);
     }
   };
 
-  const canAdmin = [userRole, ...(userRoles ?? [])].some((r) => r === 'Admin' || r === 'DocCtrl'); // OWN-3
+  // DCK-13 / DCK-10: the SAME capability the database enforces
+  // (checkout.force_release, read by enforce_checkout_release_guard), against
+  // the full role collection and any live per-person grant — never a
+  // hardcoded role pair. Until the policy loads, the shipped default applies
+  // (byte-identical to the old pair for an unconfigured org).
+  const canAdmin = useForceReleaseAllowed(docRecord.orgId ?? null, userRole ?? null, userRoles ?? null, currentUserId ?? null);
 
   return (
     <div 

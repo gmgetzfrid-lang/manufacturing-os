@@ -29,6 +29,7 @@
 // the legacy document-scoped behavior instead of breaking checkout.
 
 import { supabase } from "@/lib/supabase";
+import { logCheckoutEvent } from "@/lib/audit";
 
 type SupabaseLike = typeof supabase;
 
@@ -132,13 +133,16 @@ export function isMissingEpisodeSchema(err: unknown): boolean {
   if (!e) return false;
   const code = e.code ?? "";
   const msg = (e.message ?? "").toLowerCase();
+  // DCK-11: the error must NAME the episode schema. A bare 42703 / PGRST204
+  // for an unrelated column (checkout_messages.kind, say) used to trip the
+  // latch below and silently detach every later session and thread message
+  // from the register. Postgres and PostgREST both name the missing object
+  // in the message, so a genuine pre-migration error still classifies.
+  if (!(msg.includes("checkout_episodes") || msg.includes("episode_id"))) return false;
   // 42P01 undefined_table / 42703 undefined_column (raw PG);
   // PGRST204 unknown column, PGRST205 unknown table (PostgREST schema cache).
   if (code === "42P01" || code === "42703" || code === "PGRST204" || code === "PGRST205") return true;
-  return (
-    (msg.includes("checkout_episodes") || msg.includes("episode_id")) &&
-    (msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find"))
-  );
+  return msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find");
 }
 
 /** True when the error means the 20261012 outcome columns aren't applied yet
@@ -152,19 +156,44 @@ export function isMissingOutcomeSchema(err: unknown): boolean {
   return msg.includes("outcome") && (msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find"));
 }
 
-// Once we know the schema is missing we stop retrying for the session —
-// avoids a failed query per call on pre-migration environments.
-let episodeSchemaMissing = false;
+// Once we know the schema is missing we stop retrying — avoids a failed
+// query per call on pre-migration environments. DCK-11: the latch is
+// TIME-BOXED, not a process-lifetime flag. It lives in module scope (shared
+// by every request a server process handles, and by a whole browser tab), so
+// a permanent latch turned one transient classification into a silent,
+// unrecoverable hole in the checkout register. After the window it re-probes;
+// a genuinely pre-migration environment simply re-latches every few minutes.
+export const EPISODE_SCHEMA_RECHECK_MS = 5 * 60_000;
+let episodeSchemaMissingUntil = 0;
+
+function episodeSchemaMissing(): boolean {
+  return Date.now() < episodeSchemaMissingUntil;
+}
+
+/** Flip the latch, loudly. Degrading to legacy behaviour is deliberate on a
+ *  pre-migration database, but it must never be silent (DCK-11): the first
+ *  flip of each window logs the error that caused it so a server log or the
+ *  browser console shows WHY sessions stopped being episode-tagged. */
+function markEpisodeSchemaMissing(cause: unknown): void {
+  const wasLatched = episodeSchemaMissing();
+  episodeSchemaMissingUntil = Date.now() + EPISODE_SCHEMA_RECHECK_MS;
+  if (!wasLatched) {
+    console.error(
+      "[checkoutEpisodes] episode schema unavailable — checkouts degrade to the legacy (episode-less) record until it re-probes",
+      cause,
+    );
+  }
+}
 
 /** Test hook / manual reset (e.g. after the user applies the migration). */
 export function resetEpisodeSchemaFlag(): void {
-  episodeSchemaMissing = false;
+  episodeSchemaMissingUntil = 0;
 }
 
 /** Whether this environment has been detected as pre-migration (no episode
  *  schema). Only meaningful after at least one episode query has run. */
 export function episodeSchemaIsMissing(): boolean {
-  return episodeSchemaMissing;
+  return episodeSchemaMissing();
 }
 
 // ─── Row mapping ─────────────────────────────────────────────────────────
@@ -194,7 +223,7 @@ export async function getActiveEpisode(
   documentId: string,
   opts?: { client?: SupabaseLike },
 ): Promise<CheckoutEpisode | null> {
-  if (episodeSchemaMissing) return null;
+  if (episodeSchemaMissing()) return null;
   const db = opts?.client ?? supabase;
   const { data, error } = await db
     .from("checkout_episodes")
@@ -203,7 +232,7 @@ export async function getActiveEpisode(
     .eq("status", "active")
     .maybeSingle();
   if (error) {
-    if (isMissingEpisodeSchema(error)) { episodeSchemaMissing = true; return null; }
+    if (isMissingEpisodeSchema(error)) { markEpisodeSchemaMissing(error); return null; }
     throw new Error(error.message);
   }
   return data ? rowToEpisode(data as Record<string, unknown>) : null;
@@ -226,11 +255,11 @@ export async function ensureActiveEpisode(input: {
   /** Backdate the open (used when adopting an in-flight legacy checkout). */
   openedAt?: string | null;
 }): Promise<{ episode: CheckoutEpisode; created: boolean } | null> {
-  if (episodeSchemaMissing) return null;
+  if (episodeSchemaMissing()) return null;
 
   const existing = await getActiveEpisode(input.documentId);
   if (existing) return { episode: existing, created: false };
-  if (episodeSchemaMissing) return null; // set by getActiveEpisode
+  if (episodeSchemaMissing()) return null; // set by getActiveEpisode
 
   // Next per-document number. Can't race itself: a second creator hits the
   // unique index below and re-selects rather than inserting seq'.
@@ -261,7 +290,7 @@ export async function ensureActiveEpisode(input: {
     .single();
 
   if (error) {
-    if (isMissingEpisodeSchema(error)) { episodeSchemaMissing = true; return null; }
+    if (isMissingEpisodeSchema(error)) { markEpisodeSchemaMissing(error); return null; }
     // 23505 = unique violation on the one-active-per-document index: someone
     // opened the episode a beat before us. Join theirs.
     if ((error as { code?: string }).code === "23505") {
@@ -288,7 +317,7 @@ export async function adoptInFlightCheckout(input: {
   documentId: string;
   libraryId?: string | null;
 }): Promise<CheckoutEpisode | null> {
-  if (episodeSchemaMissing) return null;
+  if (episodeSchemaMissing()) return null;
   const sessions = await fetchActiveSessions(input.documentId);
   if (sessions.length === 0) return null;
 
@@ -318,18 +347,27 @@ export async function adoptInFlightCheckout(input: {
 export async function listEpisodesForDocument(
   documentId: string,
 ): Promise<CheckoutEpisode[]> {
-  if (episodeSchemaMissing) return [];
+  if (episodeSchemaMissing()) return [];
   const { data, error } = await supabase
     .from("checkout_episodes")
     .select("*")
     .eq("document_id", documentId)
     .order("opened_at", { ascending: false });
   if (error) {
-    if (isMissingEpisodeSchema(error)) { episodeSchemaMissing = true; return []; }
+    if (isMissingEpisodeSchema(error)) { markEpisodeSchemaMissing(error); return []; }
     throw new Error(error.message);
   }
   return ((data as Record<string, unknown>[]) ?? []).map(rowToEpisode);
 }
+
+/** What a close attempt found. `live_sessions` = the episode still has an
+ *  active member session (a racer joined after the caller's own fetch), so
+ *  it was NOT sealed and the caller must reconcile instead (DCK-14). */
+export type CloseEpisodeResult = "closed" | "live_sessions" | "skipped";
+
+/** The refusal text of the 20261075 database rail, matched by substring so
+ *  a race that slips past the re-read below still resolves to `live_sessions`. */
+const EPISODE_LIVE_SESSIONS_RAIL = "still has active sessions";
 
 async function closeEpisode(input: {
   episodeId: string;
@@ -337,9 +375,21 @@ async function closeEpisode(input: {
   closedByName?: string | null;
   reason: "checked_in" | "force_released" | "expired" | "reconciled";
   client?: SupabaseLike;
-}): Promise<void> {
-  if (episodeSchemaMissing) return;
+}): Promise<CloseEpisodeResult> {
+  if (episodeSchemaMissing()) return "skipped";
   const db = input.client ?? supabase;
+  // DCK-14: seal only on the SAME evidence the lock clear is conditional on —
+  // re-read the episode's own active sessions right here, inside the close.
+  // The caller's session list predates its own writes; a newcomer who joined
+  // in between must not be sealed into a closed episode.
+  const { data: live, error: liveErr } = await db
+    .from("checkout_sessions")
+    .select("id")
+    .eq("episode_id", input.episodeId)
+    .eq("status", "active")
+    .limit(1);
+  if (liveErr && !isMissingEpisodeSchema(liveErr)) throw new Error(liveErr.message);
+  if ((live ?? []).length > 0) return "live_sessions";
   const { error } = await db
     .from("checkout_episodes")
     .update({
@@ -351,7 +401,14 @@ async function closeEpisode(input: {
     })
     .eq("id", input.episodeId)
     .eq("status", "active"); // CAS: only close a still-open episode
-  if (error && !isMissingEpisodeSchema(error)) throw new Error(error.message);
+  if (error) {
+    if (isMissingEpisodeSchema(error)) return "skipped";
+    // The database rail (20261075) refused because a session joined between
+    // the re-read and the write: same verdict, the caller reconciles.
+    if ((error.message ?? "").includes(EPISODE_LIVE_SESSIONS_RAIL)) return "live_sessions";
+    throw new Error(error.message);
+  }
+  return "closed";
 }
 
 // ─── System messages (episode-tagged) ────────────────────────────────────
@@ -378,12 +435,12 @@ export async function postEpisodeSystemMessage(input: {
     kind: "system",
   };
   try {
-    const withEpisode = episodeSchemaMissing || !input.episodeId
+    const withEpisode = episodeSchemaMissing() || !input.episodeId
       ? base
       : { ...base, episode_id: input.episodeId, lock_id: input.episodeId };
     const { error } = await db.from("checkout_messages").insert(withEpisode);
     if (error && isMissingEpisodeSchema(error)) {
-      episodeSchemaMissing = true;
+      markEpisodeSchemaMissing(error);
       await db.from("checkout_messages").insert(base);
     }
   } catch (e) {
@@ -522,21 +579,40 @@ export async function finishMySession(input: {
       })
       .eq("id", input.documentId)
       .or(`checked_out_by.is.null,checked_out_by.eq.${input.userId}`);
+    let closeResult: CloseEpisodeResult = "skipped";
     if (episode?.id) {
-      await closeEpisode({
+      closeResult = await closeEpisode({
         episodeId: episode.id,
         closedBy: input.userId,
         closedByName: input.userName,
         reason: "checked_in",
       });
-      episodeClosed = true;
+      episodeClosed = closeResult === "closed";
     }
-    await postEpisodeSystemMessage({
-      orgId: input.orgId,
-      documentId: input.documentId,
-      episodeId: episode?.id ?? null,
-      text: `${input.userName} checked in — everyone is done, checkout closed.`,
-    });
+    if (closeResult === "live_sessions") {
+      // DCK-14: someone checked out between our session fetch and the close.
+      // The guarded documents clear above already left their lock alone (or
+      // they hold no lock yet); settle the columns from the live session rows
+      // and say what actually happened instead of "checkout closed".
+      await reconcileDocumentCheckoutState(input.documentId, {
+        orgId: input.orgId,
+        actorUserId: input.userId,
+        actorName: input.userName,
+      });
+      await postEpisodeSystemMessage({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        episodeId: episode?.id ?? null,
+        text: `${input.userName} checked in — someone else joined meanwhile, so the checkout stays open.`,
+      });
+    } else {
+      await postEpisodeSystemMessage({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        episodeId: episode?.id ?? null,
+        text: `${input.userName} checked in — everyone is done, checkout closed.`,
+      });
+    }
   } else if (transition.kind === "transfer") {
     // Holder leaves, others remain: pass the lock so the document never
     // reads "free" mid-episode. Fetch the heir's session details for the
@@ -596,14 +672,21 @@ export async function finishMySession(input: {
 
 /**
  * Admin/DocCtrl override: end EVERY active session, close the episode with
- * close_reason 'force_released', clear the document columns, and log a
- * system alert into the thread. Callers write their own audit row.
+ * close_reason 'force_released', clear the document columns, log a system
+ * alert into the thread, and write the FORCE_RELEASE audit row — HERE, after
+ * the release succeeded, so both surfaces (status-cell popover, Inspector
+ * drawer) record identically and a refused release records nothing (DCK-5).
+ * Callers must NOT write their own FORCE_RELEASE row.
  */
 export async function forceReleaseDocument(input: {
   orgId: string;
   documentId: string;
   actorUserId: string;
   actorName: string;
+  /** For the audit row (DCK-5). */
+  actorEmail?: string | null;
+  actorRole?: string | null;
+  /** The stated reason — reaches released_reason AND the audit details. */
   reason?: string | null;
 }): Promise<void> {
 
@@ -625,10 +708,29 @@ export async function forceReleaseDocument(input: {
   if (rpcErr) {
     throw new Error(`Force release was refused — the lock was NOT cleared: ${rpcErr.message}`);
   }
-  const rpc = (rpcData ?? null) as { documentId?: string; endedSessions?: number } | null;
+  const rpc = (rpcData ?? null) as { documentId?: string; previousHolder?: string | null; endedSessions?: number } | null;
   if (!rpc || rpc.documentId !== input.documentId) {
     throw new Error("Force release was not confirmed by the database — the lock was NOT cleared.");
   }
+
+  // DCK-5: the record of the act, written once the act is real. The reason
+  // is the one that reached released_reason a moment ago.
+  await logCheckoutEvent({
+    orgId: input.orgId,
+    fileId: input.documentId,
+    userId: input.actorUserId,
+    userEmail: input.actorEmail || "unknown",
+    userRole: input.actorRole || "unknown",
+    type: "FORCE_RELEASE",
+    details: {
+      reason: input.reason ?? null,
+      previousHolderId: rpc.previousHolder ?? null,
+      endedSessions: rpc.endedSessions ?? affected.length,
+      releasedUsers: affected.map((s) => ({ userId: s.userId, userName: s.userName })),
+      episodeId: episode?.id ?? null,
+      checkoutNumber: episode?.seq ?? null,
+    },
+  });
 
   if (episode) {
     await closeEpisode({
@@ -669,6 +771,63 @@ export async function forceReleaseDocument(input: {
     } catch (e) {
       console.warn("[forceRelease] victim notify failed (non-blocking)", e);
     }
+  }
+}
+
+// ─── Lock claim verdict (DCK-4) ──────────────────────────────────────────
+
+/** How a CAS lock claim ended. The conditional UPDATE answers THREE ways,
+ *  not two: a row (we hold the lock), no row and no error (someone else holds
+ *  it — we joined), or an ERROR (an ACL write deny, an RLS filter, a
+ *  transport failure). The third used to be read as the second, leaving an
+ *  active session on a document that reads as free. */
+export type LockClaimVerdict = "held" | "joined" | "failed";
+
+export function classifyLockClaim(result: {
+  data: unknown;
+  error: { message?: string } | null | undefined;
+}): LockClaimVerdict {
+  if (result.error) return "failed";
+  return result.data ? "held" : "joined";
+}
+
+/** Roll back a checkout whose lock claim FAILED (not lost): end the session
+ *  row that was just opened so the register does not carry a session nobody
+ *  can see in the lock columns, and seal the episode if this attempt opened
+ *  it. Best-effort on the episode; the session end is checked. */
+export async function abortFailedLockClaim(input: {
+  sessionId: string;
+  userId: string;
+  userName?: string | null;
+  episodeId?: string | null;
+  /** True when this attempt created the episode (nobody else is on it). */
+  episodeCreated?: boolean;
+  client?: SupabaseLike;
+}): Promise<void> {
+  const db = input.client ?? supabase;
+  const now = new Date().toISOString();
+  const { error } = await db
+    .from("checkout_sessions")
+    .update({
+      status: "checked_in",
+      ended_at: now,
+      released_at: now,
+      released_by: input.userId,
+      released_reason: "Checkout did not complete — the lock claim failed",
+    })
+    .eq("id", input.sessionId)
+    .eq("status", "active");
+  if (error) throw new Error(`The checkout could not be rolled back: ${error.message}`);
+  if (input.episodeId && input.episodeCreated) {
+    try {
+      await closeEpisode({
+        episodeId: input.episodeId,
+        closedBy: input.userId,
+        closedByName: input.userName ?? null,
+        reason: "reconciled",
+        client: db,
+      });
+    } catch { /* the stray episode is harmless: the next checkout joins it */ }
   }
 }
 
@@ -740,7 +899,7 @@ export async function quickHold(input: {
   } catch { /* non-blocking */ }
 
   // Atomic conditional lock claim — same CAS as the full modal.
-  const { data: lockedRow } = await supabase
+  const claim = await supabase
     .from("documents")
     .update({
       checked_out_by: input.userId,
@@ -753,6 +912,20 @@ export async function quickHold(input: {
     .or(`checked_out_by.is.null,checked_out_by.eq.${input.userId}`)
     .select("id")
     .maybeSingle();
+  const verdict = classifyLockClaim(claim);
+  if (verdict === "failed") {
+    // DCK-4: a FAILED write is not a lost race. Undo the session we opened
+    // and say so — never "joined" over a document nobody holds.
+    await abortFailedLockClaim({
+      sessionId: session?.id as string,
+      userId: input.userId,
+      userName: input.userName,
+      episodeId: episode?.id ?? null,
+      episodeCreated: ensured?.created === true,
+    });
+    throw new Error(`Quick hold did not complete — the lock could not be claimed: ${claim.error?.message ?? "write refused"}`);
+  }
+  const lockedRow = verdict === "held";
 
   await postEpisodeSystemMessage({
     orgId: input.orgId,

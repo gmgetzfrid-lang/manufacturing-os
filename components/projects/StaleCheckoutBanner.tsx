@@ -11,7 +11,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AlarmClock, Loader2, X, FileText } from "lucide-react";
 import { listStaleCheckoutsForUser } from "@/lib/projects";
-import { reconcileDocumentCheckoutState } from "@/lib/checkoutEpisodes";
+import { finishMySession } from "@/lib/checkoutEpisodes";
+import { logCheckoutEvent } from "@/lib/audit";
+import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import type { CheckoutSession } from "@/types/schema";
 
@@ -27,6 +29,9 @@ type StaleRow = CheckoutSession & {
 const DISMISS_KEY = "mfg-os.staleCheckouts.dismissedUntil";
 
 export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps) {
+  // DCK-9: the release goes through the same check-in as every other
+  // surface, so the register and the audit row need the actor's name/role.
+  const { userEmail, activeRole } = useRole();
   const [rows, setRows] = useState<StaleRow[]>([]);
   // Dismiss persists for the day (localStorage) — component-local state made
   // the banner reappear on every navigation, which teaches people to ignore it.
@@ -71,28 +76,33 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
     if (!row.id || !userId) return;
     setReleasingId(row.id); setReleaseError(null);
     try {
-      const now = new Date().toISOString();
-      const { error } = await supabase.from("checkout_sessions").update({
-        status: "checked_in",
-        ended_at: now,
-        released_at: now,
-        released_by: userId,
-        released_reason: "User released from stale-checkout banner",
-      }).eq("id", row.id);
-      if (error) throw new Error(error.message);
-      await supabase.from("audit_logs").insert({
-        action: "CHECKOUT_RELEASED",
-        resource_type: "document", resource_id: row.documentId,
-        org_id: row.orgId, user_id: userId, user_email: null,
-        details: { via: "stale_checkout_banner", sessionId: row.id, docNumber: row.docNumber ?? null },
-      }).then(() => undefined, () => undefined);
-      // Settle the document from its remaining active sessions: clears the
-      // lock + closes the episode if I was the last one out, transfers the
-      // lock if collaborators remain, rebuilds the collaborator list.
-      await reconcileDocumentCheckoutState(row.documentId, {
+      if (!row.orgId) throw new Error("This checkout has no workspace on record.");
+      const userName = userEmail?.split("@")[0] || "User";
+      // DCK-9: a release from the banner is a CHECK-IN like any other — it
+      // goes through finishMySession (ends my session rows on the document,
+      // settles the lock/episode: clear, transfer, or rebuild) with an
+      // explicit register outcome, and writes the CHECK_IN audit row every
+      // renderer already understands. The old direct UPDATE left the
+      // register line blank and wrote CHECKOUT_RELEASED, which nothing
+      // counted as a lock event.
+      await finishMySession({
         orgId: row.orgId,
-        actorUserId: userId,
-        closeReason: "checked_in",
+        documentId: row.documentId,
+        userId,
+        userName,
+        episodeId: row.episodeId ?? null,
+        sessionStatus: "checked_in",
+        releasedReason: "Released from the stale-checkout banner (no changes)",
+        outcome: { outcome: "all_clear", note: null, ref: null },
+      });
+      await logCheckoutEvent({
+        orgId: row.orgId,
+        fileId: row.documentId,
+        userId,
+        userEmail: userEmail || "unknown",
+        userRole: activeRole || "unknown",
+        type: "CHECK_IN",
+        details: { via: "stale_checkout_banner", outcome: "all_clear", sessionId: row.id, docNumber: row.docNumber ?? null },
       });
       await refresh();
     } catch (e) {
