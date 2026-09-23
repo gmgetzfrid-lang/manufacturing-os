@@ -273,7 +273,7 @@ lib/documentShares.ts:68-73 — the full body of revokeShareLink; no `const { er
 ## EGR-7 · The full-org export embeds live plaintext share/portal/intake tokens and ships them to an operator-configured external webhook or bucket
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:50-51`, `lib/exportTables.ts:54`, `lib/exportTables.ts:171-181`, `lib/dataExport.ts:300`, `lib/exportRunner.ts:159-162`, `lib/exportRunner.ts:277-314`, `app/api/data-export/structured/route.ts:53-57`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence-search: grep for redact/sanitize/scrub/token over lib/dataExport.ts and lib/exportRunner.ts finds no redaction step — the only `token` hits in exportRunner are S3 ContinuationToken pagination (lines 381-395). lib/exportTables.ts:171-181 (EXPORT_EXCLUDED_TABLES) excludes ai_connections for exactly the 'secrets never leave the database' reason, which shows the omission is an oversight rather than a policy. Export is gated to Admin/Manager/DocCtrl (app/api/data-export/structured/route.ts:55-57), but that does not constrain where the operator points the destination.
@@ -298,6 +298,18 @@ lib/exportTables.ts:50-51,54 list the three token-bearing tables; :173-174 shows
 - [ ] dumpTable applies the redaction rather than select("*") for tables that declare one
 - [ ] The export README/manifest states which columns were redacted, so a restore knows the shares must be re-issued rather than silently arriving dead
 - [ ] Consider whether a restore should re-mint tokens; either way the decision is written down next to the ai_connections exclusion reason
+
+**Resolution (2026-09-23, Round F).** Reproduced first: `lib/dataExport.ts dumpTable` was `select("*")` with no redaction step, `lib/exportTables.ts` carried no column map, and `grep -rn "REDACT\|redactColumns" lib app` returned nothing. Fix — this is also admin-and-org `BKP-1`'s export half and projects-and-cost `INTK-6`, fixed once here: `REDACT_COLUMNS` in `lib/exportTables.ts` — `document_shares.token`, `project_intake_links.token`, `transmittals.portal_token` (and XEDGE-10's three `export_destinations.*_encrypted`), each with a written reason beside the `ai_connections` exclusion — and `redactRow(table, row)`, applied by `dumpTable` to EVERY dumped row, so no consumer of the envelope (ZIP, webhook, bucket, `/api/data-export/structured`) carries a live token. The manifest gains `redactedColumns`, the notes say which columns are null and that links must be re-issued (the old "every column is preserved verbatim" line is corrected), and the ZIP README gets a "Redacted credential columns" section. The restore decision is written down (`DEC-44`): a bearer column never comes back — `lib/dataRestore.ts scrubRestoredRow`, applied inside `remapRow` (the one place BOTH restore paths pass every row, so no caller has to remember): a NOT NULL UNIQUE `token` becomes `restored-<uuid>` and the row arrives REVOKED (`revoked_at` set when null; `/share/*` and `/api/intake/*` already answer 410 on `revoked_at`), `portal_token` is nulled (an issued transmittal's rail `trg_transmittals_guard` mints a fresh server-side token on insert, so the OLD token still never returns), and a hand-edited envelope that still carries plaintext is scrubbed the same way. Tripwire: `lib/__tests__/exportCoverage.test.ts` censuses every exported table's columns for token / secret / password / api_key / *_encrypted and fails when one is not in `REDACT_COLUMNS`; it also proves export and restore agree (`isBearerColumn`).
+- Files: `lib/exportTables.ts`, `lib/dataExport.ts`, `lib/exportRunner.ts` (README section), `lib/dataRestore.ts`.
+- Tests: `lib/__tests__/exportCoverage.test.ts` ("bearer-column redaction tripwire"), `lib/__tests__/dcRoundFExportContract.test.ts` ("EGR-7 / XEDGE-10 — the restore never reinstates a bearer column", "the chunked route lands a share row scrubbed: placeholder token, revoked, org forced").
+
+**Done-when.**
+- [x] a per-table column redaction map in lib/exportTables.ts nulls token, portal_token and any future bearer column, enforced by the same coverage tripwire that governs table membership ✓.
+- [x] dumpTable applies the redaction rather than select("*") for tables that declare one ✓ (the select stays `*`; every row passes through `redactRow` before it leaves `dumpTable`, so nothing downstream can see the column).
+- [x] the export README/manifest states which columns were redacted ✓ (`manifest.redactedColumns`, manifest notes, README section).
+- [x] the restore decision is written down next to the ai_connections exclusion reason ✓ (`REDACT_COLUMNS` doc comment and `DEC-44`; decided: no re-mint — restored links arrive revoked and a person re-issues them).
+
+**Scope / residual.** admin-and-org `BKP-1` closes by pointer to this (note appended in its record); its restore half (A&O P1) inherits the scrub because `app/api/admin/restore/apply/route.ts` (A&O-owned, not edited) already calls `remapRow`. Also closes the export half of projects-and-cost `INTK-6` (same table).
 
 ---
 

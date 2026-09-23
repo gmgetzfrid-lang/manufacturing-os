@@ -181,3 +181,47 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
   signup_attempts:
     "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
 };
+
+/** EGR-7 / XEDGE-10: columns whose VALUE is a live credential. The same rule
+ *  that keeps `ai_connections` out of the backup applies per column here —
+ *  secrets never leave the database. Every export nulls these columns
+ *  (`redactRow`, applied by dumpTable), the manifest and README list them, and
+ *  the restore never reinstates them (lib/dataRestore.ts `scrubRestoredRow`):
+ *  a share, intake link or portal link in a backup is re-issued, never
+ *  revived, and an export destination comes back with its credentials to be
+ *  re-entered. lib/__tests__/exportCoverage.test.ts censuses every exported
+ *  table for token / secret / api_key / password / *_encrypted columns, so a
+ *  future bearer column cannot ship un-redacted. */
+export const REDACT_COLUMNS: Record<string, { columns: readonly string[]; reason: string }> = {
+  document_shares: {
+    columns: ["token"],
+    reason: "the sole credential for /share/<token> — an unexpired share in an old backup would otherwise stay live forever; re-issue shares after a restore",
+  },
+  project_intake_links: {
+    columns: ["token"],
+    reason: "a WRITE credential — it lets the holder submit versions through /api/intake/*; re-issue intake links after a restore",
+  },
+  transmittals: {
+    columns: ["portal_token"],
+    reason: "the sole credential for the external transmittal portal; the recipient's link is re-sent after a restore",
+  },
+  export_destinations: {
+    columns: ["access_key_id_encrypted", "secret_access_key_encrypted", "webhook_secret_encrypted"],
+    reason: "bucket / webhook credentials encrypted under the deployment-wide key — a restore into another workspace on the same deployment would decrypt them (confused deputy); re-enter credentials after a restore",
+  },
+};
+
+/** The redacted columns of `table` (empty for a table that declares none). */
+export function redactedColumnsFor(table: string): readonly string[] {
+  return REDACT_COLUMNS[table]?.columns ?? [];
+}
+
+/** Null every redacted column of a `table` row. Pure; returns a new object
+ *  and leaves a table with no redaction map byte-identical. */
+export function redactRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  const cols = redactedColumnsFor(table);
+  if (cols.length === 0) return row;
+  const out: Record<string, unknown> = { ...row };
+  for (const c of cols) if (c in out) out[c] = null;
+  return out;
+}
