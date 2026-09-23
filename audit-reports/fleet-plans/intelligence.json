@@ -1,0 +1,851 @@
+{
+  "area": "intelligence",
+  "openCount": 254,
+  "claimStatus": "UNCLAIMED. No intelligence report file carries a DEC-32 claim. Two findings are already RESOLVED by pointer from roles-and-permissions Round C1 (IEDGE-2, ORCH-3 -> EGRESS-3, 20261048 live); two are REFUTED and must not be queued (IEDGE-9, WIRE-5). 254 OPEN, 12 gap specs (GAP-301..312). Re-planned 2026-09-23 against the live tree (HEAD ba7bfcb) with document-control wave 1 running.",
+  "waves": {
+    "now (concurrent with DC wave 1)": [
+      "I-01 phase A",
+      "I-02",
+      "I-03",
+      "I-04",
+      "I-05 core",
+      "I-06",
+      "I-07",
+      "I-08",
+      "I-09",
+      "I-10",
+      "I-11 (all but the asset-hub read switch)",
+      "I-14 core"
+    ],
+    "after I-10 merges": [
+      "I-13",
+      "I-14 scope picker"
+    ],
+    "after DC wave 1 P2 EGRESS + P6 CHECKOUT, DC wave 2, identity IS-P1": [
+      "I-12"
+    ],
+    "after DC P2 / P10 / P7 merge (file-by-file)": [
+      "I-05 Sidebar, templates/generate, capabilityPolicy limbs"
+    ],
+    "after PS-VERIFY (DC wave 2)": [
+      "I-11 assets/[tag] read switch"
+    ],
+    "after admin-and-org P1/P2/P3 merge": [
+      "I-01 phase B"
+    ]
+  },
+  "recordOnlyCloses": {
+    "DACL-1": "I-01 -> R&P DB-4 + DOCACL-4 + OWN-20 + DEC-10 (acl_index maintained: save-time subtree rewrite, move rewrite, nightly rebuild)",
+    "DACL-2": "I-01 -> R&P SURF-2 (app/api/storage/delete: controller tier, assertSafeStorageKey, hold guard fail-closed, audit row; record names intelligence/DACL-2)",
+    "DACL-3": "I-01 -> R&P EGRESS-2 (app/d/[number] does zero DB work; client-side resolution under RLS)",
+    "DACL-4": "I-01 -> R&P EGRESS-1 (20261022 INSERT visibility predicate, org join, shareStillAuthorized); hold/status/ack/capability/expiry halves close with DC wave-2 P1 SHARE (DRLS-5, DIST-6, EGR-5)",
+    "KACL-2": "I-01 -> R&P EGRESS-3 Round C1 (ToolContext.principal via loadPrincipal, route 403s on null, readableIds/unreadableMirrors fail closed, lib/__tests__/sweepRoundC.test.ts) — the same code that closed IEDGE-2 and ORCH-3; all four Done-when criteria hold at HEAD",
+    "DACL-5": "I-01 -> R&P DOCACL-1 / ADD-1 (lib/acl.ts matches ctx.roles; download-url normalizeRoles; 20261041 allow bucket evaluates every held role)",
+    "DACL-8": "I-01 -> R&P EGRESS-2 (the oracle) + public-surfaces PS-VERIFY (VFY-2 per-print semantics, VFY-12 scan log, VFY-14 narrow select); private/hidden refusal handed to PS-VERIFY as a residual limb",
+    "WIRE-9": "I-01 -> R&P LIFE-2 / DEC-23 (waiver deleted; LIFE-2's record names intelligence/WIRE-9) -> INVALID by decision",
+    "WIRE-7": "I-01 -> handed to the drafting-flow fleet with GAP-312 (must ship with GAP-110/GAP-111 per 99 Phase 5); prerequisites I-10 GAP-311 and I-11 GAP-304",
+    "ILIFE-1": "I-01 -> A&O P2 BKP-2 (storage-key registry incl. cost_documents.file_url)",
+    "ILIFE-3": "I-01 -> A&O P1 BKP-7 / BKP-10 (one archive layout)",
+    "ILIFE-4": "I-01 -> A&O P1 BKP-5 + ORG-1/BKP-3 (restore/apply route)",
+    "ILIFE-6": "I-01 -> DC XEDGE-13 (storageOrphans ordered paging, RESOLVED) + A&O P2 BKP-2 pagination half (dataExport)",
+    "ILIFE-7": "I-01 -> A&O P3 BKP-8 (Admin-only export, DEC-43)",
+    "ILIFE-8": "I-01 -> DC P9 RET-7 (org-scoped purge)",
+    "ILIFE-9": "I-01 -> A&O P1 BKP-12 (CONFLICT_TARGETS for codebook_config, library_numbering, recently_viewed_docs, document_equipment_suggestions + tripwire test)",
+    "ILIFE-10": "I-01 -> A&O P1 BKP-12 (business keys for process_flows / entity_mentions / proposed_links handed as entries)",
+    "ILIFE-12": "I-01 -> A&O P2 BKP-14 + ALOG-1 dw4 (schemaExpectations regenerated with tripwire)",
+    "IRLS-12": "I-01 -> A&O P2 BKP-14; the '42P01 vs empty' criterion is a limb in lib/processFlows.ts (I-09), lib/linkRules.ts / lib/answerSkills.ts (I-08)",
+    "DACL-7": "I-01 -> A&O P3 BKP-8",
+    "IEDGE-10": "I-01 -> A&O P3 BKP-8 + DC P10 EGR-7 (token redaction)",
+    "GPV-12 route half": "I-04 IEDGE-11 (the 'answered' contract); page half is I-14's",
+    "ORCH-1 / PR-1 halves": "I-04 -> R&P EGRESS-3 Round C1 closed checkout_document + log_audit_completion controller gate and the actor name; notify_personnel authority and the server-side proposal record remain",
+    "BR-1 roles[] half": "I-11 -> R&P ADD-1 (memberHoldsAny in app/api/equipment-bridge/route.ts); the per-document ACL half remains",
+    "WIRE-8 reader-shape half": "I-11 -> R&P LIFE-15 (parseSourceDocument accepts every shape); indexes + asset-hub read remain",
+    "IRLS-10 search_path half": "I-10 -> R&P DB-6 (20261020 pins is_org_controller); the roles[] policy half remains",
+    "DACL-12 per-action half": "I-12 -> R&P DOCACL-5 (row visibility stays coarse by design); the role/team deny-read half remains",
+    "IEDGE-12 bytes-door discover/read half": "I-12 -> R&P DOCACL-5 canServeContent; the full-chain / one-predicate half remains"
+  },
+  "packages": [
+    {
+      "name": "I-01 RECORDS & LIFECYCLE HANDOFF — verify-and-record closures landed elsewhere, plus the two restore/export residuals",
+      "findings": [
+        "KACL-2 (record-only -> R&P EGRESS-3, same code as IEDGE-2/ORCH-3)",
+        "DACL-1 (record-only)",
+        "DACL-2 (record-only)",
+        "DACL-3 (record-only)",
+        "DACL-4 (record-only; hold/status/ack halves after DC P1 SHARE)",
+        "DACL-5 (record-only)",
+        "DACL-8 (record-only -> PS-VERIFY; private/hidden limb handed over)",
+        "WIRE-9 (record-only -> INVALID by DEC-23)",
+        "WIRE-7 (handoff -> drafting-flow fleet with GAP-312)",
+        "ILIFE-1 (pointer)",
+        "ILIFE-2 (residual: RESTORE_TABLE_ORDER + FK-order test)",
+        "ILIFE-3 (pointer)",
+        "ILIFE-4 (pointer)",
+        "ILIFE-6 (pointer)",
+        "ILIFE-7 (pointer)",
+        "ILIFE-8 (pointer)",
+        "ILIFE-9 (pointer)",
+        "ILIFE-10 (pointer + business keys handed to A&O P1)",
+        "ILIFE-11 (residual: knowledge_chunks explicit column list omitting embedding)",
+        "ILIFE-12 (pointer)",
+        "IRLS-12 (pointer; 42P01-vs-empty limbs in I-08/I-09)",
+        "DACL-7 (pointer)",
+        "IEDGE-10 (pointer)"
+      ],
+      "severityMix": "1 CRITICAL / 8 HIGH / 12 MEDIUM / 2 LOW (upper bounds; every closure re-verified against current code per DEC-29 and cited file:line)",
+      "files": [
+        "audit-reports/intelligence/05-knowledge-acl.md, 06-document-acl-leaks.md, 18-lifecycle.md, 16-persistence-rls.md, 19-wiring.md, 21-edges-and-invariants.md (Resolution blocks)",
+        "reverse-pointer lines in audit-reports/roles-and-permissions/09-non-document-surfaces.md, 10-content-egress.md, 07-document-lifecycle.md; audit-reports/document-control/08-retention.md; audit-reports/admin-and-org/02-backup-restore.md (or the file BKP-* live in); audit-reports/public-surfaces/01-verify-endpoints.md",
+        "lib/dataRestore.ts — RESTORE_TABLE_ORDER only: knowledge_libraries, knowledge_sources, knowledge_documents before process_flows and entity_mentions (phase B, after A&O P1 merges; A&O P1 owns planRestore/CONFLICT_TARGETS)",
+        "lib/__tests__/dataRestore.test.ts — derive FK dependencies from supabase/migrations and assert referenced-table index < referrer index (ILIFE-2 criterion 2)",
+        "lib/dataExport.ts dumpTable + lib/exportTables.ts — knowledge_chunks dumped with an explicit column list omitting `embedding` and a manifest note (phase B, after A&O P2 merges; A&O P2 owns the coverage contract)",
+        "lib/__tests__/exportCoverage.test.ts (extend: the column-list exception is declared, not silent)",
+        "audit-reports/intelligence/README.md progress table; node audit-reports/build-index.mjs"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "Phase A (now): R&P SURF-2, EGRESS-1, EGRESS-2, DOCACL-1, DB-4, DOCACL-4, OWN-20, LIFE-2 are RESOLVED and live (20261022/20261036/20261041/20261042 verified) — reproduce each Done-when against HEAD, cite file:line",
+        "DACL-4 halves 2b/3 close only after DC wave-2 P1 SHARE (DRLS-5, DIST-6, EGR-5: hold/status refusal, controller-tier minting, 90-day max)",
+        "DACL-8 residual (verify surfaces refuse private/hidden or answer without title) is PS-VERIFY's file set — hand over in the record, do not edit app/api/verify*/",
+        "Phase B: admin-and-org P1 (dataRestore.ts, BKP-12/BKP-5/BKP-7/BKP-10), P2 (exportTables/dataExport/storageOrphans collector, BKP-2/BKP-14), P3 (BKP-8) and DC P9 (RET-7), P10 (EGR-7) merged — A&O itself runs after DC waves",
+        "WIRE-7/GAP-312 belong to the drafting-flow fleet (unplanned); 99 Phase 5 says ship with GAP-110/GAP-111 or the form is edited twice; prerequisites I-10 GAP-311, I-11 GAP-304",
+        "DEC-41: refuted/invalid records stay in the corpus with the reason"
+      ],
+      "sequencingNotes": "Phase A now: DACL-1/2/3/5, WIRE-9 (reproduce, cite, record, regenerate index). DACL-4 and DACL-8 record the closed halves now and the pending halves as pointers with the owning package named. Phase B after A&O P1/P2/P3 and DC P9/P10 merge: verify each ILIFE-* Done-when against the merged tree; implement only the two residuals (RESTORE_TABLE_ORDER move + FK-order test; knowledge_chunks column list) as narrow edits on the merged versions of those files; everything else closes by pointer. Never re-derive A&O's registry/CONFLICT_TARGETS here.",
+      "decisionsNeeded": [
+        "DACL-8 private/hidden on public verify — default handed to PS-VERIFY: answer 'current / superseded' without title for private/hidden documents (fail-safe: less disclosure)",
+        "ILIFE-10 business keys — default: restore pre-filters duplicates on the real unique keys (process_flows (org,from,to), entity_mentions COALESCE key, proposed_links (doc,target,proposer)); no new unique indexes from this package (A&O P1 decides the CONFLICT_TARGETS entries)",
+        "WIRE-9 status — default: INVALID with the DEC-23 citation (the Done-when was the other branch of the fork)"
+      ],
+      "alreadyResolvedElsewhere": [
+        "KACL-2 <- R&P EGRESS-3 (Round C1, 20261048 live; ToolContext.principal, readableIds fail closed, sweepRoundC.test.ts) — record with the same pointer IEDGE-2/ORCH-3 carry",
+        "DACL-1 <- R&P DB-4 + DOCACL-4 + OWN-20 (DEC-10 cache + nightly rebuild)",
+        "DACL-2 <- R&P SURF-2 (its record names intelligence/DACL-2)",
+        "DACL-3 <- R&P EGRESS-2",
+        "DACL-4 halves 1/2a <- R&P EGRESS-1 + 20261022 + 20261026",
+        "DACL-5 <- R&P DOCACL-1 / ADD-1 / 20261041",
+        "DACL-8 oracle <- R&P EGRESS-2; scan-log/per-print <- PS-VERIFY (queued)",
+        "WIRE-9 <- R&P LIFE-2 / DEC-23",
+        "ILIFE-6 storageOrphans half <- DC XEDGE-13",
+        "ILIFE-1/3/4/7/8/9/10/12, IRLS-12, DACL-7, IEDGE-10 <- owned by A&O P1/P2/P3 and DC P9/P10 packages (queued, not yet landed)"
+      ]
+    },
+    {
+      "name": "I-02 KNOWLEDGE MEMORY, PAGES & THE MEANING INDEX — ask-memory ACL (CRITICAL), mirror-row and mention-snippet visibility, the knowledge library page, the embed pipeline",
+      "findings": [
+        "ASK-1",
+        "KACL-1",
+        "IRLS-1",
+        "IEDGE-5",
+        "IEDGE-6",
+        "IRLS-9",
+        "KACL-7",
+        "ASK-6 (render: model text as data, route options sanitised in I-03)",
+        "SEM-12",
+        "HUB-11",
+        "SEM-1",
+        "SEM-3",
+        "SEM-4",
+        "SEM-5",
+        "SEM-6",
+        "SEM-7",
+        "SEM-8",
+        "SEM-9",
+        "SEM-11",
+        "SEM-13"
+      ],
+      "severityMix": "3 CRITICAL / 2 HIGH / 13 MEDIUM / 2 LOW",
+      "files": [
+        "new migration 2026NNNN_intel_knowledge_memory_acl.sql: knowledge_questions_select -> user_id = auth.uid() OR is_org_controller(org_id) (replaces 20260911:146-150); knowledge_documents_select excludes mirror rows whose source document the caller cannot read (EXISTS on documents under the caller's RLS — same shape as 20260917's chunk lockdown, KACL-7); entity_mentions_read requires the document (direct or via the mirror hop) to be readable (IEDGE-6/IRLS-9); policy census test replaying schema.sql + every migration",
+        "new app/api/knowledge/history/route.ts: server-side ask-memory search and thread reopen; every row's citations filtered through loadPrincipal + readableControlledDocIds; a row citing an unreadable source is withheld whole; fail closed",
+        "lib/knowledge.ts: searchAskHistory / listKnowledgeQuestions call the route (browser reads of knowledge_questions end); semantic build loop claim/stop semantics (SEM-7), status shape (SEM-4), nudgeEmbedDrain unchanged",
+        "app/(protected)/knowledge/[id]/page.tsx: memory card + openConversation through the route (ASK-1/KACL-1/IEDGE-5); NeedCard/ClarifyCard render model text as quoted data, never as chrome or as action labels without a marker (ASK-6); 'keyword only' chip from the answer's retrieval flag (SEM-12); ViewTabs strip (HUB-11)",
+        "lib/mentions.ts (shape unchanged — the policy does the work; comment corrected)",
+        "lib/knowledgeEmbedCore.ts: failure tracking + ordered fetch + skip (SEM-4), per-model coverage (SEM-1/SEM-5)",
+        "lib/knowledgeEmbedDrain.ts: ordered library pick beyond 6, marker cleared/aged on cap or error (SEM-11), marker userId validated as a uuid and an active member (GOV-14 limb — the getCapUsd interpolation itself is I-05's), claim per library (SEM-7)",
+        "app/api/knowledge/embed/route.ts + app/api/cron/embed-drain/route.ts: provider/model consistency (SEM-3/SEM-6), re-arm after ingestion (SEM-8), agreement gate via I-05's aiGates when it lands (local check meanwhile)",
+        "lib/ai/embeddings.ts: corpus-model resolution helper shared with I-03's ask route limb (SEM-1/SEM-3/SEM-6)",
+        "components/knowledge/SemanticIndexPanel.tsx: price from lib/ai/pricing per model, Voyage marked estimate (SEM-13); removal/rebuild copy (SEM-3); the HUB-12 naming line here is edited by this package and recorded by I-05",
+        "new migration 2026NNNN_intel_semantic_layer.sql: knowledge_chunks.embed_attempts / embed_error (SEM-4); semantic_coverage counts ready documents and the current model (SEM-5); semantic_search sets hnsw.ef_search / per-model partial index (SEM-9)",
+        "lib/__tests__/knowledgeMemoryAcl.test.ts, embedDrain.test.ts (new); embeddings.test.ts, embedStatusShape.test.ts (extend)"
+      ],
+      "migrationsLikely": 2,
+      "dependsOn": [
+        "R&P Round C1 seam (lib/knowledgeAccess.ts loadPrincipal / readableControlledDocIds) — reuse, never a parallel implementation",
+        "DEC-43 (controllers unscoped -> controllers read all memory); DEC-30 inventories: knowledge_questions rows whose citations name a now-private/hidden document (count); knowledge_chunks with embedding_model differing from the library's connection model, per library; libraries carrying an embedBuild marker older than 7 days",
+        "I-05 GOV-1 (op filter) makes embedding spend visible to the cap — not blocking; I-05 aiGates for the agreement gate on embed (local gate until then)",
+        "I-05 records HUB-12 after this package's SemanticIndexPanel copy merges; the hub's 'Recent questions' card becomes 'your recent questions' once this RLS lands (I-05 label)",
+        "app/(protected)/intelligence/page.tsx is NOT edited here (I-05's file) — its client read of knowledge_questions keeps working under the narrowed policy"
+      ],
+      "sequencingNotes": "Phase 1 (the security answer, half one) — runs now, gates nothing. Order: RLS migration first (fail closed; pending-migration line per DEC-30) -> history route -> page memory card/openConversation -> mirror-row policy (KACL-7) -> entity_mentions read policy (IEDGE-6/IRLS-9) -> SEM-4/SEM-7/SEM-11 drain integrity -> SEM-1/SEM-3/SEM-6 model consistency -> SEM-5/SEM-9 coverage & RPC -> SEM-8 -> copy (SEM-12/SEM-13/ASK-6/HUB-11). Nothing here touches the ask route (I-03) or the hub page (I-05).",
+      "decisionsNeeded": [
+        "Who may read a stored answer — default: the asker and controllers by RLS; anyone else only through the history route, which filters citations per reader and withholds any answer citing an unreadable source (fail-safe: an answer is as restricted as its most restricted source)",
+        "Mirror rows for non-readers — default: hidden (number/title are the leak); upload-origin rows stay org-readable by design",
+        "SEM-3 provider switch — default: refuse to save a different embedding provider while stamped vectors exist unless 'rebuild' is chosen; dialog copy says vectors are NOT reused",
+        "SEM-13 price display — default: per-model rate from lib/ai/pricing; Voyage shown as 'estimate' until the placeholder rate is corrected (GOV-6 in I-05)"
+      ],
+      "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-03 THE ASK ROUTE — /api/knowledge/ask: the per-asker ACL seam, retrieval honesty, the prompt boundary, metering",
+      "findings": [
+        "IEDGE-4",
+        "ASK-5",
+        "KACL-4",
+        "KACL-6",
+        "KACL-8",
+        "KACL-10",
+        "KACL-9",
+        "ASK-8",
+        "ASK-2",
+        "ING-10",
+        "PR-4",
+        "ASK-3",
+        "ASK-4",
+        "PR-5",
+        "PR-9",
+        "ASK-7",
+        "ASK-9",
+        "ASK-10",
+        "SEM-10"
+      ],
+      "severityMix": "0 CRITICAL / 5 HIGH / 13 MEDIUM / 1 LOW",
+      "files": [
+        "app/api/knowledge/ask/route.ts (sole owner of this file): the exclusion block :157-187 (linkErr other than 42703 fails CLOSED; mirror list paged past the PostgREST row cap — KACL-4); legend chunks scoped to org + library and through the readable set (KACL-8/ASK-8); aiReadability at retrieval time (KACL-10) and the is_indexed comment (KACL-9); document text out of the SYSTEM prompt into a delimited data block (ASK-4/PR-5); DRAWING FACTS overflow detection on the 20,000 slab and provenance wording once I-06's chunk source column exists (ASK-2/ING-10/PR-4); stop_reason=max_tokens -> partial answer, never persisted as complete or rated (ASK-3); semantic over-fetch and the retrieval flag updated after round 2 (ASK-9/ASK-10); history reconstructed server-side from knowledge_questions by thread_id (ASK-5); citations carry source_rev and proven ground drops stale (IEDGE-4); clarify/need text sanitised as data (ASK-6 route half — the finding is I-02's); calc protocol output marked unverified (PR-9); query-side embedding tokens metered and maxTokens bounded by headroom (ASK-7/SEM-10 — reservation helper from I-05 when it lands)",
+        "lib/ai/providerCall.ts: AiCallResult carries stopReason for every provider (ASK-3) — additive, no signature change",
+        "lib/aiBoundary.ts: aiReadability reused at retrieval; exports unchanged (DC P1 SHARE / PS-VERIFY read NOT_CURRENT_STATUSES)",
+        "lib/__tests__/askRouteAcl.test.ts, askRouteHonesty.test.ts (new; drive the route under mock with a denied Viewer, a max_tokens stop, a truncated slab)"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "R&P Round C1 seam; DEC-29 (SUSPECTED prompt-quality claims — ASK-8, PR-5, PR-9 — reproduce against a real provider before acting)",
+        "I-02 owns lib/knowledge.ts and the knowledge page: the memory/thread rows this route reconstructs history from are written here (thread_id) and read there",
+        "I-05 aiGates/reservation helper for ASK-7 — wire when merged; the maxTokens headroom bound can land first",
+        "I-06 GOV-9 (knowledge_chunks.source) for PR-4's per-tag provenance wording — wording lands after I-06; the overflow detection does not wait",
+        "I-07's TAG_ENTITY_KINDS unchanged (ING-5 adds 'anchor' to ENTITY_KINDS only)",
+        "KACL-6: knowledge_libraries carries no ACL — see decision"
+      ],
+      "sequencingNotes": "Phase 1 (security answer, half one). Order: KACL-4 -> KACL-8/ASK-8 -> KACL-10/KACL-9 -> ASK-4/PR-5 -> ASK-2/ING-10/PR-4 -> ASK-3 -> ASK-9/ASK-10 -> ASK-5 -> IEDGE-4 -> ASK-7/SEM-10/PR-9. One file, one owner: no other package edits the ask route.",
+      "decisionsNeeded": [
+        "KACL-6 — default: no library-level ACL is built; upload-origin content is org-readable by design (recorded as accepted, documented on the library page); mirrors are already filtered per asker",
+        "ASK-5 — default: when a thread_id is present the client history is ignored and turns are read from knowledge_questions; without one, history is accepted but never persisted into the record",
+        "ASK-3 — default: a max_tokens answer is returned with partial:true and a banner, stored with partial:true, excluded from proven ground and rating",
+        "ASK-4/PR-5 — default: legend/decoder/owner instructions move to a delimited DATA section of the user turn; the system prompt carries only app-authored text"
+      ],
+      "alreadyResolvedElsewhere": [
+        "KACL-4 fail-open catch <- R&P Round C1 (the try/catch now excludes all mirrors); the linkErr branch and the row cap are what remains"
+      ]
+    },
+    {
+      "name": "I-04 GRAPH ASK, ORCHESTRATOR & AI-EXTRACTED RECORDS — the graph's Ask box ACL (CRITICAL), orchestrator write authority and proposal binding, AI-read quotes",
+      "findings": [
+        "GPV-1",
+        "IEDGE-1",
+        "IEDGE-11",
+        "ORCH-1",
+        "PR-1",
+        "ORCH-4",
+        "ORCH-6",
+        "ORCH-8",
+        "ORCH-9",
+        "ORCH-10",
+        "ORCH-11",
+        "PR-2"
+      ],
+      "severityMix": "2 CRITICAL / 3 HIGH / 6 MEDIUM / 1 LOW",
+      "files": [
+        "app/api/graph/ask/route.ts: loadPrincipal + readableControlledDocIds over the hits' mirror sources before ranking; upload-origin hits stay; fail closed; mentions/mirror follow-ups filtered the same way (GPV-1/IEDGE-1); the 'answered' mode removed from the contract or implemented through governedAiCall (IEDGE-11; GPV-12's route half)",
+        "lib/orchestrator/tools.ts: notify_personnel authority (see decision) and controller tier through lib/permissions isControllerPrincipal — no local role list (ORCH-1/PR-1/ORCH-8); model text escaped before .or() filters and query errors reported (ORCH-6); details param stored (ORCH-11); drawing_audit_logs upsert refuses to downgrade a more-severe verdict for the same key (ORCH-1 criterion 3; key shape coordinated with I-07 DWG-6)",
+        "lib/orchestrator/loop.ts + lib/orchestrator/protocol.ts: tool results spliced as delimited data with a trust note (ORCH-9)",
+        "app/api/orchestrator/route.ts: pending actions written to the proposal store; the in-run `approved` execution path removed or audited (ORCH-10)",
+        "app/api/orchestrator/execute/route.ts: executes only a stored, unexpired proposal for this user/org (ORCH-4/PR-1 criterion 2)",
+        "lib/orchestratorClient.ts, app/(protected)/assistant/page.tsx: confirm sends the proposal id",
+        "new migration 2026NNNN_intel_orchestrator_proposals.sql: orchestrator_proposals (id, org_id, user_id, fingerprint, tool, parameters, created_at, expires_at, executed_at); RLS on, no policies (service role only); prune step rides the existing maintenance cron's knowledge block via lib (no vercel.json entry — 99 Do-not)",
+        "app/api/projects/cost-docs/route.ts + lib/bidTab.ts validateParsedQuote only: reconcile total vs line-item sum, flag the mismatch on the parsed record (PR-2)",
+        "lib/__tests__/sweepRoundC.test.ts (extend), orchestratorExecute.test.ts, graphAskAcl.test.ts (new)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "R&P EGRESS-3 / Round C1 (ToolContext.principal, readableIds/unreadableMirrors) — build on it; DEC-43; DEC-35 (controller tier via helper, no new literals)",
+        "I-07 DWG-6 changes drawing_audit_logs' unique key (library_id) — land the log_audit_completion upsert after I-07's migration, or agree the key now",
+        "projects-and-cost fleet (unplanned) targets lib/bidTab.ts (COST-3, COST-5 scoreBids) — PR-2 edits validateParsedQuote and the cost-docs route only; cross-reference in both records",
+        "I-05 GOV-1 makes orchestrator spend count (ORCH-5 is I-05's); I-05 reservation for ORCH-7"
+      ],
+      "sequencingNotes": "Phase 1 per 99 ('IEDGE-1 and IEDGE-2 belong in Phase 1'). Order: graph/ask ACL (fail closed) -> IEDGE-11 contract -> ORCH-4 proposal store + execute binding -> ORCH-1/PR-1 notify authority + ORCH-8 helper -> ORCH-10 -> ORCH-6/ORCH-9 -> ORCH-11 -> PR-2. Verified sound, keep: the fingerprint comparison, the handoff (href) actions never executing server-side, readableIds fail-closed.",
+      "decisionsNeeded": [
+        "ORCH-4 — default: proposals stored server-side per run, 15-minute expiry, single execution; /execute refuses unknown/expired/other-user fingerprints with 409",
+        "notify_personnel authority — default: any active member may notify about a document they can read (a message is not a record); log_audit_completion stays controller-tier (Admin/DocCtrl via isControllerPrincipal — Manager/Supervisor drop out; ORCH-8)",
+        "ORCH-10 — default: remove the in-run approved execution path; every write goes through /execute and writes AI_ACTION_EXECUTED",
+        "IEDGE-11 — default: drop 'answered' from the contract (evidence-only); a written answer is the knowledge ask route's job",
+        "PR-2 — default: flag total≠Σ(line items) on the review screen; never auto-correct or block"
+      ],
+      "alreadyResolvedElsewhere": [
+        "ORCH-1 / PR-1 halves (checkout_document + log_audit_completion controller gate; actor name) <- R&P EGRESS-3 Round C1",
+        "GPV-12 route half <- closes with IEDGE-11 here; page half is I-14's"
+      ]
+    },
+    {
+      "name": "I-05 AI GOVERNANCE, HUB & NAVIGATION — the one cap and meter, keys, the agreement gate helper; the Intelligence status board and its navigation (incl. HUB-1 CRITICAL)",
+      "findings": [
+        "GOV-1",
+        "GOV-3",
+        "GOV-4",
+        "GOV-5",
+        "GOV-6",
+        "GOV-7",
+        "GOV-10",
+        "GOV-11",
+        "PR-12",
+        "GOV-12",
+        "GOV-13",
+        "GOV-14",
+        "ORCH-5",
+        "ORCH-7",
+        "SEM-2",
+        "PR-6",
+        "HUB-1",
+        "HUB-3",
+        "HUB-4",
+        "HUB-5",
+        "HUB-6",
+        "HUB-7",
+        "HUB-9",
+        "HUB-10",
+        "HUB-12"
+      ],
+      "severityMix": "1 CRITICAL / 6 HIGH / 13 MEDIUM / 5 LOW",
+      "files": [
+        "lib/ai/usageServer.ts: getMonthUsage / getMonthUsageByUser drop the op='knowledgeAsk' filter (every op counts — GOV-1, GOV-5, ORCH-5, SEM-2); ledger read error refuses instead of $0 (GOV-4); cap 0 = locked (GOV-3); getCapUsd parameterised, no string interpolation (GOV-14); reserve/settle helpers (GOV-13, ORCH-7)",
+        "new lib/ai/aiGates.ts: assertAiGates({orgId,userId,op}) = own key + allowlist + agreement + cap + reservation — the ONE helper; wired here into governedCall and app/api/ai/connection; wired by I-09 (flows/read), I-07 (locate), I-02 (embed) in their own files; templates/generate after DC P10 (GOV-11/PR-12)",
+        "lib/ai/governedCall.ts (uses aiGates; unchanged signature)",
+        "lib/ai/pricing.ts: Voyage named in the agreement text and a documented embeddings allowlist; AGREEMENT_VERSION bump; Voyage rate corrected from the published list (GOV-6, SEM-13 input)",
+        "lib/ai/keyVault.ts: fail closed when EXPORT_ENCRYPTION_KEY is unset in production (GOV-12)",
+        "app/api/ai/connection/route.ts: test calls gated and metered (GOV-7); HUB-10 snapshot key includes the user",
+        "app/api/ai/usage/route.ts: cap changes behind a capability id, not the controller literal (GOV-10)",
+        "lib/capabilityPolicy.ts: ONE new id `ai.manage_caps` (default Admin) + migration re-creating org_capability_allows_for from its NEWEST definition (DC P7's, 20261063 base) with lineDiff proof — AFTER DC wave-2 P7 TRANSMITTALS merges",
+        "components/knowledge/AiSettingsModal.tsx: 'Cap reached' copy matches enforcement (GOV-3)",
+        "app/api/templates/generate/route.ts: JSON-parse failure surfaces instead of blanking AI sections (PR-6); aiGates (GOV-11 limb) — AFTER DC P10 EDGES (XEDGE-11/12) merges",
+        "components/knowledge/LibraryAiModal.tsx: save() carries drawingIntel (HUB-1 — one line, ship first as its own commit); one name for the vision checkbox (HUB-12)",
+        "app/(protected)/intelligence/page.tsx: per-card failure states instead of permanent shimmer (HUB-7); Meaning-index card renders for Admin and reads coverage honestly (HUB-9); snapshot keyed by org+user (HUB-10); 'Your recent questions' label once I-02's RLS lands; HUB-3 first-step card",
+        "app/(protected)/knowledge/page.tsx (HUB-5 CTA targets the control), app/(protected)/intelligence/setup/page.tsx (HUB-3/HUB-6), lib/featureAtlas.ts (HUB-6 playbooks entry), components/navigation/ViewTabs.tsx (HUB-4 copy 'seven'), components/knowledge/EquipmentTablePanel.tsx (HUB-12)",
+        "components/navigation/Sidebar.tsx: HUB-3/HUB-6 entries — AFTER DC P2 EGRESS merges (it posts lib/swSession from Sidebar); keep to the nav arrays (notifications fleet targets the badge trail in the same file)",
+        "lib/__tests__/aiUsage.test.ts, aiGates.test.ts, hubStatus.test.ts (new); aiPricing.test.ts (extend)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "DC wave-1 P2 EGRESS merged before the Sidebar edit; DC wave-1 P10 EDGES merged before templates/generate; DC wave-2 P7 TRANSMITTALS merged before lib/capabilityPolicy.ts + the org_capability_allows_for re-creation (same pattern, newest definition, lineDiff proof)",
+        "I-02's knowledge_questions RLS (hub label); I-02 and I-07 edit SemanticIndexPanel / DrawingIntelPanel — HUB-12 is recorded here after those merge; this package edits only LibraryAiModal and EquipmentTablePanel for HUB-12",
+        "DEC-35 (no facility vocabulary; controller tier through helpers; GOV-10 via a capability id); DEC-18 pattern (enforcement flags) for GOV-12's production/dev split; DEC-30: none (the capability migration re-creates a function; no data)",
+        "notifications fleet (unplanned) owns the Sidebar badge trail (TRAIL-2/3, DELIV-3); identity IS-P1 and PS PKG-1 edit RoleContext, not touched here"
+      ],
+      "sequencingNotes": "HUB-1 first (CRITICAL, one line). Then GOV-1/GOV-4/GOV-3 (one function, four findings incl. GOV-5; every route benefits with no edits) -> aiGates -> GOV-14/GOV-13/ORCH-7 reservation -> GOV-12/GOV-7/GOV-6 -> hub cards (HUB-7/9/10/5/4) -> waits: Sidebar after DC P2, templates after DC P10, GOV-10 after DC P7. The route-side aiGates limbs are recorded as cross-package (I-09, I-07, I-02) like DC's HLD-1.",
+      "decisionsNeeded": [
+        "GOV-1 scope — default: every op (ask, vision, embed, orchestrator, locate, flows, templates, connection tests) counts against the single per-user cap; a $0 cap locks",
+        "GOV-4 — default: a ledger read error refuses the call (503 'usage unavailable'), never resolves to $0",
+        "GOV-12 — default: refuse to store a provider key when EXPORT_ENCRYPTION_KEY is unset in production; development warns; existing plaintext rows keep decrypting and are re-sealed on next save",
+        "GOV-6 — default: keep Voyage (Anthropic-recommended, no-training API terms) but name it in the signed agreement and the embeddings allowlist; re-sign required (AGREEMENT_VERSION bump)",
+        "GOV-10 — default: new capability `ai.manage_caps` seeded to Admin only; DocCtrl loses cap-raising unless granted through the policy console",
+        "GOV-13 — default: reserve the estimated cost of maxTokens at call start; settle to actual after; concurrent calls see the reservation",
+        "HUB-3 — default: the /setup order-of-operations navigator gets a hub card; no new sidebar entry beyond HUB-6's playbooks link"
+      ],
+      "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-06 INGESTION & REV-UP INTEGRITY — the ingest lock, the rev-up purge, honest counters, the chunker (last)",
+      "findings": [
+        "ING-1",
+        "ING-2",
+        "ING-3",
+        "DWG-1",
+        "ING-4",
+        "ING-6",
+        "ING-7",
+        "ING-8",
+        "ING-9",
+        "ING-11",
+        "ING-12",
+        "ASK-11",
+        "GOV-9",
+        "ILIFE-5",
+        "IRLS-7",
+        "ILIFE-13",
+        "IRLS-6"
+      ],
+      "severityMix": "0 CRITICAL / 4 HIGH / 11 MEDIUM / 2 LOW",
+      "files": [
+        "lib/knowledgeIngest.ts: per-document claim before a batch and compare-and-set on source_version_id at commit (ING-2/ING-1); entity insert failure marks the document instead of advancing to 'ready' (ING-8); vision provider failure counted and reported (ING-6); emptyPages persisted per document (ING-11); chunk rows carry source 'text'|'vision' (GOV-9); vision_pages reset on rebuild/rev-up (ING-12 — the drawing route's rebuild block is I-07's file: the reset lives in the lib both call)",
+        "lib/knowledgeSourceSync.ts: rev-up refresh deletes knowledge_page_entities and machine-derived entity_mentions with the chunks, same transaction shape (ING-3/DWG-1); syncAllKnowledgeSources paged, no 25-library slice (ILIFE-13)",
+        "app/api/knowledge/ingest/route.ts: server-side PDF sniff before unpdf (ING-9)",
+        "lib/knowledgeText.ts: mergeRetrievedRRF / mergeRetrieved use truncateSafe (ASK-11); table-atomic chunking reachable from ingestion — splitPageIntoSections must keep line structure so splitTables sees rows (ING-4); cross-page overlap (ING-7) — LAST, see decision",
+        "new migration 2026NNNN_intel_ingest_integrity.sql: knowledge_documents.ingest_claimed_by / ingest_claimed_at / claim TTL; knowledge_chunks.source TEXT CHECK ('text','vision') DEFAULT 'text' (GOV-9); knowledge_documents.source_document_id FK -> documents(id) ON DELETE CASCADE after inventory (ILIFE-5/IRLS-7); knowledge_documents.empty_pages INTEGER (ING-11)",
+        "new migration 2026NNNN_intel_migration_hygiene_knowledge_questions.sql: makes 20260806's knowledge_questions ALTER order-safe (IRLS-6) in a way lib/__tests__/migrationSourceOfTruth.test.ts (DB-8) accepts — no re-definition of anything a later numbered migration defines",
+        "lib/__tests__/knowledgeText.test.ts (extend — re-run the table-chunking demonstration on a REAL ingested document first, per 99), ingestLock.test.ts, sourceSync.test.ts (new)"
+      ],
+      "migrationsLikely": 2,
+      "dependsOn": [
+        "99 ⚠: the ingest lock belongs in Phase 1; re-run the table-chunking demonstration against a real ingested document before changing the chunker (every chunk boundary changes; full re-index)",
+        "DEC-30 inventories: mirrors whose source_document_id names no document (ILIFE-5 CASCADE population); documents with vision_pages > page_count; documents in 'indexing' with no recent progress (lock backfill)",
+        "I-07 owns app/api/knowledge/drawing/route.ts (rebuild calls the shared reset); I-11 GAP-309 consumes the rev-up entity purge — ship ING-3 before GAP-309; I-03 PR-4 wording waits for GOV-9's column",
+        "DB-8 migrationSourceOfTruth test governs IRLS-6's fix; I-07 owns DWG-9 (line-traces ALTER) — same class, separate file",
+        "app/api/cron/maintenance/route.ts is NOT edited (DC P5, PS-VERIFY, A&O P5 own one step each) — the drain and sync fixes live in the libs it calls"
+      ],
+      "sequencingNotes": "Order: ING-2 lock + ING-1 CAS -> ING-3/DWG-1 rev-up purge -> ING-8/ING-6 -> ING-12/ING-11 counters -> ING-9 -> ILIFE-5/IRLS-7 FK (inventory first) -> ILIFE-13 -> GOV-9 -> IRLS-6 -> ASK-11 -> ING-4/ING-7 chunker LAST behind a per-library re-index action.",
+      "decisionsNeeded": [
+        "ING-4/ING-7 chunker — default: ship as chunker v2 behind a per-library 'Re-index with table-aware chunking' action and a chunk_version stamp; never an automatic corpus-wide re-index; the meaning index for that library is rebuilt after (I-02 SEM-8 re-arm)",
+        "ILIFE-5 FK action — default: ON DELETE CASCADE (no AI shadow outlives its controlled document); inventory first, dangling mirrors purged in the same paste",
+        "ING-2 lock — default: claim per document with a 5-minute TTL keyed by driver id; the loser waits, never errors the document",
+        "ING-6 — default: a page whose vision call failed is recorded as vision_failed and retried on the next pass; the document reaches 'ready' only with zero failed pages or an explicit 'accept partial'"
+      ],
+      "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-07 DRAWING INTELLIGENCE — extraction grammar, the OPC contract, audit keying and determinism, locate metering and honesty",
+      "findings": [
+        "DWG-2",
+        "DWG-3",
+        "DWG-4",
+        "DWG-5",
+        "GOV-8",
+        "DWG-6",
+        "DWG-7",
+        "BR-12",
+        "DWG-8",
+        "DWG-9",
+        "DWG-10",
+        "DWG-11",
+        "DWG-12",
+        "DWG-13",
+        "ING-5",
+        "PR-10",
+        "PR-11"
+      ],
+      "severityMix": "0 CRITICAL / 5 HIGH / 11 MEDIUM / 1 LOW",
+      "files": [
+        "lib/drawingText.ts: line-number tokens (6\"-P-1024-A1A) excluded from EQUIPMENT_RE hits (DWG-2); SPARSE_PAGE gate replaced by tag-density/prose detection with vision as opt-in fallback (DWG-7/BR-12); connector raw line kept whole for the audit (DWG-8); OPC box token contract shared with the vision prompt (DWG-4)",
+        "lib/knowledgeVision.ts: VISION_SYSTEM asks for 'OPC <n>: …' lines (DWG-4), transcribes line numbers as LINE not equipment (DWG-2), title-block fields only from the border (PR-11)",
+        "app/api/knowledge/drawing/route.ts: verdicts keyed (org, library, sheet, rev) (DWG-6); deterministic sheet identity (ordered self rows, DWG-10); census caps reported not hidden (DWG-11); sheetsNeedingAudit wired and 'unrevised never re-audited' real (DWG-13); rebuild calls I-06's shared vision_pages reset",
+        "lib/drawingAuditLog.ts (DWG-13; RANK exported for I-04's log_audit_completion)",
+        "app/api/knowledge/locate/route.ts: refine-pass tokens metered and counted against the cap via I-05's aiGates/recordAskUsage after the loop (DWG-5/GOV-8); the library-wide 'elsewhere' read named and bounded (DWG-12); vision positions cached as approximate with the revision they were read on (PR-10)",
+        "lib/drawingLocate.ts (PR-10 prompt/parse contract)",
+        "components/knowledge/DrawingIntelPanel.tsx (caps/verdict copy; the HUB-12 naming line here is edited by this package and recorded by I-05)",
+        "components/knowledge/CitedPageViewer.tsx: text-layer marks honour /Rotate, CropBox origin and /UserUnit (DWG-3) — normalisation at ingest is I-06's lib/knowledgeIngest.ts norm(); this package computes from page metadata in the viewer, I-06 records the ingest half by pointer",
+        "lib/knowledgeEntityKinds.ts + lib/__tests__/entityKindGuard.test.ts: 'anchor' declared; the locate exemption rewritten to describe the bounded read (ING-5, DWG-12)",
+        "new migration 2026NNNN_intel_drawing_audit_scope.sql: drawing_audit_logs.library_id + unique (org_id, library_id, sheet_number, revision_code) after DEC-30 inventory of cross-library duplicates (DWG-6); 20261009_trace_method.sql made a no-op when knowledge_line_traces is absent, DB-8-compliant (DWG-9)",
+        "lib/__tests__/drawingText.test.ts, drawingAuditLog.test.ts, drawingLocate.test.ts (extend)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "I-06 ING-3/DWG-1 (entities refreshed on rev-up) for DWG-13's 'unrevised never re-audited' to hold; I-05 aiGates for locate (a local recordAskUsage after the refine loop closes GOV-8/DWG-5 first)",
+        "I-04 log_audit_completion writes drawing_audit_logs — agree the DWG-6 key before either lands; I-11 GAP-304 makes discovery authoritative — land DWG-2 (phantom line-number equipment) before it",
+        "DEC-30 inventories: drawing_audit_logs rows sharing (org, sheet, rev) across libraries; knowledge_page_entities rows with pos_source='vision'",
+        "99 Do-not: do not raise MAX_PAGES / vision-read the whole set (the tag→sheet map costs zero calls)"
+      ],
+      "sequencingNotes": "DWG-2 first (feeds the registry) -> DWG-4/PR-11 prompt↔parser contract -> DWG-6 migration -> DWG-10/DWG-11 -> DWG-13/PR-10 -> DWG-5/GOV-8 -> DWG-12/ING-5 guard -> DWG-7/BR-12 -> DWG-8 -> DWG-3 -> DWG-9.",
+      "decisionsNeeded": [
+        "DWG-7/BR-12 — default: drawing-like pages over 2,000 chars still get tag extraction when tag density says drawing; vision is a per-library opt-in, never automatic",
+        "DWG-6 — default: key includes library_id; existing rows backfilled from document_id's library where resolvable, kept org-wide otherwise",
+        "PR-10 — default: vision positions expire on rev-up and render as approximate (dashed box already exists)",
+        "DWG-2 — default: line numbers are extracted as a new kind 'line' rather than dropped (they answer 'which line feeds V-3'), never as equipment"
+      ],
+      "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-08 SKILLS AUTHORITY & LINK PROPOSALS — who may publish an org-wide instruction pack, built-in ownership, the proposer's block-set, conflict targets that have never written a row",
+      "findings": [
+        "IEDGE-3",
+        "GOV-2",
+        "IRLS-3",
+        "ORCH-2",
+        "PR-3",
+        "HUB-2",
+        "LNK-7",
+        "HUB-8",
+        "LNK-1",
+        "LNK-2",
+        "LNK-3",
+        "IRLS-2",
+        "WIRE-2",
+        "IRLS-4",
+        "LNK-4",
+        "LNK-5",
+        "LNK-6",
+        "LNK-8",
+        "LNK-9",
+        "LNK-10",
+        "LNK-11",
+        "LNK-12",
+        "LNK-13"
+      ],
+      "severityMix": "0 CRITICAL / 11 HIGH / 8 MEDIUM / 4 LOW",
+      "files": [
+        "new migration 2026NNNN_intel_skills_authority.sql: answer_skills / link_rules INSERT with visibility='org' and UPDATE to 'org' require is_org_controller (IEDGE-3/GOV-2/IRLS-3/ORCH-2/PR-3); builtin rows created_by NULL, controller-managed, DELETE refused (HUB-2/LNK-7); link_rules.config validated by a BEFORE trigger — pattern count/length, bounded quantifiers (LNK-6 PATCH bypass)",
+        "new migration 2026NNNN_intel_link_conflict_targets.sql: proposed_links_read requires both endpoints readable (documents RLS subquery — LNK-4); document_related_resources (document_id, target_document_id) unique index made plain (non-partial) after DEC-30 inventory of NULL-target rows (LNK-3/IRLS-2/WIRE-2); entity_mentions COALESCE key replaced by two plain partial-free indexes or a generated column (IRLS-4/WIRE-2) after inventory; role literals in proposed_links_write / entity_mentions_write -> is_org_controller / roles && (the IRLS-10 limbs owned here)",
+        "lib/answerSkills.ts, lib/answerSkillsServer.ts, lib/linkRules.ts (seed with created_by NULL; 42P01 vs empty distinguished — IRLS-12 limb)",
+        "app/(protected)/intelligence/skills/page.tsx + components/intelligence/ConnectionSkillsPanel.tsx (one list, one seeding entry — HUB-8; controls follow the new authority), components/intelligence/SkillStudio.tsx (org-wide toggle controller-only)",
+        "lib/linkProposerServer.ts: 'stale' ≠ 'dismissed' in the decided set (LNK-1); ordered, paged inputs with truncation notes (LNK-2); onConflict target matches the plain index (LNK-3); private skills honoured and names not copied into org-readable evidence (LNK-5); regex run under a per-document time budget, offender disabled with a note (LNK-6); per-tag cap and ranking before the slice (LNK-10); the semantic proposer either emitted or its label removed (LNK-11); pending proposals in the block-set so the 12-pass driver advances (LNK-12)",
+        "lib/linkProposalLogic.ts: block-set keyed (pair, proposer) (LNK-8); canonical carrier rule (LNK-13)",
+        "lib/linkProposals.ts (PROPOSER_LABELS, stale handling), lib/postPublish.ts (LNK-1 invalidation semantics)",
+        "lib/relatedResources.ts + components/documents/RelatedPanel.tsx (LNK-9/LNK-13 provenance rendered from the declared value set; both documents show the link)",
+        "components/graph/GraphShapeWizard.tsx (LNK-9 writes a declared origin, not 'user')",
+        "app/(protected)/admin/proposed-links/page.tsx (LNK-12 progress truth)",
+        "lib/mentionIndexer.ts (IRLS-4/WIRE-2 write path against the new index)",
+        "lib/__tests__/linkProposalLogic.test.ts, mentionIndex.test.ts (extend); skillsAuthority.test.ts (new); a policy census test for both skill tables"
+      ],
+      "migrationsLikely": 2,
+      "dependsOn": [
+        "DEC-30 inventories: document_related_resources rows with NULL target_document_id (the partial index's carve-out); duplicate (asset_id, knowledge_document_id|document_id, page) mention rows; builtin skill rows with non-null created_by; proposed_links rows in status 'stale'",
+        "DEC-35 (controller tier via is_org_controller; no role literals); I-02 owns entity_mentions' READ policy (separate migration file) — this package owns the write path/indexes",
+        "components/documents/RelatedPanel.tsx and lib/relatedResources.ts are listed by no DC/A&O package — re-check at claim time",
+        "I-04's orchestrator reads proposed_links? no; I-13's graph draws proposals via listPendingPairs (LNK-4's policy narrows what non-readers see — I-14 GM-7 reports errors)"
+      ],
+      "sequencingNotes": "Skills RLS first (five HIGHs share one root: any member publishes into every colleague's prompt) -> conflict targets (LNK-3/IRLS-2/IRLS-4/WIRE-2: the auto-apply and mention writes have never landed) -> LNK-4 -> LNK-1/LNK-8/LNK-12 block-set semantics -> LNK-2/LNK-10 bounds -> LNK-5/LNK-6 -> LNK-9/LNK-11/LNK-13 -> HUB-8.",
+      "decisionsNeeded": [
+        "Org-wide skill publication — default: controllers only; members author private skills; sharing = a controller flips visibility (fail-safe: no member can reach another member's prompt)",
+        "LNK-6 — default: patterns limited to a bounded, backtracking-safe subset validated at save and run under a 50 ms per-document budget; an offending skill is disabled with a note, never silently skipped",
+        "LNK-11 — default: remove the 'semantic' label until a proposer emits it",
+        "LNK-13 — default: the lower document_number carries the row; both Related panels render it",
+        "LNK-1 — default: 'stale' proposals re-enter the queue when the new revision re-extracts the same evidence; 'dismissed' stays blocked until new evidence"
+      ],
+      "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-09 PROCESS FLOWS & OPERATING AREAS — who may write the plant's topology, the PFD reader's grounding and settled-set, the unit panels",
+      "findings": [
+        "FLOW-1",
+        "FLOW-2",
+        "FLOW-3",
+        "FLOW-4",
+        "FLOW-5",
+        "FLOW-6",
+        "FLOW-7",
+        "FLOW-9",
+        "FLOW-11",
+        "FLOW-12",
+        "FLOW-13",
+        "FLOW-14",
+        "IEDGE-7",
+        "IEDGE-8",
+        "IRLS-11",
+        "AREA-3",
+        "AREA-5",
+        "AREA-6",
+        "AREA-8",
+        "WIRE-6",
+        "WIRE-10",
+        "PR-7",
+        "PR-8"
+      ],
+      "severityMix": "0 CRITICAL / 3 HIGH / 13 MEDIUM / 7 LOW",
+      "files": [
+        "new migration 2026NNNN_intel_process_flows_authority.sql: INSERT status='proposed' unless is_org_controller; origin='ai' and source_document_id only via service role; UPDATE to 'confirmed' controller-only, decided_by pinned to auth.uid(); endpoint-existence BEFORE trigger + cleanup of asset endpoints on assets DELETE (WIRE-10/FLOW-6) after DEC-30 inventory of dangling refs; dismissed pairs carry the source revision they were decided on (IEDGE-8 re-propose rule) — FLOW-2/AREA-3/IEDGE-7/IRLS-11 share this root",
+        "app/api/flows/read/route.ts: roster paged and unit-scoped, the model told 'N more not listed' (FLOW-4/AREA-5/WIRE-6); settled set ordered and keyed, pending excluded correctly (FLOW-5/IEDGE-8); per-row insert tolerant of 23505 after the model is billed (FLOW-12); MAX_PAGES truncation reported (FLOW-11); JSON parse guarded (PR-8); confidence gate for auto-proposal (PR-7); agreement/cap gate through I-05's aiGates (GOV-11/PR-12 limb — a local agreement check until it lands); authority via isControllerPrincipal, no literal list (DEC-35)",
+        "app/api/flows/browse/route.ts, lib/flowsBrowse.ts (FLOW-7: error state distinct from indexing)",
+        "lib/processFlows.ts: listProcessFlows ordered/paged past 4000 with truncation (FLOW-9 half — the orgGraph 8000 cap half is I-13's); createManualFlow status by authority (FLOW-2); 42P01 vs empty (IRLS-12 limb)",
+        "lib/knowledgePageRender.ts: width parameter; PFD reads at the ingester's 1800 px (FLOW-13)",
+        "components/assets/UnitOpsPanels.tsx: unit-less proposals reviewable (FLOW-1); controls follow authority (FLOW-3); graph pivot link carrying the scope (AREA-6 — URL contract from I-14, scope from I-13)",
+        "components/assets/AreaKnowledgePanel.tsx + app/api/area/knowledge-status/route.ts: checklist steps reflect real state, step 1 not satisfied by a folder name alone (AREA-8)",
+        "lib/__tests__/flowsBrowse.test.ts (extend); flowsRead.test.ts (new); process_flows policy census test"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "DEC-35: 'Only admins and document controllers shape the process map' expressed through lib/permissions isControllerPrincipal (or a capability id after DC P7 — decision), not a role literal",
+        "DEC-30 inventories: process_flows rows whose asset endpoint no longer exists; confirmed rows created by non-controllers; duplicate pairs",
+        "I-05 aiGates (agreement gate limb; local gate meanwhile); I-13 lib/scope.ts + GAP-305 for the unit-scoped roster and AREA-6; I-14 URL contract (?scope=) for AREA-6 — AREA-6 lands last",
+        "I-13 owns orgGraph's flow cap/dedupe halves (FLOW-9, FLOW-8/GM-8); I-14 owns the renderer half (FLOW-10/GPV-8) — cross-reference",
+        "FLOW-14 (topology feeds nothing but drawing) — see decision; the orchestrator's trace_pid_lines is I-04's file"
+      ],
+      "sequencingNotes": "RLS migration first (four findings, one root) -> FLOW-3 -> FLOW-5/IEDGE-8/FLOW-12 -> FLOW-4/AREA-5/WIRE-6 -> FLOW-1 -> PR-7/PR-8/FLOW-11/FLOW-13 -> FLOW-6/WIRE-10 -> FLOW-7 -> AREA-8 -> AREA-6 (after I-13/I-14) -> FLOW-14 (decision). 99 Do-not: no AI-derived data drives a hold/MOC; proposed flows never reach a reasoning surface.",
+      "decisionsNeeded": [
+        "FLOW-2 — default: hand-drawn flows by non-controllers land as 'proposed'; controllers confirm (fail-safe: the shared topology is human-controller-asserted)",
+        "FLOW-14 — default: not built; recorded as a follow-up gap ('confirmed topology as a reasoning input'); only confirmed flows would ever be consumed",
+        "WIRE-10 — default: validation trigger + cleanup on asset delete; no FK on a polymorphic TEXT column",
+        "FLOW-4 — default: roster = the launching unit's assets first, then the rest paged; the model is told the count not listed",
+        "PR-7 — default: proposals below 0.5 confidence are stored but shown in a 'low confidence' bucket, never auto-confirmed (a number is not a source — GAP-303)"
+      ],
+      "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-10 REGISTRY & CODEBOOK — write authority on the registry, the codec's invariants, one tag grammar (Phase 0), ⌘K tag lookup, the master-list door",
+      "findings": [
+        "AREA-1",
+        "IRLS-5",
+        "AREA-9",
+        "AREA-11",
+        "CB-2",
+        "IRLS-8",
+        "CB-3",
+        "CB-4",
+        "IRLS-10",
+        "CB-5",
+        "CB-6",
+        "CB-7",
+        "CB-8",
+        "CB-9",
+        "CB-10",
+        "BR-4",
+        "AREA-7",
+        "BR-6",
+        "BR-8",
+        "GAP-310",
+        "GAP-311"
+      ],
+      "severityMix": "0 CRITICAL / 2 HIGH / 15 MEDIUM / 2 LOW (+2 gaps, both BUILD_NARROW S)",
+      "files": [
+        "new migration 2026NNNN_intel_registry_authority.sql: assets / asset_types / asset_photos SELECT members, writes by the writer tier expressed on the role collection, DELETE controller-only (AREA-1/IRLS-5); document_equipment_suggestions writes service-role + controllers (CB-2/IRLS-8); codebook_entries / codebook_config writes via is_org_controller (CB-4); org_ai_instructions `role IN` -> is_org_controller (IRLS-10 — the proposed_links / entity_mentions limbs are I-08's); codebook code CHECK numeric for unit/equipment_type kinds (CB-3); unique partial index assets (org_id, code) WHERE code IS NOT NULL after DEC-30 inventory (CB-10)",
+        "new migration 2026NNNN_intel_one_tag_grammar.sql: asset_aliases.alias_normalized rewritten to the codebook grammar IN THE SAME COMMIT as the reader flip (GAP-310 Do-not)",
+        "lib/codebook.ts: the one exported normalizer (GAP-310/CB-9); typeForTag same-length prefix collision surfaced (CB-8); tagToCode injectivity check (CB-10); saveConfig no longer hardcodes mirrorsTag (CB-7)",
+        "lib/codebookServer.ts (shared codec unchanged; loader reports a non-numeric code instead of an empty codebook — CB-3)",
+        "lib/assets.ts: normalizeTag re-exports the codebook grammar; listAssets paged past the PostgREST cap (AREA-9); updateAsset re-decodes code/unit_code together (AREA-11/CB-6)",
+        "lib/assetAliases.ts (reader on the one grammar), lib/assetCategorize.ts (re-decode plan when the codebook changes — CB-6; unit filing from code — AREA-7)",
+        "lib/search.ts + lib/globalSearch.ts + components/navigation/GlobalCommandPalette.tsx: tag → asset → unit (+ sheets once I-11's relation exists), alias-aware, no AI call, asset hit lands on /assets/<tag> not the admin table (GAP-311)",
+        "components/assets/AssetCsvImportModal.tsx: unit_code / code columns; XLSX through lib/xlsxData.ts parseWorkbook; update-existing mode (BR-4/AREA-7/BR-6 — GAP-307's list half)",
+        "app/(protected)/admin/codebook/page.tsx: numeric-code validation, collision warning, delete refusal with counts, mirrorsTag control (CB-3/CB-5/CB-7/CB-8)",
+        "app/(protected)/admin/assets/page.tsx: printed restriction matches RLS (AREA-1); paging (AREA-9); discovered-asset filter + bulk cleanup reading origin/discovered_from (BR-8); code/unit contradiction badge (AREA-11)",
+        "app/api/codebook/import/route.ts (CB-3)",
+        "lib/__tests__/codebook.test.ts (extend: awkward-input table every call site must agree on — GAP-310 acceptance 3), assetCategorize.test.ts (extend), registryPolicy census test, globalSearchTags.test.ts (new)"
+      ],
+      "migrationsLikely": 2,
+      "dependsOn": [
+        "99 Phase 0: GAP-310 migrate the column and flip the readers in ONE commit; GAP-311 depends on GAP-310 (here) and GAP-304 (I-11) — the tag/asset/unit lookup ships now, sheets when I-11's relation exists",
+        "DEC-30 inventories: duplicate assets.code per org; assets whose code ≠ tagToCode(tag, unit_code); aliases whose normalized form changes; codebook codes that are non-numeric",
+        "DEC-35: writer tier through lib/roleHeld / lib/permissions helpers, no new literal lists; lib/roleCapabilities.ts is A&O P9's — not touched (CB-4 cites it as a location only)",
+        "I-11 owns lib/equipmentBridgeServer.ts (its local assetNorm flips to the one grammar at I-11's claim); I-13 (GAP-305 unit identity) lands after this package — codebook files are owned here",
+        "lib/xlsxData.ts is not listed by DC P10 (which edits templates/generate + lib/outputTemplates) — verify at claim time"
+      ],
+      "sequencingNotes": "Phase 0 first: GAP-310 (one commit). Then registry RLS (AREA-1/IRLS-5) -> CB-2/IRLS-8/CB-4/IRLS-10 -> CB-3/CB-10 -> CB-8/CB-9/CB-7 -> CB-5/CB-6/AREA-11 -> AREA-9 -> BR-4/AREA-7/BR-6 (the master-list door) -> BR-8 -> GAP-311.",
+      "decisionsNeeded": [
+        "Registry write tier — default: Admin/DocCtrl/Manager/Supervisor (what the page already prints) expressed as a policy on the role collection; DELETE controller-only; photos follow the asset",
+        "CB-6 — default: a codebook edit produces a re-decode plan in the categorizer (accept per asset); never a silent rewrite",
+        "CB-5 — default: deleting a unit/type with assets filed under it is refused with the count; archive instead",
+        "CB-10 — default: unique (org_id, code) after inventory; collisions listed in I-11's coverage report",
+        "CB-7 — default: mirrorsTag exposed in the numbering tab; a non-mirroring org keeps its rule"
+      ],
+      "alreadyResolvedElsewhere": [
+        "IRLS-10 search_path half <- R&P DB-6 (20261020 pins is_org_controller)"
+      ]
+    },
+    {
+      "name": "I-11 THE BRIDGE & THE MEMORY — GAP-302 → 301 → Phase-0 Bridge fixes → 303 → 304 → 309 → 307 → 308; the relation becomes the record",
+      "findings": [
+        "AREA-4",
+        "BR-1",
+        "BR-2",
+        "BR-3",
+        "BR-5",
+        "BR-7",
+        "BR-9",
+        "BR-10",
+        "BR-11",
+        "BR-13",
+        "BR-14",
+        "CB-1",
+        "WIRE-1",
+        "GM-14",
+        "DACL-11",
+        "AREA-2",
+        "WIRE-8",
+        "GAP-301",
+        "GAP-302",
+        "GAP-303",
+        "GAP-304",
+        "GAP-307",
+        "GAP-308",
+        "GAP-309"
+      ],
+      "severityMix": "0 CRITICAL / 4 HIGH / 9 MEDIUM / 4 LOW (+7 gaps: 302 S, 301 S, 303 M, 304 M, 309 M, 307 M, 308 M)",
+      "files": [
+        "new migration 2026NNNN_intel_document_assets_source.sql (GAP-302 — Phase 0): source CHECK widened to ('jsonb_sync','manual','drawing'); sheet_label TEXT, pages INTEGER[] nullable; the trigger's DELETE scope (already `AND source='jsonb_sync'`) pinned by a test; RLS: document_assets / project_documents SELECT only where the document is readable (documents RLS subquery — DACL-11), INSERT/DELETE of source='manual' by the writer tier, 'drawing' rows service-role only (AREA-2)",
+        "new migration 2026NNNN_intel_provenance.sql (GAP-303/GAP-309): document_assets.asserted_by ('machine'|'human'), asserted_by_user, model, source_revision, vanished_at / superseded_at; corrections as rows not overwrites; WIRE-8: GIN indexes on transmittals.items (jsonb_path_ops) and tickets.metadata",
+        "lib/equipmentBridgeServer.ts: targetKey throw moved below discovery and the strip-and-retry reported (Phase 0 BR-* items; AREA-4/BR-3 half); kind 'self' rows read for the sheet address on each suggestion (GAP-301); writes document_assets rows source='drawing' with sheet + provenance while KEEPING the metadata write (GAP-304 — WIRE-1/BR-2); per-twin suggestions (BR-14); apply idempotent against deletions (BR-5); extractor stop-list re-applied at the registry boundary (BR-13); unit existence checked before filing (CB-1); code backfill not gated on unit_code NULL (BR-7); sweep cursor + budget (BR-11); source_document_id gate becomes 'is there a column to populate' (GAP-307/BR-3); assetNorm -> I-10's one grammar; sheet on the relation, never a node (99 Do-not)",
+        "app/api/equipment-bridge/route.ts: per-document ACL through readableControlledDocIds, unreadable documents skipped and counted (BR-1 remaining half); tag subset + 'dismissed' accepted from the client (BR-9); paged sweep contract (BR-11)",
+        "components/documents/EquipmentSweepModal.tsx: partial review / dismiss (BR-9); 'no column mapped' and 'upload-origin' signals (BR-3/AREA-4); coverage entry point",
+        "new lib/bridgeCoverage.ts + a coverage action on the equipment-bridge route + components/assets/CoverageReport.tsx (GAP-308: agree / list-only / sheet-only / disagree as working lists, re-derived on read)",
+        "new app/api/equipment/sheets/route.ts (GM-14: knowledge_page_entities stays REVOKEd; sheets are served from the relation per caller)",
+        "app/(protected)/assets/[tag]/page.tsx: read document_assets instead of `.contains(\"asset_tags\", …)` (WIRE-1/BR-2/WIRE-8 asset-hub criterion) — AFTER PS-VERIFY (DC wave 2) merges; that package owns the file",
+        "lib/__tests__/equipmentBridge.test.ts (new: idempotence, a 'drawing' row survives an unrelated asset_tags edit, degraded insert reports what it dropped, discovery with no column mapped), documentAssetsPolicy census test"
+      ],
+      "migrationsLikely": 2,
+      "dependsOn": [
+        "99 PAIR 1 (GAP-302 before anything writes Bridge output) and PAIR 3 (GAP-301 before GAP-304); Phase 2 order 303 -> 304 -> 309",
+        "I-06 ING-3/DWG-1 (superseded-revision entities purged) before GAP-309 is meaningful; I-07 DWG-2 (phantom line-number equipment) before discovery becomes authoritative; I-10 GAP-310 for assetNorm; I-10's CSV/XLSX door is GAP-307's list half",
+        "PS-VERIFY (DC wave 2) owns app/(protected)/assets/[tag]/page.tsx — the hub read switch waits for its merge; the relation write does not",
+        "DC P4 REVIEW / P7 own types/schema.ts — no AssetTag source field (GAP-302 Do-not), so no schema type edit is needed here",
+        "DEC-30 inventories: document_assets rows with an unexpected source (expect none); assets with origin='drawing' and their discovered_from; documents whose mapped metadata column holds tags with no document_assets row (GAP-304 backfill population); document_related_resources not affected",
+        "99 Do-not: never union Bridge tags into documents.asset_tags; no confidence threshold auto-accept; no AI-derived data drives a hold/MOC"
+      ],
+      "sequencingNotes": "Phase 0: GAP-302 migration -> GAP-301 -> targetKey/strip-and-retry (AREA-4, BR-3 close). Phase 2: GAP-303 -> GAP-304 (DACL-11/AREA-2 policies ride the same migration set) -> GAP-309. Phase 3: GAP-307 -> GAP-308. Then BR-1/BR-9/BR-11/BR-13/BR-14/CB-1/BR-7/BR-5 in severity order. Last: the asset-hub read switch (after PS-VERIFY), GM-14 route, WIRE-8 indexes. GAP-311 (I-10) and GAP-312 (drafting-flow) consume this relation.",
+      "decisionsNeeded": [
+        "BR-1 — default: sweep/apply skip documents the caller cannot read and report the count; never widen",
+        "GAP-309 — default: a vanished tag surfaces as a reviewable delta (appeared/vanished per sheet and revision); never auto-removed",
+        "GAP-307 — default: knowledge-only P&IDs build the registry with door='knowledge' provenance; assets with no decode are created unit-less and REPORTED (assetCategorize discipline), never guessed",
+        "GAP-308 placement — default: a tab on the Operating Areas page per unit; org-wide from the sweep modal",
+        "BR-9 — default: 'dismissed' tags are remembered per document and never re-applied; re-proposed only when a new revision brings the tag back",
+        "DACL-11 — default: document_assets / project_documents rows are visible only when the document is (fail-safe: the existence of a restricted drawing is not org-wide)"
+      ],
+      "alreadyResolvedElsewhere": [
+        "BR-1 roles[] half <- R&P ADD-1 (memberHoldsAny in app/api/equipment-bridge/route.ts)",
+        "WIRE-8 reader-shape half <- R&P LIFE-15 (parseSourceDocument accepts every shape)"
+      ]
+    },
+    {
+      "name": "I-12 DOCUMENT ACL BOUNDARY — one read predicate for the AI seam, the bytes door and the database; the explorer's chain (runs last: its files are the most contended)",
+      "findings": [
+        "DACL-6",
+        "DACL-9",
+        "DACL-10",
+        "DACL-12",
+        "KACL-3",
+        "KACL-5",
+        "KACL-11",
+        "IEDGE-12"
+      ],
+      "severityMix": "0 CRITICAL / 2 HIGH / 5 MEDIUM / 1 LOW",
+      "files": [
+        "lib/knowledgeAccess.ts: chainReadable — hidden requires read (KACL-3); private fallback matches canDiscover (KACL-11); exported as the one predicate every caller uses (IEDGE-12); containerReadable follows",
+        "lib/permissions.ts: canServeContent / canDiscover reuse the chain predicate; a zero-rule chain node contributes nothing so app and DB agree on default-open for normal visibility (DACL-6 — the drawer is NOT edited; A&O P7 owns PermissionDrawer.tsx:318-335)",
+        "lib/acl.ts: buildDocChain double-push (DACL-9); evaluateAclChain empty-rule semantics (DACL-6)",
+        "app/api/storage/download-url/route.ts: the guard runs for every org key that resolves to a document, evaluates the full chain via readableControlledDocIds, fails closed for keys behind a record (KACL-5) — AFTER DC P2 EGRESS merges (clamp/no-store/400 edits); DEC-43 bypass audit and DEC-7 ownership branch preserved",
+        "app/(protected)/documents/[libraryId]/page.tsx: refuse to render children whose ancestry could not be resolved (DACL-9); explicit 'restricted — request access' state (DACL-6 criterion 2) — AFTER DC P6 CHECKOUT, DC wave-2 (RG-12/XEDGE-5) and identity IS-P1 merge",
+        "app/(protected)/documents/page.tsx: library gate on the one model (DACL-10) — AFTER identity IS-P1 (:187 computeCanRead)",
+        "new migration 2026NNNN_intel_node_visible_deny_and_libraries.sql: 6-arg node_visible body from 20261041 extended so role/team deny of read/discover binds before any allow (DACL-12 remaining half) with the 20261041 probe shape; RESTRICTIVE SELECT on libraries via node_visible after DEC-30 inventory (DACL-10); read_access/visible_to writes retired as enforcement (the wizard/console copy is A&O P8 / ALOG-13's)",
+        "lib/__tests__/acl.test.ts (extend) + a SQL matrix test mirroring it (DACL-12 / DACL-6 criterion 3); knowledgeAccess.test.ts, downloadUrlAcl.test.ts (new); a test proving the ask route and the download endpoint agree on one document/principal pair (IEDGE-12 criterion 3)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "DC wave 1: P2 EGRESS (download-url) and P6 CHECKOUT (documents/[libraryId]/page.tsx) merged; DC wave 2 (RG-12, XEDGE-5 on the same page; P1 SHARE consumes knowledgeAccess via shareAuthorization) merged; identity IS-P1 (documents/page.tsx :187, documents/[libraryId]/page.tsx 13 sites) merged",
+        "A&O P8 (admin/libraries wizard, ALOG-13 console copy) owns DACL-10's wizard half — coordinate; A&O P7 owns PermissionDrawer.tsx — not edited here",
+        "Verified sound, do not break: DEC-7/GAP-15 ownership branch order, DEC-43 controller rail + bypass audit, DEC-8 deny wins, DEC-10 acl_index cache + nightly rebuild (DACL-1 closed on it), Round C1 callers of readableControlledDocIds (orchestrator, drawing, locate, sources, share) keep their fail-closed shape",
+        "DEC-30 inventories: libraries with read_access ≠ 'ALL' or non-empty visible_to whose acl would newly hide a member; documents/collections with zero-rule ACLs; role/team deny-read rules that would newly bind (count of affected members)"
+      ],
+      "sequencingNotes": "Runs LAST among intelligence packages. Order: knowledgeAccess predicate (KACL-3/KACL-11) with tests -> permissions/acl alignment (DACL-6, IEDGE-12) -> download-url (KACL-5) -> node_visible migration (DACL-12) -> libraries RLS + detail page (DACL-10) -> explorer chain (DACL-9). Each step tightens; none widens.",
+      "decisionsNeeded": [
+        "DACL-6 — default: a chain node whose ACL has zero rules contributes nothing; app and DB agree on default-open for normal visibility (DOCACL-2); the UI never blanks a library on save",
+        "DACL-10 — default: retire read_access/visible_to as enforcement; libraries.acl + visibility is the one model; the RESTRICTIVE policy lands only after the inventory shows no member newly loses a library they use — else BLOCKED per DEC-30 with the query",
+        "DACL-12 per-action allow — default: accepted by design (DOCACL-5: row visibility stays coarse); only the role/team deny half is built",
+        "KACL-5 fail-closed scope — default: closed for any key that resolves to a document row; open only for keys with no record behind them"
+      ],
+      "alreadyResolvedElsewhere": [
+        "DACL-12 per-action half <- R&P DOCACL-5 (accepted by design)",
+        "IEDGE-12 bytes-door discover/read half <- R&P DOCACL-5 canServeContent"
+      ]
+    },
+    {
+      "name": "I-13 GRAPH ASSEMBLY, UNIT IDENTITY & SCOPE — honest assembly, one unit node family (GAP-305), lib/scope.ts (GAP-306 core)",
+      "findings": [
+        "GM-2",
+        "GPV-3",
+        "WIRE-3",
+        "AREA-10",
+        "GM-10",
+        "GPV-2",
+        "GPV-14",
+        "GM-3",
+        "GM-4",
+        "GM-13",
+        "GPV-6",
+        "FLOW-8",
+        "GM-8",
+        "GM-5",
+        "GM-6",
+        "GM-9",
+        "GM-12",
+        "WIRE-4",
+        "GAP-305",
+        "GAP-306"
+      ],
+      "severityMix": "0 CRITICAL / 3 HIGH / 9 MEDIUM / 6 LOW (+2 gaps: 305 M, 306 L)",
+      "files": [
+        "lib/orgGraph.ts: GraphNode carries unitCode / unitId / libraryId scoping keys (GPV-2); one unit node family joined by data (GM-2/GPV-3/AREA-10); ordered, paged reads with truncation that is true (GM-3/GM-13/GPV-6); optional() reports errors as truncations (GM-4); direction-aware edge key for flow so A→B and B→A both draw (FLOW-8/GM-8); flow cap reported (FLOW-9 orgGraph half); codebook unit links + bound knowledge library edges (GPV-14); systems level from documents.plant_id/system_id (GM-10); scoped assembly through lib/scope.ts (GAP-306 — never post-assembly)",
+        "new lib/scope.ts: a scope is a resolved id set {units, assets, documents, libraries} with boundary counts; consumed by orgGraph here, by UnitOpsPanels (I-09 AREA-6) and the graph picker (I-14) later",
+        "lib/graphInsights.ts: bridge multiplicity by pair, not by edge type (GM-5); REGION_ANCHOR_ORDER includes 'plot' (GM-9); insights labelled as computed under the reader's ACL (GM-6)",
+        "lib/operationalGraph.ts + app/(protected)/admin/scope/page.tsx: units.code ↔ codebook unit mapping as data; assets.unit_id written by the decode or retired (WIRE-3/AREA-10 — decision)",
+        "new migration 2026NNNN_intel_unit_identity.sql (GAP-305): documents.unit_code TEXT written by the decode; one mapping between codebook unit codes and units rows (units.codebook_code UNIQUE per org, or codebook_entries.meta.unitId — decision); DEC-30 inventory of documents whose decoded unit disagrees with documents.unit_id; a one-off server backfill that REPORTS non-decoding numbers (never guesses)",
+        "lib/__tests__/graphInsights.test.ts (extend); orgGraph.test.ts (new: 'each edge is a row somewhere' — the guard test 99 names); scope.test.ts (new: scoped assembly returns complete results for a unit that exceeds the org-wide caps)"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "99 PAIR 2 (GAP-305 before GAP-306); 99 Phase 4 'argue the place before the filter' — see decision",
+        "I-10 merged first (codebook files and the one grammar are I-10's); I-11 GAP-304 makes tag edges complete; DC P4/P7 own types/schema.ts — DocumentRow.unit_code typed locally in lib/orgGraph.ts until DC wave 2 merges",
+        "I-14 owns app/(protected)/graph/page.tsx and components/graph/* (GM-1/GM-11/GPV-7 page halves; the scope picker); I-09 owns the flows lib half (FLOW-9)",
+        "DEC-30 inventory for the GAP-305 backfill; 99 Do-not: never infer the unit edge at assembly time; write the decode",
+        "DEC-35: no facility vocabulary — unit labels come from the codebook, never code"
+      ],
+      "sequencingNotes": "GM-4/GM-3/GM-13/GPV-6 (assembly honesty) first -> FLOW-8/GM-8 -> GM-5/GM-9 -> GPV-14 -> GAP-305 (migration + one node family; WIRE-3/AREA-10/GM-2/GPV-3/GM-10 close here) -> GPV-2 -> GAP-306 lib/scope.ts + scoped assembly -> GM-6 -> GM-12/WIRE-4 decisions.",
+      "decisionsNeeded": [
+        "GAP-306 'the place before the filter' — default: lib/scope.ts ships here and is consumed FIRST by the operating-area page (I-09 AREA-6 -> /graph?scope=unit:<code>), then by the graph picker (I-14); the place is the first delivery, the filter the second",
+        "units table vs codebook unit — default: keep both (configured operating unit vs decoded code), map codebook code -> units.id as data, write documents.unit_code; retire nothing; assets.unit_id filled from the mapping by the same backfill",
+        "GM-12 — default: WONTFIX-for-now with the sessionStorage snapshot; a server-assembled graph recorded as a follow-up gap",
+        "WIRE-4 — default: no node types beyond systems (GM-10); the lens rename in I-14 fixes the naming defect"
+      ],
+      "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-14 GRAPH PAGE, LENSES & RENDERERS — lenses named for what they show, insights on the whole map, direction drawn, URL state, keyboard access",
+      "findings": [
+        "GM-1",
+        "GM-7",
+        "GM-11",
+        "GPV-4",
+        "GPV-5",
+        "GPV-7",
+        "GPV-8",
+        "FLOW-10",
+        "GPV-9",
+        "GPV-10",
+        "GPV-11",
+        "GPV-12",
+        "GPV-13"
+      ],
+      "severityMix": "0 CRITICAL / 0 HIGH / 11 MEDIUM / 2 LOW",
+      "files": [
+        "app/(protected)/graph/page.tsx: LENSES named for what they show and visible at every width (GPV-10); 'Equipment' collision resolved on the lens labels, node label kept (GPV-4); computeInsights on the full graph, not the filtered view (GM-1); listPendingPairs errors reported (GM-7); ?focus= re-flies only when the param changes (GPV-5); connect writes unit endpoints through the one identity (GPV-7 — after I-13); lens/focus/scope/query in the URL and BackToGraphChip restores them (GPV-11); the Ask panel counts only nodes it can show (GPV-12 page half); keyboard dismissal of the four overlays and aria on the map region (GPV-13); scope picker consuming lib/scope.ts (GAP-306 UI)",
+        "components/graph/OrgGraph2D.tsx + OrgGraph3D.tsx: arrows on flow and supersession, defaults and alpha threshold so a flow's direction is visible; 3D honours arrow/curve settings (GPV-8/FLOW-10); depth fade from the neighborhood distance map (GPV-9); keyboard focus / aria (GPV-13)",
+        "components/graph/GraphControls.tsx (neighbourhood depth under Local graph, arrows hint — GPV-9/GPV-8), components/graph/NodePeek.tsx (both degrees labelled — GM-11), components/graph/BackToGraphChip.tsx (GPV-11), components/graph/graphTheme.ts (edge legend — GPV-8)",
+        "lib/graphSettings.ts (URL-serialisable lens/scope; forces stay local — GPV-11), lib/graphSim.ts (distance exposed to renderers — GPV-9)",
+        "lib/__tests__/graphSim.test.ts (extend); graphSettingsUrl.test.ts (new)"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-13 (lib/scope.ts, one unit identity for GPV-7, GraphNode scoping keys) for the scope picker and GPV-7; everything else can start now",
+        "I-13 owns the orgGraph halves (FLOW-8/GM-8 edge key; GM-1's data is the full graph already loaded); I-09 links to the URL contract defined here (AREA-6)",
+        "No DC / A&O / PS package lists these files",
+        "99 Do-not: never infer an edge at render time; never name a lens after what it hides"
+      ],
+      "sequencingNotes": "Now: GM-1, GM-7, GM-11, GPV-5, GPV-9, GPV-13, GPV-10/GPV-4 naming, GPV-8/FLOW-10, GPV-12. After I-13: GPV-7, GPV-11 scope in the URL, the picker.",
+      "decisionsNeeded": [
+        "Lens set — default: 'Everything', 'Plant (units & equipment)', 'Equipment ↔ Documents', 'Documents & libraries'; node label 'Equipment' stays, lens labels change; a scope picker is a separate control, not a lens",
+        "GPV-8 — default: arrows ON by default for flow and supersession only; flow alpha raised into the visible band; 3D draws direction cones",
+        "GPV-11 — default: lens, focus, scope and query in the URL; forces, colours and mode stay per-org local"
+      ],
+      "alreadyResolvedElsewhere": []
+    }
+  ],
+  "crossAreaFileOverlaps": [
+    "app/api/storage/download-url/route.ts ↔ DC wave-1 P2 EGRESS (clamp, 400, no-store) — I-12 KACL-5 edits it AFTER P2 merges",
+    "components/navigation/Sidebar.tsx ↔ DC P2 EGRESS (posts lib/swSession from Sidebar) and the notifications fleet (TRAIL-2/3, DELIV-3 badge trail; unplanned) — I-05 HUB-3/HUB-6 edit the nav arrays only, after P2",
+    "app/(protected)/documents/[libraryId]/page.tsx ↔ DC P6 CHECKOUT, DC wave-2 RG-12/XEDGE-5, identity IS-P1 — I-12 DACL-9/DACL-6 last; BR-1's client gate (:3769-3777) and AREA-4's sweep button (:4685) are read-only citations, not edited by intelligence",
+    "app/(protected)/documents/page.tsx ↔ R&P EGRESS-2 (landed), identity IS-P1 (:187) — I-12 DACL-10 after IS-P1",
+    "app/(protected)/assets/[tag]/page.tsx ↔ public-surfaces PS-VERIFY (DC wave 2: no-session redirect, PKG-12 region) — I-11's read switch (asset_tags → document_assets) after PS-VERIFY merges",
+    "lib/capabilityPolicy.ts + org_capability_allows_for ↔ DC wave-2 P7 TRANSMITTALS (one new id + function re-creation with lineDiff) — I-05 GOV-10 uses the same pattern AFTER P7, re-creating from P7's definition",
+    "app/api/templates/generate/route.ts ↔ DC P10 EDGES (XEDGE-11/12) — I-05 PR-6 + the GOV-11 aiGates limb after P10",
+    "lib/dataRestore.ts ↔ DC P10 XEDGE-3 then A&O P1 (ORG-1/BKP-3/BKP-5/BKP-12) — I-01 phase B touches RESTORE_TABLE_ORDER only, after A&O P1",
+    "lib/exportTables.ts / lib/dataExport.ts ↔ DC P10 (EGR-7/XEDGE-10) then A&O P2 (BKP-1/2/4/9/11/14) — I-01 phase B adds the knowledge_chunks column list only, after A&O P2",
+    "lib/storageOrphans.ts / app/api/admin/orphans/route.ts ↔ DC P9 RET-7 + A&O P2 — intelligence ILIFE-1/ILIFE-8 close by pointer, no edit",
+    "lib/schemaExpectations.ts ↔ PS-VERIFY (verify_scans row) + A&O P2 (BKP-14 regeneration) — IRLS-12/ILIFE-12 by pointer, no edit",
+    "supabase/schema.sql ↔ DC P10 PKG-14 — not touched; IRLS-6/DWG-9 fixes are new numbered migrations that satisfy DB-8's migrationSourceOfTruth test",
+    "types/schema.ts ↔ DC P4 REVIEW and P7 TRANSMITTALS — intelligence packages type new columns locally (lib/orgGraph.ts DocumentRow) and add no AssetTag field (GAP-302 Do-not)",
+    "app/api/cron/maintenance/route.ts ↔ DC P5 HOLDS, PS-VERIFY, A&O P5 (one step each) — intelligence edits none of it; ILIFE-13 (sync slice), SEM-11 (drain pick) and the proposal prune live in the libs it calls; no vercel.json cron entry ever (99 Do-not, lib/__tests__/vercelConfig.test.ts)",
+    "lib/roleCapabilities.ts ↔ A&O P9 (POLICY_TOKENS single declaration) — not touched (CB-4 cites it as a location only)",
+    "components/permissions/PermissionDrawer.tsx ↔ A&O P7 ALOG-8 (:318-335) — I-12 DACL-6 is solved in lib/acl.ts + lib/permissions.ts + the explorer; the drawer is not edited",
+    "app/(protected)/admin/libraries/page.tsx ↔ A&O P8 (ALOG-3/ORG-7) and ALOG-13 (console copy) — DACL-10's wizard half stays with A&O; I-12 owns enforcement only",
+    "lib/bidTab.ts, app/api/projects/cost-docs/route.ts ↔ projects-and-cost COST-3/COST-5 (unplanned fleet) — I-04 PR-2 edits validateParsedQuote and the route only; cross-reference both records",
+    "app/(protected)/requests/new/page.tsx, lib/ticketTransitions.ts, tickets schema ↔ drafting-flow GAP-110/GAP-111 and public-surfaces PKG-5 — GAP-312 + WIRE-7 are handed to the drafting-flow fleet (must ship together per 99 Phase 5)",
+    "lib/aiBoundary.ts NOT_CURRENT_STATUSES ↔ DC P1 SHARE and PS-VERIFY read it — I-03 KACL-10 keeps every export; DC's 'reuse, no new set' note stands",
+    "lib/knowledgeAccess.ts ↔ R&P EGRESS-3 / EGRESS-8 callers (orchestrator, share list/auth, drawing, locate, sources, flows browse, area status, templates, acl rebuild, collections, documents move) — I-12 tightens chainReadable; every caller keeps its fail-closed shape and is re-run through lib/__tests__/sweepRoundC.test.ts",
+    "lib/knowledge.ts ↔ owned by I-02 alone (memory functions + the client embed loop); I-05 HUB-1 fixes LibraryAiModal's save, not the type (KnowledgeAiFeatures already carries drawingIntel)",
+    "components/knowledge/SemanticIndexPanel.tsx (I-02) and DrawingIntelPanel.tsx (I-07) carry one HUB-12 naming line each — edited by their owners, recorded by I-05",
+    "lib/__tests__/entityKindGuard.test.ts ↔ I-07 (ING-5/DWG-12) — I-03/I-06 keep TAG_ENTITY_KINDS reads named; lib/__tests__/sweepRoundC.test.ts ↔ I-04 extends; I-12 re-runs",
+    "drawing_audit_logs unique key ↔ I-07 DWG-6 (adds library_id) and I-04 ORCH-11/ORCH-1 (log_audit_completion upsert) — agree the key before either lands"
+  ],
+  "notes": "COVERAGE: 254 OPEN ids assigned exactly once across 14 packages (I-01 23, I-02 20, I-03 19, I-04 12, I-05 25, I-06 17, I-07 17, I-08 23, I-09 23, I-10 19, I-11 17, I-12 8, I-13 18, I-14 13); halves/limbs are noted on the owning id and cross-referenced, never double-assigned. 12 gap specs: GAP-301/302/303/304/307/308/309 → I-11; GAP-305/306 → I-13; GAP-310/311 → I-10; GAP-312 → handed to the drafting-flow fleet with WIRE-7 (must ship with GAP-110/GAP-111; prerequisites I-10 GAP-311 and I-11 GAP-304). REFUTED (never queue): IEDGE-9, WIRE-5. Already RESOLVED by pointer: IEDGE-2, ORCH-3 (R&P EGRESS-3, Round C1, 20261048 live). VERIFIED AGAINST HEAD (ba7bfcb): /api/graph/ask still runs graph_ask on the service role with no ACL (GPV-1/IEDGE-1 OPEN — EGRESS-3 did not touch it); knowledge_questions_select is still org-wide (20260911:146-150); answer_skills/link_rules INSERT admit any member with visibility='org'; assets/asset_types/document_assets/project_documents are still FOR ALL member; process_flows INSERT has no status gate; the Bridge still throws on targetKey above discovery, reads kind='equipment' only and writes the metadata column only; unit:/cbunit: are still two families; getMonthUsage still filters op='knowledgeAsk' and getCapUsd's `capUsd > 0` disables a $0 cap; LibraryAiModal.save() still drops drawingIntel; the orchestrator's CONTROLLER_ROLES is still four roles and /execute still trusts client-sent tool+parameters (fingerprint only). Closed by other areas and verified: KACL-2 (EGRESS-3 — same code as IEDGE-2/ORCH-3), DACL-2 (SURF-2), DACL-3 (EGRESS-2), DACL-5 (DOCACL-1/ADD-1/20261041), DACL-1 (DB-4/DOCACL-4/OWN-20/DEC-10), the EGRESS-1 halves of DACL-4, WIRE-9 (LIFE-2/DEC-23), BR-1's roles[] half (ADD-1), ORCH-1/PR-1's checkout+audit-log gate (EGRESS-3), is_org_controller search_path (DB-6/20261020), XEDGE-13 for ILIFE-6's orphan half. CONCURRENCY WITH THE DOCUMENT-CONTROL WAVES: run NOW, disjoint from every DC wave-1/wave-2 file — I-02, I-03, I-04, I-06, I-07, I-08, I-09, I-10, I-11 (all but the assets/[tag] read switch), I-14 core, I-01 phase A, I-05 core (lib/ai/*, app/api/ai/*, AiSettingsModal, LibraryAiModal, intelligence/page, knowledge/page, setup page, ViewTabs, featureAtlas, EquipmentTablePanel). MUST WAIT and why — I-05 Sidebar.tsx after DC P2 EGRESS (swSession posting lands there), app/api/templates/generate after DC P10 EDGES (XEDGE-11/12 rewrite it), lib/capabilityPolicy.ts + org_capability_allows_for after DC wave-2 P7 (it re-creates the function; GOV-10 must build on P7's newest definition); I-11 assets/[tag]/page.tsx after PS-VERIFY (owns the file in wave 2); I-12 after DC P2 (download-url), P6 CHECKOUT + wave-2 RG-12/XEDGE-5 (documents/[libraryId]/page.tsx) and identity IS-P1 (documents/page.tsx :187 and 13 sites on the library page) — its files are the most contended in the repo, so it runs last; I-01 phase B after admin-and-org P1/P2/P3 (which themselves run after DC), because lib/dataRestore.ts and lib/exportTables.ts/dataExport.ts are rewritten there. INTERNAL ORDER: I-10 (GAP-310 Phase 0) before I-13 (GAP-305 needs the codebook files and one grammar); I-13 before I-14's scope picker/GPV-7 and I-09's AREA-6; I-06 ING-3 before I-11 GAP-309; I-07 DWG-2 before I-11 makes discovery authoritative; I-11 GAP-302 before ANY Bridge relation write (99 PAIR 1) and GAP-301 before GAP-304 (PAIR 3); I-02's RLS before I-05's hub label; I-05's aiGates is the one agreement/cap helper — I-09 (flows/read), I-07 (locate), I-02 (embed) wire their limbs in their own files (the HLD-1 pattern), each landing a local gate first if I-05 has not merged; I-07 DWG-6 and I-04's log_audit_completion agree the drawing_audit_logs key. MIGRATIONS: 17 likely across 11 packages, every one hand-applied (DEC-30) with a 'Pending migration:' line and the inventory query pasted BEFORE apply where named: I-06 (dangling mirrors; vision_pages > page_count), I-07 (cross-library audit duplicates), I-08 (NULL-target related rows; duplicate mentions; builtin owners), I-09 (dangling flow endpoints; non-controller confirmed rows), I-10 (duplicate assets.code; code≠tagToCode; alias rewrites; non-numeric codes), I-11 (untagged-relation backfill population), I-12 (libraries newly hidden; zero-rule ACLs; newly-binding role/team denies — BLOCKED per DEC-30 if the inventory cannot be observed), I-13 (decode vs unit_id disagreements), I-02 (citations naming now-restricted documents; stale embedBuild markers), I-05 (none — function re-creation only, lineDiff proof). Every migration that touches a function or policy a later numbered migration defines must satisfy lib/__tests__/migrationSourceOfTruth.test.ts (DB-8) and the searchPathPin lint. EVIDENCE BAR per package (DEC-29): reproduce first, failing test before, every Done-when checked, ship loop tsc → eslint → vitest → next build, 'Verified sound' diff-checked; each package edits its findings in place, updates the README progress table and runs node audit-reports/build-index.mjs. DEC-35 applies throughout: no new role literals — the controller tier through lib/permissions isControllerPrincipal / lib/roleHeld, distinct authorities through a capability id; unit and equipment labels come from the codebook. 99 Do-not table binds every package: no Bridge tags into documents.asset_tags, no sheet node, no render-time unit edge, no MAX_PAGES raise, no service-class lexicon, no confidence auto-accept, no AI-derived hold/MOC input, no vercel.json cron, no second container-chain walk, no lens named for what it hides. SUSPECTED prompt-quality findings (ASK-8, PR-5, PR-9, ORCH-9, DWG-7/8/10/11, SEM-7/9/11/13, GM-5/6/8/12, KACL-11, IRLS-9, AREA-9, CB-7, GOV-14, ILIFE-6/11, LNK-3, WIRE-2, HUB-10, ORCH-7, ORCH-10, FLOW-13, IRLS-6/7) must be reproduced before acting — no provider was observed by the audit."
+}
