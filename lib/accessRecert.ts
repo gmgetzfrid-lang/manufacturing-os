@@ -56,27 +56,157 @@ export function describeRecert(p?: RecertPolicy | null): string {
   return `Recertify every ${p.intervalMonths} month${p.intervalMonths === 1 ? "" : "s"}`;
 }
 
-// ── The current access list (from the library ACL allow-rules) ────────────────
+// ── The EFFECTIVE access list (RET-3) ────────────────────────────────────────
+// The attestation used to snapshot `libraries.acl` allow-rules — a list that is
+// not the access list. Enforcement is node_visible(): a library whose
+// visibility is null/'normal' is readable by EVERY active member; every
+// Admin/DocCtrl reads everything; the effective owner reads their library; and
+// only then does the chain-merged `acl_index` (not `acl`) decide, with an
+// explicit deny of read/discover winning. The population attested here is
+// resolved by the same rules, expanded to PEOPLE (a role rule admits the
+// members holding that role additively, a team rule its members), with
+// expired rules split out — they may still sit in the index until the nightly
+// rebuild, which is exactly what "expired, still listed" means.
 
-export interface AccessGrant { subjectType: string; subjectId: string; subjectName: string; actions: string[]; expiresAt: string | null }
+export type AccessGrantSource = "default" | "controller" | "owner" | "explicit" | "inherited";
+export interface AccessGrant {
+  subjectType: string; subjectId: string; subjectName: string; actions: string[]; expiresAt: string | null;
+  /** Why this person has access (every reason that applies). */
+  via?: string[];
+  source?: AccessGrantSource;
+  status?: "active" | "expired";
+}
+export interface EffectiveAccess {
+  /** People who can read the library today. */
+  live: AccessGrant[];
+  /** Allow-rules whose expiresAt has passed — reported separately, never attested as current. */
+  expired: AccessGrant[];
+  /** False when any read the resolution needs failed; recertifyAccess refuses to attest. */
+  complete: boolean;
+  issues: string[];
+  visibility: string | null;
+}
 
-export async function listAccessGrants(orgId: string, libraryId: string): Promise<AccessGrant[]> {
-  const { data } = await supabase.from("libraries").select("acl").eq("id", libraryId).maybeSingle();
-  const acl = (data?.acl as AccessControl | null) ?? null;
-  const allows = (acl?.rules ?? []).filter((r) => (r as AccessRule).effect === "allow") as AccessRule[];
-  const userIds = uniq(allows.filter((r) => r.subject.type === "user").map((r) => r.subject.id));
-  const nameMap = new Map<string, string>();
-  if (userIds.length) {
-    const { data: us } = await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).in("uid", userIds);
-    for (const u of (us ?? []) as Array<Record<string, unknown>>) nameMap.set(u.uid as string, (u.display_name as string) || (u.email as string) || (u.uid as string));
+type MemberRow = { uid: string; display_name: string | null; email: string | null; role: string | null; roles: string[] | null };
+type BucketSide = { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]>; orgs?: Record<string, string[]> } | null | undefined;
+
+const ruleExpired = (r: AccessRule, nowMs: number) => !!r.expiresAt && new Date(String(r.expiresAt)).getTime() <= nowMs;
+const bucketIds = (side: BucketSide, kind: "users" | "roles" | "teams" | "orgs"): Map<string, Set<string>> => {
+  const out = new Map<string, Set<string>>();
+  const m = side?.[kind] ?? {};
+  for (const [action, ids] of Object.entries(m)) {
+    for (const id of ids ?? []) {
+      const s = out.get(id) ?? new Set<string>();
+      s.add(action); out.set(id, s);
+    }
   }
-  return allows.map((r) => ({
-    subjectType: r.subject.type,
-    subjectId: r.subject.id,
-    subjectName: r.subject.type === "user" ? (nameMap.get(r.subject.id) || r.subject.id) : r.subject.id,
-    actions: r.actions ?? [],
-    expiresAt: r.expiresAt ? String(r.expiresAt) : null,
-  }));
+  return out;
+};
+
+export async function listAccessGrantsDetailed(orgId: string, libraryId: string, nowMs: number = Date.now()): Promise<EffectiveAccess> {
+  const issues: string[] = [];
+  const [{ data: lib, error: libErr }, { data: members, error: memErr }, { data: teamRows, error: teamErr }] = await Promise.all([
+    supabase.from("libraries").select("visibility, acl, acl_index, owner_user_id").eq("id", libraryId).maybeSingle(),
+    supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", orgId).eq("status", "active"),
+    supabase.from("team_members").select("team_id, uid").eq("org_id", orgId),
+  ]);
+  if (libErr) issues.push(`library: ${libErr.message}`);
+  if (!lib && !libErr) issues.push("library: not found");
+  if (memErr) issues.push(`members: ${memErr.message}`);
+  if (teamErr) issues.push(`teams: ${teamErr.message}`);
+  if (issues.length) return { live: [], expired: [], complete: false, issues, visibility: null };
+
+  const visibility = (lib?.visibility as string | null) ?? null;
+  const acl = (lib?.acl as AccessControl | null) ?? null;
+  const index = (lib?.acl_index as { allow?: BucketSide; deny?: BucketSide } | null) ?? null;
+  const ownerId = (lib?.owner_user_id as string | null) ?? null;
+  const people = ((members ?? []) as MemberRow[]);
+  const byUid = new Map(people.map((m) => [m.uid, m]));
+  const nameOf = (uid: string) => { const m = byUid.get(uid); return m ? (m.display_name || m.email || uid) : uid; };
+  const holdsRole = (m: MemberRow, role: string) => (normalizeRoles(m.roles, m.role) as string[]).includes(role);
+  const teamMembers = new Map<string, string[]>();
+  for (const t of (teamRows ?? []) as Array<{ team_id: string; uid: string }>) {
+    teamMembers.set(t.team_id, [...(teamMembers.get(t.team_id) ?? []), t.uid]);
+  }
+
+  // Accumulate per person: actions ∪, every reason recorded.
+  const live = new Map<string, { actions: Set<string>; via: string[]; source: AccessGrantSource }>();
+  const admit = (uid: string, actions: Iterable<string>, via: string, source: AccessGrantSource) => {
+    if (!byUid.has(uid)) return; // only active members can read anything
+    const cur = live.get(uid) ?? { actions: new Set<string>(), via: [], source };
+    for (const a of actions) cur.actions.add(a);
+    cur.via.push(via);
+    live.set(uid, cur);
+  };
+
+  // 1. Controllers and the owner read regardless of the ACL (node_visible
+  //    returns before the index is consulted).
+  for (const m of people) if (normalizeRoles(m.roles, m.role).some((r) => r === "Admin" || r === "DocCtrl")) admit(m.uid, ["read"], "Admin/DocCtrl", "controller");
+  if (ownerId) admit(ownerId, ["read"], "library owner", "owner");
+  // 2. Default visibility admits every active member.
+  const isDefault = visibility == null || visibility === "normal";
+  if (isDefault) for (const m of people) admit(m.uid, ["read"], "default visibility (open to every active member)", "default");
+
+  // 3. Rules: expired ones are split out; live ones are attributed. The
+  //    rule-level expiry is the only place expiry lives (the index has none).
+  const rules = ((acl?.rules ?? []) as AccessRule[]).filter((r) => r.effect === "allow");
+  const expired: AccessGrant[] = [];
+  const expiredSubjects = new Set<string>();
+  const liveSubjects = new Set<string>();
+  for (const r of rules) {
+    const key = `${r.subject.type}:${r.subject.id}`;
+    if (ruleExpired(r, nowMs)) {
+      expiredSubjects.add(key);
+      expired.push({
+        subjectType: r.subject.type, subjectId: r.subject.id,
+        subjectName: r.subject.type === "user" ? nameOf(r.subject.id) : r.subject.id,
+        actions: r.actions ?? [], expiresAt: String(r.expiresAt), source: "explicit", status: "expired",
+        via: ["expired rule — still listed in the access index until the nightly rebuild"],
+      });
+    } else liveSubjects.add(key);
+  }
+
+  // 4. The index the database reads (any allow action lets the row through).
+  const allow = index?.allow ?? null;
+  const explain = (key: string) => liveSubjects.has(key) ? "explicit" as const : expiredSubjects.has(key) ? null : "inherited" as const;
+  for (const [uid, actions] of bucketIds(allow, "users")) {
+    const src = explain(`user:${uid}`); if (!src) continue;
+    admit(uid, actions, "user rule", src);
+  }
+  for (const [role, actions] of bucketIds(allow, "roles")) {
+    const src = explain(`role:${role}`); if (!src) continue;
+    for (const m of people) if (holdsRole(m, role)) admit(m.uid, actions, `role rule: ${role}`, src);
+  }
+  for (const [teamId, actions] of bucketIds(allow, "teams")) {
+    const src = explain(`team:${teamId}`); if (!src) continue;
+    for (const uid of teamMembers.get(teamId) ?? []) admit(uid, actions, `team rule: ${teamId}`, src);
+  }
+  for (const [orgSubject, actions] of bucketIds(allow, "orgs")) {
+    const src = explain(`org:${orgSubject}`); if (!src) continue;
+    for (const m of people) admit(m.uid, actions, "org-wide rule", src);
+  }
+
+  // 5. An explicit deny of read/discover refuses everyone but controllers
+  //    and the owner (DEC-7: an owner outranks a stray deny).
+  const denied = new Set<string>([
+    ...(index?.deny?.users?.read ?? []), ...(index?.deny?.users?.discover ?? []),
+  ]);
+  for (const uid of denied) {
+    const cur = live.get(uid);
+    if (cur && cur.source !== "controller" && cur.source !== "owner") live.delete(uid);
+  }
+
+  const grants: AccessGrant[] = [...live.entries()].map(([uid, g]) => ({
+    subjectType: "user", subjectId: uid, subjectName: nameOf(uid),
+    actions: [...g.actions], expiresAt: null, via: uniq(g.via), source: g.source, status: "active" as const,
+  })).sort((a, b) => a.subjectName.localeCompare(b.subjectName));
+  return { live: grants, expired, complete: true, issues: [], visibility };
+}
+
+/** The people who can read the library today (the EFFECTIVE population — see
+ *  listAccessGrantsDetailed). Expired rules are not in this list. */
+export async function listAccessGrants(orgId: string, libraryId: string): Promise<AccessGrant[]> {
+  return (await listAccessGrantsDetailed(orgId, libraryId)).live;
 }
 
 // ── Policy + attestation ─────────────────────────────────────────────────────
@@ -110,7 +240,14 @@ export async function setRecertPolicy(input: {
 export async function recertifyAccess(input: {
   libraryId: string; orgId: string; note?: string; actorId?: string | null; actorName?: string | null;
 }): Promise<{ grantCount: number; nextDate: string | null }> {
-  const grants = await listAccessGrants(input.orgId, input.libraryId);
+  // RET-3: attest the EFFECTIVE population, and refuse to attest at all when
+  // it could not be resolved — a snapshot signed against a partial list is
+  // the false compliance record the finding describes.
+  const effective = await listAccessGrantsDetailed(input.orgId, input.libraryId);
+  if (!effective.complete) {
+    throw new Error(`Recertification refused: the library's effective access list could not be resolved (${effective.issues.join("; ")}). Nothing was attested.`);
+  }
+  const grants = effective.live;
   const { data: lib } = await supabase.from("libraries").select("recert_policy").eq("id", input.libraryId).maybeSingle();
   const policy = (lib?.recert_policy as RecertPolicy | null) ?? null;
   const now = new Date().toISOString();

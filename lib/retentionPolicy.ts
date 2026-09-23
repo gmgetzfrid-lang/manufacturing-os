@@ -26,6 +26,41 @@ export function computeRetentionUntil(basisISO: string | null, policy: Retention
   return d.toISOString().slice(0, 10);
 }
 
+// ── RET-11: the scheduled end-of-life action ─────────────────────────────────
+// RetentionPolicy.action ('review' | 'archive' | 'destroy') was edited, stored
+// and inherited but read by nothing: a records schedule configured "then
+// destroy" was notified and disposed exactly like "then review". These are the
+// ONE reading of the field — the scan's notice, the Inspector's description,
+// and the disposition default all come through here.
+
+export type ScheduledAction = NonNullable<RetentionPolicy["action"]>;
+
+/** The action a policy schedules at end of life; 'review' when unset (the
+ *  type's own default — a prompt to the controller, never automatic). */
+export function scheduledActionFor(policy: RetentionPolicy | null | undefined): ScheduledAction {
+  return policy?.action ?? "review";
+}
+
+/** Human wording for the scheduled action, as the notice and the panel say it. */
+export function scheduledActionLabel(policy: RetentionPolicy | null | undefined): string {
+  const a = scheduledActionFor(policy);
+  return a === "destroy" ? "destroy" : a === "archive" ? "archive" : "flag for review";
+}
+
+/** What disposeDocument records when the caller names no action: the schedule's
+ *  'destroy' or 'archive'; a 'review' schedule disposes as an archive (the
+ *  review is the disposition decision being taken). */
+export function disposeActionFor(policy: RetentionPolicy | null | undefined): "archive" | "destroy" {
+  return scheduledActionFor(policy) === "destroy" ? "destroy" : "archive";
+}
+
+/** One sentence for a policy, naming the schedule's action so a controller who
+ *  chose "then destroy" sees it outside the open editor. */
+export function describeRetentionPolicy(p?: RetentionPolicy | null): string {
+  if (!p || !p.enabled || !p.years) return "No retention policy";
+  return `Retain ${p.years} year${p.years === 1 ? "" : "s"} from ${p.basis ?? "created"}, then ${scheduledActionLabel(p)}`;
+}
+
 /** The basis date a policy clocks from, given the doc's raw timestamps. */
 export function retentionBasisISO(
   policy: RetentionPolicy,

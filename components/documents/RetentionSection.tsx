@@ -14,6 +14,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import RetentionPill from "@/components/documents/RetentionPill";
 import {
   resolveEffectiveRetentionPolicy, setRetentionPolicy, placeLegalHold, releaseLegalHold, disposeDocument,
+  describeRetentionPolicy, disposeActionFor, scheduledActionLabel,
 } from "@/lib/retention";
 import type { DocumentRecord, RetentionPolicy } from "@/types/schema";
 
@@ -21,10 +22,9 @@ type Level = "document" | "collection" | "library";
 type Basis = NonNullable<RetentionPolicy["basis"]>;
 type Action = NonNullable<RetentionPolicy["action"]>;
 
-function describe(p?: RetentionPolicy | null): string {
-  if (!p || !p.enabled || !p.years) return "No retention policy";
-  return `Retain ${p.years} year${p.years === 1 ? "" : "s"} from ${p.basis ?? "created"}`;
-}
+// RET-11: the description names the scheduled action ("…, then destroy") so
+// the choice is visible outside the open editor.
+const describe = describeRetentionPolicy;
 
 export default function RetentionSection({ doc, orgId, canManage }: {
   doc: DocumentRecord;
@@ -88,11 +88,28 @@ export default function RetentionSection({ doc, orgId, canManage }: {
   };
   const dispose = async () => {
     if (!doc.id) return;
-    if (!(await appConfirm({ title: "Dispose this record?", message: "It will be archived and marked disposed — the audit trail is kept. This is a records-management action.", tone: "danger", confirmLabel: "Dispose" }))) return;
+    // RET-11: the dialog and the recorded action come from the schedule —
+    // a "then destroy" policy is disposed and logged as destroy, not silently
+    // downgraded to archive. Bytes are never deleted here; the space-saver
+    // handles storage, and a legal hold still overrides everything.
+    const scheduled = scheduledActionLabel(eff);
+    const action = disposeActionFor(eff);
+    if (!(await appConfirm({
+      title: "Dispose this record?",
+      message: `Its retention schedule calls for: ${scheduled}. It will be archived and marked disposed (recorded as "${action}") — the audit trail is kept. This is a records-management action.`,
+      tone: "danger", confirmLabel: action === "destroy" ? "Dispose — destroy" : "Dispose",
+    }))) return;
     setBusy(true);
     try {
-      const res = await disposeDocument({ documentId: doc.id, orgId, action: "archive", actorId: uid, actorName: userEmail });
-      if (!res.ok) await appAlert({ tone: "danger", message: res.reason === "legal_hold" ? "This record is under a legal hold — release it first." : `Couldn't dispose: ${res.reason ?? "unknown"}` });
+      const res = await disposeDocument({ documentId: doc.id, orgId, action, actorId: uid, actorName: userEmail });
+      if (!res.ok) {
+        await appAlert({
+          tone: "danger",
+          message: res.reason === "legal_hold" ? "This record is under a legal hold — release it first."
+            : res.reason === "active_hold" ? "This document has an open hold — release the hold first, then dispose."
+            : `Couldn't dispose: ${res.reason ?? "unknown"}`,
+        });
+      }
       await load();
     } finally { setBusy(false); }
   };
