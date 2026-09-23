@@ -1,0 +1,892 @@
+{
+ "area": "projects (joint: projects-tab + projects-and-cost)",
+ "why": "The two areas share 48 files (intake door, quality, money ledger, bid tab, schedule import/engine, wizard/health, project model). One agent per shared file set: each joint package owns BOTH areas' findings for its files, reads both briefs, and writes resolution records into both areas' reports.",
+ "packages": [
+  {
+   "name": "J1 INTAKE-DOOR",
+   "projectsTabPackages": [
+    "P1 INTAKE-DOOR \u2014 the external contractor door as a boundary, the trusted promote routed through publish_revision, transition-in (GAP-401)"
+   ],
+   "projectsAndCostPackages": [
+    "PC-1 INTAKE-DOOR \u2014 authorship, post-publish pipeline, tenant scope, collision scan, throttle, content, errors (sequencing items 1 and 2)"
+   ],
+   "findings": {
+    "projects-tab": [
+     "SEC-1 (route half: magic-byte allowlist, sniffed ContentType stored; egress limb in P10)",
+     "SEC-3",
+     "SEC-4 (residual after R&P OWN-4)",
+     "SEC-5 (IntakePanel + migration; the QuotesPanel mint site :539-544 is P4's one-line limb)",
+     "SEC-6",
+     "SEC-8",
+     "SEC-11",
+     "SEC-12",
+     "SEC-13",
+     "SEC-14 (intake paths; the DB guard extension lands after DC P4's guard migration)",
+     "SEC-16",
+     "SAF-5",
+     "SAF-9",
+     "SAF-10",
+     "SAF-11",
+     "SAF-12",
+     "SAF-13",
+     "SAF-15",
+     "REL-8"
+    ],
+    "projects-and-cost": [
+     "INTK-1",
+     "INTK-2",
+     "INTK-4",
+     "INTK-9",
+     "INTK-3",
+     "INTK-5",
+     "INTK-7",
+     "INTK-8",
+     "INTK-11",
+     "INTK-13",
+     "INTK-10",
+     "INTK-14",
+     "PM-2",
+     "INTK-6 (record-only \u2192 DC P10 EDGES EGR-7 + A&O P1/P3)"
+    ]
+   },
+   "files": [
+    "app/api/cron/maintenance/route.ts \u2014 ONE step: prune_intake_attempts (INTK-8 dw4; no third vercel.json cron). Add only after DC P5 HOLDS' step has merged (same file); PS-VERIFY and A&O P5 add their own single steps later",
+    "app/api/intake/resolve/route.ts (assigned_doc_ids trusted :108-120 region = SEC-11/INTK-9; rejection reason never returned = SAF-9)",
+    "app/api/intake/resolve/route.ts \u2014 org-scoped assigned document fetch (INTK-9); definite invalid-link answer when the project is missing (PM-2); lastOutcome maps 'declined' quotes to not-selected (PT MON-10 resolve half); project status check (PM-1 route limb: refuses tokens whose project is completed/cancelled/archived \u2014 the lib/projects.ts half of PM-1 is PC-2's)",
+    "app/api/intake/upload/route.ts (467 lines today; linkAuthored bootstrap :245-249 reads the link's OWN rejected/pending versions = SEC-3/INTK-1; autoNow :309; raw documents.update({current_version_id\u2026}) :383-385 = SAF-5/INTK-2; no sniff, no rate limit, mime_type: file.type :87; notify block :392+)",
+    "app/api/intake/upload/route.ts \u2014 REBUILD ON DC P4 REVIEW's merged version. Token/link/project-status validation BEFORE req.formData() (token moves to a header or query param; INTK-8 dw1); rate limit via new lib/intakeRateLimit.ts (INTK-8); extension+MIME allowlist per branch with magic-byte sniff, stored ContentType from the sniffed type, title/number length caps, revLabel format check (INTK-11 = PT SEC-6 + SEC-1 server half); generic portal errors with a server-logged correlation id, redline branch checks link ownership before existence, intake_collection_id write checked + idempotent folder creation (INTK-13); linkAuthored derived from documents.authored_by_link_id (never the version chain) and `if (isAssigned || !current_version_id) autoNow = false` (INTK-1 = PT SEC-3 + SEC-12; drafting-flow HAND-5 chain-reaction re-verified against OWN-4's hold check); every document fetch `.eq('org_id', link.org_id)` (INTK-9 = PT SEC-11); autoNow branch calls runPostPublishSideEffects with finalizeReviewedRevision's argument shape (INTK-2 = PT SAF-5; notifications PROD-13 pointer) and first resolves the displaced in_review version (review_state 'superseded' + audit row + reviewer notice) (INTK-4 = PT SAF-10; DC RG-10 dw1 is the same lines \u2014 build on P4's landing); both branches emit() with followers/intent holders and queueEmail() instead of raw notifications/email_notifications inserts, every insert checks {error} (INTK-10); uniqueness_key computed via lib/uniqueness.ts computeUniquenessKey at document insert (INTK-5); quote branch validates the project before writing to R2 and resolves party_id from the link's company (PM-2 dw3; COST-12 intake limb); 'this link is no longer valid' when the project row is gone (PM-2 dw2)",
+    "app/submit/[token]/page.tsx (portal: status + rejection reason display, expiry display, error tone; keyboard/contrast limbs stay with P11)",
+    "app/submit/[token]/page.tsx \u2014 NARROW: render 429 / 'link no longer valid' / correlation-id messages (INTK-8, INTK-13, PM-2); all other portal copy/A11Y stays PT",
+    "components/projects/IntakePanel.tsx (approve passes requireRosterComplete:false ~:234-246 = SEC-13; approve promotes 'whatever is pending' ~:237-241 = SAF-15; raw token read ~:145,:350-353 = SEC-16; expiry default ~:150 = SEC-5; reject path = SAF-9/SAF-10)",
+    "components/projects/IntakePanel.tsx \u2014 NARROW, on DC P4's merged version: promise text at ~:409 made true (INTK-1 dw4); link list filtered to purpose='documents' and Assign-docs hidden for quote links (INTK-12 IntakePanel limb \u2014 INTK-12 itself is PC-8's); reject path unchanged beyond what P4 lands (RG-10 dw3)",
+    "components/projects/TransitionInPanel.tsx (:241-245 one-click adopt over a known collision = SAF-12)",
+    "components/projects/TransitionInPanel.tsx \u2014 NARROW: single-sheet Adopt gets the bulk button's clean gate; 'unverifiable' badge; header comment made true (INTK-3 dw3, INTK-7 dw4)",
+    "lib/__tests__/intakeUploadRoute.test.ts (new: both SEC-3 branches, sniff refusal, 429, held/checked-out demotion, promote goes through publish_revision + runPostPublishSideEffects, retry returns the original record)",
+    "lib/__tests__/rpPhase3Migration.test.ts (KEEP its source pins on the intake route \u2014 extend, never delete)",
+    "lib/__tests__/transitionIn.test.ts (extend: rejected candidate hidden; collision adopt refused; renumber uniqueness-checked)",
+    "lib/__tests__/transitionIn.test.ts (extend: unverifiable, LIKE escape, ordered status filter, rejected excluded, adopt re-scan), new lib/__tests__/intakeUploadRoute.test.ts (submit twice against an assigned doc \u2192 both in review; never-approved doc \u2192 review; hold/checkout/authority demotions keep working; sniffed type; token-before-body; 429), new lib/__tests__/intakeDoorMigration.test.ts (shape of migration A/B; policy census that no later migration widens project_intake_links_write)",
+    "lib/postPublish.ts \u2014 caller comment lists the intake route (INTK-2 dw3); no behaviour change. The grep-based 'every writer of current_version_id imports postPublish' test ALLOW-LISTS the three writers DC P3 LIFECYCLE will convert (lib/revisions.ts:388, lib/documentLifecycle/common.ts:247, app/(protected)/documents/[libraryId]/page.tsx:2563) so the build does not fail before P3 lands; P3 removes the allow-list entries",
+    "lib/schemaExpectations.ts \u2014 one row for intake_attempts (A&O P2 regenerates later; PS-VERIFY adds verify_scans the same way)",
+    "lib/transitionIn.ts (candidate list :69-91 = SAF-11; adopt :202-254 uniqueness check + collision refusal = SAF-12; adopt under the wrong actor :217 vs 20261011 collections guard = SAF-13)",
+    "lib/transitionIn.ts \u2014 scanTransitionImpact: no-number \u21d2 'unverifiable' never 'clean'; LIKE-escape or normalised-key equality; status filtered server-side with deterministic order and no 5-row window; tag-scan-empty reported and reflected in clean (INTK-7 = PT SAF-12 scan half). listTransitionCandidates excludes candidates whose latest intake version is rejected and marks open pending_version_id (INTK-3 = PT SAF-11). adoptDocument re-runs the scan server-side, refuses a collision unless the new number is itself clean, recomputes uniqueness_key on number/library change and reports the unique-violation readably (INTK-3 + INTK-5 = PT SAF-12 adopt half). flagCollisionToDrafting is NOT edited (drafting-flow's DCW-7/FRIC-3/FRIC-8/ROUTE-4/PERS-6/PROJ-12 own it)",
+    "lib/uniqueness.ts (narrow: export the key builder so intake-born and adopted documents get uniqueness_key \u2014 PC INTK-5)",
+    "new lib/fileSniff.ts (magic-byte allowlist; pure; tested)",
+    "new lib/intakeRateLimit.ts (signup_attempts pattern from app/api/auth/signup/route.ts:19-33 \u2014 fail OPEN on limiter error)",
+    "new lib/intakeRateLimit.ts \u2014 signup_attempts pattern (app/api/auth/signup/route.ts:19-33): durable per-token and per-IP window, fail OPEN on limiter error, 429 with a portal-renderable message; per-link submission cap and storage budget read from project_intake_links",
+    "new migration 2026NNNN_pt_intake_idempotency.sql (document_versions/cost_documents idempotency key per (link, sha256) for REL-8/INTK-13; uniqueness_key backfill for intake-born documents \u2014 DEC-30 inventory first)",
+    "new migration 2026NNNN_pt_intake_links_ttl.sql (project_intake_links.expires_at NOT NULL + CHECK (expires_at > created_at AND expires_at <= created_at + interval '90 days') after backfilling NULLs to created_at + 14 days; use_cap INT default 10; REVOKE SELECT(token) ON project_intake_links FROM authenticated \u2014 SEC-16 \u2014 with a token_prefix display column; intake_rate_limits table like signup_attempts; bump_intake_use REVOKE/GRANT \u2014 PC INTK-14)",
+    "new migration A (INTK-1 + INTK-9 + INTK-14 + PM-2 \u2014 one file, inventory first): documents.authored_by_link_id UUID NULL REFERENCES project_intake_links(id) ON DELETE SET NULL, backfilled from the FIRST document_versions row (min created_at) per intake-born document; BEFORE INSERT OR UPDATE trigger on project_intake_links rejecting any assigned_doc_ids entry whose document.org_id <> link.org_id and requiring the writer to hold publish authority on that document's library (user_can_publish_on_library(auth.uid(), library) OR is_org_controller(org_id)) \u2014 service-role exempt like 20260831; REVOKE ALL ON FUNCTION bump_intake_use(uuid) FROM public, anon, authenticated; GRANT EXECUTE TO service_role (pattern 20260930:119-120); project_intake_links.project_id gains REFERENCES projects(id) ON DELETE CASCADE after the orphan inventory returns zero (or after the orphans are deleted \u2014 they have no project to revoke them from)",
+    "new migration B (INTK-5 backfill + INTK-8 table): UPDATE documents SET uniqueness_key = <recomputed> WHERE uniqueness_key IS NULL AND document_number IS NOT NULL \u2014 written as a per-library statement that mirrors lib/uniqueness.ts and REFUSED (NOT VALID / skipped rows reported) where the recomputed key would collide with a live row; CREATE TABLE intake_attempts (id, token_hash, ip, outcome, created_at) + index (token_hash, created_at), (ip, created_at) + prune_intake_attempts() \u2014 RLS on, no policies (service role only)"
+   ],
+   "migrationsLikely": 4,
+   "when": "after DC P4 REVIEW merges (shared promote block / IntakePanel reject path / reviewControl); cron step only after DC P5 HOLDS",
+   "dependsOn": [
+    "DC P10 EDGES (wave 1) lands EGR-7 = INTK-6's redaction of project_intake_links.token (and document_shares.token) in lib/exportTables.ts; A&O P1 (restore never reinstates a token: regenerate + mark revoked) and A&O P3 (exports admin-only, dropping 'Manager' = INTK-6 dw3) finish it. PC-1 records INTK-6 by pointer after those merge and re-verifies each Done-when (DEC-29)",
+    "DC P3 LIFECYCLE (wave 2) converts the other three current_version_id writers \u2014 PC-1's census test allow-lists them until then",
+    "DC P4 REVIEW (wave 1, running now) MERGED \u2014 it owns app/api/intake/upload/route.ts and components/projects/IntakePanel.tsx and its RG-10 lands in the same autoNow/pending_version_id lines as INTK-2/INTK-4. Start PC-1 the moment P4 merges; rebuild INTK-1/2/4 on its version",
+    "DC P5 HOLDS merged before the single cron step (same file); lib/holdGate.ts assertNotOnHold, if merged, replaces the inline hold read OWN-4 put in the route \u2014 otherwise keep the inline read (fail closed)",
+    "DEC-30 inventories BEFORE migration A/B: (a) project_intake_links whose project_id has no projects row; (b) documents with uniqueness_key IS NULL AND document_number IS NOT NULL, grouped by library, and the subset whose recomputed key collides with a live row; (c) document_versions with review_state='in_review' whose record's pending_version_id <> id (INTK-4 orphans \u2014 surfaced, not auto-voided); (d) assigned_doc_ids entries whose document org_id <> link org_id; (e) intake-born documents whose first version carries a different intake_link_id than the newest (INTK-1 bootstraps already taken)",
+    "DEC-33/DEC-34/DEC-36 (review requirement resolves through the container chain; never requireRosterComplete:false), DEC-35 (no role-name branching \u2014 memberHoldsAny / capability tokens only; sweepRoundC1b HEADLINE_AUTHORITY census forbids activeRole?.includes), DEC-40 (intake documents are references \u2014 no project-local copies), DEC-30 (inventory NULL expires_at rows and duplicate intake folders before apply)",
+    "DEC-35: no new role literals \u2014 the controller pool keeps the sanctioned roleFilter(['Admin','DocCtrl']) shape the C1b census enforces (lib/__tests__/sweepRoundC1b.test.ts:114-120); followers come from emit()'s resolvers",
+    "DEC-40 (projects link by reference): intake-born documents get a project_documents reference row, never a copy \u2014 coordinate with PC-2's new project_documents write policy (the intake route runs service-role, so the policy does not bind it; drafting-flow PROJ-5 is the same ask)",
+    "R&P OWN-4 (RESOLVED) landed the hold/checkout/creator-authority demotion in this route with source pins in lib/__tests__/rpPhase3Migration.test.ts:107 \u2014 keep the demotion semantics (a failed gate DEMOTES to pending review, never refuses the file)",
+    "R&P OWN-4 (RESOLVED, 58ff3d5) is the base: hold / checkout / creator-authority demotions at upload/route.ts:311-355 stay; INTK-1 is the surviving bootstrap at :245-249/:309",
+    "document-control P4 REVIEW (wave 1, running now) MERGED \u2014 it owns app/api/intake/upload/route.ts, components/projects/IntakePanel.tsx, lib/reviewControl.ts, lib/docClass.ts, types/schema.ts and rewrites the same promote block for RG-10 (refuse repointing pending_version_id over a live roster; IntakePanel reject voids sign-off rows). Build on its tree; SAF-10's roster-void half may already be delivered by RG-10 \u2014 verify and record",
+    "document-control P5 HOLDS (wave 1) MERGED for lib/holdGate.ts assertNotOnHold \u2014 replace OWN-4's inline document_holds read with the shared helper; if not merged keep the inline read (fail closed on error, as today)",
+    "drafting-flow fleet (unplanned) will edit the same route's redline branch (SM-9) and lib/transitionIn.ts flagCollisionToDrafting \u2014 different functions; whichever lands second rebases",
+    "notifications fleet (unplanned): PROD-13/TAX-13 own the doc_superseded / review_requested kind vocabulary \u2014 PC-1 keeps today's kinds and only changes the dispatch path",
+    "projects-and-cost 99-fix-sequencing items 1\u20132 (INTK-1 then INTK-2) are THIS package's first two commits; drafting-flow HAND-5/HAND-9/SM-9/PROJ-5/PROJ-12 and projects-and-cost INTK-1\u2026INTK-14, PM-2 (delete revokes tokens \u2014 needs lib/projects.ts, P8's file: P8 calls a revoke helper P1 exports from lib/transitionIn.ts or a new lib/intakeLinks.ts) close by pointer to this package",
+    "publish_revision newest body (20261049; verify no later re-creation) \u2014 SAF-5/INTK-2/HAND-5: the trusted promote calls supabaseAdmin.rpc('publish_revision', { p_actor: link.created_by, \u2026 }) so the publish guard, hold gate, checkout lock and review-completion branch all run, then runPostPublishSideEffects (lib/postPublish.ts:91). Never re-implement the pipeline in the route (GAP-401 'do not keep the service role and add application-layer checks')"
+   ],
+   "decisionsNeeded": [
+    "Public-door allowlist \u2014 default: PDF, PNG, JPEG, TIFF, DWG (AC10xx magic) only; everything else refused naming the accepted list; DXF/XLSX/DOCX excluded until a controller asks (fail-safe: fewer types)",
+    "Link TTL \u2014 default 14 days, DB ceiling 90 days, use cap 10, expired links swept by cron/maintenance (after DC P5/PS-VERIFY/A&O P5 cron edits merge \u2014 one step); existing NULL-expiry rows backfilled to created_at+14d and the affected links listed in the migration output",
+    "Rate limit \u2014 default 20 uploads per token per hour and 60 per IP per hour, fail OPEN on limiter error (house pattern), at most one notification per recipient per 15-minute window",
+    "SEC-16 token exposure \u2014 default: column-privilege REVOKE SELECT(token) for authenticated + display prefix; hashing the token at rest is deferred (would change both public routes' lookups) and recorded as a new finding",
+    "SEC-14 MOC gate \u2014 default: intake approve UI captures moc_reference when doc_class requires it and the route refuses publish without it; the DB-side 'fails on every path' criterion is delivered by extending the newest publish guard AFTER DC P4's guard migration (lineDiff proof, rpSweepMigrations pattern)",
+    "SAF-9 contractor notification \u2014 default: portal shows outcome + reason on next visit; email to the contractor only when the link carries a contact email the org entered (no scraping of letterheads)",
+    "INTK-1 authorship rule (default, fail-safe): a document is link-authored only when documents.authored_by_link_id = link.id AND the document is not in assigned_doc_ids AND current_version_id IS NOT NULL (at least one human approval); anything else routes to review. Record as a new DEC",
+    "INTK-3 rejected candidates: exclude from the transition list (default) vs show with a 'rejected' badge; pending candidates: block single adopt (default) vs allow with a warning",
+    "INTK-7 unnumbered sheets: 'unverifiable' and excluded from bulk adopt (default); a number is not made mandatory on the portal (would move the dead end upstream)",
+    "INTK-8 limits (defaults): 30 submissions / token / hour, 60 / IP / hour, per-link cap 500 submissions and 5 GB unless overridden on the link; presigned direct-to-R2 upload (INTK-8 dw3) is deferred to PT's GAP-401 build and recorded as a follow-on finding, not done here",
+    "INTK-11 allowlists (defaults): quotes PDF only; drawings PDF/DWG/DXF/ZIP; the download-disposition half (INTK-11 dw2) is PT SEC-7 on DC P2's download-url route \u2014 pointer, not done here",
+    "INTK-10 audience (default): controllers pool (roleFilter) + project owner + followers/intent holders of the target document via emit(); email only through queueEmail (preferences, digest, dedupe honoured)",
+    "PM-2 mechanism (default): FK ON DELETE CASCADE after the orphan inventory (orphans are deleted \u2014 no project remains that could revoke them) rather than an explicit deleteProject cleanup (lib/projects.ts is PC-2's)",
+    "INTK-4 displaced review state: 'superseded' (default; matches the version's lifecycle vocabulary) vs 'void'"
+   ]
+  },
+  {
+   "name": "J2 QUALITY",
+   "projectsTabPackages": [
+    "P2 QUALITY-GATES \u2014 PSSR evidence contract, per-item AI review, checked writes, gates with teeth (GAP-402 narrow, GAP-404, GAP-405)"
+   ],
+   "projectsAndCostPackages": [
+    "PC-5 QUALITY-EVIDENCE-INTEGRITY \u2014 retraction, laundering, assessment downgrade, machine actor, fail-open gate, turnover history, punch record, org rail (sequencing item 3 + GAP-404 + GAP-402 narrow)"
+   ],
+   "findings": {
+    "projects-tab": [
+     "SAF-1",
+     "SAF-2",
+     "SAF-3 (checklists/turnover half + the shared helper; costs/changeOrders half is P3's)",
+     "SAF-4",
+     "UX-7 (QualityTab tone; IntakePanel:292 limb is P1's)",
+     "UX-8 (QualityTab + checklists.ts:218-223; CostsTab:119-124 limb is P3's)",
+     "UX-10 (the load-bearing safety read \u2014 PC QUAL-8; costs half satisfied by REL-2 in P3, QuotesPanel:545 limb in P4)",
+     "PERF-7"
+    ],
+    "projects-and-cost": [
+     "QUAL-1",
+     "QUAL-2",
+     "QUAL-5",
+     "QUAL-6",
+     "QUAL-8",
+     "QUAL-11",
+     "QUAL-12",
+     "QUAL-13",
+     "QUAL-7"
+    ]
+   },
+   "files": [
+    "app/api/projects/checklist/route.ts \u2014 response includes each proposal's current status/evidence so the confirm can name satisfied targets (QUAL-5 dw3); per-item apply contract (SAF-2). SEC-10 (service-role read of ACL-restricted documents via lib/docFileServer.ts) stays PT \u2014 not edited here",
+    "components/projects/QualityTab.tsx (bulk N/A count-only confirm :293-319 = SAF-2; blank-reason prompts :426-436,:579-581,:698-699 = SAF-4; success rendered as error :314,:328,:81-86 = UX-7; top-of-page error :81-86,:383-386 = UX-8; evidence chip shows status+rev = SAF-1)",
+    "components/projects/QualityTab.tsx \u2014 NARROW, named regions: the assessment confirm dialog names satisfied targets and lists items per-item (:305-309; QUAL-5/SAF-2); evidence chips render the cited document's current status and a machine-verified label separate from a human decision (:455-464; QUAL-1 dw3, QUAL-6 dw4); turnover Accept offers the document picker, accepted/waived rows get Reopen (:518-582; QUAL-11/QUAL-13); punch rows show closer + closedAt + done/void (:685-701; QUAL-7); delete the false header comment at :17 (QUAL-9's comment limb \u2014 QUAL-9 is PC-9's). PT's QualityTab packages (A11Y-2/8/12, UX-3/7/8, PERF-3/4, SAF-4 dialog half) run after PC-5 merges",
+    "components/providers/DialogProvider.tsx (:107 region only \u2014 prompt gains required/minLength so a blank reason cannot settle; app-wide provider, additive option, default unchanged)",
+    "lib/__tests__/checklists.test.ts (new: unreviewed Draft with matching title does not satisfy; count-only bulk path cannot write; RLS zero-row write returns error and writes no audit row; blank reason rejected server-side on all three routes; batched apply is one round trip)",
+    "lib/__tests__/projectControls.test.ts (checklistEngine section \u2014 extend, keep the existing pins)",
+    "lib/__tests__/projectControls.test.ts (extend: satisfy-then-remove-title \u2192 not satisfied; auto-only MI checklist does not satisfy a PSSR MI item; satisfied + na proposal \u21d2 not flipped; read error \u21d2 ok:false; zero items \u21d2 ok:false), new lib/__tests__/checkedWrite.test.ts (zero-match \u21d2 error, no audit row), new lib/__tests__/qualityRailsMigration.test.ts (trigger/policy shapes; org mismatch refused)",
+    "lib/checklistEngine.ts (evidence contract per item kind; satisfied-by provenance; retraction when the citing document is voided/superseded/deleted \u2014 PC QUAL-1/QUAL-2 same file)",
+    "lib/checklistEngine.ts \u2014 applyAutoEvidence returns a downgrade for a satisfied item whose only evidence is source:'auto' and whose probe no longer proves it; stale auto chips removed, human chips untouched (QUAL-1; substrate: manual_note precedence and firstDocMatch's whole-word matcher stay byte-identical); addedEvidence carries documentId (QUAL-1 dw2); miChecklistComplete requires human-decided items, the turnover rule matches the item's subject against accepted item names (QUAL-2); the evidence register admits only Issued documents with a current_version_id, excluding external-provenance versions not approved, and prefers documents attached to accepted turnover items over intake titles (PT SAF-1 = GAP-404 acceptance 1; QUAL-13 dw3)",
+    "lib/checklists.ts (audit() after unchecked update :203-205/:225-227 = SAF-3; gatherEvidence title match over Draft/intake docs :250-282 = SAF-1; applyAssessment sequential loop :158-172 = SAF-2/PERF-7/QUAL-5; list reads discard error :96/:103 = UX-10/QUAL-8; completion gate :214-231)",
+    "lib/checklists.ts \u2014 runAutoEvidence writes documentId chips and removes stale ones; applyAssessment refuses to downgrade satisfied or evidence-bearing items without per-item confirmation and the confirm payload states how many proposals target satisfied items (QUAL-5 = PT SAF-2's per-item review); runAutoEvidence/applyAssessment stamp a distinguishable machine actor and the audit row carries item ids + prior/new status + citation (QUAL-6); listChecklistItems returns a distinguishable error and setChecklistStatus refuses on read failure or zero items (QUAL-8; PT UX-10 lib half); setChecklistStatus records whether completion rested on human sign-off and only that is citable (QUAL-2 dw3); createChecklist derives item org_id from the header row (QUAL-12 dw2); every decision write goes through the new checked-write helper with row-count verification and audits only after a confirmed match (PT SAF-3 = GAP-402 narrow, this file's sites); per-item assessment writes batched (PT PERF-7); reason required server-side for N/A and reopen, no invented fallback (PT SAF-4 / GAP-405 server half)",
+    "lib/turnover.ts (blank reason accepted :204/:225 = SAF-4; audit after unchecked write :207/:275 = SAF-3; waived vs accepted buckets; reopen/reject trail \u2014 PC QUAL-11/QUAL-13 document_id write :199)",
+    "lib/turnover.ts \u2014 reviewTurnoverItem writes a turnover_review_events history row (reviewer, date, note, from\u2192to) instead of overwriting; accepted/waived items can be reopened with a required reason and an audit action; a rejection produces a nonconformance-kind event the scorecard and report can read (QUAL-11); document_id offered/required on accept and rendered (QUAL-13); punch closed_by_name + description/location + closure evidence; done vs void distinguishable (QUAL-7); partyId threaded through seed/add/review (COST-12 turnover limb \u2014 COST-12 itself is PC-8's); waived is no longer counted as accepted (PT SAF-4 dw4); reason required server-side on waive/void (GAP-405 server half); checked writes (SAF-3)",
+    "new lib/checkedWrite.ts (one helper: update/insert/delete \u2192 .select('id') \u2192 zero rows = error; mirrors the OWN-14 inline shape in lib/ownership.ts:198-207; P3 consumes it after merge or uses the inline shape and records it)",
+    "new lib/checkedWrite.ts \u2014 GAP-402 narrow: one helper that runs an update/insert with .select('id'), requires a non-empty match, returns a typed failure ('no permission, or someone else changed this'), never throws raw Postgres text; adopted here by checklists/turnover and later by PC-7 (money) and PC-9 (wizard). A census test fails when a raw discarded write result appears in lib/checklists.ts, lib/turnover.ts, lib/costs.ts, lib/costDocs.ts, lib/changeOrders.ts (GAP-402 acceptance 3)",
+    "new migration 2026NNNN_pt_quality_rails.sql (CHECK constraints on project_checklists.status, checklist_items.status/applicability, turnover_items.status, punch_items.status \u2014 the quality half of REL-4; checklist_items.org_id tied to the parent checklist by trigger \u2014 PC QUAL-12; satisfied_by/satisfied_how columns for GAP-404 acceptance 3 \u2014 PC QUAL-6)",
+    "new migration A (QUAL-12 + QUAL-7 + QUAL-11): BEFORE INSERT OR UPDATE trigger on checklist_items enforcing org_id = (SELECT org_id FROM project_checklists WHERE id = checklist_id) and checklist_items_write WITH CHECK gains the same predicate; punch_items.closed_by_name TEXT, description TEXT, location TEXT, closure_note TEXT; turnover_review_events (id, org_id, project_id, item_id, from_status, to_status, kind CHECK IN ('review','reopen','nonconformance'), reviewer uid + name, note, created_at) append-only (INSERT own-row only, no UPDATE/DELETE for authenticated); project_checklists.completed_basis TEXT CHECK IN ('human','auto') NULL (QUAL-2 dw3)"
+   ],
+   "migrationsLikely": 2,
+   "when": "now; PC-6 QUALITY-SIGNOFF-AUTHORITY follows as J2b after J2 and DC P7 (capabilityPolicy re-creation)",
+   "dependsOn": [
+    "DEC-30 inventories BEFORE migration A: checklist_items whose org_id <> the parent checklist's org_id (QUAL-12 \u2014 surfaced; a mismatch is either corruption or an attack and needs a human); satisfied items whose evidence is auto-only and whose cited title no longer matches an Issued document in the register (QUAL-1 stale greens \u2014 listed for review, never auto-downgraded by the migration; the next sweep does it visibly); project_checklists at 'complete' with zero manual_note items (QUAL-2 \u2014 their completed_basis backfills to 'auto')",
+    "DEC-35 (no facility vocabulary \u2014 'MI', 'PSSR' item kinds must be config/seed data, never code branches), DEC-31 (convert the safety-critical writes only; open a new finding for the remaining raw .update sites), GAP-402 'do not write the audit row before the write succeeds', GAP-404 'do not render an AI-marked item identically to a human-verified one'",
+    "DEC-35: the machine actor is a reserved sentinel (updated_by NULL + updated_by_name 'evidence sweep' / 'AI assessment'), not a facility role",
+    "MON-11's turnover-rejection notice is one emit() call in lib/turnover.ts delivered here as P3's limb; MON-7's party_id carry on turnover rows is P11's limb (one column in the insert)",
+    "No document-control package touches these files \u2014 PC-5 can run NOW, concurrently with DC wave 1",
+    "No running fleet owns these files \u2014 can start NOW. DialogProvider.tsx is app-wide: additive option only",
+    "PT SEC-10 (checklist route reads ACL-restricted documents with the service role) is NOT done here \u2014 it needs lib/docFileServer.ts; PC-5 only keeps the route's response shape stable",
+    "QUAL-4 (PC-6) builds on this package's completed_basis and history rows \u2014 PC-6 runs after PC-5 merges",
+    "Report 03 substrate (must not change): firstDocMatch whole-word matcher; manual_note precedence; setChecklistStatus's gate logic and computeChecklistProgress's N/A exclusion; gatherProjectEvidenceState's fail-closed per-query tolerance (only the fail-OPEN read behind the completion gate changes); user_owns_project's shape",
+    "Sequencing item 3: QUAL-1 'ships with GAP-404' \u2014 GAP-404's acceptance (no green on a string alone; per-item bulk review; who/what satisfied each item and how) is met by QUAL-1 + QUAL-5/SAF-2 + QUAL-6 together; GAP-404 depends on GAP-402, which this package ships in its narrow form (helper + census + the quality sites); PT closes GAP-402/GAP-404/GAP-405-server by pointer",
+    "projects-and-cost 99-fix-sequencing item 3: QUAL-1 (auto-evidence never retracts) ships WITH GAP-404 here \u2014 same file (lib/checklistEngine.ts); QUAL-2, QUAL-5, QUAL-6, QUAL-8, QUAL-11, QUAL-12, QUAL-13 close by pointer to this package; projects-tab owns lib/checklists.ts, lib/checklistEngine.ts, lib/turnover.ts, QualityTab.tsx"
+   ],
+   "decisionsNeeded": [
+    "Evidence contract \u2014 default: only Issued/Locked (NOT_CURRENT_STATUSES from lib/aiBoundary.ts excluded) documents attached to THIS project (project_documents or the project's intake collection after approval) can satisfy; a filename/title match is a proposal rendered as 'suggested', never green",
+    "Bulk AI N/A \u2014 default: review list with every item unchecked; apply writes only checked ids; audit row carries the ids",
+    "Reason minimum \u2014 default 10 non-whitespace characters, no canned text (lib/checkinOutcomes.ts bar); enforced in turnover.ts/checklists.ts, mirrored in the prompt",
+    "Retraction (QUAL-1) \u2014 default: a satisfied item whose citing document leaves Issued/Locked reverts to needs_evidence with an audit row; never silently stays green",
+    "Turnover reopen (QUAL-11) \u2014 default: an accepted item can be reopened by a controller or the project owner with a reason; the prior acceptance survives as history (never overwritten in place)",
+    "QUAL-1 retraction (default): an auto-only green whose proof vanished goes to needs_evidence on the next sweep, with the stale chip removed and an audit row per item; human-evidenced items are never touched",
+    "QUAL-2 (default): a checklist completed on auto-evidence alone records completed_basis='auto' and is never cited as proof by another checklist; the turnover rule requires a subject match",
+    "QUAL-5 (default): the assessment never downgrades a satisfied or evidence-bearing item; such proposals are listed for per-item human confirmation",
+    "QUAL-8 (default): a checklist with zero items cannot be completed; a failed item read blocks completion",
+    "QUAL-11 nonconformance (default): a rejection writes a 'nonconformance' review event readable by PC-8's scorecard and PC-9's report \u2014 no separate NCR module (recorded as a follow-on capability if wanted)",
+    "QUAL-7 (default): description/location/closure_note added as nullable text; photos/attachments deferred to a follow-on finding"
+   ]
+  },
+  {
+   "name": "J2b QUALITY-SIGNOFF-AUTHORITY",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [
+    "PC-6 QUALITY-SIGNOFF-AUTHORITY \u2014 discipline reviewers, separation of duties, bound sign-off identity (QUAL-4 \u2014 a build, wave 3)"
+   ],
+   "findings": {
+    "projects-tab": [],
+    "projects-and-cost": [
+     "QUAL-4"
+    ]
+   },
+   "files": [
+    "components/projects/QualityTab.tsx \u2014 NARROW: sign-off controls rendered from the capability decision (canSignOff) rather than canManage, so the UI neither hides controls the policy accepts nor shows ones it rejects (QUAL-4 dw4)",
+    "lib/capabilityPolicy.ts \u2014 ONE new capability id 'quality.sign_off' (area Quality; default holders = today's writers: controllers + project owner) resolved per project through the resource dimension DEC-13 stage 3 delivered (20261052/20261056); SQL CASE row via a migration re-creating org_capability_allows_for from its NEWEST definition (20261063 or DC P7's later one) with a lineDiff proof \u2014 the same procedure DC P7 uses for its transmit capability",
+    "lib/checklists.ts / lib/turnover.ts \u2014 setChecklistStatus and reviewTurnoverItem refuse completion/acceptance by the uid that created the checklist and ran the sweep when another eligible signer exists (DEC-12/DEC-37 shape: derived from the eligible count, per slot); a sign-off captures a bound identity (uid + timestamp + statement) via an e_signatures row (20261050 signature-ceremony shape), replacing the email-prefix stamp \u2014 built on PC-5's merged versions",
+    "new lib/__tests__/qualitySignoff.test.ts (owner cannot self-complete when a second signer exists; a Safety-role member granted the capability on one project can write that project's checklist and no other; the UI census renders controls from the decision)",
+    "new migration (QUAL-4): project_checklists_write / checklist_items_write / turnover_items_write / punch_items_write gain OR org_capability_allows_for('quality.sign_off', org_id, project_id) \u2014 replacing, not supplementing, the FOR ALL bodies from 20261013 (DRLS-1 lesson); quality_signoffs (or e_signatures rows with resource_type 'checklist'/'turnover_item') binding uid, timestamp, statement, item; BEFORE UPDATE trigger on project_checklists refusing status\u2192complete when NEW.completed_by = created_by AND another eligible signer exists (eligibility from the capability decision)"
+   ],
+   "migrationsLikely": 1,
+   "when": "wave 3: after J2 and DC P7 TRANSMITTALS",
+   "dependsOn": [
+    "A&O P9 edits lib/roleCapabilities.ts (POLICY_TOKENS) \u2014 PC-6 adds no tokens there; the capability's default holders are expressed in capabilityPolicy.ts only",
+    "DC P7 TRANSMITTALS (wave 2) merged \u2014 it adds a capability id to lib/capabilityPolicy.ts and re-creates org_capability_allows_for; PC-6 re-creates it again from P7's newest body (never from 20261063 if P7 has landed)",
+    "DEC-13 (resource dimension live), DEC-12 + DEC-37 (SoD derived from eligible count, per slot), DEC-16 (fail closed when the decision cannot be evaluated), DEC-35 (Safety/Operations/Maintenance are granted the capability, never named in code), DEC-21 (independence policy default on where a roster exists)",
+    "DEC-30 inventory (informational): project_checklists where the completer uid = creator uid; turnover items accepted by the project owner on projects with other active members",
+    "PC-5 merged (same lib/checklists.ts / lib/turnover.ts / QualityTab regions; completed_basis and review history are the substrate)"
+   ],
+   "decisionsNeeded": [
+    "Grant model (default): a per-project capability grant ('quality.sign_off') rather than project_members.role expansion \u2014 keeps SURF-11's roster semantics intact",
+    "SoD (default): refuse self-completion only when a second eligible signer exists in the org (DEC-12 pattern); with one eligible person, allow with a visible 'single-signer' marker on the record",
+    "Bound identity (default): e_signatures rows (existing ceremony) over a new quality_signoffs table"
+   ]
+  },
+  {
+   "name": "J3 MONEY-LEDGER",
+   "projectsTabPackages": [
+    "P3 MONEY-LEDGER \u2014 the award as a transaction with a repair path, compare-and-swap everywhere, honest rollups, financial rails (GAP-406)"
+   ],
+   "projectsAndCostPackages": [
+    "PC-7 MONEY-LEDGER-RAILS \u2014 exposure and revised budget, CPI scope, change-order authority, source links, delete guards, swallowed money writes, stale-snapshot void, currency at posting"
+   ],
+   "findings": {
+    "projects-tab": [
+     "MON-1",
+     "MON-3",
+     "MON-4 (rollup; the report label is P7's one-line limb)",
+     "MON-8",
+     "MON-9",
+     "MON-10 (costDocs decline-all-rivals; the portal status copy is whatever status this sets \u2014 P1 renders it)",
+     "MON-11 (award + CO-approval notices here; turnover-rejection emit is P2's limb)",
+     "MON-12 (award refusal server-side; QuotesPanel chip is P4's limb, companies page :522 is P9's)",
+     "SAF-3 (costs/changeOrders half \u2014 the ID closes in P2, which ships the helper and the record)",
+     "REL-2",
+     "REL-4 (money tables + fmtMoney; quality CHECKs are P2's migration)",
+     "REL-9 (CO unwind + dead cost states; checklist void is P2's, companies 'inactive' is P9's)",
+     "PERF-10 (fmtMoney/list rows; costSeries parse-once is P5's limb)",
+     "UX-8 (CostsTab:119-124 limb only \u2014 the ID closes in P2)"
+    ],
+    "projects-and-cost": [
+     "COST-1",
+     "COST-2",
+     "COST-4",
+     "COST-6",
+     "COST-14",
+     "COST-11",
+     "COST-9",
+     "COST-10",
+     "COST-8"
+    ]
+   },
+   "files": [
+    "app/api/projects/cost-docs/route.ts (page-truncation signal returned then dropped :128-156 \u2014 PC COST-13/UX-4; keep the auth shape P10's tests pin)",
+    "components/projects/CostsTab.tsx (empty vs broken :60-82 = REL-2; error placement :119-124 = UX-8; remaining tile :133-156 = MON-4; currency label :159-164 = BID-7's CostsTab limb)",
+    "components/projects/CostsTab.tsx \u2014 NARROW: Remaining tile and per-account row show the exposure-based figure with actuals-only secondary (COST-2 dw2); revised-budget column (COST-4); entry rows link to their source document / CO (COST-9 dw3); currency picker on the account form instead of a hardcoded 'USD' (:489; COST-8 dw4); loaders surface errors instead of an empty state (PT REL-2 lib-facing half). Everything else in CostsTab is PT's (A11Y-10/12, CHART-*, REL-10, UX-8, PERF-*)",
+    "components/projects/cost/ChangeOrdersPanel.tsx (unwind action; approval authority copy \u2014 PC COST-6)",
+    "components/projects/cost/ChangeOrdersPanel.tsx \u2014 NARROW: proposer and decider side by side with a same-person flag (COST-6 dw4); Unwind action (COST-9)",
+    "components/projects/cost/CostCharts.tsx \u2014 NARROW, one label: which portion of the budget the CPI-based EAC covers (COST-1 dw2)",
+    "lib/__tests__/costs.test.ts (extend) + new lib/__tests__/costDocs.test.ts (post-failure-plus-revert-failure reported; void/manual-total on awarded refused; unmapped status readable; concurrent CO numbers distinct; zero-row write writes no audit row)",
+    "lib/__tests__/costs.test.ts (extend: budget 1000 / committed 900 / spent 0 is at-risk and not 1000 remaining; 200k account + approved 100k CO + 200k actuals at 50% \u21d2 CPI 1.0; one pinned + one unpinned account \u21d2 EAC \u2265 spent; source links non-null on every posted entry), new lib/__tests__/costDocs.test.ts (void/manual-total refused on awarded; rival-decline failure reported; truncated-read refusal; currency mismatch refusal), new lib/__tests__/moneyRailsMigration.test.ts (guards + split policies + threshold trigger shapes)",
+    "lib/changeOrders.ts (unchecked decide write :151-161 = SAF-3; number generation race :88-110 = MON-9; approve never revises budget \u2014 PC COST-4; unwind path absent :186-192 = REL-9/COST-9)",
+    "lib/changeOrders.ts \u2014 decideChangeOrder rejects actorId = created_by when another eligible decider exists and enforces the org approval threshold (COST-6); ChangeOrder maps posted_entry_id and an unwind voids exactly that entry (COST-9 dw2); the revert and posted_entry_id writes surface errors (COST-11); CO numbering retries on 23505 up to three times then a human message (PT MON-9); checked writes (SAF-3)",
+    "lib/costDocs.ts (claimDocTransition CAS :170-192 verified sound \u2014 keep; award post-then-revert :196-257 = MON-1/COST-11; voidCostDoc/setManualTotal without CAS :310-334 = MON-3/COST-14; status label throw :181 = MON-8; rival decline :250-257 = MON-10)",
+    "lib/costDocs.ts \u2014 awardQuote/postInvoice pass the document id as source_document_id (COST-9), refuse when doc.currency <> account.currency or record an explicit rate + converted amount (COST-8 = PT BID-7 posting half), refuse or require a typed total confirmation when pages_read < pages_total (COST-13 posting limb \u2014 reads the columns PC-8 adds: cost_documents.pages_total, pages_read), check the rival-decline {error} and matched count and report a partial outcome (COST-11); revertDocTransition surfaces failure (COST-11 dw2 = PT MON-1 dw1); voidCostDoc and setManualTotal claim with .in('status', allowed) + row-count check and re-read the row instead of trusting the client snapshot (COST-14 = PT MON-3; PT BID-9's correct/void on parsed rows rides here); parsedQuoteFrom overlays doc.totalAmount so one number drives display and award (PT BID-1 = GAP-407 dw1); COST_DOC_STATUS_LABEL[status] ?? status (PT MON-8 lib half); a reconciliation query/helper lists awarded/posted docs with no matching entry and approved COs with posted_entry_id NULL, and an auditable repair action (COST-11 dw3 = PT MON-1 / GAP-406 'repair path')",
+    "lib/costSeries.ts \u2014 computeForecast's CPI branch applies to the pinned subset (budget = pinnedBudget), the unpinned remainder by run-rate or excluded and labelled; a test pins EAC never below spent (COST-1)",
+    "lib/costs.ts (unchecked writes :111-117 = SAF-3; computeCostRollup remaining ignores commitments :316-332 = MON-4/COST-2; fmtMoney :352-360 = PERF-10/REL-4; list reads discard error :157/:189/:221 = REL-2)",
+    "lib/costs.ts \u2014 AccountRollup/ProjectCostRollup expose exposure (committed + spent net of invoiced commitments), remaining = budget \u2212 exposure, overBudget on exposure (COST-2 = PT MON-4); revisedBudget = budget + approved change orders (joined by cost_account_id), earnedValue/remaining/overBudget/cpi against revisedBudget with the original visible as baseline (COST-4); pinnedBudget/pinnedSpent alongside cpi (COST-1 dw1 \u2014 the contract PC-9's report consumes); addEntry accepts and writes source_document_id (COST-9); saveParty's patch gains companyId and mapParty carries it (COST-12 saveParty limb \u2014 COST-12 itself is PC-8's); the never-delete comment names the DB guard (COST-10 dw3); the audit helper at :111-117 logs its failure (COST-11 dw4); checked writes with row-count verification (PT SAF-3 money sites; PC-5's lib/checkedWrite.ts if merged, else the same pattern inline); fmtMoney unchanged",
+    "new migration 2026NNNN_pt_money_rails.sql (award_quote RPC: one transaction claims the transition, inserts the commitment, declines rivals, audits \u2014 or rolls back entirely; a view/query of awarded-without-commitment rows and an audited repair action; CHECK on cost_documents.status/kind and change_orders.status; DELETE refused on cost_entries/change_orders/cost_documents for non-controllers \u2014 PC COST-10; change-order number from a per-project sequence \u2014 MON-9)",
+    "new migration A (COST-10 + COST-6): BEFORE DELETE guards on cost_entries, change_orders, cost_documents (and cost_accounts) refusing deletion unless current_setting('app.record_purge', true) = 'project:<id>' (the GUC PC-2's delete_project_record sets) or auth.role() = 'service_role' with an audit row written first (COST-10 dw1/dw2 \u2014 shape of 20260826); change_orders_write split: INSERT (status='proposed' only) for controller-or-owner, UPDATE to approved/rejected for controller-or-owner AND NOT (decided_by = created_by) when the org has another eligible decider, plus an org_configurations key change_order_approval_threshold enforced in a BEFORE UPDATE trigger (COST-6 dw2/dw3 \u2014 a trigger, not a second permissive policy); CHECK constraints on cost_documents.status and kind (PT MON-8 dw3)"
+   ],
+   "migrationsLikely": 2,
+   "when": "now",
+   "dependsOn": [
+    "DEC-12/DEC-37 for COST-6's self-approval rule (derived from the eligible-decider count); DEC-35 (threshold and deciders are configuration, not role names in code); DEC-31 (the org threshold UI in admin settings is a follow-on finding \u2014 this package ships the config key + enforcement + a documented default)",
+    "DEC-30 inventories: cost_documents in awarded/posted with no cost_entries row referencing them (COST-11 dw3 / MON-1 dw2 \u2014 the repair path's population); change_orders approved with posted_entry_id NULL; cost_entries with source_document_id NULL created by award/post/CO paths (COST-9 backfill by description/reference match, applied only where unambiguous); change_orders where decided_by = created_by (COST-6 \u2014 informational, flagged on the row, never rewritten)",
+    "DEC-30 inventory before apply: cost_documents rows status='awarded' with no cost_entries row (the MON-1 damage already done \u2014 GAP-406 acceptance 2 and the repair path depend on the count); rows with a status outside the CHECK set",
+    "Intelligence ILIFE-1 / A&O BKP-2 own the orphan collector for cost_documents.file_url \u2014 untouched here; notifications PROD-6 (cost/CO silent) untouched",
+    "No document-control package touches these files \u2014 PC-7 can run NOW, concurrently with DC wave 1 and with PC-8 (disjoint files; two named column contracts: cost_documents.pages_total/pages_read from PC-8's migration, and companyId on CostParty consumed by PC-8's registry work). If PC-7 lands first, its truncated-read refusal is a no-op until PC-8's columns exist (reads NULL as 'unknown' \u2014 fail SAFE: unknown page count \u21d2 require the typed confirmation)",
+    "No running fleet owns these files \u2014 can start NOW. Consume P2's lib/checkedWrite.ts once merged, else the OWN-14 inline shape (record which)",
+    "PC-2 delete_project_record shares the GUC 'app.record_purge' contract with migration A \u2014 name fixed here; whichever lands first defines it, the other reuses it",
+    "PC-5's lib/checkedWrite.ts (GAP-402) \u2014 consume if merged; otherwise apply the same .select('id') + row-count pattern inline and let PC-5's census pick the file up later",
+    "Report 03 'Verified sound': compare-and-swap on award/post/decide is load-bearing \u2014 the transaction extends it, never replaces the zero-match-is-loss semantics",
+    "Report 04 substrate (must survive): claimDocTransition's CAS shape; validateParsedQuote; user_owns_project's active-membership requirement; honest-null discipline in companyScore/costSeries; void-not-delete convention; hasWord() whole-word scope matching; the pure rollup/series/scoring split",
+    "notifications PROD-6 (the silent controls program) is the same defect as MON-11 \u2014 notifications' sequencing puts it deliberately last; this package adds ONLY the three named emit() calls through lib/notify (no new kinds beyond what taxonomy allows) and points PROD-6 at them",
+    "projects-and-cost COST-1 rollup half (CPI over pinned accounts applied to whole budget), COST-2, COST-4, COST-6, COST-9, COST-10, COST-11, COST-13, COST-14 close by pointer to this package; projects-tab owns lib/costs.ts, lib/costDocs.ts, lib/changeOrders.ts, CostsTab.tsx, ChangeOrdersPanel.tsx, the cost-docs route"
+   ],
+   "decisionsNeeded": [
+    "MON-4 headline \u2014 default: the tile shows Budget / Spent / Committed / Available (= budget \u2212 spent \u2212 committed) and 'Remaining' is retired; glossary entry added; the lessons-learned draft uses the same rollup",
+    "MON-12 do-not-use award \u2014 default: server refuses unless an override reason is supplied; override audited with the company id and reason; 'inactive' status kept but hidden from award unless overridden (same path)",
+    "MON-1 repair \u2014 default: an audited 're-post commitment' or 'revert award' action for controllers only; never delete",
+    "REL-9 CO unwind \u2014 default: one action 'reverse change order' that voids exactly its posted entry (posted_entry_id) and records the reversal as a CO event",
+    "COST-4 \u2014 default: an approved CO revises the account budget by its amount (budget_revised column) so approved scope growth stops reading as over-budget; original budget kept",
+    "COST-2 exposure definition (default): exposure = spent + open commitments (a commitment counts until actuals invoiced against it, matched by source_document_id/party, reach its amount); Remaining tile = budget \u2212 exposure labelled 'Uncommitted'; actuals-only shown as secondary",
+    "COST-4 (default): budget stays the original baseline; revisedBudget = budget + approved COs by cost_account_id; every derived index uses revisedBudget; health's 'change control' part keeps scoring growth vs the original and says so",
+    "COST-6 (defaults): self-approval refused when another eligible decider exists (DEC-12 shape), otherwise allowed with a visible marker; approval threshold default = no threshold until an org sets change_order_approval_threshold (fail-safe alternative \u2014 a default threshold that blocks every large CO \u2014 would strand real approvals; the marker + audit make the gap visible instead)",
+    "COST-8 (default): refuse to post when currencies differ; no FX conversion is built (a follow-on capability); the parse route (PC-8) validates ISO-4217 and stores NULL otherwise",
+    "COST-10 (default): DELETE refused for authenticated writers outright; purge only through PC-2's audited RPC or an explicit service-role path that audits first",
+    "COST-11/MON-1 repair (default): an auditable 're-post' or 'revert award' action for controllers, never a silent correction; existing broken rows surfaced on the Costs tab as a data-health line",
+    "COST-1 (default): EAC via CPI applies to the pinned subset; the unpinned remainder is forecast by run-rate; the Costs tab and report label the split"
+   ]
+  },
+  {
+   "name": "J4 BID-TAB-AND-REGISTRY",
+   "projectsTabPackages": [
+    "P4 BID-TAB \u2014 one number, one source; scoring honesty; the quote is openable; RFQ document integrity (GAP-407)",
+    "P9 COMPANIES-REGISTRY \u2014 the Known Companies registry at scale, page resilience, indexes (GAP-409 registry half)"
+   ],
+   "projectsAndCostPackages": [
+    "PC-8 TABULATION-AND-REGISTRY \u2014 bid scoring, vendor matching and do-not-use, page-truncated reads, party links, cost-discipline attribution, quote-link lifecycle"
+   ],
+   "findings": {
+    "projects-tab": [
+     "BID-1",
+     "BID-2",
+     "BID-3",
+     "BID-4",
+     "BID-6",
+     "BID-7 (display; CostsTab currency label is P3's limb; mixed-currency award refusal lives in costDocs \u2014 ask P3 for the guard, this package flags the group)",
+     "BID-8",
+     "BID-9",
+     "BID-10",
+     "BID-11",
+     "BID-12",
+     "RFQ-1",
+     "RFQ-2",
+     "PERF-9",
+     "SEC-5 mint limb (one insert :539-544 adds expires_at \u2014 the ID closes in P1)",
+     "MON-12 chip limb (:289-291 \u2014 closes in P3)",
+     "UX-10 limb (:545 \u2014 closes in P2)",
+     "PERF-1",
+     "PERF-11",
+     "REL-1",
+     "UX-9",
+     "A11Y-9",
+     "MON-12 companies-page limb (:522 \u2014 closes in P3)",
+     "REL-9 'inactive' limb (lib/companies.ts:24 \u2014 closes in P3)"
+    ],
+    "projects-and-cost": [
+     "COST-3",
+     "COST-5",
+     "COST-13",
+     "COST-12",
+     "COST-7",
+     "INTK-12"
+    ]
+   },
+   "files": [
+    "app/(protected)/companies/[id]/page.tsx (554 lines; action error unmounts the page :75-82,:153,:157 = UX-9; bars :127-133 = A11Y-9; do-not-use chip :522 = MON-12 limb; N+1 :54-71 = PERF-1)",
+    "app/(protected)/companies/[id]/page.tsx \u2014 NARROW: the quality-manual confirm shows pages read/total and lets the human adjust the proposed score or labels it as the model's proposal accepted (:216-232; COST-3 dw3/dw4). PT owns the rest (PERF-1/GAP-409, A11Y, UX-9, REL-1)",
+    "app/(protected)/companies/page.tsx (335 lines; per-company gatherCompanyProfile worker loop :46-79 = PERF-1; infinite spinner on null org :46 = REL-1; error tone/contrast :120,:172 limbs stay with P5/P11; dimension bars overflow :196-202 = A11Y-9; hand-rolled modal :286 = A11Y-4 (P11))",
+    "app/api/companies/quality-manual/route.ts \u2014 records pages read vs total; the response and stored proposal carry them (COST-3 dw3)",
+    "app/api/projects/cost-docs/route.ts \u2014 records pdf.numPages and the pages rendered on the cost_documents row (pages_total, pages_read) and returns both; audit details carry the pair (COST-13 dw1/dw4); currency validated against an ISO-4217 set, NULL otherwise (COST-8 route limb); validUntil/notes persisted (BID-11). PT PERF-6 (timeouts) and intelligence PR-2 (line-item reconciliation) are not done here",
+    "components/projects/IntakePanel.tsx \u2014 NOT edited here: INTK-12's purpose filter / hide-Assign-docs limb is delivered by PC-1 (its file); record the split on INTK-12",
+    "components/projects/cost/QuotesPanel.tsx (639 lines; score uses AI total while award posts corrected :195-203/:298/:213 = BID-1; no link to the quote = BID-2; USD everywhere :154,:218,:298-300,:351 = BID-7; manual-total bids in a separate list :209-212,:346-366 = BID-8; correction only when parse failed :74-87,:249,:309-316 = BID-9; RFQ group free text :485 = BID-10; validity/notes never shown = BID-11; exact-string company match :50-52,:275 = BID-12; static import of lib/rfqDocx :30 = PERF-9; quote link mint :539-544 = SEC-5 limb)",
+    "components/projects/cost/QuotesPanel.tsx \u2014 NARROW, named regions: registry match via the normalised helper with 'matched to X \u2014 change' and an explicit company link stored on the cost_documents row (:275; COST-3/BID-12); 'read pages 1\u20138 of N' beside partially read documents and repeated in the award confirm (:66-68, :218; COST-13 dw2); every fmtMoney on a document/bid figure passes the record's currency (:218, :298, :300, :351; COST-8/BID-7); the award confirm refuses or warns on a do_not_use match (COST-3 dw1 = PT MON-12 UI half); quote-link form gains an expiry, the list gains Revoke, the creation insert .select('id').single() and the audit resource_id is the link id \u2014 no token material \u2014 with {error} checked (:536-548, :613-635; INTK-12 = PT SEC-5); quote upload passes partyId (COST-12 dw3). Everything else in QuotesPanel (BID-2, BID-6, BID-8, BID-10 UI, A11Y-1, UX-4/13, PERF-9) is PT's, after PC-8 merges",
+    "lib/__tests__/projectControls.test.ts (bidTab section \u2014 extend; the existing five pins stay green) + new lib/__tests__/rfqDocx.test.ts (C0 fuzz strict-parses; multi-paragraph purpose) + new lib/__tests__/quotesPanel.test.ts (display and award agree after setManualTotal; single bid no badge; case-variant groups tabulate as one)",
+    "lib/__tests__/projectControls.test.ts (extend: single-exclusion three-bid field \u21d2 disclosing bidder not driven to 0; padded hours cannot buy best value; mixed currency refused; 25% owner_request growth scores like on-bid; single commendation not 'Excellent'; normalised matching), new lib/__tests__/costDocsRoute.test.ts (pages_total/pages_read recorded; ISO currency validation)",
+    "lib/bidTab.ts (declared exclusion scored worse than hiding :168 = BID-3/COST-5; silent-gap word matching :82-112 = BID-4; single-bid 'best value' :184 = BID-6; company match :30,:42,:131 = BID-12)",
+    "lib/bidTab.ts \u2014 coverage on an absolute scale (gaps against the scope union or a fixed per-gap deduction); declared exclusions weighted separately and far lower than silent gaps, matching the RFQ letter (COST-5 = PT BID-3); manpower bounded / plausibility-checked and labelled vendor-stated + AI-extracted (COST-5 dw3); BidEconomics carries currency and scoreBids refuses a mixed-currency field (COST-8 tabulation limb \u2014 COST-8 itself is PC-7's; = PT BID-7 display half); silent-gap detection raised to a token-set similarity threshold and downgraded from accusation to prompt, never driving the score (PT BID-4); normalised company matching helper (strip punctuation/legal suffixes/whitespace) (COST-3 dw2 = PT BID-12); validUntil/notes surfaced in the parsed shape (PT BID-11 lib half)",
+    "lib/companies.ts (listCompanies + gatherCompanyProfile :233-323: six queries per company by party_id = PERF-1/PERF-11; raw error strings :85-212 = REL-3's sites (P11 converts, this package keeps the shape); companies.status 'inactive' :24 = REL-9 limb)",
+    "lib/companies.ts + lib/companyScore.ts \u2014 gatherCompanyProfile derives awardsTotal from posted commitment entries (or the party's contract_value where set) and reports 'unlinked' distinctly from 'no work' (COST-12 dw2/dw4 = PT MON-7); finalCostTotal counts only contractor-attributable reason codes (scope_gap; field_condition per the decision below) and the detail string shows its work; owner-side counters surfaced (COST-7); evidenceCount gates the band so one commendation cannot render 'Excellent' (COST-12 dw5); the scorecard's quality dimension reads PC-5's nonconformance events when present; do_not_use exposed as a hard signal the award path reads (COST-3 dw1)",
+    "lib/companyScore.ts (PC COST-7: cost-discipline blames owner-request/design-error COs \u2014 reason-code contract; null-means-unknown verified sound \u2014 keep)",
+    "lib/rfqDocx.ts (control chars :31-32 = RFQ-1; raw newlines :42,:51,:123-126 = RFQ-2; exclusions promise :65 must match the scorer = BID-3)",
+    "new lib/__tests__/companiesRegistry.test.ts (query count independent of company count \u2014 one batched gather per table; null org renders an error not a spinner; a failed action leaves the page mounted with form contents intact)",
+    "new migration 2026NNNN_pt_registry_indexes.sql (PERF-11: btree on change_orders/turnover_items/punch_items/cost_documents (party_id); pg_trgm GIN on milestones.responsible_party, project_intake_links.company_name, documents.title/name/document_number \u2014 lands BEFORE MON-7 (P11); companies.status CHECK \u2014 REL-4/REL-9 registry half)",
+    "new migration A (COST-13 + COST-3 + COST-12): cost_documents.pages_total INT, pages_read INT; cost_documents.company_id UUID REFERENCES companies(id) ON DELETE SET NULL (explicit registry link; party_id stays); project_parties.company_id already exists \u2014 backfill company_id where a confident normalised name match exists, as a one-off with the matches listed in the migration output (COST-12 / MON-7 dw4); project_intake_links.expires_at default for purpose='quote' set by the app (no schema change)"
+   ],
+   "migrationsLikely": 2,
+   "when": "now",
+   "dependsOn": [
+    "DEC-35: reason-code attribution is configuration-free; do_not_use is a registry status, not a role. DEC-30 inventories: cost_documents whose currency is not a known ISO code; project_parties with company_id and NULL contract_value and vice versa (COST-12); cost_documents with pages_total NULL after the migration (all existing rows \u2014 flagged 'read extent unknown')",
+    "GAP-407 'do not hide the AI's original value once corrected' (GAP-303 principle) and 'do not let a bid be awardable without its source being openable'",
+    "GAP-409 'do not fix this with a client-side cache; stale company data drives award decisions' \u2014 one server-side batched gather (SQL or a handful of .in() queries) per page, no cache",
+    "No document-control package touches these files \u2014 PC-8 can run NOW, concurrently with DC wave 1 and with PC-7 (disjoint files; column contract: cost_documents.pages_total/pages_read and CostParty.companyId \u2014 see PC-7)",
+    "No running fleet owns these files \u2014 can start NOW. Concurrent with P3: costDocs.awardQuote / setManualTotal / voidCostDoc SIGNATURES are frozen for the duration; BID-10's server-side group normalization (costDocs :157,:250-251 lower(trim)) is P3's one-line limb \u2014 P4 normalizes on the client and flags it",
+    "No running fleet owns these files \u2014 can start NOW. REL-1 cites components/providers/RoleContext.tsx:58,:315-325 as the SOURCE of the null org \u2014 RoleContext is identity-and-session IS-P1's and public-surfaces PKG-1's file: NOT edited; the page handles a null org itself",
+    "PC-1 delivers INTK-12's IntakePanel limb and the intake quote branch's party_id (COST-12 intake limb); PC-5 delivers COST-12's turnover/punch partyId limb",
+    "PC-7 owns lib/costs.ts (saveParty companyId limb) and lib/costDocs.ts (award-time do_not_use refusal / truncated-read refusal / currency refusal): PC-8 ships the signals (normalised match, pages, currency, company link) and PC-7 enforces at posting \u2014 record the split on COST-3, COST-13, COST-8, COST-12. If PC-8 lands first, the UI warns; if PC-7 lands first, its refusal reads NULLs as 'unknown' and requires confirmation (fail safe)",
+    "PT BID-2 (open the quote from the bid row) is PT's UI; PC-8 only ensures the row carries the file reference it already has",
+    "README 'Verified sound': the type-the-total fallback and the 'price only \u2014 not scored on manpower' marker are the model \u2014 BID-8 folds manual-total bids INTO the table using exactly that marker",
+    "Report 04 substrate: validateParsedQuote, hasWord(), honest-null discipline in companyScore \u2014 unchanged",
+    "SEC-2 (P8) will hide private-project rows from the profile gather at the policy level \u2014 the gather must tolerate zero rows without inventing a score (companyScore already does \u2014 verified sound)",
+    "intelligence PR-2 (AI totals never reconciled against line items, then ranked) and projects-and-cost COST-5, COST-8 (display half), COST-3 (chip half), COST-13 (truncation chip) close by pointer to this package; projects-tab owns QuotesPanel.tsx, lib/bidTab.ts, lib/rfqDocx.ts",
+    "projects-and-cost COST-3 (registry half: score derived from \u226410 pages \u2014 copy the limit on the profile), COST-7, COST-12 (reader half; the writer limbs are P11's MON-7) close by pointer; projects-tab owns lib/companies.ts, lib/companyScore.ts, both companies pages"
+   ],
+   "decisionsNeeded": [
+    "BID-4 coverage term \u2014 default: silent-gap detection becomes advisory chips only and drops OUT of the score until a per-RFQ scope checklist exists (the letter's promise then matches the scorer)",
+    "BID-3 \u2014 default: a declared exclusion is scored exactly as an unpriced-but-declared item (coverage neutral), never below hiding it",
+    "BID-7 mixed currency \u2014 default: a group with more than one currency shows each price in its own currency, is NOT ranked, and award asks P3's guard to refuse until the total is restated in the budget currency",
+    "BID-12 \u2014 default: a 'link to registry company' picker on the row (company_id on cost_documents); no fuzzy auto-binding; do-not-use chip renders from the bound company",
+    "PERF-9 \u2014 default: dynamic import; no bundle-analyzer gate added (route JS threshold recorded as a manual check)",
+    "PERF-1 gather shape \u2014 default: one RPC company_profiles(org_id) returning per-company aggregates (needs a migration in the same file) vs six .in() queries over all party ids \u2014 default the six batched queries (no new SQL surface), RPC only if the census test cannot get under 200 queries",
+    "Pagination \u2014 default: server-side page of 50 companies sorted by name, search by ILIKE with the trigram index",
+    "COST-5 coverage (default): score = 100 \u2212 15 per silent gap \u2212 5 per declared exclusion, floored at 0, scope union as the reference; manpower part capped so hours can move the composite by at most 5 points",
+    "COST-3 do_not_use (default): award refused without a recorded controller override (PC-7 enforces); the bid table shows the flag beside the price",
+    "COST-13 (default): a truncated read (pages_read < pages_total, or pages_total unknown) requires a typed confirmation of the total before award/post; MAX_PAGES stays 8 for cost (raise is a cost/latency question recorded for the user)",
+    "COST-7 field_condition attribution (default): field_condition counts as contractor-neutral (excluded from growth) until the org says otherwise \u2014 the conservative reading of the module's own contract",
+    "COST-12 awardsTotal (default): derived from posted commitment entries; contract_value stays a manual override shown as such",
+    "INTK-12 quote-link expiry (default): 90 days from creation, editable; existing quote links get expires_at = created_at + 90 days only after the inventory shows no link in active bidding (else BLOCKED with the query)"
+   ]
+  },
+  {
+   "name": "J5 CHARTS",
+   "projectsTabPackages": [
+    "P5 CHARTS \u2014 the S-curve/crew chart kit: scale bounds, series identity, today marker, example-data honesty"
+   ],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "CHART-1",
+     "CHART-2",
+     "CHART-3",
+     "CHART-4",
+     "CHART-5",
+     "MON-2",
+     "REL-10",
+     "REL-11",
+     "A11Y-11",
+     "PERF-10 costSeries limb (parse each entry date once \u2014 the ID closes in P3)"
+    ],
+    "projects-and-cost": []
+   },
+   "files": [
+    "app/globals.css (:31-34 chart tokens and :49 --state-held ONLY; :218 and :298-303 are P11's)",
+    "components/dashboard/viz.tsx (:11 categorical palette, :104 chart a11y helper \u2014 narrow; shared with the dashboard, additive only)",
+    "components/projects/cost/CostCharts.tsx (example frame :45,:86 = REL-10; four-charts promise :89-129 = REL-11; 'Daily activity' label :90,:126 = A11Y-11; flat crew curve :126-127 = CHART-3)",
+    "components/ui/ChartKit.tsx (296 lines; scale has no lower bound :35-41 = CHART-1; Spent/Committed hues :72,:79 = CHART-2; hardcoded colour :170,:203 = CHART-4; today marker :53-67,:82-85 = CHART-5; watermark :280-288 = REL-10; :134 = REL-11)",
+    "lib/__tests__/projectControls.test.ts (costSeries section \u2014 extend: span for multi-day tasks) + new lib/__tests__/chartKit.test.ts (every projected y inside the viewBox for a negative fixture; today at today; palette tokens no literal hex)",
+    "lib/costSeries.ts (planned span starts at first FINISH :~112-157 = MON-2 \u2014 derive the span from milestone starts inside buildCostSeries so CostsTab (P3's file) needs no edit; flat distribution :152-157 = CHART-3; parse-once = PERF-10 limb)"
+   ],
+   "migrationsLikely": 0,
+   "when": "now; consumes the CostCharts limbs J3/J8 name \u2014 coordinate by landing J5 after J3",
+   "dependsOn": [
+    "No running fleet owns these files \u2014 can start NOW; the dataviz palette rule (validated categorical scale, shape + hue for series identity) governs CHART-2/CHART-4",
+    "README 'Verified sound': the S-curve's role='img' + text legend + dashed planned line are exemplary \u2014 extend, never regress",
+    "projects-and-cost COST-1 chart half (CostCharts.tsx:53-56 CPI label) closes by pointer here; the rollup half is P3's"
+   ],
+   "decisionsNeeded": [
+    "CHART-3 \u2014 default: replace the flat planned-crew curve with a single stat ('planned average crew') until a schedule-shaped distribution exists; no invented variation",
+    "REL-11 \u2014 default: burn-by-budget-line renders for real projects; a budget-only project gets an explanation panel, and the example set is reduced to what the real interface can draw",
+    "REL-10 \u2014 default: example charts render ONLY when the project has zero accounts AND zero entries; every example figure carries the watermark in-mark, not as a corner label"
+   ]
+  },
+  {
+   "name": "J6a SCHEDULE-IMPORT",
+   "projectsTabPackages": [
+    "P6a SCHEDULE-IMPORT \u2014 stable row identity, date parsing that never guesses, progress-preserving re-import, relationship types (GAP-403)"
+   ],
+   "projectsAndCostPackages": [
+    "PC-3 SCHEDULE-IMPORT-AND-WRITERS \u2014 parsers, the importer's merge, shift/duration, baseline authority, the batch-move RPC"
+   ],
+   "findings": {
+    "projects-tab": [
+     "SCH-1",
+     "SCH-2",
+     "SCH-3",
+     "SCH-8 (parser half: relationship type + lag captured and reported; the reflow's use of lag is P6b's)",
+     "SCH-14",
+     "SCH-16"
+    ],
+    "projects-and-cost": [
+     "SCHED-1",
+     "SCHED-2",
+     "SCHED-3",
+     "SCHED-4",
+     "SCHED-6",
+     "SCHED-8",
+     "SCHED-9",
+     "SCHED-11"
+    ]
+   },
+   "files": [
+    "components/projects/MovePreviewSheet.tsx \u2014 NARROW, one line: baseline-drift warning fed from the computed change set (SCHED-3 dw4; PT SCH-4 dw2 wants the same input)",
+    "components/projects/ScheduleImportModal.tsx (615 lines; no size/row cap, no progress, no cancel :108-124 = SCH-14; reviewable diff before write = GAP-403 acceptance 2; ambiguous-date prompt = SCH-1; 'what would be overwritten' = SCH-2)",
+    "components/projects/ScheduleImportModal.tsx \u2014 NARROW: project picker/count when the file holds several projects (SCHED-6 dw1) and the warnings list (SCHED-8 dw2). GAP-403's diff review UI is PT's, built on the dryRun plan",
+    "lib/__tests__/scheduleParsers.test.ts, scheduleParsersXml.test.ts (UID 0 / OutlineLevel 0 fixture; Work fixture; two-project fixture; divergent Unique ID/ID fixture; D/M file), lib/__tests__/milestones.test.ts (extend: shift under a non-UTC TZ, dryRun plan, top-row insert keeps identities and progress, expected-updated_at rejection), new lib/__tests__/milestoneRpcMigration.test.ts (grant lines present; NULL-uid branch tests auth.role(); baseline trigger shape)",
+    "lib/__tests__/scheduleParsers.test.ts, scheduleParsersXml.test.ts (extend: D/M/Y file with all values \u2264 12 rejected-or-prompted, never guessed; row inserted at the top leaves every other row's identity intact; Unique ID preferred with a warning on fallback; SS/FF/SF + lag surfaced) + lib/__tests__/milestones.test.ts (progressed row survives a zero-progress re-import; removed predecessor clears locally)",
+    "lib/milestones.ts \u2014 REGION :852-1107 ONLY (importMilestones upsert: percent_complete overwritten from the file :948-966 = SCH-2; structure add-only :1072-1107 = SCH-16; two round trips per row :938-1064 = SCH-14). Everything else in this file is P6b's",
+    "lib/milestones.ts \u2014 import section (importMilestonesFromParsed ~900-1100): shift derived from the UTC reading and recomputed when planned_start crosses 06:00/18:00 in updateMilestone/applyMilestoneMoves (SCHED-9); duration_hours written from the parser (SCHED-2); a dryRun mode returning an {added, removed, changed, unchanged, localProgressAtRisk} plan, plan fields separated from actuals so re-import never overwrites percent_complete/status/actual_* without opt-in, content-derived stable refs when no id column exists, relationship fields set to exactly what the file says for present rows, chunked upserts with a row cap (PT SCH-2/SCH-3/SCH-14/SCH-16 \u2014 GAP-403's engine half; PT builds the diff UI on this plan); duration arithmetic in UTC (PT SCH-12); phase delete counts descendants, records prior parent_ids in audit details, cleans dangling dependency refs (PT SCH-17). Moves section: applyMilestoneMoves passes each row's expected updated_at, surfaces the RPC's unmatched ids, records before/after dates per moved row (milestone_notes 'reschedule' or audit details), checks the audit insert's error, replaces the 50-id truncation with 'showing 50 of N' (SCHED-11 + PT SCH-7 client half). Baseline section: setBaseline/clearBaseline become one RPC call each; clearBaseline audited or deleted (SCHED-3 + PT SAF-7)",
+    "lib/scheduleFilter.ts \u2014 shift filter reads the recomputed value (SCHED-9 consumer)",
+    "lib/scheduleParsers.ts (952 lines; M/D-first assumption with a comment claiming a guard :910-925 = SCH-1; positional externalRef `${refTag}-row:${rowIndex}` :665-721 = SCH-3; id-column synonym race :585-590 = PC SCHED-8; P6 REL type/lag discarded :372-379,:508-523 = SCH-8; OutlineLevel 0 coerced :247-261 = PC SCHED-1; durationHours never populated = PC SCHED-2; multi-project P6 merge = PC SCHED-6; refusal copy :144-152 = PC SCHED-12)",
+    "lib/scheduleParsers.ts \u2014 Number(outlineLevelRaw) with an explicit NaN test; a level-0 row becomes the root parent (or is skipped with a warning), dropped rows clear their level in recentByLevel (SCHED-1); <Work>/<Duration> PT#H#M#S, P6 PlannedDuration/RemainingDuration, XER target_drtn_hr_cnt parsed into durationHours (SCHED-2); multi-project detection + proj_id / Project ObjectId filter with a count in the result (SCHED-6); predecessors resolved through the ID column when both Unique ID and ID exist, unresolvable tokens counted into warnings (SCHED-8); coerceIso attaches Z to offset-less datetimes (SCHED-9) and resolves D/M vs M/D from the whole file, never per row (PT SCH-1 \u2014 same function); relationship type + lag captured, non-FS links imported only when the engine can honour them, skipped count reported (PT SCH-8 \u2014 parser half; PC-4 honours lag in cascade); the .mpp refusal string states what the XML path carries (SCHED-12 limb a \u2014 SCHED-12 itself is PC-4's)",
+    "new migration 2026NNNN_pt_milestone_import_identity.sql (milestones.source_key TEXT + UNIQUE (project_id, source_key) WHERE source_key IS NOT NULL; import_batch_id; DEC-30 inventory of rows whose external_ref is positional before backfill)",
+    "new migration A (SCHED-4 + PT SCH-7 \u2014 ONE re-creation of apply_milestone_moves, base = 20260907): the NULL-uid branch tests auth.role() = 'service_role' explicitly; REVOKE ALL FROM public, anon; GRANT EXECUTE TO authenticated, service_role; each move carries p_expected_updated_at and the UPDATE adds it to the WHERE; the function returns matched and unmatched ids and v_count counts affected rows; the role list at :42 reads through caller_holds_any_role / can_manage_project rather than a fresh literal (DEC-35; authorityCensus.test.ts)",
+    "new migration B (SCHED-3): set_project_baseline(p_project) / clear_project_baseline(p_project) SECURITY DEFINER RPCs (single statement each, can_manage_project OR controller, audited, REVOKE from anon/public) + BEFORE UPDATE trigger on milestones refusing direct writes to baseline_* columns outside those RPCs (a trigger \u2014 milestones_member_all is a permissive FOR ALL, so a second policy would be decorative per DRLS-1) + milestone_baseline_history (project_id, taken_at, taken_by, rows JSONB) written before every re-baseline (PT SAF-7's 'irreversible')"
+   ],
+   "migrationsLikely": 3,
+   "when": "now",
+   "dependsOn": [
+    "DEC-35 for the RPC's role list; DEC-30 inventories: milestones with source IN ('p6','msproject','csv','mpxj') AND shift IS NOT NULL (SCHED-9 recompute candidates \u2014 recompute is opt-in per project, since shift is user-correctable); projects where baseline_* is set on some but not all leaves (SCHED-3 half-applied); the anon grant on apply_milestone_moves cannot be read from the repo \u2014 the migration's probe prints has_function_privilege('anon', ...) before and after",
+    "GAP-403 'do not auto-apply the merge', 'do not infer identity from the task name', 'do not treat a row missing from the new file as deleted'",
+    "No document-control package touches these files \u2014 PC-3 can run NOW, concurrently with DC wave 1",
+    "No running fleet owns these files \u2014 can start NOW. Concurrent with P6b by REGION of lib/milestones.ts (P6a :852-1107; P6b the rest) \u2014 merge order irrelevant, rebase on conflict",
+    "PC-4 owns lib/scheduleReflow.ts \u2014 SCHED-9's 'shift follows a moved task' is done in lib/milestones.ts (the writer), never in the reflow engine; PT SCH-8's engine half (honour lag) is PC-4's",
+    "PC-9 consumes computeScheduleMetrics (lib/milestones.ts:643) for SPI \u2014 read-only import, no conflict",
+    "Report 02 substrate: computeTreeMove (lib/scheduleReflow.ts:126-208), rebaseSchedule's optimistic lock (lib/milestones.ts:1209-1229), the 20260704 project-scoped external_ref indexes, first_completed_at preservation and rollUpSummaryDates are verified sound \u2014 the importer builds on them; the RPC keeps its transaction shape (only the NULL-uid escape and the lock change)",
+    "SCH-14's 'one round trip' means a single batched upsert (or an RPC) \u2014 do not touch apply_milestone_moves (P6b's migration)",
+    "identity/PT: ScheduleTab.tsx / ExecutionView.tsx are PT's \u2014 PC-3 hands them the unmatched-ids result and the plan shape; PT renders 'which moves were rejected' (SCH-7 dw1) and the diff (GAP-403)",
+    "notifications PROD-11 (milestones silent) cites lib/milestones.ts \u2014 untouched here; the notifications fleet rebases",
+    "projects-and-cost SCHED-1, SCHED-2, SCHED-6, SCHED-8, SCHED-12 close by pointer to this package; projects-tab owns lib/scheduleParsers.ts and the import region of lib/milestones.ts"
+   ],
+   "decisionsNeeded": [
+    "Ambiguous dates \u2014 default: a file whose date column is ambiguous throughout (every day-part \u2264 12) prompts once for the convention; a file with any unambiguous value fixes the convention for all rows; the result names the column and the convention",
+    "Missing rows on re-import \u2014 default: shown in the diff as 'not in this file' and left untouched; removal is a separate explicit action",
+    "Import caps \u2014 default: 5 MB / 5,000 rows, refused with the limit named; progress + cancel in the modal; a cancelled import leaves rows tagged with import_batch_id so the partial state is visible and reversible",
+    "Non-FS relationships \u2014 default: captured with lag and shown; the reflow (P6b) honours SS/FF only after its own test; until then they are stored and reported as 'not enforced'",
+    "SCHED-1 level-0 row (default): import it as the root parent of the level-1 phases (keeps assignGroupColors' single-root anchoring) rather than skip it",
+    "SCHED-6 (default): when a file holds several projects, the modal asks which one; the parser never merges silently",
+    "SCHED-8 (default): when both id columns exist, dependency refs resolve through ID and the row key stays Unique ID; unresolved tokens are reported, never guessed",
+    "SCHED-9 (default): shift stays a stored column but is recomputed by every date-writing path; existing imported rows are recomputed only on request (they may have been hand-corrected)",
+    "SCHED-3 authority (default): baseline set/clear = the same predicate the batch-move RPC enforces (can_manage_project OR controller); history table keeps every prior baseline; clearBaseline is kept and audited (it gains a caller in the RPC)",
+    "PT SCH-8 relationship types (default): parser records type + lag; the importer creates only links the engine honours (FS with lag after PC-4) and reports the skipped count",
+    "SCHED-11 breadcrumb (default): per-row before/after in milestone_notes (kind 'reschedule'), matching updateMilestone's existing shape"
+   ]
+  },
+  {
+   "name": "J6b SCHEDULE-ENGINE",
+   "projectsTabPackages": [
+    "P6b SCHEDULE-ENGINE \u2014 cycles, the batch-move lock, one overdue rule, timezone-safe arithmetic, baselines, the execution board"
+   ],
+   "projectsAndCostPackages": [
+    "PC-4 SCHEDULE-REFLOW-AND-ROLLUPS \u2014 locked descendants, FS semantics with lag, summary status, critical path, weighting basis, estimate labels"
+   ],
+   "findings": {
+    "projects-tab": [
+     "SCH-4",
+     "SCH-5 (helper + its five schedule call sites; projectSnapshot/projectReport consumers are P7's two-line limb)",
+     "SCH-6",
+     "SCH-7",
+     "SCH-9",
+     "SCH-10",
+     "SCH-11",
+     "SCH-12",
+     "SCH-13",
+     "SCH-15",
+     "SCH-17",
+     "SCH-18",
+     "SAF-7",
+     "SAF-8",
+     "A11Y-3",
+     "PERF-5"
+    ],
+    "projects-and-cost": [
+     "SCHED-5",
+     "SCHED-13",
+     "SCHED-7",
+     "SCHED-10",
+     "SCHED-14",
+     "SCHED-12"
+    ]
+   },
+   "files": [
+    "components/projects/ExecutionReportView.tsx (:70-78,:86-87 estimates/critical-path label)",
+    "components/projects/ExecutionReportView.tsx \u2014 NARROW: basis label, Work-hours card state, forecast qualifier (SCHED-12/14)",
+    "components/projects/ExecutionView.tsx (1714 lines; renders every row :808-849,:945 = PERF-5; cycle move preview :449-461 = SCH-4; editable imported rows = SCH-13; overdue :949 = SCH-5)",
+    "components/projects/ExecutionView.tsx \u2014 NARROW, two strings: the Critical-path button tooltip (~:727-729) and legend (~:1503-1504) carry the Report's caveat or the CPM name (SCHED-12 limb c). Everything else in ExecutionView is PT's (SCH-4 preview, SCH-13, PERF-5)",
+    "components/projects/MovePreviewSheet.tsx (count must match what is written = SCH-4)",
+    "components/projects/RebaseScheduleModal.tsx (:51-57,:76 local-vs-UTC day = SCH-10)",
+    "components/projects/ScheduleProgress.tsx (:41,:49-53 overdue = SCH-5)",
+    "components/projects/ScheduleTab.tsx (tint literals :528-582 = A11Y-3; overdue :518 = SCH-5; imported-rows toggle changes numbers :233,:259,:317 = SCH-6; 'read-only imported rows' :607 = SCH-13; realtime channel :105-120 = SCH-7; undo :326-376 = SCH-18; re-baseline confirm :284 = SAF-7)",
+    "components/projects/TaskDetailPanel.tsx (cycle guard defeated by toggle :691,:727 = SCH-9; baseline :480-483)",
+    "components/projects/useUndoableActions.ts (:58-71 failed undo reports success = SCH-18)",
+    "lib/__tests__/scheduleReflow.test.ts, scheduleReflowLocks.test.ts, dependencies.test.ts, scheduleProgress.test.ts, scheduleFilter.test.ts, executionReport.test.ts (extend) + new lib/__tests__/overdue.test.ts (due-today across UTC-8/UTC/UTC+9) + rebase timezone test + 2-node cycle refusal test",
+    "lib/__tests__/scheduleReflowLocks.test.ts (completed grandchild under a cascaded parent and under a sequenced parent), lib/__tests__/dependencies.test.ts (08:00/17:00 fixtures; lag), lib/__tests__/scheduleProgress.test.ts (all-missed phase; mixed hours/weight list), lib/__tests__/criticalPath.test.ts (long-lead driver; parallel chains; 90%-done task)",
+    "lib/criticalPath.ts (ignores dependency edges = SCH-15/PC SCHED-10 \u2014 derive from the graph or rename the label)",
+    "lib/criticalPath.ts \u2014 a real forward/backward CPM over dependsOn with float (SCHED-10 dw1 = PT SCH-15), or \u2014 if the heuristic is kept behind a flag \u2014 per-frontier seams, no 14-day cutoff, remainingHours \u00d7 (100 - leafPercent)/100 (SCHED-10 dw2/dw3)",
+    "lib/executionReport.ts (overdue :136 = SCH-5; estimates presented as record = PC SCHED-12)",
+    "lib/executionReport.ts \u2014 consumes the per-list basis and reports it; 'Work hours' card hidden or labelled 'not supplied by this import' when plannedHours is 0 (SCHED-2 dw3 consumer; SCHED-14); forecast basis named or suppressed under a completion threshold (SCHED-12 limb b)",
+    "lib/milestones.ts \u2014 everything EXCEPT :852-1107 (batch move caller :1221 = SCH-7; setBaseline/clearBaseline :1462-1514 = SAF-7/PC SCHED-3; missed keeps 100% :389-395 = SAF-8; duration arithmetic :1410 = SCH-12; deleteMilestone orphans subtree :565-584 = SCH-17; shift derivation :902-910 = PC SCHED-9; drag path breadcrumb :247-327 = PC SCHED-11)",
+    "lib/milestones.ts:663-669 (computeScheduleMetrics' effectiveWeight consumer) \u2014 DELEGATED to PC-3 (its file): PC-4 exports chooseWeightBasis(list) from scheduleProgress and PC-3 switches that one call site; record the split on SCHED-14",
+    "lib/scheduleFilter.ts (overdue rule :101; shift :26-27,:104 \u2014 new shared isOverdue lives here or in a new lib/overdue.ts)",
+    "lib/scheduleProgress.ts (missed earns 100% :35-39 = SAF-8; missed never bubbles = PC SCHED-7; effectiveWeight mixes units = PC SCHED-14)",
+    "lib/scheduleProgress.ts \u2014 Agg carries missed; deriveSummaryStatus surfaces it ranked with blocked/on_hold (SCHED-7); the weighting basis is chosen once per list (hours only if every leaf has them, else weight) and reported (SCHED-14); a missed leaf cannot earn 100% (PT SAF-8)",
+    "lib/scheduleReflow.ts (cycle walk persisted :338-365 = SCH-4; wouldCreateCycle :272 sees only filtered nodes = SCH-9; UTC-midnight snap :531,:542 = SCH-11; +DAY_MS hardcoded FS gap :350-356 = PC SCHED-13; completed work moved :38-52,:345-363,:433-447 = PC SCHED-5)",
+    "lib/scheduleReflow.ts \u2014 cascadeDependents and sequenceSiblings skip locked nodes inside a shifted subtree (match computeTreeMove :160-161); a row with actual_at never receives a planned-date change from any batch engine (SCHED-5); the FS constraint becomes successor.start >= predecessor.finish + storedLag (default 0), cascaded rows keep their time-of-day (SCHED-13; PT SCH-8 engine half); cycle detection aborts the whole cascade naming the edges and bounds displacement (PT SCH-4); the cycle check always runs over the full milestone set regardless of display filters (PT SCH-9 lib half); summary resize preserves each child's clock time (PT SCH-11)",
+    "new migration 2026NNNN_pt_milestone_batch_move_lock.sql (re-create apply_milestone_moves from its NEWEST body \u2014 20260907 unless later re-created; add p_expected_updated_at per row \u2192 stale rows rejected, return the true changed count; drop the `IF v_uid IS NULL THEN NULL` skip \u2014 PC SCHED-4; REVOKE/GRANT; lineDiff proof test) + new migration 2026NNNN_pt_milestone_baselines.sql (milestone_baselines table keyed (project_id, captured_at) with rows per milestone; baseline writes controller-or-owner only; ALTER PUBLICATION supabase_realtime ADD TABLE milestones \u2014 SCH-7's realtime half = notifications RT-12)"
+   ],
+   "migrationsLikely": 2,
+   "when": "now; after J6a (lib/milestones.ts shared)",
+   "dependsOn": [
+    "DEC-30: SCH-7's realtime claim is void if milestones was added to the publication by hand in the dashboard \u2014 inventory `select * from pg_publication_tables where tablename='milestones'` before writing the ALTER; the lock migration needs an inventory of in-flight moves (none expected)",
+    "DEC-31: ExecutionView.tsx edits are two strings \u2014 if the CPM rename needs more, open a follow-on finding rather than widen",
+    "No document-control package touches these files \u2014 PC-4 can run NOW, concurrently with DC wave 1 and with PC-3 (disjoint files; the single lib/milestones.ts call site is delegated to PC-3)",
+    "No running fleet owns these files \u2014 can start NOW. Region-split of lib/milestones.ts with P6a (see P6a). SCH-8's reflow use of lag waits for P6a's parser to capture it (consume after P6a merges; until then FS-only with the gap fixed)",
+    "P7 consumes the shared overdue predicate in lib/projectSnapshot.ts:115-119 and lib/projectReport.ts:88-91 after this merges (two lines, P7's files)",
+    "PT SCH-8's parser half (relationship type + lag captured) lands in PC-3; PC-4's lag support reads the field if present and defaults to 0 \u2014 no ordering constraint",
+    "Report 02 substrate: computeTreeMove's locked-leaf handling and deepest-first re-envelope are the reference implementation \u2014 SCHED-5 is fixed by making the other two engines match it, never by changing it",
+    "SCHED-10 subsumes PT SCH-15; the CPM decision below governs both",
+    "projects-and-cost SCHED-3, SCHED-4, SCHED-5, SCHED-7, SCHED-9, SCHED-10, SCHED-11, SCHED-13, SCHED-14 close by pointer to this package; notifications RT-12 (milestones publication) and PROD-11 (schedule mutators silent \u2014 NOT built here; pointer only) cross-reference; projects-tab owns these files"
+   ],
+   "decisionsNeeded": [
+    "SCH-13 imported rows \u2014 default: 'read-only imported rows' means dates/structure locked to the import, progress/status editable; enforced in lib/milestones.ts (below the UI) and the tooltip rewritten to say exactly that",
+    "SCH-15 \u2014 default: rename the label to 'longest chain' unless the graph-derived path lands in the same package (it may: criticalPath.ts is 88 lines) \u2014 never leave 'critical path' on an estimate",
+    "SAF-7 \u2014 default: every baseline capture is kept; drift computed against the newest by default with a picker for older captures; clearBaseline becomes 'retire' (soft)",
+    "SCH-17 \u2014 default: deleting a phase re-parents its children to the phase's parent (never orphans), states the count in the confirm, records the prior structure in the audit row",
+    "PERF-5 \u2014 default: windowed rendering of rows (no new dependency if the existing list virtualization pattern in the repo suffices; otherwise a small in-house window)",
+    "SCHED-10 / SCH-15 (default): implement real CPM over dependsOn (the edges exist since 20260705); the date-walk heuristic is retired, not renamed",
+    "SCHED-13 (default): zero-lag FS means successor.start >= predecessor.finish; imported same-day chains are not pushed; a stored lag column is optional (PC-3 decides whether the parser persists lag in attributes or a column \u2014 default attributes.lag_hours, no migration)",
+    "SCHED-14 (default): hours basis only when every leaf carries hours; otherwise unit weight for all, with the basis named in the UI",
+    "SCHED-7 (default): an all-missed phase reads 'missed' (ranked after blocked, before on_hold)",
+    "SCHED-12 (default): Forecast finish suppressed below 10% task completion, otherwise labelled 'at the current rate of N tasks/day'"
+   ]
+  },
+  {
+   "name": "J7 WIZARD-HEALTH-REPORT",
+   "projectsTabPackages": [
+    "P7 WIZARD-HEALTH-REPORT \u2014 the project wizard's writes, the health score/coach truth, the snapshot and the printed report"
+   ],
+   "projectsAndCostPackages": [
+    "PC-9 HEALTH-REPORT-AND-COACH \u2014 imported schedules count, SPI, the report's CPI, coach truth, the project evidence pack, wizard write failures"
+   ],
+   "findings": {
+    "projects-tab": [
+     "UX-1",
+     "UX-12",
+     "A11Y-5",
+     "UX-3",
+     "UX-4",
+     "UX-5",
+     "UX-6",
+     "MON-5",
+     "MON-6",
+     "PERF-3",
+     "PERF-4",
+     "MON-4 report-label limb (closes in P3)",
+     "SCH-5 consumer limb (two lines, closes in P6b)"
+    ],
+    "projects-and-cost": [
+     "PM-3",
+     "PM-12",
+     "QUAL-9",
+     "QUAL-10",
+     "PM-13"
+    ]
+   },
+   "files": [
+    "components/projects/EditProjectModal.tsx (:36-42 \u2014 the four wizard-only fields become editable = UX-1)",
+    "components/projects/ProjectCoach.tsx (:33,:41 re-gather + abort on unmount = PERF-3; :77 hardcoded colour = CHART-4's consumer \u2014 token from P5)",
+    "components/projects/ProjectWizard.tsx (467 lines; five unchecked sub-writes :149-204 = UX-1/PC PM-13; budget '1,200,000' rejected :153; lookalike Field :456-463 = A11Y-5 \u2014 compose components/ui/Field.tsx's exported Field :38; eight clicks :120,:222,:434-444 = UX-12; party rows without company_id :179-183 = MON-7's limb (P11))",
+    "components/projects/ProjectWizard.tsx \u2014 NARROW: the four follow-up writes bind their errors (the milestones insert loses `.then(() => undefined, () => undefined)`), failures are collected and shown as a banner on the destination page naming what did not save, the typed rows are retained for retry (PM-13 = PT UX-1; GAP-402's helper consumed if merged); company_id write unchanged (COST-12 reads it). PT's wizard packages (A11Y-5/10, UX-12) run after",
+    "components/projects/ScheduleTab.tsx \u2014 NARROW, one import: the shared liveness predicate replaces the inline includeGhost comment (PM-3 dw2). Everything else in ScheduleTab is PT's",
+    "components/projects/cost/CostCharts.tsx \u2014 read-only consumer of the pinned/unpinned split (no edit beyond PC-7's label)",
+    "lib/__tests__/projectControls.test.ts (projectHealth section \u2014 extend: no copy claims an unbuilt mechanism; every coach action names a real route) + new lib/__tests__/projectWizard.test.ts (a failing sub-write surfaces with the data recoverable; 1,200,000 accepted) + new lib/__tests__/projectReport.test.ts (report CPI equals the Costs-tab rollup for a pinned fixture; imported-only fixture reports real counts)",
+    "lib/__tests__/projectSnapshot.test.ts (new: a project whose only milestones have source='p6' \u21d2 milestoneCount > 0, overdue correct, spi non-null), lib/__tests__/projectReport.test.ts (new: pinned account + 50% milestone \u21d2 rollup.cpi non-null and equal to the Costs tab value; rendered report contains the milestone table and the closeout snapshot), lib/__tests__/evidencePack.test.ts (new: quality sections present; footer honest), lib/__tests__/projectWizard.test.ts (new: a cost_accounts insert error surfaces)",
+    "lib/evidencePack.ts \u2014 project pack ONLY (gatherProjectEvidence / renderProjectEvidenceHtml): queries and sections for every checklist with items, status, applicability, citations and decider; the turnover package with per-item reviewer/date/note and PC-5's review history; the punch list with closers; audit query ordered newest-first with the truncation disclosed; footer names what is and is not covered; machine-satisfied items visually distinct (QUAL-10). The document pack (drafting-flow EVID-10, DC TRX-13 acknowledged_meta) is not touched",
+    "lib/projectHealth.ts (copy asserting unbuilt mechanisms :225 'auto-greens', :231 'gated on acceptance; scored', :243 'process themselves' = UX-3/UX-4/UX-5/PC QUAL-9; coach action that does not exist :177-183,:208,:214 = UX-6; dead observer/state refs :57,:145 = REL-9 pointer)",
+    "lib/projectHealth.ts \u2014 Cost part reads s.committed (COST-2 dw3 consumer); coach payoff strings made true: turnover ('open items are recorded on the closeout, not blocked' / no scoring claim until COST-12 lands), SPI payoff real after PM-3, the CPI payoff unchanged (QUAL-9 = PT UX-5; PT UX-3 / UX-6 coach copy in the same pass \u2014 same file, same rule: a single source of truth for gate strictness referenced by the coach and the dialog)",
+    "lib/projectReport.ts (CPI unconditionally null :53-59 = MON-5/PC PM-12/COST-1; imported schedules invisible :54 = MON-6; overdue :88-91; milestone index keyed by position :192-195; closeout snapshot :159 = SAF-14's report half \u2014 P8 writes the snapshot, this file renders it)",
+    "lib/projectReport.ts \u2014 the milestone query selects id, a real id-keyed milestonePctIndex feeds computeCostRollup, `void pctIdx` removed; the report never says 'No schedule loaded' for imported milestones; forecast and draftLessonsLearned re-checked with cpi populated; closeout section renders the gate snapshot PC-2 stores on the override audit row (PM-12 = PT MON-5 = COST-1 dw3; PM-3; PT SAF-14 report half)",
+    "lib/projectSnapshot.ts (imported rows excluded :49 = MON-6/PC PM-3; hard-coded null metric :120 = UX-6; overdue :115-119 = SCH-5 consumer; gather re-run per mount :25-26 = PERF-3; error indistinguishable from empty = REL-6 item 3 / PC QUAL-8 reader side)",
+    "lib/projectSnapshot.ts \u2014 uses the shared predicate; spi computed from lib/milestones.ts computeScheduleMetrics (import only; PC-3 owns that file) so computeProjectHealth's SPI branch and the coach's payoff become real (PM-3 dw3); s.committed populated and read (COST-2 consumer \u2014 reads the exposure figure PC-7 exposes)",
+    "new lib/milestoneLiveness.ts \u2014 ONE predicate (imported/ghost rows are commitments; the dead 'app' branch and impossible == null clause removed) used by projectSnapshot, projectReport and \u2014 by one import \u2014 ScheduleTab (PM-3 dw2 = PT MON-6; PT SCH-5's three overdue rules converge on the same helper for the snapshot/report sites)"
+   ],
+   "migrationsLikely": 0,
+   "when": "now; QUAL-10 limb waits for DC P7 (lib/evidencePack.ts)",
+   "dependsOn": [
+    "DEC-31: no changes to lib/milestones.ts (PC-3's) or lib/costs.ts (PC-7's) \u2014 only imports",
+    "DEC-35 (health/coach copy names no facility vocabulary), README systemic pattern ('a silent fallback wherever an honest gap belongs') \u2014 the snapshot returns {ok:false,error} on a failed read and the coach says so",
+    "No running fleet owns these files \u2014 can start NOW. MON-6 cites supabase/migrations/20260614_phase7_milestones.sql:61 and types/schema.ts:429 as EVIDENCE (the source column) \u2014 the fix is the snapshot/report query filter, not a migration, and types/schema.ts (document-control P4/P7's file) is NOT edited",
+    "P6b MERGED before the SCH-5 consumer lines (two call sites) \u2014 everything else in this package is independent of P6b; PERF-3's 'gather once' is delivered inside ProjectCoach + projectSnapshot (per-project memo + AbortController), not by lifting state into page.tsx (P8's file) or the tabs (P2/P3's files)",
+    "PC-2's gate snapshot on the override audit row (PT SAF-14) \u2014 the report renders it when present, recomputes otherwise (no ordering constraint)",
+    "PC-5's turnover_review_events and completed_basis \u2014 the pack renders them when present (no ordering constraint; QUAL-10 waits for P7 anyway, by which time PC-5 has merged)",
+    "PC-7's ProjectCostRollup contract (pinnedBudget/pinnedSpent, exposure) \u2014 PM-12 needs only the id-keyed map and works without it; the exposure consumer in projectHealth is a one-line read once PC-7 lands (no ordering constraint; if PC-9 lands first, s.committed keeps today's meaning)",
+    "PM-3, PM-12, QUAL-9, PM-13 can start NOW (no DC package owns these files); QUAL-10 waits for DC P7 TRANSMITTALS (wave 2) to merge its lib/evidencePack.ts edit (TRX-13) \u2014 do QUAL-10 last and rebase on P7; if P7 has not merged when the rest is done, record QUAL-10 BLOCKED-on-P7 with the query and hand it to a follow-on",
+    "PT SCH-5 (three overdue rules) spans executionReport/scheduleFilter (PC-3/PC-4), projectSnapshot/projectReport (here) and ScheduleTab/ExecutionView (PT) \u2014 the shared predicate here is the convergence point; PT closes SCH-5 once all three land",
+    "drafting-flow PROJ-6 (no open-drafting-request gate at closeout; cites projectSnapshot) and EVID-4/EVID-10 (document pack) rebase on PC-9; DEC-40 for anything the pack references (links, never copies)",
+    "projects-and-cost PM-3, PM-12, PM-13, COST-1 (report half), QUAL-9 close by pointer to this package; projects-tab owns ProjectWizard.tsx, EditProjectModal.tsx, lib/projectHealth.ts, lib/projectSnapshot.ts, lib/projectReport.ts, ProjectCoach.tsx"
+   ],
+   "decisionsNeeded": [
+    "UX-12 \u2014 default: step 1 alone (name + optional budget) creates the project; later steps are visibly optional and reachable from the project page afterwards",
+    "UX-3 \u2014 default: copy says 'suggested when a matching Issued document is on the project \u2014 confirm each'; no automatic sweep added in this package",
+    "MON-6 \u2014 default: imported rows COUNT for health, coach and report exactly as they do on the Costs tab (one rule, one helper in projectSnapshot consumed by projectReport)",
+    "PERF-4 \u2014 default: the eslint-disable is removed and the effect's dependency list made honest (projectId + orgId); a loop is impossible once the snapshot is memoised per project",
+    "PM-3 (default): imported/ghost milestones count as commitments everywhere (the Schedule tab's stated position wins over the snapshot's); SPI is computed rather than the payoff removed",
+    "QUAL-9 (default): the coach copy describes a check-with-override; the gates stay advisory (page.tsx:625 product intent); the scoring claim is removed until COST-12 lands",
+    "PM-13 (default): partial failure keeps the project and retains the typed rows in component state for one retry, with a banner on the destination page \u2014 not a full transaction (createProject already commits first)",
+    "QUAL-10 (default): the pack renders the full quality program; audit trail newest-first with 'showing N of M' rather than a silent 1000-row cut"
+   ]
+  },
+  {
+   "name": "J8 PROJECT-MODEL",
+   "projectsTabPackages": [
+    "P8 PROJECT-MODEL \u2014 private-project RLS, the project page shell, the timeline sees the controls program, documents tab truth, export (GAP-408)"
+   ],
+   "projectsAndCostPackages": [
+    "PC-2 PROJECT-MODEL-RAILS \u2014 closeout/reopen, delete, checkout release, activity attribution, document register, CSV, controller helper"
+   ],
+   "findings": {
+    "projects-tab": [
+     "SEC-2",
+     "SEC-9",
+     "SEC-15",
+     "SEC-17",
+     "SAF-6",
+     "SAF-14",
+     "SAF-16",
+     "SAF-17",
+     "UX-11",
+     "UX-14",
+     "REL-5",
+     "PERF-2",
+     "PERF-8"
+    ],
+    "projects-and-cost": [
+     "PM-1",
+     "PM-4",
+     "PM-6",
+     "QUAL-3",
+     "PM-7",
+     "PM-8",
+     "PM-9",
+     "PM-11",
+     "PM-10",
+     "PM-5 (record-only + one-line residual)",
+     "PM-14 (record-only \u2192 R&P DB-6 / 20261020)"
+    ]
+   },
+   "files": [
+    "app/(protected)/projects/[id]/page.tsx (1030 lines \u2014 P8 OWNS this file; other packages' page limbs are listed under their own IDs and land here: documents tab two lists + badge :420,:442,:461-483,:722-751 = UX-11; closeout override dialog :627-653 = SAF-14; timeline fetched on open :145-150,:180,:246-250 = PERF-8; transfer button :913,:977-982 = SEC-15; observer picker :926,:133 = UX-14; per-tab error boundary = REL-5; SAF-13's adopt-button gate :508-523 = P1's limb (hide when the actor cannot adopt) \u2014 coordinate: P1 lands lib logic, P8 the one-line render gate)",
+    "app/(protected)/projects/[id]/page.tsx \u2014 NARROW, four regions only: delete confirm driven by live counts (:408 region; PM-6 dw1); cancel/complete confirm and outcome message reflect {released, stillHeld} (:619-623; PM-4); Reopen action for controllers; isOwner derivation stops trusting project_members.role (:947) and canComment excludes observers (PM-11). PT's page-wide packages run after this merges",
+    "app/(protected)/projects/page.tsx (export button :103-114 = PERF-2; identity-and-session IS-P1 later edits :190 \u2014 not touched here)",
+    "components/projects/ProjectDocumentsCard.tsx (:48-84 list = UX-11; :135-144 detach confirm + canManage = SAF-17/SEC-17; superseded/archived guard = drafting PROJ-8 pointer; DEC-40 current-revision marker)",
+    "components/projects/ProjectDocumentsCard.tsx \u2014 NARROW: attach/detach through a server-stamped activity write (PM-8 dw4); rest stays PT (UX-11)",
+    "lib/__tests__/projects.test.ts (new: per-session release outcome, closed-project refusal, reopen, delete refusal with counts, csvSafe round-trip of '=1+1'), new lib/__tests__/projectRailsMigration.test.ts (policy/trigger shapes; census that no later migration re-creates project_documents_member_all \u2014 extend phase3RlsMigration.test.ts's pattern)",
+    "lib/projectExport.ts (360 sequential round trips :34-61,:114-129 = PERF-2/GAP-409; CSV formula escaping :12-22,:70-105 = PC PM-10)",
+    "lib/projectExport.ts + new lib/csvSafe.ts \u2014 csvField prefixes = + - @ TAB CR with a quote-wrapped apostrophe before the existing escaping (PM-10); the helper is exported for lib/dataExport.ts / lib/exportTables.ts / lib/xlsxData.ts, which are DC P10 / A&O P2 files \u2014 those packages consume it (PM-10 dw2 by pointer), PC-2 does not edit them",
+    "lib/projects.ts (transferOwnership :622 \u2192 RPC = SEC-15; assertCanManageProject :581 roles[] = PC PM-5; listProjectDocuments :322-330 + ACL-hidden count = UX-11; updateMember/observer :662-716 = UX-14; transitionProjectStatus :260 writes the gate SNAPSHOT into the override audit row = SAF-14/PC QUAL-9; deleteProject :600 revokes intake links via P1's helper = PC PM-2, counts cost/quality rows in the confirm = PC PM-6/QUAL-3; postComment last_activity_at :431 = PC PM-9)",
+    "lib/projects.ts \u2014 REBUILD ON DC P6 CHECKOUT's merged version. transitionProjectStatus: revokes the project's intake links on complete/cancel/archive (PM-1), claims the release outcome only from the real released ids and reports 'still held by X' (PM-4 dw3), serialises the gate snapshot into the audit row on override (PT SAF-14), adds an audited controller-only reopenProject that clears completed_at/cancelled_at/cancelled_reason (PM-1 dw3). releaseAllCheckoutsForProject: binds {error}, releases per session, uses force_release_document (20261043) for sessions the actor may release as a controller, returns {released, stillHeld} (PM-4). autoReleaseExpiredAdHoc: stranded project checkouts on closed projects become sweepable (PM-4 dw4 \u2014 extend, do not re-add DCK-7's shape). deleteProject: routes through the new delete_project_record RPC (counts, audits with counts, deletes in one transaction; refused when quality/financial rows exist unless the archive path is taken) (PM-6 + QUAL-3). writeActivity: binds both errors, stops the client UPDATE of last_activity_at (trigger does it), stamps identity server-side (PM-7 dw3, PM-9). updateMember refuses role='owner' (PM-11 dw3). assertCanManageProject: isControllerPrincipal from lib/permissions.ts replaces the literal (PM-5 residual, DEC-35)",
+    "lib/timeline.ts (getProjectTimeline :411-478 never queries resource_type='project' audit rows :441-443 = SAF-6/GAP-408; in-review versions leak :447-452,:513-514 vs getDocumentTimeline :324-332 = SAF-16; detach amputates history :423-433 = SAF-17; full load on every open = PERF-8)",
+    "new components/projects/TabErrorBoundary.tsx (REL-5 \u2014 a thrown error in one tab leaves the other six usable; no ErrorBoundary exists in the repo today)",
+    "new lib/__tests__/projectsRls.test.ts (policy census replaying schema.sql + every migration: every controls/cost table's member-read policy references project_visible_to_me; project_documents has no FOR ALL policy; projects DELETE requires active membership) + lib/__tests__/timeline.test.ts (new: a project-scoped audit row reaches getProjectTimeline; in-review version hidden for a non-reviewer; detached document's history survives) + projectExport.test.ts (round trips independent of project count; formula characters escaped)",
+    "new migration 2026NNNN_pt_private_projects_rls.sql (SEC-2: the seven controls tables + cost tables + project_parties/cost_accounts/cost_entries/cost_documents member-read policies from 20261013:256 and 20260906 re-created as project_visible_to_me(project_id) \u2014 the helper exists (20260913:40) and is referenced by exactly ONE policy today (project_activity :91); companies/company_events stay org-scoped but the profile gather (P9) must not surface private-project rows; SEC-9: projects_delete_owner from 20260906:66-68 requires an ACTIVE org membership (20261042/20261043 succession DELETEs on project_members are the live neighbours \u2014 lineDiff proof); SEC-17/PC PM-8/drafting PROJ-3: project_documents FOR ALL (20260609:192-197, 20260913:79-86) split per verb \u2014 SELECT visible-project, INSERT/DELETE can_manage_project(project_id) from 20261047:173; PC PM-7: project_activity INSERT binds user_id = auth.uid() and project_visible_to_me)",
+    "new migration 2026NNNN_pt_transfer_ownership.sql (SEC-15/PC PM-5: transfer_project_ownership(p_project, p_new_owner) SECURITY DEFINER, caller must be current owner or controller, target must be an active member; projects_update_owner WITH CHECK cannot admit the post-transfer row for a plain owner \u2014 the RPC is the path; assertCanManageProject reads roles[] via the same predicate)",
+    "new migration A (PM-7 + PM-9 + PM-11): project_activity_insert WITH CHECK (user_id = auth.uid() OR (user_id IS NULL AND auth.role()='service_role')) AND org_id = project_org(project_id) AND project_visible_to_me(project_id) AND (type <> 'comment' OR can_manage_project(project_id) OR is_project_member-with-role-in-(owner,collaborator)); no UPDATE policy; AFTER INSERT trigger touching projects.last_activity_at (SECURITY DEFINER, search_path pinned); backfill last_activity_at = max(project_activity.created_at)",
+    "new migration B (PM-8 = PT SEC-17 = drafting-flow PROJ-3, + PT SEC-15): drop project_documents_member_all; SELECT USING project_visible_to_me(project_id); INSERT/UPDATE/DELETE limited to is_org_controller(org_id) OR can_manage_project(project_id), WITH CHECK org_id = project_org(project_id); checkouts_resync_project_documents re-created SECURITY DEFINER SET search_path (a collaborator's checkout-driven row must still land); transfer_project_ownership(project, new_owner) SECURITY DEFINER RPC validating the current owner and the recipient's active membership, REVOKE from public/anon (PT SEC-15 rides here because it is the same lib/projects.ts function and policy set)",
+    "new migration C (PM-1 + PM-6 + QUAL-3 + PT SEC-9): projects_update_owner / projects_delete_owner require active membership (user_owns_project shape); BEFORE INSERT/UPDATE/DELETE guard on cost_entries, change_orders, cost_documents, cost_accounts, project_checklists, checklist_items, turnover_items, punch_items, milestones refusing writes while the project's status is completed/cancelled/archived unless current_setting('app.project_reopen', true) is set by reopen_project() (audited RPC, controller-only); BEFORE DELETE guard on projects refusing when any quality/financial row exists unless current_setting('app.record_purge', true) = 'project:<id>' set inside delete_project_record() (which counts, writes PROJECT_DELETED details with counts and a serialized snapshot, then deletes); BEFORE DELETE guards on the four quality tables mirroring 20260826's legal-hold shape and honouring the same GUC; retention/legal_hold reach: projects.legal_hold BOOLEAN NOT NULL DEFAULT false checked by the projects guard (QUAL-3 dw4 minimal form); cost_documents R2 keys of a purged project written to the orphan-sweep queue (PM-6 dw5 \u2014 the collector is A&O BKP-2 / intelligence ILIFE-1; PC-2 only records the keys)"
+   ],
+   "migrationsLikely": 5,
+   "when": "after DC P6 CHECKOUT merges (lib/projects.ts, lib/timeline.ts)",
+   "dependsOn": [
+    "20261047 can_manage_project (R&P SURF-11) is the roster predicate for migration A/B \u2014 do not re-inline project_members into a projects policy (20260913 recursion)",
+    "DC P6 CHECKOUT (wave 1, running now) MERGED \u2014 it owns lib/projects.ts (DCK-7 sweep, DCK-9 register) and lib/timeline.ts; PC-2 rebuilds releaseAllCheckoutsForProject / autoReleaseExpiredAdHoc on its version and never re-adds a second force-release write (20261043 force_release_document is the base)",
+    "DEC-25 analogue for PM-1: closeout never auto-releases anything it cannot release; reopen is explicit and audited. DEC-40 for the register (reference rows only). DEC-43: controllers stay unscoped",
+    "DEC-30 inventories BEFORE apply: project_activity rows whose user_id is not an active member of project_org(project_id) (PM-7 dw4 \u2014 surfaced for review, never rewritten); project_documents rows with org_id <> project_org(project_id); closed projects with active project-tied checkout_sessions (PM-4); completed/cancelled/archived projects with un-revoked intake links (PM-1); projects carrying cost/quality rows (PM-6 blast radius of the delete guard); project_members rows with role='owner' whose user is not projects.owner_user_id (PM-11)",
+    "DEC-30 inventories before apply: projects owned by deactivated members (SEC-9); project_documents rows attached by non-managers (SEC-17 \u2014 informational); private projects with cost/quality rows readable today (SEC-2 \u2014 the blast radius statement)",
+    "DEC-40 (documents tab shows the live current revision and marks superseded \u2014 never a copy), DEC-43 (controllers unscoped: project_visible_to_me keeps the controller branch), GAP-408 'decide per event type whether it is a milestone or noise; one event vocabulary', DEC-20/DEC-12 substrate from 20261042/20261043 (succession on revocation)",
+    "P1 exports the intake-link revoke helper deleteProject calls (PC PM-2); until P1 merges, deleteProject revokes inline with a TODO pointer \u2014 or P8 lands after P1",
+    "PC-7's money DELETE guards (COST-10) and this package's project purge RPC share ONE contract: guards honour current_setting('app.record_purge', true) = 'project:<id>'. Whichever lands first defines the GUC name exactly as written here",
+    "Runs BEFORE identity-and-session IS-P1 (which edits projects/[id]/page.tsx:237 and projects/page.tsx:190 after all DC waves) or rebases on it \u2014 one of the two, recorded",
+    "document-control P6 CHECKOUT (wave 1, running now) MERGED \u2014 it owns lib/projects.ts (DCK-7 :1032-1122, DCK-9 :388-414), lib/timeline.ts (DCK-9 :256-268, HLD-11 :124-169,:346-357,:464-470, RG-12 :330) and components/projects/StaleCheckoutBanner.tsx. Build on its tree; PC PM-4 (closeout release silently fails, lib/projects.ts:371-415) is DCK-9's region \u2014 verify whether P6 closed it, else fold in here",
+    "drafting-flow (unplanned) EVID-1 / PROJ-6 / PROJ-10 / PROJ-13 cite lib/projects.ts and PROJ-3/PROJ-5/PROJ-8 cite ProjectDocumentsCard \u2014 PROJ-3 closes with PM-8 by pointer; the rest rebase on PC-2",
+    "identity IS-P1 (SESS-6) edits projects/[id]/page.tsx:237 after all DC waves \u2014 it rebases on PC-2/PC-9's narrow edits",
+    "notifications PROD-4 (hardcoded emit audiences, lib/projects.ts) \u2014 untouched here",
+    "projects-and-cost PM-1 (closeout is a label \u2014 project-side half here: completed/cancelled/archived refuse writes via a status branch in the write policies; the token half is P1's), PM-2, PM-4, PM-5, PM-6, PM-7, PM-8, PM-9, PM-10, PM-11, QUAL-3, QUAL-9 (gate copy), and drafting-flow PROJ-3, PROJ-6, PROJ-8 close by pointer to this package; QUAL-10 (evidence pack omits quality) is document-control P7's file (lib/evidencePack.ts, wave 2) \u2014 pointer, not fixed here"
+   ],
+   "decisionsNeeded": [
+    "SEC-9 residual 'a project with financial records cannot be hard-deleted' \u2014 default: deleteProject refuses when cost_entries/change_orders/awarded cost_documents/turnover or checklist rows exist and offers Archive instead (PC PM-6/QUAL-3 same call); controllers may force with a reason, audited with the counts",
+    "SAF-6 event vocabulary \u2014 default: award, change-order decision, checklist status change, turnover accept/reject/waive, punch close are milestones; cost entries and individual checklist item updates are noise (not shown); the list lives in ONE map in lib/timeline.ts",
+    "UX-14 \u2014 default: observer stays in the picker with copy 'can see, cannot manage' now that 20261047 enforces it; the client canManage reads the roster role too so UI and DB agree",
+    "PERF-2 \u2014 default: one query per table with .in('project_id', ids) in batches of 100, progress + cancel, button disabled while running",
+    "PM-1 closeout and the external door (default): completing/cancelling/archiving REVOKES the project's intake links (fail safe; reopen mints new links) rather than suspending them",
+    "PM-1 regulated-record freeze (default): DB trigger refuses writes on the six regulated tables for closed projects; reopen is controller-only and audited (a project owner cannot reopen their own closed project)",
+    "PM-6/QUAL-3 (default): a project carrying any cost or quality row cannot be hard-deleted \u2014 it archives; hard delete exists only for record-less projects, via the counting/auditing RPC; no retention policy engine for projects beyond legal_hold (the full retention model stays a follow-on finding)",
+    "PM-4 (default): per-session release; sessions the actor may not release stay active and are named in the outcome; controllers release via force_release_document; the sweep later releases project-tied sessions on closed projects after the same 24h ad-hoc window",
+    "PM-7 comments by observers (default): an observer may read but not post project_activity comments (PM-11 dw1 enforced rather than the option removed)",
+    "PM-11 (default): keep the observer option with enforced behaviour (DB: can_manage_project already excludes it; app: canComment excludes it) rather than remove it",
+    "PM-10 (default): apostrophe-prefix in a quoted cell; no change to the BOM/extension"
+   ]
+  },
+  {
+   "name": "J9 API-ROUTES-AND-EGRESS",
+   "projectsTabPackages": [
+    "P10 API-ROUTES-AND-EGRESS \u2014 route authorization tests, ACL-aware service-role reads, presigned disposition, the viewer sandbox, schema health"
+   ],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "SEC-10",
+     "SEC-7",
+     "REL-6 (route-auth tests for all four routes + the money/snapshot failure-mode tests are P3/P7's \u2014 cross-reference)",
+     "REL-7",
+     "PERF-6",
+     "SEC-1 egress limb (attachment disposition + iframe sandbox + header test \u2014 the ID closes in P1)"
+    ],
+    "projects-and-cost": []
+   },
+   "files": [
+    "app/api/companies/quality-manual/route.ts (same auth shape; readable timeout; page cap surfaced = PERF-6)",
+    "app/api/projects/checklist/route.ts (198 lines; member-level auth :57-63 then supabaseAdmin document reads :110-131 and resolveDocumentFile = SEC-10 \u2014 evaluate the caller's read decision (lib/permissions.ts node_visible path, DEC-43 controller branch) before any service-role document read; readable timeout = PERF-6)",
+    "app/api/storage/download-url/route.ts (:200-205 GetObjectCommand \u2014 default attachment, inline only for an explicit reviewed caller; test asserts the header = SEC-1 Done-when 1/4, SEC-7) \u2014 AFTER P2 EGRESS merges; app/api/transmittal/route.ts already sends attachment (:73) \u2014 not edited (DC P7's file)",
+    "components/viewers/SecureDocViewer.tsx (:274 iframe sandbox with no allow-same-origin; render gated on the stored sniffed type from P1 = SEC-1 Done-when 2) \u2014 narrow; identity IS-P1 (:58) and drafting EVID-5 (:52-59) are other regions",
+    "lib/__tests__/apiRouteAuth.test.ts (extend with the four controls routes: cost-docs, checklist, quality-manual, intake upload \u2014 401/403/ACL-denied cases = REL-6; a member without ACL read on a document gets 403 from the checklist route = SEC-10)",
+    "lib/docFileServer.ts (36 lines; resolveDocumentFile gains a required caller/decision argument or a wrapper \u2014 every route that resolves a document via supabaseAdmin goes through it = SEC-10 Done-when 2)",
+    "lib/schemaExpectations.ts (add rows for project_checklists, checklist_items, turnover_items, punch_items, change_orders, companies, company_events \u2190 20261013 = REL-7; the tripwire 'every CREATE TABLE has a row' is admin-and-org BKP-14 / intelligence ILIFE-12 \u2014 pointer, one test if none exists yet)",
+    "lib/storage.ts (getSignedUrlForPath :188 \u2014 ResponseContentDisposition attachment by default, inline opt-in parameter = SEC-7) \u2014 AFTER document-control P2 EGRESS merges",
+    "new lib/__tests__/presignedDisposition.test.ts + apiRouteAuth extension"
+   ],
+   "migrationsLikely": 0,
+   "when": "route half now; egress half after DC P2 EGRESS",
+   "dependsOn": [
+    "DEC-43 (a controller bypass-decided read of a restricted node is audited at the bytes egress \u2014 the checklist route's service-role read must write the same CONTROLLER_RESTRICTED_READ row or route through the download-url path), R&P DOCACL substrate (lib/permissions.ts controllerBypassDecided), intelligence GOV-1/GOV-3/PR-12 own lib/ai/governedCall.ts \u2014 NOT edited; intelligence FLOW-11/FLOW-13 own lib/knowledgePageRender.ts \u2014 NOT edited (pass a deadline/page cap from the route)",
+    "The egress half (SEC-7, SEC-1 limb) waits for document-control P2 EGRESS (wave 1) MERGED \u2014 it rewrites app/api/storage/download-url/route.ts (clamp, no-store, granted expiresIn) and lib/presignedLifetime.ts; lib/storage.ts:118-154 is EGR-4's citation. Build on its tree; identity IS-P1 edits SecureDocViewer.tsx:58 after ALL DC waves \u2014 P10 lands its :274 change before IS-P1 or rebases",
+    "The route half (SEC-10, REL-6, REL-7, PERF-6) can start NOW \u2014 no fleet owns the checklist/quality-manual routes, lib/docFileServer.ts, apiRouteAuth.test.ts. The cost-docs route is P3's file: tests only, no edits; P3 keeps the auth shape",
+    "lib/schemaExpectations.ts is also edited by admin-and-org P2 (regenerate; after DC P10 EDGES), public-surfaces PS-VERIFY (verify_scans row; DC wave 2) and intelligence ILIFE-12 \u2014 additive rows only, rebase on conflict; the phantom-row deletion is A&O P2's",
+    "roles-and-permissions 03-document-control-acl.md:292 cites SEC-10 as the example of a service-role re-check inheriting the gap \u2014 cross-reference on close"
+   ],
+   "decisionsNeeded": [
+    "SEC-7 inline opt-in \u2014 default: only the in-app viewers (SecureDocViewer/MultiDocViewer/FullScreenViewer via the download-url route with inline=true and a stored type in {application/pdf, image/*}) get inline; every other caller and every share/portal/verify path gets attachment",
+    "PERF-6 \u2014 default: the route sets a deadline of maxDuration \u2212 15 s for render + inference and returns 'The document was too large to read in time \u2014 try fewer pages' with the page cap named; no queueing built",
+    "SEC-10 audit \u2014 default: when the caller is served a restricted document only because they are a controller, write CONTROLLER_RESTRICTED_READ (DEC-43) from the route as well"
+   ]
+  },
+  {
+   "name": "J10 SURFACE-SWEEP",
+   "projectsTabPackages": [
+    "P11 SURFACE-SWEEP \u2014 accessibility baseline for safety surfaces, user-facing errors, vocabulary, AI preconditions, the scorecard's writers (GAP-410; runs LAST)"
+   ],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "A11Y-1",
+     "A11Y-2",
+     "A11Y-4",
+     "A11Y-6",
+     "A11Y-7",
+     "A11Y-8",
+     "A11Y-10",
+     "A11Y-12",
+     "A11Y-13",
+     "REL-3",
+     "UX-13",
+     "UX-15",
+     "MON-7"
+    ],
+    "projects-and-cost": []
+   },
+   "files": [
+    "MON-7 writers (PC COST-12): lib/costs.ts saveParty carries company_id; ProjectWizard contractors create parties with company_id; lib/turnover.ts:143,:168,:247 and lib/changeOrders.ts rows carry party_id; QuotesPanel.tsx:461 award binds party_id/company_id; lib/companies.ts:240-252 gather reads through project_parties.company_id \u2014 each a one-line edit in another package's file, done after that package merged",
+    "app/(protected)/projects/page.tsx:125-141, app/(protected)/companies/page.tsx:94-100, app/submit/[token]/page.tsx:223-224, app/(protected)/projects/[id]/page.tsx:418-448,:709-720 (aria-pressed/aria-selected on pills and tabs = A11Y-7)",
+    "app/globals.css (:218 selected pill dark variant = A11Y-7; :298-303 coarse-pointer target floor = A11Y-8) \u2014 P5 owns :31-34/:49",
+    "components/projects/ProjectWizard.tsx:213, app/(protected)/projects/[id]/page.tsx:562,:609, app/(protected)/companies/page.tsx:286, app/(protected)/companies/[id]/page.tsx:500 (five hand-rolled modals \u2192 compose Modal = A11Y-4)",
+    "components/projects/QualityTab.tsx:439-497,:686 + app/(protected)/companies/[id]/page.tsx:313 + components/dashboard/viz.tsx (status as text/glyph + legend + accessible name = A11Y-2/A11Y-12; 24px/44px targets, Accept confirmation, stepper :571-580 = A11Y-8)",
+    "components/projects/cost/QuotesPanel.tsx:478, app/submit/[token]/page.tsx:173,:245,:274, app/(protected)/plot-plans/page.tsx:166 (hidden \u2192 sr-only file inputs with a labelled button = A11Y-1)",
+    "components/ui/HelpTooltip.tsx (a focusable, click-openable disclosure so decision-critical text is not hover-only = A11Y-12)",
+    "components/ui/Modal.tsx (has role=dialog/aria-modal/Escape :50-64; ADD focus trap + focus restore = A11Y-4 Done-when 3)",
+    "contrast pass over the cited sites in A11Y-13 (projects pages, companies pages, submit portal, date inputs) in both themes",
+    "new lib/__tests__/a11yProjects.test.ts (accessible name of a status cell includes its state; every file input is keyboard-reachable; the five modals render role=dialog with a trap) + userFacingError.test.ts + MON-7 fixture test (each scorecard dimension non-null for a fully populated fixture)",
+    "the error/success sites in app/(protected)/projects/[id]/page.tsx:665,:936, companies pages, app/submit/[token]/page.tsx:182,:251, ProjectWizard.tsx:124-125, IntakePanel.tsx:292 (role=status/alert + focus to the failed field = A11Y-6)",
+    "the four AI entry points \u2014 companies/[id]/page.tsx:279, QuotesPanel.tsx:409-411, QualityTab.tsx:129-131, CostsTab (precondition stated before the click; 'needs a budget line' offers the fix in place) = UX-13; lib/ai/governedCall.ts:41-47 is intelligence's \u2014 NOT edited",
+    "the ~22 raw-Postgres-string sites in lib/checklists.ts, lib/turnover.ts, lib/costDocs.ts, lib/changeOrders.ts, lib/companies.ts, QuotesPanel.tsx:545 \u2192 new lib/userFacingError.ts (message map + console/log of the raw detail) = REL-3 / UX-10 residual",
+    "user-facing strings across the Projects surface + the glossary (one word per concept: not-applicable / waived / void; contractor; task) = UX-15"
+   ],
+   "migrationsLikely": 0,
+   "when": "LAST in the projects fleet (substitutes shared components across every owner's files)",
+   "dependsOn": [
+    "GAP-410 'do not add a tooltip and call the dot fixed', 'do not fix dark mode by disabling the tint' (A11Y-3 was P6b's), README 'the recurring shape of the problems is re-implementation \u2014 most fixes are substitutions' (Modal, Field, sr-only, shell padding)",
+    "Runs AFTER P1, P2, P3, P4, P7, P8, P9 have merged (it touches files every one of them owns \u2014 substitution work, not new engineering) and after PERF-11's indexes (P9) for MON-7; the only package that is sequenced behind the rest of this area",
+    "identity-and-session IS-P1 edits projects/[id]/page.tsx:237, projects/page.tsx:190, SecureDocViewer.tsx:58 after all DC waves \u2014 coordinate ordering (rebase on whichever lands second)",
+    "projects-and-cost COST-12 (writer half) and COST-3 (advisory-only flag) close by pointer to MON-7/UX-13 here"
+   ],
+   "decisionsNeeded": [
+    "A11Y-8 Accept confirmation \u2014 default: Accept opens the same reason dialog as Reject (P2 made the reason mandatory); the stepper is removed from the tab order",
+    "UX-15 vocabulary \u2014 default: 'not applicable' (checklist), 'waived' (turnover), 'void' (money), 'contractor' (party/company on a project), 'task' (schedule row); the execution legend follows the row label",
+    "REL-3 \u2014 default: a fixed map of known Postgres/PostgREST codes \u2192 plain sentences, with an 'unexpected' fallback that names no internals; raw detail goes to console.error only",
+    "MON-7 quality dimension \u2014 default: an accepted turnover item counts for the company bound to the item's party; unbound parties stay Unrated (null), never 0"
+   ]
+  }
+ ],
+ "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",
+ "runOrder": [
+  "now: J2, J3, J4, J6a, J7 (minus QUAL-10), J9 route half",
+  "then: J5 (after J3), J6b (after J6a)",
+  "after DC P4: J1; after DC P6: J8; after DC P2: J9 egress half; after DC P7: J7 QUAL-10 limb, J2b",
+  "last: J10"
+ ]
+}
