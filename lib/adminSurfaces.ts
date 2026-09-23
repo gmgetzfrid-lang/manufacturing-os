@@ -70,7 +70,10 @@ export const ADMIN_SURFACES: readonly AdminSurface[] = [
     denied: `The audit log is limited to management, document control and auditors. ${CHANGE}` },
   { key: "scope", path: "/admin/scope", label: "Operational scope", entry: "*", writes: ["Admin", "Manager", "Supervisor", "DocCtrl"],
     denied: "You must be an active member to view the operational scope." },
-  { key: "holds", path: "/admin/holds", label: "Holds", entry: "*", writes: ["Admin", "Manager", "Supervisor", "DocCtrl"],
+  // HLD-8: who may RELEASE from /admin/holds is the holds.release capability
+  // (lib/holds.ts holdControlsFor — role tokens, the collection, grants), not
+  // a role list, so there is no `writes` set to pin to the page's source.
+  { key: "holds", path: "/admin/holds", label: "Holds", entry: "*",
     denied: "You must be an active member to view holds." },
   { key: "assets", path: "/admin/assets", label: "Operating areas", entry: "*", writes: ["Admin", "DocCtrl", "Manager", "Supervisor"],
     denied: "You must be an active member to browse the equipment registry." },

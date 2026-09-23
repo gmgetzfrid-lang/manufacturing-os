@@ -16,6 +16,9 @@
 //   5. Stale-checkout escalation: checkouts held past 14 days notify the
 //      org's DocCtrl/Admin pool (a stale lock stops being the holder's
 //      private secret).
+//   6. Compliance clocks per org — including the hold aging sweep (HLD-14):
+//      a hold past its expected release, or open past HOLD_AGING_DAYS with
+//      no date, nudges its opener and the release pool once.
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -32,6 +35,7 @@ import { scanEffectiveDates } from "@/lib/effectiveDate";
 import { scanRetention } from "@/lib/retention";
 import { scanAccessRecerts } from "@/lib/accessRecert";
 import { scanDistributionAcks } from "@/lib/distributionAcks";
+import { scanStaleHolds } from "@/lib/holds";
 import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
@@ -183,6 +187,10 @@ async function handler(req: NextRequest) {
       ["retention", scanRetention],
       ["access-recert", scanAccessRecerts],
       ["distribution-acks", scanDistributionAcks],
+      // HLD-14: holds past their expected release, or open past HOLD_AGING_DAYS
+      // with no date — the opener and the release pool are nudged once. Rides
+      // here because a third vercel.json cron entry fails deployment (step 10).
+      ["hold-aging", scanStaleHolds],
     ];
     for (const org of (orgRows as Array<{ id: string }>) ?? []) {
       result.complianceOrgs += 1;

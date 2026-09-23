@@ -5,27 +5,39 @@
 //
 // Design choices:
 //   - One-click for the four predefined reasons (matches the
-//     directive's "one-click hold states" requirement).
+//     directive's "one-click hold states" requirement) — the click
+//     opens an inline confirm row that asks for an OPTIONAL expected
+//     release date (HLD-14) and places the hold on the second click.
 //   - "Other" reveals a free-text input + Submit; deliberately
 //     two-click so an arbitrary string isn't created accidentally.
-//   - Release uses an inline confirm (small textarea optional)
-//     rather than a modal — the directive says "lightweight
-//     interactions" and "avoid excessive forms."
-//   - Stale indicator: when an active hold has gone past its
-//     expected_release_at, the duration label switches to red and
-//     prefixes with "+Nd late" — the directive's "schedule
-//     variance visibility" in its lightest form.
+//   - Release uses an inline confirm (a REQUIRED one-line reason,
+//     HLD-10) rather than a modal — the directive says "lightweight
+//     interactions" and "avoid excessive forms." A stop-work is lifted
+//     for a stated reason; the database holds the same rule.
+//   - Stale indicator: when an active hold has gone past the
+//     expected_release_at the opener set in the picker, the duration
+//     label switches to red and prefixes with "+Nd late". Holds with no
+//     date never read late here; the maintenance cron's aging sweep
+//     (lib/holds.ts scanStaleHolds) nudges the opener and the release
+//     pool once a hold is past its date, or past HOLD_AGING_DAYS with
+//     none — the directive's "schedule variance visibility".
+//   - Who sees the controls is decided by the org's capability policy
+//     (holds.open / holds.release — role tokens, the additive collection
+//     and per-person grants) through lib/holds.ts holdControlsFor, never
+//     a literal role list (HLD-8). `canEdit` is a caller-side hard OFF
+//     (read-only contexts); it can hide controls, never grant them.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  AlertOctagon, Plus, X, Loader2, Clock, AlertTriangle, Lock, Check, Printer,
+  AlertOctagon, Plus, X, Loader2, Clock, AlertTriangle, Lock, Check, Printer, CalendarClock,
 } from "lucide-react";
 import {
-  listActiveHoldsForDocument, openHold, releaseHold,
-  PREDEFINED_HOLD_REASONS,
+  listActiveHoldsForDocument, openHold, releaseHold, holdControlsFor, expectedReleaseIso,
+  PREDEFINED_HOLD_REASONS, type HoldRecord,
 } from "@/lib/holds";
+import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import type { DocumentHold } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 
@@ -43,8 +55,9 @@ interface HoldStripProps {
   userName?: string;
   userEmail?: string;
   userRole?: string;
-  /** When false, the strip renders read-only (no open/release buttons).
-   *  Defaults true — callers gate on app-level role checks. */
+  /** When false, the strip renders read-only (no open/release buttons)
+   *  whatever the policy says. Defaults true. It never grants: the
+   *  controls also need the org's holds.open / holds.release capability. */
   canEdit?: boolean;
   /** Bump from outside to force a refresh (e.g. after a parent action
    *  that may have closed a hold via a different code path). */
@@ -54,17 +67,45 @@ interface HoldStripProps {
   onChange?: () => void;
 }
 
+/** Today as the date input's `min` (local date). */
+function todayLocalIso(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export default function HoldStrip({
   documentId, orgId, userId, userName, userEmail, userRole,
   canEdit = true, refreshKey, onChange,
 }: HoldStripProps) {
-  const [holds, setHolds] = useState<DocumentHold[]>([]);
+  const { roles: heldRoleCollection } = useRole();
+  const [holds, setHolds] = useState<HoldRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [otherDraft, setOtherDraft] = useState<string | null>(null);
+  /** A predefined reason awaiting its (optional) expected-release date. */
+  const [pendingReason, setPendingReason] = useState<string | null>(null);
+  const [expectedDraft, setExpectedDraft] = useState("");
   const [releasingId, setReleasingId] = useState<string | null>(null);
   const [releaseReasonDraft, setReleaseReasonDraft] = useState("");
+  const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
+
+  // HLD-8: the controls follow the policy. Until it is read nothing is
+  // offered (fail closed); a read error falls to the shipped defaults, the
+  // same way every other policy consumer does — the database still enforces.
+  useEffect(() => {
+    let alive = true;
+    void loadCapabilityPolicy(orgId)
+      .then((p) => { if (alive) setPolicy(p); })
+      .catch(() => { if (alive) setPolicy({}); });
+    return () => { alive = false; };
+  }, [orgId]);
+  const { canOpen, canRelease } = policy
+    ? holdControlsFor(policy, userRole, heldRoleCollection, userId)
+    : { canOpen: false, canRelease: false };
+  const showOpen = canEdit && canOpen;
+  const showRelease = canEdit && canRelease;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -78,7 +119,7 @@ export default function HoldStrip({
 
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
 
-  const onOpen = async (reason: string) => {
+  const onOpen = async (reason: string, expectedDate?: string) => {
     if (!reason.trim()) return;
     setBusy(true);
     setError(null);
@@ -86,12 +127,15 @@ export default function HoldStrip({
       await openHold({
         orgId, documentId,
         reason: reason.trim(),
+        expectedReleaseAt: expectedReleaseIso(expectedDate),
         openedBy: userId,
         openedByName: userName,
         openedByEmail: userEmail,
         openedByRole: userRole,
       });
       setOtherDraft(null);
+      setPendingReason(null);
+      setExpectedDraft("");
       await refresh();
       onChange?.();
     } catch (e) { setError((e as Error).message); }
@@ -99,6 +143,8 @@ export default function HoldStrip({
   };
 
   const onRelease = async (holdId: string) => {
+    const releasedReason = releaseReasonDraft.trim();
+    if (!releasedReason) return;
     setBusy(true);
     setError(null);
     try {
@@ -108,7 +154,7 @@ export default function HoldStrip({
         releasedByName: userName,
         releasedByEmail: userEmail,
         releasedByRole: userRole,
-        releasedReason: releaseReasonDraft.trim() || undefined,
+        releasedReason,
       });
       setReleasingId(null);
       setReleaseReasonDraft("");
@@ -150,7 +196,7 @@ export default function HoldStrip({
           {holds.map((h) => <ActiveHoldRow
             key={h.id}
             hold={h}
-            canEdit={canEdit}
+            canRelease={showRelease}
             isReleasing={releasingId === h.id}
             onStartRelease={() => { setReleasingId(h.id!); setReleaseReasonDraft(""); }}
             onCancelRelease={() => { setReleasingId(null); setReleaseReasonDraft(""); }}
@@ -162,17 +208,21 @@ export default function HoldStrip({
         </div>
       )}
 
-      {canEdit && (
+      {showOpen && (
         <div className="pt-1 border-t border-[var(--color-border)] space-y-2">
           <div className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Place hold</div>
           <div className="flex flex-wrap gap-1.5">
             {PREDEFINED_HOLD_REASONS.map((r) => (
               <span key={r} className="inline-flex items-center gap-0.5">
                 <button
-                  onClick={() => onOpen(r)}
+                  onClick={() => { setOtherDraft(null); setPendingReason(pendingReason === r ? null : r); setExpectedDraft(""); }}
                   disabled={busy || heldReasons.has(r)}
                   title={heldReasons.has(r) ? "Already on hold for this reason" : `Place hold: ${r}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    pendingReason === r
+                      ? "bg-amber-600 text-white border-amber-700"
+                      : "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200"
+                  }`}
                 >
                   <Plus className="w-3 h-3" /> {r}
                 </button>
@@ -180,7 +230,7 @@ export default function HoldStrip({
               </span>
             ))}
             <button
-              onClick={() => setOtherDraft(otherDraft === null ? "" : null)}
+              onClick={() => { setPendingReason(null); setExpectedDraft(""); setOtherDraft(otherDraft === null ? "" : null); }}
               disabled={busy}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors"
             >
@@ -188,24 +238,65 @@ export default function HoldStrip({
             </button>
           </div>
 
+          {/* HLD-14: a predefined reason asks (optionally) when the hold is
+              expected to clear, then places it. */}
+          {pendingReason !== null && (
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <span className="text-[11px] font-bold text-amber-900">{pendingReason}</span>
+              <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                <CalendarClock className="w-3 h-3" /> Expected release
+                <input
+                  type="date"
+                  value={expectedDraft}
+                  min={todayLocalIso()}
+                  onChange={(e) => setExpectedDraft(e.target.value)}
+                  aria-label="Expected release date (optional)"
+                  className="text-[11px] border border-[var(--color-border-strong)] rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <span className="opacity-70">(optional)</span>
+              </label>
+              <button
+                onClick={() => onOpen(pendingReason, expectedDraft)}
+                disabled={busy}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-40"
+              >
+                <Check className="w-3 h-3" /> Place hold
+              </button>
+              <button
+                onClick={() => { setPendingReason(null); setExpectedDraft(""); }}
+                disabled={busy}
+                className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
+              ><X className="w-3 h-3" /></button>
+            </div>
+          )}
+
           {otherDraft !== null && (
-            <div className="flex items-center gap-1.5 mt-1">
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <input
                 value={otherDraft}
                 onChange={(e) => setOtherDraft(e.target.value)}
                 placeholder="Custom hold reason"
-                className="flex-1 text-xs border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                className="flex-1 min-w-[10rem] text-xs border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 autoFocus
               />
+              <input
+                type="date"
+                value={expectedDraft}
+                min={todayLocalIso()}
+                onChange={(e) => setExpectedDraft(e.target.value)}
+                aria-label="Expected release date (optional)"
+                title="Expected release (optional)"
+                className="text-[11px] border border-[var(--color-border-strong)] rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
               <button
-                onClick={() => otherDraft && onOpen(otherDraft)}
+                onClick={() => otherDraft && onOpen(otherDraft, expectedDraft)}
                 disabled={!otherDraft?.trim() || busy}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-40"
               >
                 <Check className="w-3 h-3" /> Add
               </button>
               <button
-                onClick={() => setOtherDraft(null)}
+                onClick={() => { setOtherDraft(null); setExpectedDraft(""); }}
                 disabled={busy}
                 className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
               ><X className="w-3 h-3" /></button>
@@ -220,11 +311,11 @@ export default function HoldStrip({
 // ─── Per-active-hold row ───────────────────────────────────────
 
 function ActiveHoldRow({
-  hold, canEdit, isReleasing, onStartRelease, onCancelRelease, onConfirmRelease,
+  hold, canRelease, isReleasing, onStartRelease, onCancelRelease, onConfirmRelease,
   releaseReasonDraft, setReleaseReasonDraft, busy,
 }: {
-  hold: DocumentHold;
-  canEdit: boolean;
+  hold: HoldRecord;
+  canRelease: boolean;
   isReleasing: boolean;
   onStartRelease: () => void;
   onCancelRelease: () => void;
@@ -239,7 +330,9 @@ function ActiveHoldRow({
   const [nowMs] = useState<number>(() => Date.now());
 
   // Print the physical HOLD card. Auto-assembles from the hold + document —
-  // zero inputs to fill.
+  // zero inputs to fill. HLD-7: the card carries the rev the hold was placed
+  // against (held at open time by the database) — the document's current rev
+  // only when the hold predates that record.
   const printCard = async () => {
     try {
       const { data } = await supabase
@@ -252,7 +345,7 @@ function ActiveHoldRow({
       await printHoldCard({
         holdId: hold.id!,
         docLabel: String(d?.document_number || d?.title || d?.name || "Document"),
-        docRev: (d?.rev as string | null) ?? null,
+        docRev: hold.heldRevLabel ?? ((d?.rev as string | null) ?? null),
         reason: hold.reason,
         notes: hold.notes ?? null,
         openedByName: hold.openedByName ?? null,
@@ -268,6 +361,7 @@ function ActiveHoldRow({
   const expectedMs = hold.expectedReleaseAt ? new Date(hold.expectedReleaseAt as string).getTime() : null;
   const isLate = expectedMs !== null && nowMs > expectedMs;
   const lateDays = isLate ? Math.round((nowMs - (expectedMs as number)) / 86400_000) : 0;
+  const releaseReady = releaseReasonDraft.trim().length > 0;
 
   return (
     <div className="bg-amber-50/50 border border-amber-200 rounded-lg p-2.5">
@@ -284,6 +378,10 @@ function ActiveHoldRow({
               {isLate && <span className="ml-1 font-bold text-red-700">(+{lateDays}d late)</span>}
             </span>
             {hold.openedByName && <span>by {hold.openedByName}</span>}
+            {hold.heldRevLabel && <span className="font-mono">at Rev {hold.heldRevLabel}</span>}
+            {expectedMs !== null && !isLate && (
+              <span className="inline-flex items-center gap-0.5"><CalendarClock className="w-2.5 h-2.5" /> expected {new Date(expectedMs).toLocaleDateString()}</span>
+            )}
           </div>
           {hold.notes && (
             <div className="mt-1 text-[11px] text-[var(--color-text)] whitespace-pre-wrap">{hold.notes}</div>
@@ -300,7 +398,7 @@ function ActiveHoldRow({
           >
             <Printer className="w-3 h-3" /> Card
           </button>
-          {canEdit && !isReleasing && (
+          {canRelease && !isReleasing && (
             <button
               onClick={onStartRelease}
               disabled={busy}
@@ -317,13 +415,15 @@ function ActiveHoldRow({
           <input
             value={releaseReasonDraft}
             onChange={(e) => setReleaseReasonDraft(e.target.value)}
-            placeholder="Resolution (optional)"
+            placeholder="Why is this hold being released? (required)"
+            aria-label="Release reason (required)"
             className="flex-1 text-[11px] border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             autoFocus
           />
           <button
             onClick={onConfirmRelease}
-            disabled={busy}
+            disabled={busy || !releaseReady}
+            title={releaseReady ? "Release this hold" : "State why the hold is being released"}
             className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-40"
           >
             <Check className="w-3 h-3" /> Release

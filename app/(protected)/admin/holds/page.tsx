@@ -6,11 +6,13 @@
 // 7-day open/release counts).
 // Middle: active-by-reason breakdown.
 // Bottom: list of active holds, oldest first (biggest blockers up
-// top). Each row links to the affected document's inspector.
+// top). Each row links to the affected document in its inspector.
 //
-// Admin-class roles only — even though RLS would let any org member
-// read, only the controllers act on these. Read-only for the rest;
-// they can still see what's blocked but can't release.
+// Any org member can read the queue (RLS lets them); who may RELEASE from
+// here is the org's capability policy — holds.release by role token, the
+// additive collection, or a per-person grant — through the same evaluator
+// the inspector strip and the database use (HLD-8), never a literal role
+// list. A release states its reason (HLD-10).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -22,14 +24,12 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import {
-  listActiveHoldsForOrg, getHoldMetrics, releaseHold,
-  type HoldMetrics,
+  listActiveHoldsForOrg, getHoldMetrics, releaseHold, holdControlsFor,
+  type HoldMetrics, type HoldRecord,
 } from "@/lib/holds";
-import type { DocumentHold } from "@/types/schema";
+import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { supabase } from "@/lib/supabase";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
-
-const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
 interface DocMeta {
   documentNumber: string | null;
@@ -39,10 +39,22 @@ interface DocMeta {
 
 export default function HoldsPage() {
   const { activeOrgId, activeRole, roles, uid, userEmail } = useRole();
-  // ADD-1: authority by the role COLLECTION, never the headline alone.
-  const canRelease = roles.some((r) => ADMIN_ROLES.has(r));
+  // HLD-8: the Release control follows the capability policy (role tokens,
+  // the additive collection — never the headline alone — and live grants).
+  // Nothing is offered until the policy is read; a read error falls to the
+  // shipped defaults as every policy consumer does; the database enforces.
+  const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    void loadCapabilityPolicy(activeOrgId)
+      .then((p) => { if (alive) setPolicy(p); })
+      .catch(() => { if (alive) setPolicy({}); });
+    return () => { alive = false; };
+  }, [activeOrgId]);
+  const canRelease = policy ? holdControlsFor(policy, activeRole, roles, uid).canRelease : false;
 
-  const [holds, setHolds] = useState<DocumentHold[]>([]);
+  const [holds, setHolds] = useState<HoldRecord[]>([]);
   const [docs, setDocs] = useState<Map<string, DocMeta>>(new Map());
   const [metrics, setMetrics] = useState<HoldMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,6 +98,8 @@ export default function HoldsPage() {
 
   const onRelease = async (holdId: string) => {
     if (!uid) return;
+    const releasedReason = releaseDraft.trim();
+    if (!releasedReason) return;
     setBusy(true);
     try {
       await releaseHold({
@@ -93,7 +107,7 @@ export default function HoldsPage() {
         releasedByName: userEmail ?? undefined,
         releasedByEmail: userEmail ?? undefined,
         releasedByRole: activeRole ?? undefined,
-        releasedReason: releaseDraft.trim() || undefined,
+        releasedReason,
       });
       setReleasingId(null);
       setReleaseDraft("");
@@ -104,6 +118,7 @@ export default function HoldsPage() {
 
   const totalByReason = useMemo(() => metrics?.activeByReason ?? [], [metrics]);
   const maxBarCount = useMemo(() => totalByReason.reduce((m, r) => Math.max(m, r.count), 1), [totalByReason]);
+  const releaseReady = releaseDraft.trim().length > 0;
 
   if (!activeOrgId) return <div className="p-6 text-sm text-[var(--color-text-muted)]">No active organization.</div>;
 
@@ -179,7 +194,9 @@ export default function HoldsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       {meta ? (
-                        <Link href={`/documents/${meta.libraryId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-blue-700 inline-flex items-center gap-1">
+                        // HLD-8: deep-link to the held document (the same
+                        // `?doc=` the hold notification uses), not the library.
+                        <Link href={`/documents/${meta.libraryId}?doc=${h.documentId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-blue-700 inline-flex items-center gap-1">
                           {meta.documentNumber && <span className="font-mono">{meta.documentNumber}</span>}
                           {meta.title && <span className="text-[var(--color-text)]">— {meta.title}</span>}
                           <ChevronRight className="w-3 h-3" />
@@ -195,6 +212,7 @@ export default function HoldsPage() {
                         {lateDays > 0 && <span className="ml-1 font-bold text-red-700">(+{lateDays}d late)</span>}
                       </span>
                       {h.openedByName && <span>opened by {h.openedByName}</span>}
+                      {h.heldRevLabel && <span className="font-mono">at Rev {h.heldRevLabel}</span>}
                     </div>
                     {h.notes && <div className="mt-1 text-[11px] text-[var(--color-text)] whitespace-pre-wrap">{h.notes}</div>}
                     {releasingId === h.id && (
@@ -202,11 +220,17 @@ export default function HoldsPage() {
                         <input
                           value={releaseDraft}
                           onChange={(e) => setReleaseDraft(e.target.value)}
-                          placeholder="Resolution (optional)"
+                          placeholder="Why is this hold being released? (required)"
+                          aria-label="Release reason (required)"
                           className="flex-1 text-[11px] border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                           autoFocus
                         />
-                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors">
+                        <button
+                          onClick={() => onRelease(h.id!)}
+                          disabled={busy || !releaseReady}
+                          title={releaseReady ? "Release this hold" : "State why the hold is being released"}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
+                        >
                           <Check className="w-3 h-3" /> Release
                         </button>
                         <button onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
