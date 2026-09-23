@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const maxDuration = 300;
 import { createClient } from "@supabase/supabase-js";
 import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
+import { scheduledRunGate } from "@/lib/exportEntitlement";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -33,6 +34,8 @@ type ScheduledDestination = ExportDestination & {
   schedule_day_of_week?: ScheduleParams["schedule_day_of_week"];
   schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
   next_run_at?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
 };
 
 type ScheduledRunResult = {
@@ -40,6 +43,8 @@ type ScheduledRunResult = {
   ok: boolean;
   bytes?: number;
   error?: string;
+  /** XEDGE-7: what the gate WOULD have refused with SUBSCRIPTION_ENFORCE on. */
+  warnings?: string[];
 };
 
 async function handler(req: NextRequest) {
@@ -56,6 +61,8 @@ async function handler(req: NextRequest) {
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   const nowIso = new Date().toISOString();
+  // DEC-18: billing-derived refusals are inert until the flag is on.
+  const enforceBilling = process.env.SUBSCRIPTION_ENFORCE === "true";
 
   const { data: due } = await sb
     .from("export_destinations")
@@ -93,6 +100,37 @@ async function handler(req: NextRequest) {
       continue;
     }
 
+    // XEDGE-7 / XEDGE-8: an unattended push must not outlive the person who
+    // configured it, the workspace's subscription, or the plan the bucket
+    // feature is sold on (lib/exportEntitlement.ts). A skip is RECORDED — a
+    // cancelled run plus the destination's last-run status — never a silent
+    // continue; the clock was already advanced by the claim above.
+    const gate = await scheduledRunGate(sb, dest, enforceBilling);
+    for (const n of gate.notices) console.warn(`[run-scheduled] destination ${dest.id}: ${n}`);
+    if (!gate.ok) {
+      const at = new Date().toISOString();
+      const skipMsg = `skipped: ${gate.reason}`;
+      await sb.from("export_runs").insert({
+        org_id: dest.org_id,
+        destination_id: dest.id,
+        trigger_type: "scheduled",
+        status: "cancelled",
+        error_message: skipMsg.slice(0, 1000),
+        destination_type: dest.destination_type,
+        diagnostics: [{ ts: at, step: "gate:skipped", detail: gate.reason }],
+        started_at: at,
+        completed_at: at,
+        duration_ms: 0,
+      });
+      await sb.from("export_destinations").update({
+        last_run_at: at,
+        last_run_status: "failed",
+        last_run_error: skipMsg.slice(0, 500),
+      }).eq("id", dest.id);
+      results.push({ destinationId: dest.id, ok: false, error: skipMsg });
+      continue;
+    }
+
     const startedAt = new Date().toISOString();
     const { data: runRow } = await sb.from("export_runs").insert({
       org_id: dest.org_id,
@@ -124,7 +162,10 @@ async function handler(req: NextRequest) {
           total_bytes: result.bytes,
           destination_path: result.destinationPath ?? null,
           destination_type: dest.destination_type,
-          diagnostics: result.diagnostics,
+          diagnostics: [
+            ...gate.notices.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
+            ...result.diagnostics,
+          ],
           completed_at: completedAt,
           duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
         }).eq("id", runId);
@@ -143,7 +184,10 @@ async function handler(req: NextRequest) {
         }),
       }).eq("id", dest.id);
 
-      results.push({ destinationId: dest.id, ok: true, bytes: result.bytes });
+      results.push({
+        destinationId: dest.id, ok: true, bytes: result.bytes,
+        ...(gate.notices.length ? { warnings: gate.notices } : {}),
+      });
     } catch (e) {
       const completedAt = new Date().toISOString();
       const msg = (e as Error).message || String(e);

@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { encryptSecret, maskSecret } from "@/lib/serverCrypto";
 import { computeNextRunAt } from "@/lib/exportRunner";
+import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
@@ -79,19 +80,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Plan gate: cloud bucket (S3/R2) backup destinations are a Growth feature.
-  // Trials may still configure one to evaluate; Starter cannot.
+  // Trials may still configure one to evaluate; Starter cannot. XEDGE-8: the
+  // SAME helper gates PATCH and the scheduled runner.
   if (body.bucket) {
-    const { data: org } = await auth.admin
-      .from("orgs").select("subscription_status, subscribed_plan").eq("id", orgId).maybeSingle();
-    const plan = (org as { subscribed_plan?: string } | null)?.subscribed_plan;
-    const status = (org as { subscription_status?: string } | null)?.subscription_status;
-    const allowed = plan === "growth" || plan === "enterprise" || status === "trialing";
-    if (!allowed) {
-      return NextResponse.json(
-        { error: "Cloud backup destinations (S3/R2) require the Growth plan. Upgrade in Billing to enable scheduled cloud backups." },
-        { status: 402 },
-      );
-    }
+    const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
+    if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
   }
 
   let access_key_id_encrypted: string | null = null;
