@@ -381,7 +381,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Quality program: checklists before their items; turnover/punch only
   // need projects + parties + documents, all long since restored.
   "project_checklists", "checklist_items",
-  "turnover_items", "punch_items",
+  "turnover_items", "turnover_review_events", "punch_items",
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources",
   "knowledge_documents", "knowledge_chunks", "knowledge_page_entities",
   "knowledge_questions",
