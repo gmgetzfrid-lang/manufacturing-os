@@ -115,6 +115,7 @@ export const ORG_SCOPED_TABLES = [
   "document_markups", // GAP-7 / DEC-24: viewer markup per (document, version, user) — evidence, exported
   "milestones",
   "milestone_notes",
+  "milestone_baseline_history", // projects Round G / SCHED-3: every prior approved-plan snapshot — the record, exported
 
   // Equipment + operational scope
   "assets",

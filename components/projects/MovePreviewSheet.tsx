@@ -80,6 +80,9 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
     if (mode === "extend" && targets.some((t) => t.status === "completed")) {
       w.push("Some selected tasks are already Done — extending a finished task is unusual.");
     }
+    // Baseline drift (PC SCHED-3 / PT SCH-4): say so before the move commits, the way the single-task form does.
+    const pastBaseline = deltaDays > 0 ? targets.filter((t) => t.baselineFinishAt && Date.parse(t.plannedAt as string) + deltaDays * 86400000 > Date.parse(t.baselineFinishAt as string)).length : 0;
+    if (pastBaseline > 0) w.push(`${pastBaseline} task${pastBaseline === 1 ? "" : "s"} would finish past the approved baseline.`);
     return w;
   }, [targets, deltaDays, mode, nowMs]);
 

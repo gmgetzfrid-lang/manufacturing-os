@@ -361,6 +361,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "curated_collection_items", "library_views", "plot_plans",
   "project_documents", "project_activity",
   "milestones", "milestone_notes",
+  "milestone_baseline_history", // projects Round G / SCHED-3: after projects (FK); taken_by is remapped like any user column
   "ticket_number_counters", "tickets", "ticket_comments",
   "checkout_sessions", "checkout_episodes", "checkout_messages",
   "markup_requests",

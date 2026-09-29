@@ -63,6 +63,9 @@ const HEADLINE = /(?<![\w'])role(?![\w'])/;
 const COLLECTION_FUNNELS = [
   "is_org_controller", "caller_holds_any_role", "is_org_admin", "is_org_admin_or_manager",
   "org_capability_allows", "org_capability_allows_for", "acl_index_denies",
+  // projects Round G (20261098): the schedule-editing predicate, read through
+  // caller_holds_any_role, shared by apply_milestone_moves and the baseline RPCs.
+  "can_edit_project_schedule",
 ];
 const COLLECTION = new RegExp(`(?<![\\w'])roles(?![\\w'])|\\b(?:${COLLECTION_FUNNELS.join("|")})\\s*\\(`);
 const MEMBERSHIP = /\borg_members\b/;
@@ -226,6 +229,7 @@ describe("authority-function census (DB-7)", () => {
       ["org_capability_allows_for/4", null],
       ["is_org_admin/1", "caller_holds_any_role"],
       ["org_capability_allows/3", "org_capability_allows_for"],
+      ["can_edit_project_schedule/2", "caller_holds_any_role"],
     ] as Array<[string, string | null]>) {
       const d = final.get(`function ${key}`);
       expect(d, key).toBeDefined();
