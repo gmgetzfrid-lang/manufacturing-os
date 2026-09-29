@@ -24,8 +24,8 @@
       "LOW": 12
     },
     "by_status": {
-      "RESOLVED": 33,
-      "OPEN": 114
+      "RESOLVED": 38,
+      "OPEN": 109
     }
   },
   "status_vocabulary": [
@@ -717,7 +717,7 @@
       "id": "DIST-8",
       "title": "The \"nobody signs for anyone else\" fix on document_acknowledgments is one-sided: its WITH CHECK lets an assignee self-waive or hand the obligation to someone else",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -901,7 +901,7 @@
       "id": "DRLS-8",
       "title": "`download_audits` — the record of who took a controlled drawing out — is rewritable and deletable by any active member",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1932,7 +1932,7 @@
       "id": "XEDGE-6",
       "title": "The service worker caches authenticated document bytes and signed-URL JSON in a device-wide cache that survives sign-out, ignoring Cache-Control: no-store",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2441,7 +2441,7 @@
       "id": "EGR-4",
       "title": "/api/storage/download-url lets the caller choose expiresIn with no clamp — a member can mint a 7-day credential-free URL to any document they can currently read",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2713,7 +2713,7 @@
       "id": "PKG-11",
       "title": "/api/storage/download-url takes the presigned-URL lifetime from an unclamped query parameter, so any member can mint a 7-day unauthenticated link to a drawing's bytes",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
