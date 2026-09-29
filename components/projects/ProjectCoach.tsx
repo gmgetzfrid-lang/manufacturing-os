@@ -10,12 +10,14 @@
 // Pure engine (lib/projectHealth) + one bounded gather (lib/projectSnapshot).
 // The gather is memoised per project and aborted on unmount, so a tab
 // mounting underneath (Costs, Quality) does not re-run thirteen queries
-// whose results would be thrown away.
+// whose results would be thrown away. The memo is shared only where no
+// write can sit behind the request: the mount run and the first re-key;
+// every later re-key follows a mutation and gathers fresh.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Sparkles, ArrowRight, AlertTriangle } from "lucide-react";
-import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
+import { gatherProjectSnapshot, refreshNeedsFreshSnapshot } from "@/lib/projectSnapshot";
 import { computeProjectHealth, buildCoachItems, type ProjectHealth, type CoachItem } from "@/lib/projectHealth";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 
@@ -31,18 +33,27 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   const [showAll, setShowAll] = useState(false);
 
   const [readFailures, setReadFailures] = useState<string[]>([]);
+  const [notMigrated, setNotMigrated] = useState<string[]>([]);
+  // The key's initial and previous values: the first change is the page's
+  // own initial refresh (or a tab mounting) and shares the in-flight round;
+  // any later change follows a write and must not be served from a round
+  // whose queries were issued before it.
+  const keys = useRef<{ initial: number | undefined; prev: number | undefined }>({ initial: refreshKey, prev: refreshKey });
 
   useEffect(() => {
     // Abort on unmount / re-key: in-flight requests are cancelled (once no
     // other subscriber shares the memoised round), not merely ignored.
     const controller = new AbortController();
+    const fresh = refreshNeedsFreshSnapshot(keys.current.initial, keys.current.prev, refreshKey);
+    keys.current.prev = refreshKey;
     void (async () => {
       try {
-        const snap = await gatherProjectSnapshot(orgId, projectId, { signal: controller.signal });
+        const snap = await gatherProjectSnapshot(orgId, projectId, { signal: controller.signal, fresh });
         if (controller.signal.aborted) return;
         setHealth(computeProjectHealth(snap));
         setItems(buildCoachItems(snap, projectId));
         setReadFailures(snap.readFailures ?? []);
+        setNotMigrated(snap.notMigrated ?? []);
       } catch { /* coach is an enhancement — never breaks the page */ }
     })();
     return () => { controller.abort(); };
@@ -82,6 +93,11 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
         <div role="status" className="mx-4 mt-2 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.08] px-2.5 py-1.5 text-[11px] text-[var(--color-text)]">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
           <span>Could not read {readFailures.join(", ")} — the score and suggestions below treat {readFailures.length === 1 ? "it" : "them"} as unknown, not as empty.</span>
+        </div>
+      )}
+      {open && notMigrated.length > 0 && (
+        <div role="status" className="mx-4 mt-2 text-[11px] text-[var(--color-text-muted)]">
+          The database has not been migrated for {notMigrated.join(" and ")} (migration 20261013) — suggestions about {notMigrated.length === 1 ? "it" : "them"} are off until it is applied.
         </div>
       )}
       {open && (

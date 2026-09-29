@@ -53,6 +53,10 @@ export interface ProjectStateSnapshot {
    *  counts above are zeros standing in for "unknown" — the coach names
    *  them instead of presenting the zeros as the truth. */
   readFailures?: string[];
+  /** Fields the database has not been migrated for (20261013): the read
+   *  fell back to the pre-migration column list, so these fields are
+   *  unknown — a known state, named as such, not a failed read. */
+  notMigrated?: string[];
 }
 
 /**

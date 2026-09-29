@@ -5,7 +5,9 @@
 // fault-tolerant: a table that doesn't exist yet (pre-migration) simply
 // contributes zeros, so the coach degrades to fewer suggestions instead of
 // a crash — but a read that FAILS is named in `readFailures`, so the coach
-// can say "could not read X" instead of presenting zeros as the truth.
+// can say "could not read X" instead of presenting zeros as the truth, and
+// a column that migration 20261013 has not yet added is named in
+// `notMigrated` (the pre-migration list is read instead).
 // One round of parallel queries — the coach renders on every project open,
 // so this stays cheap: each query selects only the columns it reads, and
 // concurrent gathers for the same project share one in-flight round
@@ -21,12 +23,23 @@ import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import type { Milestone, MilestoneSource, MilestoneStatus } from "@/types/schema";
 
 type Row = Record<string, unknown>;
-type QueryResult<T> = { data: T | null; error: { message: string } | null };
+type QueryResult<T> = { data: T | null; error: { message: string; code?: string | null } | null };
 
 /** A snapshot gathered less recently than this is re-gathered; within it,
  *  a second request for the same project is served from the last round.
- *  Short on purpose: a mutation made after a tab mount must re-gather. */
+ *  The window exists for one reason: a tab mounting under the coach bumps
+ *  the coach's key once with no write behind it (PERF-4's loop), and that
+ *  bump must not cost thirteen queries. It is NOT safe across a write — a
+ *  request inside the window is answered from queries issued before it —
+ *  so a caller that follows a mutation passes `fresh: true`, and a surface
+ *  that writes calls `invalidateProjectSnapshot`. Once PERF-4 moves
+ *  `onDataChanged` out of the tabs' refresh, this window can go to 0 and
+ *  only in-flight sharing remains. */
 export const SNAPSHOT_REUSE_MS = 1500;
+
+/** PostgREST's "column does not exist" codes: a database migration
+ *  20261013 (project controls program) has not reached. */
+const MISSING_COLUMN = new Set(["PGRST204", "42703"]);
 
 interface MemoEntry {
   promise: Promise<ProjectStateSnapshot>;
@@ -40,6 +53,31 @@ const memo = new Map<string, MemoEntry>();
  *  it just made). */
 export function resetProjectSnapshotMemo(): void {
   memo.clear();
+}
+
+/** A surface that just wrote to this project calls this so no later
+ *  request is answered from a round whose queries were issued before the
+ *  write. A round still in flight keeps serving the callers already
+ *  waiting on it (their own surfaces re-key after the write); it is simply
+ *  no longer offered to anyone else. */
+export function invalidateProjectSnapshot(orgId: string, projectId: string): void {
+  memo.delete(`${orgId}:${projectId}`);
+}
+
+/**
+ * Which re-keys of a snapshot consumer must bypass the memo. The mount run
+ * and the FIRST change of the key share whatever round is in flight — the
+ * page's own initial refresh (or a tab mounting underneath) bumps the key
+ * once with no write behind it. Every later change follows a mutation
+ * somewhere on the page, and a round issued before that write must not be
+ * reused, so those gather fresh.
+ */
+export function refreshNeedsFreshSnapshot(
+  initialKey: number | undefined,
+  prevKey: number | undefined,
+  key: number | undefined,
+): boolean {
+  return key !== prevKey && prevKey !== initialKey;
 }
 
 function abortError(): Error {
@@ -98,6 +136,7 @@ export async function gatherProjectSnapshotUncached(
   signal?: AbortSignal,
 ): Promise<ProjectStateSnapshot> {
   const readFailures: string[] = [];
+  const notMigrated: string[] = [];
   const fail = (label: string) => { if (!readFailures.includes(label)) readFailures.push(label); };
 
   /** Await a PostgREST result; a thrown or returned error names the table
@@ -118,15 +157,43 @@ export async function gatherProjectSnapshotUncached(
     try { return await p; } catch (e) { if (signal?.aborted) throw e; fail(label); return fallback; }
   };
   const sig = <Q extends { abortSignal(s: AbortSignal): Q }>(q: Q): Q => (signal ? q.abortSignal(signal) : q);
+  /** A read whose column list includes migration-20261013 columns: on a
+   *  "column does not exist" answer, re-read with the pre-migration list
+   *  (the way the wizard retries `company_id`) and record WHICH fields the
+   *  database has not been migrated for — a known state, not a failed read. */
+  const readOrLegacy = async <T>(
+    label: string,
+    fields: string,
+    q: () => PromiseLike<QueryResult<T>>,
+    legacy: () => PromiseLike<QueryResult<T>>,
+    fallback: T,
+  ): Promise<T> => {
+    let r: QueryResult<T>;
+    try {
+      r = await q();
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      fail(label);
+      return fallback;
+    }
+    if (!r.error) return (r.data ?? fallback) as T;
+    if (!(r.error.code && MISSING_COLUMN.has(r.error.code))) { fail(label); return fallback; }
+    if (!notMigrated.includes(fields)) notMigrated.push(fields);
+    return read(label, legacy(), fallback);
+  };
 
   const [projRow, accounts, entries, costDocRows, parties, coRows, msRows, checklists, turnover, punch, links, members] =
     await Promise.all([
-      read<Row | null>("project", sig(supabase.from("projects")
-        .select("purpose, goals, sow_document_id, job_kind").eq("id", projectId)).maybeSingle(), null),
+      readOrLegacy<Row | null>("project", "job size and Summary of Work",
+        () => sig(supabase.from("projects").select("purpose, goals, sow_document_id, job_kind").eq("id", projectId)).maybeSingle(),
+        () => sig(supabase.from("projects").select("purpose, goals").eq("id", projectId)).maybeSingle(),
+        null),
       call("cost accounts", listAccounts(orgId, projectId), []),
       call("cost entries", listEntries(orgId, projectId), []),
-      read<Row[]>("cost documents", sig(supabase.from("cost_documents")
-        .select("kind, status, rfq_group, vendor_name, file_name").eq("project_id", projectId).limit(500)), []),
+      readOrLegacy<Row[]>("cost documents", "RFQ groups",
+        () => sig(supabase.from("cost_documents").select("kind, status, rfq_group, vendor_name, file_name").eq("project_id", projectId).limit(500)),
+        () => sig(supabase.from("cost_documents").select("kind, status, vendor_name, file_name").eq("project_id", projectId).limit(500)),
+        []),
       read<Array<{ id: string }>>("companies on the job", sig(supabase.from("project_parties")
         .select("id").eq("project_id", projectId).limit(200)), []),
       read<Array<{ status: string; amount: number }>>("change orders", sig(supabase.from("change_orders")
@@ -252,5 +319,6 @@ export async function gatherProjectSnapshotUncached(
     membersCount: members.length,
 
     readFailures,
+    notMigrated,
   };
 }

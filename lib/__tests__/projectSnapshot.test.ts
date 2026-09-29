@@ -14,7 +14,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const state = vi.hoisted(() => ({
   tables: {} as Record<string, Array<Record<string, unknown>>>,
   errors: {} as Record<string, string>,
+  /** PostgREST error code for a table's error; `errorOnce` answers it on the
+   *  first query only (a pre-migration column list, then the legacy one). */
+  errorCodes: {} as Record<string, string>,
+  errorOnce: {} as Record<string, boolean>,
   fromCalls: [] as string[],
+  selects: [] as string[],
   delayMs: 0,
 }));
 
@@ -22,8 +27,10 @@ vi.mock("@/lib/supabase", () => {
   function chain(table: string) {
     const c: Record<string, unknown> = {};
     const settle = () => new Promise<{ data: unknown; error: unknown }>((resolve) => {
-      const out = state.errors[table]
-        ? { data: null, error: { message: state.errors[table] } }
+      const msg = state.errors[table];
+      if (msg && state.errorOnce[table]) { delete state.errors[table]; delete state.errorOnce[table]; }
+      const out = msg
+        ? { data: null, error: { message: msg, code: state.errorCodes[table] ?? null } }
         : { data: state.tables[table] ?? [], error: null };
       if (state.delayMs > 0) setTimeout(() => resolve(out), state.delayMs); else resolve(out);
     });
@@ -32,7 +39,8 @@ vi.mock("@/lib/supabase", () => {
         if (prop === "then") {
           return (resolve: (v: unknown) => void, reject?: (e: unknown) => void) => settle().then(resolve, reject);
         }
-        return () => {
+        return (...args: unknown[]) => {
+          if (prop === "select") state.selects.push(`${table}:${String(args[0])}`);
           if (prop === "maybeSingle") {
             return settle().then((r) => ({ data: Array.isArray(r.data) ? (r.data[0] ?? null) : null, error: r.error }));
           }
@@ -45,7 +53,10 @@ vi.mock("@/lib/supabase", () => {
   return { supabase: { from: (t: string) => { state.fromCalls.push(t); return chain(t); } } };
 });
 
-import { gatherProjectSnapshot, gatherProjectSnapshotUncached, resetProjectSnapshotMemo } from "@/lib/projectSnapshot";
+import {
+  gatherProjectSnapshot, gatherProjectSnapshotUncached, resetProjectSnapshotMemo,
+  invalidateProjectSnapshot, refreshNeedsFreshSnapshot,
+} from "@/lib/projectSnapshot";
 import { computeProjectHealth, buildCoachItems } from "@/lib/projectHealth";
 import { isOverdueMilestone, isImportedMilestone, isLiveMilestone, liveMilestones } from "@/lib/milestoneLiveness";
 
@@ -55,7 +66,10 @@ const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toIS
 beforeEach(() => {
   state.tables = {};
   state.errors = {};
+  state.errorCodes = {};
+  state.errorOnce = {};
   state.fromCalls = [];
+  state.selects = [];
   state.delayMs = 0;
   resetProjectSnapshotMemo();
 });
@@ -138,6 +152,14 @@ describe("gatherProjectSnapshot — an honest gap, not a silent zero", () => {
     expect(snap.readFailures).not.toContain("punch items");
   });
 
+  it("a refused projects read (not a missing column) is still a named read failure", async () => {
+    state.errors.projects = "permission denied for table projects";
+    state.errorCodes.projects = "42501";
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.readFailures).toContain("project");
+    expect(snap.notMigrated).toEqual([]);
+  });
+
   it("selects only the columns it reads — never select('*') on projects or cost_documents", async () => {
     // The mock ignores selects; this pins the source so a future edit
     // that widens the query again is visible.
@@ -145,6 +167,52 @@ describe("gatherProjectSnapshot — an honest gap, not a silent zero", () => {
     const src = fs.readFileSync(new URL("../projectSnapshot.ts", import.meta.url), "utf8");
     expect(src).not.toMatch(/from\("projects"\)\s*\.select\("\*"\)/);
     expect(src).not.toMatch(/from\("cost_documents"\)\s*\.select\("\*"\)/);
+  });
+});
+
+describe("gatherProjectSnapshot — a database migration 20261013 has not reached", () => {
+  it("re-reads projects with the pre-migration column list and names the gap as 'not migrated', not as a failed read", async () => {
+    state.tables.projects = [{ purpose: "Replace the exchanger", goals: ["No leaks"] }];
+    state.errors.projects = "column projects.job_kind does not exist";
+    state.errorCodes.projects = "42703";
+    state.errorOnce.projects = true;
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.readFailures).toEqual([]);
+    expect(snap.notMigrated).toEqual(["job size and Summary of Work"]);
+    // The legacy read carried only the columns that exist there.
+    const projectSelects = state.selects.filter((x) => x.startsWith("projects:"));
+    expect(projectSelects).toEqual(["projects:purpose, goals, sow_document_id, job_kind", "projects:purpose, goals"]);
+    // …and what it returned is used: purpose and goals are known.
+    expect(snap.hasPurpose).toBe(true);
+    expect(snap.hasGoals).toBe(true);
+    expect(snap.jobKind).toBeNull();
+    expect(snap.hasSow).toBe(false);
+  });
+
+  it("re-reads cost_documents without rfq_group (PGRST204) so quotes still count", async () => {
+    state.tables.cost_documents = [
+      { kind: "quote", status: "parsed", vendor_name: "Acme", file_name: "q1.pdf" },
+      { kind: "quote", status: "parsed", vendor_name: "Bolt Co", file_name: "q2.pdf" },
+    ];
+    state.errors.cost_documents = "Could not find the 'rfq_group' column of 'cost_documents' in the schema cache";
+    state.errorCodes.cost_documents = "PGRST204";
+    state.errorOnce.cost_documents = true;
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.readFailures).toEqual([]);
+    expect(snap.notMigrated).toEqual(["RFQ groups"]);
+    expect(snap.quoteCount).toBe(2);
+    expect(state.selects.filter((x) => x.startsWith("cost_documents:"))).toEqual([
+      "cost_documents:kind, status, rfq_group, vendor_name, file_name",
+      "cost_documents:kind, status, vendor_name, file_name",
+    ]);
+  });
+
+  it("a legacy read that ALSO fails is a read failure", async () => {
+    state.errors.projects = "permission denied for table projects";
+    state.errorCodes.projects = "42703";
+    // errorOnce unset: both reads fail.
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.readFailures).toContain("project");
   });
 });
 
@@ -203,5 +271,59 @@ describe("gatherProjectSnapshot — gather once per project (PERF-3)", () => {
     await gatherProjectSnapshotUncached("org1", "p1");
     await gatherProjectSnapshotUncached("org1", "p1");
     expect(countMilestoneReads()).toBe(2);
+  });
+});
+
+describe("gatherProjectSnapshot — never served from before a write", () => {
+  it("invalidateProjectSnapshot: a request after a write is not answered from the round before it", async () => {
+    state.tables.punch_items = [{ status: "open" }];
+    const before = await gatherProjectSnapshot("org1", "p1");
+    expect(before.punchOpen).toBe(1);
+    // The write: the last punch item closes; the surface that wrote calls
+    // invalidate, and the next request (inside SNAPSHOT_REUSE_MS) re-gathers.
+    state.tables.punch_items = [{ status: "closed" }];
+    invalidateProjectSnapshot("org1", "p1");
+    const after = await gatherProjectSnapshot("org1", "p1");
+    expect(after.punchOpen).toBe(0);
+    expect(state.fromCalls.filter((t) => t === "punch_items")).toHaveLength(2);
+    // Another project's round is untouched.
+    await gatherProjectSnapshot("org1", "p2");
+    invalidateProjectSnapshot("org1", "p1");
+    await gatherProjectSnapshot("org1", "p2");
+    expect(state.fromCalls.filter((t) => t === "punch_items")).toHaveLength(3);
+  });
+
+  it("invalidating while a round is in flight lets its waiters finish but offers it to nobody else", async () => {
+    state.delayMs = 10;
+    const waiting = gatherProjectSnapshot("org1", "p1");
+    invalidateProjectSnapshot("org1", "p1");
+    const next = gatherProjectSnapshot("org1", "p1");
+    expect(await waiting).toBeTruthy();
+    expect(await next).toBeTruthy();
+    expect(state.fromCalls.filter((t) => t === "punch_items")).toHaveLength(2);
+  });
+
+  it("fresh: true after a mutation is served from a new round even inside the reuse window", async () => {
+    state.tables.punch_items = [{ status: "open" }];
+    await gatherProjectSnapshot("org1", "p1");
+    state.tables.punch_items = [];
+    const stale = await gatherProjectSnapshot("org1", "p1");
+    expect(stale.punchOpen).toBe(1); // the window, by design — hence `fresh` below
+    const fresh = await gatherProjectSnapshot("org1", "p1", { fresh: true });
+    expect(fresh.punchOpen).toBe(0);
+  });
+
+  it("the coach's re-key rule: mount and the first re-key share, every later re-key gathers fresh", () => {
+    // Mount: key unchanged.
+    expect(refreshNeedsFreshSnapshot(0, 0, 0)).toBe(false);
+    // First change (the page's own initial refresh, or a tab mounting): share.
+    expect(refreshNeedsFreshSnapshot(0, 0, 1)).toBe(false);
+    // Second and later changes follow a write somewhere on the page: fresh.
+    expect(refreshNeedsFreshSnapshot(0, 1, 2)).toBe(true);
+    expect(refreshNeedsFreshSnapshot(0, 2, 3)).toBe(true);
+    // A re-run with the same key (orgId/projectId changed) is not a re-key.
+    expect(refreshNeedsFreshSnapshot(0, 2, 2)).toBe(false);
+    // A consumer mounted with no key at all never re-keys.
+    expect(refreshNeedsFreshSnapshot(undefined, undefined, undefined)).toBe(false);
   });
 });

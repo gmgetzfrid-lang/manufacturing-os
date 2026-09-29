@@ -24,6 +24,7 @@ import { createProject } from "@/lib/projects";
 import { seedTurnoverItems } from "@/lib/turnover";
 import { listCompanies, type Company } from "@/lib/companies";
 import { Field } from "@/components/ui/Field";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures,
   type WizardWriteDeps, type WizardWriteFailure, type WizardWriteInput, type WizardWriteStep,
@@ -233,6 +234,21 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     router.push(`/projects/${createdProjectId}`);
   };
 
+  /** The header X. In the partial-failure state the project already exists
+   *  (the list must show it) and the retained rows are about to be lost, so
+   *  the user confirms, and the list refreshes on the way out. */
+  const closeWizard = async () => {
+    if (failures.length > 0 && createdProjectId) {
+      const ok = await appConfirm({
+        title: "Close without retrying?",
+        message: `The project was created and will appear in the list, but ${summarizeWizardFailures(failures)} did not save and what you typed for ${failures.length === 1 ? "it" : "them"} will be lost. Use "Retry unsaved" or "Open project anyway" to keep it.`,
+      });
+      if (!ok) return;
+      onCreated();
+    }
+    onClose();
+  };
+
   const Icon = STEPS[step].icon;
 
   return (
@@ -253,7 +269,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   : "Skip or fill in — everything here can also be added from the project page later."} Skipped steps come back as coach suggestions, never lost.
               </div>
             </div>
-            <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+            <button onClick={() => void closeWizard()} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
           </div>
           <div className="mt-3 flex items-center gap-1">
             {STEPS.map((s, i) => (

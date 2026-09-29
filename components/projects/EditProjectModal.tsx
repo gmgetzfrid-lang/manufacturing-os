@@ -12,6 +12,7 @@ import { X, Loader2, Check, Pencil, Lock, Globe, Target, Plus, FileText, Search 
 import { supabase } from "@/lib/supabase";
 import { updateProjectMeta } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
+import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
 import type { Project, ProjectVisibility } from "@/types/schema";
 
 interface WizardFields {
@@ -38,6 +39,11 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
   const [visibility, setVisibility] = useState<ProjectVisibility>(project.visibility ?? "public");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The identity patch that already reached the database, if the second
+  // write (the wizard's fields) then failed: Save again retries only that
+  // second write, and closing the modal refreshes the page so the header
+  // shows what was saved.
+  const [savedIdentity, setSavedIdentity] = useState<string | null>(null);
 
   // The wizard's fields — the typed Project doesn't carry them, so they
   // are read here. `before` is what was stored, for the audit row.
@@ -76,11 +82,16 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       setGoals(loaded.goals);
       setSuccessCriteria(loaded.successCriteria);
       if (loaded.sowDocumentId) {
+        // The attachment is set the moment the fields are editable — a save
+        // during the label lookup must not write sow_document_id = null.
+        const sowId = loaded.sowDocumentId;
+        setSowDoc({ id: sowId, label: "Document" });
         const { data: doc } = await supabase.from("documents").select("id, document_number, title, name")
-          .eq("id", loaded.sowDocumentId).maybeSingle();
+          .eq("id", sowId).maybeSingle();
         if (cancelled) return;
         const d = (doc ?? {}) as Record<string, unknown>;
-        setSowDoc({ id: loaded.sowDocumentId, label: String(d.document_number || d.title || d.name || "Document") });
+        const label = String(d.document_number || d.title || d.name || "Document");
+        setSowDoc((cur) => (cur && cur.id === sowId ? { id: sowId, label } : cur));
       }
     })();
     return () => { cancelled = true; };
@@ -111,21 +122,28 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
     setGoalDraft("");
   };
 
+  /** Closing after a partial save still refreshes the page (onSaved), so
+   *  the header never shows a name the database no longer holds. */
+  const close = () => { if (savedIdentity) onSaved(); else onClose(); };
+
   const save = async () => {
     if (!name.trim()) { setError("Project name can't be empty."); return; }
     setBusy(true); setError(null);
     try {
-      await updateProjectMeta({
-        projectId: project.id!,
-        patch: {
-          name: name.trim(),
-          description: description.trim() || null,
-          mocReference: moc.trim() || null,
-          targetCompletionDate: target || null,
-          visibility,
-        },
-        actorUserId, actorEmail, actorRole,
-      });
+      const patch = {
+        name: name.trim(),
+        description: description.trim() || null,
+        mocReference: moc.trim() || null,
+        targetCompletionDate: target || null,
+        visibility,
+      };
+      // Skip only when this exact patch already landed (a retry after the
+      // second write failed); an identity field edited since is written.
+      const patchKey = JSON.stringify(patch);
+      if (savedIdentity !== patchKey) {
+        await updateProjectMeta({ projectId: project.id!, patch, actorUserId, actorEmail, actorRole });
+        setSavedIdentity(patchKey);
+      }
 
       // The wizard's fields — only when they were readable (never overwrite
       // stored values with blanks from a failed read) and only when changed.
@@ -149,7 +167,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             updated_at: new Date().toISOString(),
             updated_by: actorUserId,
           }).eq("id", project.id!);
-          if (extErr) throw new Error(`Identity fields saved, but purpose / goals / Summary of Work were not: ${extErr.message}`);
+          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${extErr.message}. Save changes retries just those.`);
           await logAuditAction({
             action: "PROJECT_UPDATED",
             resourceId: project.id!, resourceType: "project",
@@ -159,6 +177,9 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           });
         }
       }
+      // No later snapshot request may be answered from a round issued
+      // before this write (lib/projectSnapshot memo).
+      invalidateProjectSnapshot(project.orgId, project.id!);
       onSaved();
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -169,12 +190,12 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in" onClick={close} />
       <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
           <Pencil className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-sm font-black text-[var(--color-text)]">Edit project</span>
-          <button onClick={onClose} aria-label="Close" className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={close} aria-label="Close" className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
           <label className="block">
@@ -293,7 +314,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           {error && <div role="alert" className="rounded-lg border border-rose-500/40 bg-rose-500/[0.07] px-3 py-2 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
+          <button onClick={close} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">{savedIdentity ? "Close" : "Cancel"}</button>
           <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save changes
           </button>
