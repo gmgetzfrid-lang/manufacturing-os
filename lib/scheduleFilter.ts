@@ -27,6 +27,19 @@ export interface ScheduleFilter {
   shifts: Array<"day" | "night" | "swing">;
 }
 
+/** Day / night from a planned start, read in UTC — schedule dates are stored
+ *  wall-clock-as-UTC (the importer attaches Z to offset-less source times),
+ *  so the label is the same on every machine (PC SCHED-9). 06:00–17:59 →
+ *  day, otherwise night. Null when there is no readable start. The single
+ *  implementation: the importer, the editors and the filter all read it. */
+export function shiftForStart(plannedStartIso: string | null | undefined): "day" | "night" | null {
+  if (!plannedStartIso) return null;
+  const d = new Date(plannedStartIso);
+  if (isNaN(d.getTime())) return null;
+  const h = d.getUTCHours();
+  return (h >= 6 && h < 18) ? "day" : "night";
+}
+
 export const EMPTY_FILTER: ScheduleFilter = {
   query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [],
 };
@@ -101,7 +114,13 @@ export function filterMilestones(
       if (Date.parse(m.plannedAt as string) >= now) return false;
     }
     if (f.blockedOnly && m.status !== "blocked" && m.status !== "on_hold") return false;
-    if (f.shifts.length > 0 && (!m.shift || !f.shifts.includes(m.shift))) return false;
+    if (f.shifts.length > 0) {
+      // A stored label wins (it may be a hand correction); a row with none is
+      // classified from its start, so "night" shows the night work whether or
+      // not the importer that created the row wrote a label.
+      const shift = m.shift ?? shiftForStart(m.plannedStartAt as string | null | undefined);
+      if (!shift || !f.shifts.includes(shift)) return false;
+    }
     if (groupSet.size > 0) {
       const g = topGroupOf(m);
       if (!g.id || !groupSet.has(g.id)) return false;

@@ -25,8 +25,8 @@ import {
   FileText, Calendar as CalIcon,
   Columns3, ArrowRight, Link2,
 } from "lucide-react";
-import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
-import { importMilestonesFromParsed } from "@/lib/milestones";
+import { parseScheduleFileFromBytes, SCHEDULE_IMPORT_LIMITS, type ParseResult, type ParseOptions, type ScheduleFormat, type DateConvention } from "@/lib/scheduleParsers";
+import { importMilestonesFromParsed, type ImportResult, type ImportPlan } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { Select } from "@/components/ui/Field";
 import Spinner from "@/components/ui/Spinner";
@@ -78,7 +78,18 @@ export default function ScheduleImportModal({
   const [parsing, setParsing] = useState(false);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number; errors: string[] } | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  // The raw bytes are kept so the file can be re-parsed with an answer to a
+  // question the parser asked (date order, which project) without a re-drop.
+  const bytesRef = useRef<Uint8Array | null>(null);
+  const [parseOpts, setParseOpts] = useState<ParseOptions>({});
+  // GAP-403: the merge plan is shown BEFORE anything is written; progress
+  // that the file would change is only overwritten on explicit opt-in.
+  const [plan, setPlan] = useState<ImportPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [overwriteProgress, setOverwriteProgress] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; phase: "rows" | "structure" } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   // Per-column review config: include/exclude, rename, or map to a first-class
   // field. Lets the user shape ANY ingested column before the final import.
   const [colConfig, setColConfig] = useState<Record<string, { include: boolean; rename: string; mapTo: string }>>({});
@@ -109,10 +120,22 @@ export default function ScheduleImportModal({
     setParsing(true);
     setParseResult(null);
     setImportResult(null);
+    setPlan(null);
+    setParseOpts({});
     setFilename(file.name);
     try {
+      // Size cap (PT SCH-14): refused with the limit named, never decoded.
+      if (file.size > SCHEDULE_IMPORT_LIMITS.maxBytes) {
+        bytesRef.current = null;
+        setParseResult({
+          format: "unknown", rows: [],
+          warnings: [`"${file.name}" is ${(file.size / 1048576).toFixed(1)} MB; the import limit is ${SCHEDULE_IMPORT_LIMITS.maxBytes / 1048576} MB per file. Export a smaller schedule (for example one phase) or trim unused columns.`],
+        });
+        return;
+      }
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
+      bytesRef.current = bytes;
       setParseResult(parseScheduleFileFromBytes(file.name, bytes));
     } catch (e) {
       setParseResult({
@@ -122,6 +145,17 @@ export default function ScheduleImportModal({
       });
     } finally { setParsing(false); }
   }, []);
+
+  // Re-parse the same bytes with an answer (date order / project choice).
+  const reparse = useCallback((patch: ParseOptions) => {
+    const bytes = bytesRef.current;
+    if (!bytes || !filename) return;
+    const next = { ...parseOpts, ...patch };
+    setParseOpts(next);
+    setPlan(null);
+    setImportResult(null);
+    setParseResult(parseScheduleFileFromBytes(filename, bytes, next));
+  }, [filename, parseOpts]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -146,14 +180,21 @@ export default function ScheduleImportModal({
     return out as unknown as ParseResult["rows"][number];
   }, [colConfig, INTERNAL_KEYS]);
 
-  const submit = useCallback(async () => {
-    if (!parseResult || parseResult.rows.length === 0) return;
-    setImporting(true);
-    try {
-      const shaped = parseResult.rows.map(applyColConfig);
-      const res = await importMilestonesFromParsed({
+  const overRowCap = (parseResult?.rows.length ?? 0) > SCHEDULE_IMPORT_LIMITS.maxRows;
+
+  /** One import call, shared by the plan (dryRun) and the write. */
+  const runImport = useCallback(async (dryRun: boolean) => {
+    if (!parseResult || parseResult.rows.length === 0) return null;
+    const shaped = parseResult.rows.map(applyColConfig);
+    const controller = dryRun ? null : new AbortController();
+    abortRef.current = controller;
+    return importMilestonesFromParsed({
         orgId, projectId,
         source: FORMAT_TO_SOURCE[parseResult.format],
+        dryRun,
+        overwriteProgress,
+        signal: controller?.signal,
+        onProgress: dryRun ? undefined : setProgress,
         // CRITICAL: pass through every hierarchy + duration field
         // the parser captured. Previous code dropped these on the
         // floor — the importer then wrote rows with no parent_id,
@@ -187,6 +228,27 @@ export default function ScheduleImportModal({
         createdBy: userId,
         createdByName: userName,
       });
+  }, [parseResult, orgId, projectId, userId, userName, applyColConfig, overwriteProgress]);
+
+  // Step 1: the reviewable diff. Nothing is written.
+  const review = useCallback(async () => {
+    if (overRowCap) return;
+    setPlanning(true);
+    try {
+      const res = await runImport(true);
+      if (res?.plan) setPlan(res.plan);
+      if (res && res.errors.length > 0) setImportResult(res);
+    } finally { setPlanning(false); }
+  }, [runImport, overRowCap]);
+
+  // Step 2: apply the reviewed plan, with progress and cancel.
+  const submit = useCallback(async () => {
+    if (!plan || overRowCap) return;
+    setImporting(true);
+    setProgress(null);
+    try {
+      const res = await runImport(false);
+      if (!res) return;
       setImportResult(res);
       // Only auto-close when at least one row was actually INSERTED
       // into this project. Pure-update results (which happen when
@@ -195,14 +257,17 @@ export default function ScheduleImportModal({
       // can verify what landed. Caught a real bug where users
       // re-imported into a fresh project and saw nothing because
       // every row was an update to a different project's rows.
-      const cleanWin = res.errors.length === 0 && res.inserted > 0;
+      const cleanWin = res.errors.length === 0 && res.inserted > 0 && !res.cancelled;
       if (cleanWin) {
         setTimeout(() => onDone(), 800);
       }
-    } finally { setImporting(false); }
-  }, [parseResult, orgId, projectId, userId, userName, onDone, applyColConfig]);
+    } finally { setImporting(false); abortRef.current = null; }
+  }, [plan, runImport, onDone, overRowCap]);
 
-  const canSubmit = !!parseResult && parseResult.rows.length > 0 && !importing;
+  const cancelImport = useCallback(() => { abortRef.current?.abort(); }, []);
+
+  const canReview = !!parseResult && parseResult.rows.length > 0 && !importing && !planning && !overRowCap;
+  const canSubmit = canReview && !!plan;
   const previewRows = parseResult?.rows.slice(0, 8) ?? [];
   const moreCount = (parseResult?.rows.length ?? 0) - previewRows.length;
 
@@ -371,6 +436,88 @@ export default function ScheduleImportModal({
                 </div>
               )}
 
+              {/* Questions the parser asked — answered once, applied to every row. */}
+              {parseResult.needsDateConvention && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+                  <div className="font-bold">How should dates in this file be read?</div>
+                  <div>Every slash date (e.g. <span className="font-mono">{parseResult.dates?.sample}</span>) could be day/month or month/day. Nothing is imported until you choose; the choice applies to the whole file.</div>
+                  <div className="flex items-center gap-4">
+                    {(["mdy", "dmy"] as DateConvention[]).map((c) => (
+                      <label key={c} className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input type="radio" name="date-convention" checked={parseOpts.dateConvention === c} onChange={() => reparse({ dateConvention: c })} className="accent-[var(--color-accent)]" />
+                        {c === "mdy" ? "Month / day / year (US)" : "Day / month / year"}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {parseResult.needsProjectChoice && parseResult.projects && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+                  <div className="font-bold">This file holds {parseResult.projects.length} projects — which one is this?</div>
+                  <div>They are never merged into one board. Pick the project whose activities belong here.</div>
+                  <Select value={parseOpts.projectId ?? ""} onChange={(e) => reparse({ projectId: e.target.value || null })}>
+                    <option value="">Choose a project…</option>
+                    {parseResult.projects.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.rows} row{p.rows === 1 ? "" : "s"}</option>)}
+                  </Select>
+                </div>
+              )}
+              {!parseResult.needsProjectChoice && parseResult.projects && parseResult.projects.length > 1 && parseResult.selectedProjectId && (
+                <div className="text-[11px] text-[var(--color-text-muted)]">Importing project <b>{parseResult.projects.find((p) => p.id === parseResult.selectedProjectId)?.name}</b> only ({parseResult.projects.length} in the file).</div>
+              )}
+              {parseResult.rows.length > 0 && (parseResult.keyColumn || parseResult.dates?.convention) && (
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  {parseResult.keyColumn && <>Re-imports match rows on <b>{parseResult.keyColumn}</b>. </>}
+                  {parseResult.dates?.convention && <>Dates read as <b>{parseResult.dates.convention === "dmy" ? "day/month/year" : "month/day/year"}</b> ({parseResult.dates.decidedBy === "user" ? "your choice" : `fixed by the file: ${parseResult.dates.sample}`}).</>}
+                </div>
+              )}
+              {overRowCap && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+                  This file has <b>{parseResult.rows.length.toLocaleString()}</b> rows; the import limit is <b>{SCHEDULE_IMPORT_LIMITS.maxRows.toLocaleString()}</b> rows per file. Split the schedule (for example by phase) and import the parts separately.
+                </div>
+              )}
+
+              {/* The reviewable diff (GAP-403): what this import would do, before it writes. */}
+              {plan && !importResult && (
+                <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
+                  <div className="text-xs font-black text-[var(--color-text)]">What this import will do</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                    <StatCell label="Added"        value={`${plan.added}`}     tone={plan.added > 0 ? "ok" : "muted"} />
+                    <StatCell label="Changed"      value={`${plan.changed}`}   tone={plan.changed > 0 ? "ok" : "muted"} />
+                    <StatCell label="Unchanged"    value={`${plan.unchanged}`} tone="muted" />
+                    <StatCell label="Not in file"  value={`${plan.notInFile}`} tone={plan.notInFile > 0 ? "warn" : "muted"} />
+                  </div>
+                  {plan.notInFile > 0 && (
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                      {plan.notInFile} task{plan.notInFile === 1 ? " is" : "s are"} on the board but not in this file ({plan.notInFileNames.slice(0, 5).join(", ")}{plan.notInFile > 5 ? ", …" : ""}). They are left as they are — an import never deletes.
+                    </div>
+                  )}
+                  {plan.localProgressAtRisk.length > 0 && (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[11px] text-amber-900 space-y-1.5">
+                      <div className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> {plan.localProgressAtRisk.length} task{plan.localProgressAtRisk.length === 1 ? " has" : "s have"} progress recorded here that this file would {overwriteProgress ? "overwrite" : "reset — kept as recorded"}</div>
+                      <ul className="ml-5 list-disc">
+                        {plan.localProgressAtRisk.slice(0, 5).map((r) => <li key={r.id}>{r.name}: {r.localPercent}% ({r.localStatus.replace("_", " ")}) here vs {r.filePercent ?? 0}% in the file</li>)}
+                        {plan.localProgressAtRisk.length > 5 && <li className="italic">+{plan.localProgressAtRisk.length - 5} more…</li>}
+                      </ul>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer font-bold">
+                        <input type="checkbox" checked={overwriteProgress} onChange={(e) => { setOverwriteProgress(e.target.checked); setPlan(null); }} className="accent-amber-600" />
+                        Overwrite the progress recorded here with the file&apos;s values
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Progress + cancel while writing */}
+              {importing && progress && (
+                <div className="rounded-xl border border-[var(--color-border)] p-3 text-xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span>{progress.phase === "rows" ? "Writing rows" : "Wiring structure"} · {progress.done} / {progress.total}</span>
+                    <button onClick={cancelImport} className="font-bold text-rose-700 hover:underline">Cancel</button>
+                  </div>
+                  <div className="h-1.5 rounded bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0}%` }} /></div>
+                </div>
+              )}
+
               {/* Preview table */}
               {parseResult.rows.length > 0 && (
                 <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
@@ -430,7 +577,9 @@ export default function ScheduleImportModal({
               {importResult && (
                 <div className={`rounded-xl p-3 border ${importResult.errors.length > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}>
                   <div className="flex items-center gap-2 font-bold text-sm">
-                    {importResult.errors.length > 0
+                    {importResult.cancelled
+                      ? <><AlertTriangle className="w-4 h-4 text-rose-600" /> Import cancelled</>
+                      : importResult.errors.length > 0
                       ? <><AlertTriangle className="w-4 h-4 text-rose-600" /> Imported with errors</>
                       : <><CheckCircle2 className="w-4 h-4 text-emerald-600" /> Imported successfully</>
                     }
@@ -439,6 +588,9 @@ export default function ScheduleImportModal({
                     <div>Inserted: <b>{importResult.inserted}</b></div>
                     <div>Updated: <b>{importResult.updated}</b></div>
                     {importResult.skipped > 0 && <div>Skipped: <b>{importResult.skipped}</b></div>}
+                    {parseResult.dates?.convention && <div>Dates read as <b>{parseResult.dates.convention === "dmy" ? "day/month/year" : "month/day/year"}</b> ({parseResult.dates.decidedBy === "user" ? "your choice" : `fixed by the file: ${parseResult.dates.sample}`}).</div>}
+                    {parseResult.keyColumn && <div>Rows matched on <b>{parseResult.keyColumn}</b>.</div>}
+                    {importResult.batchId && <div className="text-[10px] font-mono text-[var(--color-text-faint)]">batch {importResult.batchId}</div>}
                     {importResult.errors.length > 0 && (
                       <div className="text-rose-700">
                         {importResult.errors.length} error{importResult.errors.length === 1 ? "" : "s"}:
@@ -453,20 +605,30 @@ export default function ScheduleImportModal({
 
           {/* Tip strip — always visible. */}
           <div className="text-[11px] text-[var(--color-text-muted)] italic">
-            One-way import. We never write back to your PM tool. Re-importing the same file upserts rows with stable IDs.
+            One-way import. We never write back to your PM tool. Re-importing matches rows on their source id, shows what would change first, and never erases progress recorded here unless you say so.
           </div>
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           <button onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Close</button>
-          {parseResult && parseResult.rows.length > 0 && !importResult && (
+          {parseResult && parseResult.rows.length > 0 && !importResult && !plan && (
+            <button
+              onClick={review}
+              disabled={!canReview}
+              className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
+            >
+              {planning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Columns3 className="w-4 h-4" />}
+              Review changes
+            </button>
+          )}
+          {parseResult && parseResult.rows.length > 0 && !importResult && plan && (
             <button
               onClick={submit}
               disabled={!canSubmit}
               className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
             >
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              Import {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"}
+              Import {plan.added + plan.changed} change{plan.added + plan.changed === 1 ? "" : "s"}
             </button>
           )}
         </div>
