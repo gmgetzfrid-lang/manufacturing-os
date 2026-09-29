@@ -460,7 +460,13 @@ export default function InspectorPanel({
           userName={userEmail || undefined}
           userEmail={userEmail || undefined}
           userRole={activeRole || undefined}
-          canEdit={canOpenHold || canReleaseHold}
+          // HLD-8: HoldStrip has ONE flag for both its Release buttons and
+          // its place-hold form. This strip exists to list ACTIVE holds, so
+          // it follows holds.release — a holds.open-only member must not be
+          // drawn a Release the database refuses. (Until HoldStrip takes
+          // canOpen/canRelease separately, an open-only member places a
+          // further hold from the queue rather than from this strip.)
+          canEdit={canReleaseHold}
           refreshKey={holdsRefresh}
           onChange={() => setHoldsRefresh((k) => k + 1)}
         />

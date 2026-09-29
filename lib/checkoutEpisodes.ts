@@ -793,10 +793,13 @@ export function classifyLockClaim(result: {
 
 /** Roll back a checkout whose lock claim FAILED (not lost): end the session
  *  row that was just opened so the register does not carry a session nobody
- *  can see in the lock columns, and seal the episode if this attempt opened
- *  it. Best-effort on the episode; the session end is checked. */
+ *  can see in the lock columns, end the edit intent that was recorded for it
+ *  (or overlap banners keep naming a phantom editor), and seal the episode
+ *  if this attempt opened it. Best-effort on the intent and the episode; the
+ *  session end is checked. */
 export async function abortFailedLockClaim(input: {
   sessionId: string;
+  documentId: string;
   userId: string;
   userName?: string | null;
   episodeId?: string | null;
@@ -818,6 +821,12 @@ export async function abortFailedLockClaim(input: {
     .eq("id", input.sessionId)
     .eq("status", "active");
   if (error) throw new Error(`The checkout could not be rolled back: ${error.message}`);
+  // The checkout-sourced edit intent is keyed (document, user, kind, source),
+  // so the row the upsert wrote a moment ago IS this session's — end it.
+  try {
+    const { endMyIntents } = await import("@/lib/intents");
+    await endMyIntents({ documentId: input.documentId, userId: input.userId, sources: ["checkout"] });
+  } catch { /* the banner's phantom is the only cost; the intent expires */ }
   if (input.episodeId && input.episodeCreated) {
     try {
       await closeEpisode({
@@ -882,10 +891,13 @@ export async function quickHold(input: {
     .from("checkout_sessions").insert(sessionRow).select("id").single();
   if (sessionErr) throw new Error(sessionErr.message);
 
-  // Ambient edit intent, anchored to the current revision.
+  // Ambient edit intent, anchored to the current revision. Not awaited on
+  // the happy path; the handle is kept so a rollback can wait for it and
+  // then end it, instead of racing the delete against the upsert.
+  let intentWrite: Promise<void> = Promise.resolve();
   try {
     const { recordIntent } = await import("@/lib/intents");
-    void recordIntent({
+    intentWrite = recordIntent({
       orgId: input.orgId,
       documentId: input.documentId,
       libraryId: input.libraryId ?? null,
@@ -916,8 +928,10 @@ export async function quickHold(input: {
   if (verdict === "failed") {
     // DCK-4: a FAILED write is not a lost race. Undo the session we opened
     // and say so — never "joined" over a document nobody holds.
+    await intentWrite.catch(() => undefined);
     await abortFailedLockClaim({
       sessionId: session?.id as string,
+      documentId: input.documentId,
       userId: input.userId,
       userName: input.userName,
       episodeId: episode?.id ?? null,

@@ -95,7 +95,10 @@ describe("the controller vocabulary is spelled once (DCK-13 done-when 3)", () =>
     const inspector = src("components/documents/InspectorPanel.tsx");
     expect(inspector).toMatch(/\{canForceRelease && isCheckedOut && onForceUnlock && \(/);
     expect(inspector).not.toMatch(/\{isController && isCheckedOut && onForceUnlock && \(/);
-    expect(inspector).toMatch(/canEdit=\{canOpenHold \|\| canReleaseHold\}/);
+    // the strip that lists ACTIVE holds (Release buttons) follows holds.release
+    // alone — a holds.open-only member is not drawn a Release the DB refuses
+    expect(inspector).toMatch(/canEdit=\{canReleaseHold\}/);
+    expect(inspector).not.toMatch(/canEdit=\{canOpenHold \|\| canReleaseHold\}/);
     expect(inspector).toMatch(/activeHoldCount === 0 && canOpenHold && \(/);
     expect(inspector).not.toMatch(/activeHoldCount === 0 && \(canManageAssets \|\| isOwner\)/);
 

@@ -333,8 +333,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
       // Ambient intent: this checkout is an EDIT intent anchored to the
       // revision that is current right now — the publish contract's
-      // expected-base source. Fire-and-forget.
-      void recordIntent({
+      // expected-base source. Not awaited on the happy path; the handle is
+      // kept so a DCK-4 rollback can wait for it before ending it.
+      const intentWrite = recordIntent({
         orgId: document.orgId,
         documentId: document.id!,
         libraryId: document.libraryId ?? null,
@@ -389,8 +390,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       // session we just opened would sit on a document that reads as free.
       const verdict = classifyLockClaim(claim);
       if (verdict === "failed") {
+        await intentWrite.catch(() => undefined);
         await abortFailedLockClaim({
           sessionId: insertedSession?.id as string,
+          documentId: document.id!,
           userId: currentUser.uid,
           userName,
           episodeId: checkoutEpisode?.id ?? null,

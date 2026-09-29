@@ -17,6 +17,8 @@
 //          closer's fetch — the close reconciles instead
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const state = vi.hoisted(() => ({
   /** Static rows per table (filtered by eq/in/is when read). */
@@ -112,6 +114,9 @@ import {
   resetEpisodeSchemaFlag, episodeSchemaIsMissing, EPISODE_SCHEMA_RECHECK_MS, isMissingEpisodeSchema,
 } from "@/lib/checkoutEpisodes";
 import { autoReleaseExpiredAdHoc, releaseAllCheckoutsForProject } from "@/lib/projects";
+import { endMyIntents } from "@/lib/intents";
+
+const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
 const writesTo = (table: string, op?: string) => state.writes.filter((w) => w.table === table && (!op || w.op === op));
 const messages = () => writesTo("checkout_messages", "insert").map((w) => String((w.payload as { text: string }).text));
@@ -120,6 +125,7 @@ beforeEach(() => {
   state.rows = {}; state.seq = {}; state.errors = {}; state.calls = []; state.writes = [];
   state.rpc = []; state.rpcResult = { data: null, error: null }; state.audits = []; state.emits = [];
   state.timeline = []; state.insertSeq = 0;
+  vi.mocked(endMyIntents).mockClear();
   resetEpisodeSchemaFlag();
 });
 
@@ -149,6 +155,15 @@ describe("DCK-4 — a failed lock claim is neither 'held' nor 'joined'", () => {
     expect(sealed[0].payload).toMatchObject({ status: "closed", close_reason: "reconciled" });
     // and nothing in the thread claims we joined anyone
     expect(messages()).toEqual([]);
+    // the edit intent recorded for this session dies with it — no phantom editor
+    expect(vi.mocked(endMyIntents)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(endMyIntents)).toHaveBeenCalledWith({ documentId: "d1", userId: "u1", sources: ["checkout"] });
+  });
+
+  it("the modal's rollback also ends the intent: it hands the document id to abortFailedLockClaim after waiting for the intent write", () => {
+    const modal = src("components/documents/CheckoutFlowModal.tsx");
+    expect(modal).toMatch(/const intentWrite = recordIntent\(\{/);
+    expect(modal).toMatch(/await intentWrite\.catch\(\(\) => undefined\);\s*\n\s*await abortFailedLockClaim\(\{\s*\n\s*sessionId: insertedSession\?\.id as string,\s*\n\s*documentId: document\.id!,/);
   });
 
   it("quickHold: no row and no error is still a genuine join", async () => {
@@ -157,6 +172,7 @@ describe("DCK-4 — a failed lock claim is neither 'held' nor 'joined'", () => {
     await expect(quickHold({ orgId: "o1", documentId: "d1", libraryId: "l1", userId: "u1", userName: "ann" })).resolves.toBe("joined");
     expect(messages().some((t) => t.includes("joined via quick hold"))).toBe(true);
     expect(writesTo("checkout_sessions", "update")).toHaveLength(0);
+    expect(vi.mocked(endMyIntents)).not.toHaveBeenCalled(); // a join keeps its intent
   });
 });
 
@@ -333,6 +349,18 @@ describe("DCK-7 — the browser sweep is the caller's own, select-driven, and lo
     await expect(autoReleaseExpiredAdHoc("o1", { userId: "u1" })).rejects.toThrow(/NOT released: You are not allowed/);
     expect(writesTo("notifications", "insert")).toHaveLength(0);
     expect(writesTo("audit_logs", "insert")).toHaveLength(0);
+  });
+
+  it("/checkouts keeps the sweep in its own lane: a refused sweep is shown in sweepError and the listing still loads", () => {
+    const page = src("app/(protected)/checkouts/page.tsx");
+    expect(page).toMatch(/const \[sweepError, setSweepError\] = useState<string \| null>\(null\);/);
+    // the sweep's try/catch closes BEFORE listAllActiveCheckouts is awaited
+    expect(page).toMatch(/try \{\s*\n\s*await autoReleaseExpiredAdHoc\(activeOrgId, \{ userId: uid \?\? null \}\);\s*\n\s*\} catch \(e\) \{\s*\n\s*setSweepError\(/);
+    expect(page).toMatch(/\}\s*\n\s*try \{\s*\n\s*const sessions = await listAllActiveCheckouts\(activeOrgId\);/);
+    expect(page).toMatch(/\{sweepError && !loading && \(/);
+    // the library page isolates its sweep the same way
+    const lib = src("app/(protected)/documents/[libraryId]/page.tsx");
+    expect(lib).toMatch(/m\.autoReleaseExpiredAdHoc\(activeOrgId, \{ userId: uid \}\)\)\s*\n\s*\.catch\(/);
   });
 
   it("the cron (service client, no org) sweeps everyone and attributes the CHECK_IN to the system, naming the holder", async () => {

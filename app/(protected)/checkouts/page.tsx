@@ -43,6 +43,9 @@ export default function CheckoutsPage() {
   const [rows, setRows] = useState<CheckoutWithContext[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // DCK-7: the own-row expiry sweep reports in its own lane — a refused or
+  // failed sweep must not blank the list people came to read.
+  const [sweepError, setSweepError] = useState<string | null>(null);
   // Phase 6 — scope-consolidation signals computed from the active
   // checkout list. Asset and scope overlaps; same-document and
   // same-project overlaps are covered by other UIs.
@@ -58,13 +61,18 @@ export default function CheckoutsPage() {
     if (!activeOrgId) return;
     setLoading(true);
     setError(null);
+    setSweepError(null);
+    // Opportunistically auto-release MY expired ad-hoc checkouts on load —
+    // keeps the list honest without needing a server cron. DCK-7: scoped
+    // to the caller's own sessions (the release guard refuses anyone
+    // else's); a refused sweep surfaces in its own strip below and the
+    // listing still loads — the sweep is a courtesy, the list is the page.
     try {
-      // Opportunistically auto-release MY expired ad-hoc checkouts on load —
-      // keeps the list honest without needing a server cron. DCK-7: scoped
-      // to the caller's own sessions (the release guard refuses anyone
-      // else's); a refused sweep surfaces in the error strip below.
       await autoReleaseExpiredAdHoc(activeOrgId, { userId: uid ?? null });
-
+    } catch (e) {
+      setSweepError((e as Error).message || "Expired checkouts were NOT released");
+    }
+    try {
       const sessions = await listAllActiveCheckouts(activeOrgId);
       if (sessions.length === 0) {
         setRows([]); setLoading(false); return;
@@ -268,6 +276,12 @@ export default function CheckoutsPage() {
               showToast({ type: "success", title: "Heads-up sent", message: `Notified ${recipients.length} ${recipients.length === 1 ? "person" : "people"} to coordinate on ${what}.` });
             }}
           />
+        )}
+
+        {sweepError && !loading && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {sweepError}
+          </div>
         )}
 
         {loading ? (
