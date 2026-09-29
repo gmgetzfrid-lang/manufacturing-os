@@ -31,7 +31,7 @@ report.
 ## REL-1 · The companies registry spins forever if the org never resolves, with no error boundary to catch it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
 - **Locations:**
@@ -59,6 +59,14 @@ to `app/(protected)/companies/`, modelled on the projects route's.
 **Done when.**
 - A null org id produces an actionable error, not an infinite spinner.
 - `/companies` has its own in-shell loading skeleton and error boundary.
+
+**Resolution (2026-09-23, projects Round G).** `app/(protected)/companies/page.tsx` keeps a tri-state (`"loading" | "ready" | "failed"`) instead of a boolean, and derives an org-failure state from `useRole()`: when `activeOrgId` is null and the resolver's `loading` is false, the page renders "Couldn't determine your organization — … Retry, or sign in again" (naming the membership-lookup failure when `membershipState === "error"`) with a Retry button; nothing waits on an id that will not arrive. `app/(protected)/companies/loading.tsx` (in-shell `RouteLoader`) and `error.tsx` (reset + escape link, inside the shell) were added. `RoleContext` was not edited (IS-P1 / PKG-1's). Pinned in `companiesRegistry.test.ts` (source pins + boundary files exist).
+
+**Done-when.**
+- A null org id produces an actionable error, not an infinite spinner — ✓.
+- `/companies` has its own in-shell loading skeleton and error boundary — ✓.
+
+**Scope / residual.** The resolver's own 15 s timeout behaviour (SESS-1) is identity-and-session's.
 
 ---
 
@@ -356,6 +364,8 @@ also pure cost, per report `09`).
 - An approved change order can be unwound in one action that voids exactly its entry.
 - The remaining dead declarations are removed.
 
+*Landed 2026-09-23 (projects Round G, J4 limb): `companies.status = 'inactive'` now has one visible effect: the bid tab shows an "inactive" chip beside a bidder resolved to an inactive registry row (`QuotesPanel.tsx`), and 20261095 guards the status CHECK. Whether `inactive` should filter or block closes in P3.*
+
 ---
 
 ## REL-10 · Example charts can appear on a project that has real data, and the watermark is effectively invisible
@@ -472,7 +482,7 @@ condition to match `hasPlan`. Use the project currency in the example.
 
 | ID | Severity | Status |
 |---|---|---|
-| REL-1 | HIGH | OPEN |
+| REL-1 | HIGH | RESOLVED |
 | REL-2 | HIGH | OPEN |
 | REL-3 | HIGH | OPEN |
 | REL-4 | HIGH | OPEN |

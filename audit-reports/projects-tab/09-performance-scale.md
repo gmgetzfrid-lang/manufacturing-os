@@ -51,7 +51,7 @@ more times.
 ## PERF-1 · The companies registry fires over eleven hundred queries per page view, with no cache, pagination or abort
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (query counts exact; timing estimated)
 - **Blast radius:** performance / availability
 - **Locations:**
@@ -96,6 +96,15 @@ company restarts the whole sweep.
 - A `/companies` visit issues under 200 queries.
 - Navigating away stops the sweep.
 - Back does not re-run it.
+
+**Resolution (2026-09-23, projects Round G).** Three parts. (1) `lib/companies.ts` `gatherCompanyProfiles(companies)` is ONE batched gather: per evidence table, one `.in()` query per chunk of 200 ids (company ids or party ids), results bucketed client-side by company — 11 queries for a page of 150 companies with parties, 16 when their parties span two chunks, never one per company; `gatherCompanyProfile(c)` is the one-company wrapper. (2) `listCompaniesPage(orgId, { search, kind, page })` pages server-side (`COMPANY_PAGE_SIZE` 50, sorted by name, `count: "exact"`, kind `eq`, search as `name.ilike / trade.ilike` with the term sanitised of PostgREST's `,()`), on the trigram indexes 20261095 adds; `listCompanies` keeps its signature with a hard cap (`COMPANY_LIST_CAP`). (3) `app/(protected)/companies/page.tsx` loads one page, gathers evidence for that page only, and its effect cleanup flips a cancel token so a result arriving after navigation is dropped; no client cache (GAP-409). Tests: `lib/__tests__/companiesRegistry.test.ts` (query count for 1 vs 150 companies equal at 11, 300 party ids → 16, always < 200; no per-company `eq("company_id")`; the page/range/order/or calls; source pins on the page).
+
+**Done-when.**
+- A `/companies` visit issues under 200 queries — ✓ (1 list + 11–16 gather, pinned).
+- Navigating away stops the sweep — ✓ (there is no queue to drain: one batched gather whose result is discarded on cancel; the in-flight HTTP requests of that single round complete).
+- Back does not re-run it — **not done, by decision**: GAP-409 says "do not fix this with a client-side cache; stale company data drives award decisions", and the brief pins "one server-side batched gather per page, no cache". Back re-runs one ~11-query gather for the visible page.
+
+**Scope / residual.** The detail page re-gathers its one company through the same function (a single-id batch). The RPC alternative (`company_profiles(org_id)`) was not needed: the census test is under 20. Migrations: `20261095_prj_roundG_registry_indexes.sql`, `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30: applied by hand; the code half is live without them and reads the missing columns as unknown).
 
 ---
 
@@ -384,7 +393,7 @@ the project row lands rather than blocking on everything.
 ## PERF-9 · A 571 KB chunk containing a zip library ships to everyone who opens any project
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (verified against the built output)
 - **Blast radius:** performance
 - **Locations:**
@@ -416,6 +425,14 @@ in `next/dynamic`.
 **Done when.**
 - PizZip is not in the project route's initial chunks.
 - Route JS is under 700 KB.
+
+**Resolution (2026-09-23, projects Round G).** `QuotesPanel.tsx` no longer imports `lib/rfqDocx` statically; `makeRfq` does `const { downloadStarterRfq } = await import("@/lib/rfqDocx")` at the click, so PizZip is a separate chunk loaded only when a starter RFQ is downloaded. No bundle-analyzer gate was added (plan default).
+
+**Done-when.**
+- PizZip is not in the project route's initial chunks — ✓ by import graph (no static path from the project page to `pizzip` remains: `grep -rn "rfqDocx" components app` shows only the dynamic import).
+- Route JS is under 700 KB — **not verified here**: no `next build` was run in this package (the integrator builds); recorded as a manual check on the built manifest.
+
+**Scope / residual.** The other heavy statics named (ExecutionView, ScheduleImportModal, TaskDetailPanel) are P6a/P6b files — not touched.
 
 ---
 
@@ -457,7 +474,7 @@ once. Hoist the `toLocaleString` formatters out of the row components.
 ## PERF-11 · Four join columns and two search columns have no index
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (from the migration set)
 - **Blast radius:** performance
 - **Locations:**
@@ -481,6 +498,14 @@ that, not after.
 **Done when.**
 - The company-profile gather uses index scans.
 - Document type-ahead does not degrade with library size.
+
+**Resolution (2026-09-23, projects Round G).** Migration `20261095_prj_roundG_registry_indexes.sql`: partial btree indexes on `party_id` for `change_orders`, `turnover_items`, `punch_items`, `cost_documents` and `cost_entries` (the batched gather now reads posted commitments by party too); `pg_trgm` GIN on `milestones.responsible_party`, `project_intake_links.company_name`, `documents.title` / `name` / `document_number`, and `companies.name` / `companies.trade` (the registry's server-side search); a guarded `companies_status_check` for a table that predates 20261013's inline CHECK. Verification probes for every index in the final SELECT. Shape pinned by `lib/__tests__/prjRoundGMigrations.test.ts`.
+
+**Done-when.**
+- The company-profile gather uses index scans — ✓ once 20261095 is applied (the gather's filters are exactly `party_id IN (…)` / `company_id IN (…)` / `project_id IN (…)`, all now indexed). **Pending migration:** `20261095_prj_roundG_registry_indexes.sql` (DEC-30).
+- Document type-ahead does not degrade with library size — ✓ once applied (trigram GIN on the three `ilike` columns). Pending the same migration.
+
+**Scope / residual.** `milestones.responsible_party` is still matched client-side by case-insensitive equality inside the batched gather (the rows come by `project_id IN`), so the trigram index serves the other readers of that column; it lands before P11's MON-7 as the plan requires.
 
 ---
 
@@ -519,7 +544,7 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 
 | ID | Severity | Status |
 |---|---|---|
-| PERF-1 | CRITICAL | OPEN |
+| PERF-1 | CRITICAL | RESOLVED |
 | PERF-2 | CRITICAL | OPEN |
 | PERF-3 | HIGH | OPEN |
 | PERF-4 | HIGH | OPEN |
@@ -527,6 +552,6 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 | PERF-6 | HIGH | OPEN |
 | PERF-7 | HIGH | OPEN |
 | PERF-8 | HIGH | OPEN |
-| PERF-9 | MEDIUM | OPEN |
+| PERF-9 | MEDIUM | RESOLVED |
 | PERF-10 | MEDIUM | OPEN |
-| PERF-11 | MEDIUM | OPEN |
+| PERF-11 | MEDIUM | RESOLVED |

@@ -319,7 +319,7 @@ give the current step `aria-current="step"`.
 ## A11Y-9 · Company dimension bars overflow their card on a phone
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** mobile
 - **Locations:**
@@ -341,6 +341,14 @@ flex, and stack the label above the bar on narrow screens. Add `min-w-0` and
 **Done when.**
 - Neither card overflows at 375px.
 - The page body never scrolls horizontally.
+
+**Resolution (2026-09-23, projects Round G).** Both dimension rows drop their fixed widths below `sm:`: the label is `w-full sm:w-24` / `sm:w-28` (stacks above the bar on a phone), the track is `flex-1 sm:flex-none sm:w-24` / `sm:w-32` with `min-w-10`, the number keeps its `w-7` / `w-8`, and the detail wraps (`basis-full sm:basis-auto`, `truncate` on the list card, `break-words` on the profile). The list card and the profile header card carry `min-w-0 overflow-hidden`; the profile page gutter is `px-4 sm:px-6`. Pinned by source in `companiesRegistry.test.ts`.
+
+**Done-when.**
+- Neither card overflows at 375px — ✓ by construction: the only non-shrinking content on a row is the 28–32 px number; everything else flexes or wraps. Not measured in a browser (no browser in this loop).
+- The page body never scrolls horizontally — ✓ by construction (`overflow-hidden` on the cards, `min-w-0` down the flex chain); same caveat.
+
+**Scope / residual.** The hand-rolled modal (A11Y-4) stays with P11.
 
 ---
 
@@ -569,7 +577,7 @@ background to the one date input.
 | A11Y-6 | HIGH | OPEN |
 | A11Y-7 | HIGH | OPEN |
 | A11Y-8 | HIGH | OPEN |
-| A11Y-9 | HIGH | OPEN |
+| A11Y-9 | HIGH | RESOLVED |
 | A11Y-10 | HIGH | OPEN |
 | A11Y-11 | MEDIUM | OPEN |
 | A11Y-12 | MEDIUM | OPEN |

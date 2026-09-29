@@ -305,7 +305,7 @@ explain why on the button.
 ## UX-9 · An action error destroys the entire company page
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / data-loss
 - **Locations:**
@@ -327,6 +327,14 @@ failed COMMENT blank the entire project view."*
 **Done when.**
 - An action error renders as a dismissible banner and leaves the page intact.
 - Form contents survive a failed action.
+
+**Resolution (2026-09-23, projects Round G).** `app/(protected)/companies/[id]/page.tsx` separates load errors from action errors exactly as the project page does: `error` (load) still replaces the record; a new `actionError` renders as a dismissible `role="alert"` banner above the header, and both `QualityManualPanel` and `EventsPanel` receive `setErr={setActionError}`. A failed evaluation ("add your AI key first") or event save now leaves the header, scorecard, proposal and form contents mounted. Pinned in `companiesRegistry.test.ts` ("a failed action renders as a dismissible banner and leaves the company page mounted").
+
+**Done-when.**
+- An action error renders as a dismissible banner and leaves the page intact — ✓.
+- Form contents survive a failed action — ✓ (the panels are never unmounted by an action error; their `useState` survives).
+
+**Scope / residual.** None.
 
 ---
 
@@ -365,6 +373,8 @@ database migration (20261013) applied."*
 **Done when.**
 - Empty, broken and forbidden render differently.
 - No raw Postgres string reaches a user in the Projects area (see `REL-3`).
+
+*Landed 2026-09-23 (projects Round G, J4 limb): `QuotesPanel.tsx:545`'s migration-aware message is kept as the model; the two new writes in the panel (`cost_documents.company_id`, quote-link `expires_at`) surface a named-migration message on `42703` / `PGRST204` instead of a silent success. The list-function conversion closes in P2.*
 
 ---
 
@@ -585,7 +595,7 @@ shown on that tab), **EAC** (never rendered — the forecast is a sentence),
 | UX-6 | HIGH | OPEN |
 | UX-7 | HIGH | OPEN |
 | UX-8 | HIGH | OPEN |
-| UX-9 | HIGH | OPEN |
+| UX-9 | HIGH | RESOLVED |
 | UX-10 | HIGH | OPEN |
 | UX-11 | HIGH | OPEN |
 | UX-12 | HIGH | OPEN |
