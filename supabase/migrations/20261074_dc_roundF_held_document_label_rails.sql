@@ -127,9 +127,11 @@ SELECT 'document_versions label rail installed (BEFORE UPDATE OF revision_label;
               FROM pg_proc WHERE proname = 'enforce_version_hold_label_guard'),
        NULL::text
 UNION ALL
-SELECT 'the publish guard body is untouched by this migration (20261060 archive disjunct still present)',
-       (SELECT prosrc LIKE '%(NEW.status = ''Archived'' AND COALESCE(OLD.status, '''') <> ''Archived'')%'
-          FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
+SELECT 'the publish guard still exists and neither rail is wired to it (this migration owns only its two rails; P4 owns that body)',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_document_publish_guard')
+       AND NOT EXISTS (SELECT 1 FROM pg_trigger
+                        WHERE tgname IN ('trg_document_hold_label_guard', 'trg_version_hold_label_guard')
+                          AND tgfoid = 'enforce_document_publish_guard'::regproc),
        NULL::text
 UNION ALL
 SELECT 'both rails are SECURITY DEFINER with search_path pinned',

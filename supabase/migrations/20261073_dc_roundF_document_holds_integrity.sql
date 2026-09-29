@@ -24,7 +24,12 @@
 --          it. A BEFORE INSERT guard refuses any row whose org_id differs from
 --          the document's, and the INSERT policy binds the row's org to the
 --          document's (the 20261032 PKG-5 shape) on top of the UNCHANGED
---          3-argument capability check the 20261052 probe expects.
+--          3-argument capability check the 20261052 probe expects. The same
+--          guard refuses a signed-in INSERT that arrives already released:
+--          HLD-5's release rules bind UPDATE, so without this a holder of
+--          holds.open could write a released-hold history entry under any
+--          name with no reason and no audit row. A hold is placed open.
+--          Service-role INSERTs (a restore replaying released rows) pass.
 --   HLD-7  a hold did not know the revision it stopped, so a printed card and
 --          the public verify page could only show whatever the document reads
 --          NOW. held_rev_label / held_version_id are captured at open time
@@ -85,9 +90,16 @@ BEGIN
   SELECT d.org_id, d.rev, d.current_version_id
     INTO v_doc_org, v_doc_rev, v_doc_ver
     FROM documents d WHERE d.id = NEW.document_id;
-  IF v_doc_org IS NULL THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'A hold must name an existing document.'
       USING ERRCODE = 'foreign_key_violation';
+  END IF;
+  -- documents.org_id is nullable (schema.sql): a document with no org cannot
+  -- carry a hold (the hold's org is NOT NULL and could never agree) — say so,
+  -- rather than claiming the document does not exist.
+  IF v_doc_org IS NULL THEN
+    RAISE EXCEPTION 'This document carries no org; repair it before placing a hold.'
+      USING ERRCODE = 'check_violation';
   END IF;
   -- Applies to EVERYONE (service role included): this is a constraint, not an
   -- authority check — a hold in the wrong org is unreachable by the people it
@@ -100,7 +112,20 @@ BEGIN
   -- a lifecycle copy or a direct insert gets it from the document).
   IF NEW.held_rev_label IS NULL THEN NEW.held_rev_label := v_doc_rev; END IF;
   IF NEW.held_version_id IS NULL THEN NEW.held_version_id := v_doc_ver; END IF;
-  -- A row is never born released or pre-recorded.
+  -- A signed-in caller places a hold OPEN: the release columns are written
+  -- only by the release transition (enforce_document_hold_guard, BEFORE
+  -- UPDATE), which requires a reason, pins the releaser to the session and
+  -- writes the HOLD_RELEASED audit row. A row born released would be a
+  -- release history entry under any name, with no reason and no audit row.
+  -- The service role (no session — a restore replaying released rows) keeps
+  -- what it supplies.
+  IF auth.uid() IS NOT NULL
+     AND (NEW.released_at IS NOT NULL OR NEW.released_by IS NOT NULL
+          OR NEW.released_by_name IS NOT NULL OR NEW.released_reason IS NOT NULL) THEN
+    RAISE EXCEPTION 'A hold is placed open; release it with a reason.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  -- Never born pre-recorded: only the release guard stamps this.
   NEW.release_recorded_at := NULL;
   RETURN NEW;
 END;
@@ -254,11 +279,12 @@ SELECT 'hold guard pins a signed-in release to the session and writes the HOLD_R
           FROM pg_proc WHERE proname = 'enforce_document_hold_guard'),
        NULL::text
 UNION ALL
-SELECT 'org guard installed BEFORE INSERT on document_holds (org must match the document; held rev captured)',
+SELECT 'org guard installed BEFORE INSERT on document_holds (org must match the document; held rev captured; a signed-in row is born open)',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_document_hold_org_guard'
                  AND tgrelid = 'document_holds'::regclass AND NOT tgisinternal)
        AND (SELECT prosrc LIKE '%A hold must carry the org of the document it holds.%'
               AND prosrc LIKE '%NEW.held_rev_label := v_doc_rev;%'
+              AND prosrc LIKE '%A hold is placed open; release it with a reason.%'
               FROM pg_proc WHERE proname = 'enforce_document_hold_org_guard'),
        NULL::text
 UNION ALL

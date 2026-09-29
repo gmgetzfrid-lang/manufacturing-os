@@ -424,9 +424,12 @@ export const HOLD_AGING_DAYS = Math.max(1, Number(process.env.HOLD_AGING_DAYS) |
  *  the per-org compliance scans, on the shared client the cron swaps to the
  *  service role. For every open hold past its expected_release_at, or with
  *  no date and older than HOLD_AGING_DAYS, tells the opener and the
- *  policy-derived release pool ONCE — deduped by the hold id in the
- *  notification metadata, the escalateStaleCheckouts shape. Returns the
- *  number of holds nudged. */
+ *  policy-derived release pool ONCE per expectation — deduped by the hold id
+ *  AND the expected date it missed (metadata.staleHoldId + staleFor, the
+ *  escalateStaleCheckouts shape widened by the expectation): the nudge asks
+ *  the opener to set a new expected date, and when that date passes too the
+ *  hold is nudged again rather than aging silently. Returns the number of
+ *  holds nudged. */
 export async function scanStaleHolds(orgId: string, now: Date = new Date()): Promise<number> {
   const nowIso = now.toISOString();
   const agedBefore = new Date(now.getTime() - HOLD_AGING_DAYS * 86400_000).toISOString();
@@ -451,11 +454,15 @@ export async function scanStaleHolds(orgId: string, now: Date = new Date()): Pro
   const pool = await resolveHoldAudience(orgId, policy);
   let nudged = 0;
   for (const h of rows.values()) {
+    // The dedupe key is the hold AND the expectation it missed: a re-dated
+    // hold that misses its new date is nudged again; an age nudge (no date)
+    // fires once until a date is set.
+    const staleFor = h.expected_release_at ?? "age";
     const { data: existing } = await supabase
       .from("notifications")
       .select("id")
       .eq("kind", "hold_opened")
-      .contains("metadata", { staleHoldId: h.id })
+      .contains("metadata", { staleHoldId: h.id, staleFor })
       .limit(1);
     if (((existing as unknown[] | null) ?? []).length > 0) continue;
 
@@ -481,7 +488,7 @@ export async function scanStaleHolds(orgId: string, now: Date = new Date()): Pro
       resource: { type: "document", id: h.document_id },
       actorName: "System",
       audience: { involved: [h.opened_by, ...pool] },
-      metadata: { staleHoldId: h.id, escalation: true },
+      metadata: { staleHoldId: h.id, staleFor, escalation: true },
     });
     nudged += 1;
   }

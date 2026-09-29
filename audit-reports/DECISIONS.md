@@ -925,7 +925,7 @@ happen silently.
 
 *Extended 2026-09-17 (roles-and-permissions Round E): the gate keys on the terminal transition (`CLOSED` or `CANCELED`), not on the close action's name, so `cancel_request` (`DEC-14`) meets the same 409 and the same release-or-keep resolution. See `WF-17`.*
 
-*Landed 2026-09-23 (document-control Round F): the `20261073` `document_holds` guard pins a hold's identity and freezes its release record but leaves `origin_ticket_id` writable and admits the ticket close gate's service-role release — which must still name a releaser and a reason, and keeps writing its own audit row. A release is never silent and never anonymous. See `HLD-5`.*
+*Landed 2026-09-23 (document-control Round F): the `20261073` `document_holds` guard pins a hold's identity and freezes its release record but leaves `origin_ticket_id` writable and admits the ticket close gate's service-role release — which must still name a releaser and a reason, and keeps writing its own audit row. For a signed-in caller a release is never silent and never anonymous: UPDATE requires a reason and attributes to the session, and INSERT refuses a row born released. The service role is trusted to name its actor and write its row (the ticket gate does; a restore replays history). Pinned by shape only until 20261073 is pasted (DEC-30). See `HLD-5`.*
 
 <a id="dec-26"></a>
 ## DEC-26 · Does an as-built ticket classify its own output?

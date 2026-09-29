@@ -6,7 +6,8 @@
 //           refuses on a held document; 20261074 label rails at the database.
 //   HLD-5   20261073 document_holds guard: identity pinned, no resurrection,
 //           reason required, session-attributed, DB-written audit row that the
-//           app does not duplicate (release_recorded_at).
+//           app does not duplicate (release_recorded_at); a signed-in INSERT
+//           is born open (no forged release history).
 //   HLD-7   held_rev_label captured at open; /api/verify-hold publishes the
 //           reason only as its predefined category and reports heldRev.
 //   HLD-8   holdControlsFor — a UserGrant lights the Release control; the
@@ -16,7 +17,7 @@
 //   HLD-10  releaseHold requires a reason; the opener is told; the audience is
 //           policy-derived; a failed emit is logged.
 //   HLD-14  expected-release date from the picker; scanStaleHolds rides the
-//           maintenance cron and nudges once.
+//           maintenance cron and nudges once per missed expectation.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -360,7 +361,7 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
     expect(expectedReleaseIso("next friday")).toBeUndefined();
     expect(expectedReleaseIso("2026-02-31")).toBeUndefined();
   });
-  it("nudges the opener + the release pool once per late or aged hold, skips young and already-nudged ones", async () => {
+  it("nudges the opener + the release pool once per late or aged hold, skips young and already-nudged ones, and nudges a re-dated hold again", async () => {
     const now = new Date("2026-09-23T03:00:00.000Z");
     const daysAgo = (n: number) => new Date(now.getTime() - n * 86400_000).toISOString();
     state.rows.document_holds = [
@@ -371,28 +372,50 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
       openHoldRow({ id: "done", expected_release_at: daysAgo(30), released_at: daysAgo(1) }),
       openHoldRow({ id: "other-org", org_id: "o2", expected_release_at: daysAgo(30) }),
       openHoldRow({ id: "nudged", expected_release_at: daysAgo(9), opened_at: daysAgo(20) }),
+      // nudged for a date it missed, re-dated by the opener, and late AGAIN
+      openHoldRow({ id: "redated", expected_release_at: daysAgo(1), opened_at: daysAgo(50) }),
+      // nudged by age (no date), then given a date that has also passed
+      openHoldRow({ id: "aged-then-dated", expected_release_at: daysAgo(2), opened_at: daysAgo(HOLD_AGING_DAYS + 20) }),
+      // nudged by age and still undated: once is enough
+      openHoldRow({ id: "aged-nudged", opened_at: daysAgo(HOLD_AGING_DAYS + 9) }),
     ];
-    state.rows.notifications = [{ id: "n1", kind: "hold_opened", metadata: { staleHoldId: "nudged", escalation: true } }];
+    state.rows.notifications = [
+      { id: "n1", kind: "hold_opened", metadata: { staleHoldId: "nudged", staleFor: daysAgo(9), escalation: true } },
+      { id: "n2", kind: "hold_opened", metadata: { staleHoldId: "redated", staleFor: daysAgo(40), escalation: true } },
+      { id: "n3", kind: "hold_opened", metadata: { staleHoldId: "aged-then-dated", staleFor: "age", escalation: true } },
+      { id: "n4", kind: "hold_opened", metadata: { staleHoldId: "aged-nudged", staleFor: "age", escalation: true } },
+    ];
     state.rows.documents = [{ id: DOC, document_number: "P-101", library_id: "lib-1" }];
     state.rows.org_members = [{ uid: "adm", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" }, { uid: "opener", role: "Drafter", roles: ["Drafter"], org_id: "o1", status: "active" }];
-    expect(await scanStaleHolds("o1", now)).toBe(2);
-    expect(dispatch.emit).toHaveBeenCalledTimes(2);
-    const emitted = dispatch.emit.mock.calls.map((c) => c[0] as { title: string; kind: string; category: string; link?: string; audience: { involved?: string[] }; metadata?: { staleHoldId?: string } });
+    expect(await scanStaleHolds("o1", now)).toBe(4);
+    expect(dispatch.emit).toHaveBeenCalledTimes(4);
+    type Emitted = { title: string; kind: string; category: string; link?: string; audience: { involved?: string[] }; metadata?: { staleHoldId?: string; staleFor?: string } };
+    const emitted = dispatch.emit.mock.calls.map((c) => c[0] as Emitted);
     const ids = emitted.map((e) => e.metadata?.staleHoldId).sort();
-    expect(ids).toEqual(["aged", "late"]);
+    expect(ids).toEqual(["aged", "aged-then-dated", "late", "redated"]);
     for (const e of emitted) {
       expect(e.kind).toBe("hold_opened");
       expect(e.category).toBe("sla");
       expect(e.audience.involved).toEqual(expect.arrayContaining(["opener", "adm"]));
       expect(e.link).toBe(`/documents/lib-1?doc=${DOC}`);
     }
-    expect(emitted.find((e) => e.metadata?.staleHoldId === "late")?.title).toMatch(/past its expected release — P-101 \(Client Review\)/);
-    expect(emitted.find((e) => e.metadata?.staleHoldId === "aged")?.title).toMatch(new RegExp(`Hold open ${HOLD_AGING_DAYS + 5} days — P-101 \\(Missing Vendor Data\\)`));
-    // idempotent: a second run the same day nudges nothing new
-    state.rows.notifications.push({ id: "n2", kind: "hold_opened", metadata: { staleHoldId: "late" } }, { id: "n3", kind: "hold_opened", metadata: { staleHoldId: "aged" } });
+    // the dedupe key is the hold AND the expectation it missed
+    const byId = (id: string) => emitted.find((e) => e.metadata?.staleHoldId === id);
+    expect(byId("late")?.metadata?.staleFor).toBe(daysAgo(3));
+    expect(byId("aged")?.metadata?.staleFor).toBe("age");
+    expect(byId("redated")?.metadata?.staleFor).toBe(daysAgo(1));
+    expect(byId("aged-then-dated")?.metadata?.staleFor).toBe(daysAgo(2));
+    expect(byId("late")?.title).toMatch(/past its expected release — P-101 \(Client Review\)/);
+    expect(byId("aged")?.title).toMatch(new RegExp(`Hold open ${HOLD_AGING_DAYS + 5} days — P-101 \\(Missing Vendor Data\\)`));
+    // idempotent: a second run the same day nudges nothing new (the key written is the key read)
+    for (const e of emitted) state.rows.notifications.push({ id: `n-${e.metadata?.staleHoldId}`, kind: "hold_opened", metadata: e.metadata as Record<string, unknown> });
     dispatch.emit.mockClear();
     expect(await scanStaleHolds("o1", now)).toBe(0);
     expect(dispatch.emit).not.toHaveBeenCalled();
+    // a hold id alone (the pre-fix key shape) no longer suppresses: the expectation must match too
+    state.rows.notifications = [{ id: "old", kind: "hold_opened", metadata: { staleHoldId: "late", escalation: true } }];
+    state.rows.document_holds = [openHoldRow({ id: "late", expected_release_at: daysAgo(3), opened_at: daysAgo(10) })];
+    expect(await scanStaleHolds("o1", now)).toBe(1);
   });
   it("rides the EXISTING maintenance route as a compliance scan — no third vercel.json cron", () => {
     const route = src("app/api/cron/maintenance/route.ts");
@@ -488,16 +511,41 @@ describe("20261073 — document_holds integrity (HLD-5 / HLD-9 / HLD-7)", () => 
     const fn = between(m73, "CREATE OR REPLACE FUNCTION enforce_document_hold_org_guard()", "DROP TRIGGER IF EXISTS trg_document_hold_org_guard");
     expect(fn).toMatch(/SECURITY DEFINER SET search_path = public/);
     expect(fn).toMatch(/SELECT d\.org_id, d\.rev, d\.current_version_id\s*\n\s*INTO v_doc_org, v_doc_rev, v_doc_ver\s*\n\s*FROM documents d WHERE d\.id = NEW\.document_id;/);
+    // "not found" and "found but org-less" are different faults with different messages (documents.org_id is nullable)
+    expect(fn).toMatch(/IF NOT FOUND THEN\s*\n\s*RAISE EXCEPTION 'A hold must name an existing document\.'\s*\n\s*USING ERRCODE = 'foreign_key_violation';/);
+    expect(fn).toMatch(/IF v_doc_org IS NULL THEN\s*\n\s*RAISE EXCEPTION 'This document carries no org; repair it before placing a hold\.'\s*\n\s*USING ERRCODE = 'check_violation';/);
+    expect(fn.indexOf("IF NOT FOUND THEN")).toBeLessThan(fn.indexOf("IF v_doc_org IS NULL THEN"));
     expect(fn).toMatch(/IF NEW\.org_id IS DISTINCT FROM v_doc_org THEN\s*\n\s*RAISE EXCEPTION 'A hold must carry the org of the document it holds\.'/);
     expect(fn).toMatch(/IF NEW\.held_rev_label IS NULL THEN NEW\.held_rev_label := v_doc_rev; END IF;/);
     expect(fn).toMatch(/IF NEW\.held_version_id IS NULL THEN NEW\.held_version_id := v_doc_ver; END IF;/);
     expect(fn).toMatch(/NEW\.release_recorded_at := NULL;/);
-    expect(fn).not.toMatch(/auth\.uid\(\)/);
+    // the org / document agreement rule does not consult the session — it binds everyone, service role included
+    const orgRule = between(fn, "IF NOT FOUND THEN", "IF NEW.held_rev_label IS NULL");
+    expect(orgRule).not.toMatch(/auth\.uid\(\)/);
     expect(m73).toMatch(/CREATE TRIGGER trg_document_hold_org_guard\s*\n\s*BEFORE INSERT ON document_holds\s*\n\s*FOR EACH ROW EXECUTE FUNCTION enforce_document_hold_org_guard\(\);/);
     // the new columns, additive and idempotent; held_version_id deliberately carries no FK (a SET NULL cascade would trip the identity pin)
     expect(m73).toMatch(/ALTER TABLE document_holds ADD COLUMN IF NOT EXISTS held_rev_label TEXT;/);
     expect(m73).toMatch(/ALTER TABLE document_holds ADD COLUMN IF NOT EXISTS held_version_id UUID;\n/);
     expect(m73).toMatch(/ALTER TABLE document_holds ADD COLUMN IF NOT EXISTS release_recorded_at TIMESTAMPTZ;/);
+  });
+  it("HLD-5 INSERT side: a signed-in row is born OPEN — released_* on INSERT refused (no forged release history under another name); the service role keeps what it supplies", () => {
+    const fn = between(m73, "CREATE OR REPLACE FUNCTION enforce_document_hold_org_guard()", "DROP TRIGGER IF EXISTS trg_document_hold_org_guard");
+    expect(fn).toMatch(/IF auth\.uid\(\) IS NOT NULL\s*\n\s*AND \(NEW\.released_at IS NOT NULL OR NEW\.released_by IS NOT NULL\s*\n\s*OR NEW\.released_by_name IS NOT NULL OR NEW\.released_reason IS NOT NULL\) THEN\s*\n\s*RAISE EXCEPTION 'A hold is placed open; release it with a reason\.'\s*\n\s*USING ERRCODE = 'check_violation';/);
+    // the refusal sits before the row is returned, after the org / rev derivation
+    expect(fn.indexOf("A hold is placed open; release it with a reason.")).toBeGreaterThan(fn.indexOf("NEW.held_version_id := v_doc_ver"));
+    expect(fn.indexOf("A hold is placed open; release it with a reason.")).toBeLessThan(fn.indexOf("RETURN NEW"));
+    // exactly one session read in the INSERT guard: the born-released rule and nothing else
+    expect((fn.match(/auth\.uid\(\)/g) ?? []).length).toBe(1);
+    // the live probe pins the branch on paste
+    const tail = m73.slice(m73.indexOf("COMMIT;"));
+    expect(tail).toMatch(/prosrc LIKE '%A hold is placed open; release it with a reason\.%'/);
+    // no signed-in app INSERT supplies a release column: openHold and the lifecycle copy both place open holds
+    const holds = src("lib/holds.ts");
+    const openBody = between(holds, "export async function openHold(", "if (error) {");
+    expect(openBody).not.toMatch(/released_/);
+    const copy = between(src("lib/documentLifecycle/common.ts"), "export async function copyActiveHoldsToDoc(", "copied++;");
+    expect(copy).not.toMatch(/released_(at|by|by_name|reason):/);
+    expect(copy).toMatch(/\.is\("released_at", null\)/);
   });
   it("one paste: inventory temp table before BEGIN, one final SELECT with the fixed (check, ok, n) shape, aggregate counts only", () => {
     expect(m73.indexOf("CREATE TEMP TABLE IF NOT EXISTS _dc_f73_before")).toBeLessThan(m73.indexOf("BEGIN;"));
@@ -549,7 +597,11 @@ describe("20261074 — held-document label rails (HLD-1 database half)", () => {
     const tail = m74.slice(m74.indexOf("COMMIT;"));
     expect(tail).toMatch(/AS check,[\s\S]*AS ok,\s*\n\s*NULL::text AS n/);
     expect((tail.match(/^UNION ALL$/gm) ?? []).length).toBe(4);
-    expect(tail).toMatch(/prosrc LIKE '%\(NEW\.status = ''Archived'' AND COALESCE\(OLD\.status, ''''\) <> ''Archived''\)%'/);
+    // ownership probe, not a text probe of P4's body: the publish guard exists and neither rail is wired to it
+    expect(tail).toMatch(/EXISTS \(SELECT 1 FROM pg_proc WHERE proname = 'enforce_document_publish_guard'\)/);
+    expect(tail).toMatch(/AND NOT EXISTS \(SELECT 1 FROM pg_trigger\s*\n\s*WHERE tgname IN \('trg_document_hold_label_guard', 'trg_version_hold_label_guard'\)\s*\n\s*AND tgfoid = 'enforce_document_publish_guard'::regproc\)/);
+    expect(tail).not.toMatch(/prosrc[^\n]*enforce_document_publish_guard/);
+    expect(tail).not.toMatch(/''Archived''/);
   });
   it("the app path this rail closes is still the bare rewrite: correctRevisionLabel updates the version label, then the document label without current_version_id", () => {
     const rev = src("lib/revisions.ts");
