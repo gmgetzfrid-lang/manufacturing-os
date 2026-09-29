@@ -19,6 +19,8 @@ import {
   activeCollaboratorNames,
   postEpisodeSystemMessage,
   quickHold,
+  resolveLockClaim,
+  abortFailedLockClaim,
 } from "@/lib/checkoutEpisodes";
 import { recordIntent } from "@/lib/intents";
 import {
@@ -331,8 +333,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
       // Ambient intent: this checkout is an EDIT intent anchored to the
       // revision that is current right now — the publish contract's
-      // expected-base source. Fire-and-forget.
-      void recordIntent({
+      // expected-base source. Not awaited on the happy path; the handle is
+      // kept so a DCK-4 rollback can wait for it before ending it.
+      const intentWrite = recordIntent({
         orgId: document.orgId,
         documentId: document.id!,
         libraryId: document.libraryId ?? null,
@@ -365,7 +368,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       // -wins left an orphaned session + a mismatched collaborator list.
       // (The active_collaborators array is still a read-modify-write; that is
       // a benign list, not the authoritative lock.)
-      const { data: lockedRow } = await supabase
+      const claim = await supabase
         .from("documents")
         .update({
           checked_out_by: currentUser.uid,
@@ -379,6 +382,29 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .or(`checked_out_by.is.null,checked_out_by.eq.${currentUser.uid}`)
         .select("id")
         .maybeSingle();
+
+      // DCK-4: a null row means one of TWO things — the lock is held by
+      // someone else (a genuine CAS miss) or the write itself was REFUSED
+      // (an ACL deny under the RESTRICTIVE documents_deny_write_guard, an
+      // RLS filter, a transport error). A filtered write answers with NO
+      // error, so the no-row case is settled by re-reading checked_out_by:
+      // only another user's id there is a join. A refusal must not be
+      // reported as "you joined": nobody holds the lock, and the session we
+      // just opened would sit on a document that reads as free.
+      const resolved = await resolveLockClaim({ claim, documentId: document.id!, userId: currentUser.uid });
+      if (resolved.verdict === "failed") {
+        await intentWrite.catch(() => undefined);
+        await abortFailedLockClaim({
+          sessionId: insertedSession?.id as string,
+          documentId: document.id!,
+          userId: currentUser.uid,
+          userName,
+          episodeId: checkoutEpisode?.id ?? null,
+          episodeCreated: ensured?.created === true,
+        });
+        throw new Error(`The checkout did not complete — the lock could not be claimed: ${resolved.detail}`);
+      }
+      const lockedRow = resolved.verdict === "held";
 
       if (!lockedRow) {
         // Someone else holds the lock (they had it already, or won the race).

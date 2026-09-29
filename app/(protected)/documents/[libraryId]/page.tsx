@@ -51,7 +51,7 @@ import PathBar from "@/components/documents/PathBar";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
-import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import WatchButton from "@/components/ui/WatchButton";
 import CommandPalette from "@/components/documents/CommandPalette";
 import DocThumb from "@/components/documents/DocThumb";
@@ -349,13 +349,17 @@ export default function LibraryExplorerPage() {
     void import("@/lib/recentDocs").then((m) => m.recordDocView(activeOrgId, uid, docId));
   }, [selectedDoc?.id, activeOrgId, uid]);
 
-  // Sweep expired ad-hoc holds where they actually block people — the library
-  // page — so a lapsed 24h cap releases on the next visit, not at the nightly
-  // cron. Cheap (usually-empty indexed query), fire-and-forget.
+  // Sweep MY expired ad-hoc holds where they actually block people — the
+  // library page — so a lapsed cap releases on the next visit, not at the
+  // nightly cron. DCK-7: scoped to the caller's own sessions (the release
+  // guard refuses anyone else's, and one refusal aborted the whole batch);
+  // a refused sweep is shown, not dropped on the console.
   useEffect(() => {
-    if (!activeOrgId) return;
-    void import("@/lib/projects").then((m) => m.autoReleaseExpiredAdHoc(activeOrgId)).catch(() => undefined);
-  }, [activeOrgId]);
+    if (!activeOrgId || !uid) return;
+    void import("@/lib/projects")
+      .then((m) => m.autoReleaseExpiredAdHoc(activeOrgId, { userId: uid }))
+      .catch((e: unknown) => setError(`Your expired quick holds were not released: ${(e as Error).message}`));
+  }, [activeOrgId, uid]);
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
   const [, setSessions] = useState<CheckoutSession[]>([]);
 
@@ -1202,20 +1206,39 @@ export default function LibraryExplorerPage() {
 
   const handleForceUnlock = async (docRecord: DocumentRecord) => {
     if (!docRecord.id || !activeOrgId) return;
-    if (!(await appConfirm({ title: `Force release lock for ${docRecord.title}?`, message: "This ends every active session and closes the checkout.", tone: "danger" }))) return;
+    // DCK-5: the dialog collects the reason; it reaches released_reason and
+    // the FORCE_RELEASE audit row that forceReleaseDocument writes once the
+    // release succeeded — this surface used to record nothing at all.
+    const reason = await appPrompt({
+      title: `Force release lock for ${docRecord.title}?`,
+      message: "This ends every active session and closes the checkout. State why — it goes on the document's record.",
+      placeholder: "Reason for releasing this lock (required)",
+      tone: "danger",
+      confirmLabel: "Force release",
+    });
+    if (reason === null) return;
+    if (reason.trim().length < 3) { setError("A force-release needs a reason — it is recorded on the document's control history."); return; }
 
     try {
       // Ends all sessions, closes the checkout episode, clears the lock +
-      // collaborator columns, and posts the system alert into the episode log.
-      await forceReleaseDocument({
+      // collaborator columns, posts the system alert into the episode log,
+      // and writes the audit row after the release succeeds.
+      const released = await forceReleaseDocument({
         orgId: activeOrgId,
         documentId: docRecord.id,
         actorUserId: uid ?? "unknown",
         actorName: userEmail?.split("@")[0] || "Admin",
+        actorEmail: userEmail ?? null,
+        actorRole: activeRole ?? null,
+        reason: reason.trim(),
       });
+      if (!released.auditRecorded) {
+        // The lock IS cleared; the record of it is not. Say so (DCK-5).
+        setError(`Released, but the audit row was refused: the lock was cleared and the sessions ended, but the FORCE_RELEASE audit row could not be written (${released.auditError ?? "unknown error"}). The document's control history does not show this release — report it.`);
+      }
     } catch (e) {
       console.error("Force unlock failed", e);
-      setError("Failed to force unlock.");
+      setError(`Force release refused — the lock was not cleared: ${(e as Error).message}`);
     }
   };
 

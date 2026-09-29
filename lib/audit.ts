@@ -13,9 +13,13 @@ export interface AuditEntry {
   timestamp?: string;
 }
 
-export async function logAuditAction(entry: AuditEntry) {
+/** Writes one audit row. Never throws; the result says whether the row
+ *  landed — supabase-js reports a refused insert (policy, transport) in the
+ *  returned `error`, not by throwing, so a caller that must know (a
+ *  force-release, DCK-5) reads `error` instead of assuming. */
+export async function logAuditAction(entry: AuditEntry): Promise<{ error: string | null }> {
   try {
-    await supabase.from("audit_logs").insert({
+    const { error } = await supabase.from("audit_logs").insert({
       action: entry.action,
       resource_id: entry.resourceId,
       resource_type: entry.resourceType,
@@ -26,8 +30,14 @@ export async function logAuditAction(entry: AuditEntry) {
       details: entry.details || null,
       metadata: entry.metadata || null,
     });
+    if (error) {
+      console.error(`Failed to write audit log (${entry.action}):`, error.message);
+      return { error: error.message };
+    }
+    return { error: null };
   } catch (error) {
     console.error("Failed to write audit log:", error);
+    return { error: (error as Error)?.message ?? String(error) };
   }
 }
 

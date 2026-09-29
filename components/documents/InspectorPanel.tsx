@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, PenLine } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
-import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
+import CheckoutStatusCell, { useForceReleaseAllowed } from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import HoldStrip from "@/components/documents/HoldStrip";
 import WatchButton from "@/components/ui/WatchButton";
@@ -42,6 +42,8 @@ import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
+import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { holdAffordances } from "@/lib/checkoutAffordances";
 import { collectTagGroups } from "@/lib/documentTags";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
@@ -167,6 +169,23 @@ export default function InspectorPanel({
     return () => { alive = false; };
   }, [selectedDoc?.id]);
   const isController = holdsAny(['Admin', 'DocCtrl']); // OWN-3: collection, not headline
+
+  // DCK-13 / HLD-8: the force-release button and the hold controls follow
+  // the org's CAPABILITY POLICY (checkout.force_release, holds.open,
+  // holds.release) — role tokens, the additive collection AND live
+  // per-person grants — exactly what the database enforces. A hardcoded
+  // role list made a widened policy inert and a narrowed one a lie.
+  const canForceRelease = useForceReleaseAllowed(selectedDoc?.orgId ?? null, activeRole ?? null, activeRoles ?? null, uid ?? null);
+  const [capLoaded, setCapLoaded] = useState<{ orgId: string; policy: CapabilityPolicy } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const orgIdForPolicy = selectedDoc?.orgId;
+    if (!orgIdForPolicy) return;
+    void loadCapabilityPolicy(orgIdForPolicy).then((p) => { if (alive) setCapLoaded({ orgId: orgIdForPolicy, policy: p }); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [selectedDoc?.orgId]);
+  const capPolicy = capLoaded && capLoaded.orgId === selectedDoc?.orgId ? capLoaded.policy : null;
+  const { canOpen: canOpenHold, canRelease: canReleaseHold } = holdAffordances(capPolicy, activeRole ?? null, activeRoles ?? null, uid ?? null);
 
   // Cheap per-selection counts: they let the ALERTS zone render only when
   // something is actually wrong, and give drawer headers honest summaries
@@ -441,7 +460,13 @@ export default function InspectorPanel({
           userName={userEmail || undefined}
           userEmail={userEmail || undefined}
           userRole={activeRole || undefined}
-          canEdit={canManageAssets || isOwner}
+          // HLD-8: HoldStrip has ONE flag for both its Release buttons and
+          // its place-hold form. This strip exists to list ACTIVE holds, so
+          // it follows holds.release — a holds.open-only member must not be
+          // drawn a Release the database refuses. (Until HoldStrip takes
+          // canOpen/canRelease separately, an open-only member places a
+          // further hold from the queue rather than from this strip.)
+          canEdit={canReleaseHold}
           refreshKey={holdsRefresh}
           onChange={() => setHoldsRefresh((k) => k + 1)}
         />
@@ -782,7 +807,7 @@ export default function InspectorPanel({
           userRoles={activeRoles}
           onCheckout={onCheckout}
         />
-        {isController && isCheckedOut && onForceUnlock && (
+        {canForceRelease && isCheckedOut && onForceUnlock && (
           <button
             onClick={() => onForceUnlock(selectedDoc)}
             className="w-full mt-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-bold flex items-center justify-center transition-colors"
@@ -890,13 +915,13 @@ export default function InspectorPanel({
         </CollapsibleSection>
       )}
 
-      {/* HOLDS — placing the FIRST hold. Every hold-authorized role
-          (Manager/Supervisor/Engineer/Drafter/controllers/owner) must be able
-          to stop work from a document — a safety control, not an admin
-          convenience — so this cannot live inside the controller-gated
-          Manage drawer. Collapsed: zero chrome on a healthy document. Once a
-          hold is active this disappears and the ALERTS zone takes over. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount === 0 && (canManageAssets || isOwner) && (
+      {/* HOLDS — placing the FIRST hold. Everyone the org's holds.open
+          policy admits (default: every active member) must be able to stop
+          work from a document — a safety control, not an admin convenience —
+          so this cannot live inside the controller-gated Manage drawer.
+          Collapsed: zero chrome on a healthy document. Once a hold is active
+          this disappears and the ALERTS zone takes over. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount === 0 && canOpenHold && (
         <CollapsibleSection id="placehold" title="Holds" icon={Shield}>
           <HoldStrip
             documentId={selectedDoc.id}

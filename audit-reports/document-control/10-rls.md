@@ -417,7 +417,7 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 ## DRLS-12 · The checkout force-release guard is BEFORE UPDATE only; `checkout_sessions` DELETE is unrestricted, so the row can be removed instead of closed
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1094-1095`, `supabase/migrations/20260831_capability_policy_and_rails.sql:80-102`, `supabase/migrations/20260901_db_hard_enforcement.sql:109-121`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the guard is a strict BEFORE UPDATE, deletion is wide open, and documents.checked_out_by has no guard of its own (the same trigger census as DRLS-3 shows no trigger touching that column). Deleting the session row rather than closing it evades the force-release control entirely.
@@ -441,6 +441,16 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 - [ ] A non-controller cannot DELETE another member's `checkout_sessions` row, and the guard covers DELETE as well as UPDATE
 - [ ] Closing a checkout is the only way to end one — deletion of an active session row is refused for every non-service role
 - [ ] A test deletes another user's active session as a member and asserts refusal
+
+**Resolution (2026-09-23, Round F — record-only close).** Verified against `ba7bfcb`, no code. The mechanism no longer holds: document-control Phase 3 (`DCK-2`, migration `20261029_dc_phase3_permissive_rls.sql`, **applied & verified live 2026-08-24**) installed `trg_checkout_session_guard` — `BEFORE UPDATE OR DELETE ON checkout_sessions` — whose DELETE branch refuses `OLD.user_id <> auth.uid()` unless `org_capability_allows(OLD.org_id, 'checkout.force_release', auth.uid())`, so `DELETE /rest/v1/checkout_sessions?id=eq.<the engineer's session>` from any other member raises; the UPDATE half (`trg_checkout_release_guard`, `20260901`) is unchanged and, since `20261025`/DB-1, `org_capability_allows` reads the real `data` column, so the "raising a column error rather than enforcing" note in the chain reaction is stale too. The split-write bypass this chain names (`SURF-4`) closed with the `force_release_document` RPC (`20261043`) and the `documents` lock-column guard (`DCK-3`, `20261029`). The census that pins it: `lib/__tests__/phase3RlsMigration.test.ts` (the guard is `BEFORE UPDATE OR DELETE`, gated on `checkout.force_release`).
+- Resolved by: `DCK-2` (`01-checkout.md`) / `20261029`.
+
+**Done-when.**
+- ✓ A non-controller cannot DELETE another member's `checkout_sessions` row; the guard covers DELETE as well as UPDATE.
+- ◐ Deletion of another user's active session row is refused for every non-service role. Explicitly not done for the OWN row: the DCK-2 guard admits `OLD.user_id = auth.uid()`, so a member may still DELETE their own active session instead of closing it. No app path issues that DELETE (`grep -rn 'from("checkout_sessions").delete' app components lib` → nothing); the lock it leaves orphaned is settled by `reconcileDocumentCheckoutState`. Tightening it to "no member DELETE at all" is a one-line extension of `enforce_checkout_session_guard` for a later package if the register is to be strictly append-only.
+- ◐ A test deletes another user's active session as a member and asserts refusal — the shape test pins the DELETE branch; the live refusal needs a database session and is recorded as verified live on 2026-08-24 under DCK-2.
+
+**Scope / residual.** The own-row DELETE corner above. No migration.
 
 ---
 

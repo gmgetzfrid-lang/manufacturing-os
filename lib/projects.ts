@@ -257,7 +257,13 @@ export type StatusTransitionInput = {
   actorRole?: string;
 };
 
-export async function transitionProjectStatus(input: StatusTransitionInput): Promise<void> {
+/** Returns `releaseError` when the status change succeeded but the
+ *  project's active checkouts were NOT released (DCK-9: the release guard
+ *  refused another user's session). The status DID change — a throw here
+ *  would make the caller skip its refresh and render the old status beside
+ *  the message — so the refusal travels in the result and the caller shows
+ *  it against the new state. Any failure BEFORE the status change throws. */
+export async function transitionProjectStatus(input: StatusTransitionInput): Promise<{ releaseError: string | null }> {
   // Defense in depth alongside the 20260906 RLS: owner/controller only.
   await assertCanManageProject(input.projectId, input.actorUserId);
   const now = new Date().toISOString();
@@ -298,12 +304,23 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
   });
 
   // Cancelling or archiving releases every active checkout on the project.
+  // DCK-9: a refused release (the release guard, for another user's session)
+  // is reported AFTER the audience is told about the status change — the
+  // status did change; what did not happen must not vanish into a warn, and
+  // must not be thrown as if the change had not happened.
+  let releaseError: Error | null = null;
   if (input.toStatus === "cancelled" || input.toStatus === "archived" || input.toStatus === "completed") {
-    await releaseAllCheckoutsForProject({
-      projectId: input.projectId,
-      reason: input.reason || `Project ${input.toStatus}`,
-      actorUserId: input.actorUserId,
-    });
+    try {
+      await releaseAllCheckoutsForProject({
+        projectId: input.projectId,
+        reason: input.reason || `Project ${input.toStatus}`,
+        actorUserId: input.actorUserId,
+        actorEmail: input.actorEmail ?? null,
+        actorRole: input.actorRole ?? null,
+      });
+    } catch (e) {
+      releaseError = e as Error;
+    }
   }
 
   // Tell the people who care — members and watchers were previously never
@@ -316,6 +333,11 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
     title: `Project ${input.toStatus}: ${(pj?.name as string) ?? "project"}`,
     body: input.reason ? `Reason: ${input.reason}` : (input.toStatus === "cancelled" || input.toStatus === "completed" || input.toStatus === "archived" ? "Any active checkouts on the project were released." : undefined),
   });
+  return {
+    releaseError: releaseError
+      ? `The project is ${input.toStatus}, but its active checkouts were NOT released: ${releaseError.message.replace(/^The project's active checkouts were NOT released: /, "")}`
+      : null,
+  };
 }
 
 // ─── CHECKOUTS LINKED TO PROJECTS ────────────────────────────────────────
@@ -369,35 +391,79 @@ function rowToCheckoutSession(r: Record<string, unknown>): CheckoutSession {
   };
 }
 
-async function releaseAllCheckoutsForProject(params: {
+/** DCK-9: ending every checkout on a project is a CHECK-IN of each session,
+ *  and the register says so — an outcome on every row (`auto_released`: the
+ *  project's state change ended it, nobody chose it; the reason travels in
+ *  outcome_note) and a CHECK_IN audit row per document. The session write is
+ *  CHECKED: the release guard refuses another user's session unless the
+ *  actor holds checkout.force_release, and that refusal is surfaced, not
+ *  swallowed. Returns the number of sessions actually ended. Exported for
+ *  tests; transitionProjectStatus is the caller. */
+export async function releaseAllCheckoutsForProject(params: {
   projectId: string;
   reason: string;
   actorUserId: string;
-}): Promise<void> {
+  actorEmail?: string | null;
+  actorRole?: string | null;
+}): Promise<number> {
   const now = new Date().toISOString();
-  const { data: active } = await supabase
+  const { data: active, error: listErr } = await supabase
     .from("checkout_sessions")
-    .select("id, document_id, org_id")
+    .select("id, document_id, org_id, user_id, user_name")
     .eq("project_id", params.projectId)
     .eq("status", "active");
+  if (listErr) throw new Error(`Project checkouts could not be read: ${listErr.message}`);
 
-  if (!active || active.length === 0) return;
+  if (!active || active.length === 0) return 0;
 
   const ids = active.map((r) => r.id as string);
   const docIds = Array.from(new Set(active.map((r) => r.document_id as string)));
   const orgByDoc = new Map(active.map((r) => [r.document_id as string, r.org_id as string]));
 
-  await supabase
-    .from("checkout_sessions")
-    .update({
-      status: "checked_in",
-      ended_at: now,
-      released_at: now,
-      released_by: params.actorUserId,
-      released_reason: params.reason,
-    })
-    .in("id", ids)
-    .eq("status", "active");
+  const basePayload = {
+    status: "checked_in",
+    ended_at: now,
+    released_at: now,
+    released_by: params.actorUserId,
+    released_reason: params.reason,
+  };
+  const endSessions = (payload: Record<string, unknown>) =>
+    supabase
+      .from("checkout_sessions")
+      .update(payload)
+      .in("id", ids)
+      .eq("status", "active")
+      .select("id, document_id, user_id, user_name");
+  let { data: ended, error: endErr } = await endSessions({ ...basePayload, outcome: "auto_released", outcome_note: params.reason });
+  if (endErr) {
+    const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
+    // Pre-20261012 environment: record the check-in without the register columns.
+    if (isMissingOutcomeSchema(endErr)) ({ data: ended, error: endErr } = await endSessions(basePayload));
+  }
+  if (endErr) throw new Error(`The project's active checkouts were NOT released: ${endErr.message}`);
+  const endedRows = (ended ?? []) as Array<{ id: string; document_id: string; user_id: string; user_name: string | null }>;
+
+  // The document's control history shows the check-in — one row per
+  // document naming every session it ended (DCK-9 done-when 2).
+  for (const docId of Array.from(new Set(endedRows.map((r) => r.document_id)))) {
+    const mine = endedRows.filter((r) => r.document_id === docId);
+    await logAuditAction({
+      action: "CHECK_IN",
+      resourceId: docId,
+      resourceType: "document",
+      orgId: orgByDoc.get(docId),
+      userId: params.actorUserId,
+      userEmail: params.actorEmail ?? undefined,
+      userRole: params.actorRole ?? undefined,
+      details: {
+        outcome: "auto_released",
+        via: "project_release",
+        projectId: params.projectId,
+        reason: params.reason,
+        releasedSessions: mine.map((r) => ({ sessionId: r.id, userId: r.user_id, userName: r.user_name })),
+      },
+    });
+  }
 
   // Settle each document from its REMAINING active sessions. A blanket
   // column-clear here used to free docs that other users (outside this
@@ -413,6 +479,7 @@ async function releaseAllCheckoutsForProject(params: {
       console.warn("[releaseAllCheckoutsForProject] reconcile failed for", docId, e);
     }
   }
+  return endedRows.length;
 }
 
 // ─── COMMENTS / ACTIVITY READ ────────────────────────────────────────────
@@ -1020,67 +1087,91 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
   };
 }
 
+/** A session row the sweep ended — the shape the UPDATE's RETURNING gives
+ *  back, which is the ONLY thing notifications and audit rows are built from. */
+interface SweptSession {
+  id: string; document_id: string; org_id: string; user_id: string; library_id: string | null;
+}
+
 /**
- * Auto-release ad-hoc checkouts whose 24h cap has passed. Idempotent.
+ * Auto-release ad-hoc checkouts whose cap has passed. Idempotent.
  *
  * Two call modes:
- *  - Client (default): pass an `orgId`, uses the RLS-scoped browser client.
- *    Opportunistically invoked on page-load of /checkouts.
+ *  - Client (default): pass an `orgId` AND `{ userId }`; uses the RLS-scoped
+ *    browser client and — DCK-7 — sweeps ONLY the caller's own expired
+ *    sessions. The release guard refuses a status change on anyone else's
+ *    session unless the caller holds checkout.force_release, and a BEFORE
+ *    trigger RAISE aborts the whole batch statement, so a page-load sweep
+ *    over other people's rows released nobody (including the caller) while
+ *    telling everyone "your checkout auto-released" on every visit. Without
+ *    a userId the browser sweep does nothing.
  *  - Cron/server: pass `{ client }` (a service-role client) and OMIT orgId
  *    to sweep every org in one pass. This is the authoritative enforcer —
  *    the page-load path is just a nicety. See /api/cron/maintenance.
+ *
+ * Notifications and the CHECK_IN audit rows (DCK-9) are driven by the rows
+ * the UPDATE actually changed, never by the pre-update selection. A sweep
+ * write that fails for any reason other than the missing outcome schema
+ * THROWS — the caller surfaces it (the /checkouts error strip, the library
+ * page banner, the cron's `errors` list).
  */
 export async function autoReleaseExpiredAdHoc(
   orgId?: string | null,
-  opts?: { client?: SupabaseLike },
+  opts?: { client?: SupabaseLike; userId?: string | null },
 ): Promise<number> {
   const db = (opts?.client ?? supabase) as SupabaseLike;
+  const browserMode = !opts?.client;
+  if (browserMode && !opts?.userId) return 0;
   const nowIso = new Date().toISOString();
 
   let query = db
     .from("checkout_sessions")
-    .select("id, document_id, org_id, user_id, library_id")
+    .select("id")
     .eq("status", "active")
     .is("project_id", null)
     .lt("auto_expires_at", nowIso);
   if (orgId) query = query.eq("org_id", orgId);
+  if (browserMode) query = query.eq("user_id", opts!.userId as string);
 
-  const { data } = await query;
+  const { data, error: listErr } = await query;
+  if (listErr) throw new Error(`Expired checkouts could not be read: ${listErr.message}`);
 
   if (!data || data.length === 0) return 0;
   const ids = data.map((r: { id: string }) => r.id);
-  const docIds = Array.from(new Set(data.map((r: { document_id: string }) => r.document_id)));
-  const orgByDoc = new Map(
-    (data as Array<{ document_id: string; org_id: string }>).map((r) => [r.document_id, r.org_id]),
-  );
 
   // The register outcome for a sweep is 'auto_released' — the one outcome no
   // human ever chooses. Pre-migration (no outcome columns) the write retries
   // without them, same tolerance as finishMySession.
-  {
-    const basePayload = {
-      status: "checked_in",
-      ended_at: nowIso,
-      released_at: nowIso,
-      released_reason: "Auto-released after 24h ad-hoc cap",
-    };
-    const { error: sweepErr } = await db
-      .from("checkout_sessions")
-      .update({ ...basePayload, outcome: "auto_released" })
-      .in("id", ids)
-      .eq("status", "active")
-      // LIFE-14: a session that already carries a human verdict keeps it —
-      // the sweep must never overwrite evidence with 'auto_released'.
-      .is("outcome", null);
-    if (sweepErr) {
-      const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
-      if (isMissingOutcomeSchema(sweepErr)) {
-        await db.from("checkout_sessions").update(basePayload).in("id", ids).eq("status", "active");
-      } else {
-        console.warn("[autoReleaseExpiredAdHoc] sweep update failed", sweepErr);
-      }
+  const basePayload = {
+    status: "checked_in",
+    ended_at: nowIso,
+    released_at: nowIso,
+    released_reason: "Auto-released after 24h ad-hoc cap",
+  };
+  const RETURNING = "id, document_id, org_id, user_id, library_id";
+  const sweep = db
+    .from("checkout_sessions")
+    .update({ ...basePayload, outcome: "auto_released" })
+    .in("id", ids)
+    .eq("status", "active")
+    // LIFE-14: a session that already carries a human verdict keeps it —
+    // the sweep must never overwrite evidence with 'auto_released'.
+    .is("outcome", null);
+  // DCK-7: RETURNING — the rows the UPDATE actually changed drive everything below.
+  let { data: swept, error: sweepErr } = await sweep.select(RETURNING);
+  if (sweepErr) {
+    const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
+    if (isMissingOutcomeSchema(sweepErr)) {
+      ({ data: swept, error: sweepErr } = await db
+        .from("checkout_sessions").update(basePayload).in("id", ids).eq("status", "active").select(RETURNING));
     }
   }
+  if (sweepErr) throw new Error(`Expired checkouts were NOT released: ${sweepErr.message}`);
+  const released = ((swept ?? []) as SweptSession[]);
+  if (released.length === 0) return 0;
+
+  const docIds = Array.from(new Set(released.map((r) => r.document_id)));
+  const orgByDoc = new Map(released.map((r) => [r.document_id, r.org_id]));
 
   // Settle each affected document from its remaining active sessions —
   // blanket-clearing freed docs that non-expired sessions still held, and
@@ -1099,13 +1190,40 @@ export async function autoReleaseExpiredAdHoc(
     }
   }
 
-  // Personal interrupt: tell each former holder their checkout evaporated.
-  // Direct notification-row inserts (works under both the RLS client and the
-  // cron's service-role client); never fails the sweep.
+  // DCK-9: an auto-release is a check-in the document's history must show,
+  // not only a notification. Under the RLS client the row is the caller's
+  // own (user_id = auth.uid(), as the audit_logs INSERT policy requires);
+  // under the cron it is the system's (no user), naming the holder in details.
   try {
-    const inserts = (data as Array<{
-      id: string; document_id: string; org_id: string; user_id: string; library_id: string | null;
-    }>).map((r) => ({
+    const audits = released.map((r) => ({
+      action: "CHECK_IN",
+      resource_id: r.document_id,
+      resource_type: "document",
+      org_id: r.org_id,
+      user_id: browserMode ? r.user_id : null,
+      user_email: browserMode ? null : "system",
+      user_role: null,
+      details: {
+        outcome: "auto_released",
+        via: browserMode ? "page_sweep" : "cron",
+        sessionId: r.id,
+        releasedUserId: r.user_id,
+        reason: basePayload.released_reason,
+      },
+      metadata: null,
+    }));
+    const { error: auditErr } = await db.from("audit_logs").insert(audits);
+    if (auditErr) console.warn("[autoReleaseExpiredAdHoc] CHECK_IN audit rows not written (non-blocking)", auditErr.message);
+  } catch (e) {
+    console.warn("[autoReleaseExpiredAdHoc] CHECK_IN audit rows not written (non-blocking)", e);
+  }
+
+  // Personal interrupt: tell each former holder their checkout evaporated —
+  // built from the rows the UPDATE actually changed. Direct notification-row
+  // inserts (works under both the RLS client and the cron's service-role
+  // client); never fails the sweep.
+  try {
+    const inserts = released.map((r) => ({
       org_id: r.org_id,
       user_id: r.user_id,
       kind: "checkout_released",
@@ -1122,5 +1240,5 @@ export async function autoReleaseExpiredAdHoc(
     console.warn("[autoReleaseExpiredAdHoc] holder notify failed (non-blocking)", e);
   }
 
-  return data.length;
+  return released.length;
 }

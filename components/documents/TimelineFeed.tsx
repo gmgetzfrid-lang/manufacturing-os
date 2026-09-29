@@ -98,6 +98,9 @@ function visualsFor(event: TimelineEvent): RowVisuals {
     case "CHECK_IN":      return { Icon: LogIn,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
     case "ABANDON":       return { Icon: AlertTriangle, ringClass: "border-orange-400", bgClass: "bg-orange-50", iconColor: "text-orange-700" };
     case "FORCE_RELEASE": return { Icon: AlertTriangle, ringClass: "border-red-400",   bgClass: "bg-red-50",   iconColor: "text-red-700" };
+    // DCK-12: the walkdown attestation reads as a check-in with a verdict, not a generic row.
+    case "FIELD_VERIFIED": return { Icon: LogIn,       ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
+    case "CHECKOUT_RELEASED": return { Icon: LogIn,    ringClass: "border-emerald-400", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
     case "JOIN":          return { Icon: LogIn,        ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     case "REV_UP":        return { Icon: GitBranch,    ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
     case "REV_BACKFILL":        return { Icon: HistoryIcon,  ringClass: "border-slate-400",   bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };

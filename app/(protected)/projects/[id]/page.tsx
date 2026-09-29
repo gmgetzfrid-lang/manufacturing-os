@@ -227,7 +227,7 @@ export default function ProjectDetailPage() {
     }
     setTransitionBusy(true);
     try {
-      await transitionProjectStatus({
+      const { releaseError } = await transitionProjectStatus({
         projectId: project.id!,
         orgId: project.orgId,
         toStatus: pendingStatus,
@@ -239,8 +239,14 @@ export default function ProjectDetailPage() {
       setPendingStatus(null);
       setStatusReason("");
       await refresh();
+      // DCK-9: the status DID change (refresh above shows it); what did not
+      // happen — the checkouts were not released — is shown against it.
+      if (releaseError) setActionError(releaseError);
     } catch (e) {
       setActionError((e as Error).message);
+      // The status may have changed before the throw; render the database's
+      // state, never the pre-click one beside the message.
+      await refresh().catch(() => undefined);
     } finally { setTransitionBusy(false); }
   };
 

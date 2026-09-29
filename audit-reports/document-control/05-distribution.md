@@ -195,7 +195,7 @@ lib/distributionAcks.ts:157-164 (no version filter) vs :82-88 (`.eq("version_id"
 ## DIST-5 · Acknowledgment rosters resolve roles against the headline role only, silently omitting everyone whose matching role is additive — and produce no warning when they do
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/acknowledgments.ts:77-87`, `lib/notify/recipients.ts:47-62`, `supabase/migrations/20260722_member_roles_collection.sql:12-23`, `lib/ownership.ts:92-95`, `lib/acknowledgments.ts:393-405`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the no-warning half. lib/acknowledgments.ts:85 `for (const role of roles) if (!covered.has(role)) warnings.push(...)` fires only when a role has ZERO headline holders; a role held additively by six people and headline by two produces `covered.has(role) === true`, so the ack_unsatisfiable notice at :392-405 never fires and the partial roster is silent.
@@ -217,6 +217,16 @@ lib/acknowledgments.ts:79 quoted verbatim; 20260722_member_roles_collection.sql:
 - [ ] expandAssignees uses resolveRoleRecipients (or the same headline-OR-collection test) instead of `.in("role", roles)`
 - [ ] the coverage warning is computed per-role against the full expected membership, so a partially-resolved role still warns
 - [ ] getOrgControllers matches the additive roles array and takes its role list from org configuration rather than a literal ["Admin","DocCtrl"]
+
+**Resolution (2026-09-23, Round F — record-only close).** Verified against `ba7bfcb`, no code. The mechanism no longer holds: `lib/acknowledgments.ts` `expandAssignees` resolves `assigneeRoles` with `.select("uid, display_name, email, role, roles") … .or(roleFilter(roles))` — `lib/roleHeld.ts`'s `role.in.(…),roles.ov.{…}` idiom — and tests each row's `heldRoles(...)` (headline ∪ additive), so an Operator whose headline is Supervisor is on the roster; this landed with the roles-and-permissions `ADD-1` amendment (Round C1b, `04-additive-roles.md`; the ack-roster query is named there as one of the four `lib/` pool resolvers converted). The coverage warning is computed from `covered`, which is built from EVERY held role of EVERY matched row, and because the filter now matches additive holders there is no "partially resolved" state left to warn about — a role warns exactly when it has zero holders of either kind. `getOrgControllers` (`lib/ownership.ts`) queries the union `role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}` (`OWN-3` / `DEC-2`, `05-ownership-publish.md`), so the "resolved to no one" alarm reaches a DocCtrl whose headline is Manager.
+- Resolved by: roles-and-permissions `ADD-1` (amendment, Round C1b) for `expandAssignees`; `OWN-3` for `getOrgControllers`.
+
+**Done-when.**
+- ✓ `expandAssignees` uses the headline-OR-collection test (`roleFilter` + `heldRoles`) instead of `.in("role", roles)`.
+- ✓ The coverage warning still fires per role against the full membership — with additive holders matched, a role is either covered by someone or warned about; the silent partial roster cannot occur.
+- ◐ `getOrgControllers` matches the additive roles array ✓; it does NOT take its list from org configuration — `Admin` / `DocCtrl` is the system's fixed controller tier (`DEC-2`, restated by `DEC-43`: the recovery rail is unscoped by design), not facility vocabulary in the `DEC-35` sense (`QAQC`, `B31.3`). Accepted as designed; a configurable controller tier would be a `DEC-2` reversal.
+
+**Scope / residual.** None beyond the design note above. No migration.
 
 ---
 
