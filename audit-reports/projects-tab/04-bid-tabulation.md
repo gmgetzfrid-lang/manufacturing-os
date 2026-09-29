@@ -18,7 +18,7 @@ number the table shows is not the number the award posts.
 ## BID-1 · The table scores the AI's total; the Award button posts the human's corrected total
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** financial / decision-quality
 - **Locations:**
@@ -66,12 +66,22 @@ lost.
 - The row shows that the total was human-corrected.
 - A test asserts display and award agree after `setManualTotal`.
 
+**Resolution (2026-09-23, projects Round G).** One number per bid. `lib/bidTab.ts` gained `withHumanTotal(quote, rowTotal)`: the row's `total_amount` (the human-visible number `awardQuote` already posts) is overlaid onto the extraction, `totalSource` becomes `"human"` and the model's reading is kept as `extractedTotal` (GAP-407 / GAP-303 — the original is never hidden). `components/projects/cost/QuotesPanel.tsx` `BidGroup` builds every table entry through it, so the Price column, `$/hr`, the field's `minTotal` normalisation, the value score and the award confirm all read the same figure; the Price cell shows "corrected · AI read $X" on a corrected row. `lib/costDocs.ts` is untouched (signatures frozen for P3). Tests: `lib/__tests__/quotesPanel.test.ts` "display and award agree after setManualTotal" (a $182,000 misread corrected to $1,182,000 re-normalises the rival to price 100 and moves best value).
+
+**Done-when.**
+- The Price column, the value score and the award confirmation all show the same number — ✓ (`econ.total` feeds all three; `award()` takes its total from the econ entry).
+- A corrected total re-normalizes the whole field's price scores — ✓ (pinned).
+- The row shows that the total was human-corrected — ✓ ("corrected · AI read …").
+- A test asserts display and award agree after `setManualTotal` — ✓ (`quotesPanel.test.ts`).
+
+**Scope / residual.** The overlay lives in the panel (the consumer), not in `parsedQuoteFrom` (P3's file); any new consumer of `parsedQuoteFrom` must apply `withHumanTotal` — the helper is exported for that. The stale-tab race the verifier named is closed on the posting side by `awardQuote`'s re-read (unchanged).
+
 ---
 
 ## BID-2 · There is no way to open the quote you are being asked to award
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** decision-quality / governance
 - **Locations:** `components/projects/cost/QuotesPanel.tsx` (whole file — a grep for `fileUrl` / `file_url` across `components/projects/cost/` returns zero hits)
@@ -95,12 +105,20 @@ file through the existing secure viewer / presigned-download path. Given
 - Every quote row links to its source document.
 - The link works for both parsed and manual-total quotes.
 
+**Resolution (2026-09-23, projects Round G).** Every quote row carries an `OpenPdfButton` (`QuotesPanel.tsx`) that resolves the stored R2 key through the existing presigned path (`lib/storage.getFileUrl` → `/api/storage/download-url`, no new egress) and opens it in a new tab (`noopener,noreferrer`). It renders on read rows, typed-total rows, the "not read yet" strip and the invoice list; a row with no `file_url` says "no file" instead of pretending.
+
+**Done-when.**
+- Every quote row links to its source document — ✓.
+- The link works for both parsed and manual-total quotes — ✓ (both are rows of the same table after BID-8).
+
+**Scope / residual.** Disposition (download-as-attachment vs the sandboxed viewer, SEC-7) stays with P10; this uses the download-url route as it stands.
+
 ---
 
 ## BID-3 · The scorer punishes the exact honesty your own RFQ letter promises to reward
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** decision-quality / vendor incentives
 - **Locations:**
@@ -137,12 +155,21 @@ and say so in the RFQ letter so the two agree.
 - The RFQ letter's promise matches the scorer's behaviour.
 - A test pins the declared-vs-hidden comparison.
 
+**Resolution (2026-09-23, projects Round G).** `exclusionCount` no longer enters any score. Under DEC-44 the coverage part of `scoreBids` is **not scored** (`parts.coverage === null`) until a per-RFQ scope checklist exists: declared exclusions are coverage-neutral and shown as amber "excludes:" facts, and the composite is price + manpower with the weights renormalised (`effectiveWeights`). The RFQ letter line (`lib/rfqDocx.ts`) now reads "declared exclusions do not lower your score — they are shown to our reviewers as scope we must buy elsewhere", which is exactly what the scorer does. The table's best-value tooltip names the excluded-item count when the badged bid excludes scope, so neutrality never hides the trade. Tests: `projectControls.test.ts` "declaring an exclusion never lowers a bid's score relative to hiding it" (same bid with and without its exclusion scores identically; the hidden gap surfaces only as a check prompt) and `rfqDocx.test.ts` "tells bidders that declared exclusions do not lower their score".
+
+**Done-when.**
+- Declaring an exclusion never lowers a bid's score relative to hiding it — ✓ (pinned).
+- The RFQ letter's promise matches the scorer's behaviour — ✓ (letter reworded; pinned).
+- A test pins the declared-vs-hidden comparison — ✓.
+
+**Scope / residual.** Decision recorded as DEC-44 (the plan's BID-3 default; BID-4's option 3). The worked example now badges the cheapest bid with the most exclusions as best value on price and manpower — the badge says so, the chips show the exclusions, and the reviewer decides; pricing excluded scope from the field's own line items is a future scope-checklist feature, not this fix.
+
 ---
 
 ## BID-4 · Silent-gap detection produces false accusations against any two bids that word the same work differently
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** decision-quality
 - **Locations:**
@@ -194,6 +221,15 @@ Options, cheapest first:
 - Two differently-worded bids for identical scope do not flag each other.
 - The coverage term is either accurate or not part of the score.
 - A test uses realistically-worded competing bids, not toy strings.
+
+**Resolution (2026-09-23, projects Round G).** `lib/bidTab.ts` replaced positional head-word matching with token-set similarity (`scopeSimilarity`: shared content tokens over the smaller set, filler words dropped, 4+-letter prefix stemming so "repipe"/"repiping", "spool"/"spools", "demo"/"demolition" agree; `SCOPE_MATCH_THRESHOLD` 0.5 and at least two shared tokens). What remains in `missingScope` is rendered as a slate **"check:"** chip whose tooltip says it is a prompt to open the PDF — the words "silent gap" and the rose accusation are gone — and it never enters the score (coverage is unscored, DEC-44). Price-only bids are never prompted (unknown scope is not undisclosed scope). Test: `projectControls.test.ts` "realistically-worded competing bids" uses the report's Alpha/Bravo fixture: at most one prompt per bid survives (hydrotest/hydrostatic), and scores are byte-equal with the prompts stripped.
+
+**Done-when.**
+- Two differently-worded bids for identical scope do not flag each other — ✓ as an accusation (none is made); the residual is a "check" prompt for wording no lexical rule can bridge, and it moves nothing.
+- The coverage term is either accurate or not part of the score — ✓ (not part of the score).
+- A test uses realistically-worded competing bids, not toy strings — ✓.
+
+**Scope / residual.** Option 2 (map line items onto the RFQ's own scope list) is the structural fix and stays open as a feature; DEC-44 records that coverage re-enters the score only through it.
 
 ---
 
@@ -247,7 +283,7 @@ strengthen the test fixture so it would actually catch this.
 ## BID-6 · A single bid is crowned "best value", and the disclaimer that would qualify it is hidden
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** decision-quality / governance
 - **Locations:**
@@ -276,12 +312,21 @@ groups. On a tie, either badge neither or label both "tied."
 - The weighting explanation is visible wherever a score is.
 - A tie is rendered as a tie.
 
+**Resolution (2026-09-23, projects Round G).** `scoreBids` badges `best` only when at least two bids are scored and exactly one holds the top score; equal tops set `tied: true` on each and badge none. `QuotesPanel.tsx` renders "tied" and shows the weighting footer whenever any score is shown (`econ.length > 0`), with a one-bid sentence ("no field to rank, so no bid is badged"). Tests: `projectControls.test.ts` "a single bid shows a score with no best-value badge; a tie is a tie"; `quotesPanel.test.ts` "single bid: score, no badge".
+
+**Done-when.**
+- A single bid shows a score with no best-value badge — ✓.
+- The weighting explanation is visible wherever a score is — ✓.
+- A tie is rendered as a tie — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## BID-7 · Every price in the bid table is rendered as US dollars regardless of the quote's currency
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / financial
 - **Locations:**
@@ -314,12 +359,20 @@ worse than no comparison.
 - Every price in the panel renders in its own currency.
 - A mixed-currency bid group is flagged and not scored as if commensurate.
 
+**Resolution (2026-09-23, projects Round G).** `BidEconomics` carries `currency` (ISO-validated by `isoCurrency`), `fieldCurrency(econ)` reports the field's currencies, and `scoreBids` refuses a mixed field — every score null, `unscored: "mixed-currency"`, nothing badged. `QuotesPanel.tsx` passes the row's currency to every `fmtMoney` (Price, $/hr, the corrected/extracted note, the award confirm, typed-total rows, invoices), shows an amber banner naming the currencies, renders "not ranked" in the score column and disables Award with "not awardable — mixed currency". The parse route stores only ISO-4217 codes (COST-8 route limb). Test: `projectControls.test.ts` "a mixed-currency field is refused".
+
+**Done-when.**
+- Every price in the panel renders in its own currency — ✓.
+- A mixed-currency bid group is flagged and not scored as if commensurate — ✓.
+
+**Scope / residual.** The posting-side refusal (a foreign-currency document into a USD account) is `lib/costDocs.awardQuote` / `postInvoice` — P3 / PC-7's guard; this package flags the group and withholds the Award control until the total is restated ("correct total").
+
 ---
 
 ## BID-8 · Bids with a typed total are excluded from the comparison and rendered in a separate list below it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** decision-quality
 - **Locations:**
@@ -347,12 +400,21 @@ needs to live in the same table.
 - They participate in price normalization.
 - Their unscored dimensions read as "not scored", never as 0.
 
+**Resolution (2026-09-23, projects Round G).** `priceOnlyQuote()` turns a typed-total row into a `ParsedQuote` with `priceOnly: true`; `BidGroup.entries` folds those rows into the same field as the read quotes, so they enter `minTotal` and shift every rival's price part. `scoreBids` gives them a price part and `null` for manpower / coverage / composite (`unscored: "price-only"`); the row keeps the existing marker "typed total — price only" and reads "not scored" in the hours, $/hr and score cells. The separate list is gone. Test: `quotesPanel.test.ts` "typed-total bids sit in the same field".
+
+**Done-when.**
+- Manual-total bids appear in the same table as parsed bids — ✓.
+- They participate in price normalization — ✓ (pinned: a cheaper typed bid moves the parsed bid's price part to 67).
+- Their unscored dimensions read as "not scored", never as 0 — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## BID-9 · There is no way to correct a wrong AI total once a quote has been read
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / dead end
 - **Locations:**
@@ -382,12 +444,21 @@ Voiding must go through a status-guarded update (see `MON-3`).
 - A parsed quote can be voided.
 - Both are audited.
 
+**Resolution (2026-09-23, projects Round G).** Read rows (status `parsed`) now carry **correct total** and **Void** beside Award; `typeTotal` titles itself "Correct the total" when an extraction exists, states the AI's figure, and calls `setManualTotal` (which already accepts any status and writes `COST_DOC_MANUAL_TOTAL`); the row then shows "corrected · AI read …" (BID-1). Void routes through `voidCostDoc` (`COST_DOC_VOIDED`). Invoices gained the same "correct total" affordance.
+
+**Done-when.**
+- A parsed quote's total can be corrected in place — ✓.
+- A parsed quote can be voided — ✓.
+- Both are audited — ✓ (existing lib audit rows).
+
+**Scope / residual.** `voidCostDoc`'s stale-snapshot guard (COST-14 / MON-3) is PC-7 / P3's.
+
 ---
 
 ## BID-10 · The RFQ group is free text with no normalization, and a case difference silently splits a bid field
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / process
 - **Locations:**
@@ -412,12 +483,20 @@ selected from a dropdown, created explicitly.
 - Two case-variant group names tabulate as one group.
 - Awarding declines rivals across the case variants.
 
+**Resolution (2026-09-23, projects Round G).** Client half, as assigned. `rfqGroupKey` (case-folded, whitespace-collapsed) drives two things in `QuotesPanel.tsx`: `mergeQuoteGroups(quoteGroups(docs))` tabulates case/whitespace variants as one field under the first-seen spelling, and `snapRfqGroup` snaps a typed group (upload row and quote-link form) onto an existing group's spelling before it is written, so this screen can no longer create a second field. Tests: `quotesPanel.test.ts` "case-variant groups tabulate as one" and "a typed variant snaps onto the existing spelling".
+
+**Done-when.**
+- Two case-variant group names tabulate as one group — ✓.
+- Awarding declines rivals across the case variants — ✓ for every group written from this screen from now on (no variant can be written); **not done here** for variants that already exist in the data: `awardQuote`'s rival filter (`lib/costDocs.ts:250-251`, exact string) is P3 / J3's one-line `lower(trim)` limb, flagged.
+
+**Scope / residual.** The intake route writes `rfq_group` from the link, which is snapped at link creation.
+
 ---
 
 ## BID-11 · Quote validity dates and vendor notes are captured and never shown
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** decision-quality
 - **Locations:**
@@ -443,12 +522,20 @@ chip or an expandable line on the row.
 - An expired quote is visibly marked and warns on award.
 - Vendor notes are visible on the row.
 
+**Resolution (2026-09-23, projects Round G).** A "Valid until" column renders `validUntil`; `quoteExpired()` (valid through the end of its day) marks a lapsed date "· expired" in rose, and the award confirm warns "This quote's validity date has PASSED". Vendor notes render as a sky "note:" chip on the row (the shipped example's "Includes weekend premium" is now visible beside Bayline's price). The parse route persists both in the stored extraction (pinned in `costDocsRoute.test.ts`). Test: `quotesPanel.test.ts` "an expired quote is detected".
+
+**Done-when.**
+- An expired quote is visibly marked and warns on award — ✓.
+- Vendor notes are visible on the row — ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## BID-12 · Known-company matching is exact string equality against whatever the AI read off the letterhead
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** governance
 - **Locations:**
@@ -483,21 +570,30 @@ still looks complete and normal.
 - A failed company load is visible, not silent.
 - The do-not-use flag renders for realistic name variants.
 
+**Resolution (2026-09-23, projects Round G).** `lib/bidTab.ts` gained `normalizeCompanyName` (case, punctuation, `&`→and, whitespace, trailing legal suffixes, leading "The") and `matchCompanyByName` (exact normalised equality; two registry rows that normalise alike never auto-bind). `QuotesPanel.tsx` resolves each row through `registryFor`: an explicit link (`cost_documents.company_id`, 20261096) wins, otherwise the name match is shown as "matched to X" with a **change / link to registry** picker (`CompanyPicker`) that writes the link (`{ error }` checked, pre-migration message, `COST_DOC_COMPANY_LINKED` audit). The do-not-use and inactive chips render from the resolved company. A failed registry load is a visible amber banner and a per-row "registry unavailable" marker instead of a silent empty list. Tests: `projectControls.test.ts` "normalised company matching resolves realistic letterhead variants, never ambiguity"; the SQL backfill in 20261096 uses the same rule (pinned byte-equal in `prjRoundGMigrations.test.ts`).
+
+**Done-when.**
+- A vendor can be bound to a registry company from the bid row — ✓ (pending migration 20261096 for the column; the picker says so until then).
+- A failed company load is visible, not silent — ✓.
+- The do-not-use flag renders for realistic name variants — ✓ ("Gulf Mechanical, Inc.", "Apex Industrial Services, LLC").
+
+**Scope / residual.** Reading `company_id` back goes through a side query in the panel because `mapDoc` (`lib/costDocs.ts`) is P3's; mapping `companyId` onto `CostDocument` is P3's one-line limb. Migrations: `20261095_prj_roundG_registry_indexes.sql`, `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30: applied by hand; the code half is live without them and reads the missing columns as unknown).
+
 ---
 
 ## Report progress
 
 | ID | Severity | Status |
 |---|---|---|
-| BID-1 | CRITICAL | OPEN |
-| BID-2 | CRITICAL | OPEN |
-| BID-3 | CRITICAL | OPEN |
-| BID-4 | CRITICAL | OPEN |
+| BID-1 | CRITICAL | RESOLVED |
+| BID-2 | CRITICAL | RESOLVED |
+| BID-3 | CRITICAL | RESOLVED |
+| BID-4 | CRITICAL | RESOLVED |
 | BID-5 | HIGH | OPEN |
-| BID-6 | HIGH | OPEN |
-| BID-7 | HIGH | OPEN |
-| BID-8 | HIGH | OPEN |
-| BID-9 | HIGH | OPEN |
-| BID-10 | MEDIUM | OPEN |
-| BID-11 | MEDIUM | OPEN |
-| BID-12 | MEDIUM | OPEN |
+| BID-6 | HIGH | RESOLVED |
+| BID-7 | HIGH | RESOLVED |
+| BID-8 | HIGH | RESOLVED |
+| BID-9 | HIGH | RESOLVED |
+| BID-10 | MEDIUM | RESOLVED |
+| BID-11 | MEDIUM | RESOLVED |
+| BID-12 | MEDIUM | RESOLVED |

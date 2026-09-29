@@ -1700,3 +1700,65 @@ role ids) — then scope lives on the id, is checked in `node_visible` after
 the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
+
+<a id="dec-44"></a>
+## DEC-44 · Bid scoring honesty and the registry's evidence floor
+
+**Decision. The bid tabulation scores only what a vendor states about its
+own price and hours. (1) A DECLARED exclusion never lowers a score; it is
+shown as a fact beside the price. (2) "Silent gap" detection is word
+matching on free text and cannot tell a rewording from an omission, so it
+is a PROMPT ("check: …") and never enters the score. (3) With neither in
+the score, the coverage part is NOT SCORED until a per-RFQ scope checklist
+exists; the composite is price + manpower with the weights renormalised.
+(4) Labour hours are vendor-stated and AI-extracted: among bids that state
+them the manpower part moves the composite by at most 5 points; a bid that
+states none takes the floor. (5) A best-value badge needs two scored bids
+and a unique top; a tie is a tie; a mixed-currency field is not ranked. On
+the registry: `field_condition` change orders are contractor-neutral
+(neither side's miss); a scorecard band is PROVISIONAL below three recorded
+evidence points; a bidder is bound to a registry row only by exact
+normalised-name equality or an explicit human link, never fuzzily.**
+
+> Made during the projects Round G resolution (2026-09-23, package J4
+> BID-TAB-AND-REGISTRY) closing `BID-3`, `BID-4`, `BID-6`, `BID-7`,
+> `BID-12`, `COST-5`, `COST-7` and `COST-12`'s band gate. The plan's
+> BID-3 and BID-4 defaults; COST-5's "−15 per silent gap, −5 per declared
+> exclusion" default was NOT taken because it contradicts both the RFQ
+> letter this product sends ("declared exclusions do not") and BID-4's
+> finding that the matcher cannot carry a score.
+
+**Rationale.** The scorer punished the disclosure the RFQ letter promised
+to reward (a single honest exclusion cost twenty points; hiding it cost
+nothing) and accused competent bids of omitting scope they had priced in
+other words. Any positive weight on a declared exclusion re-creates the
+inversion in miniature, and any weight on detected gaps makes the score a
+function of the word matcher. `BID-4`'s own option 3 — remove coverage from
+the composite rather than score on noise — is the only honest position
+until the RFQ carries an explicit scope list the bids are mapped onto.
+Bounding manpower to five points keeps "price alone is never the verdict"
+without letting a self-reported number buy the badge. One commendation
+graded "Excellent" is a rating, not evidence; three points is the floor.
+
+**Implementation.** `lib/bidTab.ts` (`scoreBids`, `effectiveWeights`,
+`MANPOWER_MAX_COMPOSITE_SWING`, `scopeSimilarity`, `matchCompanyByName`),
+`lib/rfqDocx.ts` (the letter line), `lib/companyScore.ts`
+(`MIN_EVIDENCE_FOR_BAND`, `scoreBand(score, evidenceCount)`),
+`lib/companies.ts` (`CONTRACTOR_CO_REASONS` / `OWNER_CO_REASONS`),
+`components/projects/cost/QuotesPanel.tsx` (footer states the effective
+weights and that coverage is not scored).
+
+**Acceptance.** The same bid scores identically with and without its
+declared exclusion; realistic rewordings of identical scope never change a
+score; two bids stating hours differ by at most five composite points on
+manpower; a single bid or a tie carries no badge; a mixed-currency field
+has no scores; a registry row with one commendation reads "Provisional".
+
+**Reversal.** Coverage re-enters the score when an RFQ carries a per-RFQ
+scope checklist and each bid's line items are mapped onto it (`BID-4`
+option 2) — then declared exclusions can be priced from the field's own
+line items and the letter is reworded in the same change. `field_condition`
+attribution and the five-point cap are org-level tunables once an org
+states a different reading of the reason-code contract.
+
+**Risk:** low — pure scoring logic, every branch pinned by tests.

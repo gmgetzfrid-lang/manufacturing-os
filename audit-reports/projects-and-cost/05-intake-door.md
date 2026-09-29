@@ -411,6 +411,16 @@ QuotesPanel.tsx:539-544 — the insert object, no `expires_at`. :613-634 — the
 - [ ] Both link-creation inserts `.select("id").single()` and the audit row's `resource_id` is that id; no token material is ever written to `audit_logs`.
 - [ ] Both audit inserts check `{ error }` instead of swallowing it, so a failed audit of external-credential creation is visible.
 
+**Partial (2026-09-23, projects Round G).** The Costs-tab half. `QuotesPanel.tsx` `QuoteLinksSection`: the form has an expiry date (default `created + 90 days`, editable, refused when blank or in the past) written to `expires_at`; the insert uses `.select("id").single()` and the `INTAKE_QUOTE_LINK_CREATED` audit row's `resource_id` is the link id (no token material) with `{ error }` checked and surfaced ("The link was created but its audit record failed: …"); each row shows its expiry (or "no expiry" in amber for pre-Round-G links) and a **Revoke** button that writes `revoked_at` and records `INTAKE_QUOTE_LINK_REVOKED` (`{ error }` checked). Existing links are NOT backfilled: 20261096 inventories quote links with no expiry and those used in the last 30 days, and carries the `created_at + 90 days` UPDATE commented out, to be run once the active count reads 0 (the plan's default: blocked otherwise).
+
+**Done-when.**
+- [x] The quote-link form offers an expiry, and the list carries a revoke button that writes `revoked_at` — ✓.
+- [ ] IntakePanel filters to `purpose = 'documents'` (or labels quote links distinctly and hides 'Assign docs' for them) — **PC-1's file** (`components/projects/IntakePanel.tsx`) — not done here.
+- [ ] Both link-creation inserts `.select("id").single()` and the audit row's `resource_id` is that id — QuotesPanel ✓; **IntakePanel's insert is PC-1's** — not done here.
+- [ ] Both audit inserts check `{ error }` — QuotesPanel (create and revoke) ✓; **IntakePanel's is PC-1's** — not done here.
+
+**Scope / residual.** PT SEC-5's mint limb is the same change (recorded there). The DB `CHECK` ceiling on `expires_at` is P1's.
+
 ---
 
 <a id="intk-13"></a>

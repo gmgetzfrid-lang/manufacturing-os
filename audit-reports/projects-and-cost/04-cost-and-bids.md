@@ -114,6 +114,16 @@ components/projects/cost/QuotesPanel.tsx:275 — `const known = companies.find((
 - [ ] The quality-manual evaluation records how many pages of the manual were read and the UI qualifies the percentage accordingly; a truncated read does not land as a bare coverage number
 - [ ] The confirm step lets the human adjust the proposed score, or the stored value is explicitly labelled as the model's proposal that a human accepted
 
+**Partial (2026-09-23, projects Round G).** Signals shipped here; the posting-side rail is PC-7's (`lib/costDocs.ts`). (a) Matching: `lib/bidTab.normalizeCompanyName` / `matchCompanyByName` (case, punctuation, whitespace, legal suffixes; exact normalised equality, ambiguity never auto-binds) and an explicit link stored on the row — `cost_documents.company_id` (20261096, FK ON DELETE SET NULL) set from a picker on the bid row ("matched to X — change"); the bound row outranks the name match. (b) do_not_use as a hard signal: the award flow in `QuotesPanel.tsx` refuses a do-not-use company unless a reason is typed, and records `COST_DOC_AWARD_OVERRIDE_DO_NOT_USE` with `{ error }` checked (a failed record stops the award); the flag renders beside the price from the bound company. (c) Read extent: `app/api/companies/quality-manual/route.ts` returns `pagesRead`, `pagesTotal` (new `lib/pdfPageCount.ts`) and `truncated`; `confirmQualityManual` stores `quality_manual_pages_read/_total` (20261096, pre-migration tolerant) and the audit row carries them; the profile header shows "read pages 1–10 of 62" beside the percentage and on every future render of the score. (d) The confirm step has a "record as ___ %" field; an unchanged value is labelled "the model's proposal, accepted as-is", a changed one "adjusted from the model's N%", and the audit row records `proposedScore` / `adjusted`. Tests: `projectControls.test.ts` (normalised matching), `costDocsRoute.test.ts` (quality-manual response carries the extent), `prjRoundGMigrations.test.ts`.
+
+**Done-when.**
+- [x] awardQuote refuses or requires an explicit override … recorded in audit_logs — UI half ✓ (typed reason, audited); **the `awardQuote` / `proposeChangeOrder` refusal itself is PC-7's** (`lib/costDocs.ts`, `lib/changeOrders.ts`) — not done here; until it lands the UI is the only gate.
+- [x] Company matching uses a normalized comparison with an explicit link stored on the cost_documents/party row — ✓ (`cost_documents.company_id`; the party row's `company_id` is backfilled once by 20261096 — the `saveParty` writer is PC-7's).
+- [x] The quality-manual evaluation records how many pages were read and the UI qualifies the percentage — ✓.
+- [x] The confirm step lets the human adjust the proposed score, or labels it as accepted — ✓ (both).
+
+**Scope / residual.** Pending migration: `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30). Remaining limb: PC-7's posting-side refusal (reads `company_id` → `companies.status`, requires the recorded override).
+
 ---
 
 <a id="cost-4"></a>
@@ -152,7 +162,7 @@ lib/changeOrders.ts:167-172 — the entire financial effect of approval is `entr
 ## COST-5 · Bid scoring is scaled to the worst bid in the field, so one honest exclusion can cost the full coverage weight, and the manpower dimension rewards higher self-reported hours
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/bidTab.ts:159`, `lib/bidTab.ts:165-171`, `lib/bidTab.ts:139`, `lib/bidTab.ts:118-124`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both mechanics verified. Padding hours lowers $/hr monotonically and therefore raises the manpower part: 2,000h vs 4,000h at the same $200k gives parts of 50 vs 100, a 15-point weighted swing, on a number the bidder writes about itself with no cross-check. The 'best value' label is advisory (tooltip at QuotesPanel.tsx:293 says 'not automatically the winner'), which caps the impact but does not change the ranking bias.
@@ -173,6 +183,16 @@ lib/bidTab.ts:159 — `const maxGaps = Math.max(...econ.map((e) => e.missingScop
 - [ ] A declared exclusion and a silent gap carry different weights, matching the module's stated premise that surfacing exclusions is the point
 - [ ] The manpower part is bounded or paired with a plausibility check so an inflated hours claim cannot buy the best-value flag, and the tabulation labels labour hours as vendor-stated and AI-extracted
 - [ ] A test pins the single-exclusion three-bid field and asserts the disclosing bidder is not driven to a coverage part of 0
+
+**Resolution (2026-09-23, projects Round G).** The field-relative coverage denominator is gone. Under DEC-44 (`lib/bidTab.ts`): declared exclusions are coverage-neutral (a fixed deduction of 0 that cannot vary with who else bid) and shown as facts; "silent gaps" are downgraded to check prompts that never enter the score; the coverage part is therefore not scored (`parts.coverage === null`) until a per-RFQ scope checklist exists and the composite is price + manpower renormalised. Manpower: hours remain vendor-stated and AI-extracted — the table header and cell say so — and among bids that state them the part is bounded so it can move the composite by at most `MANPOWER_MAX_COMPOSITE_SWING` (5) points (`floor = 100 − 5 / manpowerShare`); a bid that states none still takes the floor (the RFQ asks for hours). Tests (`projectControls.test.ts`): the single-exclusion three-bid field (disclosing bidder's coverage part is not 0 and its score equals the others'; a three-way tie badges none), padded hours (2× hours cannot beat a 6 %-cheaper honest bid; the manpower swing ≤ 5), declared-vs-hidden.
+
+**Done-when.**
+- [x] Coverage is scored on an absolute scale … so the penalty for one exclusion does not vary tenfold with who else bid — ✓ (the penalty is fixed at zero; no denominator over the field remains).
+- [ ] A declared exclusion and a silent gap carry different weights — **not as worded, by decision (DEC-44)**: both carry zero score weight; they differ in kind and presentation (a vendor-stated fact in amber vs a system prompt in slate). Scoring detected gaps above declared ones would make the score depend on the word matcher BID-4 shows cannot carry it.
+- [x] The manpower part is bounded … and the tabulation labels labour hours as vendor-stated and AI-extracted — ✓.
+- [x] A test pins the single-exclusion three-bid field and asserts the disclosing bidder is not driven to a coverage part of 0 — ✓.
+
+**Scope / residual.** Coverage re-enters the score only through an explicit per-RFQ scope list (BID-4 option 2), recorded in DEC-44 as the reversal condition.
 
 ---
 
@@ -212,7 +232,7 @@ lib/changeOrders.ts:144-147 — the only pre-approval checks are `if (co.status 
 ## COST-7 · Cost-discipline scoring blames the contractor for owner-request and design-error change orders, contradicting the reason-code contract the CO module states
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/companyScore.ts:107-121`, `lib/companies.ts:285`, `lib/companies.ts:299-301`, `lib/changeOrders.ts:5-8`, `components/projects/cost/ChangeOrdersPanel.tsx:159-161`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The formula is exactly as described — reason_code only ever ADDS penalty (gapShare), never exempts owner_request/design_error from the base growth penalty. Severity lowered because the dimension is unreachable with real data: awardsTotal comes solely from project_parties.contract_value on rows matched by company_id (companies.ts:240), and those two columns are written by mutually exclusive paths (ProjectWizard.tsx:180-186 writes company_id but no contract_value; lib/costs.ts:132-153 writes contract_value but no company_id, and the only caller CostsTab.tsx:542 is insert-only). So `e.awardsTotal <= 0` always holds and companyScore.ts:109 short-circuits to "No awarded work yet" — it is a latent formula bug, not a score anyone sees today.
@@ -235,6 +255,16 @@ lib/companies.ts:285 — `const approvedCoTotal = cos.filter((c) => c.status ===
 - [ ] The cost-discipline detail string distinguishes contractor-driven growth from owner-driven growth so the number can show its work as the module header promises
 - [ ] A test pins that a contractor with 25% growth entirely from owner_request COs scores the same as one that finished on bid
 - [ ] The corresponding owner-side counter (design_error / owner_request volume) is surfaced somewhere, since the reason-code contract claims those land on us and nothing currently consumes them
+
+**Resolution (2026-09-23, projects Round G).** `gatherCompanyProfiles` splits approved change orders by the reason-code contract: `CONTRACTOR_CO_REASONS` (`scope_gap`) enters `finalCostTotal`; `OWNER_CO_REASONS` (`design_error`, `owner_request`) and the neutral codes (`field_condition`, `other` — contractor-neutral by DEC-44's default) are excluded from the growth numerator and surfaced as `ownerDrivenCoCount/Total` and `neutralCoCount/Total`. `computeCompanyScorecard` shows its work: "N% cost growth over bid, contractor-driven · … (k from their scope gaps) · 2 owner-driven COs (25% growth on our side — not scored against them) · 1 field-condition/other CO not scored". Fixed in the same pass as COST-12's links so it never fires wrong. Tests: `projectControls.test.ts` "25% growth entirely from owner_request COs scores the same as finishing on bid" (both 100; detail names the owner-side counter); `companiesRegistry.test.ts` end-to-end through the gather.
+
+**Done-when.**
+- [x] finalCostTotal counts only COs whose reason attributes to the contractor (scope_gap, and a documented decision on field_condition) — ✓ (field_condition: contractor-neutral, DEC-44).
+- [x] The cost-discipline detail string distinguishes contractor-driven growth from owner-driven growth — ✓.
+- [x] A test pins that a contractor with 25% growth entirely from owner_request COs scores the same as one that finished on bid — ✓.
+- [x] The corresponding owner-side counter is surfaced somewhere — ✓ (evidence fields + the detail string on the card and profile).
+
+**Scope / residual.** None; `lib/changeOrders.ts` untouched.
 
 ---
 
@@ -266,6 +296,8 @@ lib/costDocs.ts:232-242 — the addEntry call passes orgId, projectId, costAccou
 - [ ] The parse route validates the model's currency against a known ISO-4217 set and stores null rather than free text when it does not match
 - [ ] BidEconomics carries currency, and scoreBids either refuses to score a mixed-currency field or scores it only after an explicit stated conversion
 - [ ] Every fmtMoney call on a document or bid figure passes that record's currency (components/projects/cost/QuotesPanel.tsx:218,298,300,351), and the account form offers a currency picker instead of hardcoding USD
+
+*Landed 2026-09-23 (projects Round G, J4 limb): route limb and tabulation limb. `app/api/projects/cost-docs/route.ts` stores `currency` only as a known ISO-4217 code (`lib/bidTab.isoCurrency`, `ISO_4217`) — free text becomes NULL — for quotes and invoices alike, in the column and the stored extraction; `BidEconomics` carries `currency`, `fieldCurrency()` names the field's currencies, and `scoreBids` refuses a mixed field (all scores null, nothing badged); every `fmtMoney` on a document or bid figure in `QuotesPanel.tsx` passes the record's currency and the Award control is withheld in a mixed group. 20261096 inventories the rows whose stored currency is not an ISO code. The `awardQuote` / `postInvoice` refusal and the account currency picker are PC-7's (COST-8 itself).*
 
 ---
 
@@ -387,6 +419,17 @@ lib/companies.ts:284 — `const awardsTotal = parties.reduce((s, p) => s + (p.co
 - [ ] gatherCompanyProfile reports honestly when a dimension is empty because the link is missing versus because no work happened — an unlinked company must not present as an unrated-but-clean one
 - [ ] A composite built from a single commendation does not render as "Excellent": evidenceCount gates the band shown on the profile and in the bid tab
 
+**Partial (2026-09-23, projects Round G).** Reader half and the registry link. `lib/companies.ts` `gatherCompanyProfiles` (batched, PERF-1) derives `awardsTotal` from posted commitment `cost_entries` on the company's parties, falling back to the typed `contract_value` only when nothing has posted and labelling it ("awards from the typed contract value"; `awardsSource` on the profile); quotes reach a company through the new explicit `cost_documents.company_id` OR `party_id` (deduplicated); `partiesLinked` is reported and `computeCompanyScorecard` renders "Unlinked — … (no project party is linked to this company — link one on the Costs tab)" for the cost and quality dimensions, distinct from "No awarded work yet" / "No quality evidence yet"; the registry card and the profile say "unlinked — no project party yet". `scoreBand(score, evidenceCount)` returns **Provisional** below `MIN_EVIDENCE_FOR_BAND` (3), used by both pages, so one commendation cannot render "Excellent". The quote upload row (`QuotesPanel.tsx`) offers the project's parties and passes `partyId`. 20261096 backfills `project_parties.company_id` once where the normalised name matches exactly one registry company (counts only in its output; ambiguous names left alone) and inventories the company_id/contract_value split. Tests: `companiesRegistry.test.ts` (awards from entries; fallback labelled; unlinked vs no work; link OR party without double counting), `projectControls.test.ts` (Provisional band; unlinked detail).
+
+**Done-when.**
+- [ ] saveParty and the Costs tab's PartiesPanel let a party be linked to a Known Company, and CostParty/mapParty carry companyId — **PC-7's** (`lib/costs.ts`, `CostsTab.tsx`) — not done here; the one-off backfill in 20261096 links existing parties by unique normalised name.
+- [x] awardQuote writes the awarded total … (or gatherCompanyProfile derives awardsTotal from posted commitment entries) — ✓ (derived).
+- [ ] uploadCostDoc's caller and the intake quote branch resolve and set party_id, and turnover/punch creation carries the responsible party — upload caller ✓; **intake branch is PC-1's, turnover/punch is PC-5's** — not done here.
+- [x] gatherCompanyProfile reports honestly when a dimension is empty because the link is missing versus because no work happened — ✓.
+- [x] A composite built from a single commendation does not render as "Excellent": evidenceCount gates the band shown on the profile and in the bid tab — ✓ on the profile and the registry card; the bid tab shows the QM percentage only (no band), unchanged.
+
+**Scope / residual.** Pending migration: `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30). PC-5's nonconformance events are not read (the table is not in this tree; DEC-31).
+
 ---
 
 <a id="cost-13"></a>
@@ -417,6 +460,16 @@ app/api/projects/cost-docs/route.ts:27 — `const MAX_PAGES = 8;` and line 97 `r
 - [ ] The review UI shows "read pages 1-8 of N" beside any partially-read document, and the award/post confirm dialog repeats it when the read was truncated
 - [ ] awardQuote and postInvoice refuse to post, or require an explicit typed confirmation of the total, when the stored total came from a truncated read
 - [ ] The audit_logs COST_DOC_PARSED and COST_DOC_AWARDED details carry the pages-read/pages-total pair so a later reconciliation can find truncated reads
+
+**Partial (2026-09-23, projects Round G).** `app/api/projects/cost-docs/route.ts` records the document's true page count (`lib/pdfPageCount.countPdfPages`, unpdf) and the pages rendered as `cost_documents.pages_total` / `pages_read` (20261096; pre-migration the write retries without them and the extent still travels), returns `pagesTotal` beside `pagesRead`, and the `COST_DOC_PARSED` audit row carries `pagesRead`, `pagesTotal` and `truncated`. `QuotesPanel.tsx` shows "read pages 1–8 of N" (amber) beside a partially read quote or invoice, "read extent unknown" for rows recorded before the columns existed, repeats it in the award confirm, and — per the default decision — a truncated or unknown-extent read requires the total to be **typed back** (must equal the row's total) before Award or Post-as-actual; MAX_PAGES stays 8. Tests: `costDocsRoute.test.ts` (row patch, response, audit pair, unknown → NULL never "complete", short doc not truncated, pre-migration retry), `quotesPanel.test.ts` (`readExtent`).
+
+**Done-when.**
+- [x] The parse route records the document's true page count and the pages actually read on the cost_documents row, and returns both — ✓.
+- [x] The review UI shows "read pages 1-8 of N" beside any partially-read document, and the award/post confirm dialog repeats it when the read was truncated — ✓.
+- [x] awardQuote and postInvoice refuse to post, or require an explicit typed confirmation of the total, when the stored total came from a truncated read — UI half ✓ (typed confirmation on both paths); **the lib-side refusal in `awardQuote` / `postInvoice` is PC-7's** — not done here.
+- [ ] The audit_logs COST_DOC_PARSED and COST_DOC_AWARDED details carry the pages-read/pages-total pair — PARSED ✓; **AWARDED is written by `lib/costDocs.awardQuote` (PC-7's file)** — not done here.
+
+**Scope / residual.** Pending migration: `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30; its inventory counts the rows that will read "extent unknown"). Raising MAX_PAGES is a cost/latency question recorded for the user.
 
 ---
 

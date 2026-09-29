@@ -17,6 +17,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
+import { countPdfPages } from "@/lib/pdfPageCount";
 import { resolveDocumentFile } from "@/lib/docFileServer";
 import { QUALITY_MANUAL_RUBRIC, validateRubricFindings, rubricCoverageScore } from "@/lib/checklistEngine";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -25,6 +26,9 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
+// At most 10 pages are judged (COST-3). The proposal therefore RECORDS how
+// much of the manual was read (pagesRead / pagesTotal) so a percentage
+// derived from a partial read never lands as a bare number.
 const MAX_PAGES = 10;
 
 export async function POST(req: NextRequest) {
@@ -55,7 +59,10 @@ export async function POST(req: NextRequest) {
 
   const file = await resolveDocumentFile(orgId, documentId);
   if (!file) return bad("That document has no stored file to read.", 404);
-  const images = await renderKnowledgePages(file.fileKey, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+  const [images, pagesTotal] = await Promise.all([
+    renderKnowledgePages(file.fileKey, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES),
+    countPdfPages(file.fileKey),
+  ]);
   if (images.length === 0) return bad("The pages could not be rendered for reading — is it a PDF?", 502);
 
   const rubricText = QUALITY_MANUAL_RUBRIC
@@ -102,6 +109,8 @@ export async function POST(req: NextRequest) {
     findings,
     gaps: findings.filter((f) => !f.covered).map((f) => ({ area: f.area, finding: f.finding })),
     pagesRead: images.map((i) => i.page),
+    pagesTotal,
+    truncated: pagesTotal != null ? images.length < pagesTotal : null,
     note: "Proposal only — confirm to put it on the company's record.",
   });
 }

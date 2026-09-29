@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   computeBidEconomics, scoreBids, validateParsedQuote, DEFAULT_WEIGHTS,
+  normalizeCompanyName, matchCompanyByName, isoCurrency, fieldCurrency, effectiveWeights,
+  MANPOWER_MAX_COMPOSITE_SWING,
   type ParsedQuote,
 } from "@/lib/bidTab";
 import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/costSeries";
@@ -10,7 +12,7 @@ import {
   validateRubricFindings, QUALITY_MANUAL_RUBRIC,
   type ChecklistItemState, type ProjectEvidenceState,
 } from "@/lib/checklistEngine";
-import { computeCompanyScorecard, scoreBand, type CompanyEvidence } from "@/lib/companyScore";
+import { computeCompanyScorecard, scoreBand, MIN_EVIDENCE_FOR_BAND, type CompanyEvidence } from "@/lib/companyScore";
 import { buildExampleCostData } from "@/lib/exampleProject";
 
 // ── Bid tabulation ─────────────────────────────────────────────────────────
@@ -88,6 +90,120 @@ describe("bidTab economics", () => {
     expect(ok.exclusions).toEqual(["a"]);
     expect(ok.lineItems).toHaveLength(1);
     expect(() => validateParsedQuote({ vendorName: "A" }, "id2")).toThrow(/total/i);
+  });
+});
+
+// ── Round G scoring honesty (BID-3 / BID-4 / BID-6 / BID-7 / COST-5) ──────
+
+describe("bidTab honesty (Round G, DEC-44)", () => {
+  const line = (description: string, total: number, hours: number | null = null) => ({ description, total, hours });
+
+  it("BID-3 / COST-5: declaring an exclusion never lowers a bid's score relative to hiding it", () => {
+    const rival = quote({ id: "rival", total: 100_000, lineItems: [line("Demo and repipe exchanger circuits", 80_000, 900), line("Insulation reinstatement complete", 20_000, 200)] });
+    const declared = quote({ id: "d", total: 95_000, exclusions: ["Insulation reinstatement"], lineItems: [line("Demo and repipe exchanger circuits", 95_000, 900)] });
+    const hidden = quote({ id: "h", total: 95_000, exclusions: [], lineItems: [line("Demo and repipe exchanger circuits", 95_000, 900)] });
+    const sD = scoreBids(computeBidEconomics([rival, declared])).find((s) => s.quoteId === "d")!;
+    const sH = scoreBids(computeBidEconomics([rival, hidden])).find((s) => s.quoteId === "h")!;
+    expect(sD.score).toBe(sH.score);
+    // The letter's promise ("declared exclusions do not") is the scorer's behaviour: coverage is not a scored part.
+    expect(sD.parts.coverage).toBeNull();
+    expect(sH.parts.coverage).toBeNull();
+    // The declared exclusion is still a visible fact; the hidden gap is a check prompt, not a score.
+    const eD = computeBidEconomics([rival, declared]).find((e) => e.quoteId === "d")!;
+    const eH = computeBidEconomics([rival, hidden]).find((e) => e.quoteId === "h")!;
+    expect(eD.exclusionCount).toBe(1);
+    expect(eD.missingScope).toHaveLength(0);
+    expect(eH.missingScope.some((m) => /insulation/i.test(m))).toBe(true);
+  });
+
+  it("COST-5: single-exclusion three-bid field — the disclosing bidder is not driven to a coverage part of 0", () => {
+    const a = quote({ id: "a", total: 100_000, exclusions: ["Insulation reinstatement"], lineItems: [line("Demo and repipe exchanger circuits", 100_000, 1000)] });
+    const b = quote({ id: "b", total: 100_000, lineItems: [line("Demo and repipe exchanger circuits", 100_000, 1000)] });
+    const c = quote({ id: "c", total: 100_000, lineItems: [line("Demo and repipe exchanger circuits", 100_000, 1000)] });
+    const scores = scoreBids(computeBidEconomics([a, b, c]));
+    const sa = scores.find((s) => s.quoteId === "a")!;
+    expect(sa.parts.coverage).not.toBe(0);
+    expect(sa.score).toBe(scores.find((s) => s.quoteId === "b")!.score);
+    // All three tie — none is badged; the tie is rendered as a tie.
+    expect(scores.every((s) => !s.best && s.tied)).toBe(true);
+  });
+
+  it("BID-4: realistically-worded competing bids — coverage never drives the score; prompts are prompts", () => {
+    const alpha = quote({ id: "alpha", total: 180_000, lineItems: [
+      line("Remove and dispose existing piping at E-301", 60_000, 600),
+      line("Fabricate and erect replacement spools (ISO 301-A)", 90_000, 900),
+      line("Hydrotest, dry and return to operations", 30_000, 300),
+    ]});
+    const bravo = quote({ id: "bravo", total: 172_000, lineItems: [
+      line("Demolition of existing 6-inch process piping", 58_000, 580),
+      line("Install new spool pieces per ISO 301-A", 86_000, 860),
+      line("Hydrostatic test and reinstate to service", 28_000, 280),
+    ]});
+    const econ = computeBidEconomics([alpha, bravo]);
+    // Token-set similarity absorbs "existing piping" / "spool ... ISO 301-A"; only the
+    // hydrotest wording is left as a CHECK prompt (a prompt to open the PDF, not an accusation).
+    for (const e of econ) expect(e.missingScope.length).toBeLessThanOrEqual(1);
+    const scores = scoreBids(econ);
+    for (const s of scores) expect(s.parts.coverage).toBeNull();
+    // Same bids with the prompts stripped score identically: the prompt is not in the score.
+    const stripped = scoreBids(econ.map((e) => ({ ...e, missingScope: [] })));
+    expect(scores.map((s) => s.score)).toEqual(stripped.map((s) => s.score));
+  });
+
+  it("COST-5: padded hours cannot buy best value against a slightly cheaper honest bid (swing capped)", () => {
+    const honest = quote({ id: "honest", total: 188_000, lineItems: [line("Repipe unit 300 exchanger circuits", 188_000, 2000)] });
+    const padded = quote({ id: "padded", total: 200_000, lineItems: [line("Repipe unit 300 exchanger circuits", 200_000, 4000)] });
+    const scores = scoreBids(computeBidEconomics([honest, padded]));
+    expect(scores.find((s) => s.best)!.quoteId).toBe("honest");
+    // Between two bids that state hours, the manpower part moves the composite by at most the cap.
+    const w = effectiveWeights();
+    const h = scores.find((s) => s.quoteId === "honest")!, p = scores.find((s) => s.quoteId === "padded")!;
+    expect((p.parts.manpower! - h.parts.manpower!) * w.manpower).toBeLessThanOrEqual(MANPOWER_MAX_COMPOSITE_SWING + 1e-9);
+    // Not stating hours at all still takes the floor — undisclosed never beats disclosed.
+    const silent = quote({ id: "silent", total: 188_000, lineItems: [line("Repipe unit 300 exchanger circuits", 188_000, null)] });
+    const s2 = scoreBids(computeBidEconomics([silent, padded]));
+    expect(s2.find((s) => s.quoteId === "silent")!.parts.manpower).toBe(0);
+  });
+
+  it("BID-6: a single bid shows a score with no best-value badge; a tie is a tie", () => {
+    const only = scoreBids(computeBidEconomics([quote({ id: "solo", lineItems: [line("Repipe circuits", 100_000, 1000)] })]));
+    expect(only[0].score).not.toBeNull();
+    expect(only[0].best).toBe(false);
+    const twins = scoreBids(computeBidEconomics([
+      quote({ id: "t1", lineItems: [line("Repipe circuits", 100_000, 1000)] }),
+      quote({ id: "t2", lineItems: [line("Repipe circuits", 100_000, 1000)] }),
+    ]));
+    expect(twins.every((s) => !s.best && s.tied)).toBe(true);
+  });
+
+  it("BID-7 / COST-8: a mixed-currency field is refused — nothing scored, nothing badged", () => {
+    const econ = computeBidEconomics([
+      quote({ id: "us", currency: "USD", total: 195_000, lineItems: [line("Repipe circuits", 195_000, 2000)] }),
+      quote({ id: "eu", currency: "EUR", total: 168_000, lineItems: [line("Repipe circuits", 168_000, 2000)] }),
+    ]);
+    expect(fieldCurrency(econ)).toEqual({ currency: null, currencies: ["USD", "EUR"], mixed: true });
+    const scores = scoreBids(econ);
+    expect(scores.every((s) => s.score === null && !s.best && s.unscored === "mixed-currency")).toBe(true);
+    // An unknown currency beside a known one is NOT mixed — it is taken as the field's.
+    const same = computeBidEconomics([quote({ id: "a", currency: "USD" }), quote({ id: "b", currency: null })]);
+    expect(fieldCurrency(same).mixed).toBe(false);
+    expect(isoCurrency("eur")).toBe("EUR");
+    expect(isoCurrency("dollars")).toBeNull();
+    expect(isoCurrency("$")).toBeNull();
+  });
+
+  it("BID-12 / COST-3: normalised company matching resolves realistic letterhead variants, never ambiguity", () => {
+    const registry = [{ id: "g", name: "Gulf Mechanical" }, { id: "a", name: "Apex Industrial" }, { id: "a2", name: "Apex Industrial Services" }];
+    expect(normalizeCompanyName("Gulf Mechanical, Inc.")).toBe("gulf mechanical");
+    expect(normalizeCompanyName("GULF  MECHANICAL LLC")).toBe("gulf mechanical");
+    expect(normalizeCompanyName("The Gulf Mechanical Co. Ltd")).toBe("gulf mechanical");
+    expect(normalizeCompanyName("A&B Fabrication")).toBe("a and b fabrication");
+    expect(matchCompanyByName("Gulf Mechanical, Inc.", registry)?.id).toBe("g");
+    expect(matchCompanyByName("Apex Industrial Services, LLC", registry)?.id).toBe("a2");
+    expect(matchCompanyByName("Apex", registry)).toBeNull();          // no fuzzy binding
+    expect(matchCompanyByName("Unknown vendor", registry)).toBeNull();
+    // Two registry rows that normalise alike never auto-bind.
+    expect(matchCompanyByName("Gulf Mechanical", [...registry, { id: "dup", name: "Gulf Mechanical LLC" }])).toBeNull();
   });
 });
 
@@ -278,6 +394,44 @@ describe("companyScore", () => {
     const cost = (c: typeof clean) => c.dimensions.find((d) => d.key === "cost")!.score!;
     expect(cost(gappy)).toBeLessThan(cost(clean));
     expect(clean.dimensions.find((d) => d.key === "cost")!.detail).toContain("20% cost growth");
+  });
+
+  it("COST-7: 25% growth entirely from owner_request COs scores the same as finishing on bid", () => {
+    // The gatherer keeps owner-driven COs OUT of finalCostTotal and reports them separately.
+    const onBid = computeCompanyScorecard(evidence({ awardsTotal: 500_000, finalCostTotal: 500_000, changeOrderCount: 0 }));
+    const ownerGrowth = computeCompanyScorecard(evidence({
+      awardsTotal: 500_000, finalCostTotal: 500_000, changeOrderCount: 2, changeOrderScopeGapCount: 0,
+      ownerDrivenCoCount: 2, ownerDrivenCoTotal: 125_000,
+    }));
+    const cost = (c: typeof onBid) => c.dimensions.find((d) => d.key === "cost")!;
+    expect(cost(ownerGrowth).score).toBe(cost(onBid).score);
+    expect(cost(ownerGrowth).score).toBe(100);
+    // The detail shows its work: the owner-side counter is surfaced, not hidden.
+    expect(cost(ownerGrowth).detail).toContain("2 owner-driven COs");
+    expect(cost(ownerGrowth).detail).toContain("25% growth on our side");
+    // Contractor-driven growth still counts, and says so.
+    const gap = computeCompanyScorecard(evidence({ awardsTotal: 500_000, finalCostTotal: 625_000, changeOrderCount: 1, changeOrderScopeGapCount: 1 }));
+    expect(cost(gap).score).toBeLessThan(100);
+    expect(cost(gap).detail).toContain("contractor-driven");
+  });
+
+  it("COST-12: one commendation is not 'Excellent' — the band is provisional below the evidence floor", () => {
+    const one = computeCompanyScorecard(evidence({ commendations: 1 }));
+    expect(one.composite).toBe(100);
+    expect(one.evidenceCount).toBe(1);
+    expect(scoreBand(one.composite, one.evidenceCount).label).toBe("Provisional");
+    expect(scoreBand(one.composite).label).toBe("Excellent"); // without the count the old call still grades
+    const enough = computeCompanyScorecard(evidence({ commendations: MIN_EVIDENCE_FOR_BAND }));
+    expect(scoreBand(enough.composite, enough.evidenceCount).label).toBe("Excellent");
+  });
+
+  it("COST-12: an unlinked company reads 'unlinked', distinct from 'no work'", () => {
+    const unlinked = computeCompanyScorecard(evidence({ partiesLinked: 0 }));
+    const linkedNoWork = computeCompanyScorecard(evidence({ partiesLinked: 2 }));
+    const cost = (c: typeof unlinked) => c.dimensions.find((d) => d.key === "cost")!.detail;
+    expect(cost(unlinked)).toMatch(/Unlinked/);
+    expect(cost(linkedNoWork)).toBe("No awarded work yet");
+    expect(unlinked.dimensions.find((d) => d.key === "quality")!.detail).toMatch(/Unlinked/);
   });
 
   it("responsiveness shows OUR review clock in the detail — honest both ways", () => {

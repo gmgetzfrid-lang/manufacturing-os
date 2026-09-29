@@ -338,6 +338,8 @@ the contractor's permanent scorecard."
 - An awarded quote appears in the company's bid history.
 - A test with a fully-populated fixture asserts each dimension is non-null.
 
+*Landed 2026-09-23 (projects Round G, J4 limb): reader half: `gatherCompanyProfiles` derives `awardsTotal` from posted commitment entries on the company's parties (the typed `contract_value` is a labelled fallback), reads quotes through `cost_documents.company_id` OR `party_id`, and reports "unlinked" distinctly from "no work"; the quote upload row passes `partyId`; 20261096 backfills `project_parties.company_id` where the normalised name matches exactly one registry row (counts only in its output). The writer limbs (`saveParty` companyId, turnover/punch `partyId`, the intake quote branch) stay with P11 / PC-1 / PC-5 / PC-7.*
+
 ---
 
 ## MON-8 · An unmapped document status throws inside the award path, hanging the button forever
@@ -501,6 +503,8 @@ explicit override that captures a reason and writes an audit row. Decide what
 - Awarding a `do_not_use` company requires an explicit, reasoned override.
 - The override is audited.
 - `inactive` either has behaviour or no longer exists.
+
+*Landed 2026-09-23 (projects Round G, J4 limb): the bid-tab chip (`QuotesPanel.tsx`) renders from the bound registry company (`cost_documents.company_id`, 20261096) or the normalised name match, so realistic letterhead variants resolve (BID-12); a failed registry load is announced instead of blanking the flag; and the award flow refuses a do-not-use company unless a reason is typed and recorded (`COST_DOC_AWARD_OVERRIDE_DO_NOT_USE`, insert `{ error }`-checked — a failed record stops the award). The posting-side refusal in `awardQuote` and the meaning of `inactive` close in P3 / PC-7.*
 
 ---
 
