@@ -7,7 +7,8 @@ import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/c
 import { computeProjectHealth, buildCoachItems, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
-  validateRubricFindings, QUALITY_MANUAL_RUBRIC,
+  validateRubricFindings, QUALITY_MANUAL_RUBRIC, completionBasis, reasonProblem,
+  isMachineActorName, MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT, REASON_MIN_LENGTH,
   type ChecklistItemState, type ProjectEvidenceState,
 } from "@/lib/checklistEngine";
 import { computeCompanyScorecard, scoreBand, type CompanyEvidence } from "@/lib/companyScore";
@@ -233,6 +234,100 @@ describe("checklistEngine", () => {
       state({ miChecklistComplete: true }),
     );
     expect(res[0].status).toBe("satisfied");
+  });
+
+  // ── projects Round G (J2 QUALITY) — QUAL-1 / QUAL-2 / SAF-1 / SAF-4 / QUAL-6 ──
+
+  it("QUAL-1: satisfy on a matching title, remove the title, re-run — the item is no longer satisfied and the auto chip is dropped", () => {
+    const first = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete with records" })],
+      state({ documentTitles: ["E-301 Hydrotest Report Rev 0"], documents: [{ id: "d1", label: "E-301 Hydrotest Report Rev 0", status: "Issued", rev: "0", viaTurnover: false }] }),
+    );
+    expect(first).toEqual([{ id: "a", status: "satisfied", addedEvidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 0"', documentId: "d1", source: "auto" }] }]);
+    const again = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete with records", status: "satisfied", evidence: first[0].addedEvidence })],
+      state({ documentTitles: [] }),
+    );
+    expect(again).toEqual([{ id: "a", status: "needs_evidence", addedEvidence: [], removeAutoEvidence: true, retracted: true }]);
+  });
+
+  it("QUAL-1: a stale auto chip is REPLACED by the current citation, never merely supplemented", () => {
+    const res = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: 'Document on file: "old hydrotest"', source: "auto" }] })],
+      state({ documentTitles: ["E-301 Hydrotest Report Rev 1"] }),
+    );
+    expect(res).toEqual([{ id: "a", status: "satisfied", addedEvidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 1"', source: "auto" }], removeAutoEvidence: true }]);
+    // an unchanged citation is left alone (no chip added, nothing removed)
+    const same = applyAutoEvidence(
+      [item({ id: "a", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: 'Document on file: "E-301 Hydrotest Report Rev 1"', source: "auto" }] })],
+      state({ documentTitles: ["E-301 Hydrotest Report Rev 1"] }),
+    );
+    expect(same).toEqual([{ id: "a", status: "satisfied", addedEvidence: [] }]);
+  });
+
+  it("QUAL-1: a satisfied item with a human chip or a human note is never retracted; a satisfied item with no chips at all is left alone", () => {
+    const res = applyAutoEvidence([
+      item({ id: "h", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: "gone", source: "auto" }, { label: "walked down", source: "manual" }] }),
+      item({ id: "n", text: "Hydrotest complete", status: "satisfied", evidence: [{ label: "gone", source: "auto" }], manualNote: "verified 9/14" }),
+      item({ id: "z", text: "Hydrotest complete", status: "satisfied", evidence: [] }),
+    ], state());
+    expect(res).toEqual([]);
+  });
+
+  it("QUAL-2: the turnover rule needs a SUBJECT match — one accepted sign-off does not vouch for every turnover line", () => {
+    const s = state({ turnoverAcceptedNames: ["Work completion sign-off"] });
+    const generic = applyAutoEvidence([item({ id: "a", text: "Turnover / quality package received and reviewed" })], s);
+    expect(generic[0]).toEqual({ id: "a", status: "needs_evidence", addedEvidence: [] });
+    const matched = applyAutoEvidence(
+      [item({ id: "b", text: "Pressure test records included in the turnover package" })],
+      state({ turnoverAcceptedNames: ["Pressure / leak test records"] }),
+    );
+    expect(matched[0].status).toBe("satisfied");
+    expect(matched[0].addedEvidence[0].label).toBe('Turnover item accepted: "Pressure / leak test records"');
+    const weld = applyAutoEvidence(
+      [item({ id: "c", text: "Weld map included in the data book" })],
+      state({ turnoverAcceptedNames: ["NDE reports", "Weld map & weld log"] }),
+    );
+    expect(weld[0].addedEvidence[0].label).toBe('Turnover item accepted: "Weld map & weld log"');
+  });
+
+  it("QUAL-2: an MI checklist completed on auto-evidence alone does not satisfy a PSSR mechanical-integrity item (the gather sets miChecklistComplete only for a human completion)", () => {
+    // completionBasis is what setChecklistStatus records; the gather feeds
+    // miChecklistComplete only from completed_basis = 'human'.
+    const autoOnly: ChecklistItemState[] = [
+      item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }] }),
+      item({ id: "2", text: "Ops trained", status: "na", applicability: "na" }), // assessment N/A, no note
+    ];
+    expect(completionBasis(autoOnly)).toBe("auto");
+    const human: ChecklistItemState[] = [
+      item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }], manualNote: "reviewed the log — 42 welds, all traceable" }),
+      item({ id: "2", text: "Ops trained", status: "na", applicability: "na", manualNote: "no operator interface on this change" }),
+      item({ id: "3", text: "Open item", status: "open" }), // not counted toward the gate
+    ];
+    expect(completionBasis(human)).toBe("human");
+    expect(completionBasis([item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "walked down", source: "manual" }] })])).toBe("human");
+    const pssr = applyAutoEvidence(
+      [item({ id: "a", text: "New equipment reviewed by the mechanical integrity group" })],
+      state({ miChecklistComplete: false }),
+    );
+    expect(pssr[0].status).toBe("needs_evidence");
+  });
+
+  it("SAF-4: the reason bar refuses blank, short and canned reasons and accepts a real one", () => {
+    expect(REASON_MIN_LENGTH).toBe(10);
+    expect(reasonProblem(null)).toMatch(/required/);
+    expect(reasonProblem("   ")).toMatch(/required/);
+    expect(reasonProblem("too short")).toMatch(/at least 10/);
+    expect(reasonProblem("decided by reviewer")).toMatch(/isn't a reason/);
+    expect(reasonProblem("Not applicable")).toMatch(/isn't a reason/);
+    expect(reasonProblem("No hydrotest — electrical-only scope")).toBeNull();
+  });
+
+  it("QUAL-6: the machine actor is a reserved sentinel, never a person's name", () => {
+    expect(isMachineActorName(MACHINE_ACTOR_SWEEP)).toBe(true);
+    expect(isMachineActorName(MACHINE_ACTOR_ASSESSMENT)).toBe(true);
+    expect(isMachineActorName("mreyes")).toBe(false);
+    expect(isMachineActorName(null)).toBe(false);
   });
 
   it("quality-manual rubric coverage scores confirmed areas only", () => {

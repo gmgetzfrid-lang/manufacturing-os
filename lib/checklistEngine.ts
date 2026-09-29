@@ -9,7 +9,14 @@
 //      project (turnover accepted, MI checklist complete, documents present,
 //      equipment tags known), auto-satisfy the items whose evidence exists
 //      and mark the rest needs_evidence. A manual override ALWAYS wins —
-//      auto never touches an item a human has decided.
+//      auto never touches an item a human has decided. And the sweep
+//      RETRACTS: a green that rests only on the sweep's own citation goes
+//      back to needs_evidence the moment the proof is gone (QUAL-1) — a
+//      human chip or note is never touched.
+//      Evidence contract (SAF-1 / GAP-404): only documents the register
+//      admits — Issued/Locked, with a current version, not an unapproved
+//      external submission — can be cited, and every auto chip carries the
+//      documentId it matched so the citation resolves to a row.
 //   3. The QUALITY-MANUAL RUBRIC — the ISO 9001-shaped areas a contractor's
 //      manual is scored against; the AI cites findings per area, a human
 //      confirms, the coverage % lands on the company profile.
@@ -40,11 +47,21 @@ export function validateSegmentedItems(raw: unknown): SegmentedItem[] {
 
 // ── Auto-evidence ─────────────────────────────────────────────────────────
 
+/** One admitted document of the project's evidence register (SAF-1). */
+export interface EvidenceDocument {
+  id: string;
+  label: string;                     // "<number> <title>" — what firstDocMatch sees
+  status: string | null;
+  rev: string | null;
+  viaTurnover: boolean;              // attached to an ACCEPTED turnover item (preferred)
+}
+
 export interface ProjectEvidenceState {
   turnoverAcceptedNames: string[];   // accepted turnover item names
-  miChecklistComplete: boolean;      // a kind='mi' checklist fully satisfied
-  documentTitles: string[];          // project register titles+numbers
+  miChecklistComplete: boolean;      // a kind='mi' checklist completed on HUMAN sign-off (completed_basis = 'human')
+  documentTitles: string[];          // project register titles+numbers (admitted documents only)
   equipmentTags: string[];           // tags known on the project's drawings
+  documents?: EvidenceDocument[];    // the same register with ids, so a chip can name its row
 }
 
 export interface ChecklistItemState {
@@ -59,7 +76,57 @@ export interface ChecklistItemState {
 export interface AutoEvidenceResult {
   id: string;
   status: "needs_evidence" | "satisfied";
-  addedEvidence: Array<{ label: string; source: "auto" }>;
+  addedEvidence: Array<{ label: string; documentId?: string; source: "auto" }>;
+  /** Drop every existing source:'auto' chip before appending (stale
+   *  citation, or the proof is gone). Human chips are never in scope. */
+  removeAutoEvidence?: true;
+  /** A satisfied item lost its only (auto) proof — QUAL-1 retraction. */
+  retracted?: true;
+}
+
+// ── Machine actor (DEC-35: a reserved sentinel, not a facility role) ─────
+//
+// The sweep and the AI assessment stamp `updated_by = NULL` and one of these
+// names, so a row can always say whether a person or the machine set its
+// status (QUAL-6). A human write always carries a uid and never these names.
+export const MACHINE_ACTOR_SWEEP = "evidence sweep";
+export const MACHINE_ACTOR_ASSESSMENT = "AI assessment";
+export const isMachineActorName = (name: string | null | undefined): boolean =>
+  name === MACHINE_ACTOR_SWEEP || name === MACHINE_ACTOR_ASSESSMENT;
+
+// ── The reason bar (SAF-4 / GAP-405) ─────────────────────────────────────
+//
+// A decision that turns a gate green — N/A, reopen, waive, void — needs a
+// typed reason: the same bar lib/checkinOutcomes.ts sets (no canned text,
+// no get-out-of-jail-free cards). Enforced SERVER-SIDE in lib/checklists.ts
+// and lib/turnover.ts; the prompt mirrors it (required + minLength).
+export const REASON_MIN_LENGTH = 10;
+const CANNED_REASONS = new Set(["decided by reviewer", "n/a", "na", "not applicable", "reason", "none", "ok"]);
+
+/** null when the reason meets the bar, otherwise the refusal to show. */
+export function reasonProblem(reason: string | null | undefined): string | null {
+  const text = (reason ?? "").trim();
+  const dense = text.replace(/\s+/g, "");
+  if (dense.length === 0) return "A reason is required — this decision goes on the record.";
+  if (dense.length < REASON_MIN_LENGTH) return `Say why in at least ${REASON_MIN_LENGTH} characters — the reason is the record.`;
+  if (CANNED_REASONS.has(text.toLowerCase())) return "That isn't a reason — say what was decided and why.";
+  return null;
+}
+
+// ── Completion basis (QUAL-2) ────────────────────────────────────────────
+
+/** 'human' when every item that counted toward the gate — satisfied or N/A —
+ *  carries a human decision (a note or a person-attached chip); 'auto' when
+ *  any of them rests on the sweep or the assessment alone. Only a 'human'
+ *  completion is citable as proof by another checklist. */
+export function completionBasis(items: ChecklistItemState[]): "human" | "auto" {
+  for (const it of items) {
+    const counted = it.status === "satisfied" || it.status === "na" || it.applicability === "na";
+    if (!counted) continue;
+    const human = Boolean(it.manualNote) || it.evidence.some((e) => e.source === "manual");
+    if (!human) return "auto";
+  }
+  return "human";
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -69,13 +136,13 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace
  *  yields needs_evidence, never a false green. */
 const EVIDENCE_RULES: Array<{
   match: RegExp;
-  probe: (s: ProjectEvidenceState) => string | null; // evidence label when proven
+  probe: (s: ProjectEvidenceState, text: string) => string | null; // evidence label when proven
 }> = [
   {
+    // QUAL-2: the item's SUBJECT must match an accepted item's name — one
+    // accepted sign-off never vouches for every line that says "turnover".
     match: /turnover|quality package|data book|documentation package/i,
-    probe: (s) => s.turnoverAcceptedNames.length > 0
-      ? `Turnover items accepted: ${s.turnoverAcceptedNames.slice(0, 3).join(", ")}${s.turnoverAcceptedNames.length > 3 ? "…" : ""}`
-      : null,
+    probe: (s, text) => acceptedTurnoverMatch(s, text),
   },
   {
     match: /mechanical integrity|MI review|integrity (group|manager)/i,
@@ -125,12 +192,52 @@ function firstDocMatch(s: ProjectEvidenceState, keys: string[]): string | null {
   return null;
 }
 
+/** The register row behind a `Document on file: "…"` citation, so the chip
+ *  carries the documentId it matched (QUAL-1). Turnover-attached documents
+ *  are listed first by the gather, so a title shared with an intake upload
+ *  resolves to the accepted one. */
+function documentForProof(s: ProjectEvidenceState, proof: string): EvidenceDocument | null {
+  if (!s.documents) return null;
+  return s.documents.find((d) => `Document on file: "${d.label}"` === proof) ?? null;
+}
+
+// Words too generic to tie a checklist line to a turnover item: a shared
+// "records" or "package" proves nothing about the subject.
+const GENERIC_WORDS = new Set([
+  "and", "the", "for", "with", "from", "that", "this", "all", "any", "per", "are", "was",
+  "records", "record", "reports", "report", "package", "packages", "turnover", "quality",
+  "data", "book", "documentation", "documents", "document", "items", "item", "test", "tests",
+  "sign", "off", "final", "received", "accepted", "complete", "completed", "reviewed",
+]);
+const subjectWords = (text: string) => new Set(norm(text).split(" ").filter((w) => w.length >= 3 && !GENERIC_WORDS.has(w)));
+
+/** An accepted turnover item satisfies a line only when the two share a
+ *  subject word ("weld", "nde", "mtr", "pressure") — never on the bare
+ *  fact that something was accepted. */
+function acceptedTurnoverMatch(s: ProjectEvidenceState, text: string): string | null {
+  const words = subjectWords(text);
+  if (words.size === 0) return null;
+  for (const name of s.turnoverAcceptedNames) {
+    const nameWords = subjectWords(name);
+    for (const w of nameWords) {
+      if (words.has(w)) return `Turnover item accepted: "${name}"`;
+    }
+  }
+  return null;
+}
+
 /**
  * Sweep items the human hasn't decided: where the platform can PROVE the
  * evidence exists, satisfy with the citation attached; where the item looks
  * evidence-shaped but nothing is on file, mark needs_evidence (that list is
  * exactly what the coach demands next). Items matching no rule are left
  * alone — silence over guessing.
+ *
+ * Retraction (QUAL-1): an item at `satisfied` whose only chips are the
+ * sweep's own and whose probe no longer proves it goes back to
+ * needs_evidence with the stale chips removed. A stale auto chip on a still-
+ * proven item is replaced by the current citation. A human chip or a human
+ * note keeps the sweep out entirely (unchanged precedence).
  */
 export function applyAutoEvidence(
   items: ChecklistItemState[],
@@ -143,16 +250,25 @@ export function applyAutoEvidence(
     if (item.status === "satisfied" && item.evidence.some((e) => e.source === "manual")) continue;
     const rule = EVIDENCE_RULES.find((r) => r.match.test(item.text));
     if (!rule) continue;
-    const proof = rule.probe(state);
+    const proof = rule.probe(state, item.text);
+    const autoChips = item.evidence.filter((e) => e.source === "auto");
     if (proof) {
       const already = item.evidence.some((e) => e.label === proof);
+      const stale = autoChips.some((e) => e.label !== proof);
+      const doc = documentForProof(state, proof);
+      const chip = { label: proof, ...(doc ? { documentId: doc.id } : {}), source: "auto" as const };
       out.push({
         id: item.id,
         status: "satisfied",
-        addedEvidence: already ? [] : [{ label: proof, source: "auto" }],
+        // A stale auto chip is replaced, never merely supplemented.
+        addedEvidence: stale ? [chip] : already ? [] : [chip],
+        ...(stale ? { removeAutoEvidence: true as const } : {}),
       });
     } else if (item.status === "open") {
       out.push({ id: item.id, status: "needs_evidence", addedEvidence: [] });
+    } else if (item.status === "satisfied" && autoChips.length > 0) {
+      // The green rested on the sweep alone and the proof is gone.
+      out.push({ id: item.id, status: "needs_evidence", addedEvidence: [], removeAutoEvidence: true, retracted: true });
     }
   }
   return out;
