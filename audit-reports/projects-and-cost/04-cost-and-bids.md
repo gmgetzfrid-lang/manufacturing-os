@@ -54,6 +54,18 @@ components/projects/cost/CostCharts.tsx:53-56 — `computeForecast({ budget: rol
 - [ ] lib/projectReport.ts selects milestone `id` and passes a real milestonePctIndex keyed by milestone id, so the report's CPI row and the Costs tab agree
 - [ ] A test pins that a project with one pinned and one unpinned account does not report an EAC below its already-spent total
 
+**Partial (2026-09-23, projects Round G — worked in the joint J3 MONEY-LEDGER package; the close-out report half is J7 WIZARD-HEALTH's `MON-5` limb).** `lib/costs.ts` `ProjectCostRollup` exposes `pinnedBudget` / `pinnedSpent` (the revised budget and spend of the milestone-pinned accounts — the only portion `cpi` measures). `lib/costSeries.ts` `computeForecast` takes `pinnedBudget` / `pinnedSpent`: the CPI branch divides ONLY the pinned budget by CPI, carries the unpinned remainder at the run-rate when the schedule gives one (else at budget), floors each part at its own spend, and returns `scopeNote` — "CPI applies to the 67% of budget pinned to schedule tasks ($1,000); the other $500 is carried at the current spend pace" / "…covers the whole budget — every account is pinned". Without a pinned figure the legacy whole-budget division still applies, floored at spent and labelled. `components/projects/cost/CostCharts.tsx` (J5's file — the one label the brief allows, plus the three inputs that make it true) passes `pinnedBudget` / `pinnedSpent` / the revised budget and renders `forecast.scopeNote` beside the basis line.
+- Tests: `lib/__tests__/costs.test.ts` — "one pinned + one unpinned account never reports an EAC below what is already spent" (the finding's own 1500 / 900 / cpi 1.5 shape: old EAC 1000 < 900 spent; now 1,166.67 ≥ 900), "the unpinned remainder is carried at the run-rate…", "every account pinned…", "without a pinned figure…floored at spent"; "the rollup exposes the pinned subset's budget and spend beside cpi". The existing `projectControls.test.ts` forecast case is unchanged and still passes.
+- Reproduced at the base commit: `eac = budget / cpi` with `budget: rollup.budget`.
+
+**Done-when.**
+- [x] ProjectCostRollup exposes the pinned-account budget and spend alongside cpi, and computeForecast's CPI branch applies to the pinned subset (unpinned by run-rate, else at budget, labelled).
+- [x] The Costs tab states which portion of the budget the CPI-based EAC covers.
+- [ ] NOT DONE HERE — `lib/projectReport.ts` selecting milestone `id` and passing a real index is projects-tab `MON-5`, J7's file. Once it does, `computeForecast` gives the report the same scoped EAC and `scopeNote`.
+- [x] A test pins that one pinned + one unpinned account never reports an EAC below the already-spent total.
+
+**Scope / residual.** OPEN for J7's report half. Decision (DEC-44): CPI to the pinned subset, run-rate for the rest, labelled.
+
 ---
 
 <a id="cost-2"></a>
@@ -84,6 +96,17 @@ lib/costs.ts:316-317 — `remaining: a.budget - spent,` / `overBudget: a.budget 
 - [ ] The Remaining tile and the per-account row in components/projects/CostsTab.tsx render the commitment-inclusive figure, with the actuals-only figure available as a secondary number rather than the headline
 - [ ] computeProjectHealth's Cost part reads s.committed, or ProjectStateSnapshot.committed is removed so the unused field stops implying the health engine considers it
 - [ ] lib/__tests__/costs.test.ts gains a case pinning that an account with budget 1000, committed 900, spent 0 is flagged as at-risk and does not report 1000 remaining
+
+**Partial (2026-09-23, projects Round G — joint J3 MONEY-LEDGER; projects-tab pair `MON-4`, resolved there for the rollup + tile).** `lib/costs.ts` `AccountRollup` / `ProjectCostRollup` gain `openCommitments` (a commitment counts until the actuals invoiced against it, matched by party, reach its amount — never below zero), `exposure = spent + openCommitments`, `remaining = revisedBudget − exposure`, `remainingActualsOnly = revisedBudget − spent`, and `overBudget` trips on exposure. `components/projects/CostsTab.tsx`: the headline tile is "Available" (uncommitted) with the actuals-only figure as the secondary line; each account row shows "X uncommitted"; the account detail shows "Exposure X". `lib/projectHealth.ts` is PC-9's file — the figure is exposed for it (`rollup.exposure`, `rollup.openCommitments`).
+- Tests: `lib/__tests__/costs.test.ts` — "budget 1000, committed 900, spent 0 is at risk — 100 uncommitted, not 1000 remaining" (and a second award trips `overBudget` with nothing invoiced), "a commitment is drawn down by actuals from the SAME party; another party's invoices do not".
+
+**Done-when.**
+- [x] AccountRollup and ProjectCostRollup expose an exposure figure including open commitments, `remaining = budget − exposure`, and `overBudget` trips on exposure.
+- [x] The Remaining tile and the per-account row render the commitment-inclusive figure, with the actuals-only figure secondary.
+- [ ] NOT DONE HERE — `computeProjectHealth`'s Cost part reading `s.committed` (or dropping the field) is PC-9 / J7's `lib/projectHealth.ts`; `rollup.exposure` is the figure to read.
+- [x] `lib/__tests__/costs.test.ts` pins budget 1000 / committed 900 / spent 0 → 100 remaining, not 1000.
+
+**Scope / residual.** OPEN for the health-score consumer. Decision (DEC-44): exposure matched by party.
 
 ---
 
@@ -145,6 +168,17 @@ lib/changeOrders.ts:167-172 — the entire financial effect of approval is `entr
 - [ ] lib/projectHealth.ts:105-110 scores change-order growth against the original baseline explicitly labelled as such, not against a figure that other tiles now treat as revised
 - [ ] A test pins that a 200k account with an approved 100k CO and 200k of actuals at 50% complete reports CPI 1.0, not 0.5
 
+**Partial (2026-09-23, projects Round G — joint J3 MONEY-LEDGER).** Budget stays the original baseline; the rollup joins approved change orders. `lib/changeOrders.ts` `approvedChangesByAccount(cos)` (approved COs summed by `cost_account_id`, signed); `lib/costs.ts` `computeCostRollup(accounts, entries, milestonePct, approvedChanges = new Map())` exposes per account `approvedChanges` and `revisedBudget = budget + approvedChanges`, and computes `earnedValue` (`revisedBudget × pct`), `remaining`, `overBudget` and therefore `cpi` against `revisedBudget`; the project rollup exposes `approvedChanges` / `revisedBudget` and `pinnedBudget` follows the revised figure. `components/projects/CostsTab.tsx` loads the change orders, passes the map, shows the revised figure as the Budget headline with "X baseline + Y approved changes" beneath, "of <revised> (revised from <baseline>)" per account and the approved-changes line in the account detail; the burn bar and the forecast use the revised budget.
+- Tests: `lib/__tests__/costs.test.ts` "an approved change order revises the budget, and EV/CPI/remaining follow the revised figure" — 200k account + approved 100k CO at 50% with 150k of actuals → CPI 1.0 (was 0.667); the finding's literal shape (200k of actuals at 50%) → 0.75 against the revised budget, not the 0.5 the baseline reported. A CPI of exactly 1.0 in that literal shape is arithmetically unreachable under `EV = revisedBudget × pct` (150k EV / 200k AC); the test pins both.
+
+**Done-when.**
+- [x] The rollup joins approved change_orders by cost_account_id and exposes `revisedBudget = budget + approvedChanges`.
+- [x] earnedValue, remaining, overBudget and cpi are computed against revisedBudget; the original budget stays visible as the baseline.
+- [ ] NOT DONE HERE — the "Change control" part's baseline label in `lib/projectHealth.ts:105-110` is PC-9 / J7's file (the verifier already records growth-vs-baseline as intended there).
+- [x] A test pins the 200k / 100k-CO / 50% shape — CPI 1.0 at 150k of actuals, 0.75 (not 0.5) at the literal 200k.
+
+**Scope / residual.** OPEN for the health label. No `budget_revised` column — the revision is derived from the CO ledger, so it cannot drift from it.
+
 ---
 
 <a id="cost-5"></a>
@@ -204,6 +238,21 @@ lib/changeOrders.ts:144-147 — the only pre-approval checks are `if (co.status 
 - [ ] An org-level approval threshold exists (amount above which a controller, not merely the project owner, must decide) and is enforced in decideChangeOrder AND in a database policy or trigger, not only in the UI
 - [ ] change_orders gains split policies so INSERT of a proposed CO and UPDATE to status='approved' are separately grantable, instead of one FOR ALL grant
 - [ ] The CO row and the report show proposer and decider side by side and visibly flag when they are the same person
+
+**Partial (2026-09-23, projects Round G — joint J3 MONEY-LEDGER; the "report" half of the last done-when is J7's `lib/projectReport.ts`).** An authority model with the rail at the database.
+- `lib/changeOrders.ts` `decideChangeOrder`: (a) DEC-12's shape derived from the eligible-decider count — when `actorId === created_by` and another eligible decider exists (active members holding the controller tier via `memberHoldsAny`, plus the project owner, minus the actor) the decision is refused: "You proposed CO-004 — a second person has to decide it (N other eligible decider(s) in this org)"; a read failure fails SAFE (refused, naming the read); when nobody else can, the decision proceeds and is MARKED (`selfDecided` on the row/type, in the audit details, and an amber "self-decided" chip on the CO row). (b) An org threshold — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }` (`loadApprovalThreshold`) — above which only a controller-tier holder may approve; default none. Returns `{ warning }` so a partial outcome reaches the panel.
+- Migration `20261094`: `change_orders_write` (FOR ALL) is dropped and split — `change_orders_insert` (WITH CHECK `status = 'proposed' AND (controller OR owner)`), `change_orders_update` (the 20261013 predicate byte-carried on USING and WITH CHECK), NO DELETE policy; `enforce_change_order_decision_guard` is a BEFORE UPDATE trigger on proposed → approved/rejected applying both rules for `NEW.decided_by` (the controller predicate byte-carried from `is_org_controller`, 20260814) — a trigger, not a second permissive policy.
+- `components/projects/cost/ChangeOrdersPanel.tsx`: proposer and decider side by side on every row with the same-person flag; the Approve button's title explains the rule.
+- Tests: `lib/__tests__/costDocs.test.ts` — "the proposer cannot decide their own CO while another eligible decider exists", "with nobody else able to decide, the self-decision goes through and is MARKED", "above the org's threshold only a controller approves"; `lib/__tests__/moneyRailsMigration.test.ts` — the split, the guard, the two byte-carried predicates (line diff = the policy header only).
+- Pending migration: `20261094_prj_roundG_change_order_authority.sql`.
+
+**Done-when.**
+- [x] decideChangeOrder rejects a decision whose actorId equals created_by when another eligible decider exists; otherwise self-approval is allowed with a visible marker.
+- [x] An org-level approval threshold exists, enforced in decideChangeOrder AND in a database trigger (once `20261094` is applied).
+- [x] change_orders has split INSERT / UPDATE policies instead of one FOR ALL grant.
+- [ ] Partly — the CO row shows proposer and decider side by side with the same-person flag; the close-out report (`lib/projectReport.ts`) is J7's file.
+
+**Scope / residual.** OPEN for the report line. The admin UI for the threshold key is a follow-on (DEC-31); the key, its shape and the default are documented in `lib/changeOrders.ts` and DEC-44. Self-REJECTION is refused on the same rule (the brief's "approved/rejected"); withdrawing one's own proposal is the `void` decision, unaffected.
 
 ---
 
@@ -267,6 +316,17 @@ lib/costDocs.ts:232-242 — the addEntry call passes orgId, projectId, costAccou
 - [ ] BidEconomics carries currency, and scoreBids either refuses to score a mixed-currency field or scores it only after an explicit stated conversion
 - [ ] Every fmtMoney call on a document or bid figure passes that record's currency (components/projects/cost/QuotesPanel.tsx:218,298,300,351), and the account form offers a currency picker instead of hardcoding USD
 
+**Partial (2026-09-23, projects Round G — joint J3 MONEY-LEDGER; the posting half = projects-tab `BID-7`'s posting limb).** `lib/costDocs.ts` `currencyMismatch(doc, costAccountId)`: `awardQuote`, `postInvoice` and `repairCostDoc` (re-post) refuse BEFORE the claim when the document's currency and the budget line's differ (case-insensitive; either side unstated → nothing to compare): "This document is in EUR but the budget line is in USD — pick a EUR budget line or correct the document's currency before posting." No FX conversion is built (decision default). `components/projects/CostsTab.tsx` `AccountForm` offers a currency select (USD / CAD / EUR / GBP / MXN / AUD) instead of the hardcoded `"USD"`, so the mixed-currency banner is reachable and the refusal has something to compare against.
+- Tests: `lib/__tests__/costDocs.test.ts` "a document in another currency than the budget line is refused BEFORE the claim" (quote and invoice).
+
+**Done-when.**
+- [x] awardQuote and postInvoice refuse to post when the document's currency differs from the target account's.
+- [ ] NOT DONE HERE — the parse route's ISO-4217 validation is PC-8's (`app/api/projects/cost-docs/route.ts` is in this package's file list only for COST-13, which is not assigned here).
+- [ ] NOT DONE HERE — `BidEconomics` currency / `scoreBids` refusal is `lib/bidTab.ts`, J4 BIDTAB's.
+- [ ] Partly — the account form offers a currency picker; the `fmtMoney` calls in `QuotesPanel.tsx` are J4's.
+
+**Scope / residual.** OPEN for the J4 / PC-8 halves.
+
 ---
 
 <a id="cost-9"></a>
@@ -274,7 +334,7 @@ lib/costDocs.ts:232-242 — the addEntry call passes orgId, projectId, costAccou
 ## COST-9 · Dead and write-only FK columns on the cost tables: cost_entries.source_document_id is never written, change_orders.posted_entry_id is never read, and the unwind path both were meant to support does not exist
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260908_cost_control.sql:54-59`, `supabase/migrations/20260819_orphan_tables_backfill.sql:213`, `lib/costs.ts:226-238`, `lib/changeOrders.ts:184-188`, `supabase/migrations/20261013_project_controls_program.sql:130`, `lib/costDocs.ts:6-9`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both dead-column claims are exactly right. Severity lowered because the summary's operational premise is wrong on two counts: a generic unwind path DOES exist and is exposed in the UI (CostsTab.tsx:383-397 renders a per-entry Void calling voidEntry), and the entry does carry a human back-reference to the CO — lib/changeOrders.ts:172-173 sets `description: "${co.coNumber} — ${co.title}"` and `reference: co.coNumber`, both rendered at CostsTab.tsx:378-379. The real residue is that the FKs are dead and voiding the entry leaves the CO still reading "approved".
@@ -296,6 +356,19 @@ supabase/migrations/20260908_cost_control.sql:56-57 — `ALTER TABLE cost_entrie
 - [ ] The entry list in the Costs tab links each entry to its source document or change order instead of relying on a description string
 - [ ] A test or query pins that no posted cost entry created by awardQuote/postInvoice/decideChangeOrder has a null source link
 
+**Resolution (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER (projects-tab pair `REL-9`'s CO-unwind limb). `lib/costs.ts` `addEntry` accepts `sourceDocumentId` and writes `cost_entries.source_document_id`; `CostEntry.sourceDocumentId` is mapped. `lib/costDocs.ts` `awardQuote` / `postInvoice` / `repairCostDoc` pass the document's id. `lib/changeOrders.ts` `ChangeOrder.postedEntryId` is mapped, read by `unwindChangeOrder` (voids exactly that entry), by `listLedgerOrphans` and by the Costs tab. `components/projects/CostsTab.tsx` builds `sourceLabel(entry)` from the loaded documents (`from quote Q-1`) and the change orders' `postedEntryId` (`from CO-004`) and prints it on every entry row. Migration `20261093` backfills `source_document_id` where an award/invoice-shaped entry's reference matches exactly ONE document in its project (ambiguous matches counted and left alone; the inventory reports before/after).
+- Tests: `lib/__tests__/costDocs.test.ts` — the award test pins `source_document_id: "d1"`, "postInvoice writes the invoice as the actual's source document", the unwind test pins `posted_entry_id` read and the approval test pins the link written; `lib/__tests__/moneyRailsMigration.test.ts` pins the backfill's uniqueness predicate.
+- Reproduced at the base commit: `source_document_id` appeared in no `.ts` file; `posted_entry_id` was written once and read nowhere.
+- Pending migration: `20261093_prj_roundG_money_rails.sql` (backfill only; new writes carry the link without it).
+
+**Done-when.**
+- [x] addEntry accepts and writes source_document_id; awardQuote / postInvoice pass the document's id.
+- [x] ChangeOrder maps posted_entry_id and the CO row offers an unwind that voids exactly that entry.
+- [x] The entry list links each entry to its source document or change order.
+- [x] Tests pin the source link on award and post, and the entry link on approval (a CO's entry is linked through `posted_entry_id`, the reverse direction).
+
+**Scope / residual.** None beyond the backfill's ambiguous residue, reported by the migration's final row.
+
 ---
 
 <a id="cost-10"></a>
@@ -303,7 +376,7 @@ supabase/migrations/20260908_cost_control.sql:56-57 — `ALTER TABLE cost_entrie
 ## COST-10 · Financial rows are deletable: no DELETE guard on cost_entries, change_orders, or cost_documents, contradicting the code's stated never-delete invariant
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260906_projects_hardening.sql:158-175`, `supabase/migrations/20261013_project_controls_program.sql:262-266`, `supabase/migrations/20261013_project_controls_program.sql:304-314`, `lib/costs.ts:246-257`, `lib/costDocs.ts:308-309`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The codebase demonstrably knows the fix — 20260814_documents_delete_controllers.sql:44 and 20260815:24-29 use `AS RESTRICTIVE FOR DELETE`, and 20260826 adds BEFORE DELETE triggers for legal holds — but none of that was applied to the money tables.
@@ -324,6 +397,17 @@ supabase/migrations/20261013_project_controls_program.sql:310 — `'CREATE POLIC
 - [ ] Any deletion that is genuinely required (org teardown, data-retention purge) runs through an explicit service-role path that writes an audit_logs entry first
 - [ ] The stated invariant in lib/costs.ts:246 names the database guard that enforces it rather than describing a convention the schema does not hold
 
+**Resolution (2026-09-23, projects Round G — code half; the rail is the migration).** Joint J3 MONEY-LEDGER. Migration `20261093` adds `enforce_cost_ledger_delete_guard()` (SECURITY DEFINER, `SET search_path = public`, 20260826's shape) as a BEFORE DELETE row trigger on `cost_entries`, `change_orders`, `cost_documents` AND `cost_accounts`: every DELETE is refused (`check_violation`, "Financial records are never deleted — void the <table> row instead") except (a) the audited project purge, which sets `app.record_purge = 'project:<id>'` for the one project it tears down — the GUC contract shared with PC-2's `delete_project_record`, named here first — and (b) the service role, whose delete is written to `audit_logs` FIRST (`COST_ROW_PURGED`, table + project id). The JWT role is read from the request claim settings (spelled out so the authority census does not mistake it for a headline read). `lib/costs.ts`'s never-delete comment now names the guard. Decision default applied: DELETE refused for authenticated writers outright (no controller exception).
+- Tests: `lib/__tests__/moneyRailsMigration.test.ts` — the function's pin / GUC / audit-first order, the four triggers, the read-only final select.
+- Pending migration: `20261093_prj_roundG_money_rails.sql`. Consequence to know before applying: a project DELETE through PostgREST now fails while the project has cost rows (the FK cascade fires the guard) — that is the rail; PC-2's audited purge RPC is the door.
+
+**Done-when.**
+- [x] cost_entries, change_orders and cost_documents (and cost_accounts) carry a BEFORE DELETE trigger that refuses deletion, in 20260826's shape.
+- [x] A genuinely required deletion runs through the purge GUC or the service role, which writes an audit_logs entry first.
+- [x] `lib/costs.ts`'s invariant names the database guard.
+
+**Scope / residual.** The split of `change_orders`' FOR ALL grant (no DELETE policy at all) is `20261094`; the four cost tables' `*_write` / `*_owner_write` FOR ALL policies keep their DELETE grant on paper — the trigger refuses it regardless, and narrowing those loops is left to a later sweep so this package's migration count stays at two.
+
 ---
 
 <a id="cost-11"></a>
@@ -331,7 +415,7 @@ supabase/migrations/20261013_project_controls_program.sql:310 — `'CREATE POLIC
 ## COST-11 · Money-path writes whose errors are swallowed: a failed rival-decline still reports a successful award, leaving every losing bid awardable
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/costDocs.ts:250-257`, `lib/costDocs.ts:196-201`, `lib/changeOrders.ts:176-188`, `lib/costs.ts:111-117`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The swallowed write is real, but the headline consequence is FALSE: the losing bids are not awardable. QuotesPanel.tsx:205 computes `const awarded = groupDocs.find((d) => d.status === "awarded")` over the whole RFQ group (the same group awardQuote uses to pick rivals, costDocs.ts:250-251), and both Award affordances are gated on it — `{canManage && !awarded && (…PostControls… label="Award")}` at :309-314 for the bid table and `canManage && !awarded && d.status === "parsed"` at :356 for typed-total bids. Once one bid in the group is awarded the Award button disappears for every sibling, so no second commitment can be posted through the UI. What actually survives is cosmetic/reporting: the rivals stay labelled "Read — awaiting your review" forever and never register as considered-and-declined.
@@ -354,6 +438,17 @@ lib/costDocs.ts:256 — `.then(() => undefined, () => undefined);` on the rival-
 - [ ] revertDocTransition and decideChangeOrder's revert surface their failure to the caller so a claimed-but-unposted row is visibly stuck rather than silently stuck
 - [ ] A reconciliation exists for the two orphan states the claim-then-post design can produce: cost_documents in 'awarded'/'posted' with no matching entry, and change_orders in 'approved' with posted_entry_id null
 - [ ] The audit helpers in lib/costs.ts:111-117 and lib/costDocs.ts:78-84 at minimum log their failure rather than discarding it (cite the audit-logger finding in audit-reports/roles-and-permissions)
+
+**Resolution (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER (projects-tab pair `MON-1`, resolved there). (1) `awardQuote`'s rival-decline reads `{ error }` and the matched count and returns `{ ok: true, warning }` naming the shortfall. (2) `revertDocTransition` returns `{ ok, error }` and both money paths report a claimed-but-unposted row as STUCK with its id; `decideChangeOrder`'s `revertDecision` is checked and throws naming the CO as stuck; the `posted_entry_id` link write is checked and reported as a warning. (3) Reconciliation: `listLedgerOrphans` + the `cost_ledger_orphans` view (`20261093`) + the Costs tab's data-health line + `repairCostDoc`. (4) The audit helpers in `lib/costs.ts` and `lib/costDocs.ts` log a failed insert (`console.warn` with the action and resource id) instead of `.then(() => undefined, () => undefined)`.
+- Tests: `lib/__tests__/costDocs.test.ts` — "a failed rival-decline is a PARTIAL outcome", "post failure + revert failure is reported as STUCK…", "post failure + revert failure names the CO as stuck; a saved-link failure is a warning on success", the orphans / repair cases.
+
+**Done-when.**
+- [x] The rival-decline update checks its {error} and matched count; awardQuote reports a partial outcome.
+- [x] revertDocTransition and decideChangeOrder's revert surface their failure to the caller.
+- [x] A reconciliation exists for both orphan states.
+- [x] The audit helpers at minimum log their failure (the roles-and-permissions audit-logger finding is the precedent).
+
+**Scope / residual.** The change-order panel surfaces the warning through the shared `setErr` (which `UX-8`'s limb now scrolls into view). Pending migration `20261093` for the view only.
 
 ---
 
@@ -425,7 +520,7 @@ app/api/projects/cost-docs/route.ts:27 — `const MAX_PAGES = 8;` and line 97 `r
 ## COST-14 · voidCostDoc decides from a stale client snapshot, so an awarded or posted document can be voided while its cost entry stays on the budget
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/costDocs.ts:310-318`, `lib/costDocs.ts:170-192`, `components/projects/cost/QuotesPanel.tsx:172-174`, `components/projects/cost/QuotesPanel.tsx:360-362`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The stale-snapshot race is real and the file's own sibling function shows the guard it is missing. Reachable for invoices (:172-174) and typed-total quotes (:360-362); a parsed quote in the bid table has no Void affordance, which narrows the exact scenario in the summary but not the defect.
@@ -447,5 +542,15 @@ lib/costDocs.ts:312-315 — `if (doc.status === "awarded" || doc.status === "pos
 - [ ] voidCostDoc routes through claimDocTransition (from ['draft','parsed'] to 'void') so the guard runs against the database row, not the client snapshot
 - [ ] The UPDATE carries `.in("status", ["draft","parsed"])` and a zero-row match is reported as "someone else just decided this document", matching the module's existing convention
 - [ ] A test pins that voiding a document whose stored status is 'awarded' fails even when the caller passes a snapshot claiming 'parsed'
+
+**Resolution (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER (projects-tab pair `MON-3`, resolved there). `voidCostDoc` routes through `claimDocTransition(doc.id, ["draft", "parsed"], "void", uid, false)` — the guard runs against the database row; the UPDATE carries `.in("status", ["draft","parsed"])` and a zero-row match is "Someone else just decided this document — refresh to see the latest" (a row already awarded is named as such). `setManualTotal` is the same shape with the row's real status re-read on zero rows (BID-9's correct/void on parsed rows rides on the same predicate).
+- Tests: `lib/__tests__/costDocs.test.ts` "voiding a document whose stored status is awarded is refused even when the caller passes a snapshot claiming parsed".
+
+**Done-when.**
+- [x] voidCostDoc routes through claimDocTransition (draft/parsed → void).
+- [x] The UPDATE carries `.in("status", ["draft","parsed"])` and a zero-row match is reported in the module's convention.
+- [x] A test pins that voiding a document whose stored status is 'awarded' fails even when the snapshot claims 'parsed'.
+
+**Scope / residual.** None. The secondary effect the verifier noted (voiding an awarded doc re-opening Award on its rivals) is closed by the same predicate.
 
 ---

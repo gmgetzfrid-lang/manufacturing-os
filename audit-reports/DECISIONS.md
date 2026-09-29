@@ -497,6 +497,8 @@ pre-emptively.
 **Risk:** high — changes what is possible on every ticket in orgs above the
 threshold.
 
+*Landed 2026-09-23 (projects Round G): the same derivation on change orders — `decideChangeOrder` (`lib/changeOrders.ts`) refuses a proposer's own decision while the org has another eligible decider (active controller-tier holders plus the project owner, minus the actor), allows and MARKS it when nobody else can, and `enforce_change_order_decision_guard` (`20261094`) applies the rule at the database for `NEW.decided_by`. Counted from the eligible-decider set rather than the raw active-member count, since only controllers and the owner can decide a CO. See `COST-6`.*
+
 <a id="dec-13"></a>
 ## DEC-13 · Does `policyAllows` gain a resource dimension?
 
@@ -1292,6 +1294,8 @@ facility with no configuration must keep working exactly as it does today.
 
 **Risk:** medium — wide, but mechanical.
 
+*Landed 2026-09-23 (projects Round G): the change-order approval threshold is configuration — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }`, read by `loadApprovalThreshold` and by the `20261094` trigger; the decider tier above it is the controller collection (`memberHoldsAny(m, ["Admin","DocCtrl"])` / the `is_org_controller` predicate), never a facility role name. Default: no threshold until an org sets one. See `COST-6`, `DEC-44`.*
+
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
 
@@ -1700,3 +1704,68 @@ role ids) — then scope lives on the id, is checked in `node_visible` after
 the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
+
+<a id="dec-44"></a>
+## DEC-44 · The money ledger's derived figures and rails
+
+**Decision. The cost rollup's headline is what is still UNCOMMITTED; approved
+change orders revise the budget without touching the baseline; CPI forecasts
+only what CPI measured; the ledger is never deleted; and a refusal is always
+a sentence with a repair path, never a silent success.**
+
+> Made during projects Round G (2026-09-23) by the joint J3 MONEY-LEDGER
+> package, taking the briefs' stated defaults. Each rule below is the fail-safe
+> reading of its evidence, chosen so the packages that consume these figures
+> (health, report, charts) can proceed.
+
+**Rules.**
+1. **Exposure** = spent + open commitments, where a commitment is drawn down
+   by the actuals invoiced against it, matched by party, never below zero.
+   `remaining` = revised budget − exposure, labelled *Available (uncommitted)*;
+   the actuals-only figure is secondary; `overBudget` trips on exposure
+   (`MON-4` / `COST-2`). An unmatched party over-counts exposure — the
+   conservative direction.
+2. **Revised budget** = budget + approved change orders by cost account. The
+   original budget stays the visible baseline; EV, CPI, remaining, overBudget
+   and the forecast use the revised figure; the health score's "change
+   control" part keeps scoring growth against the baseline and says so
+   (`COST-4`). No stored `budget_revised` column — derived from the ledger.
+3. **CPI scope.** The CPI-based EAC applies to the milestone-pinned subset;
+   the unpinned remainder is carried at the run-rate when the schedule gives
+   one, else at budget; every part is floored at its own spend, so an EAC is
+   never below money already spent; the split is labelled wherever the EAC is
+   printed (`COST-1`).
+4. **Change-order authority.** Self-decision is refused while another
+   eligible decider exists (DEC-12's derivation over controllers + owner,
+   DEC-37's one-deliverable reading), otherwise allowed and marked; the
+   approval threshold is `org_configurations.change_order_approval_threshold`
+   with **no default** — a shipped default that blocked every large CO would
+   strand real approvals; the marker + audit make the gap visible (`COST-6`).
+5. **No FX.** A document in another currency than its budget line is refused
+   at posting; no conversion is built (`COST-8`).
+6. **Never delete.** Every DELETE on the four money tables is refused at the
+   database except the audited project purge (`app.record_purge =
+   'project:<id>'`, the GUC contract shared with the project-purge RPC) and
+   the service role, audited first (`COST-10`). A project with cost rows
+   cannot be deleted through PostgREST — the purge RPC is the door.
+7. **Repair, not correction.** A claimed-but-unposted document or an approved
+   change order with no linked entry is surfaced on the Costs tab and repaired
+   by an audited re-post or revert, never rewritten silently (`MON-1` /
+   `COST-11`).
+8. **Declined rivals.** An award declines every still-open quote on its
+   scope: the RFQ group when grouped, every other open ungrouped quote on the
+   project when not. Group quotes to keep different scopes apart (`MON-10`).
+9. **Do-not-use.** Awarding a company flagged `do_not_use` or `inactive`
+   needs a reasoned override, audited by company id (`MON-12`).
+
+**Acceptance.** `lib/__tests__/costs.test.ts`, `lib/__tests__/costDocs.test.ts`,
+`lib/__tests__/moneyRailsMigration.test.ts`; migrations `20261093`, `20261094`.
+
+**Reversal.** Per rule: 1 and 2 are label + formula changes in `lib/costs.ts`;
+3 is `computeForecast`'s pinned branch; 4's threshold is per-org
+configuration; 6 is the two trigger functions; 8 is one filter in
+`awardQuote`.
+
+**Risk:** medium — the headline money figure changes meaning on every Costs
+tab (from budget − spent to budget − exposure); the previous figure stays
+visible as the secondary line.

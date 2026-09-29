@@ -300,6 +300,14 @@ explain why on the button.
 - An error from a control below the fold is visible without scrolling.
 - "Mark complete" is disabled with a visible reason when it would be refused.
 
+**Partial (2026-09-23, projects Round G — the `CostsTab.tsx:119-124` limb only; the ID closes in P2/J2).** Joint J3 MONEY-LEDGER. `components/projects/CostsTab.tsx`: the banner carries `ref` / `tabIndex={-1}` / `role="alert"`, and a `useEffect` on `err` scrolls it into view (`scrollIntoView({ block: "nearest", behavior: "smooth" })`) and moves focus to it — so an error raised by Approve / Reverse / Award / Void far below the fold is seen and announced. The quotes and change-order panels keep raising through the same `setErr`, which is also how `decideChangeOrder`'s partial-outcome warning (`COST-11`) and `awardQuote`'s rival warning reach the user.
+
+**Done-when.**
+1. ✓ for the Costs tab — an error from a control below the fold is brought into view (and focused).
+2. ✗ NOT DONE HERE — "Mark complete" disabled-with-reason is `QualityTab.tsx` / `lib/checklists.ts`, J2's.
+
+**Scope / residual.** OPEN for J2's QualityTab half. Inline placement beside each control is the fuller fix the P7 component-wide package can take; the shared banner is now at least reachable.
+
 ---
 
 ## UX-9 · An action error destroys the entire company page

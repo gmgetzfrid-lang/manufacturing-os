@@ -14,7 +14,7 @@ inconsistent with no way to detect or repair it.
 ## MON-1 · A failed award leaves the document permanently awarded with no commitment, and nothing can repair it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / financial
 - **Locations:**
@@ -65,6 +65,22 @@ money.
 - There is a supported way to repair one.
 - A test simulates post-failure-plus-revert-failure and asserts the state is reported.
 
+**Resolution (2026-09-23, projects Round G).** Worked in the joint J3 MONEY-LEDGER package (projects-tab P3 + projects-and-cost PC-7; the projects-and-cost pair is `COST-11`). The revert is now a CHECKED write and the two orphan states have a query, a UI line and an audited repair — never a delete.
+- `lib/costDocs.ts` `revertDocTransition(docId, backTo, from)` returns `{ ok, error }` (UPDATE carries the claimed status, `.select("id")`, zero rows = failure). `awardQuote` / `postInvoice` call it on the unreadable-total branch AND on the `addEntry` failure branch (the branch the hardening pass found missing); a failed revert returns `stuckMessage(...)` — "the money did not post (…) AND the document could not be put back (…) — it is stuck as awarded with no cost entry. Document <id>: use Repair on the Costs tab". `lib/changeOrders.ts` `revertDecision` is the same shape; a failed revert throws naming the CO as stuck.
+- Detectable: `listLedgerOrphans(orgId, projectId)` (`lib/costDocs.ts`) lists awarded/posted documents with no posted `cost_entries.source_document_id` pointing at them and approved change orders with `posted_entry_id` NULL; migration `20261093` adds the same question as the view `cost_ledger_orphans` (security_invoker) and a DEC-30 inventory of the population before apply. `components/projects/CostsTab.tsx` renders the result as the "Ledger needs attention" line above the stat strip.
+- Repair: `repairCostDoc({ doc, action: "repost" | "revert", costAccountId?, actor })` — re-post writes the missing commitment/actual with the document as its source (`COST_DOC_REPAIRED`, `action: repost`, entry id); revert puts the row back to parsed/draft (`COST_DOC_REPAIRED`, `action: revert`). Both re-check the entry link server-side and refuse a document that has since been made whole. Controller / owner writes only (the existing RLS).
+- Tests: `lib/__tests__/costDocs.test.ts` — "post failure + revert failure is reported as STUCK with the document id", "post failure with a clean revert…", "lists awarded/posted paper with no entry…", "re-post posts the missing commitment…", "revert puts a stuck award back to parsed"; `lib/__tests__/moneyRailsMigration.test.ts` pins the view and the inventory.
+- Reproduced at the base commit: `revertDocTransition` ended in `.then(() => undefined, () => undefined)` and `awardQuote`'s `addEntry` failure branch returned `{ ok: false }` with no revert.
+- Pending migration: `supabase/migrations/20261093_prj_roundG_money_rails.sql` (the view + inventory; the app-side query and repair work without it).
+
+**Done-when.**
+1. ✓ A failed post surfaces an explicit error — the post error, or the stuck message naming the state and the document id when the revert also failed.
+2. ✓ An awarded document with no cost entry is detectable by a query (`listLedgerOrphans`, `cost_ledger_orphans`) and visible in the UI (the "Ledger needs attention" line).
+3. ✓ There is a supported way to repair one (`repairCostDoc`, re-post or revert, audited).
+4. ✓ A test simulates post-failure-plus-revert-failure and asserts the state is reported.
+
+**Scope / residual.** Remediation item 4 (claim-and-post as one database function) is deliberately NOT shipped: the compare-and-swap in `claimDocTransition` is the load-bearing substrate report 03 verified sound, the money path stays `lib/costs.addEntry` only, and every done-when holds with the checked revert + reconciliation + repair. Rivals declined by an award that is later reverted stay declined (the repair line says so). The `409` at `app/api/projects/cost-docs/route.ts:87-92` is untouched — a repaired/reverted document is readable again because its status is.
+
 ---
 
 ## MON-2 · The cost S-curve's planned line starts on the day the first task finishes
@@ -112,7 +128,7 @@ definitions (`MON-6`) so the whole app agrees.
 ## MON-3 · Void and manual-total have no compare-and-swap, in the one file that preaches the discipline
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / financial
 - **Locations:**
@@ -140,6 +156,17 @@ returned row count, exactly as `claimDocTransition` does. Return the same
 - Voiding an awarded document is refused.
 - Setting a manual total on an awarded document is refused.
 - Both refusals are tested.
+
+**Resolution (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER (projects-and-cost pair `COST-14`). Both writers decide against the DATABASE row. `voidCostDoc` routes through `claimDocTransition(doc.id, ["draft", "parsed"], "void", uid, /* stampPosted */ false)` — re-read, status predicate on the UPDATE, `.select("id")`, zero rows = "Someone else just decided this document — refresh"; a row that is already awarded is refused with its real status ("This document is already awarded — refresh to see the latest"). `setManualTotal` carries `.in("status", ["draft", "parsed"])` on its UPDATE, checks the row count, and on zero rows re-reads the row to name the status ("…already awarded — its total is locked"); a draft becomes parsed on a typed total. The client-snapshot check stays as a fast refusal; it is no longer the decision.
+- Tests: `lib/__tests__/costDocs.test.ts` — "voiding a document whose stored status is awarded is refused even when the snapshot says parsed", "a void that loses the race (zero rows matched) is reported…", "setting a manual total on an awarded document is refused with the row's real status…".
+- Reproduced at the base commit: both UPDATEs were `.eq("id", …)` alone.
+
+**Done-when.**
+1. ✓ Voiding an awarded document is refused.
+2. ✓ Setting a manual total on an awarded document is refused.
+3. ✓ Both refusals are tested.
+
+**Scope / residual.** No signature change (P4/J4's QuotesPanel calls are untouched). The portal's "not_selected" mapping of `void` (`app/api/intake/resolve/route.ts`) is P1's; with this fix an awarded document can no longer reach `void` through the app, so the mapping can no longer contradict a posted commitment.
 
 ---
 
@@ -181,6 +208,17 @@ definition.
 - The headline figure accounts for open commitments, or is labelled so it cannot be misread.
 - "Remaining" (or its replacement) has a glossary entry.
 - The lessons-learned draft and the tile agree.
+
+**Partial (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER (projects-and-cost pair `COST-2`; decision default from the brief: the headline is Budget / Committed / Spent / **Available** = budget − spent − open commitments, "Remaining" retired). `lib/costs.ts` `computeCostRollup` now exposes per account and per project `openCommitments` (a commitment counts until the actuals invoiced against it, matched by party, reach its amount), `exposure = spent + openCommitments`, `remaining = revisedBudget − exposure` (uncommitted), `remainingActualsOnly = revisedBudget − spent` (secondary), and `overBudget` trips on exposure. `components/projects/CostsTab.tsx`: the headline tile is "Available" with the definition in its sub-line ("uncommitted (budget − spent − open commitments) · X uninvoiced"); the Committed tile shows the not-yet-invoiced part; each account row shows "X uncommitted" beside "of <revised budget>". `lib/projectReport.ts` reads `d.rollup.remaining`, so the lessons-learned draft and the tile now use the same definition without an edit there.
+- Tests: `lib/__tests__/costs.test.ts` — "budget 1000, committed 900, spent 0 is at risk — 100 uncommitted, not 1000 remaining", "a commitment is drawn down by actuals from the SAME party…", and the first case updated to the new semantics (800 committed / 300 invoiced → 500 open, 250 uncommitted, 750 uninvoiced).
+- Reproduced at the base commit: `remaining: sum(budget) − sum(spent)`.
+
+**Done-when.**
+1. ✓ The headline figure accounts for open commitments (and its sub-line says how).
+2. ✗ NOT DONE HERE — the glossary lives in `CostGlossary` (`components/projects/cost/CostCharts.tsx`), J5 CHARTS' file, where this package may touch only the forecast label. **Pointer to J5:** add `{ term: "Available (uncommitted)", plain: "Budget minus what you've spent minus what you've promised (open commitments, net of the invoices already posted against them). The number you can still award." }`.
+3. ✓ The lessons-learned draft and the tile agree (both consume `rollup.remaining`); the report's "Remaining" row label is P7/J7's one-line limb.
+
+**Scope / residual.** Open until J5 adds the glossary line. The exposure matching rule (by party) is DEC-44's stated default; an invoice posted with no party against an award that carries one is counted as unmatched (conservative — exposure over-counts, never under-counts).
 
 ---
 
@@ -372,12 +410,24 @@ never runs, and the Award button spins indefinitely.
 - The database rejects an unmapped status.
 - A test covers the unmapped-status path.
 
+**Partial (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER. `lib/costDocs.ts` `costDocStatusLabel(status)` is the total lookup (`COST_DOC_STATUS_LABEL[status] ?? status`), used by `claimDocTransition`, `setManualTotal`, `repairCostDoc` and the Costs tab's data-health line; an unmapped status now yields "This document is already <status> — refresh to see the latest" instead of a throw inside the award path. Migration `20261093` adds `cost_documents_status_check` and `cost_documents_kind_check` (NOT VALID, duplicate-guarded — 20260908's shape) so an unmapped value cannot be written; the DEC-30 inventory counts rows outside either set before apply.
+- Tests: `lib/__tests__/costDocs.test.ts` "costDocStatusLabel is total; the award path names the odd status instead of hanging"; `lib/__tests__/moneyRailsMigration.test.ts` pins both CHECKs.
+- Pending migration: `20261093_prj_roundG_money_rails.sql`.
+
+**Done-when.**
+1. ✓ An unmapped status produces a readable error, not a hang.
+2. ✗ NOT DONE HERE — the `try/catch` + `finally { setBusy(null) }` around the `award` call is in `components/projects/cost/QuotesPanel.tsx`, P4/J4 BIDTAB's file. With (1) the lib no longer throws on this path, so the button no longer hangs on THIS cause; the belt-and-braces wrap is J4's limb.
+3. ✓ The database rejects an unmapped status or kind (once `20261093` is applied).
+4. ✓ A test covers the unmapped-status path.
+
+**Scope / residual.** Open until J4 lands the call-site wrap. `REL-4`'s money-table half rides here.
+
 ---
 
 ## MON-9 · Two simultaneous change-order proposals collide on the generated number
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -398,6 +448,16 @@ project.
 **Done when.**
 - Two concurrent proposals both succeed with distinct numbers.
 - A genuine collision produces a human message, never raw constraint text.
+
+**Resolution (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER. `lib/changeOrders.ts` `proposeChangeOrder` retries a `23505` up to three times: each attempt re-reads the project's maximum and takes `max(maxN + 1, lastTried + 1)` — so a rival whose row is not yet visible is stepped past instead of collided with again, and a visible one is simply counted. After three collisions the user reads "Another change order was numbered at the same moment — try again and it will take the next number." (the `saveCompany` precedent), never the constraint text. Any other insert error surfaces as before.
+- Tests: `lib/__tests__/costDocs.test.ts` — "two concurrent proposals both succeed with distinct numbers — the loser retries past the collision" (CO-001 live, CO-002 collides → CO-003), "three collisions produce a human sentence, never the constraint text".
+- Reproduced at the base commit: read-max-then-insert with `if (error) throw new Error(error.message)`.
+
+**Done-when.**
+1. ✓ Two concurrent proposals both succeed with distinct numbers.
+2. ✓ A genuine collision produces a human message, never raw constraint text.
+
+**Scope / residual.** No per-project sequence at the database (the unique index `change_orders_project_number_key` remains the arbiter); a numbering gap after a stepped-past collision is possible and preferred over a second collision. No migration.
 
 ---
 
@@ -428,6 +488,16 @@ group. Send the notification promised at `upload/route.ts:127`.
 **Done when.**
 - Every losing bid on an awarded scope reaches a terminal status.
 - The contractor is notified of the outcome.
+
+**Partial (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER (brief: "costDocs decline-all-rivals"). `lib/costDocs.ts` `awardQuote` now derives the rival set from the awarded scope: the same RFQ group when the award is grouped (as before), and — when the award is UNGROUPED — every other still-open ungrouped quote on the project, since an ungrouped award has no narrower scope to decline within. Already-decided rivals are never touched (`.in("status", ["draft","parsed"])` stays the DB-side guard) and grouped quotes are left alone by an ungrouped award. The decline is a checked write (`COST-11`): its `{ error }` and matched count are read and a shortfall is returned as `{ ok: true, warning }` ("Awarded, but N of M competing bid(s) could not be marked not-selected — refresh and decline them by hand"). The audit row records `rivalsConsidered` and `rivalsDeclined`.
+- Tests: `lib/__tests__/costDocs.test.ts` — "posts the commitment…declines the group's open rivals…" (grouped: only the group's open rival flips), "an UNGROUPED award declines every other open ungrouped quote on the project, and leaves grouped ones alone", "a failed rival-decline is a PARTIAL outcome".
+- Decision (DEC-44): to keep ungrouped quotes for different scopes apart, group them — the RFQ group is the scope handle; the portal renders whatever status this sets (P1).
+
+**Done-when.**
+1. ✓ Every losing bid on an awarded scope reaches a terminal status (`declined`).
+2. ✗ NOT DONE HERE — the contractor is external and has no user id; `lib/notify` has no vendor-email kind and the notifications area keeps the taxonomy (PROD-6). The award notice this round (`MON-11`) reaches the project owner and followers; the vendor's signal is the portal status chip P1 renders from the status this sets.
+
+**Scope / residual.** Open on the contractor notification only. `BID-10` (group normalisation) is J4's and would make the grouped rule stricter still.
 
 ---
 
@@ -464,12 +534,23 @@ already shows state.
 - A change-order approval notifies the proposer.
 - A turnover rejection notifies whoever is responsible for the item.
 
+**Partial (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER — the two emits this package owns, through `lib/notify/dispatch.emit` with existing kinds only (no taxonomy change): `lib/costDocs.ts` `notifyAward` (after a successful award: category `status`, kind `project_status`, audience = the project owner + followers of the project, actor excluded; body names the vendor, the scope and the posted amount; link to the Costs tab) and `lib/changeOrders.ts` `notifyApproval` (after a successful approval: the proposer, `created_by`, unless they decided it themselves). Both are best-effort behind the money (a failed emit is logged, never fails the award/approval).
+- Tests: `lib/__tests__/costDocs.test.ts` — the award test asserts one emit with `involved: ["u-owner"]`, `resource: { type: "project" }`; "an approval notifies the proposer (and not the decider)".
+- Reproduced at the base commit: no notification import in either library.
+
+**Done-when.**
+1. ✓ Awarding notifies the project owner (and project followers); the "affected party" (the vendor) is external — see `MON-10`.
+2. ✓ A change-order approval notifies the proposer.
+3. ✗ NOT DONE HERE — the turnover-rejection emit is P2/J2 QUALITY's limb (`lib/turnover.ts`).
+
+**Scope / residual.** Open until J2 lands the turnover emit. notifications `PROD-6` should point at these two call sites for the cost/CO half.
+
 ---
 
 ## MON-12 · A company flagged "do not use" can still be awarded work
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** process / governance
 - **Locations:**
@@ -501,6 +582,17 @@ explicit override that captures a reason and writes an audit row. Decide what
 - Awarding a `do_not_use` company requires an explicit, reasoned override.
 - The override is audited.
 - `inactive` either has behaviour or no longer exists.
+
+**Resolution (2026-09-23, projects Round G).** Joint J3 MONEY-LEDGER — the server-side refusal (the QuotesPanel chip is P4/J4's; the companies page tooltip at `:522` is P9's). `lib/costDocs.ts` `companyBehind(doc)` resolves the company by the party's registry link first (`project_parties.company_id`, the column `COST-12`'s picker will write — `CostParty.companyId` and `saveParty`'s patch carry it from this round) and by exact case-insensitive name only as a fallback (a single match; two or none → no company). `awardQuote` refuses a `do_not_use` OR `inactive` company BEFORE the claim unless the caller passes `overrideReason` (new optional input field — existing calls unchanged); an override is audited as `COST_DOC_AWARD_OVERRIDE` with `companyId`, `companyName`, `companyStatus` and the reason, and the award's own audit row carries the company id and the override. `inactive` therefore now has behaviour: hidden from award unless overridden, same path as `do_not_use` (decision default from the brief; DEC-44).
+- Tests: `lib/__tests__/costDocs.test.ts` — "a do-not-use company (by the party's registry link) needs a reasoned override, which is audited by company id", "an inactive company matched by exact name is refused the same way; an unknown vendor is not blocked".
+- Reproduced at the base commit: `awardQuote` read no company status.
+
+**Done-when.**
+1. ✓ Awarding a `do_not_use` company requires an explicit, reasoned override.
+2. ✓ The override is audited (company id + reason).
+3. ✓ `inactive` has behaviour (refused at award without an override).
+
+**Scope / residual.** The override affordance (a reason prompt on the Award button) is a QuotesPanel change for J4; until it lands, a flagged company simply cannot be awarded from the UI — the safe direction. A failed company lookup blocks nothing (the flag is advisory when unreadable) — the exact-name fallback is `BID-12`'s known weakness and the registry link is the durable key.
 
 ---
 
