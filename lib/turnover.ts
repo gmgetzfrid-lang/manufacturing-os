@@ -4,13 +4,24 @@
 // and did OUR side actually review them?" — that question becomes rows.
 // Each turnover item is one required content of the package (weld map, NDE
 // reports, MTRs…), seeded by job size, tracked open → received → accepted /
-// rejected / waived with the reviewer's name on the decision. Acceptance
-// rates roll up to the contractor's permanent scorecard, and accepted items
-// become evidence the checklist engine can cite. The punch list is the
-// closeout snag list — small, dated, and visible until it's empty.
+// rejected / waived with the reviewer's name on the decision and — on
+// accept — the document that was reviewed (QUAL-13). Every decision also
+// lands as a turnover_review_events row (QUAL-11): a review history that is
+// never overwritten, in which a rejection is a nonconformance event the
+// scorecard and the report can read, and from which an accepted or waived
+// item can be reopened with a reason. Accepted items become evidence the
+// checklist engine can cite. The punch list is the closeout snag list —
+// small, dated, and visible until it's empty — and closing an item records
+// who closed it, what was done, and whether it was done or voided (QUAL-7).
+//
+// Every decision write is a checked write (lib/checkedWrite.ts, GAP-402):
+// a refusal surfaces and audits nothing. Waive, reject, reopen and void
+// require a typed reason that meets the bar (SAF-4 / GAP-405, server-side).
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
+import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
+import { reasonProblem } from "@/lib/checklistEngine";
 
 export type TurnoverStatus = "open" | "received" | "accepted" | "rejected" | "waived";
 
@@ -38,15 +49,34 @@ export interface TurnoverItem {
   createdAt: string | null;
 }
 
+export type TurnoverEventKind = "review" | "reopen" | "nonconformance";
+
+/** One row of the review history (QUAL-11) — append-only at the database. */
+export interface TurnoverReviewEvent {
+  id: string;
+  itemId: string;
+  fromStatus: TurnoverStatus | null;
+  toStatus: TurnoverStatus;
+  kind: TurnoverEventKind;
+  reviewerName: string | null;
+  note: string | null;
+  documentId: string | null;
+  createdAt: string | null;
+}
+
 export interface PunchItem {
   id: string;
   orgId: string;
   projectId: string;
   partyId: string | null;
   title: string;
+  description: string | null;
+  location: string | null;
   status: "open" | "done" | "void";
   dueDate: string | null;
   closedAt: string | null;
+  closedByName: string | null;
+  closureNote: string | null;
   createdByName: string | null;
   createdAt: string | null;
 }
@@ -103,6 +133,20 @@ function mapItem(r: Record<string, unknown>): TurnoverItem {
   };
 }
 
+function mapEvent(r: Record<string, unknown>): TurnoverReviewEvent {
+  return {
+    id: String(r.id),
+    itemId: String(r.item_id),
+    fromStatus: (r.from_status as TurnoverStatus | null) ?? null,
+    toStatus: (r.to_status as TurnoverStatus) ?? "open",
+    kind: (r.kind as TurnoverEventKind) ?? "review",
+    reviewerName: (r.reviewer_name as string | null) ?? null,
+    note: (r.note as string | null) ?? null,
+    documentId: (r.document_id as string | null) ?? null,
+    createdAt: (r.created_at as string | null) ?? null,
+  };
+}
+
 function mapPunch(r: Record<string, unknown>): PunchItem {
   return {
     id: String(r.id),
@@ -110,9 +154,13 @@ function mapPunch(r: Record<string, unknown>): PunchItem {
     projectId: String(r.project_id),
     partyId: (r.party_id as string | null) ?? null,
     title: String(r.title ?? ""),
+    description: (r.description as string | null) ?? null,
+    location: (r.location as string | null) ?? null,
     status: (r.status as PunchItem["status"]) ?? "open",
     dueDate: (r.due_date as string | null) ?? null,
     closedAt: (r.closed_at as string | null) ?? null,
+    closedByName: (r.closed_by_name as string | null) ?? null,
+    closureNote: (r.closure_note as string | null) ?? null,
     createdByName: (r.created_by_name as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
   };
@@ -126,13 +174,29 @@ async function audit(action: string, orgId: string, resourceId: string, actor: A
   }).then(() => undefined, () => undefined);
 }
 
+const actorName = (actor: Actor) => actor.email?.split("@")[0] ?? null;
+
 // ── Turnover items ───────────────────────────────────────────────────────
 
+/** The turnover items, or a thrown error the surface renders as "failed to
+ *  load" — never an empty state standing in for a denial (UX-10). */
 export async function listTurnoverItems(orgId: string, projectId: string): Promise<TurnoverItem[]> {
-  const { data } = await supabase.from("turnover_items").select("*")
+  const { data, error } = await supabase.from("turnover_items").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: true }).limit(300);
+  if (error) throw new Error(describeWriteError(error));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapItem);
+}
+
+/** The review history for a project's turnover items, oldest first. A
+ *  missing table (pre-migration) is an empty history, not a failure — the
+ *  items themselves still render. */
+export async function listTurnoverReviewEvents(orgId: string, projectId: string): Promise<TurnoverReviewEvent[]> {
+  const { data, error } = await supabase.from("turnover_review_events").select("*")
+    .eq("org_id", orgId).eq("project_id", projectId)
+    .order("created_at", { ascending: true }).limit(1000);
+  if (error) return [];
+  return (((data ?? []) as Array<Record<string, unknown>>)).map(mapEvent);
 }
 
 /** Seed the required contents for the job size — skipping names that
@@ -143,7 +207,9 @@ export async function seedTurnoverItems(input: {
   partyId?: string | null;
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string; added: number }> {
-  const existing = await listTurnoverItems(input.orgId, input.projectId);
+  let existing: TurnoverItem[];
+  try { existing = await listTurnoverItems(input.orgId, input.projectId); }
+  catch (e) { return { ok: false, error: (e as Error).message, added: 0 }; }
   const have = new Set(existing.map((i) => i.name.toLowerCase()));
   const rows = seedsForJobKind(input.jobKind)
     .filter((s) => !have.has(s.name.toLowerCase()))
@@ -154,12 +220,12 @@ export async function seedTurnoverItems(input: {
       created_by: input.actor.uid,
     }));
   if (rows.length === 0) return { ok: true, added: 0 };
-  const { error } = await supabase.from("turnover_items").insert(rows);
-  if (error) return { ok: false, error: error.message, added: 0 };
+  const w = await checkedWrite(supabase.from("turnover_items").insert(rows).select("id"));
+  if (!w.ok) return { ok: false, error: w.error, added: 0 };
   await audit("TURNOVER_SEEDED", input.orgId, input.projectId, input.actor, {
-    jobKind: input.jobKind, added: rows.length,
+    jobKind: input.jobKind, added: w.ids.length,
   });
-  return { ok: true, added: rows.length };
+  return { ok: true, added: w.ids.length };
 }
 
 export async function addTurnoverItem(input: {
@@ -169,23 +235,41 @@ export async function addTurnoverItem(input: {
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!input.name.trim()) return { ok: false, error: "Name the turnover item." };
-  const { error } = await supabase.from("turnover_items").insert({
+  const w = await checkedWrite(supabase.from("turnover_items").insert({
     org_id: input.orgId, project_id: input.projectId,
     party_id: input.partyId ?? null,
     name: input.name.trim(), description: input.description?.trim() || null,
     required: input.required !== false,
     created_by: input.actor.uid,
-  });
-  if (error) return { ok: false, error: error.message };
+  }).select("id"));
+  if (!w.ok) return { ok: false, error: w.error };
   await audit("TURNOVER_ITEM_ADDED", input.orgId, input.projectId, input.actor, { name: input.name.trim() });
   return { ok: true };
+}
+
+/** Append one row to the review history. A refused or failed insert is
+ *  reported — the status write already landed, so the caller says so. */
+async function recordReviewEvent(input: {
+  item: TurnoverItem; from: TurnoverStatus; to: TurnoverStatus; kind: TurnoverEventKind;
+  note: string | null; documentId: string | null; actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const w = await checkedWrite(supabase.from("turnover_review_events").insert({
+    org_id: input.item.orgId, project_id: input.item.projectId, item_id: input.item.id,
+    from_status: input.from, to_status: input.to, kind: input.kind,
+    reviewer: input.actor.uid, reviewer_name: actorName(input.actor),
+    note: input.note, document_id: input.documentId,
+  }).select("id"));
+  return w.ok ? { ok: true } : { ok: false, error: w.error };
 }
 
 /**
  * Move one item through the review: mark received (optionally attaching the
  * submitted document), then accepted / rejected / waived — decisions stamp
- * the reviewer's name and note. Acceptance rates feed the contractor's
- * scorecard, so the decision is the record.
+ * the reviewer's name and note, and an accept records the document that was
+ * reviewed (QUAL-13). Reject and waive REQUIRE a reason that meets the bar
+ * (SAF-4). The prior decision survives as a turnover_review_events row —
+ * a rejection as a `nonconformance` event (QUAL-11). Acceptance rates feed
+ * the contractor's scorecard, so the decision is the record.
  */
 export async function reviewTurnoverItem(input: {
   item: TurnoverItem;
@@ -195,86 +279,149 @@ export async function reviewTurnoverItem(input: {
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   const { item } = input;
+  const note = input.note?.trim() || null;
+  if (input.status === "rejected" || input.status === "waived") {
+    const problem = reasonProblem(note);
+    if (problem) return { ok: false, error: problem };
+  }
   const row: Record<string, unknown> = { status: input.status };
   if (input.documentId !== undefined) row.document_id = input.documentId;
   if (input.status === "accepted" || input.status === "rejected" || input.status === "waived") {
     row.reviewed_at = new Date().toISOString();
     row.reviewed_by = input.actor.uid;
-    row.reviewed_by_name = input.actor.email?.split("@")[0] ?? null;
-    row.review_note = input.note?.trim() || null;
+    row.reviewed_by_name = actorName(input.actor);
+    row.review_note = note;
   }
-  const { error } = await supabase.from("turnover_items").update(row).eq("id", item.id);
-  if (error) return { ok: false, error: error.message };
+  const w = await checkedWrite(supabase.from("turnover_items").update(row).eq("id", item.id).select("id"));
+  if (!w.ok) return { ok: false, error: w.error };
   await audit("TURNOVER_REVIEWED", item.orgId, item.projectId, input.actor, {
-    itemId: item.id, name: item.name, status: input.status, note: input.note ?? null,
+    itemId: item.id, name: item.name, from: item.status, status: input.status, note,
+    documentId: input.documentId ?? item.documentId ?? null,
   });
+  if (input.status === "accepted" || input.status === "rejected" || input.status === "waived") {
+    const ev = await recordReviewEvent({
+      item, from: item.status, to: input.status,
+      kind: input.status === "rejected" ? "nonconformance" : "review",
+      note, documentId: input.documentId ?? item.documentId ?? null, actor: input.actor,
+    });
+    if (!ev.ok) return { ok: false, error: `The item is now ${input.status}, but the review history row was not written: ${ev.error}` };
+  }
+  return { ok: true };
+}
+
+/** Reopen an accepted or waived item for re-review (QUAL-11): the item goes
+ *  back to "received — awaiting review", the acceptance survives in the
+ *  history, and the reason goes on the record. Authority is the write
+ *  policy's (a controller or the project owner). */
+export async function reopenTurnoverItem(input: {
+  item: TurnoverItem; reason: string; actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { item } = input;
+  if (item.status !== "accepted" && item.status !== "waived") {
+    return { ok: false, error: "Only an accepted or waived item can be reopened." };
+  }
+  const reason = input.reason.trim();
+  const problem = reasonProblem(reason);
+  if (problem) return { ok: false, error: problem };
+  const w = await checkedWrite(supabase.from("turnover_items").update({
+    status: "received",
+    reviewed_at: null, reviewed_by: null, reviewed_by_name: null, review_note: null,
+  }).eq("id", item.id).eq("status", item.status).select("id"));
+  if (!w.ok) return { ok: false, error: w.error };
+  await audit("TURNOVER_REOPENED", item.orgId, item.projectId, input.actor, {
+    itemId: item.id, name: item.name, from: item.status, reason,
+  });
+  const ev = await recordReviewEvent({
+    item, from: item.status, to: "received", kind: "reopen", note: reason,
+    documentId: item.documentId, actor: input.actor,
+  });
+  if (!ev.ok) return { ok: false, error: `The item was reopened, but the review history row was not written: ${ev.error}` };
   return { ok: true };
 }
 
 export interface TurnoverProgress {
   required: number;
-  accepted: number;
+  accepted: number;          // accepted — delivered and reviewed (waived NOT included)
+  waived: number;            // waived — the requirement was set aside, with a reason
   received: number;          // received but not yet decided
   rejected: number;
   outstanding: string[];     // required item names still open/rejected
-  pct: number;               // accepted / required (waived counts as met)
+  pct: number;               // (accepted + waived) / required — met, with the two buckets kept apart
 }
 
 export function computeTurnoverProgress(items: TurnoverItem[]): TurnoverProgress {
   const req = items.filter((i) => i.required);
-  const accepted = req.filter((i) => i.status === "accepted" || i.status === "waived").length;
+  const accepted = req.filter((i) => i.status === "accepted").length;
+  const waived = req.filter((i) => i.status === "waived").length;
   return {
     required: req.length,
     accepted,
+    waived,
     received: req.filter((i) => i.status === "received").length,
     rejected: req.filter((i) => i.status === "rejected").length,
     outstanding: req.filter((i) => i.status === "open" || i.status === "rejected").map((i) => i.name),
-    pct: req.length > 0 ? Math.round((accepted / req.length) * 100) : 100,
+    pct: req.length > 0 ? Math.round(((accepted + waived) / req.length) * 100) : 100,
   };
 }
 
 // ── Punch list ───────────────────────────────────────────────────────────
 
 export async function listPunchItems(orgId: string, projectId: string): Promise<PunchItem[]> {
-  const { data } = await supabase.from("punch_items").select("*")
+  const { data, error } = await supabase.from("punch_items").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(500);
+  if (error) throw new Error(describeWriteError(error));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapPunch);
 }
 
 export async function addPunchItem(input: {
   orgId: string; projectId: string;
   title: string; dueDate?: string | null; partyId?: string | null;
+  description?: string | null; location?: string | null;
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!input.title.trim()) return { ok: false, error: "Describe the punch item." };
-  const { error } = await supabase.from("punch_items").insert({
+  const w = await checkedWrite(supabase.from("punch_items").insert({
     org_id: input.orgId, project_id: input.projectId,
     party_id: input.partyId ?? null,
     title: input.title.trim(), due_date: input.dueDate || null,
+    description: input.description?.trim() || null,
+    location: input.location?.trim() || null,
     created_by: input.actor.uid,
-    created_by_name: input.actor.email?.split("@")[0] ?? null,
-  });
-  if (error) return { ok: false, error: error.message };
+    created_by_name: actorName(input.actor),
+  }).select("id"));
+  if (!w.ok) return { ok: false, error: w.error };
   await audit("PUNCH_ADDED", input.orgId, input.projectId, input.actor, { title: input.title.trim() });
   return { ok: true };
 }
 
+/** Close (done), void, or reopen a punch item. Done records who closed it
+ *  and what closed it (closure note); void REQUIRES a reason (SAF-4) —
+ *  the two are distinguishable on the row, not only by dot colour (QUAL-7). */
 export async function setPunchStatus(input: {
-  item: PunchItem; status: "open" | "done" | "void"; actor: Actor;
+  item: PunchItem; status: "open" | "done" | "void"; note?: string | null; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
+  const note = input.note?.trim() || null;
+  if (input.status === "void") {
+    const problem = reasonProblem(note);
+    if (problem) return { ok: false, error: problem };
+  }
   const row: Record<string, unknown> = { status: input.status };
   if (input.status === "done" || input.status === "void") {
     row.closed_at = new Date().toISOString();
     row.closed_by = input.actor.uid;
+    row.closed_by_name = actorName(input.actor);
+    row.closure_note = note;
   } else {
     row.closed_at = null;
     row.closed_by = null;
+    row.closed_by_name = null;
+    row.closure_note = null;
   }
-  const { error } = await supabase.from("punch_items").update(row).eq("id", input.item.id);
-  if (error) return { ok: false, error: error.message };
+  const w = await checkedWrite(supabase.from("punch_items").update(row).eq("id", input.item.id).select("id"));
+  if (!w.ok) return { ok: false, error: w.error };
   await audit("PUNCH_STATUS", input.item.orgId, input.item.projectId, input.actor, {
-    itemId: input.item.id, title: input.item.title, status: input.status,
+    itemId: input.item.id, title: input.item.title, from: input.item.status, status: input.status, note,
   });
   return { ok: true };
 }
