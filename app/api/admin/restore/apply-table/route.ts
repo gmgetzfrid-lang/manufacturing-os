@@ -76,13 +76,32 @@ export async function POST(req: NextRequest) {
   }
 
   let inserted = 0;
+  // HLD-9 (20261073): the document_holds INSERT guard binds the service role
+  // too — a backup row whose org differs from its document's, or whose
+  // document is gone, is refused by the row's own trigger (23514 / 23503). One
+  // such row must not sink the 499 legitimate holds sharing its chunk: the
+  // chunk is retried row by row and the refused ids are reported, not fatal.
+  const refused: Array<{ id: string | null; code: string; message: string }> = [];
+  const ROW_REFUSAL_CODES = new Set(["23514", "23503"]);
+  const rowRefusalTables = new Set(["document_holds"]);
   for (let i = 0; i < mapped.length; i += 500) {
     const chunk = mapped.slice(i, i + 500);
     const up = await sb.from(table).upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
     if (up.error) {
       const ins = await sb.from(table).insert(chunk, { count: "exact" });
       if (ins.error) {
-        return NextResponse.json({ error: ins.error.message, inserted }, { status: 500 });
+        if (!(rowRefusalTables.has(table) && ROW_REFUSAL_CODES.has(String(ins.error.code ?? "")))) {
+          return NextResponse.json({ error: ins.error.message, inserted }, { status: 500 });
+        }
+        for (const row of chunk) {
+          const one = await sb.from(table).upsert([row], { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
+          if (!one.error) { inserted += one.count ?? 1; continue; }
+          if (!ROW_REFUSAL_CODES.has(String(one.error.code ?? ""))) {
+            return NextResponse.json({ error: one.error.message, inserted, refused }, { status: 500 });
+          }
+          refused.push({ id: typeof row.id === "string" ? row.id : null, code: String(one.error.code), message: one.error.message });
+        }
+        continue;
       }
       inserted += ins.count ?? chunk.length;
     } else {
@@ -98,6 +117,7 @@ export async function POST(req: NextRequest) {
     user_id: actor.userId, user_email: actor.email,
     details: {
       table, rowsReceived: rows.length, rowsAfterFilters: mapped.length, inserted,
+      ...(refused.length ? { refused } : {}),
       backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
       backupOrgName: parsed.manifest?.orgName ?? null,
     },
@@ -106,5 +126,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Rows were written but the restore audit row failed: ${auditErr.message}`, inserted }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, inserted });
+  return NextResponse.json({ ok: true, inserted, ...(refused.length ? { refused } : {}) });
 }

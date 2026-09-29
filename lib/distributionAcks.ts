@@ -14,6 +14,7 @@
 import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
 import { emit } from "@/lib/notify/dispatch";
+import { assertNotOnHold } from "@/lib/holdGate";
 
 export interface DistributionAck {
   id: string;
@@ -120,6 +121,14 @@ export async function requestAcks(input: {
    *  notification); defaults to notifying. */
   notify?: boolean;
 }): Promise<{ requested: number; reminded: number }> {
+  // HLD-1: an acknowledgment is an assignment against the revision — nobody
+  // is asked to confirm they hold a drawing that is under a stop-work. The
+  // recall close-out (`notify: false`, DIST-10) is the record of a recall
+  // already sent to holders of an OUTDATED copy, not an assignment against
+  // the held revision, and proceeds. Fails closed on an unreadable hold set.
+  if (input.notify !== false) {
+    await assertNotOnHold(input.documentId, { action: "requesting confirmations" });
+  }
   const now = new Date().toISOString();
   const uids = input.recipients.map((r) => r.uid);
   let existing = new Map<string, { acknowledged: boolean }>();

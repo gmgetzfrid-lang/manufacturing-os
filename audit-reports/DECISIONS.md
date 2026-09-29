@@ -929,6 +929,8 @@ happen silently.
 
 *Extended 2026-09-17 (roles-and-permissions Round E): the gate keys on the terminal transition (`CLOSED` or `CANCELED`), not on the close action's name, so `cancel_request` (`DEC-14`) meets the same 409 and the same release-or-keep resolution. See `WF-17`.*
 
+*Landed 2026-09-23 (document-control Round F): the `20261073` `document_holds` guard pins a hold's identity and freezes its release record but leaves `origin_ticket_id` writable and admits the ticket close gate's service-role release — which must still name a releaser and a reason, and keeps writing its own audit row. For a signed-in caller a release is never silent and never anonymous: UPDATE requires a reason and attributes to the session, and INSERT refuses a row born released. The service role is trusted to name its actor and write its row (the ticket gate does; a restore replays history). Pinned by shape only until 20261073 is pasted (DEC-30). See `HLD-5`.*
+
 <a id="dec-26"></a>
 ## DEC-26 · Does an as-built ticket classify its own output?
 
@@ -1295,6 +1297,8 @@ facility with no configuration must keep working exactly as it does today.
 **Reversal.** None available. This is a structural constraint, not a preference.
 
 **Risk:** medium — wide, but mechanical.
+
+*Landed 2026-09-23 (document-control Round F): the hold-change and hold-aging audience is the org's `holds.release` pool read from the capability policy (`lib/holds.ts` `holdPoolFromMembers` — tokens expanded against the held collection, per-person grants included), never a literal list; the shipped wildcard is read as "no dedicated pool" and falls back to the controller tier (`isControllerRole`, what `is_org_controller` means) rather than an org-wide broadcast, so an unconfigured org's fan-out is unchanged. Which controls a person sees on the two hold surfaces is the same policy through `holdControlsFor`. See `HLD-8`, `HLD-10`, `HLD-14`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
