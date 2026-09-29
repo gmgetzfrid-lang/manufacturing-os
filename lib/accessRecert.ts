@@ -60,13 +60,18 @@ export function describeRecert(p?: RecertPolicy | null): string {
 // The attestation used to snapshot `libraries.acl` allow-rules — a list that is
 // not the access list. Enforcement is node_visible(): a library whose
 // visibility is null/'normal' is readable by EVERY active member; every
-// Admin/DocCtrl reads everything; the effective owner reads their library; and
-// only then does the chain-merged `acl_index` (not `acl`) decide, with an
-// explicit deny of read/discover winning. The population attested here is
-// resolved by the same rules, expanded to PEOPLE (a role rule admits the
-// members holding that role additively, a team rule its members), with
-// expired rules split out — they may still sit in the index until the nightly
-// rebuild, which is exactly what "expired, still listed" means.
+// Admin/DocCtrl reads everything; the EFFECTIVE owner reads their library
+// (user_is_effective_owner, 20261042: owner_user_id when that person is an
+// active member, else the supervisor of owner_team_id); and only then does
+// the chain-merged `acl_index` (not `acl`) decide through
+// acl_subject_in_bucket (20260708), which has users / roles / teams arms and
+// NO org arm — an `orgs` bucket admits nobody at the database, so it admits
+// nobody here either. An explicit deny of read/discover wins. The population
+// attested here is resolved by the same rules, expanded to PEOPLE (a role
+// rule admits the members holding that role additively, a team rule its
+// members), with expired rules split out — they may still sit in the index
+// until the nightly rebuild, which is exactly what "expired, still listed"
+// means.
 
 export type AccessGrantSource = "default" | "controller" | "owner" | "explicit" | "inherited";
 export interface AccessGrant {
@@ -91,7 +96,7 @@ type MemberRow = { uid: string; display_name: string | null; email: string | nul
 type BucketSide = { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]>; orgs?: Record<string, string[]> } | null | undefined;
 
 const ruleExpired = (r: AccessRule, nowMs: number) => !!r.expiresAt && new Date(String(r.expiresAt)).getTime() <= nowMs;
-const bucketIds = (side: BucketSide, kind: "users" | "roles" | "teams" | "orgs"): Map<string, Set<string>> => {
+const bucketIds = (side: BucketSide, kind: "users" | "roles" | "teams"): Map<string, Set<string>> => {
   const out = new Map<string, Set<string>>();
   const m = side?.[kind] ?? {};
   for (const [action, ids] of Object.entries(m)) {
@@ -105,23 +110,27 @@ const bucketIds = (side: BucketSide, kind: "users" | "roles" | "teams" | "orgs")
 
 export async function listAccessGrantsDetailed(orgId: string, libraryId: string, nowMs: number = Date.now()): Promise<EffectiveAccess> {
   const issues: string[] = [];
-  const [{ data: lib, error: libErr }, { data: members, error: memErr }, { data: teamRows, error: teamErr }] = await Promise.all([
-    supabase.from("libraries").select("visibility, acl, acl_index, owner_user_id").eq("id", libraryId).maybeSingle(),
+  const [{ data: lib, error: libErr }, { data: members, error: memErr }, { data: teamRows, error: teamErr }, { data: teams, error: supErr }] = await Promise.all([
+    supabase.from("libraries").select("visibility, acl, acl_index, owner_user_id, owner_team_id").eq("id", libraryId).maybeSingle(),
     supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", orgId).eq("status", "active"),
     supabase.from("team_members").select("team_id, uid").eq("org_id", orgId),
+    supabase.from("teams").select("id, supervisor_user_id").eq("org_id", orgId),
   ]);
   if (libErr) issues.push(`library: ${libErr.message}`);
   if (!lib && !libErr) issues.push("library: not found");
   if (memErr) issues.push(`members: ${memErr.message}`);
   if (teamErr) issues.push(`teams: ${teamErr.message}`);
+  if (supErr) issues.push(`team supervisors: ${supErr.message}`);
   if (issues.length) return { live: [], expired: [], complete: false, issues, visibility: null };
 
   const visibility = (lib?.visibility as string | null) ?? null;
   const acl = (lib?.acl as AccessControl | null) ?? null;
   const index = (lib?.acl_index as { allow?: BucketSide; deny?: BucketSide } | null) ?? null;
   const ownerId = (lib?.owner_user_id as string | null) ?? null;
+  const ownerTeamId = (lib?.owner_team_id as string | null) ?? null;
   const people = ((members ?? []) as MemberRow[]);
   const byUid = new Map(people.map((m) => [m.uid, m]));
+  const supervisorOf = new Map(((teams ?? []) as Array<{ id: string; supervisor_user_id: string | null }>).map((t) => [t.id, t.supervisor_user_id ?? null]));
   const nameOf = (uid: string) => { const m = byUid.get(uid); return m ? (m.display_name || m.email || uid) : uid; };
   const holdsRole = (m: MemberRow, role: string) => (normalizeRoles(m.roles, m.role) as string[]).includes(role);
   const teamMembers = new Map<string, string[]>();
@@ -139,10 +148,17 @@ export async function listAccessGrantsDetailed(orgId: string, libraryId: string,
     live.set(uid, cur);
   };
 
-  // 1. Controllers and the owner read regardless of the ACL (node_visible
-  //    returns before the index is consulted).
+  // 1. Controllers and the EFFECTIVE owner read regardless of the ACL
+  //    (node_visible returns before the index is consulted). The owner is
+  //    resolved exactly as user_is_effective_owner does: owner_user_id when
+  //    that person is an active member; otherwise, for a team-owned library,
+  //    the team's supervisor (when active). A departed owner admits nobody.
   for (const m of people) if (normalizeRoles(m.roles, m.role).some((r) => r === "Admin" || r === "DocCtrl")) admit(m.uid, ["read"], "Admin/DocCtrl", "controller");
-  if (ownerId) admit(ownerId, ["read"], "library owner", "owner");
+  if (ownerId && byUid.has(ownerId)) admit(ownerId, ["read"], "library owner", "owner");
+  else if (ownerTeamId) {
+    const supervisor = supervisorOf.get(ownerTeamId) ?? null;
+    if (supervisor) admit(supervisor, ["read"], "team supervisor (effective owner)", "owner");
+  }
   // 2. Default visibility admits every active member.
   const isDefault = visibility == null || visibility === "normal";
   if (isDefault) for (const m of people) admit(m.uid, ["read"], "default visibility (open to every active member)", "default");
@@ -167,6 +183,11 @@ export async function listAccessGrantsDetailed(orgId: string, libraryId: string,
   }
 
   // 4. The index the database reads (any allow action lets the row through).
+  //    Only the three arms acl_subject_in_bucket has: users, roles, teams. An
+  //    `orgs` bucket is written by the client-side index builder but no
+  //    database rule ever reads it, so it is NOT expanded — listing every
+  //    member the database refuses would be the over-attestation twin of
+  //    the finding.
   const allow = index?.allow ?? null;
   const explain = (key: string) => liveSubjects.has(key) ? "explicit" as const : expiredSubjects.has(key) ? null : "inherited" as const;
   for (const [uid, actions] of bucketIds(allow, "users")) {
@@ -180,10 +201,6 @@ export async function listAccessGrantsDetailed(orgId: string, libraryId: string,
   for (const [teamId, actions] of bucketIds(allow, "teams")) {
     const src = explain(`team:${teamId}`); if (!src) continue;
     for (const uid of teamMembers.get(teamId) ?? []) admit(uid, actions, `team rule: ${teamId}`, src);
-  }
-  for (const [orgSubject, actions] of bucketIds(allow, "orgs")) {
-    const src = explain(`org:${orgSubject}`); if (!src) continue;
-    for (const m of people) admit(m.uid, actions, "org-wide rule", src);
   }
 
   // 5. An explicit deny of read/discover refuses everyone but controllers

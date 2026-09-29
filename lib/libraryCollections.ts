@@ -8,6 +8,7 @@ import { notify } from "@/lib/inAppNotifications";
 import { getOrgControllers } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig, LibraryHomeConfig } from "@/types/schema";
 
 const TABLE = "collections";
@@ -394,7 +395,33 @@ export async function moveDocumentsServer(params: {
   return { moved, retentionRecomputed, warning };
 }
 
-export async function deleteFolder(collectionId: string, orgId: string): Promise<void> {
+/** What the delete route refuses over (RET-10): the records that would lose
+ *  their retention deadline, with a sample of the deadlines. */
+export interface RetentionLoss { count: number; sample: Array<{ id: string; until: string }> }
+
+/** The default RET-10 confirmation: a dialog naming the count and the
+ *  deadlines about to be lost. Injectable so the decision is testable and a
+ *  caller with its own dialog can supply it. */
+export async function confirmRetentionLoss(loss: RetentionLoss): Promise<boolean> {
+  const sample = loss.sample.slice(0, 3).map((l) => l.until.slice(0, 10)).join(", ");
+  return appConfirm({
+    title: `${loss.count} record${loss.count === 1 ? "" : "s"} would lose ${loss.count === 1 ? "its" : "their"} retention deadline`,
+    message:
+      `This folder carries the retention policy for ${loss.count} record${loss.count === 1 ? "" : "s"}`
+      + (sample ? ` (e.g. retained until ${sample})` : "")
+      + ", and the destination has no policy of its own. Deleting it clears their retention"
+      + " deadline — they will never come up for disposition review. To keep the schedule, set a"
+      + " retention policy on the parent folder or library (or on the records) first."
+      + " Continue and accept the loss on the record?",
+    confirmLabel: "Delete and accept the loss",
+    tone: "danger",
+  });
+}
+
+export async function deleteFolder(
+  collectionId: string, orgId: string,
+  opts: { confirmRetentionLoss?: (loss: RetentionLoss) => Promise<boolean> } = {},
+): Promise<void> {
   // NOT a client-side supabase call, deliberately. collections carries a
   // RESTRICTIVE delete policy with no permissive one, so an anon-key DELETE
   // matches zero rows and reports success — a Delete that visibly does
@@ -404,13 +431,31 @@ export async function deleteFolder(collectionId: string, orgId: string): Promise
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in.");
-  const res = await fetch("/api/collections/delete", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ orgId, collectionId }),
-  });
-  const out = (await res.json().catch(() => null)) as { error?: string } | null;
-  if (!res.ok) throw new Error(out?.error ?? "Couldn't delete the folder.");
+  const post = async (acknowledgeRetentionLoss: boolean) => {
+    const res = await fetch("/api/collections/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(acknowledgeRetentionLoss ? { orgId, collectionId, acknowledgeRetentionLoss: true } : { orgId, collectionId }),
+    });
+    const out = (await res.json().catch(() => null)) as { error?: string; retentionLoss?: RetentionLoss } | null;
+    return { res, out };
+  };
+  const first = await post(false);
+  if (first.res.ok) return;
+  // RET-10: the route refuses (409) when stepping the contents up would clear
+  // a retention deadline. The acknowledgement is a person's decision, taken
+  // here with the count and the deadlines in front of them — never sent
+  // pre-emptively. A declined dialog is a refusal, not a silent success:
+  // the caller must not remove the folder from the screen.
+  const loss = first.res.status === 409 ? first.out?.retentionLoss : undefined;
+  if (loss && typeof loss.count === "number" && loss.count > 0) {
+    const ok = await (opts.confirmRetentionLoss ?? confirmRetentionLoss)(loss);
+    if (!ok) throw new Error(`Folder not deleted — ${loss.count} record${loss.count === 1 ? " keeps its" : "s keep their"} retention deadline.`);
+    const second = await post(true);
+    if (second.res.ok) return;
+    throw new Error(second.out?.error ?? "Couldn't delete the folder.");
+  }
+  throw new Error(first.out?.error ?? "Couldn't delete the folder.");
 }
 
 export interface DeletedFolder {

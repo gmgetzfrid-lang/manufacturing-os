@@ -45,9 +45,27 @@ vi.mock("@/lib/supabaseAdmin", () => {
   return { supabaseAdmin: { from: (t: string) => chain(t), auth: { getUser: async () => ({ data: { user: { id: "u1", email: "u@x" } }, error: null }) } } };
 });
 vi.mock("@/lib/knowledgeAccess", () => ({ loadPrincipal: vi.fn(async () => ({ isController: true })) }));
+// The client half (deleteFolder): a signed-in session, a stubbed dialog, a recorded fetch.
+const client = vi.hoisted(() => ({
+  confirm: true,
+  confirms: [] as Array<Record<string, unknown>>,
+  fetches: [] as Array<Record<string, unknown>>,
+  responses: [] as Array<{ status: number; body: unknown }>,
+}));
+vi.mock("@/lib/supabase", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) }, from: () => { throw new Error("unexpected client query"); } } }));
+vi.mock("@/components/providers/DialogProvider", () => ({
+  appConfirm: vi.fn(async (o: Record<string, unknown>) => { client.confirms.push(o); return client.confirm; }),
+  appAlert: vi.fn(async () => undefined), appPrompt: vi.fn(async () => null),
+}));
+vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+  client.fetches.push(JSON.parse(init.body) as Record<string, unknown>);
+  const next = client.responses.shift() ?? { status: 200, body: { ok: true } };
+  return { ok: next.status < 400, status: next.status, json: async () => next.body };
+}));
 vi.mock("@/lib/serverCollections", () => ({ loadCollectionTree: vi.fn(async () => ({})), rebuildSubtreePaths: vi.fn(async () => undefined) }));
 
 import { POST as DELETE_FOLDER } from "@/app/api/collections/delete/route";
+import { deleteFolder } from "@/lib/libraryCollections";
 import { POST as RESTORE_FOLDER } from "@/app/api/collections/trash/route";
 
 const post = (url: string, body: unknown) => new NextRequest(url, {
@@ -181,5 +199,47 @@ describe("trash restore — RET-10 returns the stepped-up documents and re-clock
     expect(res.status).toBe(200);
     expect(body.documentsReturned).toBe(0);
     expect(body.note).toMatch(/No record of which documents the delete stepped up/);
+  });
+});
+
+describe("RET-10 — the product path: deleteFolder turns the refusal into a confirm-with-count and re-posts the acknowledgement", () => {
+  const refusal = {
+    status: 409,
+    body: { error: "Deleting this folder would remove the retention deadline from 2 record(s)…", retentionLoss: { count: 2, sample: [{ id: "d1", until: "2050-01-01" }, { id: "d2", until: "2049-06-30" }] } },
+  };
+  beforeEach(() => { client.confirm = true; client.confirms = []; client.fetches = []; client.responses = []; });
+
+  it("first POST carries no acknowledgement; on 409 the dialog names the count and deadlines; confirming re-POSTs acknowledgeRetentionLoss: true", async () => {
+    client.responses = [refusal, { status: 200, body: { ok: true } }];
+    await deleteFolder("c1", "org1");
+    expect(client.fetches).toEqual([{ orgId: "org1", collectionId: "c1" }, { orgId: "org1", collectionId: "c1", acknowledgeRetentionLoss: true }]);
+    expect(client.confirms).toHaveLength(1);
+    expect(client.confirms[0].title).toBe("2 records would lose their retention deadline");
+    expect(String(client.confirms[0].message)).toMatch(/retained until 2050-01-01, 2049-06-30/);
+    expect(client.confirms[0]).toMatchObject({ tone: "danger", confirmLabel: "Delete and accept the loss" });
+  });
+  it("declining is a refusal, not a silent success: it throws and never re-POSTs", async () => {
+    client.responses = [refusal];
+    client.confirm = false;
+    await expect(deleteFolder("c1", "org1")).rejects.toThrow(/Folder not deleted — 2 records keep their retention deadline/);
+    expect(client.fetches).toHaveLength(1);
+  });
+  it("a clean delete never asks; any other refusal surfaces the route's message unchanged", async () => {
+    await deleteFolder("c1", "org1");
+    expect(client.confirms).toEqual([]);
+    expect(client.fetches).toEqual([{ orgId: "org1", collectionId: "c1" }]);
+    client.fetches = [];
+    client.responses = [{ status: 403, body: { error: "Only Admins and Document Controllers can delete folders." } }];
+    await expect(deleteFolder("c1", "org1")).rejects.toThrow(/Only Admins and Document Controllers can delete folders/);
+    expect(client.confirms).toEqual([]);
+    expect(client.fetches).toHaveLength(1);
+  });
+  it("an injected confirmation replaces the dialog", async () => {
+    client.responses = [refusal, { status: 200, body: { ok: true } }];
+    const seen: unknown[] = [];
+    await deleteFolder("c1", "org1", { confirmRetentionLoss: async (loss) => { seen.push(loss); return true; } });
+    expect(seen).toEqual([{ count: 2, sample: refusal.body.retentionLoss.sample }]);
+    expect(client.confirms).toEqual([]);
+    expect(client.fetches[1]).toMatchObject({ acknowledgeRetentionLoss: true });
   });
 });

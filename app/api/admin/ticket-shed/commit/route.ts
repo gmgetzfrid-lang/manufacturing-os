@@ -17,6 +17,7 @@ import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import type { TicketAttachmentLite } from "@/lib/ticketShed";
 import { isOrgOwnedKey, sharedLiveKeys } from "@/lib/shedKeyGuard";
+import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
 
@@ -219,20 +220,21 @@ export async function POST(req: NextRequest) {
 
   const reclaimedTickets = newlyStamped;
   // RET-13: persist the delete shortfall on the catalog row so the archive
-  // keeps offering "Reclaim" until every key is actually gone (best-effort on
-  // a database that predates the column).
+  // keeps offering "Reclaim" until every key is actually gone. CHECKED
+  // (supabase-js never throws): a refused write — or a database that
+  // predates the column — is named in `errors` and `shortfallPersisted:
+  // false` rather than leaving the catalog claiming a clean reclaim.
   const keysFailed = Math.max(0, keysToDelete.length - keysDeleted);
-  try {
-    await sb.from("archives").update({ reclaim_shortfall: keysFailed }).eq("org_id", orgId).eq("archive_id", archiveId);
-  } catch { /* pre-migration DB */ }
+  const persisted = await persistReclaimShortfall(sb, orgId, archiveId, keysFailed);
+  if (!persisted.ok) errors.push(persisted.error);
   try {
     await sb.from("audit_logs").insert({
       action: "TICKET_ARCHIVE_RECLAIM",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { archiveId, reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) },
+      details: { archiveId, reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) },
     });
   } catch { /* best-effort */ }
 
-  return NextResponse.json({ ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, rejectedKeys, sharedSkipped, errors });
+  return NextResponse.json({ ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors });
 }

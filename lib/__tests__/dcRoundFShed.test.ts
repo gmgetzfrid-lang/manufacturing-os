@@ -143,11 +143,15 @@ const pair = (id: string, key: string, extra: Record<string, unknown> = {}) => [
 function shedResolver(opts: {
   versions: Array<Record<string, unknown>>; liveRows?: Array<{ id: string; file_url: string }>;
   liveError?: string; claims?: string[][]; unclaims?: string[][]; stamps?: string[][]; archiveUpdates?: Array<Record<string, unknown>>;
+  archiveUpdateError?: { code?: string; message: string };
 }) {
   return (table: string, ops: Op[]) => {
     if (table === "documents") return { data: [], error: null };
     if (table === "archives") {
-      if (argOf(ops, "update")) { opts.archiveUpdates?.push(argOf(ops, "update")![0] as Record<string, unknown>); return { data: [], error: null }; }
+      if (argOf(ops, "update")) {
+        opts.archiveUpdates?.push(argOf(ops, "update")![0] as Record<string, unknown>);
+        return opts.archiveUpdateError ? { data: null, error: opts.archiveUpdateError } : { data: [], error: null };
+      }
       if (argOf(ops, "maybeSingle")) return { data: { note: "saved" }, error: null };
       return { data: [], error: null };
     }
@@ -258,7 +262,41 @@ describe("shed commit — RET-6 / RET-8 at the destructive step, RET-13 shortfal
     expect(body.sharedSkipped).toBe(1);
     expect(body.keysDeleted).toBe(1);
     expect(body.keysFailed).toBe(1);
+    expect(body.shortfallPersisted).toBe(true);
     expect(archiveUpdates).toEqual([{ reclaim_shortfall: 1 }]);
+  });
+
+  it("a REFUSED shortfall write is named, never dropped: shortfallPersisted false + an error (supabase-js never throws)", async () => {
+    const versions = [version("ok", `orgs/${ORG}/ok.pdf`, { archive_id: "arch1" }), version("fails", `orgs/${ORG}/fails.pdf`, { archive_id: "arch1" })];
+    const archiveUpdates: Array<Record<string, unknown>> = [];
+    state.resolve = shedResolver({ versions, archiveUpdates, archiveUpdateError: { message: "transient 5xx" } });
+    state.r2Errors = [{ Key: `orgs/${ORG}/fails.pdf`, Message: "boom" }];
+    const res = await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }));
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(body.keysFailed).toBe(1);
+    expect(body.shortfallPersisted).toBe(false);
+    expect(body.errors).toContain("shortfall persist: transient 5xx");
+    expect(archiveUpdates).toEqual([{ reclaim_shortfall: 1 }]);
+    // A database that predates the column says so by name.
+    state.resolve = shedResolver({ versions, archiveUpdateError: { code: "PGRST204", message: "Could not find the 'reclaim_shortfall' column of 'archives' in the schema cache" } });
+    state.r2Errors = [{ Key: `orgs/${ORG}/fails.pdf`, Message: "boom" }];
+    const pre = (await (await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }))).json()) as Record<string, unknown>;
+    expect(pre.shortfallPersisted).toBe(false);
+    expect((pre.errors as string[]).some((e) => /reclaim_shortfall is not applied yet \(migration 20261077 §6\)/.test(e))).toBe(true);
+  });
+
+  it("when nothing deletable remains (every row shared or foreign) the stale shortfall is cleared, checked", async () => {
+    const versions = [version("shared", `orgs/${ORG}/shared.pdf`, { archive_id: "arch1", archived_at: "2026-01-01T00:00:00Z" })];
+    const archiveUpdates: Array<Record<string, unknown>> = [];
+    state.resolve = shedResolver({ versions, archiveUpdates, liveRows: [{ id: "shared", file_url: `orgs/${ORG}/shared.pdf` }, { id: "current", file_url: `orgs/${ORG}/shared.pdf` }] });
+    const body = (await (await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }))).json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ ok: true, keysDeleted: 0, keysFailed: 0, sharedSkipped: 1, shortfallPersisted: true, errors: [] });
+    expect(archiveUpdates).toEqual([{ reclaim_shortfall: 0 }]);
+    expect(state.r2Deletes).toEqual([]);
+    state.resolve = shedResolver({ versions, liveRows: [{ id: "shared", file_url: `orgs/${ORG}/shared.pdf` }, { id: "current", file_url: `orgs/${ORG}/shared.pdf` }], archiveUpdateError: { message: "refused" } });
+    const refused = (await (await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }))).json()) as Record<string, unknown>;
+    expect(refused).toMatchObject({ shortfallPersisted: false, errors: ["shortfall persist: refused"] });
   });
 
   it("fails CLOSED (nothing stamped, nothing deleted) when the shared-key read errors", async () => {
@@ -297,10 +335,14 @@ describe("shed commit — RET-6 / RET-8 at the destructive step, RET-13 shortfal
 function ticketResolver(opts: {
   tickets: Array<Record<string, unknown>>; liveRows?: Array<{ id: string; file_url: string }>;
   claims?: string[][]; unclaims?: string[][]; archiveUpdates?: Array<Record<string, unknown>>; stamps?: string[];
+  archiveUpdateError?: { code?: string; message: string };
 }) {
   return (table: string, ops: Op[]) => {
     if (table === "archives") {
-      if (argOf(ops, "update")) { opts.archiveUpdates?.push(argOf(ops, "update")![0] as Record<string, unknown>); return { data: [], error: null }; }
+      if (argOf(ops, "update")) {
+        opts.archiveUpdates?.push(argOf(ops, "update")![0] as Record<string, unknown>);
+        return opts.archiveUpdateError ? { data: null, error: opts.archiveUpdateError } : { data: [], error: null };
+      }
       if (argOf(ops, "maybeSingle")) return { data: { note: "saved" }, error: null };
       return { data: [], error: null };
     }
@@ -359,7 +401,20 @@ describe("ticket shed — RET-6 on both halves", () => {
     expect(body.rejectedKeys).toBe(1);
     expect(body.sharedSkipped).toBe(1);
     expect(body.keysFailed).toBe(0);
+    expect(body.shortfallPersisted).toBe(true);
     expect(archiveUpdates).toEqual([{ reclaim_shortfall: 0 }]);
+  });
+
+  it("ticket commit: a refused shortfall write is named in errors and shortfallPersisted is false", async () => {
+    const tickets = [{ id: "t1", archived_at: "2026-01-01T00:00:00Z", comments: [], history: [], metadata: {}, attachments: [{ url: `orgs/${ORG}/tickets/t1/a.pdf` }] }];
+    state.resolve = ticketResolver({ tickets, archiveUpdateError: { message: "refused" } });
+    state.r2Errors = [{ Key: `orgs/${ORG}/tickets/t1/a.pdf`, Message: "boom" }];
+    const res = await TICKET_COMMIT(post("https://app/api/admin/ticket-shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }));
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(body.keysFailed).toBe(1);
+    expect(body.shortfallPersisted).toBe(false);
+    expect(body.errors).toContain("shortfall persist: refused");
   });
 });
 

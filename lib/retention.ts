@@ -38,12 +38,17 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 export async function effectiveRetentionPolicyForDocument(doc: {
   retentionPolicy?: RetentionPolicy | null; collectionId?: string | null; libraryId: string;
 }): Promise<RetentionPolicy | null> {
+  // RET-11: the reads are CHECKED — a failed folder or library read must not
+  // quietly resolve to the document's own (usually null) policy and name the
+  // wrong scheduled action.
   let folder: RetentionPolicy | null = null;
   if (doc.collectionId) {
-    const { data } = await supabase.from("collections").select("retention_policy").eq("id", doc.collectionId).maybeSingle();
+    const { data, error } = await supabase.from("collections").select("retention_policy").eq("id", doc.collectionId).maybeSingle();
+    if (error) throw new Error(`Could not read the folder's retention policy: ${error.message}`);
     folder = (data as PolicyCols)?.retention_policy ?? null;
   }
-  const { data: lib } = await supabase.from("libraries").select("retention_policy").eq("id", doc.libraryId).maybeSingle();
+  const { data: lib, error: libErr } = await supabase.from("libraries").select("retention_policy").eq("id", doc.libraryId).maybeSingle();
+  if (libErr) throw new Error(`Could not read the library's retention policy: ${libErr.message}`);
   return resolveEffectiveRetentionPolicy(doc.retentionPolicy ?? null, folder, (lib as PolicyCols)?.retention_policy ?? null);
 }
 
@@ -241,7 +246,9 @@ export async function disposeDocument(input: {
   // unless the caller names one explicitly.
   let action: "archive" | "destroy" = input.action ?? "archive";
   if (!input.action) {
-    const { data: row } = await supabase.from("documents").select("retention_policy, collection_id, library_id").eq("id", input.documentId).maybeSingle();
+    // Checked: a failed read must not record 'archive' for a destroy schedule.
+    const { data: row, error: rowErr } = await supabase.from("documents").select("retention_policy, collection_id, library_id").eq("id", input.documentId).maybeSingle();
+    if (rowErr) throw new Error(`Could not read the record's retention schedule; nothing was disposed: ${rowErr.message}`);
     if (row) {
       const policy = await effectiveRetentionPolicyForDocument({
         retentionPolicy: (row.retention_policy as RetentionPolicy | null) ?? null,
@@ -286,11 +293,17 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
 
   // RET-11: resolve each record's EFFECTIVE policy (document > folder >
   // library) once per org so the notice can name the scheduled action.
-  const [controllers, { data: libRows }, { data: colRows }] = await Promise.all([
+  // CHECKED: with an empty map every notice would read "flag for review" —
+  // the wrong instruction for a "then destroy" schedule — so a failed read
+  // aborts the scan before any record is flagged (the cron records it per org).
+  const [controllers, { data: libRows, error: libErr }, { data: colRows, error: colErr }] = await Promise.all([
     getOrgControllers(orgId),
     supabase.from("libraries").select("id, retention_policy").eq("org_id", orgId),
     supabase.from("collections").select("id, retention_policy").eq("org_id", orgId),
   ]);
+  if (libErr || colErr) {
+    throw new Error(`Retention scan could not read the policy chain: ${libErr ? `libraries: ${libErr.message}` : ""}${libErr && colErr ? "; " : ""}${colErr ? `collections: ${colErr.message}` : ""}`);
+  }
   const libPol = new Map(((libRows ?? []) as Array<{ id: string; retention_policy: RetentionPolicy | null }>).map((l) => [l.id, l.retention_policy ?? null]));
   const colPol = new Map(((colRows ?? []) as Array<{ id: string; retention_policy: RetentionPolicy | null }>).map((c) => [c.id, c.retention_policy ?? null]));
   let n = 0;

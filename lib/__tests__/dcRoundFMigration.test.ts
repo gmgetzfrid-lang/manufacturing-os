@@ -72,10 +72,16 @@ describe("20261077 §2 — enforce_library_sensitive_columns extended from the l
     expect(nonComment(lineDiff(live, next).onlyInB)).toEqual([
       "  IF (NEW.last_recertified_at IS DISTINCT FROM OLD.last_recertified_at",
       "      OR NEW.last_recertified_by IS DISTINCT FROM OLD.last_recertified_by",
-      "      OR NEW.next_recertification_date IS DISTINCT FROM OLD.next_recertification_date) THEN",
+      "      OR (NEW.next_recertification_date IS DISTINCT FROM OLD.next_recertification_date",
+      "          AND NEW.recert_policy IS NOT DISTINCT FROM OLD.recert_policy)) THEN",
       "       AND OLD.owner_user_id::text IS DISTINCT FROM auth.uid()::text THEN",
       "      RAISE EXCEPTION 'Only an Admin, Document Controller or the library owner can record an access recertification.'",
     ]);
+    // The arm is the ATTESTATION only: a next date that moves with a
+    // recert_policy change (setRecertPolicy writes both) stays under the
+    // policy arm, so a can_manage_node holder who could set the cadence
+    // before this migration still can.
+    expect(next).toMatch(/OR \(NEW\.next_recertification_date IS DISTINCT FROM OLD\.next_recertification_date\s*\n\s*AND NEW\.recert_policy IS NOT DISTINCT FROM OLD\.recert_policy\)\) THEN/);
     // The arm has no can_manage_node escape (the policy arm keeps it).
     const arm = next.slice(next.indexOf("NEW.last_recertified_at IS DISTINCT FROM"));
     expect(arm).toMatch(/IF NOT is_org_controller\(OLD\.org_id\)\s*\n\s*AND OLD\.owner_user_id::text IS DISTINCT FROM auth\.uid\(\)::text THEN/);

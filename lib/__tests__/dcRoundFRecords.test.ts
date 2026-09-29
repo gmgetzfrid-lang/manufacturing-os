@@ -147,6 +147,19 @@ describe("RET-5 — checked writes in lib/retention.ts", () => {
     expect(state.notifies.every((n) => /retention schedule calls for: destroy/.test(n.body as string))).toBe(true);
     expect(state.notifies.some((n) => /P-102/.test(n.title as string))).toBe(false);
   });
+  it("scanRetention aborts BEFORE flagging anything when the policy chain cannot be read (RET-11: never name the wrong action)", async () => {
+    const flagWrites: unknown[] = [];
+    state.resolve = (table, ops) => {
+      if (table === "documents" && argOf(ops, "update")) { flagWrites.push(argOf(ops, "update")![0]); return { data: null, error: null }; }
+      if (table === "documents") return { data: [{ id: "ok", library_id: "l1", collection_id: "c1", document_number: "P-101", retention_until: "2020-01-01", retention_policy: null, owner_user_id: null, owner_name: null }], error: null };
+      if (table === "libraries") return { data: null, error: { message: "timeout" } };
+      if (table === "collections") return { data: [{ id: "c1", retention_policy: P({ action: "destroy" }) }], error: null };
+      return { data: [], error: null };
+    };
+    await expect(scanRetention("org1")).rejects.toThrow(/Retention scan could not read the policy chain: libraries: timeout/);
+    expect(flagWrites).toEqual([]);
+    expect(state.notifies).toEqual([]);
+  });
 });
 
 describe("HLD-1 (dispose gate) + RET-11 — disposeDocument", () => {
@@ -181,6 +194,20 @@ describe("HLD-1 (dispose gate) + RET-11 — disposeDocument", () => {
     expect(writes[0]).toMatchObject({ disposition_state: "disposed", status: "Archived" });
     expect((writes[1] as { event: { detail: unknown } }).event.detail).toEqual({ action: "destroy" });
   });
+  it("throws (nothing disposed) when the schedule cannot be read — never records 'archive' for a destroy schedule", async () => {
+    const writes: unknown[] = [];
+    const base = disposeResolver({ holds: [], policy: P({ action: "destroy" }), writes });
+    state.resolve = (table, ops) => {
+      if (table === "documents" && argOf(ops, "select")?.[0] === "retention_policy, collection_id, library_id") return { data: null, error: { message: "timeout" } };
+      return base(table, ops);
+    };
+    await expect(disposeDocument({ documentId: "d1", orgId: "org1", actorId: "u1" })).rejects.toThrow(/Could not read the record's retention schedule; nothing was disposed: timeout/);
+    expect(writes).toEqual([]);
+    // A failed folder / library read inside the chain fails the same way.
+    state.resolve = (table, ops) => table === "libraries" ? { data: null, error: { message: "lib down" } } : base(table, ops);
+    await expect(disposeDocument({ documentId: "d1", orgId: "org1", actorId: "u1" })).rejects.toThrow(/Could not read the library's retention policy: lib down/);
+    expect(writes).toEqual([]);
+  });
   it("an explicit action still wins", async () => {
     const writes: unknown[] = [];
     state.resolve = disposeResolver({ holds: [], policy: P({ action: "destroy" }), writes });
@@ -212,11 +239,15 @@ describe("RET-3 — the recertification attests the EFFECTIVE population", () =>
     { uid: "owner", display_name: "Own", email: "own@x", role: "Drafter", roles: ["Drafter"] },
     { uid: "teamie", display_name: "Tee", email: "tee@x", role: "Drafter", roles: ["Drafter"] },
   ];
-  const resolver = (lib: Record<string, unknown> | null, opts: { memberError?: string; teams?: Array<{ team_id: string; uid: string }> } = {}) =>
+  const resolver = (lib: Record<string, unknown> | null, opts: {
+    memberError?: string; teams?: Array<{ team_id: string; uid: string }>;
+    teamRows?: Array<{ id: string; supervisor_user_id: string | null }>; teamRowsError?: string;
+  } = {}) =>
     (table: string) => {
       if (table === "libraries") return { data: lib, error: null };
       if (table === "org_members") return opts.memberError ? { data: null, error: { message: opts.memberError } } : { data: members, error: null };
       if (table === "team_members") return { data: opts.teams ?? [], error: null };
+      if (table === "teams") return opts.teamRowsError ? { data: null, error: { message: opts.teamRowsError } } : { data: opts.teamRows ?? [], error: null };
       return { data: [], error: null };
     };
   const now = Date.parse("2026-09-23T00:00:00Z");
@@ -250,6 +281,49 @@ describe("RET-3 — the recertification attests the EFFECTIVE population", () =>
     expect(eff.expired[0]).toMatchObject({ subjectId: "viewer", status: "expired", expiresAt: past });
     // The plain list is the live list — an expired grant is never counted as current.
     expect((await listAccessGrants("org1", "l1")).map((g) => g.subjectId)).not.toContain("viewer");
+  });
+  it("team-owned library: the team's supervisor is the effective owner and is attested (user_is_effective_owner)", async () => {
+    // owner_user_id NULL, owner_team_id t1 whose supervisor is a plain Drafter; private, no rule names them.
+    state.resolve = resolver(
+      { visibility: "private", acl: null, acl_index: null, owner_user_id: null, owner_team_id: "t1" },
+      { teamRows: [{ id: "t1", supervisor_user_id: "teamie" }] },
+    );
+    const eff = await listAccessGrantsDetailed("org1", "l1", now);
+    expect(eff.complete).toBe(true);
+    expect(eff.live.map((g) => g.subjectId).sort()).toEqual(["admin", "docctrl-add", "teamie"]);
+    expect(eff.live.find((g) => g.subjectId === "teamie")).toMatchObject({ source: "owner", via: ["team supervisor (effective owner)"] });
+  });
+  it("a departed owner admits nobody; resolution falls through to the team supervisor, exactly as node_visible does", async () => {
+    state.resolve = resolver(
+      { visibility: "private", acl: null, acl_index: null, owner_user_id: "left-the-org", owner_team_id: "t1" },
+      { teamRows: [{ id: "t1", supervisor_user_id: "eng" }] },
+    );
+    const eff = await listAccessGrantsDetailed("org1", "l1", now);
+    expect(eff.live.map((g) => g.subjectId).sort()).toEqual(["admin", "docctrl-add", "eng"]);
+    expect(eff.live.find((g) => g.subjectId === "eng")?.source).toBe("owner");
+    // An active owner_user_id still wins over the team (the supervisor is not admitted by ownership).
+    state.resolve = resolver(
+      { visibility: "private", acl: null, acl_index: null, owner_user_id: "owner", owner_team_id: "t1" },
+      { teamRows: [{ id: "t1", supervisor_user_id: "eng" }] },
+    );
+    expect((await listAccessGrantsDetailed("org1", "l1", now)).live.map((g) => g.subjectId).sort()).toEqual(["admin", "docctrl-add", "owner"]);
+  });
+  it("an `orgs` allow bucket admits nobody — acl_subject_in_bucket has no org arm", async () => {
+    state.resolve = resolver({
+      visibility: "private", owner_user_id: "owner",
+      acl: { rules: [{ effect: "allow", subject: { type: "org", id: "org1" }, actions: ["read"] }] },
+      acl_index: { allow: { orgs: { read: ["org1"] } } },
+    });
+    const eff = await listAccessGrantsDetailed("org1", "l1", now);
+    expect(eff.complete).toBe(true);
+    expect(eff.live.map((g) => g.subjectId).sort()).toEqual(["admin", "docctrl-add", "owner"]);
+  });
+  it("a failed team-supervisor read refuses to attest (the effective owner could not be resolved)", async () => {
+    state.resolve = resolver({ visibility: "private", acl: null, acl_index: null, owner_user_id: null, owner_team_id: "t1" }, { teamRowsError: "timeout" });
+    const eff = await listAccessGrantsDetailed("org1", "l1", now);
+    expect(eff.complete).toBe(false);
+    expect(eff.issues).toEqual(["team supervisors: timeout"]);
+    await expect(recertifyAccess({ libraryId: "l1", orgId: "org1", actorId: "admin" })).rejects.toThrow(/team supervisors: timeout/);
   });
   it("an unresolvable population refuses to attest", async () => {
     state.resolve = resolver({ visibility: null, acl: null, acl_index: null, owner_user_id: null }, { memberError: "timeout" });

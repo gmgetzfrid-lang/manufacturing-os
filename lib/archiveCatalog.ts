@@ -11,6 +11,8 @@
 // Reclaim whenever it is non-zero, and routes the retry by which table holds
 // ANY linked rows, not by the pending count alone.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 export interface CatalogRowState {
   status: "full" | "producing" | "pending" | "committed" | "empty";
   docPending: number; docCommitted: number;
@@ -44,4 +46,24 @@ export function catalogReclaimLabel(row: CatalogRowState): string | null {
     return `reclaimed, but ${row.reclaimShortfall} cloud object(s) failed to delete and are still billed — run Reclaim again`;
   }
   return null;
+}
+
+/** Persist the delete shortfall on the catalog row — CHECKED. supabase-js
+ *  never throws, so a refused update (RLS, transport, or a database that
+ *  predates `archives.reclaim_shortfall`, migration 20261077 §6) resolves
+ *  with `{ error }`; the caller puts the message in its `errors` and reports
+ *  `shortfallPersisted: false` instead of letting the catalog claim a state
+ *  the row does not hold. */
+export async function persistReclaimShortfall(
+  sb: SupabaseClient, orgId: string, archiveId: string, keysFailed: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await sb.from("archives").update({ reclaim_shortfall: keysFailed }).eq("org_id", orgId).eq("archive_id", archiveId);
+  if (!error) return { ok: true };
+  const preMigration = /reclaim_shortfall|42703|PGRST204/i.test(`${error.code ?? ""} ${error.message ?? ""}`);
+  return {
+    ok: false,
+    error: preMigration
+      ? `shortfall persist: archives.reclaim_shortfall is not applied yet (migration 20261077 §6) — the catalog cannot show that ${keysFailed} key(s) failed to delete`
+      : `shortfall persist: ${error.message}`,
+  };
 }

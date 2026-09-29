@@ -20,7 +20,10 @@
 --      member could PATCH years out — change only for a controller or the
 --      library owner (roles DEL-6: owners recertify — its resolution says
 --      the owner arm must be added the day libraries UPDATE is narrowed).
---      recert_policy was already guarded there. Line-diff pinned.
+--      recert_policy was already guarded there (controller / owner /
+--      can_manage_node), and a next date that moves together with a
+--      recert_policy change stays under that arm — the new arm is the
+--      attestation only. Line-diff pinned.
 --   3. document_versions.file_url is write-once for every authenticated
 --      caller (BEFORE UPDATE): the shed deletes what this column names, and
 --      no app path ever repoints an existing row (the intake route runs as
@@ -186,9 +189,14 @@ BEGIN
   -- is next due — is the compliance record itself. A controller or the
   -- library owner only (roles DEL-6: owners recertify); the scan's
   -- recert_notified_at watermark stays unguarded (it is not authority).
+  -- Scoped to the attestation: a next_recertification_date that moves WITH a
+  -- recert_policy change is the cadence being set (the policy arm above
+  -- already decided that write, can_manage_node included); one that moves
+  -- alone is the clock being pushed, which only an attestation may do.
   IF (NEW.last_recertified_at IS DISTINCT FROM OLD.last_recertified_at
       OR NEW.last_recertified_by IS DISTINCT FROM OLD.last_recertified_by
-      OR NEW.next_recertification_date IS DISTINCT FROM OLD.next_recertification_date) THEN
+      OR (NEW.next_recertification_date IS DISTINCT FROM OLD.next_recertification_date
+          AND NEW.recert_policy IS NOT DISTINCT FROM OLD.recert_policy)) THEN
     IF NOT is_org_controller(OLD.org_id)
        AND OLD.owner_user_id::text IS DISTINCT FROM auth.uid()::text THEN
       RAISE EXCEPTION 'Only an Admin, Document Controller or the library owner can record an access recertification.'
@@ -312,6 +320,7 @@ UNION ALL
 SELECT 'library guard installed (BEFORE UPDATE) and carries the recert attestation arm',
        (SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_library_sensitive_columns' AND NOT tgisinternal)
               AND (SELECT prosrc LIKE '%NEW.next_recertification_date IS DISTINCT FROM OLD.next_recertification_date%'
+                          AND prosrc LIKE '%AND NEW.recert_policy IS NOT DISTINCT FROM OLD.recert_policy)) THEN%'
                           AND prosrc LIKE '%Only an Admin, Document Controller or the library owner can record an access recertification.%'
                           AND prosrc LIKE '%NEW.recert_policy   IS DISTINCT FROM OLD.recert_policy%'
                      FROM pg_proc WHERE proname = 'enforce_library_sensitive_columns')),
