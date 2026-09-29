@@ -21,6 +21,7 @@ import {
   RETENTION_DOC_COLUMNS,
   type RetentionDocRow,
 } from "@/lib/serverRetention";
+import { resolveEffectiveRetentionPolicy, computeRetentionUntil, retentionBasisISO } from "@/lib/retentionPolicy";
 
 export const runtime = "nodejs";
 
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authErr || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; collectionId?: string };
+  let body: { orgId?: string; collectionId?: string; acknowledgeRetentionLoss?: boolean };
   try { body = await req.json(); } catch { return bad("Invalid JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const collectionId = String(body.collectionId ?? "").trim();
@@ -52,6 +53,26 @@ export async function POST(req: NextRequest) {
     .eq("id", collectionId).eq("org_id", orgId).maybeSingle();
   if (!node) return bad("Folder not found.", 404);
   const heirParent = (node.parent_id as string | null) ?? null;
+
+  // RET-10: stepping the documents up re-clocks them against the heir's
+  // policy. When THIS folder carried the retention policy and the heir has
+  // none, every stepped-up record loses its deadline (retention_until → NULL)
+  // and silently drops out of the disposition scan forever. Preview the
+  // re-clock BEFORE anything moves and refuse unless the caller explicitly
+  // acknowledges the loss by count — a records obligation is never destroyed
+  // as a side effect of tidying folders. Fail closed on any read error.
+  const { data: contents, error: contentsErr } = await supabaseAdmin
+    .from("documents").select(RETENTION_DOC_COLUMNS).eq("collection_id", collectionId);
+  if (contentsErr) return bad(`Couldn't read the folder's documents: ${contentsErr.message}`, 500);
+  const preview = await previewRetentionLoss(node.library_id as string, heirParent, (contents ?? []) as RetentionDocRow[]);
+  if ("error" in preview) return bad(`Couldn't verify the retention effect of this delete: ${preview.error}`, 500);
+  if (preview.lost.length > 0 && body.acknowledgeRetentionLoss !== true) {
+    const sample = preview.lost.slice(0, 3).map((l) => l.until).join(", ");
+    return NextResponse.json({
+      error: `Deleting this folder would remove the retention deadline from ${preview.lost.length} record(s) (e.g. until ${sample}) because the destination has no retention policy — they would never come up for disposition. Set a retention policy on the parent folder or library (or on the records) first, or delete with acknowledgeRetentionLoss: true to accept the loss on the record.`,
+      retentionLoss: { count: preview.lost.length, sample: preview.lost.slice(0, 20) },
+    }, { status: 409 });
+  }
 
   // Contents step UP, then the folder goes. Order matters: if the delete
   // ran first, a cascade or FK could take the contents with it.
@@ -112,12 +133,41 @@ export async function POST(req: NextRequest) {
     };
   }
 
+  // The audit detail records which records lost a deadline and what it was
+  // (RET-10), and the stepped-up ids so a trash restore can put them back.
   await supabaseAdmin.from("audit_logs").insert({
     action: "FOLDER_DELETED",
     resource_type: "collection", resource_id: collectionId,
     org_id: orgId, user_id: user.id, user_email: user.email ?? null,
-    details: { name: node.name, contentsMovedTo: heirParent, ...retentionNote },
+    details: {
+      name: node.name, contentsMovedTo: heirParent, ...retentionNote,
+      steppedDocIds: stepped.map((d) => d.id),
+      retentionDeadlinesLost: preview.lost.length,
+      retentionDeadlinesLostSample: preview.lost.slice(0, 20),
+      retentionLossAcknowledged: preview.lost.length > 0,
+    },
   }).then(() => undefined, () => undefined);
 
-  return NextResponse.json({ ok: true, contentsMovedTo: heirParent });
+  return NextResponse.json({ ok: true, contentsMovedTo: heirParent, retentionDeadlinesLost: preview.lost.length });
+}
+
+/** What the heir's effective policy would do to each record's materialized
+ *  deadline — the pure rules of lib/retentionPolicy.ts, run before the move. */
+async function previewRetentionLoss(
+  libraryId: string, heirParent: string | null, docs: RetentionDocRow[],
+): Promise<{ lost: Array<{ id: string; until: string }> } | { error: string }> {
+  if (docs.length === 0) return { lost: [] };
+  try {
+    const { folderPolicy, libPolicy } = await loadDestinationPolicies(supabaseAdmin, libraryId, heirParent);
+    const lost: Array<{ id: string; until: string }> = [];
+    for (const d of docs) {
+      if (d.disposition_state === "disposed" || !d.retention_until) continue;
+      const policy = resolveEffectiveRetentionPolicy(d.retention_policy, folderPolicy, libPolicy);
+      const until = policy ? computeRetentionUntil(retentionBasisISO(policy, d), policy) : null;
+      if (!until) lost.push({ id: d.id, until: d.retention_until.slice(0, 10) });
+    }
+    return { lost };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
 }

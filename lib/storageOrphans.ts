@@ -16,11 +16,16 @@
 //   - protected prefixes (offline-archive zips, export artifacts) are never
 //     candidates;
 //   - deletion re-runs the full scan server-side and only deletes keys that
-//     are STILL orphans — the client's list is display, not authority.
+//     are STILL orphans — the client's list is display, not authority;
+//   - the WALK is confined to the caller's org prefix (RET-7): one
+//     workspace's admin never lists, sizes or deletes another tenant's
+//     objects. The reference collector stays bucket-wide on purpose — a key
+//     any tenant references is protected — only the candidate set is scoped.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
+import { orgKeyPrefix } from "@/lib/shedKeyGuard";
 
 const MIN_AGE_DAYS = 7;
 const PROTECTED_PREFIXES = ["data/", "exports/"];
@@ -131,15 +136,22 @@ export async function collectReferencedKeys(sb: SupabaseClient): Promise<Set<str
 export interface OrphanScan {
   orphans: Array<{ key: string; size: number; lastModified: string | null }>;
   orphanBytes: number;
+  /** Objects and bytes under THIS org's prefix only (RET-7) — never the bucket. */
   totalObjects: number;
   totalBytes: number;
   referencedKeys: number;
   skippedYoung: number;
   truncated: boolean;
+  /** The prefix the walk was confined to. */
+  scope: string;
 }
 
-/** Walk the bucket and report objects nothing references. Read-only. */
-export async function scanOrphans(sb: SupabaseClient, maxPages = 500): Promise<OrphanScan> {
+/** Walk THIS org's prefix and report objects nothing (in any org) references.
+ *  Read-only. `orgId` is required: a scan is always confined to
+ *  `orgs/<orgId>/`, so one tenant's admin never sees another's keys. */
+export async function scanOrphans(sb: SupabaseClient, orgId: string, maxPages = 500): Promise<OrphanScan> {
+  if (!orgId) throw new Error("scanOrphans: orgId is required — the walk must be confined to one workspace.");
+  const prefix = orgKeyPrefix(orgId);
   const referenced = await collectReferencedKeys(sb);
   const cutoff = Date.now() - MIN_AGE_DAYS * 86400 * 1000;
 
@@ -149,11 +161,14 @@ export async function scanOrphans(sb: SupabaseClient, maxPages = 500): Promise<O
   let pages = 0;
   do {
     const res = await r2.send(new ListObjectsV2Command({
-      Bucket: R2_BUCKET, ContinuationToken: token, MaxKeys: 1000,
+      Bucket: R2_BUCKET, Prefix: prefix, ContinuationToken: token, MaxKeys: 1000,
     }));
     for (const obj of res.Contents ?? []) {
       const key = obj.Key ?? "";
       const size = obj.Size ?? 0;
+      // Belt and braces: a key outside the prefix is never a candidate, even
+      // if the listing hands one back.
+      if (!key.startsWith(prefix)) continue;
       totalObjects++;
       totalBytes += size;
       if (!key || referenced.has(key)) continue;
@@ -169,19 +184,23 @@ export async function scanOrphans(sb: SupabaseClient, maxPages = 500): Promise<O
   orphans.sort((a, b) => b.size - a.size);
   return {
     orphans, orphanBytes, totalObjects, totalBytes,
-    referencedKeys: referenced.size, skippedYoung, truncated: !!token,
+    referencedKeys: referenced.size, skippedYoung, truncated: !!token, scope: prefix,
   };
 }
 
-/** Delete orphans. RE-SCANS server-side and deletes only keys that are
- *  still orphans right now — the caller's list is never trusted. */
-export async function deleteOrphans(sb: SupabaseClient): Promise<{
-  deleted: number; freedBytes: number; errors: string[];
+/** Delete THIS org's orphans. RE-SCANS server-side (confined to the org
+ *  prefix) and deletes only keys that are still orphans right now — the
+ *  caller's list is never trusted, and a key outside the prefix is never
+ *  sent to DeleteObjects. */
+export async function deleteOrphans(sb: SupabaseClient, orgId: string): Promise<{
+  deleted: number; freedBytes: number; errors: string[]; scope: string;
 }> {
-  const scan = await scanOrphans(sb);
-  const out = { deleted: 0, freedBytes: 0, errors: [] as string[] };
-  for (let i = 0; i < scan.orphans.length; i += 500) {
-    const batch = scan.orphans.slice(i, i + 500);
+  const scan = await scanOrphans(sb, orgId);
+  const prefix = scan.scope;
+  const out = { deleted: 0, freedBytes: 0, errors: [] as string[], scope: prefix };
+  const candidates = scan.orphans.filter((o) => o.key.startsWith(prefix));
+  for (let i = 0; i < candidates.length; i += 500) {
+    const batch = candidates.slice(i, i + 500);
     try {
       const res = await r2.send(new DeleteObjectsCommand({
         Bucket: R2_BUCKET,

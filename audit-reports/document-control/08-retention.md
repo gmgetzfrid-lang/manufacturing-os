@@ -102,7 +102,7 @@ app/api/storage/delete/route.ts:42 `await r2.send(new DeleteObjectCommand({ Buck
 ## RET-3 · Access recertification attests the wrong access list — it reads libraries.acl while enforcement uses visibility + acl_index
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/accessRecert.ts:59-76`, `lib/accessRecert.ts:97-114`, `supabase/migrations/20260708_acl_rls_enforcement.sql:44-80`, `supabase/schema.sql (libraries: visibility, acl, acl_index, read_access, write_access, admin_access, visible_to)`, `supabase/migrations/20260821_access_recert.sql:22-35`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real: for a default-visibility library the effective reader set is every active org member plus all Admin/DocCtrl, and none of them appear in the attested snapshot, so the compliance record is signed against a list that is not the access list. I propose MEDIUM rather than HIGH because there is a mitigation the finding's scenario omits — components/documents/AccessRecertModal.tsx:118 renders, for an empty list, 'No explicit grants on this library (inherited / default access only).', so the reviewer is not silently told nobody has access. The defect is the accuracy of the stored attestation, with no direct data exposure.
@@ -124,6 +124,17 @@ lib/accessRecert.ts:60-62 `const { data } = await supabase.from("libraries").sel
 - [ ] listAccessGrants resolves the EFFECTIVE population: when visibility is null/'normal' it enumerates active org members, always includes Admin/DocCtrl, expands role and team rules to uids, and reads acl_index (the column RLS uses) rather than acl
 - [ ] expired grants are excluded from the live list and reported separately as 'expired, still listed'
 - [ ] recertifyAccess refuses to attest, or marks the snapshot 'incomplete', when the effective population could not be resolved
+
+**Resolution (2026-09-23, Round F).** Reproduced: `listAccessGrants` read `libraries.acl` allow-rules only (`:63-80`), never filtered `expiresAt`, and enforcement is `node_visible` (20261041) over `acl_index`. `lib/accessRecert.ts` now resolves the EFFECTIVE population by the same rules: `listAccessGrantsDetailed(orgId, libraryId)` reads `libraries.visibility, acl, acl_index, owner_user_id, owner_team_id`, the org's active members, team rows and `teams.supervisor_user_id`, then — visibility null/'normal' admits every active member (source `default`); every Admin/DocCtrl by role collection (`controller`) and the EFFECTIVE owner (`owner`) always — resolved as `user_is_effective_owner` (20261042) does: `owner_user_id` when that person is an active member, otherwise the supervisor of `owner_team_id` (via "team supervisor (effective owner)"); a departed owner admits nobody; `acl_index` allow buckets expanded to PEOPLE through exactly the three arms `acl_subject_in_bucket` (20260708) has — a user rule its user, a role rule the members holding that role additively, a team rule its members (source `explicit` when a live rule backs it, `inherited` otherwise). An `orgs` bucket is NOT expanded: the client index builder writes it (`lib/acl.ts`) but `acl_subject_in_bucket` has no org arm, so the database admits nobody by it and attesting every member under it would be the over-attestation twin of the finding. An explicit deny of read/discover removes a member unless controller/owner (DEC-7). Rules whose `expiresAt` has passed are split into `expired` (status `expired`, via "expired rule — still listed in the access index until the nightly rebuild") and never counted as current; `complete:false` + `issues` when any read fails. `listAccessGrants` returns `.live` (the modal keeps working unchanged); `recertifyAccess` attests `effective.live` and THROWS `Recertification refused: the library's effective access list could not be resolved (…)` when `complete` is false — nothing is written.
+- Tests: `lib/__tests__/dcRoundFRecords.test.ts` — "default visibility: every active member is attested…", "private library: controllers, the owner, and the acl_index grants expanded to people; a deny removes a member" (expired rule split out, absent from the plain list), "team-owned library: the team's supervisor is the effective owner and is attested", "a departed owner admits nobody; resolution falls through to the team supervisor", "an `orgs` allow bucket admits nobody — acl_subject_in_bucket has no org arm", "a failed team-supervisor read refuses to attest", "an unresolvable population refuses to attest".
+- Files: `lib/accessRecert.ts` (`listAccessGrantsDetailed`, `listAccessGrants`, `recertifyAccess` head).
+
+**Done-when.**
+- ✓ effective population resolved: null/'normal' → active org members; Admin/DocCtrl always; the EFFECTIVE owner (owner_user_id if active, else the owner team's supervisor); role and team rules expanded to uids; `acl_index` read (the column RLS uses) through the users/roles/teams arms only, `acl` only for expiry.
+- ✓ expired grants excluded from the live list and reported separately (`expired[]`, status `expired`, "still listed" note); `grant_count` / `grants_snapshot` carry the live list only.
+- ✓ `recertifyAccess` refuses to attest when the population could not be resolved.
+
+**Scope / residual.** `components/documents/AccessRecertModal.tsx` (admin-and-org P9 / `ALOG-2` owns it) still renders the plain list; the `expired` entries are available to it from `listAccessGrantsDetailed` (the "expired, still listed" rendering is theirs). `ALOG-2` extends `recertifyAccess` (performed_by binding, error surfacing in the modal) — the head of the function was kept to the one refusal so it can. `acl_index` carries no expiry, so an expired subject is genuinely "still listed" in the index until the nightly rebuild (DEC-10); it is flagged, never attested.
 
 ---
 
@@ -155,6 +166,17 @@ supabase/schema.sql:1068-1069 `CREATE POLICY "documents_org_access" ON documents
 - [ ] libraries' recert_policy / last_recertified_at / next_recertification_date get the same controller-only guard
 - [ ] document_disposition_events and access_recertification_events are split into FOR SELECT (member) + FOR INSERT (controller) with no UPDATE or DELETE policy for authenticated
 
+**Partial (2026-09-23, Round F).** Reproduced against current code: done-when 1 and the disposition half of done-when 3 were already closed by `20261043` (roles-and-permissions `SURF-3`: `trg_document_retention_guard` BEFORE UPDATE — legal_hold/legal_hold_* controller-only, retention columns controller/owner/publisher; `document_disposition_events` append-only with a RESTRICTIVE INSERT authority) — verified live 2026-09-02. What was still open: the `libraries` attestation columns were writable by any member (`enforce_library_sensitive_columns`, 20261036, guards `recert_policy` but not `last_recertified_at` / `last_recertified_by` / `next_recertification_date`), and the disposition trail's DELETE was controller-permitted. Landed in `supabase/migrations/20261077_dc_roundF_records_rails.sql`: §2 extends the live 20261036 body (lineDiff-pinned: nothing removed) with an arm refusing a change to `last_recertified_at` / `last_recertified_by`, or to `next_recertification_date` when it moves ALONE (`NEW.recert_policy IS NOT DISTINCT FROM OLD.recert_policy`), unless `is_org_controller(OLD.org_id)` OR the caller is the library owner (roles `DEL-6`: owners recertify, and its resolution says the owner arm must be added the day `libraries` UPDATE is narrowed — the app path `recertifyAccess` is an owner-or-controller write). The arm is scoped to the ATTESTATION on purpose: `setRecertPolicy` writes `recert_policy` and `next_recertification_date` in one statement, and the live policy arm admits controller / owner / `can_manage_node` for that cadence write — a next date that moves together with a policy change stays under the policy arm, so an ACL-manage holder who could set the cadence before this migration still can, while a next date pushed on its own (the self-attestation shape) is refused. §5 tightens `doc_disposition_events_no_delete` to `USING (false)`. The scan's `recert_notified_at` watermark is deliberately left unguarded (not authority).
+- Tests: `lib/__tests__/dcRoundFMigration.test.ts` — "§2 … removes nothing", "adds exactly the attestation-column arm: controller OR the library owner" (pins the `AND NEW.recert_policy IS NOT DISTINCT FROM OLD.recert_policy` scoping), "§5 the disposition trail's DELETE policy is USING (false)". The migration's own probe checks the same substring in `prosrc`.
+- Pending migration: `supabase/migrations/20261077_dc_roundF_records_rails.sql` (§2, §5).
+
+**Done-when.**
+- ✓ BEFORE UPDATE trigger on documents guards legal_hold/legal_hold_*, retention_until, disposition_state, disposed_at — `20261043` (live).
+- ✓ libraries' attestation columns get the controller-or-owner guard — `supabase/migrations/20261077_dc_roundF_records_rails.sql` §2 (pending apply): `last_recertified_at` / `last_recertified_by` always; `next_recertification_date` when it changes without a `recert_policy` change. `recert_policy` (and a next date set with it) stays under the 20261036 arm (controller / owner / `can_manage_node`) — the cadence is not narrowed by this migration; only the attestation is.
+- ✓ / ✗ `document_disposition_events`: SELECT member + RESTRICTIVE INSERT authority (20261043), no UPDATE (20261043), no DELETE for any non-service role (20261077 §5). **`access_recertification_events` NOT done here**: the fleet plan assigns that table's policy split (INSERT bound to `performed_by = auth.uid()`, no UPDATE/DELETE, replacing `access_recert_events_member`) to admin-and-org P9 `ALOG-2`, which runs after this wave; a second migration on the same policies from this package would fork it.
+
+**Scope / residual.** Stays OPEN until `ALOG-2` lands its migration; the record then closes by pointer. `libraries.acl` (also named in the mechanism) is under the 20261036 guard already.
+
 ---
 
 <a id="ret-5"></a>
@@ -162,7 +184,7 @@ supabase/schema.sql:1068-1069 `CREATE POLICY "documents_org_access" ON documents
 ## RET-5 · Every retention and legal-hold write ignores supabase-js's {error} and row count — a hold can be reported placed when nothing was written
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/retention.ts:120-132`, `lib/retention.ts:134-145`, `lib/retention.ts:151-159`, `lib/retention.ts:95-109`, `lib/retention.ts:68-91`, `lib/retention.ts:231-244`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. supabase-js resolves an RLS-filtered UPDATE with error null and no row information, so placeLegalHold returns the count of ids it *intended* to patch, and the UI/notification (`notifyHold`, :224-225 'A legal hold was placed on N records') reports that number as fact. Contrast app/api/admin/ticket-shed/commit/route.ts:157-167, which does `{ count: "exact" }` and refuses to proceed on `(count ?? 0) === 0` — the correct pattern already exists in the repo.
@@ -185,6 +207,17 @@ lib/retention.ts:126-131 `for (let i = 0; i < ids.length; i += 50) { await supab
 - [ ] disposeDocument checks the update's error and affected count and returns {ok:false, reason} when nothing was written
 - [ ] setRetentionPolicy, recomputeRetention and logEvent surface errors to the caller instead of discarding them
 
+**Resolution (2026-09-23, Round F).** Reproduced against current code: `placeLegalHold` / `releaseLegalHold` / `disposeDocument` / `setRetentionPolicy` were already checked (roles-and-permissions `SURF-3` / `OWN-14`, see `HLD-6`), but three writes still discarded `{error}`: `recomputeRetention` (`:83`, `:93`), the eligible-flag update inside `scanRetention` (`:256`) and `logEvent`'s disposition-event insert (`:306`) — a refused re-clock left a stale deadline reading as current, a refused flag write was still notified as "eligible", and a refused trail insert (the 20261043 RESTRICTIVE INSERT authority refuses a caller without hold/retention authority) read as a logged act. `lib/retention.ts` now: `recomputeRetention` throws `Retention clock was NOT updated/cleared: …` (and on the read error); `scanRetention` checks the scan read and each flag write, skips the notification for a refused row, processes the rest, and finally throws `Retention scan flagged N record(s) but M flag write(s) were refused — …` (the maintenance cron records it per org); `logEvent` throws `The <action> was applied but its records-management event could NOT be written (…). The trail is incomplete — report this.` — so a hold that was applied but not logged surfaces instead of vanishing.
+- Tests: `lib/__tests__/dcRoundFRecords.test.ts` — "recomputeRetention throws when the clock write is refused", "…when clearing the clock is refused", "logEvent surfaces a refused disposition-event insert (the hold was applied; the trail was not)" (no notification fires), "scanRetention names the scheduled action, skips a refused flag write and reports it".
+- Files: `lib/retention.ts`.
+
+**Done-when.**
+- ✓ `placeLegalHold`/`releaseLegalHold`: `.select('id')` per chunk, the count returned is what actually held; a short count throws before any event or notification (`SURF-3`/`OWN-14`, verified current); the notification fires only when held === ids.length, so its number is the real one.
+- ✓ `disposeDocument` checks error and affected rows, returns `{ ok:false, reason:"refused" }` on zero rows (`SURF-3`, verified current).
+- ✓ `setRetentionPolicy` (already), `recomputeRetention` and `logEvent` surface errors to the caller; `scanRetention` surfaces refused flag writes.
+
+**Scope / residual.** `logAuditAction` inside `logEvent` stays best-effort (`.catch`) by design — `audit_logs` is the secondary mirror; the records-management row is the record.
+
 ---
 
 <a id="ret-6"></a>
@@ -192,7 +225,7 @@ lib/retention.ts:126-131 `for (let i = 0; i < ids.length; i += 50) { await supab
 ## RET-6 · R2 objects are deleted using keys read from member-writable columns and JSON, with no org-prefix check on the destructive path
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1068-1080`, `app/api/admin/shed/commit/route.ts:58-98`, `app/api/admin/ticket-shed/commit/route.ts:136-139`, `app/api/admin/ticket-shed/commit/route.ts:186-193`, `app/api/admin/ticket-shed/restore/route.ts:139-144`, `app/api/admin/shed/route.ts:150-168`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contrast the finding draws is exact: app/api/admin/ticket-shed/restore/route.ts:139-144 already applies the missing rule on the WRITE path — `.filter((k) => k && k.startsWith(prefix))` with the comment 'The only keys we may write are the ones the LIVE stub records, under our prefix' — while the DELETE path applies no prefix or ownership check to the same attacker-writable field. app/api/admin/shed/route.ts:150-168 likewise GETs `r.file_url` verbatim into the archive.
@@ -215,6 +248,18 @@ supabase/schema.sql:1068-1070 `CREATE POLICY "documents_org_access" ON documents
 - [ ] the produce routes apply the same prefix filter before GetObject so a substituted key cannot be exfiltrated into the archive
 - [ ] document_versions.file_url and tickets.attachments get a write guard (trigger or column-scoped policy) so a non-controller cannot repoint an existing row's storage key
 
+**Resolution (2026-09-23, Round F).** Reproduced: `shed/commit` mapped `v.file_url` verbatim into `DeleteObjects` (`:131-133`), `ticket-shed/commit`'s `keysFor` mapped `a?.url` verbatim (`:136-139`), and both produce routes `GetObject`ed the same values, while `ticket-shed/restore` already applied `startsWith("orgs/<orgId>/")` on its write path. New `lib/shedKeyGuard.ts`: `isOrgOwnedKey(key, orgId)` = `isSafeStorageKey` (lib/storageKey.ts — traversal, control bytes, leading slash) AND `orgs/<orgId>/` prefix; `partitionOrgKeys`. Applied at every destructive step: document produce (preview and claim — a rejected row is never claimed, `rejectedKeys` in the preview, the response headers and ARCHIVE.txt), document commit (rejected rows left linked, unstamped, undeleted; `rejectedKeys` in the response and the `DATA_ARCHIVE_RECLAIM` audit detail), ticket produce (a ticket carrying ANY non-owned attachment key is skipped and un-claimed BEFORE any `GetObject`, `skippedForeignKey` / `X-Archive-Rejected-Keys`), ticket commit (`keysFor` filters and counts). Done-when 3 at the database: `supabase/migrations/20261077_dc_roundF_records_rails.sql` §3 `enforce_document_version_key_guard` (BEFORE UPDATE ON document_versions) refuses any `file_url` change for every authenticated caller (no app path repoints an existing row; the service-role intake route passes).
+- Tests: `lib/__tests__/dcRoundFShed.test.ts` — "isOrgOwnedKey: only a safe key under orgs/<orgId>/", "preview excludes a foreign-prefixed key…", "produce never claims a foreign or shared key…", "frees only org-owned, unshared keys…", "produce skips (and un-claims) a ticket carrying an attachment key outside the org prefix", "commit deletes only org-owned keys…"; `lib/__tests__/dcRoundFMigration.test.ts` "§3 document_versions.file_url is write-once…".
+- Files: `lib/shedKeyGuard.ts` (new), `app/api/admin/shed/route.ts`, `app/api/admin/shed/commit/route.ts`, `app/api/admin/ticket-shed/route.ts`, `app/api/admin/ticket-shed/commit/route.ts`; migration §3.
+- Pending migration: `supabase/migrations/20261077_dc_roundF_records_rails.sql` (§3).
+
+**Done-when.**
+- ✓ both commit routes filter every key through the org prefix AND `assertSafeStorageKey` before DeleteObjects, counting and reporting rejects.
+- ✓ both produce routes apply the same filter before GetObject (document rows never claimed; ticket skipped whole).
+- ✓ / ✗ `document_versions.file_url` write guard — `supabase/migrations/20261077_dc_roundF_records_rails.sql` §3 (pending apply). **`tickets.attachments` gets no column guard here**: `tickets` carries the drafting-flow workflow rails (20261038/20261039 deliberately leave `attachments` appendable by requesters); the delete/produce paths are closed by the prefix filter plus the RET-8 live-revision check (a substituted key naming a live controlled revision is never freed), which is the exploit the finding describes.
+
+**Scope / residual.** Verifier framing stands: cross-tenant deletion needed a member's PostgREST tamper AND a controller's commit; both halves are now refused. A guard that keeps `tickets.attachments[].url` write-once per entry is drafting-flow territory (open there if wanted).
+
 ---
 
 <a id="ret-7"></a>
@@ -222,7 +267,7 @@ supabase/schema.sql:1068-1070 `CREATE POLICY "documents_org_access" ON documents
 ## RET-7 · The orphan purge is bucket-wide, not org-scoped: one workspace's admin deletes every other tenant's orphaned objects
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageOrphans.ts:118-150`, `lib/storageOrphans.ts:152-177`, `app/api/admin/orphans/route.ts:22-33`, `app/api/admin/orphans/route.ts:35-58`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. lib/serverAuth.ts:49-58 authorizes against membership of whatever org the caller names, so any Admin of any workspace — including a self-signup personal org — can sweep every tenant's objects. The reference collector does read all orgs' rows (service-role client, no org filter), so genuinely-referenced files are safe; the sharp edge is that any table missing from the sources list at lib/storageOrphans.ts:43-88 turns into cross-tenant destruction of live files, which the file's own comment at :78-80 records as having already happened once for output_templates.
@@ -245,6 +290,17 @@ lib/storageOrphans.ts:127-129 `const res = await r2.send(new ListObjectsV2Comman
 - [ ] the reference collector still runs org-wide (a cross-org reference must protect a key) but the delete set is intersected with the caller's prefix
 - [ ] the GET response reports only the caller's org's totals and keys
 
+**Resolution (2026-09-23, Round F).** Reproduced: `scanOrphans(sb)` listed with no `Prefix` (`:151`) and `deleteOrphans(sb)` deleted every unreferenced object in the shared bucket; the route resolved `orgId` only for `authorizeOrgRole` and the audit row. `lib/storageOrphans.ts`: `scanOrphans(sb, orgId, maxPages)` requires an orgId, lists with `Prefix: orgs/<orgId>/`, skips any key outside that prefix even if a listing hands one back, and reports `totalObjects` / `totalBytes` for that prefix only plus `scope`; `deleteOrphans(sb, orgId)` re-scans server-side and sends only in-prefix keys to `DeleteObjects`. `collectReferencedKeys` stays bucket-wide on purpose (a key any tenant references is protected). `app/api/admin/orphans/route.ts` passes the caller's org to both and records `scope` in the `STORAGE_ORPHANS_PURGED` audit detail.
+- Tests: `lib/__tests__/dcRoundFShed.test.ts` — "scanOrphans lists with Prefix orgs/<orgId>/ and ignores anything outside it, totals included", "deleteOrphans never sends a key outside the prefix to DeleteObjects", "refuses to walk without an orgId".
+- Files: `lib/storageOrphans.ts`, `app/api/admin/orphans/route.ts`.
+
+**Done-when.**
+- ✓ `scanOrphans` / `deleteOrphans` take an orgId and pass `Prefix: 'orgs/' + orgId + '/'`, skipping any key outside it.
+- ✓ the reference collector still runs org-wide; the delete set is the caller's prefix only.
+- ✓ the GET reports only the caller's org's totals and keys (`scope` says which prefix).
+
+**Scope / residual.** Objects outside every `orgs/<uuid>/` prefix (legacy layout, if any exist) are now reachable by no tenant's sweep — an operator-level inventory (`ListObjectsV2` without prefix, counting keys not under `orgs/`) belongs to admin-and-org `BKP-2`/`BKP-9`, which own the collector side; the storage page's orphan section wording ("files in storage") is unchanged.
+
 ---
 
 <a id="ret-8"></a>
@@ -252,7 +308,7 @@ lib/storageOrphans.ts:127-129 `const res = await r2.send(new ListObjectsV2Comman
 ## RET-8 · revertToVersion reuses the old revision's storage key, so shedding the old revision deletes the CURRENT revision's bytes
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/revisions.ts:1165-1184`, `app/api/admin/shed/commit/route.ts:58-110`, `lib/shed.ts:74-116`, `app/api/storage/resolve/route.ts:31-38`, `app/api/storage/resolve/route.ts:74-90`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: no code path anywhere dedupes or reference-counts file_url before deletion (only supabase/migrations/20260827_file_url_index.sql indexes it, and no shed query joins on it). The old row is superseded and beyond keep-N so it is selected; deleting its key destroys the bytes the revert row — the CURRENT revision — points at. Worse, /api/storage/resolve/route.ts:32-38 orders by created_at DESC limit 1, so the lookup lands on the revert row (archived_at NULL, archive_id NULL) and line 87 returns `archived:true, missing:true, archiveId:null` — the user is told to provide an archive the UI cannot name.
@@ -275,6 +331,17 @@ lib/revisions.ts:1165-1168 comment + :1175 `file_url: targetVersion.fileUrl,`; a
 - [ ] either the same exclusion is applied at produce time so shared-key revisions are never claimed, or revertToVersion copies the object to a fresh key
 - [ ] a test covers: revert to an old revision, run produce+commit with keep-N excluding the old row, assert the shared key survives
 
+**Resolution (2026-09-23, Round F).** Reproduced: `revertToVersion` copies the target's `file_url` (`lib/revisions.ts:1203`, comment at `:1184`), and neither produce nor commit asked whether another non-archived row referenced a key before freeing it. Rule landed (`lib/shedKeyGuard.ts` `keysSharedOutside` / `sharedLiveKeys`): a key may be freed only when EVERY non-archived `document_versions` row that references it is part of the set being archived. Produce (`refineSelection`, GET preview and POST): after selection, one query per 200 keys for live rows sharing those keys; a selected row whose key is also referenced by a row OUTSIDE the selection is not claimed (`sharedSkipped` in the preview, headers, ARCHIVE.txt). Commit: the same read against the linked set; shared rows are left linked, unstamped and undeleted (`sharedSkipped` in the response and audit detail). Both reads fail CLOSED (503, nothing claimed / nothing freed). The ticket commit applies the same read so a substituted attachment key naming a live revision is never freed. Chosen over copying the object in `revertToVersion`: `lib/revisions.ts` is `P3 LIFECYCLE`'s file, and the exclusion also covers every existing shared pair (the inventory row in `supabase/migrations/20261077_dc_roundF_records_rails.sql` counts them).
+- Tests: `lib/__tests__/dcRoundFShed.test.ts` — "keysSharedOutside…", "preview excludes … a key a current revision shares", "produce never claims a foreign or shared key…", "frees only org-owned, unshared keys…", "fails CLOSED … when the shared-key read errors" (produce and commit), "RET-8 end to end: revert to an old revision, shed it beyond keep-N — the shared key survives" (produce claims nothing; a pre-fix-linked row is neither stamped nor deleted at commit).
+- Files: `lib/shedKeyGuard.ts`, `app/api/admin/shed/route.ts`, `app/api/admin/shed/commit/route.ts`, `app/api/admin/ticket-shed/commit/route.ts`.
+
+**Done-when.**
+- ✓ `shed/commit` excludes any key still referenced by a non-archived row outside the archive (a per-key live-row check before the stamp and the delete batch).
+- ✓ the same exclusion at produce time — shared-key revisions are never claimed.
+- ✓ the revert → produce+commit test asserts the shared key survives.
+
+**Scope / residual.** A shared pair is shed together once BOTH rows qualify (the exclusion is "outside the set", not "shared at all"). The `/api/storage/resolve` "archived, archiveId null" pointer the verifier noted no longer arises for a shared key (it is never freed); the resolve route itself is untouched.
+
 ---
 
 <a id="ret-9"></a>
@@ -282,7 +349,7 @@ lib/revisions.ts:1165-1168 comment + :1175 `file_url: targetVersion.fileUrl,`; a
 ## RET-9 · Both legal-hold guard functions are SECURITY DEFINER with no SET search_path
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260826_legal_hold_delete_guard.sql:17-27`, `supabase/migrations/20260826_legal_hold_delete_guard.sql:37-50`, `supabase/migrations/20260810_archive_invariants.sql:18-21`, `supabase/schema.sql:1031-1034`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The literal claim is true and the house convention is clearly the opposite (18 of 31 SECURITY DEFINER migration files set search_path). Two corrections pull the severity down: enforce_legal_hold_delete_guard (lines 17-27) references no relation at all — only OLD.legal_hold — so search_path shadowing cannot affect it, leaving one genuinely vulnerable function, not "both"; and the exploit needs CREATE on a schema ahead of public, a DDL privilege that already implies the ability to DROP the trigger outright. LOW (hardening/lint-class) fits better than MEDIUM.
@@ -305,6 +372,15 @@ lib/revisions.ts:1165-1168 comment + :1175 `file_url: targetVersion.fileUrl,`; a
 - [ ] my_org_ids(), node_visible(), doc_is_visible() and my_project_ids() get the same treatment
 - [ ] a schema-health check enumerates SECURITY DEFINER routines lacking a search_path setting and fails the build
 
+**Resolution (2026-09-23, Round F — record-only close).** Verified against current code and closed by pointer to roles-and-permissions `DB-6`: `supabase/migrations/20261020_pin_search_path.sql` pins `SET search_path = public` via `ALTER FUNCTION` on `enforce_legal_hold_delete_guard()`, `enforce_legal_hold_version_delete_guard()`, `my_org_ids()`, `node_visible(text, jsonb, uuid)`, `doc_is_visible(uuid)` and `my_project_ids()` (all named in this finding's done-when) — **applied & verified live 2026-08-24** (probe: zero `SECURITY DEFINER` functions in `public` without a pinned `search_path`). `lib/__tests__/searchPathPin.test.ts` replays the whole migration set and fails the suite on any definer function whose final definition is unpinned and not in the 20261020 list; `20261020`'s trailing SELECT probes `pg_proc` live. Nothing to write here.
+
+**Done-when.**
+- ✓ / ✗ both functions pin `search_path = public` (by ALTER, live). Their table references are **not** schema-qualified: `DB-6` chose ALTER over re-CREATE deliberately (DEC-30 — the deployed bodies are left untouched), and with `search_path` pinned to `public` an unqualified `documents` resolves only there, which is the property the finding wants.
+- ✓ `my_org_ids()`, `node_visible()`, `doc_is_visible()`, `my_project_ids()` pinned the same way (same migration).
+- ✓ a schema-health check fails the suite on any unpinned definer function (`searchPathPin.test.ts`; vitest is part of the ship loop).
+
+**Scope / residual.** None. `DRLS-11` (the ten further functions) closes the same way.
+
 ---
 
 <a id="ret-10"></a>
@@ -312,7 +388,7 @@ lib/revisions.ts:1165-1168 comment + :1175 `file_url: targetVersion.fileUrl,`; a
 ## RET-10 · Deleting a folder silently drops folder-inherited retention, and the 30-day trash restore never puts it back
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/collections/delete/route.ts:62-65`, `app/api/collections/delete/route.ts:99-120`, `app/api/collections/trash/route.ts:83-99`, `lib/serverRetention.ts:42-51`, `supabase/migrations/20260820_retention.sql:19-26`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified there is no compensating guard: nothing in the delete route checks retention_until, disposition_state or legal_hold before stepping documents up, and no restore path re-clocks documents. Docs carrying their OWN retention_policy are unaffected (resolveEffectiveRetentionPolicy prefers doc policy), so the finding's scoping to folder-INHERITED retention is precise. lib/retention.ts:174-179 then skips them permanently — scanRetention filters `.not("retention_until","is",null)`.
@@ -334,6 +410,17 @@ lib/serverRetention.ts:46-49 `const until = policy ? computeRetentionUntil(reten
 - [ ] folder delete refuses, or requires an explicit extra confirmation naming the count, when re-clocking would null a non-null retention_until on any stepped-up document
 - [ ] the FOLDER_DELETED audit detail records how many documents lost a retention deadline and what it was
 - [ ] trash restore returns the stepped-up documents to the restored folder and re-clocks them, or the delete dialog states plainly that restoring will not
+
+**Resolution (2026-09-23, Round F).** Reproduced: `reclockRetentionForDocs` writes `retention_until: null, disposition_state: null` when the heir has no policy (`lib/serverRetention.ts:46-49`), the delete route re-clocked after the move with no check, and the trash restore updated the collection row only (`trash/route.ts:99`). `app/api/collections/delete/route.ts` now previews the re-clock BEFORE anything moves (`previewRetentionLoss`: the folder's documents × the heir's effective policy through the pure `lib/retentionPolicy.ts` rules) and refuses with 409 `Deleting this folder would remove the retention deadline from N record(s) (e.g. until …) … Set a retention policy on the parent folder or library (or on the records) first, or delete with acknowledgeRetentionLoss: true …` plus `retentionLoss: { count, sample }` unless the body carries `acknowledgeRetentionLoss: true`; fails closed (500) when the preview read errors. The `FOLDER_DELETED` audit detail records `retentionDeadlinesLost`, `retentionDeadlinesLostSample` (id + the deadline that was lost), `retentionLossAcknowledged` and `steppedDocIds`. `app/api/collections/trash/route.ts` restore reads that detail (latest `FOLDER_DELETED` row for the folder), moves back ONLY the documents still sitting where the delete left them (`collection_id = contentsMovedTo`, same library), re-clocks them against the restored folder's own `retention_policy` + the library's, and reports `documentsReturned` / `retentionRecomputed` / `retentionFailed` (or a `note` saying why nothing came back) in the response and the `FOLDER_RESTORED` audit row. The PRODUCT path: `lib/libraryCollections.ts` `deleteFolder` (the only caller of the route) posts without the flag first; on a 409 carrying `retentionLoss` it opens `confirmRetentionLoss` — an `appConfirm` titled "N record(s) would lose their retention deadline", naming the sample deadlines and the workaround, button "Delete and accept the loss" — and only on a yes re-posts with `acknowledgeRetentionLoss: true`; a declined dialog THROWS ("Folder not deleted — N records keep their retention deadline") so the page never removes the folder from the screen; any other refusal surfaces the route's message unchanged. The acknowledgement is never sent pre-emptively. The confirmation is injectable (`opts.confirmRetentionLoss`) for a caller with its own dialog.
+- Tests: `lib/__tests__/dcRoundFCollections.test.ts` — "refuses (409) with the count and sample deadlines when the heir has no policy; nothing moves", "proceeds when the heir carries a policy … records zero lost", "with acknowledgeRetentionLoss the delete proceeds and the audit detail names what was lost", "fails closed when the preview read errors", "moves back only the records still at the heir, re-clocked against the restored folder's policy", "restores the shell alone, and says so, when no delete record names the documents"; the client half — "first POST carries no acknowledgement; on 409 the dialog names the count and deadlines; confirming re-POSTs acknowledgeRetentionLoss: true", "declining is a refusal, not a silent success", "a clean delete never asks; any other refusal surfaces the route's message unchanged", "an injected confirmation replaces the dialog".
+- Files: `app/api/collections/delete/route.ts`, `app/api/collections/trash/route.ts`, `lib/libraryCollections.ts` (`deleteFolder`, `confirmRetentionLoss`, `RetentionLoss`).
+
+**Done-when.**
+- ✓ folder delete refuses when re-clocking would null a non-null `retention_until`, naming the count and sample deadlines; the extra confirmation is the in-product dialog `deleteFolder` opens on the refusal, which sends `acknowledgeRetentionLoss: true` only on a yes.
+- ✓ the `FOLDER_DELETED` detail records how many documents lost a deadline and what it was.
+- ✓ trash restore returns the stepped-up documents to the restored folder and re-clocks them.
+
+**Scope / residual.** The folder page (`P6`'s `app/(protected)/documents/[libraryId]/page.tsx`) is untouched: it calls `deleteFolder(id, orgId)` and gets the dialog through the lib default; its catch shows "Couldn't delete that folder." on a decline (wave 2 may word that as the thrown message). The restore's memory of what moved is the audit row (best-effort insert); when it is missing the restore says so and restores the shell alone, exactly as before.
 
 ---
 
@@ -365,6 +452,17 @@ lib/retention.ts:194 `body: \`This record has passed its retention date (${(d.re
 - [ ] the register and the disposition UI surface the scheduled action, and disposeDocument defaults its action from the effective policy rather than a hardcoded "archive"
 - [ ] or the selector is removed from both editors until the action is honoured
 
+**Partial (2026-09-23, Round F).** Reproduced: nothing read `RetentionPolicy.action` (`scanRetention` body fixed text, `RetentionSection` `action: "archive"` hard-coded, `describe()` silent). Landed: `lib/retentionPolicy.ts` (pure) `scheduledActionFor` / `scheduledActionLabel` ("flag for review" | "archive" | "destroy") / `disposeActionFor` ('destroy' → destroy, else archive) / `describeRetentionPolicy` ("Retain 30 years from issued, then destroy"), re-exported from `lib/retention.ts`. `scanRetention` batch-loads the org's folder and library policies — CHECKED: a failed libraries or collections read throws `Retention scan could not read the policy chain: …` BEFORE any record is flagged (an empty map would have named "flag for review" for a "then destroy" schedule; the cron records the throw per org) — resolves each record's effective policy and notifies `Retention reached: <label> — scheduled to <action>` with the body naming the schedule. `disposeDocument` defaults its recorded action from the effective policy when the caller names none and returns `{ ok:true, action }`; its schedule read and `effectiveRetentionPolicyForDocument`'s folder/library reads are checked too — a read error throws with nothing disposed, never recording `archive` for a destroy schedule. `components/documents/RetentionSection.tsx` describes the policy with its action, and its Dispose dialog names the schedule and records the schedule's action (button "Dispose — destroy" for a destroy schedule).
+- Tests: `lib/__tests__/dcRoundFRecords.test.ts` — "resolves the action, its label and the disposition default", "describes the policy WITH its end-of-life action", "scanRetention names the scheduled action…" (folder 'destroy' beats library 'archive'), "scanRetention aborts BEFORE flagging anything when the policy chain cannot be read", "records the SCHEDULE's action when the caller names none", "throws (nothing disposed) when the schedule cannot be read", "an explicit action still wins".
+- Files: `lib/retentionPolicy.ts`, `lib/retention.ts`, `components/documents/RetentionSection.tsx`.
+
+**Done-when.**
+- ✓ `scanRetention` resolves the effective policy per document and names the scheduled action in the title and body.
+- ✓ / ✗ the disposition UI surfaces the scheduled action and `disposeDocument` defaults from the effective policy. **The register does not**: `app/(protected)/register/page.tsx:175` renders `RetentionPill` (status only) from row fields that carry no policy chain; naming the schedule there needs the folder/library policies per row — not this package's file, left for the register's owner.
+- ✗ (alternative) the selector is not removed — the action is now honoured.
+
+**Scope / residual.** Stays OPEN for the register column. "destroy" still never deletes bytes here (the panel says so: disposition is an explicit logged action; the space-saver handles storage) — the recorded action is the schedule's intent, which is what a records audit asks for. `RetentionPolicyModal.tsx` is unchanged (its selector wording already reads "flag for review / archive / destroy").
+
 ---
 
 <a id="ret-12"></a>
@@ -372,7 +470,7 @@ lib/retention.ts:194 `body: \`This record has passed its retention date (${(d.re
 ## RET-12 · The document archive's integrity manifest records the DB's claimed hash, not a hash of the bytes actually captured, before commit destroys the only other copy
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/shed/route.ts:146-168`, `app/api/admin/shed/route.ts:169`, `app/api/admin/ticket-shed/route.ts:212`, `components/archive/BackupViewer.tsx:100-110`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the only sha256 in the document shed path is the copied DB value; the capture loop at :150-168 does zero verification before the irreversible commit. Partial mitigation worth recording — components/archive/BackupViewer.tsx:96-104 prefers the DB file_hash over the manifest, so a corrupted capture IS detectable at re-open time; what is permanently lost is detection at the one moment recovery was still possible, and the manifest cannot distinguish pre- from post-archive corruption.
@@ -395,6 +493,17 @@ app/api/admin/shed/route.ts:155-163 `const buf = await obj.Body!.transformToByte
 - [ ] a version whose computed hash disagrees with a non-null file_hash is un-claimed rather than archived, so commit cannot free it
 - [ ] the produce response reports how many captured files had no recorded hash
 
+**Resolution (2026-09-23, Round F).** Reproduced: `shed/route.ts` wrote `sha256: r.file_hash` — the DB's upload-time claim — beside the freshly read `buf` it never hashed (`:183-189`). Produce now hashes every captured buffer (`createHash("sha256")`), records `{ sha256: <computed>, dbSha256: <file_hash> }` in `files-manifest.json`, and when the DB hash is non-null and disagrees, does NOT bundle the file and leaves the row un-claimed (the existing un-claim loop returns it to live storage, so commit cannot free it). Counts ride the response headers (`X-Archive-Unhashed`, `X-Archive-Hash-Mismatch`, plus `X-Archive-Rejected-Keys` / `X-Archive-Shared-Skipped`), ARCHIVE.txt ("N file(s) had no recorded hash; M file(s) whose live bytes disagreed with their recorded hash were NOT captured and stay in live storage") and the catalog note.
+- Tests: `lib/__tests__/dcRoundFShed.test.ts` — "produce never claims a foreign or shared key; hashes what it captured; un-claims a hash mismatch" (manifest `sha256` = hash of the captured bytes, `dbSha256` = the DB claim, the drifted file absent from the zip and un-claimed, the headers and ARCHIVE.txt counts).
+- Files: `app/api/admin/shed/route.ts`.
+
+**Done-when.**
+- ✓ the document shed hashes `buf` and records both the computed hash and the DB's hash, flagging disagreement in the produce response (headers) and ARCHIVE.txt.
+- ✓ a version whose computed hash disagrees with a non-null `file_hash` is un-claimed rather than archived.
+- ✓ the produce response reports how many captured files had no recorded hash.
+
+**Scope / residual.** `components/archive/BackupViewer.tsx` (not this package's file) still verifies DB hash first, manifest `sha256` second — the manifest field it falls back to is now the hash of the captured bytes, so that fallback finally verifies the right thing; the new `dbSha256` field is not read by it yet. The ticket shed already hashed its bytes (the finding's contrast).
+
 ---
 
 <a id="ret-13"></a>
@@ -402,7 +511,7 @@ app/api/admin/shed/route.ts:155-163 `const buf = await obj.Body!.transformToByte
 ## RET-13 · The documented recovery for a failed R2 delete is unreachable: the Reclaim button never renders for the archive that needs it, and the catalog would call the wrong endpoint
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/storage/page.tsx:500-509`, `app/(protected)/admin/storage/page.tsx:619-621`, `app/(protected)/admin/storage/page.tsx:1341-1345`, `app/(protected)/admin/storage/page.tsx:1296-1299`, `app/api/admin/shed/commit/route.ts:53-57`, `app/api/admin/archives/route.ts:74-82`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The advertised recovery is genuinely unreachable for the exact failure it addresses: no row stays pending after a successful stamp, so the catalog shows "reclaimed — the zip is the only copy" with no Reclaim button, and if it did render, docPending===0 would route a document archive to /api/admin/ticket-shed/commit. Minor citation drift only: the mis-routing line is page.tsx:621, not 1296-1299.
@@ -425,6 +534,18 @@ page.tsx:1341-1345 `{row.status === "pending" && (<button onClick={() => void co
 - [ ] commitFromCatalog picks the endpoint from which table holds ANY linked rows (docPending+docCommitted vs ticketPending+ticketCommitted), not from docPending alone
 - [ ] the retry path is exercised by a test that leaves an archive committed-with-errors and asserts the UI offers, and correctly routes, a second Reclaim
 
+**Resolution (2026-09-23, Round F).** Reproduced: after a partial R2 delete every linked row is stamped, `/api/admin/archives` computes `pending = 0` → `committed`, the Reclaim button rendered only under `row.status === "pending"` (`page.tsx:1342`), and `commitFromCatalog` chose the endpoint by `row.docPending > 0` (`:622`). Landed: both commit routes persist the delete shortfall on the catalog row (`archives.reclaim_shortfall`, `supabase/migrations/20261077_dc_roundF_records_rails.sql` §6) through `persistReclaimShortfall` in `lib/archiveCatalog.ts` — CHECKED, because supabase-js never throws: a refused update (RLS, transport, or a database that predates the column) is named in the response's `errors` (`shortfall persist: …`, or `archives.reclaim_shortfall is not applied yet (migration 20261077 §6)`) and reported as `shortfallPersisted: false` in the response and the audit detail, so the catalog is never claimed clean while the row says nothing; the document commit's "nothing deletable remains" early return (every remaining row foreign or shared) clears a stale shortfall to 0 the same checked way, so "Retry reclaim" is not offered forever for keys the route may never free. Both carry `keysFailed` in the response and the audit detail; `/api/admin/archives` selects `*` (so the catalog still lists on a database without the column) and returns `reclaimShortfall` + `needsReclaim`; new pure `lib/archiveCatalog.ts` — `catalogNeedsReclaim` (pending, OR committed with a shortfall), `catalogCommitTarget` (by which table holds ANY linked rows: pending + committed), `catalogReclaimLabel`; the storage page's catalog row renders the button from `catalogNeedsReclaim`, labels a committed-with-shortfall row amber ("…N cloud object(s) failed to delete and are still billed — run Reclaim again"), routes the retry with `catalogCommitTarget`, and words the confirm as "Retry reclaim".
+- Tests: `lib/__tests__/dcRoundFArchiveCatalog.test.ts` — the pure decisions (incl. "the all-stamped document archive goes to the document endpoint"), "/api/admin/archives reports the delete shortfall" (committed AND needsReclaim; pre-migration row reads 0), the page source pin ("renders Reclaim from catalogNeedsReclaim and routes from catalogCommitTarget — the pending-only gate and the docPending rule are gone"); `lib/__tests__/dcRoundFShed.test.ts` "frees only org-owned, unshared keys… persists the shortfall" (an R2 per-key error → `reclaim_shortfall: 1`, `shortfallPersisted: true`), "a REFUSED shortfall write is named, never dropped" (transient error and the pre-migration PGRST204 shape → `shortfallPersisted: false` + a named error), "when nothing deletable remains … the stale shortfall is cleared, checked", "ticket commit: a refused shortfall write is named in errors".
+- Files: `lib/archiveCatalog.ts` (new: the pure decisions + `persistReclaimShortfall`), `app/api/admin/archives/route.ts`, `app/(protected)/admin/storage/page.tsx` (Reclaim button region), `app/api/admin/shed/commit/route.ts`, `app/api/admin/ticket-shed/commit/route.ts`; migration §6.
+- Pending migration: `supabase/migrations/20261077_dc_roundF_records_rails.sql` (§6).
+
+**Done-when.**
+- ✓ `/api/admin/archives` reports a persisted delete-shortfall signal and the catalog renders Reclaim whenever it is non-zero; the persistence is checked, and its failure is reported rather than dropped.
+- ✓ `commitFromCatalog` picks the endpoint from which table holds ANY linked rows.
+- ✓ the retry path is tested: a commit that leaves an archive committed-with-errors persists the shortfall, the catalog route offers it, and the routing decision sends it to the right endpoint.
+
+**Scope / residual.** Until §6 is applied the column write is refused by PostgREST and every commit response says so by name (`shortfallPersisted: false`, the migration named in `errors`) while the catalog behaves as before (the commit response and audit row still carry `keysFailed`); the storage page already surfaces a non-empty `errors` as a warning. The legal-hold early return (every linked row under hold) leaves an earlier shortfall in place on purpose: those keys become deletable again when the hold is released.
+
 ---
 
 <a id="ret-14"></a>
@@ -432,7 +553,7 @@ page.tsx:1341-1345 `{row.status === "pending" && (<button onClick={() => void co
 ## RET-14 · Ticket restore writes bytes back into R2 without verifying the sha256 manifest the produce step wrote, and findInBackup's suffix match can pick the wrong entry
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/ticket-shed/restore/route.ts:147-162`, `app/api/admin/ticket-shed/restore/route.ts:93-98`, `app/api/admin/ticket-shed/route.ts:212`, `app/api/admin/ticket-shed/route.ts:231`, `lib/archive.ts:108-122`, `components/archive/BackupViewer.tsx:100-110`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. Real guards exist and limit the blast radius — restore writes only keys the LIVE archived stub owns (:141-146 allowedKeys, prefix-checked) and never touches hot tickets (:136) — but the bytes themselves are trusted unverified against a manifest the producer already computed, and findInBackup falls back to a first-wins suffix match. The suffix branch only fires when no exact match exists, so it needs a re-laid-out or hand-edited zip; MEDIUM is right.
@@ -454,5 +575,16 @@ app/api/admin/ticket-shed/restore/route.ts:148-156 `const entry = findInBackup(e
 - [ ] restore parses files-manifest.json and refuses to PutObject any file whose sha256/size does not match, counting mismatches into the response and leaving the stub intact
 - [ ] restore requires an EXACT key match (or a manifest-confirmed one) rather than accepting findInBackup's suffix fallback for writes
 - [ ] a test restores a zip with one tampered file and asserts nothing is written and the ticket stays a stub
+
+**Resolution (2026-09-23, Round F).** Reproduced: restore never read `files-manifest.json`, picked entries with `findInBackup` (suffix fallback at `lib/archive.ts:117`) and `PutObject`ed the bytes unverified. New pure `lib/restoreVerify.ts`: `exactEntryFor` (tolerates only a leading slash and the `files/` wrapper — never a suffix) and `bytesMatchManifest` (well-formed sha256 that matches, and the recorded size). `app/api/admin/ticket-shed/restore/route.ts` now requires `files-manifest.json` (a zip without it, or with an unreadable one, is refused 400 — nothing restored), takes only the exact entry for each key the LIVE stub owns, verifies the bytes BEFORE the write, and on a mismatch writes nothing for that ticket, counts `filesMismatched`, records `verify <key>: bytes do not match files-manifest.json — not written` and leaves the stub intact (the recovery pointer). `lib/archive.ts` `findInBackup` is untouched — the read-only viewer may still guess.
+- Tests: `lib/__tests__/dcRoundFShed.test.ts` — "exactEntryFor tolerates the files/ wrapper and a leading slash, never a suffix", "bytesMatchManifest requires a well-formed sha256 that matches, and the recorded size", "restores a verified archive: bytes written, stub cleared", "a tampered file: nothing written, the ticket stays a stub, the mismatch is counted", "a suffix-only entry no longer sources a write", "an archive without files-manifest.json is refused outright (fail closed)".
+- Files: `lib/restoreVerify.ts` (new), `app/api/admin/ticket-shed/restore/route.ts`.
+
+**Done-when.**
+- ✓ restore parses `files-manifest.json` and refuses to PutObject any file whose sha256/size does not match, counting mismatches into the response and leaving the stub intact.
+- ✓ restore requires an EXACT key match for writes.
+- ✓ a test restores a zip with one tampered file and asserts nothing is written and the ticket stays a stub.
+
+**Scope / residual.** Ticket archives produced before the manifest existed cannot be restored through this route (fail closed by design; the dropped-archive viewer still opens them read-only). Re-producing from a live ticket is the way back.
 
 ---

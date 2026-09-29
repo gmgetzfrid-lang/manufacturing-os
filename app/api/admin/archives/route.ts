@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
+import { catalogNeedsReclaim } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
 
@@ -23,9 +24,12 @@ export async function GET(req: NextRequest) {
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 
+  // `select("*")` on purpose (RET-13): `reclaim_shortfall` arrives with
+  // migration 20261077; naming it would break the catalog on a database that
+  // has not run it yet, and the column reads as 0 when absent.
   const { data: rows, error } = await sb
     .from("archives")
-    .select("archive_id, kind, file_count, total_bytes, note, created_at, created_by_email")
+    .select("*")
     .eq("org_id", orgId)
     .order("created_at", { ascending: false })
     .limit(100);
@@ -34,6 +38,7 @@ export async function GET(req: NextRequest) {
   const list = (rows ?? []) as Array<{
     archive_id: string; kind: string | null; file_count: number | null; total_bytes: number | null;
     note: string | null; created_at: string | null; created_by_email: string | null;
+    reclaim_shortfall?: number | null;
   }>;
   const ids = list.map((r) => r.archive_id);
 
@@ -80,7 +85,10 @@ export async function GET(req: NextRequest) {
       : pending > 0 ? "pending"
       : committed > 0 ? "committed"
       : "empty";
-    return {
+    // RET-13: stamped keys the last commit could not delete — the catalog
+    // offers Reclaim while this is non-zero (the documented retry path).
+    const reclaimShortfall = Math.max(0, Number(r.reclaim_shortfall ?? 0) || 0);
+    const row = {
       archiveId: r.archive_id,
       kind: r.kind ?? "space",
       fileCount: r.file_count ?? 0,
@@ -91,7 +99,9 @@ export async function GET(req: NextRequest) {
       docPending: d.pending, docCommitted: d.committed,
       ticketPending: t.pending, ticketCommitted: t.committed,
       status,
-    };
+      reclaimShortfall,
+    } as const;
+    return { ...row, needsReclaim: catalogNeedsReclaim(row) };
   });
 
   return NextResponse.json({ root, archives });

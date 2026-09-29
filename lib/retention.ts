@@ -16,13 +16,19 @@ import { effectiveOwnerForDocument, getOrgControllers, isEffectiveOwnerOfDocumen
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
-import { resolveEffectiveRetentionPolicy, computeRetentionUntil } from "@/lib/retentionPolicy";
+import { listActiveHoldsForDocument } from "@/lib/holds";
+import {
+  resolveEffectiveRetentionPolicy, computeRetentionUntil, disposeActionFor, scheduledActionLabel,
+} from "@/lib/retentionPolicy";
 import type { RetentionPolicy } from "@/types/schema";
 
 // The pure resolution/date logic lives in lib/retentionPolicy.ts so server
 // routes (which must not import the browser client) share it; re-exported
 // here to keep every existing import site working.
-export { resolveEffectiveRetentionPolicy, computeRetentionUntil } from "@/lib/retentionPolicy";
+export {
+  resolveEffectiveRetentionPolicy, computeRetentionUntil,
+  scheduledActionFor, scheduledActionLabel, disposeActionFor, describeRetentionPolicy,
+} from "@/lib/retentionPolicy";
 
 type Level = "library" | "collection" | "document";
 interface PolicyCols { retention_policy?: RetentionPolicy | null }
@@ -32,12 +38,17 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 export async function effectiveRetentionPolicyForDocument(doc: {
   retentionPolicy?: RetentionPolicy | null; collectionId?: string | null; libraryId: string;
 }): Promise<RetentionPolicy | null> {
+  // RET-11: the reads are CHECKED — a failed folder or library read must not
+  // quietly resolve to the document's own (usually null) policy and name the
+  // wrong scheduled action.
   let folder: RetentionPolicy | null = null;
   if (doc.collectionId) {
-    const { data } = await supabase.from("collections").select("retention_policy").eq("id", doc.collectionId).maybeSingle();
+    const { data, error } = await supabase.from("collections").select("retention_policy").eq("id", doc.collectionId).maybeSingle();
+    if (error) throw new Error(`Could not read the folder's retention policy: ${error.message}`);
     folder = (data as PolicyCols)?.retention_policy ?? null;
   }
-  const { data: lib } = await supabase.from("libraries").select("retention_policy").eq("id", doc.libraryId).maybeSingle();
+  const { data: lib, error: libErr } = await supabase.from("libraries").select("retention_policy").eq("id", doc.libraryId).maybeSingle();
+  if (libErr) throw new Error(`Could not read the library's retention policy: ${libErr.message}`);
   return resolveEffectiveRetentionPolicy(doc.retentionPolicy ?? null, folder, (lib as PolicyCols)?.retention_policy ?? null);
 }
 
@@ -67,11 +78,14 @@ interface DocForRetention {
 }
 
 /** Recompute a document's retention_until + disposition_state from its effective
- *  policy and basis date. A disposed record is left as-is. */
+ *  policy and basis date. A disposed record is left as-is. RET-5: both writes
+ *  are CHECKED — a refused re-clock throws instead of leaving a stale deadline
+ *  that reads as current. */
 export async function recomputeRetention(documentId: string): Promise<void> {
-  const { data } = await supabase.from("documents")
+  const { data, error: readErr } = await supabase.from("documents")
     .select("id, retention_policy, collection_id, library_id, created_at, updated_at, effective_date, disposition_state")
     .eq("id", documentId).maybeSingle();
+  if (readErr) throw new Error(`Couldn't read the record to re-clock its retention: ${readErr.message}`);
   if (!data) return;
   const doc = data as unknown as DocForRetention;
   if (doc.disposition_state === "disposed") return;
@@ -80,7 +94,8 @@ export async function recomputeRetention(documentId: string): Promise<void> {
     retentionPolicy: doc.retention_policy, collectionId: doc.collection_id, libraryId: doc.library_id,
   });
   if (!policy) {
-    await supabase.from("documents").update({ retention_until: null, disposition_state: null }).eq("id", doc.id);
+    const { error } = await supabase.from("documents").update({ retention_until: null, disposition_state: null }).eq("id", doc.id);
+    if (error) throw new Error(`Retention clock was NOT cleared: ${error.message}`);
     return;
   }
   const basis = policy.basis ?? "created";
@@ -90,7 +105,8 @@ export async function recomputeRetention(documentId: string): Promise<void> {
     : /* issued | superseded */ (doc.updated_at || doc.created_at);
   const until = computeRetentionUntil(basisISO, policy);
   const state = until && until <= todayISO() ? "eligible" : "active";
-  await supabase.from("documents").update({ retention_until: until, disposition_state: state }).eq("id", doc.id);
+  const { error } = await supabase.from("documents").update({ retention_until: until, disposition_state: state }).eq("id", doc.id);
+  if (error) throw new Error(`Retention clock was NOT updated: ${error.message}`);
 }
 
 /** Set (or clear) the retention policy at a level, then recompute the covered
@@ -210,12 +226,37 @@ export async function releaseLegalHold(input: {
 // ── Disposition ──────────────────────────────────────────────────────────────
 
 /** Dispose an eligible record — archive it and mark it disposed (never a hard
- *  delete here; the audit trail is preserved). Blocked while on legal hold. */
+ *  delete here; the audit trail is preserved). Blocked while on legal hold,
+ *  and (HLD-1) while an operational hold is open on the document. */
 export async function disposeDocument(input: {
   documentId: string; orgId: string; action?: "archive" | "destroy"; reason?: string; actorId?: string | null; actorName?: string | null;
-}): Promise<{ ok: boolean; reason?: string }> {
+}): Promise<{ ok: boolean; reason?: string; action?: "archive" | "destroy" }> {
   if (await isLegalHold(input.documentId)) return { ok: false, reason: "legal_hold" };
   await assertRetentionAuthority({ orgId: input.orgId, actorId: input.actorId, documentId: input.documentId });
+  // HLD-1 (dispose gate): a hold is a stop-work signal — "this document can't
+  // be advanced until X is cleared" — and disposal is the most final advance
+  // there is. An open document_holds row refuses here for EVERYONE (release
+  // the hold first; the hold queue shows who placed it and why), and the
+  // retention guard (20261077) refuses the same write at the database for
+  // non-controllers. The hold read fails CLOSED: it throws, disposal waits.
+  // Wave 2 unifies this onto lib/holdGate.ts assertNotOnHold.
+  const activeHolds = await listActiveHoldsForDocument(input.documentId);
+  if (activeHolds.length > 0) return { ok: false, reason: "active_hold" };
+  // RET-11: the action recorded is the schedule's, not a hard-coded "archive",
+  // unless the caller names one explicitly.
+  let action: "archive" | "destroy" = input.action ?? "archive";
+  if (!input.action) {
+    // Checked: a failed read must not record 'archive' for a destroy schedule.
+    const { data: row, error: rowErr } = await supabase.from("documents").select("retention_policy, collection_id, library_id").eq("id", input.documentId).maybeSingle();
+    if (rowErr) throw new Error(`Could not read the record's retention schedule; nothing was disposed: ${rowErr.message}`);
+    if (row) {
+      const policy = await effectiveRetentionPolicyForDocument({
+        retentionPolicy: (row.retention_policy as RetentionPolicy | null) ?? null,
+        collectionId: (row.collection_id as string | null) ?? null, libraryId: row.library_id as string,
+      });
+      action = disposeActionFor(policy);
+    }
+  }
   const nowIso = new Date().toISOString();
   // Checked write: the DB guard refuses disposition under a hold placed
   // between the read above and this write (the TOCTOU the app check alone
@@ -225,8 +266,8 @@ export async function disposeDocument(input: {
     .eq("id", input.documentId).select("id");
   if (dispErr) throw new Error(dispErr.message);
   if (!disposed || disposed.length === 0) return { ok: false, reason: "refused" };
-  await logEvent(input.orgId, { scopeType: "document", scopeId: input.documentId, documentId: input.documentId, action: "disposed", reason: input.reason, detail: { action: input.action ?? "archive" }, actorId: input.actorId, actorName: input.actorName });
-  return { ok: true };
+  await logEvent(input.orgId, { scopeType: "document", scopeId: input.documentId, documentId: input.documentId, action: "disposed", reason: input.reason, detail: { action }, actorId: input.actorId, actorName: input.actorName });
+  return { ok: true, action };
 }
 
 // ── Daily scan: flag newly-eligible records ──────────────────────────────────
@@ -238,7 +279,7 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
   // than `.eq(...,false)` so pre-migration NULL rows are still scanned.)
   const renudgeDays = opts?.renudgeDays ?? 30;
   const renudgeCutoff = new Date(Date.now() - renudgeDays * 86_400_000).toISOString();
-  const { data } = await supabase.from("documents")
+  const { data, error: scanErr } = await supabase.from("documents")
     .select("id, library_id, collection_id, document_number, title, name, retention_until, retention_policy, owner_user_id, owner_name")
     .eq("org_id", orgId)
     .not("legal_hold", "is", true)
@@ -246,14 +287,39 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
     .not("retention_until", "is", null)
     .lte("retention_until", todayISO())
     .or(`retention_notified_at.is.null,retention_notified_at.lt.${renudgeCutoff}`);
+  if (scanErr) throw new Error(`Retention scan could not read the records: ${scanErr.message}`);
   const docs = (data ?? []) as Array<Record<string, unknown>>;
   if (!docs.length) return 0;
 
-  const controllers = await getOrgControllers(orgId);
+  // RET-11: resolve each record's EFFECTIVE policy (document > folder >
+  // library) once per org so the notice can name the scheduled action.
+  // CHECKED: with an empty map every notice would read "flag for review" —
+  // the wrong instruction for a "then destroy" schedule — so a failed read
+  // aborts the scan before any record is flagged (the cron records it per org).
+  const [controllers, { data: libRows, error: libErr }, { data: colRows, error: colErr }] = await Promise.all([
+    getOrgControllers(orgId),
+    supabase.from("libraries").select("id, retention_policy").eq("org_id", orgId),
+    supabase.from("collections").select("id, retention_policy").eq("org_id", orgId),
+  ]);
+  if (libErr || colErr) {
+    throw new Error(`Retention scan could not read the policy chain: ${libErr ? `libraries: ${libErr.message}` : ""}${libErr && colErr ? "; " : ""}${colErr ? `collections: ${colErr.message}` : ""}`);
+  }
+  const libPol = new Map(((libRows ?? []) as Array<{ id: string; retention_policy: RetentionPolicy | null }>).map((l) => [l.id, l.retention_policy ?? null]));
+  const colPol = new Map(((colRows ?? []) as Array<{ id: string; retention_policy: RetentionPolicy | null }>).map((c) => [c.id, c.retention_policy ?? null]));
   let n = 0;
+  const failures: string[] = [];
   for (const d of docs) {
     const docId = d.id as string;
-    await supabase.from("documents").update({ disposition_state: "eligible", retention_notified_at: new Date().toISOString() }).eq("id", docId);
+    // RET-5: a refused flag write must not be notified as "eligible" — the
+    // record would read as pending review while the row still says nothing.
+    const { error: flagErr } = await supabase.from("documents").update({ disposition_state: "eligible", retention_notified_at: new Date().toISOString() }).eq("id", docId);
+    if (flagErr) { failures.push(`${docId}: ${flagErr.message}`); continue; }
+    const policy = resolveEffectiveRetentionPolicy(
+      (d.retention_policy as RetentionPolicy | null) ?? null,
+      d.collection_id ? colPol.get(d.collection_id as string) ?? null : null,
+      libPol.get(d.library_id as string) ?? null,
+    );
+    const scheduled = scheduledActionLabel(policy);
     const label = (d.document_number as string) || (d.title as string) || (d.name as string) || "Document";
     const link = `/documents/${d.library_id as string}?doc=${docId}`;
     const owner = await effectiveOwnerForDocument({
@@ -262,9 +328,17 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
     });
     const targets = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]);
     await Promise.all(targets.map((uid) =>
-      notify({ orgId, userId: uid, kind: "retention_eligible", title: `Retention reached: ${label}`, body: `This record has passed its retention date (${(d.retention_until as string).slice(0, 10)}) and is eligible for disposition review.`, link, resourceType: "document", resourceId: docId })
+      notify({
+        orgId, userId: uid, kind: "retention_eligible",
+        title: `Retention reached: ${label} — scheduled to ${scheduled}`,
+        body: `This record has passed its retention date (${(d.retention_until as string).slice(0, 10)}). Its retention schedule calls for: ${scheduled}. Disposition is an explicit, logged controller action — nothing happens automatically.`,
+        link, resourceType: "document", resourceId: docId,
+      })
     ));
     n++;
+  }
+  if (failures.length) {
+    throw new Error(`Retention scan flagged ${n} record(s) but ${failures.length} flag write(s) were refused — ${failures[0]}`);
   }
   return n;
 }
@@ -299,15 +373,22 @@ async function notifyHold(orgId: string, docIds: string[], kind: "legal_hold_pla
   ));
 }
 
+/** The records-management trail. RET-5 / DRLS-4: the insert is CHECKED — a
+ *  refused event write (the append-only, authority-gated policies of 20261043
+ *  refuse it for a caller without hold/retention authority) surfaces to the
+ *  caller instead of reading as a logged act. */
 async function logEvent(orgId: string, e: {
   scopeType: Level; scopeId: string; documentId: string | null; action: string;
   matter?: string; reason?: string; detail?: unknown; actorId?: string | null; actorName?: string | null;
 }): Promise<void> {
-  await supabase.from("document_disposition_events").insert({
+  const { error } = await supabase.from("document_disposition_events").insert({
     org_id: orgId, document_id: e.documentId, scope_type: e.scopeType, scope_id: e.scopeId,
     action: e.action, matter: e.matter ?? null, reason: e.reason ?? null, detail: e.detail ?? null,
     performed_by: e.actorId ?? null, performed_by_name: e.actorName ?? null,
   });
+  if (error) {
+    throw new Error(`The ${e.action.replace(/_/g, " ")} was applied but its records-management event could NOT be written (${error.message}). The trail is incomplete — report this.`);
+  }
   await logAuditAction({
     action: `RETENTION_${e.action.toUpperCase()}`, resourceType: e.scopeType, resourceId: e.scopeId,
     orgId, userId: e.actorId ?? "", details: { matter: e.matter, reason: e.reason },

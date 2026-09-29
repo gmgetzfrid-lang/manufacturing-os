@@ -13,6 +13,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
+import { partitionOrgKeys, sharedLiveKeys } from "@/lib/shedKeyGuard";
+import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
 
@@ -99,6 +101,40 @@ export async function POST(req: NextRequest) {
       }
     }
   }
+  // RET-6: a key outside `orgs/<orgId>/` (or unsafe) is never deleted — the
+  // column it came from is member-writable, so the value is not trusted.
+  // Rejected rows are left linked and unstamped, and counted.
+  const { owned, rejected } = partitionOrgKeys(versions, orgId, (v) => v.file_url);
+  const rejectedKeys = rejected.length;
+  versions = owned;
+
+  // RET-8: a key a NON-archived revision outside this archive still shares
+  // (a revert's current revision reuses the reverted-to key) is never
+  // freed — deleting it would destroy the current revision's bytes. Those
+  // rows stay linked, unstamped and undeleted. Fail CLOSED on the read.
+  let sharedSkipped = 0;
+  try {
+    const linkedIds = new Set(versions.map((v) => v.id));
+    const shared = await sharedLiveKeys(sb, orgId, versions.map((v) => v.file_url as string), linkedIds);
+    if (shared.size > 0) {
+      const before = versions.length;
+      versions = versions.filter((v) => !shared.has(v.file_url as string));
+      sharedSkipped = before - versions.length;
+    }
+  } catch (e) {
+    return NextResponse.json({ error: `${(e as Error).message} Nothing was freed.` }, { status: 503 });
+  }
+  if (versions.length === 0) {
+    // Nothing this path may ever delete remains, so a shortfall an earlier
+    // commit persisted is stale — clear it (checked), or the catalog offers
+    // "Retry reclaim" forever for keys it is not allowed to free.
+    const cleared = await persistReclaimShortfall(sb, orgId, archiveId, 0);
+    return NextResponse.json({
+      ok: true, reclaimed: 0, keysDeleted: 0, keysFailed: 0, shortfallPersisted: cleared.ok,
+      errors: cleared.ok ? [] : [cleared.error], heldSkipped, rejectedKeys, sharedSkipped,
+      note: `Nothing freed: ${rejectedKeys} row(s) had a storage key outside this workspace and ${sharedSkipped} row(s) share their key with a current revision.`,
+    });
+  }
   const unstamped = versions.filter((v) => !v.archived_at);
 
   const errors: string[] = [];
@@ -144,21 +180,35 @@ export async function POST(req: NextRequest) {
     }
   }
   const reclaimed = stamped.length;
+  // RET-13: the delete shortfall is persisted on the catalog row so the
+  // archive keeps offering "Reclaim" until every stamped key is actually
+  // gone — a committed row with orphaned bytes was otherwise unreachable.
+  // CHECKED (supabase-js never throws): a refused write is named in
+  // `errors` and `shortfallPersisted: false`, so the response never claims
+  // a catalog state the row does not hold. On a database that predates the
+  // column the same message says so; the response and the audit row still
+  // carry the number.
+  const keysFailed = Math.max(0, keys.length - deletedKeys);
+  const persisted = await persistReclaimShortfall(sb, orgId, archiveId, keysFailed);
+  if (!persisted.ok) errors.push(persisted.error);
 
   try {
     await sb.from("audit_logs").insert({
       action: "DATA_ARCHIVE_RECLAIM",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { archiveId, reclaimed, keysDeleted: deletedKeys, errors: errors.slice(0, 8) },
+      details: { archiveId, reclaimed, keysDeleted: deletedKeys, keysFailed, shortfallPersisted: persisted.ok, heldSkipped, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) },
     });
   } catch { /* best-effort */ }
 
+  const notes = [
+    heldSkipped > 0 ? `${heldSkipped} revision(s) under LEGAL HOLD were left untouched.` : "",
+    rejectedKeys > 0 ? `${rejectedKeys} row(s) had a storage key outside this workspace and were refused.` : "",
+    sharedSkipped > 0 ? `${sharedSkipped} row(s) share their storage key with a current revision and were left in place.` : "",
+  ].filter(Boolean);
   return NextResponse.json({
-    ok: true, archiveId, reclaimed, keysDeleted: deletedKeys, errors,
-    heldSkipped,
-    ...(heldSkipped > 0
-      ? { note: `${heldSkipped} revision(s) under LEGAL HOLD were left untouched.` }
-      : {}),
+    ok: true, archiveId, reclaimed, keysDeleted: deletedKeys, keysFailed, shortfallPersisted: persisted.ok, errors,
+    heldSkipped, rejectedKeys, sharedSkipped,
+    ...(notes.length ? { note: notes.join(" ") } : {}),
   });
 }

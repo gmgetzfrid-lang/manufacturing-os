@@ -147,7 +147,7 @@ A policy census across the document-control schema.
 ## DRLS-4 · The records-management and review-certification audit trails are member-writable AND member-deletable
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260820_retention.sql:59-64`, `supabase/migrations/20260812_enable_rls_orphan_tables.sql:42-47`, `supabase/migrations/20260819_orphan_tables_backfill.sql:221-238`, `supabase/migrations/20260630_review_cycles.sql:30-43`, `lib/retention.ts:235`, `lib/reviewCycles.ts:138`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified in both directions: member-writable (arbitrary performed_by, arbitrary action) and member-deletable. Note the contrast the finding implies is real — 20260828_integrity_hardening.sql:243/280 restricted the sibling tables document_review_signoffs and document_acknowledgments to `role IN ('Admin','DocCtrl')` for DELETE, and these two records-management trails were left out of that pass.
@@ -172,6 +172,19 @@ A policy census across the document-control schema.
 - [ ] `document_review_events.org_id` is NOT NULL with an FK to orgs, after the backfill query in 20260812:57-61 is run
 - [ ] Both insert call sites inspect the error and fail loudly
 - [ ] A test attempts to DELETE a disposition event as an Admin and asserts refusal
+
+**Resolution (2026-09-23, Round F).** Reproduced against current code: `document_disposition_events` had been made append-only for UPDATE by `20261043` (roles-and-permissions `SURF-3`) but its DELETE arm admitted controllers; `document_review_events` still carried the 20260812/20260819 `FOR ALL` member policy, a nullable `org_id` with no FK, and both writers discarded `{error}`. Landed in `supabase/migrations/20261077_dc_roundF_records_rails.sql`: §4 backfills `document_review_events.org_id` from the parent document (the 20260812 draft), drops `document_review_events_member_all`, adds `document_review_events_select` (active member) and `document_review_events_insert` (active member AND the row names a document of that org), plus RESTRICTIVE `no_update` / `no_delete` `USING (false)` — a later permissive `FOR ALL` cannot re-open them (the `DRLS-1` lesson); then, in a DO block, `org_id SET NOT NULL` when no NULL row remains, otherwise a `NOT VALID` CHECK so every NEW row is bound while the unbackfillable residue (document gone) is kept for the record; the FK to `orgs` is added `NOT VALID` and validated in place when it can be. §5 tightens `doc_disposition_events_no_delete` to `USING (false)` — the person under investigation may hold DocCtrl. App half: `lib/retention.ts` `logEvent` and `lib/reviewCycles.ts` (`insertReviewEvent`, used by `markReviewed`, `onDocumentIssued`, `setReviewPolicy`) check the insert and throw `… event could NOT be written (…). The trail is incomplete — report this.` The pre-apply inventory (TEMP TABLE, counts only) and the post-apply rows say which world the database is in (NULL rows before/after, FK validated).
+- Tests: `lib/__tests__/dcRoundFMigration.test.ts` — "§4 document_review_events: backfill, FOR ALL dropped, SELECT + INSERT (org-bound), RESTRICTIVE false on UPDATE and DELETE" (and the rail never deletes a row), "§5 the disposition trail's DELETE policy is USING (false)"; `lib/__tests__/dcRoundFRecords.test.ts` — "markReviewed throws when the event insert is refused", "logEvent surfaces a refused disposition-event insert".
+- Files: `supabase/migrations/20261077_dc_roundF_records_rails.sql`, `lib/retention.ts`, `lib/reviewCycles.ts`.
+- Pending migration: `supabase/migrations/20261077_dc_roundF_records_rails.sql` (§4, §5).
+
+**Done-when.**
+- ✓ both tables accept INSERT and SELECT from members and refuse UPDATE and DELETE to every non-service role (pending apply).
+- ✓ `document_review_events.org_id` NOT NULL with an FK to orgs after the backfill — or, when unbackfillable residue exists, bound for every new row (NOT VALID CHECK + FK) with the residue counted; the final SELECT names the count.
+- ✓ both insert call sites inspect the error and fail loudly.
+- ✓ / ✗ "a test attempts to DELETE a disposition event as an Admin and asserts refusal": no live-database harness exists here; met the way `SURF-3` met its equivalent — the shape pins prove both DELETE policies are `USING (false)` and the migration's own probe reads `pg_policies.qual = 'false'` live.
+
+**Scope / residual.** `REMEDIATION_APPLY_ALL.sql` (the third copy the verifier named) is a retired stub since `DB-8`. Service role (cron, admin routes) bypasses RLS as before; the app never deletes either trail.
 
 ---
 
@@ -385,7 +398,7 @@ schema.sql:1090 `CREATE POLICY "download_audits_org_access" ON download_audits F
 ## DRLS-11 · Ten more SECURITY DEFINER functions carrying document-control authority do not pin `search_path` — including `my_org_ids`, the base of every document-control policy
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1031-1034`, `supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:34-40`, `supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:58-61`, `supabase/migrations/20260814_documents_delete_controllers.sql:31-40`, `supabase/migrations/20260707_teams.sql:52-55`, `supabase/migrations/20260818_followups_rls.sql:95-96`, `supabase/migrations/20260818_followups_rls.sql:10-11`, `supabase/migrations/20260818_followups_rls.sql:23-24`, `supabase/migrations/20260713_branding_admin_writes.sql:11-12`, `supabase/migrations/20260817_org_members_escalation_and_config.sql:21-22`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every cited line checks out, including the claim that my_org_ids underpins the documents and document_versions policies (schema.sql:1068-1073). MEDIUM is the right level: exploitation additionally requires a principal with CREATE on a schema ahead of public in its search_path, which is not established here — the finding itself concedes that, and treats it as a house-pattern/defence-in-depth gap.
@@ -409,6 +422,15 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 - [ ] All ten functions listed here pin `SET search_path = public`, alongside the nine in DB-6
 - [ ] A lint or test enumerates `pg_proc` for `prosecdef = true AND proconfig IS NULL` and fails on any hit
 - [ ] The census is recorded once so no third audit has to re-derive it
+
+**Resolution (2026-09-23, Round F — record-only close).** Verified and closed by pointer to roles-and-permissions `DB-6`, as the verifier proposed: every one of the ten functions named here is in the `ALTER FUNCTION … SET search_path = public` list of `supabase/migrations/20261020_pin_search_path.sql` — `my_org_ids()`, `my_team_ids()`, `my_project_ids()`, `node_visible(text, jsonb, uuid)`, `doc_is_visible(uuid)`, `is_org_admin(uuid)`, `is_org_admin_or_manager(uuid)`, `is_org_controller(uuid)`, `is_org_assign_drafters(uuid)`, `can_manage_project(uuid)`, `bump_share_access(uuid)` — **applied & verified live 2026-08-24** (zero unpinned definer functions in `public`). Every definer function written since pins at creation (this round's `20261077` included), and `lib/__tests__/searchPathPin.test.ts` fails the suite on any that does not.
+
+**Done-when.**
+- ✓ all ten pin `search_path = public`, alongside the nine in `DB-6` (same migration).
+- ✓ a test enumerates the migration replay for `SECURITY DEFINER` functions without a pin and fails on any hit (`searchPathPin.test.ts`); `20261020`'s trailing SELECT is the live `pg_proc` probe (`prosecdef AND no search_path in proconfig`).
+- ✓ the census is recorded once — `DB-6`'s settled table (57 functions / 39 definer / 20 unpinned at the time) in `../roles-and-permissions/11-database-authority.md`.
+
+**Scope / residual.** None.
 
 ---
 

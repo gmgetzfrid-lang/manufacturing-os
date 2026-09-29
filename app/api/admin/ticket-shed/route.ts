@@ -31,6 +31,7 @@ import {
   type TicketAttachmentLite,
 } from "@/lib/ticketShed";
 import { makeArchiveId, archiveLocation } from "@/lib/archive";
+import { isOrgOwnedKey } from "@/lib/shedKeyGuard";
 
 export const runtime = "nodejs";
 
@@ -176,7 +177,7 @@ export async function POST(req: NextRequest) {
   // Integrity manifest: attachments have no DB-recorded hash, so hash the
   // exact bytes bundled — a re-opened zip can then be verified end to end.
   const fileManifest: Record<string, { sha256: string; size: number }> = {};
-  let capturedTickets = 0, bundledFiles = 0, fileBytes = 0, skippedIncomplete = 0;
+  let capturedTickets = 0, bundledFiles = 0, fileBytes = 0, skippedIncomplete = 0, skippedForeignKey = 0;
   const capturedIds: string[] = [];
 
   for (const t of sel.selected) {
@@ -189,9 +190,14 @@ export async function POST(req: NextRequest) {
     // attachment that isn't in this ZIP (data loss). Any unreadable → skip ticket.
     const fetched: Array<{ key: string; buf: Uint8Array; contentType: string }> = [];
     let incomplete = false;
-    for (const a of atts) {
-      const key = (a?.url || "").toString();
-      if (!key) continue;
+    const keys = atts.map((a) => (a?.url || "").toString()).filter(Boolean);
+    // RET-6: attachments[].url is member-writable. A key outside this org's
+    // prefix (or an unsafe one) is never read into the archive — checked for
+    // the WHOLE ticket before any GetObject, and the ticket is skipped,
+    // un-claimed and counted, exactly like an unreadable binary, so commit can
+    // never free a substituted key either.
+    if (keys.some((k) => !isOrgOwnedKey(k, orgId))) { skippedForeignKey++; continue; }
+    for (const key of keys) {
       try {
         const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
         const buf = await obj.Body!.transformToByteArray();
@@ -237,7 +243,8 @@ export async function POST(req: NextRequest) {
   zip.file("ARCHIVE.txt",
     `Ticket archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
     `${capturedTickets} ticket(s), ${bundledFiles} attachment file(s), ${fileBytes} bytes` +
-    `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}.\n` +
+    `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}` +
+    `${skippedForeignKey ? `, ${skippedForeignKey} ticket(s) skipped (an attachment key outside this workspace — refused, left untouched)` : ""}.\n` +
     `Save this as ${savePath} and keep it — it's the only copy of these ` +
     `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
@@ -245,7 +252,7 @@ export async function POST(req: NextRequest) {
   // Finalize the catalog row with real counts (reserved + rows already claimed above).
   await sb.from("archives").update({
     file_count: bundledFiles, total_bytes: fileBytes,
-    note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}`,
+    note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}${skippedForeignKey ? `, ${skippedForeignKey} skipped (attachment key outside this workspace)` : ""}`,
   }).eq("org_id", orgId).eq("archive_id", archiveId);
 
   return new NextResponse(zipBytes as unknown as BodyInit, {
@@ -259,6 +266,7 @@ export async function POST(req: NextRequest) {
       "X-Archive-Files": String(bundledFiles),
       "X-Archive-Bytes": String(fileBytes),
       "X-Archive-Skipped": String(skippedIncomplete),
+      "X-Archive-Rejected-Keys": String(skippedForeignKey),
     },
   });
 }

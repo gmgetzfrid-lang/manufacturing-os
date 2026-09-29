@@ -23,6 +23,7 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { CATEGORY_LABEL, type DataClass } from "@/lib/storageClassify";
+import { catalogNeedsReclaim, catalogCommitTarget, catalogReclaimLabel } from "@/lib/archiveCatalog";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface TableRow {
@@ -62,6 +63,8 @@ interface CatalogArchive {
   note: string; createdAt: string | null; createdByEmail: string | null;
   docPending: number; docCommitted: number; ticketPending: number; ticketCommitted: number;
   status: "full" | "producing" | "pending" | "committed" | "empty";
+  /** RET-13: stamped keys the last commit could not delete (still billed). */
+  reclaimShortfall?: number;
 }
 
 // Soft budget used to drive the watermark. This is a GUIDELINE default, not a
@@ -615,19 +618,26 @@ export default function StorageBackupPage() {
   };
 
   // Reclaim straight from the catalog — the recovery path for a produce whose
-  // tab closed before "I saved it". Routes to the right commit endpoint by
-  // which table holds the pending rows, and reports delete shortfalls honestly.
+  // tab closed before "I saved it", AND (RET-13) for a committed archive whose
+  // last commit left cloud objects undeleted. Routes to the right commit
+  // endpoint by which table holds ANY linked rows (lib/archiveCatalog.ts), and
+  // reports delete shortfalls honestly.
   const commitFromCatalog = async (row: CatalogArchive) => {
     if (!activeOrgId) return;
-    const which = row.docPending > 0 ? "doc" : "ticket";
-    const what = which === "doc"
-      ? `${fmtNum(row.docPending)} superseded revision file(s)`
-      : `${fmtNum(row.ticketPending)} closed ticket(s)`;
+    const which = catalogCommitTarget(row);
+    const retry = row.status === "committed";
+    const what = retry
+      ? `${fmtNum(row.reclaimShortfall ?? 0)} cloud object(s) the last reclaim could not delete`
+      : which === "doc"
+        ? `${fmtNum(row.docPending)} superseded revision file(s)`
+        : `${fmtNum(row.ticketPending)} closed ticket(s)`;
     const ok = await appConfirm({
-      title: "Reclaim space",
-      message: `Permanently remove ${what} from live storage now that ${row.archiveId}.zip is saved offline (≈${fmtBytes(row.totalBytes)})? Only do this if you actually saved the zip when it was produced — it becomes the only copy. This cannot be undone.`,
+      title: retry ? "Retry reclaim" : "Reclaim space",
+      message: retry
+        ? `Retry deleting ${what} from live storage for ${row.archiveId} (the revisions are already marked archived and the zip is their copy)? Re-running is safe: keys already gone are skipped.`
+        : `Permanently remove ${what} from live storage now that ${row.archiveId}.zip is saved offline (≈${fmtBytes(row.totalBytes)})? Only do this if you actually saved the zip when it was produced — it becomes the only copy. This cannot be undone.`,
       tone: "danger",
-      confirmLabel: "I saved it — reclaim",
+      confirmLabel: retry ? "Retry reclaim" : "I saved it — reclaim",
     });
     if (!ok) return;
     setCatalogBusyId(row.archiveId); setError(null); setCatalogMsg(null);
@@ -1311,9 +1321,11 @@ export default function StorageBackupPage() {
                 {catalog.map((row) => {
                   const busy = catalogBusyId === row.archiveId;
                   const isTicket = row.ticketPending + row.ticketCommitted > 0;
+                  const reclaimLabel = catalogReclaimLabel(row);
                   const chip =
                     row.status === "producing" ? { cls: "bg-red-50 text-red-700 border-red-200", label: "never finished producing" } :
-                    row.status === "pending" ? { cls: "bg-amber-50 text-amber-800 border-amber-200", label: "awaiting reclaim — cloud bytes still billed" } :
+                    row.status === "pending" ? { cls: "bg-amber-50 text-amber-800 border-amber-200", label: reclaimLabel ?? "awaiting reclaim — cloud bytes still billed" } :
+                    row.status === "committed" && reclaimLabel ? { cls: "bg-amber-50 text-amber-800 border-amber-200", label: reclaimLabel } :
                     row.status === "committed" ? { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "reclaimed — the zip is the only copy" } :
                     row.status === "full" ? { cls: "bg-slate-100 text-slate-600 border-slate-200", label: "full backup" } :
                     { cls: "bg-slate-100 text-slate-500 border-slate-200", label: "no linked rows" };
@@ -1339,10 +1351,10 @@ export default function StorageBackupPage() {
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                           <Copy className="w-3 h-3" /> {copiedArchiveId === row.archiveId ? "Copied!" : "Path"}
                         </button>
-                        {row.status === "pending" && (
+                        {catalogNeedsReclaim(row) && (
                           <button onClick={() => void commitFromCatalog(row)} disabled={busy}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
-                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} I saved it — reclaim
+                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} {row.status === "committed" ? "Retry reclaim" : "I saved it — reclaim"}
                           </button>
                         )}
                         {(row.status === "pending" || row.status === "producing" || row.status === "empty") && (

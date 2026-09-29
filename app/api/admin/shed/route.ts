@@ -15,12 +15,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { selectShedCandidates, type ShedCandidateRow } from "@/lib/shed";
 import { makeArchiveId, archiveLocation } from "@/lib/archive";
+import { partitionOrgKeys, sharedLiveKeys } from "@/lib/shedKeyGuard";
 
 export const runtime = "nodejs";
 
@@ -79,6 +81,25 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
   return heldIds.size === 0 ? rows : rows.filter((r) => !heldIds.has(r.record_id as string));
 }
 
+/** The two storage-key guards, applied to a selection BEFORE anything is
+ *  claimed (RET-6 / RET-8, see lib/shedKeyGuard.ts):
+ *    · a key outside `orgs/<orgId>/` (or unsafe) is never read or claimed —
+ *      a member can repoint file_url via PostgREST, and the archive must not
+ *      become the exfiltration channel;
+ *    · a key still referenced by a NON-archived row outside the selection
+ *      (a revert's current revision shares the reverted-to key) is never
+ *      claimed — freeing it would delete the current revision's bytes.
+ *  Throws when the shared-key read fails (fail closed). */
+async function refineSelection(sb: SupabaseClient, orgId: string, selected: ShedCandidateRow[]): Promise<{
+  rows: ShedCandidateRow[]; rejectedKeys: number; sharedSkipped: number;
+}> {
+  const { owned, rejected } = partitionOrgKeys(selected, orgId, (r) => r.file_url);
+  const insideIds = new Set(owned.map((r) => r.id));
+  const shared = await sharedLiveKeys(sb, orgId, owned.map((r) => r.file_url as string), insideIds);
+  const rows = shared.size === 0 ? owned : owned.filter((r) => !shared.has(r.file_url as string));
+  return { rows, rejectedKeys: rejected.length, sharedSkipped: owned.length - rows.length };
+}
+
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const keep = clampKeep(req.nextUrl.searchParams.get("keep"));
@@ -93,16 +114,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: (e as Error).message }, { status: 503 });
   }
   const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
+  let refined: Awaited<ReturnType<typeof refineSelection>>;
+  try {
+    refined = await refineSelection(actor.admin, orgId, sel.selected);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 503 });
+  }
+  const selectedBytes = refined.rows.reduce((n, r) => n + (Number(r.size) || 0), 0);
 
   return NextResponse.json({
     keepPerDoc: keep,
-    eligibleCount: sel.totalCount + sel.skipped,
-    selectedCount: sel.totalCount,
-    reclaimableBytes: sel.totalBytes,
+    eligibleCount: refined.rows.length + sel.skipped,
+    selectedCount: refined.rows.length,
+    reclaimableBytes: selectedBytes,
     /** Eligible files beyond this archive's byte cap — produce again for these. */
     remainingCount: sel.skipped,
+    /** RET-6: rows whose storage key is not under this org's prefix — never read, never freed. */
+    rejectedKeys: refined.rejectedKeys,
+    /** RET-8: rows whose key a live revision outside the selection still shares — left in place. */
+    sharedSkipped: refined.sharedSkipped,
     maxArchiveBytes: MAX_PRODUCE_BYTES,
-    sample: sel.selected.slice(0, 20).map((r) => ({
+    sample: refined.rows.slice(0, 20).map((r) => ({
       id: r.id, revision: r.revision_label, bytes: Number(r.size) || 0, supersededAt: r.superseded_at,
     })),
     note:
@@ -130,12 +162,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: (e as Error).message }, { status: 503 });
   }
   const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
-  if (sel.totalCount === 0) {
-    return NextResponse.json({ error: "Nothing eligible to shed in this window." }, { status: 400 });
+  let refined: Awaited<ReturnType<typeof refineSelection>>;
+  try {
+    refined = await refineSelection(sb, orgId, sel.selected);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 503 });
+  }
+  const selected = refined.rows;
+  if (selected.length === 0) {
+    return NextResponse.json({
+      error: "Nothing eligible to shed in this window.",
+      rejectedKeys: refined.rejectedKeys, sharedSkipped: refined.sharedSkipped,
+    }, { status: 400 });
   }
 
   const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-8) || "00000000" });
-  const selectedIds = sel.selected.map((r) => r.id);
+  const selectedIds = selected.map((r) => r.id);
 
   // Reserve the archive label first — a collision (random 8-hex token) must ABORT,
   // not be swallowed, or two produces could share a label that commit frees together.
@@ -168,20 +210,32 @@ export async function POST(req: NextRequest) {
   // so the in-memory viewer (findInBackup) opens it later by its storage key.
   const zip = new JSZip();
   const filesFolder = zip.folder("files");
-  let bundled = 0, missed = 0, bytes = 0;
+  let bundled = 0, missed = 0, bytes = 0, unhashed = 0, hashMismatch = 0;
   const capturedIds: string[] = [];
-  // Integrity manifest: key → recorded SHA-256 + provenance, so a re-opened
-  // zip can be verified (BackupViewer checks it against the DB hash too).
-  const manifest: Record<string, { sha256: string | null; size: number; revision: string | null; versionId: string; documentId: string | null }> = {};
-  for (const r of sel.selected) {
+  // Integrity manifest (RET-12): key → the SHA-256 of the bytes ACTUALLY
+  // captured, beside the DB's recorded hash, so a re-opened zip is verified
+  // against what was bundled — not against a claim the DB made at upload.
+  const manifest: Record<string, { sha256: string | null; dbSha256: string | null; size: number; revision: string | null; versionId: string; documentId: string | null }> = {};
+  for (const r of selected) {
     if (!claimedIds.has(r.id)) continue;
     const key = r.file_url as string;
     try {
       const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
       const buf = await obj.Body!.transformToByteArray();
+      const computed = createHash("sha256").update(buf).digest("hex");
+      const recorded = (r.file_hash as string | null) ?? null;
+      if (recorded && recorded.toLowerCase() !== computed) {
+        // The live object is not the bytes the record says it is (a repointed
+        // key, a truncated upload). Commit must never free it on the strength
+        // of this zip: leave it un-claimed and un-bundled, and say so.
+        hashMismatch++;
+        continue;
+      }
+      if (!recorded) unhashed++;
       filesFolder?.file(key, buf);
       manifest[key] = {
-        sha256: (r.file_hash as string | null) ?? null,
+        sha256: computed,
+        dbSha256: recorded,
         size: buf.byteLength,
         revision: (r.revision_label as string | null) ?? null,
         versionId: r.id,
@@ -213,13 +267,23 @@ export async function POST(req: NextRequest) {
   zip.file("ARCHIVE.txt",
     `Space-saver archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
     `${bundled} file(s), ${bytes} bytes.\nSave this as ${savePath} and keep it — ` +
-    `it's the only copy of these superseded revisions once space is reclaimed.\n`);
+    `it's the only copy of these superseded revisions once space is reclaimed.\n` +
+    `Integrity: files-manifest.json records the SHA-256 of the bytes captured (sha256) beside the ` +
+    `hash the database recorded at upload (dbSha256). ${unhashed} file(s) had no recorded hash; ` +
+    `${hashMismatch} file(s) whose live bytes disagreed with their recorded hash were NOT captured and stay in live storage; ` +
+    `${refined.rejectedKeys} row(s) with a storage key outside this workspace were refused; ` +
+    `${refined.sharedSkipped} row(s) whose key a current revision still shares were left in place.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
   // Finalize the catalog counts (reserved + versions already claimed above).
+  const noteExtras = [
+    missed ? `${missed} unreadable, left in place` : "",
+    hashMismatch ? `${hashMismatch} hash mismatch, left in place` : "",
+    unhashed ? `${unhashed} without a recorded hash` : "",
+  ].filter(Boolean);
   await sb.from("archives").update({
     file_count: bundled, total_bytes: bytes,
-    note: `${bundled} superseded revision binaries${missed ? ` (${missed} unreadable, left in place)` : ""}`,
+    note: `${bundled} superseded revision binaries${noteExtras.length ? ` (${noteExtras.join("; ")})` : ""}`,
   }).eq("org_id", orgId).eq("archive_id", archiveId);
 
   return new NextResponse(zipBytes as unknown as BodyInit, {
@@ -232,6 +296,10 @@ export async function POST(req: NextRequest) {
       "X-Archive-Files": String(bundled),
       "X-Archive-Bytes": String(bytes),
       "X-Archive-Remaining": String(sel.skipped),
+      "X-Archive-Unhashed": String(unhashed),
+      "X-Archive-Hash-Mismatch": String(hashMismatch),
+      "X-Archive-Rejected-Keys": String(refined.rejectedKeys),
+      "X-Archive-Shared-Skipped": String(refined.sharedSkipped),
     },
   });
 }

@@ -136,7 +136,7 @@ export async function markReviewed(input: {
       .eq("id", input.documentId);
   }
   const next = await recomputeDocument(input.documentId);
-  await supabase.from("document_review_events").insert({
+  await insertReviewEvent({
     org_id: input.orgId ?? null,
     document_id: input.documentId,
     action: "certified",
@@ -150,6 +150,17 @@ export async function markReviewed(input: {
   return { nextReviewDate: next };
 }
 
+/** DRLS-4: the review-certification trail (ISO 9001 §7.5 / PSM §1910.119(f)(3))
+ *  is written CHECKED — a refused insert (RLS, the org_id NOT NULL rail of
+ *  20261077, a transport fault) throws instead of reading as a recorded
+ *  certification. */
+async function insertReviewEvent(row: Record<string, unknown>): Promise<void> {
+  const { error } = await supabase.from("document_review_events").insert(row);
+  if (error) {
+    throw new Error(`The review was applied but its certification event could NOT be written (${error.message}). The review trail is incomplete — report this.`);
+  }
+}
+
 /** Called when a document is (re)issued — a new revision IS a review, so the
  *  clock resets to "reviewed now". Safe to call from the publish paths. */
 export async function onDocumentIssued(input: {
@@ -161,7 +172,7 @@ export async function onDocumentIssued(input: {
     .eq("id", input.documentId);
   const next = await recomputeDocument(input.documentId);
   if (next) {
-    await supabase.from("document_review_events").insert({
+    await insertReviewEvent({
       org_id: input.orgId ?? null, document_id: input.documentId, action: "issued",
       next_review_date: next, performed_by: input.userId ?? null, performed_by_name: input.userName ?? null, performed_at: now,
     });
@@ -191,7 +202,7 @@ export async function setReviewPolicy(input: {
 
   if (input.level === "document") {
     await recomputeDocument(input.id);
-    await supabase.from("document_review_events").insert({
+    await insertReviewEvent({
       org_id: input.orgId ?? null, document_id: input.id, action: "policy_set",
       performed_by: input.userId ?? null, performed_by_name: input.userName ?? null,
     });

@@ -16,6 +16,8 @@ import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import type { TicketAttachmentLite } from "@/lib/ticketShed";
+import { isOrgOwnedKey, sharedLiveKeys } from "@/lib/shedKeyGuard";
+import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
 
@@ -133,10 +135,20 @@ export async function POST(req: NextRequest) {
   }
   const errors: string[] = [];
 
+  // RET-6: attachments[].url is member-writable, so a key is trusted for
+  // deletion only when it is a safe key under THIS org's prefix — the rule
+  // ticket-shed/restore already applies on its write path. Anything else is
+  // counted and left in storage.
+  let rejectedKeys = 0;
   const keysFor = (t: TombstoneSource): string[] =>
     (Array.isArray(t.attachments) ? t.attachments : [])
       .map((a) => (a?.url || "").toString())
-      .filter(Boolean);
+      .filter((k) => {
+        if (!k) return false;
+        if (isOrgOwnedKey(k, orgId)) return true;
+        rejectedKeys++;
+        return false;
+      });
 
   // 1. STAMP any not-yet-stamped stub FIRST (fail-closed): clear the heavy JSONB,
   //    write the tombstone, set archived_at — guarded by `archived_at is null` so
@@ -183,7 +195,20 @@ export async function POST(req: NextRequest) {
     for (const r of ((data ?? []) as Array<{ id: string }>)) stillArchived.add(r.id);
   }
   const freeIds = idsToFree.filter((id) => stillArchived.has(id));
-  const keysToDelete = freeIds.flatMap((id) => keysByTicket.get(id) ?? []);
+  const candidateKeys = freeIds.flatMap((id) => keysByTicket.get(id) ?? []);
+  // RET-8 (same class): a substituted attachment key that names a LIVE
+  // controlled revision's object must never be freed here either. Fail
+  // CLOSED on the read — the stubs are already stamped, so a re-run finishes
+  // the job once the read succeeds.
+  let sharedSkipped = 0;
+  let keysToDelete: string[];
+  try {
+    const shared = await sharedLiveKeys(sb, orgId, candidateKeys, new Set<string>());
+    keysToDelete = candidateKeys.filter((k) => !shared.has(k));
+    sharedSkipped = candidateKeys.length - keysToDelete.length;
+  } catch (e) {
+    return NextResponse.json({ error: `${(e as Error).message} Stubs are stamped; re-run Reclaim to finish freeing.`, processed: idsToFree.length }, { status: 503 });
+  }
 
   for (let i = 0; i < freeIds.length; i += 200) {
     const chunk = freeIds.slice(i, i + 200);
@@ -194,14 +219,22 @@ export async function POST(req: NextRequest) {
   errors.push(...delErrors);
 
   const reclaimedTickets = newlyStamped;
+  // RET-13: persist the delete shortfall on the catalog row so the archive
+  // keeps offering "Reclaim" until every key is actually gone. CHECKED
+  // (supabase-js never throws): a refused write — or a database that
+  // predates the column — is named in `errors` and `shortfallPersisted:
+  // false` rather than leaving the catalog claiming a clean reclaim.
+  const keysFailed = Math.max(0, keysToDelete.length - keysDeleted);
+  const persisted = await persistReclaimShortfall(sb, orgId, archiveId, keysFailed);
+  if (!persisted.ok) errors.push(persisted.error);
   try {
     await sb.from("audit_logs").insert({
       action: "TICKET_ARCHIVE_RECLAIM",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { archiveId, reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, errors: errors.slice(0, 8) },
+      details: { archiveId, reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) },
     });
   } catch { /* best-effort */ }
 
-  return NextResponse.json({ ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, errors });
+  return NextResponse.json({ ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors });
 }
