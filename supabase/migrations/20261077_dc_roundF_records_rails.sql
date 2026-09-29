@@ -18,8 +18,9 @@
 --      definition), extended: last_recertified_at / last_recertified_by /
 --      next_recertification_date — the attestation record itself, which any
 --      member could PATCH years out — change only for a controller or the
---      library owner (DEL-6 / DEC-20: owners recertify). recert_policy was
---      already guarded there. Line-diff pinned.
+--      library owner (roles DEL-6: owners recertify — its resolution says
+--      the owner arm must be added the day libraries UPDATE is narrowed).
+--      recert_policy was already guarded there. Line-diff pinned.
 --   3. document_versions.file_url is write-once for every authenticated
 --      caller (BEFORE UPDATE): the shed deletes what this column names, and
 --      no app path ever repoints an existing row (the intake route runs as
@@ -183,7 +184,7 @@ BEGIN
   END IF;
   -- RET-4: the recertification ATTESTATION — who attested, when, and when it
   -- is next due — is the compliance record itself. A controller or the
-  -- library owner only (DEL-6 / DEC-20: owners recertify); the scan's
+  -- library owner only (roles DEL-6: owners recertify); the scan's
   -- recert_notified_at watermark stays unguarded (it is not authority).
   IF (NEW.last_recertified_at IS DISTINCT FROM OLD.last_recertified_at
       OR NEW.last_recertified_by IS DISTINCT FROM OLD.last_recertified_by

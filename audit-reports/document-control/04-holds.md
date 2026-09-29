@@ -51,6 +51,18 @@ supabase/migrations/20260822_review_completion_guard.sql:36-40 — `v_advancing 
 - [ ] Download and doc-pack paths either refuse or stamp a HOLD banner rather than proceeding silently
 - [ ] The DB trigger's advance test is widened, or a second trigger added, so that status→Archived and revision_label rewrites on a held document are refused for non-controllers
 
+**Partial (2026-09-23, Round F — P9 RECORDS owns the dispose-gate limb only).** Reproduced: `disposeDocument` checked `isLegalHold` and nothing else (`lib/retention.ts:217`), and the 20261043 retention guard's `status → 'Archived'` refusal fired only under a LEGAL hold — a plain archive or disposal of a document with an open `document_holds` row reached the database unguarded. Landed: `disposeDocument` reads `listActiveHoldsForDocument` (the EXISTING `lib/holds.ts` helper — wave rule: `P5 HOLDS` owns the shared `assertNotOnHold`; wave 2 unifies this call onto `lib/holdGate.ts`) and returns `{ ok:false, reason:"active_hold" }` for EVERYONE without writing; the hold read fails closed (throws). `RetentionSection` says "This document has an open hold — release the hold first, then dispose." At the database, `supabase/migrations/20261077_dc_roundF_records_rails.sql` §1 extends the live `enforce_document_retention_guard` (20261043 body, lineDiff-pinned): the early return is widened so a plain `status → 'Archived'` reaches the check, and `disposition_state → 'disposed'` or `status → 'Archived'` on a document with an unreleased `document_holds` row is refused for a non-controller (`This document has an open hold and cannot be disposed or archived until it is released.`).
+- Tests: `lib/__tests__/dcRoundFRecords.test.ts` — "refuses under an open hold — nothing written, nothing logged", "fails CLOSED when the hold read errors"; `lib/__tests__/dcRoundFMigration.test.ts` — "§1 … adds exactly the widened early return and the open-hold dispose gate".
+- Files: `lib/retention.ts`, `components/documents/RetentionSection.tsx`; migration §1.
+- Pending migration: `supabase/migrations/20261077_dc_roundF_records_rails.sql` (§1).
+
+**Done-when (this limb).**
+- ✓ `disposeDocument` refuses under an open hold. The single shared `assertNotOnHold` helper and its other call sites (`correctRevisionLabel`, `renumberDocument`, transmittal issue, distribution-ack assignment, share-link creation) are `P5`'s / the owning packages' — not done here.
+- ✗ download and doc-pack paths — `P8 FIELD` / `P2 EGRESS`.
+- ✓ / ✗ the DB trigger: `status → 'Archived'` on a held document is refused for non-controllers (20261077 §1, pending apply); the `revision_label` rewrite is `document_versions` territory — not done here.
+
+**Scope / residual.** Stays OPEN for the remaining limbs. The app refuses controllers too (a hold is a hard block; release it first — the hold queue names it), the database refuses non-controllers as the done-when states.
+
 ---
 
 <a id="hld-2"></a>
@@ -176,7 +188,7 @@ supabase/migrations/20260901_db_hard_enforcement.sql:96-102 — `-- Releasing = 
 ## HLD-6 · placeLegalHold, releaseLegalHold and disposeDocument never inspect the write result — they log the retention event, fire the notification and report a success count derived from the input id list
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/retention.ts:120-131`, `lib/retention.ts:134-144`, `lib/retention.ts:151-158`, `supabase/migrations/20260826_legal_hold_delete_guard.sql:17-33`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — supabase-js's PostgREST builder resolves with `{ data, error }` and never rejects, so a failed or RLS-denied UPDATE produces the identical return value and the identical retention event and notification as a successful one. No compensating control exists: 20260826_legal_hold_delete_guard.sql:17-33 only fires `IF OLD.legal_hold`, so if the placing UPDATE silently failed the column is still false and the delete guard stays inert on exactly the records it was meant to protect.
@@ -198,6 +210,15 @@ lib/retention.ts:124-130 — `const ids = await scopeDocumentIds(input.scope, in
 - [ ] Each batched update destructures `{ error, count }` with `{ count: "exact" }`, aborts on error, and returns the count the database actually reports
 - [ ] logEvent and notifyHold run only after a verified write, and a partial batch failure surfaces to the caller rather than being rounded up to ids.length
 - [ ] disposeDocument returns { ok:false } when its update errors or matches zero rows
+
+**Resolution (2026-09-23, Round F — record-only close).** Verified against current `lib/retention.ts` and closed by pointer to roles-and-permissions `SURF-3` / `OWN-14` (the checked-write round) and this area's `RET-5` (Round F, the remaining three writes): `placeLegalHold` and `releaseLegalHold` run each 50-id chunk as `update(patch).in("id", batch).select("id")`, abort on `error` naming how many held so far, accumulate `held` from the rows the database actually returned, and THROW when `held < ids.length` BEFORE `logEvent` or `notifyHold` run — so the event and the notification exist only when every scoped record is held, and the number they carry is the real one; `disposeDocument` is a checked `update … .select("id")` returning `{ ok:false, reason:"refused" }` on zero rows and throwing on error (and now also refuses under an open hold, `HLD-1`). `RET-5` closed `recomputeRetention`, `scanRetention`'s flag write and `logEvent` the same way. Pinned by `lib/__tests__/rpPhase6Additive.test.ts` ("disposal is a checked write"), `lib/__tests__/checkedWrites.test.ts` (placeLegalHold) and `lib/__tests__/dcRoundFRecords.test.ts`.
+
+**Done-when.**
+- ✓ / ✗ each batched update is checked and the count returned is what the database reported — via `.select('id')` row counts rather than the literal `{ count: "exact" }` shape (equivalent evidence: the rows the update touched); a chunk error aborts.
+- ✓ `logEvent` and `notifyHold` run only after a verified, complete write; a partial batch throws instead of rounding up.
+- ✓ `disposeDocument` returns `{ ok:false }` when its update matches zero rows (and throws on error).
+
+**Scope / residual.** None beyond `RET-5`'s note that `logAuditAction` stays best-effort by design.
 
 ---
 

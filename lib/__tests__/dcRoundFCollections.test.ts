@@ -156,7 +156,7 @@ describe("trash restore — RET-10 returns the stepped-up documents and re-clock
       }
       return { data: [], error: null };
     };
-    const res = await RESTORE_FOLDER(post("https://app/api/collections/trash", { orgId: "o1", collectionId: "f1" }));
+    const res = (await RESTORE_FOLDER(post("https://app/api/collections/trash", { orgId: "o1", collectionId: "f1" }))) as Response;
     const body = (await res.json()) as Record<string, unknown>;
     expect(res.status).toBe(200);
     expect(moves).toEqual([{ ids: ["d1", "d2", "moved-on"], at: "heir", to: "f1" }]);
@@ -176,7 +176,7 @@ describe("trash restore — RET-10 returns the stepped-up documents and re-clock
       }
       return { data: [], error: null };
     };
-    const res = await RESTORE_FOLDER(post("https://app/api/collections/trash", { orgId: "o1", collectionId: "f1" }));
+    const res = (await RESTORE_FOLDER(post("https://app/api/collections/trash", { orgId: "o1", collectionId: "f1" }))) as Response;
     const body = (await res.json()) as Record<string, unknown>;
     expect(res.status).toBe(200);
     expect(body.documentsReturned).toBe(0);
