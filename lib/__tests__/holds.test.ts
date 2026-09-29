@@ -10,14 +10,18 @@
 //           is born open (no forged release history).
 //   HLD-7   held_rev_label captured at open; /api/verify-hold publishes the
 //           reason only as its predefined category and reports heldRev.
-//   HLD-8   holdControlsFor — a UserGrant lights the Release control; the
+//   HLD-8   holdControlsFor — a UserGrant lights the Release control; a
+//           read-only role anywhere in the collection subtracts (ROLE-5); the
 //           queue's row link carries ?doc=.
 //   HLD-9   org-agreement guard + INSERT policy binding (byte-faithful to the
-//           live 20260901 policy plus one conjunct).
+//           live 20260901 policy plus one conjunct); a restore chunk carrying
+//           a row the guard refuses is retried row by row, not dropped.
 //   HLD-10  releaseHold requires a reason; the opener is told; the audience is
 //           policy-derived; a failed emit is logged.
 //   HLD-14  expected-release date from the picker; scanStaleHolds rides the
-//           maintenance cron and nudges once per missed expectation.
+//           maintenance cron and nudges once per missed expectation; the
+//           nudge's remedy exists — an open hold is re-dated in place from
+//           both surfaces (updateHoldExpectedRelease).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -31,6 +35,8 @@ const state = vi.hoisted(() => ({
   readErrors: {} as Record<string, string>,
   /** Simulates a BEFORE trigger: mutate the row about to be written. */
   onWrite: null as null | ((table: string, op: string, row: Record<string, unknown>) => void),
+  /** Simulates a refusing trigger: return a PostgREST error for this write, or null to admit it. */
+  writeError: null as null | ((table: string, op: string, rows: Array<Record<string, unknown>>) => { code: string; message: string } | null),
 }));
 type Filter = { kind: string; col: string; val: unknown };
 function matches(r: Record<string, unknown>, filters: Filter[]): boolean {
@@ -62,6 +68,8 @@ function chain(table: string) {
     const all = (state.rows[table] ??= []);
     if (op === "insert" || op === "upsert") {
       const rows = (Array.isArray(payload) ? payload : [payload]) as Array<Record<string, unknown>>;
+      const refusal = state.writeError?.(table, op, rows);
+      if (refusal) return { data: null, error: refusal, count: null };
       const inserted = rows.map((r) => ({ id: `${table}-${all.length + 1}`, ...r }));
       for (const r of inserted) { state.onWrite?.(table, op, r); all.push(r); }
       return single ? { data: inserted[0], error: null } : { data: inserted, error: null };
@@ -112,13 +120,17 @@ vi.mock("@/lib/audit", () => ({ logHoldEvent: audit.logHoldEvent }));
 const dispatch = vi.hoisted(() => ({ emit: vi.fn(async (_p: Record<string, unknown>) => undefined) }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: dispatch.emit }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => undefined) }));
+// The restore route's actor: an org Admin whose service-role client is the same in-memory engine.
+vi.mock("@/lib/serverAuth", () => ({
+  authorizeOrgRole: vi.fn(async () => ({ userId: "adm", email: "adm@x.io", orgId: "o1", role: "Admin", roles: ["Admin"], admin: { from: (t: string) => chain(t) } })),
+}));
 
 import {
   decideHoldGate, holdRefusalMessage, assertNotOnHold, readActiveHolds, HoldBlockedError, isHoldBlockedError,
 } from "@/lib/holdGate";
 import {
   publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK, PREDEFINED_HOLD_REASONS, holdControlsFor, holdPoolFromMembers,
-  expectedReleaseIso, releaseHold, openHold, scanStaleHolds, HOLD_AGING_DAYS,
+  expectedReleaseIso, expectedReleaseDate, releaseHold, openHold, updateHoldExpectedRelease, scanStaleHolds, HOLD_AGING_DAYS,
 } from "@/lib/holds";
 import { requestAcks } from "@/lib/distributionAcks";
 import { __resetCapabilityPolicyCache, type CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -147,7 +159,7 @@ const openHoldRow = (over: Record<string, unknown> = {}) => ({
 let warnSpy: ReturnType<typeof vi.spyOn> | null = null;
 
 beforeEach(() => {
-  state.rows = {}; state.calls = []; state.readErrors = {}; state.onWrite = null;
+  state.rows = {}; state.calls = []; state.readErrors = {}; state.onWrite = null; state.writeError = null;
   audit.logHoldEvent.mockClear(); dispatch.emit.mockClear();
   __resetCapabilityPolicyCache();
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
@@ -285,16 +297,35 @@ describe("HLD-8 / HLD-10 — holdControlsFor and the policy-derived audience", (
       caps: { "holds.release": ["Admin", "DocCtrl"], "holds.open": ["Admin", "DocCtrl", "Engineer"] },
       grants: [{ cap: "holds.release", uid: "coordinator", expiresAt: null }],
     };
-    expect(holdControlsFor(narrowed, "Viewer", [], "coordinator")).toEqual({ canOpen: false, canRelease: true });
-    expect(holdControlsFor(narrowed, "Viewer", [], "someone-else")).toEqual({ canOpen: false, canRelease: false });
+    expect(holdControlsFor(narrowed, "Requester", [], "coordinator")).toEqual({ canOpen: false, canRelease: true });
+    expect(holdControlsFor(narrowed, "Requester", [], "someone-else")).toEqual({ canOpen: false, canRelease: false });
     // the additive collection counts, never the headline alone
     expect(holdControlsFor(narrowed, "Manager", ["DocCtrl"], "m1")).toEqual({ canOpen: true, canRelease: true });
     expect(holdControlsFor(narrowed, "Engineer-2", null, "e2")).toEqual({ canOpen: true, canRelease: false });
-    // shipped default ('*') admits everyone — the UI no longer blocks people the policy allows
-    expect(holdControlsFor({}, "Viewer", [], "v1")).toEqual({ canOpen: true, canRelease: true });
+    // shipped default ('*') admits every non-read-only member — the UI no longer blocks people the policy allows
+    expect(holdControlsFor({}, "Drafter", [], "d1")).toEqual({ canOpen: true, canRelease: true });
     // an expired grant is dead
     const expired: CapabilityPolicy = { ...narrowed, grants: [{ cap: "holds.release", uid: "coordinator", expiresAt: "2020-01-01T00:00:00Z" }] };
-    expect(holdControlsFor(expired, "Viewer", [], "coordinator").canRelease).toBe(false);
+    expect(holdControlsFor(expired, "Requester", [], "coordinator").canRelease).toBe(false);
+  });
+  it("ROLE-5: a read-only role anywhere in the held collection subtracts — Viewer / Auditor never see a live control, under '*', a named list or a grant", () => {
+    const wide: CapabilityPolicy = {};
+    expect(holdControlsFor(wide, "Viewer", [], "v1")).toEqual({ canOpen: false, canRelease: false });
+    expect(holdControlsFor(wide, "Auditor", null, "a1")).toEqual({ canOpen: false, canRelease: false });
+    // no controller escape: an Admin who also holds Auditor is read-only
+    expect(holdControlsFor(wide, "Admin", ["Admin", "Auditor"], "adm")).toEqual({ canOpen: false, canRelease: false });
+    expect(holdControlsFor(wide, "Drafter", ["Drafter", "Viewer"], "d2")).toEqual({ canOpen: false, canRelease: false });
+    // a grant does not override the subtraction either
+    const granted: CapabilityPolicy = { caps: { "holds.release": ["Admin"] }, grants: [{ cap: "holds.release", uid: "v-granted", expiresAt: null }] };
+    expect(holdControlsFor(granted, "Viewer", [], "v-granted").canRelease).toBe(false);
+    // the same person without the read-only role is admitted
+    expect(holdControlsFor(wide, "Admin", ["Admin"], "adm")).toEqual({ canOpen: true, canRelease: true });
+    expect(holdControlsFor(granted, "Requester", [], "v-granted").canRelease).toBe(true);
+    // the subtraction is the shared ROLE-5 helper, not a local literal
+    const lib = src("lib/holds.ts");
+    expect(lib).toMatch(/import \{ heldRoles, holdsReadOnlyRole \} from "@\/lib\/roleHeld";/);
+    expect(lib).toMatch(/const readOnly = holdsReadOnlyRole\(\[role \?\? "", \.\.\.\(extra \?\? \[\]\)\]\.filter\(Boolean\)\);/);
+    expect(lib).not.toMatch(/"Viewer"\s*\|\|\s*"Auditor"/);
   });
   it("the audience is the policy's release pool: named roles (tokens expanded) + grants; the wildcard default falls back to controllers", () => {
     const members = [
@@ -417,6 +448,56 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
     state.rows.document_holds = [openHoldRow({ id: "late", expected_release_at: daysAgo(3), opened_at: daysAgo(10) })];
     expect(await scanStaleHolds("o1", now)).toBe(1);
   });
+  it("updateHoldExpectedRelease re-dates an OPEN hold in place: writes expected_release_at only under the released_at IS NULL predicate, null clears, a released hold is refused, no hold event is written", async () => {
+    state.rows.document_holds = [openHoldRow({ expected_release_at: "2026-10-03T23:59:59.999Z" })];
+    const out = await updateHoldExpectedRelease(HOLD, "2026-10-17T23:59:59.999Z");
+    expect(out.expectedReleaseAt).toBe("2026-10-17T23:59:59.999Z");
+    expect(state.rows.document_holds[0].expected_release_at).toBe("2026-10-17T23:59:59.999Z");
+    const upd = state.calls.find((c) => c.table === "document_holds" && c.method === "update");
+    expect(upd?.args[0]).toEqual({ expected_release_at: "2026-10-17T23:59:59.999Z" });
+    const after = state.calls.slice(state.calls.indexOf(upd!));
+    expect(after.some((c) => c.method === "is" && c.args[0] === "released_at" && c.args[1] === null)).toBe(true);
+    // identity untouched; no HOLD_* audit row, no notification — a re-date is not a hold event
+    expect(state.rows.document_holds[0]).toMatchObject({ reason: "Client Review", opened_by: "opener", released_at: null });
+    expect(audit.logHoldEvent).not.toHaveBeenCalled();
+    expect(dispatch.emit).not.toHaveBeenCalled();
+    // null clears the date: the hold falls back to the age-based nudge
+    expect((await updateHoldExpectedRelease(HOLD, null)).expectedReleaseAt).toBeNull();
+    // a released hold is closed history: the CAS predicate finds no row
+    state.rows.document_holds = [openHoldRow({ released_at: "2026-09-10T00:00:00Z" })];
+    await expect(updateHoldExpectedRelease(HOLD, "2026-10-17T23:59:59.999Z")).rejects.toThrow(/0 rows|already released or not found/);
+    expect(state.rows.document_holds[0].expected_release_at).toBeNull();
+    // the date input's initial value round-trips the picker's end-of-day instant to the same local day
+    expect(expectedReleaseDate(expectedReleaseIso("2026-10-01"))).toBe("2026-10-01");
+    expect(expectedReleaseDate(null)).toBeNull();
+    expect(expectedReleaseDate("not a date")).toBeNull();
+  });
+  it("the nudge's remedy has a surface: both hold surfaces carry a Re-date control gated on the release authority and write through updateHoldExpectedRelease", () => {
+    const lib = src("lib/holds.ts");
+    const strip = src("components/documents/HoldStrip.tsx");
+    const page = src("app/(protected)/admin/holds/page.tsx");
+    // the nudge bodies still ask for a new date — and the ask is now answerable
+    expect(lib).toMatch(/Release it with a reason, or set a new expected date\./);
+    expect(lib).toMatch(/Release it with a reason, or record when it is expected to clear\./);
+    // the strip: the row's control follows showRelease (canEdit AND the policy), never a literal
+    expect(strip).toMatch(/canRedate=\{showRelease\}/);
+    expect(strip).toMatch(/onRedate=\{\(date\) => onRedate\(h\.id!, date\)\}/);
+    expect(strip).toMatch(/await updateHoldExpectedRelease\(holdId, expectedReleaseIso\(date\) \?\? null\);/);
+    expect(strip).toMatch(/\{canRedate && !isReleasing && !redating && \(/);
+    expect(strip).toMatch(/<CalendarClock className="w-3 h-3" \/> Re-date/);
+    // the queue: the same canRelease that lights Release
+    expect(page).toMatch(/\{canRelease && releasingId !== h\.id && redatingId !== h\.id && \(/);
+    expect(page).toMatch(/await updateHoldExpectedRelease\(holdId, expectedReleaseIso\(redateDraft\) \?\? null\);/);
+    expect(page).toMatch(/<CalendarClock className="w-3 h-3" \/> Re-date/);
+    // both seed the input from the stored date and let a blank clear it
+    expect(strip).toMatch(/setDateDraft\(expectedReleaseDate\(hold\.expectedReleaseAt\) \?\? ""\)/);
+    expect(page).toMatch(/setRedateDraft\(expectedReleaseDate\(h\.expectedReleaseAt\) \?\? ""\)/);
+    for (const s of [strip, page]) expect(s).toMatch(/aria-label="Expected release date \(blank clears it\)"/);
+    // the database admits exactly this column on an open row (HLD-5 guard, DEC-25) and gates the UPDATE on holds.release
+    const m73 = mig("20261073_dc_roundF_document_holds_integrity.sql");
+    expect(m73).toMatch(/-- Still open and staying open: notes, expected_release_at and/);
+    expect(lib).toMatch(/await assertHoldCapability\(String\(holdRow\.org_id\), "holds\.release"\);\s*\n\s*\n\s*const \{ data, error \} = await supabase\s*\n\s*\.from\("document_holds"\)\s*\n\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/);
+  });
   it("rides the EXISTING maintenance route as a compliance scan — no third vercel.json cron", () => {
     const route = src("app/api/cron/maintenance/route.ts");
     expect(route).toMatch(/\["hold-aging", scanStaleHolds\],/);
@@ -459,6 +540,55 @@ describe("HLD-8 / HLD-10 — the inspector strip and the queue read the policy, 
     }
     expect(page).toMatch(/const releasedReason = releaseDraft\.trim\(\);\s*\n\s*if \(!releasedReason\) return;/);
     expect(strip).toMatch(/const releasedReason = releaseReasonDraft\.trim\(\);\s*\n\s*if \(!releasedReason\) return;/);
+  });
+});
+
+// ─── HLD-9: a restore chunk the org guard refuses is not dropped ─────────────
+describe("HLD-9 — /api/admin/restore/apply-table retries a refused document_holds chunk row by row", () => {
+  const idRemap = { orgId: { o1: "o1" }, uid: {} };
+  async function apply(table: string, rows: Array<Record<string, unknown>>) {
+    const { POST } = await import("@/app/api/admin/restore/apply-table/route");
+    const req = new NextRequest("https://app/api/admin/restore/apply-table?orgId=o1", {
+      method: "POST", body: JSON.stringify({ table, rows, idRemap }), headers: { "content-type": "application/json" },
+    });
+    const res = await POST(req);
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+  const refuse = (id: string, code: string) => (table: string, _op: string, rows: Array<Record<string, unknown>>) =>
+    table === "document_holds" && rows.some((r) => r.id === id)
+      ? { code, message: code === "23514" ? "A hold must carry the org of the document it holds." : "A hold must name an existing document." }
+      : null;
+  it("one HLD-9-mismatched row (23514) or one orphaned row (23503) no longer sinks the chunk: the good holds land, the refused ids are reported in the response and the RESTORE_CHUNK audit row", async () => {
+    state.writeError = refuse("bad", "23514");
+    const rows = [openHoldRow({ id: "good-1" }), openHoldRow({ id: "bad", org_id: "o1" }), openHoldRow({ id: "good-2" })];
+    const { status, body } = await apply("document_holds", rows);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: true, inserted: 2, refused: [{ id: "bad", code: "23514" }] });
+    expect(state.rows.document_holds.map((r) => r.id).sort()).toEqual(["good-1", "good-2"]);
+    const auditRow = state.rows.audit_logs.find((r) => r.action === "RESTORE_CHUNK");
+    expect(auditRow?.details).toMatchObject({ table: "document_holds", rowsReceived: 3, inserted: 2, refused: [{ id: "bad", code: "23514" }] });
+    // 23503 (the document is gone) takes the same path
+    state.rows = {}; state.calls = []; state.writeError = refuse("orphan", "23503");
+    const r2 = await apply("document_holds", [openHoldRow({ id: "orphan" }), openHoldRow({ id: "kept" })]);
+    expect(r2.status).toBe(200);
+    expect(r2.body).toMatchObject({ inserted: 1, refused: [{ id: "orphan", code: "23503" }] });
+  });
+  it("any other error, and any other table, still fails the chunk as before; a clean chunk reports no refusals", async () => {
+    state.writeError = (table, _op, rows) => table === "document_holds" && rows.some((r) => r.id === "x") ? { code: "42501", message: "permission denied" } : null;
+    const r1 = await apply("document_holds", [openHoldRow({ id: "x" })]);
+    expect(r1.status).toBe(500);
+    expect(r1.body).toMatchObject({ error: "permission denied", inserted: 0 });
+    state.rows = {}; state.writeError = (table) => table === "document_favorites" ? { code: "23514", message: "refused" } : null;
+    const r2 = await apply("document_favorites", [{ id: "f1", org_id: "o1", user_id: "u", document_id: DOC }]);
+    expect(r2.status).toBe(500);
+    state.rows = {}; state.writeError = null;
+    const r3 = await apply("document_holds", [openHoldRow({ id: "clean" })]);
+    expect(r3.status).toBe(200);
+    expect(r3.body).toEqual({ ok: true, inserted: 1 });
+    expect(state.rows.audit_logs.find((r) => r.action === "RESTORE_CHUNK")?.details).not.toHaveProperty("refused");
+    // the migration header and the route both state the consequence
+    expect(mig("20261073_dc_roundF_document_holds_integrity.sql")).toMatch(/delete it BEFORE\n-- any restore of document_holds from a backup taken before this paste/);
+    expect(src("app/api/admin/restore/apply-table/route.ts")).toMatch(/const rowRefusalTables = new Set\(\["document_holds"\]\);/);
   });
 });
 

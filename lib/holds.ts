@@ -26,7 +26,7 @@ import { supabase } from "@/lib/supabase";
 import { logHoldEvent } from "@/lib/audit";
 import { loadCapabilityPolicy, policyAllows, tokensFor, heldMatchesTokens, grantActive, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerRole } from "@/lib/permissions";
-import { heldRoles } from "@/lib/roleHeld";
+import { heldRoles, holdsReadOnlyRole } from "@/lib/roleHeld";
 import type { DocumentHold, HoldReason, Role } from "@/types/schema";
 
 /** The default predefined reasons surfaced by the picker UI. Orgs
@@ -118,7 +118,11 @@ export interface HoldControls {
  *  assertHoldCapability use (role tokens, the additive collection, and live
  *  per-person grants), never a literal role list. Both surfaces (the
  *  inspector strip and /admin/holds) call this; a grant of holds.release
- *  lights the Release control exactly as widening the role list does. */
+ *  lights the Release control exactly as widening the role list does.
+ *  ROLE-5: a read-only role (Viewer / Auditor) anywhere in the held
+ *  collection SUBTRACTS — deny-if-any, no headline shortcut, no controller
+ *  escape — the same way every restriction-style check in the app does, so
+ *  the shipped "*" default does not hand an Auditor a live Release control. */
 export function holdControlsFor(
   policy: CapabilityPolicy | null | undefined,
   role: string | null | undefined,
@@ -126,9 +130,10 @@ export function holdControlsFor(
   uid: string | null | undefined,
 ): HoldControls {
   const extra = extraRoles ? [...extraRoles] : null;
+  const readOnly = holdsReadOnlyRole([role ?? "", ...(extra ?? [])].filter(Boolean));
   return {
-    canOpen: policyAllows(policy, "holds.open", role, extra, uid),
-    canRelease: policyAllows(policy, "holds.release", role, extra, uid),
+    canOpen: !readOnly && policyAllows(policy, "holds.open", role, extra, uid),
+    canRelease: !readOnly && policyAllows(policy, "holds.release", role, extra, uid),
   };
 }
 
@@ -160,6 +165,17 @@ export function expectedReleaseIso(date: string | null | undefined): string | un
   const at = new Date(y, m - 1, day, 23, 59, 59, 999);
   if (Number.isNaN(at.getTime()) || at.getMonth() !== m - 1 || at.getDate() !== day) return undefined;
   return at.toISOString();
+}
+
+/** The inverse, for a date input's initial value: the stored instant (the
+ *  record's Timestamp) → the LOCAL calendar day it falls on (YYYY-MM-DD).
+ *  Null / unparsable → null. */
+export function expectedReleaseDate(iso: Date | number | string | null | undefined): string | null {
+  if (iso === null || iso === undefined || iso === "") return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())}`;
 }
 
 /** Self-contained capability check for holds — enforced HERE so every entry
@@ -325,6 +341,31 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
   return rowToHold(row);
 }
 
+/** HLD-14: re-date an OPEN hold — the remedy the aging nudge asks for ("set
+ *  a new expected date"). Writes expected_release_at only (null clears it,
+ *  and the hold falls back to the age-based nudge); the CAS predicate keeps a
+ *  released hold untouched, and the 20261073 guard admits exactly this column
+ *  on an open row. Authority is holds.release — the same capability the
+ *  document_holds UPDATE policy (20260901) gates every update on — so the
+ *  control sits beside Release on both surfaces. A re-date is not a hold
+ *  event: it writes no HOLD_* audit row and sends no notification; the next
+ *  aging sweep keys on the new date. */
+export async function updateHoldExpectedRelease(holdId: string, expectedReleaseAt: string | null): Promise<HoldRecord> {
+  const { data: holdRow } = await supabase
+    .from("document_holds").select("org_id").eq("id", holdId).maybeSingle();
+  if (holdRow?.org_id) await assertHoldCapability(String(holdRow.org_id), "holds.release");
+
+  const { data, error } = await supabase
+    .from("document_holds")
+    .update({ expected_release_at: expectedReleaseAt })
+    .eq("id", holdId)
+    .is("released_at", null)   // an open hold only; a released one is closed history
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message || "Hold already released or not found.");
+  return rowToHold(data as HoldRow);
+}
+
 // ─── Audience (HLD-10 / DEC-35) ─────────────────────────────────
 
 /** HLD-10 / DEC-35: the pool told about a hold change is the pool the org's
@@ -427,9 +468,11 @@ export const HOLD_AGING_DAYS = Math.max(1, Number(process.env.HOLD_AGING_DAYS) |
  *  policy-derived release pool ONCE per expectation — deduped by the hold id
  *  AND the expected date it missed (metadata.staleHoldId + staleFor, the
  *  escalateStaleCheckouts shape widened by the expectation): the nudge asks
- *  the opener to set a new expected date, and when that date passes too the
- *  hold is nudged again rather than aging silently. Returns the number of
- *  holds nudged. */
+ *  the opener to set a new expected date (the "Re-date" control beside
+ *  Release on the inspector strip and /admin/holds →
+ *  updateHoldExpectedRelease), and when that date passes too the hold is
+ *  nudged again rather than aging silently. Returns the number of holds
+ *  nudged. */
 export async function scanStaleHolds(orgId: string, now: Date = new Date()): Promise<number> {
   const nowIso = now.toISOString();
   const agedBefore = new Date(now.getTime() - HOLD_AGING_DAYS * 86400_000).toISOString();

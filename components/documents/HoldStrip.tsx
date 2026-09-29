@@ -20,7 +20,11 @@
 //     date never read late here; the maintenance cron's aging sweep
 //     (lib/holds.ts scanStaleHolds) nudges the opener and the release
 //     pool once a hold is past its date, or past HOLD_AGING_DAYS with
-//     none — the directive's "schedule variance visibility".
+//     none — the directive's "schedule variance visibility". The nudge asks
+//     for a new date, so an active hold carries a "Re-date" control (beside
+//     Release, same authority: holds.release is what the UPDATE policy
+//     gates) that sets, moves or clears expected_release_at in place
+//     (lib/holds.ts updateHoldExpectedRelease).
 //   - Who sees the controls is decided by the org's capability policy
 //     (holds.open / holds.release — role tokens, the additive collection
 //     and per-person grants) through lib/holds.ts holdControlsFor, never
@@ -32,8 +36,8 @@ import {
   AlertOctagon, Plus, X, Loader2, Clock, AlertTriangle, Lock, Check, Printer, CalendarClock,
 } from "lucide-react";
 import {
-  listActiveHoldsForDocument, openHold, releaseHold, holdControlsFor, expectedReleaseIso,
-  PREDEFINED_HOLD_REASONS, type HoldRecord,
+  listActiveHoldsForDocument, openHold, releaseHold, updateHoldExpectedRelease, holdControlsFor,
+  expectedReleaseIso, expectedReleaseDate, PREDEFINED_HOLD_REASONS, type HoldRecord,
 } from "@/lib/holds";
 import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { useRole } from "@/components/providers/RoleContext";
@@ -164,6 +168,19 @@ export default function HoldStrip({
     finally { setBusy(false); }
   };
 
+  // HLD-14: the aging nudge's remedy — set, move or clear the expected date
+  // of an open hold. A blank date clears it (the hold is then nudged by age).
+  const onRedate = async (holdId: string, date: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await updateHoldExpectedRelease(holdId, expectedReleaseIso(date) ?? null);
+      await refresh();
+      onChange?.();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
   const heldReasons = new Set(holds.map((h) => h.reason));
 
   return (
@@ -197,6 +214,8 @@ export default function HoldStrip({
             key={h.id}
             hold={h}
             canRelease={showRelease}
+            canRedate={showRelease}
+            onRedate={(date) => onRedate(h.id!, date)}
             isReleasing={releasingId === h.id}
             onStartRelease={() => { setReleasingId(h.id!); setReleaseReasonDraft(""); }}
             onCancelRelease={() => { setReleasingId(null); setReleaseReasonDraft(""); }}
@@ -311,11 +330,14 @@ export default function HoldStrip({
 // ─── Per-active-hold row ───────────────────────────────────────
 
 function ActiveHoldRow({
-  hold, canRelease, isReleasing, onStartRelease, onCancelRelease, onConfirmRelease,
+  hold, canRelease, canRedate, onRedate, isReleasing, onStartRelease, onCancelRelease, onConfirmRelease,
   releaseReasonDraft, setReleaseReasonDraft, busy,
 }: {
   hold: HoldRecord;
   canRelease: boolean;
+  /** HLD-14: may set / move / clear the expected release date (holds.release). */
+  canRedate: boolean;
+  onRedate: (date: string) => Promise<void>;
   isReleasing: boolean;
   onStartRelease: () => void;
   onCancelRelease: () => void;
@@ -328,6 +350,9 @@ function ActiveHoldRow({
   // strict). The hold age is informational; if the user wants a
   // fresh value, they refresh the panel.
   const [nowMs] = useState<number>(() => Date.now());
+  // HLD-14: the inline re-date row (a YYYY-MM-DD draft; blank = clear).
+  const [redating, setRedating] = useState(false);
+  const [dateDraft, setDateDraft] = useState("");
 
   // Print the physical HOLD card. Auto-assembles from the hold + document —
   // zero inputs to fill. HLD-7: the card carries the rev the hold was placed
@@ -398,7 +423,17 @@ function ActiveHoldRow({
           >
             <Printer className="w-3 h-3" /> Card
           </button>
-          {canRelease && !isReleasing && (
+          {canRedate && !isReleasing && !redating && (
+            <button
+              onClick={() => { setDateDraft(expectedReleaseDate(hold.expectedReleaseAt) ?? ""); setRedating(true); }}
+              disabled={busy}
+              title={hold.expectedReleaseAt ? "Change or clear the expected release date" : "Record when this hold is expected to clear"}
+              className="text-[10px] font-bold text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+            >
+              <CalendarClock className="w-3 h-3" /> Re-date
+            </button>
+          )}
+          {canRelease && !isReleasing && !redating && (
             <button
               onClick={onStartRelease}
               disabled={busy}
@@ -409,6 +444,37 @@ function ActiveHoldRow({
           )}
         </div>
       </div>
+
+      {redating && (
+        <div className="mt-2 flex items-center gap-1.5 pt-2 border-t border-amber-100 flex-wrap">
+          <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+            <CalendarClock className="w-3 h-3" /> Expected release
+            <input
+              type="date"
+              value={dateDraft}
+              min={todayLocalIso()}
+              onChange={(e) => setDateDraft(e.target.value)}
+              aria-label="Expected release date (blank clears it)"
+              className="text-[11px] border border-[var(--color-border-strong)] rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
+              autoFocus
+            />
+            <span className="opacity-70">(blank clears)</span>
+          </label>
+          <button
+            onClick={() => { void onRedate(dateDraft).then(() => setRedating(false)); }}
+            disabled={busy}
+            title={dateDraft ? "Save the expected release date" : "Clear the expected release date"}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-40"
+          >
+            <Check className="w-3 h-3" /> {dateDraft ? "Save date" : "Clear date"}
+          </button>
+          <button
+            onClick={() => setRedating(false)}
+            disabled={busy}
+            className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
+          ><X className="w-3 h-3" /></button>
+        </div>
+      )}
 
       {isReleasing && (
         <div className="mt-2 flex items-center gap-1.5 pt-2 border-t border-amber-100">

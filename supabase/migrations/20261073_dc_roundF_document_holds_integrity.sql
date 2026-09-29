@@ -43,7 +43,11 @@
 -- NOT a widening: every rule here refuses something that was allowed. Pre-apply
 -- inventory is captured BEFORE the DDL (DEC-30): holds whose org differs from
 -- their document's (the HLD-9 population — such a row cannot be repaired in
--- place once identity is pinned; delete and re-place it), released holds with
+-- place once identity is pinned; delete and re-place it, and delete it BEFORE
+-- any restore of document_holds from a backup taken before this paste: the org
+-- guard binds the service role, so the restore's chunk carrying that row is
+-- refused — app/api/admin/restore/apply-table retries such a chunk row by row
+-- and reports the refused ids rather than dropping the chunk), released holds with
 -- no reason (history the new rule would have refused), open holds with no
 -- reason yet and no expected release date (the HLD-14 aging population).
 --

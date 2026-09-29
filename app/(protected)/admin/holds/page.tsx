@@ -12,20 +12,22 @@
 // here is the org's capability policy — holds.release by role token, the
 // additive collection, or a per-person grant — through the same evaluator
 // the inspector strip and the database use (HLD-8), never a literal role
-// list. A release states its reason (HLD-10).
+// list. A release states its reason (HLD-10). The same authority sets, moves
+// or clears an open hold's expected release date in place ("Re-date", HLD-14:
+// the aging nudge's remedy; holds.release is what the UPDATE policy gates).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertOctagon, Clock, AlertTriangle, Check, X,
-  ChevronRight, Lock, TrendingUp,
+  ChevronRight, Lock, TrendingUp, CalendarClock,
 } from "lucide-react";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import {
-  listActiveHoldsForOrg, getHoldMetrics, releaseHold, holdControlsFor,
-  type HoldMetrics, type HoldRecord,
+  listActiveHoldsForOrg, getHoldMetrics, releaseHold, updateHoldExpectedRelease, holdControlsFor,
+  expectedReleaseIso, expectedReleaseDate, type HoldMetrics, type HoldRecord,
 } from "@/lib/holds";
 import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { supabase } from "@/lib/supabase";
@@ -61,6 +63,8 @@ export default function HoldsPage() {
   const [error, setError] = useState<string | null>(null);
   const [releasingId, setReleasingId] = useState<string | null>(null);
   const [releaseDraft, setReleaseDraft] = useState("");
+  const [redatingId, setRedatingId] = useState<string | null>(null);
+  const [redateDraft, setRedateDraft] = useState("");
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -116,9 +120,22 @@ export default function HoldsPage() {
     finally { setBusy(false); }
   };
 
+  // HLD-14: set, move or clear the expected date of an open hold (blank clears).
+  const onRedate = async (holdId: string) => {
+    setBusy(true);
+    try {
+      await updateHoldExpectedRelease(holdId, expectedReleaseIso(redateDraft) ?? null);
+      setRedatingId(null);
+      setRedateDraft("");
+      await refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
   const totalByReason = useMemo(() => metrics?.activeByReason ?? [], [metrics]);
   const maxBarCount = useMemo(() => totalByReason.reduce((m, r) => Math.max(m, r.count), 1), [totalByReason]);
   const releaseReady = releaseDraft.trim().length > 0;
+  const todayLocal = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; })();
 
   if (!activeOrgId) return <div className="p-6 text-sm text-[var(--color-text-muted)]">No active organization.</div>;
 
@@ -213,8 +230,39 @@ export default function HoldsPage() {
                       </span>
                       {h.openedByName && <span>opened by {h.openedByName}</span>}
                       {h.heldRevLabel && <span className="font-mono">at Rev {h.heldRevLabel}</span>}
+                      {expectedMs !== null && lateDays === 0 && (
+                        <span className="inline-flex items-center gap-0.5"><CalendarClock className="w-3 h-3" /> expected {new Date(expectedMs).toLocaleDateString()}</span>
+                      )}
                     </div>
                     {h.notes && <div className="mt-1 text-[11px] text-[var(--color-text)] whitespace-pre-wrap">{h.notes}</div>}
+                    {redatingId === h.id && (
+                      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                        <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                          <CalendarClock className="w-3 h-3" /> Expected release
+                          <input
+                            type="date"
+                            value={redateDraft}
+                            min={todayLocal}
+                            onChange={(e) => setRedateDraft(e.target.value)}
+                            aria-label="Expected release date (blank clears it)"
+                            className="text-[11px] border border-[var(--color-border-strong)] rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                            autoFocus
+                          />
+                          <span className="opacity-70">(blank clears)</span>
+                        </label>
+                        <button
+                          onClick={() => onRedate(h.id!)}
+                          disabled={busy}
+                          title={redateDraft ? "Save the expected release date" : "Clear the expected release date"}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-40 transition-colors"
+                        >
+                          <Check className="w-3 h-3" /> {redateDraft ? "Save date" : "Clear date"}
+                        </button>
+                        <button onClick={() => { setRedatingId(null); setRedateDraft(""); }} disabled={busy} className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
                     {releasingId === h.id && (
                       <div className="mt-2 flex items-center gap-1.5">
                         <input
@@ -239,7 +287,17 @@ export default function HoldsPage() {
                       </div>
                     )}
                   </div>
-                  {canRelease && releasingId !== h.id && (
+                  {canRelease && releasingId !== h.id && redatingId !== h.id && (
+                    <button
+                      onClick={() => { setRedatingId(h.id!); setRedateDraft(expectedReleaseDate(h.expectedReleaseAt) ?? ""); setReleasingId(null); }}
+                      disabled={busy}
+                      title={h.expectedReleaseAt ? "Change or clear the expected release date" : "Record when this hold is expected to clear"}
+                      className="shrink-0 text-[10px] font-bold text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+                    >
+                      <CalendarClock className="w-3 h-3" /> Re-date
+                    </button>
+                  )}
+                  {canRelease && releasingId !== h.id && redatingId !== h.id && (
                     <button
                       onClick={() => { setReleasingId(h.id!); setReleaseDraft(""); }}
                       className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
