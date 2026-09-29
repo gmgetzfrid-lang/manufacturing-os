@@ -257,7 +257,13 @@ export type StatusTransitionInput = {
   actorRole?: string;
 };
 
-export async function transitionProjectStatus(input: StatusTransitionInput): Promise<void> {
+/** Returns `releaseError` when the status change succeeded but the
+ *  project's active checkouts were NOT released (DCK-9: the release guard
+ *  refused another user's session). The status DID change — a throw here
+ *  would make the caller skip its refresh and render the old status beside
+ *  the message — so the refusal travels in the result and the caller shows
+ *  it against the new state. Any failure BEFORE the status change throws. */
+export async function transitionProjectStatus(input: StatusTransitionInput): Promise<{ releaseError: string | null }> {
   // Defense in depth alongside the 20260906 RLS: owner/controller only.
   await assertCanManageProject(input.projectId, input.actorUserId);
   const now = new Date().toISOString();
@@ -300,7 +306,8 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
   // Cancelling or archiving releases every active checkout on the project.
   // DCK-9: a refused release (the release guard, for another user's session)
   // is reported AFTER the audience is told about the status change — the
-  // status did change; what did not happen must not vanish into a warn.
+  // status did change; what did not happen must not vanish into a warn, and
+  // must not be thrown as if the change had not happened.
   let releaseError: Error | null = null;
   if (input.toStatus === "cancelled" || input.toStatus === "archived" || input.toStatus === "completed") {
     try {
@@ -326,9 +333,11 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
     title: `Project ${input.toStatus}: ${(pj?.name as string) ?? "project"}`,
     body: input.reason ? `Reason: ${input.reason}` : (input.toStatus === "cancelled" || input.toStatus === "completed" || input.toStatus === "archived" ? "Any active checkouts on the project were released." : undefined),
   });
-  if (releaseError) {
-    throw new Error(`The project is ${input.toStatus}, but its active checkouts were NOT released: ${releaseError.message}`);
-  }
+  return {
+    releaseError: releaseError
+      ? `The project is ${input.toStatus}, but its active checkouts were NOT released: ${releaseError.message.replace(/^The project's active checkouts were NOT released: /, "")}`
+      : null,
+  };
 }
 
 // ─── CHECKOUTS LINKED TO PROJECTS ────────────────────────────────────────

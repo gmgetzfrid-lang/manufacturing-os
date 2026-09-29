@@ -19,7 +19,7 @@ import {
   activeCollaboratorNames,
   postEpisodeSystemMessage,
   quickHold,
-  classifyLockClaim,
+  resolveLockClaim,
   abortFailedLockClaim,
 } from "@/lib/checkoutEpisodes";
 import { recordIntent } from "@/lib/intents";
@@ -384,12 +384,15 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .maybeSingle();
 
       // DCK-4: a null row means one of TWO things — the lock is held by
-      // someone else (a genuine CAS miss, no error) or the write itself
-      // FAILED (an ACL deny, an RLS filter, a transport error). The second
-      // must not be reported as "you joined": nobody holds the lock, and the
-      // session we just opened would sit on a document that reads as free.
-      const verdict = classifyLockClaim(claim);
-      if (verdict === "failed") {
+      // someone else (a genuine CAS miss) or the write itself was REFUSED
+      // (an ACL deny under the RESTRICTIVE documents_deny_write_guard, an
+      // RLS filter, a transport error). A filtered write answers with NO
+      // error, so the no-row case is settled by re-reading checked_out_by:
+      // only another user's id there is a join. A refusal must not be
+      // reported as "you joined": nobody holds the lock, and the session we
+      // just opened would sit on a document that reads as free.
+      const resolved = await resolveLockClaim({ claim, documentId: document.id!, userId: currentUser.uid });
+      if (resolved.verdict === "failed") {
         await intentWrite.catch(() => undefined);
         await abortFailedLockClaim({
           sessionId: insertedSession?.id as string,
@@ -399,9 +402,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           episodeId: checkoutEpisode?.id ?? null,
           episodeCreated: ensured?.created === true,
         });
-        throw new Error(`The checkout did not complete — the lock could not be claimed: ${claim.error?.message ?? "write refused"}`);
+        throw new Error(`The checkout did not complete — the lock could not be claimed: ${resolved.detail}`);
       }
-      const lockedRow = verdict === "held";
+      const lockedRow = resolved.verdict === "held";
 
       if (!lockedRow) {
         // Someone else holds the lock (they had it already, or won the race).

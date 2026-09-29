@@ -4,9 +4,12 @@
 // sweepRoundD3 pattern).
 //
 //   DCK-4  a FAILED lock-claim write is not "you joined": the session is rolled
-//          back and the caller is told the checkout did not complete
+//          back and the caller is told the checkout did not complete. A
+//          filtered write (the RESTRICTIVE documents_deny_write_guard) answers
+//          with NO error, so a no-row claim is settled by re-reading the holder
 //   DCK-5  forceReleaseDocument writes the FORCE_RELEASE audit row itself,
-//          AFTER the RPC succeeded, with the reason; a refusal records nothing
+//          AFTER the RPC succeeded, with the reason; a refusal records nothing;
+//          a refused audit insert after a real release is reported, not silent
 //   DCK-7  the browser sweep is scoped to the caller's own sessions, the
 //          notifications/audit rows come from the rows the UPDATE changed,
 //          and a refused sweep THROWS instead of console.warn
@@ -32,6 +35,8 @@ const state = vi.hoisted(() => ({
   rpc: [] as Array<{ fn: string; args: unknown }>,
   rpcResult: { data: null as unknown, error: null as null | { message: string } },
   audits: [] as Array<Record<string, unknown>>,
+  /** What the (mocked) audit writer answers — the real one returns the insert's error. */
+  auditResult: { error: null as string | null },
   emits: [] as Array<Record<string, unknown>>,
   timeline: [] as string[],
   insertSeq: 0,
@@ -103,17 +108,17 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 vi.mock("@/lib/audit", () => ({
-  logCheckoutEvent: vi.fn(async (p: Record<string, unknown>) => { state.audits.push(p); state.timeline.push(`audit:${String(p.type)}`); }),
-  logAuditAction: vi.fn(async (p: Record<string, unknown>) => { state.audits.push(p); state.timeline.push(`audit:${String(p.action)}`); }),
+  logCheckoutEvent: vi.fn(async (p: Record<string, unknown>) => { state.audits.push(p); state.timeline.push(`audit:${String(p.type)}`); return { error: state.auditResult.error }; }),
+  logAuditAction: vi.fn(async (p: Record<string, unknown>) => { state.audits.push(p); state.timeline.push(`audit:${String(p.action)}`); return { error: state.auditResult.error }; }),
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (p: Record<string, unknown>) => { state.emits.push(p); }) }));
 vi.mock("@/lib/intents", () => ({ recordIntent: vi.fn(async () => undefined), endMyIntents: vi.fn(async () => undefined) }));
 
 import {
-  classifyLockClaim, quickHold, forceReleaseDocument, finishMySession, getActiveEpisode,
+  classifyLockClaim, resolveLockClaim, quickHold, forceReleaseDocument, finishMySession, getActiveEpisode,
   resetEpisodeSchemaFlag, episodeSchemaIsMissing, EPISODE_SCHEMA_RECHECK_MS, isMissingEpisodeSchema,
 } from "@/lib/checkoutEpisodes";
-import { autoReleaseExpiredAdHoc, releaseAllCheckoutsForProject } from "@/lib/projects";
+import { autoReleaseExpiredAdHoc, releaseAllCheckoutsForProject, transitionProjectStatus } from "@/lib/projects";
 import { endMyIntents } from "@/lib/intents";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -123,7 +128,7 @@ const messages = () => writesTo("checkout_messages", "insert").map((w) => String
 
 beforeEach(() => {
   state.rows = {}; state.seq = {}; state.errors = {}; state.calls = []; state.writes = [];
-  state.rpc = []; state.rpcResult = { data: null, error: null }; state.audits = []; state.emits = [];
+  state.rpc = []; state.rpcResult = { data: null, error: null }; state.audits = []; state.auditResult = { error: null }; state.emits = [];
   state.timeline = []; state.insertSeq = 0;
   vi.mocked(endMyIntents).mockClear();
   resetEpisodeSchemaFlag();
@@ -166,13 +171,56 @@ describe("DCK-4 — a failed lock claim is neither 'held' nor 'joined'", () => {
     expect(modal).toMatch(/await intentWrite\.catch\(\(\) => undefined\);\s*\n\s*await abortFailedLockClaim\(\{\s*\n\s*sessionId: insertedSession\?\.id as string,\s*\n\s*documentId: document\.id!,/);
   });
 
-  it("quickHold: no row and no error is still a genuine join", async () => {
+  it("resolveLockClaim: a row is held and an error is failed without any re-read; a no-row/no-error claim is settled by checked_out_by", async () => {
+    await expect(resolveLockClaim({ claim: { data: { id: "d1" }, error: null }, documentId: "d1", userId: "u1" })).resolves.toMatchObject({ verdict: "held" });
+    await expect(resolveLockClaim({ claim: { data: null, error: { message: "permission denied" } }, documentId: "d1", userId: "u1" })).resolves.toMatchObject({ verdict: "failed", detail: "permission denied" });
+    expect(state.calls.filter((c) => c.table === "documents")).toHaveLength(0);
+    // another user's id in the lock column: a real holder → joined
+    state.rows.documents = [{ id: "d1", checked_out_by: "other" }];
+    await expect(resolveLockClaim({ claim: { data: null, error: null }, documentId: "d1", userId: "u1" })).resolves.toMatchObject({ verdict: "joined", holderId: "other" });
+    // NULL: nobody holds it, so the CAS predicate matched and the write was filtered → failed
+    state.rows.documents = [{ id: "d1", checked_out_by: null }];
+    await expect(resolveLockClaim({ claim: { data: null, error: null }, documentId: "d1", userId: "u1" })).resolves.toMatchObject({ verdict: "failed", detail: expect.stringMatching(/refused without an error.*check your access/) });
+    // the caller's OWN id: the predicate matched too → failed
+    state.rows.documents = [{ id: "d1", checked_out_by: "u1" }];
+    await expect(resolveLockClaim({ claim: { data: null, error: null }, documentId: "d1", userId: "u1" })).resolves.toMatchObject({ verdict: "failed" });
+    // the row cannot be read at all (filtered SELECT, or an error) → failed, never joined
+    state.rows.documents = [];
+    await expect(resolveLockClaim({ claim: { data: null, error: null }, documentId: "d1", userId: "u1" })).resolves.toMatchObject({ verdict: "failed" });
+    state.errors["documents.select"] = { message: "connection reset" };
+    await expect(resolveLockClaim({ claim: { data: null, error: null }, documentId: "d1", userId: "u1" })).resolves.toMatchObject({ verdict: "failed", detail: expect.stringMatching(/could not be read: connection reset/) });
+  });
+
+  it("quickHold: the CONFIRMED mechanism — a RESTRICTIVE-policy filter (zero rows, NO error) over a free document — rolls back and throws; nothing says 'joined'", async () => {
+    state.rows.documents = [{ id: "d1", checked_out_by: null }]; // nobody holds it
+    state.seq["documents.update"] = [[]];                         // …yet the CAS matched nothing: filtered
+    await expect(quickHold({ orgId: "o1", documentId: "d1", libraryId: "l1", userId: "u1", userName: "ann" }))
+      .rejects.toThrow(/did not complete — the lock could not be claimed: the write was refused without an error/);
+    const rollback = writesTo("checkout_sessions", "update");
+    expect(rollback).toHaveLength(1);
+    expect(rollback[0].payload).toMatchObject({ status: "checked_in", released_by: "u1" });
+    expect(rollback[0].filters).toContainEqual(["id", "checkout_sessions-2"]);
+    expect(writesTo("checkout_episodes", "update")[0].payload).toMatchObject({ status: "closed", close_reason: "reconciled" });
+    expect(messages()).toEqual([]);
+    expect(vi.mocked(endMyIntents)).toHaveBeenCalledWith({ documentId: "d1", userId: "u1", sources: ["checkout"] });
+  });
+
+  it("quickHold: no row and no error with ANOTHER user's id in checked_out_by is the genuine join", async () => {
     state.rows.checkout_episodes = [{ id: "ep-1", document_id: "d1", status: "active", org_id: "o1", seq: 3, opened_at: "2026-09-01T00:00:00Z" }];
-    state.rows.documents = []; // the CAS matched nothing: someone else holds it
+    state.rows.documents = [{ id: "d1", checked_out_by: "other" }]; // someone else really holds it
+    state.seq["documents.update"] = [[]];                              // so the CAS matched nothing
     await expect(quickHold({ orgId: "o1", documentId: "d1", libraryId: "l1", userId: "u1", userName: "ann" })).resolves.toBe("joined");
     expect(messages().some((t) => t.includes("joined via quick hold"))).toBe(true);
     expect(writesTo("checkout_sessions", "update")).toHaveLength(0);
     expect(vi.mocked(endMyIntents)).not.toHaveBeenCalled(); // a join keeps its intent
+  });
+
+  it("the modal settles its claim through the same resolveLockClaim (no bare classifyLockClaim)", () => {
+    const modal = src("components/documents/CheckoutFlowModal.tsx");
+    expect(modal).toMatch(/const resolved = await resolveLockClaim\(\{ claim, documentId: document\.id!, userId: currentUser\.uid \}\);/);
+    expect(modal).toMatch(/if \(resolved\.verdict === "failed"\) \{/);
+    expect(modal).toMatch(/could not be claimed: \$\{resolved\.detail\}/);
+    expect(modal).not.toMatch(/classifyLockClaim\(/);
   });
 });
 
@@ -212,6 +260,48 @@ describe("DCK-5 — forceReleaseDocument writes the audit row itself, after the 
     expect(writesTo("checkout_episodes", "update")[0].payload).toMatchObject({ status: "closed", close_reason: "force_released" });
     expect(messages().some((t) => t.includes("force-released by ctl"))).toBe(true);
     expect(state.emits[0]).toMatchObject({ kind: "checkout_released", audience: { involved: ["vic"] } });
+  });
+
+  it("a successful RPC whose audit INSERT is refused: the release stands, and the caller is told the row is missing", async () => {
+    state.rows.checkout_sessions = [{ id: "s1", user_id: "vic", user_name: "vic", started_at: "2026-09-01T00:00:00Z", document_id: "d1", status: "active" }];
+    state.rows.checkout_episodes = [{ id: "ep-1", document_id: "d1", status: "active", org_id: "o1", seq: 2, opened_at: "2026-09-01T00:00:00Z" }];
+    state.rpcResult = { data: { documentId: "d1", previousHolder: "vic", endedSessions: 1 }, error: null };
+    state.auditResult = { error: "new row violates row-level security policy for table \"audit_logs\"" };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(forceReleaseDocument(input)).resolves.toEqual({ auditRecorded: false, auditError: expect.stringMatching(/audit_logs/) });
+      expect(errSpy).toHaveBeenCalledWith(expect.stringMatching(/FORCE_RELEASE audit row was refused/), expect.stringMatching(/audit_logs/));
+    } finally { errSpy.mockRestore(); }
+    // the act itself is not undone by a lost record: sealed, alerted, victim told
+    expect(writesTo("checkout_episodes", "update")[0].payload).toMatchObject({ status: "closed", close_reason: "force_released" });
+    expect(messages().some((t) => t.includes("force-released by ctl"))).toBe(true);
+    expect(state.emits[0]).toMatchObject({ kind: "checkout_released" });
+  });
+
+  it("a recorded audit row answers auditRecorded: true", async () => {
+    state.rpcResult = { data: { documentId: "d1", previousHolder: null, endedSessions: 0 }, error: null };
+    await expect(forceReleaseDocument(input)).resolves.toEqual({ auditRecorded: true, auditError: null });
+  });
+
+  it("the real logAuditAction reads the insert's {error} instead of assuming: refused → { error }, landed → { error: null }", async () => {
+    const real = await vi.importActual<typeof import("@/lib/audit")>("@/lib/audit");
+    const entry = { action: "FORCE_RELEASE", resourceId: "d1", resourceType: "document", userId: "ctl" };
+    await expect(real.logAuditAction(entry)).resolves.toEqual({ error: null });
+    state.errors["audit_logs.insert"] = { message: "new row violates row-level security policy" };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(real.logAuditAction(entry)).resolves.toEqual({ error: "new row violates row-level security policy" });
+      expect(errSpy).toHaveBeenCalledWith(expect.stringMatching(/Failed to write audit log \(FORCE_RELEASE\)/), "new row violates row-level security policy");
+    } finally { errSpy.mockRestore(); }
+  });
+
+  it("both surfaces show a released-but-unrecorded outcome instead of plain success", () => {
+    const cell = src("components/documents/CheckoutStatusCell.tsx");
+    expect(cell).toMatch(/const released = await forceReleaseDocument\(\{/);
+    expect(cell).toMatch(/if \(!released\.auditRecorded\) \{[\s\S]*?title: "Released, but the audit row was refused"/);
+    const page = src("app/(protected)/documents/[libraryId]/page.tsx");
+    expect(page).toMatch(/const released = await forceReleaseDocument\(\{/);
+    expect(page).toMatch(/if \(!released\.auditRecorded\) \{[\s\S]*?setError\(`Released, but the audit row was refused:/);
   });
 
   it("an RPC answer for a different document is a refusal: nothing recorded", async () => {
@@ -405,5 +495,25 @@ describe("DCK-9 — the project release is a check-in with an outcome, a CHECK_I
     state.seq["checkout_sessions.select"] = [[]];
     await expect(releaseAllCheckoutsForProject({ projectId: "p1", reason: "x", actorUserId: "mgr" })).resolves.toBe(0);
     expect(state.writes).toEqual([]);
+  });
+
+  it("transitionProjectStatus: the status change lands and a refused release comes back in the RESULT, not as a throw", async () => {
+    state.rows.projects = [{ id: "p1", org_id: "o1", owner_user_id: "mgr", name: "Pump swap" }];
+    state.seq["checkout_sessions.select"] = [[row]];
+    state.errors["checkout_sessions.update"] = { message: "You are not allowed to release another user's checkout.", code: "23514" };
+    const res = await transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "completed", actorUserId: "mgr", actorEmail: "mgr@x.io", actorRole: "Manager" });
+    expect(res.releaseError).toMatch(/^The project is completed, but its active checkouts were NOT released: You are not allowed/);
+    expect(writesTo("projects", "update")[0].payload).toMatchObject({ status: "completed" });
+    // and with nothing to refuse, releaseError is null
+    state.errors = {}; state.writes = [];
+    state.seq["checkout_sessions.select"] = [[]];
+    await expect(transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "completed", actorUserId: "mgr" })).resolves.toEqual({ releaseError: null });
+  });
+
+  it("the project page refreshes to the database's status BEFORE showing the release refusal, and refreshes on a throw too", () => {
+    const page = src("app/(protected)/projects/[id]/page.tsx");
+    expect(page).toMatch(/const \{ releaseError \} = await transitionProjectStatus\(\{/);
+    expect(page).toMatch(/await refresh\(\);\s*\n(\s*\/\/.*\n)*\s*if \(releaseError\) setActionError\(releaseError\);/);
+    expect(page).toMatch(/setActionError\(\(e as Error\)\.message\);\s*\n(\s*\/\/.*\n)*\s*await refresh\(\)\.catch\(\(\) => undefined\);/);
   });
 });

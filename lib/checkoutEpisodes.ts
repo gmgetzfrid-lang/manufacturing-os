@@ -688,7 +688,12 @@ export async function forceReleaseDocument(input: {
   actorRole?: string | null;
   /** The stated reason — reaches released_reason AND the audit details. */
   reason?: string | null;
-}): Promise<void> {
+}): Promise<{
+  /** False when the release happened but the FORCE_RELEASE audit insert was
+   *  refused — the caller must say so; the lock IS cleared either way. */
+  auditRecorded: boolean;
+  auditError: string | null;
+}> {
 
   // Who is about to lose their session? Captured BEFORE the update so the
   // affected users get a durable personal notification (the system thread
@@ -714,8 +719,11 @@ export async function forceReleaseDocument(input: {
   }
 
   // DCK-5: the record of the act, written once the act is real. The reason
-  // is the one that reached released_reason a moment ago.
-  await logCheckoutEvent({
+  // is the one that reached released_reason a moment ago. The insert is
+  // CHECKED: supabase-js does not throw on a refused insert, so a policy or
+  // transport refusal would otherwise leave a released lock with no row and
+  // an actor who saw success.
+  const audit = await logCheckoutEvent({
     orgId: input.orgId,
     fileId: input.documentId,
     userId: input.actorUserId,
@@ -731,6 +739,10 @@ export async function forceReleaseDocument(input: {
       checkoutNumber: episode?.seq ?? null,
     },
   });
+  const auditError = audit?.error ?? null;
+  if (auditError) {
+    console.error("[forceRelease] the lock was released but the FORCE_RELEASE audit row was refused:", auditError);
+  }
 
   if (episode) {
     await closeEpisode({
@@ -772,6 +784,7 @@ export async function forceReleaseDocument(input: {
       console.warn("[forceRelease] victim notify failed (non-blocking)", e);
     }
   }
+  return { auditRecorded: !auditError, auditError };
 }
 
 // ─── Lock claim verdict (DCK-4) ──────────────────────────────────────────
@@ -789,6 +802,43 @@ export function classifyLockClaim(result: {
 }): LockClaimVerdict {
   if (result.error) return "failed";
   return result.data ? "held" : "joined";
+}
+
+/** The claim's verdict, settled on EVIDENCE. `classifyLockClaim` alone
+ *  cannot tell a lost race from a filtered write: `documents_deny_write_guard`
+ *  is a RESTRICTIVE policy, so an ACL write deny makes PostgREST answer with
+ *  ZERO ROWS AND NO ERROR — exactly what a CAS miss looks like. So a no-row /
+ *  no-error claim is re-read: `documents.checked_out_by` (visible to every
+ *  member SELECT). Another user's id there means someone really holds the lock
+ *  (`joined`); NULL, the caller's own id, an unreadable row or a read error
+ *  means nobody else holds it and the write was refused (`failed`). */
+export async function resolveLockClaim(input: {
+  claim: { data: unknown; error: { message?: string } | null | undefined };
+  documentId: string;
+  userId: string;
+  client?: SupabaseLike;
+}): Promise<{ verdict: LockClaimVerdict; holderId: string | null; detail: string | null }> {
+  const first = classifyLockClaim(input.claim);
+  if (first === "held") return { verdict: "held", holderId: input.userId, detail: null };
+  if (first === "failed") {
+    return { verdict: "failed", holderId: null, detail: input.claim.error?.message ?? "write refused" };
+  }
+  const db = input.client ?? supabase;
+  const { data, error } = await db
+    .from("documents")
+    .select("checked_out_by")
+    .eq("id", input.documentId)
+    .maybeSingle();
+  if (error) {
+    return { verdict: "failed", holderId: null, detail: `the lock holder could not be read: ${error.message}` };
+  }
+  const holder = (data as { checked_out_by?: string | null } | null)?.checked_out_by ?? null;
+  if (holder && holder !== input.userId) return { verdict: "joined", holderId: holder, detail: null };
+  return {
+    verdict: "failed",
+    holderId: null,
+    detail: "the write was refused without an error (nobody else holds the lock) — check your access on this folder",
+  };
 }
 
 /** Roll back a checkout whose lock claim FAILED (not lost): end the session
@@ -924,10 +974,12 @@ export async function quickHold(input: {
     .or(`checked_out_by.is.null,checked_out_by.eq.${input.userId}`)
     .select("id")
     .maybeSingle();
-  const verdict = classifyLockClaim(claim);
-  if (verdict === "failed") {
-    // DCK-4: a FAILED write is not a lost race. Undo the session we opened
-    // and say so — never "joined" over a document nobody holds.
+  // DCK-4: a FAILED write is not a lost race — and a filtered write carries
+  // NO error, so a no-row answer is settled by re-reading the lock holder.
+  const resolved = await resolveLockClaim({ claim, documentId: input.documentId, userId: input.userId });
+  if (resolved.verdict === "failed") {
+    // Undo the session we opened and say so — never "joined" over a
+    // document nobody holds.
     await intentWrite.catch(() => undefined);
     await abortFailedLockClaim({
       sessionId: session?.id as string,
@@ -937,9 +989,9 @@ export async function quickHold(input: {
       episodeId: episode?.id ?? null,
       episodeCreated: ensured?.created === true,
     });
-    throw new Error(`Quick hold did not complete — the lock could not be claimed: ${claim.error?.message ?? "write refused"}`);
+    throw new Error(`Quick hold did not complete — the lock could not be claimed: ${resolved.detail}`);
   }
-  const lockedRow = verdict === "held";
+  const lockedRow = resolved.verdict === "held";
 
   await postEpisodeSystemMessage({
     orgId: input.orgId,

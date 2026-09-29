@@ -1223,7 +1223,7 @@ export default function LibraryExplorerPage() {
       // Ends all sessions, closes the checkout episode, clears the lock +
       // collaborator columns, posts the system alert into the episode log,
       // and writes the audit row after the release succeeds.
-      await forceReleaseDocument({
+      const released = await forceReleaseDocument({
         orgId: activeOrgId,
         documentId: docRecord.id,
         actorUserId: uid ?? "unknown",
@@ -1232,6 +1232,10 @@ export default function LibraryExplorerPage() {
         actorRole: activeRole ?? null,
         reason: reason.trim(),
       });
+      if (!released.auditRecorded) {
+        // The lock IS cleared; the record of it is not. Say so (DCK-5).
+        setError(`Released, but the audit row was refused: the lock was cleared and the sessions ended, but the FORCE_RELEASE audit row could not be written (${released.auditError ?? "unknown error"}). The document's control history does not show this release — report it.`);
+      }
     } catch (e) {
       console.error("Force unlock failed", e);
       setError(`Force release refused — the lock was not cleared: ${(e as Error).message}`);

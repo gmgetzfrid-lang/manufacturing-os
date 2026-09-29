@@ -243,7 +243,7 @@ const CheckoutInfoPopover = ({
       // collaborator list, logs the system alert into the episode's thread,
       // and writes the FORCE_RELEASE audit row AFTER the release succeeds
       // (DCK-5) — a refused release records nothing.
-      await forceReleaseDocument({
+      const released = await forceReleaseDocument({
         orgId: docRecord.orgId || 'unknown',
         documentId: docRecord.id!,
         actorUserId: currentUserId || 'unknown',
@@ -252,6 +252,14 @@ const CheckoutInfoPopover = ({
         actorRole: userRole ?? null,
         reason: reason.trim(),
       });
+      if (!released.auditRecorded) {
+        // The lock IS cleared; the record of it is not. Say so (DCK-5).
+        await appAlert({
+          title: "Released, but the audit row was refused",
+          message: `The lock was cleared and the sessions ended, but the FORCE_RELEASE audit row could not be written: ${released.auditError ?? "unknown error"}. The document's control history does not show this release — report it.`,
+          tone: "danger",
+        });
+      }
 
       setProcessing(false);
       onClose();
