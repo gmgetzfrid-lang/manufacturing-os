@@ -7,13 +7,20 @@
 // role, gated ONLY by possession of the unguessable token, and returns the
 // minimum the landing page needs.
 //
-// It also makes the page's "Audit logged" claim true: every resolve bumps
-// the share's access counter AND writes a download_audits row, so the
-// distribution record shows outside pulls too.
+// The decision — token, org-joined document, the creator's current
+// authority, the document's control status, its holds, and which version is
+// servable — is lib/shareServe.ts, shared byte-for-byte with /api/share/file
+// so the page and the bytes can never disagree (SHR-6). A share always
+// serves the CURRENT issued revision; a Draft / Superseded / Void / Archived
+// or held document is refused with the reason (DRLS-5 / EGR-5 / REV-10).
+//
+// Every resolve records one access row (IP + user agent, no recipient
+// identification — SHR-10) and bumps the share's counter; the
+// download_audits row is written by /api/share/file (an actual download).
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { shareStillAuthorized } from "@/lib/shareAuthorization";
+import { recordShareAccess, requestMeta, resolveShareForServing, servedLabels } from "@/lib/shareServe";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -23,85 +30,38 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Share resolution unavailable" }, { status: 503 });
   }
   const token = (req.nextUrl.searchParams.get("token") ?? "").trim();
-  // Tokens are 32+ url-safe chars; reject junk cheaply before touching the DB.
-  if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) {
-    return NextResponse.json({ error: "invalid" }, { status: 400 });
-  }
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-  const { data: share } = await sb
-    .from("document_shares")
-    .select("id, org_id, document_id, expires_at, revoked_at, created_by")
-    .eq("token", token)
-    .maybeSingle();
-  if (!share) return NextResponse.json({ error: "notfound" }, { status: 404 });
-  if (share.revoked_at) return NextResponse.json({ error: "revoked" }, { status: 410 });
-  if (share.expires_at && new Date(share.expires_at as string).getTime() < Date.now()) {
-    return NextResponse.json({ error: "expired" }, { status: 410 });
-  }
+  const resolved = await resolveShareForServing(sb, token);
+  if (!resolved.ok) return NextResponse.json(resolved.body, { status: resolved.status });
+  const { share, doc, version } = resolved;
 
-  // Join document to the share's org. A share row's document_id was never
-  // constrained to its org_id (EGRESS-1), so a member of org A could name org
-  // B's document UUID; without this join the resolve leaked B's metadata. A
-  // cross-org share now yields no document and 404s.
-  const { data: doc } = await sb
-    .from("documents")
-    .select("id, document_number, title, name, rev, current_version_id")
-    .eq("id", share.document_id as string)
-    .eq("org_id", share.org_id as string)
-    .maybeSingle();
-  if (!doc) return NextResponse.json({ error: "notfound" }, { status: 404 });
+  const { data: org } = await sb.from("orgs").select("name").eq("id", share.org_id).maybeSingle();
 
-  // The share serves on the CREATOR's authority: if they have since lost read
-  // access to this document, or left the org, the link stops resolving — even
-  // for metadata. (EGRESS-1 Done-when 4.)
-  if (!(await shareStillAuthorized(share.org_id as string, share.created_by as string | null, doc.id as string))) {
-    return NextResponse.json({ error: "revoked" }, { status: 410 });
-  }
-
-  const { data: org } = await sb.from("orgs").select("name").eq("id", share.org_id as string).maybeSingle();
-
-  // Resolve the current PUBLISHED version's file (never an in-review draft).
-  let storagePath: string | null = null;
-  let versionId: string | null = (doc.current_version_id as string | null) ?? null;
-  if (versionId) {
-    const { data: v } = await sb.from("document_versions").select("file_url").eq("id", versionId).maybeSingle();
-    storagePath = (v?.file_url as string | null) ?? null;
-  }
-  if (!storagePath) {
-    const { data: latest } = await sb
-      .from("document_versions")
-      .select("id, file_url")
-      .eq("record_id", doc.id as string)
-      .or("review_state.is.null,review_state.eq.approved")
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (latest?.length) {
-      storagePath = (latest[0] as { file_url: string }).file_url;
-      versionId = (latest[0] as { id: string }).id;
-    }
-  }
-
-  // The page never receives a raw bucket URL anymore. Downloads go through
+  // The page never receives a raw bucket URL. Downloads go through
   // /api/share/file, which stamps SERVER-SIDE (watermark + rev footer +
-  // verify QR) before any byte leaves — the old client-side stamp fetch was
-  // CORS-blocked by the bucket, so its fallback leaked the raw file. That
-  // route also writes the download_audits row (an actual download); this one
-  // only bumps the access counter (link opened).
-  const fileUrl: string | null = storagePath
-    ? `/api/share/file?token=${encodeURIComponent(token)}`
-    : null;
+  // verify QR) before any byte leaves and writes the download_audits row.
+  const fileUrl: string | null = version ? `/api/share/file?token=${encodeURIComponent(token)}` : null;
 
-  try { await sb.rpc("bump_share_access", { p_share: share.id }); } catch { /* best-effort */ }
+  const meta = requestMeta(req);
+  await recordShareAccess(sb, { share, documentId: doc.id, versionId: version?.id ?? null, kind: "resolve", ...meta });
 
+  // The counter is a convenience the modal shows; a missing function or a
+  // refused call must be VISIBLE, not an unreachable catch (SHR-12).
+  const { error: bumpError } = await sb.rpc("bump_share_access", { p_share: share.id, p_ip: meta.ip });
+  if (bumpError) console.error("[share/resolve] bump_share_access failed", { share: share.id, message: bumpError.message });
+
+  const { rev } = servedLabels(doc, version);
   return NextResponse.json({
     documentId: doc.id,
-    versionId,
-    documentNumber: (doc.document_number as string | null) ?? null,
-    title: (doc.title as string | null) ?? (doc.name as string | null) ?? null,
-    rev: (doc.rev as string | null) ?? null,
+    versionId: version?.id ?? null,
+    documentNumber: doc.document_number ?? null,
+    title: doc.title ?? doc.name ?? null,
+    rev,
+    status: doc.status ?? null,
     orgName: (org?.name as string | null) ?? null,
+    expiresAt: share.expires_at ?? null,
     fileUrl,
   });
 }

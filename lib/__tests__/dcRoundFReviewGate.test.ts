@@ -743,10 +743,17 @@ describe("RG-12 — post-promote writes are checked and viewers resolve by curre
     const viewer = src("components/viewers/MultiDocViewer.tsx");
     expect(viewer).toMatch(/if \(doc\.currentVersionId\) \{\s*\n\s*const \{ data \} = await supabase\.from\("document_versions"\)\.select\("file_url"\)\.eq\("id", doc\.currentVersionId\)\.single\(\);/);
     expect(viewer.indexOf('.eq("id", doc.currentVersionId).single()')).toBeLessThan(viewer.indexOf('review_state.is.null,review_state.eq.approved'));
+    // Round F wave 2 (P1 SHARE): both share routes resolve through ONE helper,
+    // lib/shareServe.ts, which follows current_version_id FIRST and applies
+    // the review_state filter only on the no-pointer fallback.
+    const helper = src("lib/shareServe.ts");
+    expect(helper).toContain("if (d.current_version_id) {");
+    expect(helper.indexOf("if (d.current_version_id) {")).toBeLessThan(helper.indexOf("review_state.is.null,review_state.eq.approved"));
     for (const f of ["app/api/share/resolve/route.ts", "app/api/share/file/route.ts"]) {
       const s = src(f);
-      expect(s, f).toContain("let versionId: string | null = (doc.current_version_id as string | null) ?? null;");
-      expect(s.indexOf("doc.current_version_id as string | null"), f).toBeLessThan(s.indexOf("review_state.is.null,review_state.eq.approved"));
+      expect(s, f).toMatch(/import \{[^}]*resolveShareForServing[^}]*\} from "@\/lib\/shareServe";/);
+      expect(s, f).toContain("await resolveShareForServing(sb, token)");
+      expect(s, f).not.toContain("review_state.is.null,review_state.eq.approved");
     }
   });
 });

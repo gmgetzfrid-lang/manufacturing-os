@@ -190,7 +190,11 @@ describe("the client lists through the route and renders no link it cannot use",
     expect(m).toContain("const usable = !!url && readable && !dead;");
     expect(m).toContain("{usable && url && (");
     expect(m).toContain("{qrFor === s.id && usable && url && (");
-    expect(m).toMatch(/\{readable && <div className="rounded-xl border[^"]*">\s*\n\s*<div[^>]*>Create new<\/div>/);
+    // Round F (P1 SHARE): the Create panel is further gated on the minting
+    // tier and the document's shareable state — but `readable` stays the
+    // first term, so an unreadable document never offers a new link.
+    expect(m).toContain("const showCreate = readable && canMint === true && refusal === null;");
+    expect(m).toMatch(/\{showCreate && <div className="rounded-xl border[^"]*">\s*\n\s*<div[^>]*>Create new<\/div>/);
     expect(m).toMatch(/\{!readable && \(\s*\n\s*<div className="rounded-lg bg-amber-50/);
     expect(m).toMatch(/Link hidden &mdash; you can&rsquo;t read this document/);
     // Revoke is rendered outside the usable-only block, for any live row

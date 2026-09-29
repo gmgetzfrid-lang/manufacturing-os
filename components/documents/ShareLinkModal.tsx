@@ -2,6 +2,15 @@
 
 // ShareLinkModal — generate + manage time-limited public share links
 // for a single document. Mounted from the inspector toolbar.
+//
+// Round F (P1 SHARE): minting is a controller-tier act (Admin / DocCtrl by
+// collection) or a granted publisher of the library — the same authority
+// that issues what the link serves; anyone else sees why the box is absent.
+// The never-expiring option is gone and 90 days is the ceiling (lib/shareRules). A
+// Draft / Superseded / Void / Archived or held document is refused with the
+// reason before anything is inserted (and by the database if not). A share
+// always serves the CURRENT revision — stated here and on the landing page;
+// every link row says which revision it resolves to today.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -9,8 +18,11 @@ import {
   CheckCircle2, ExternalLink, Eye, QrCode,
 } from "lucide-react";
 import {
-  createShareLink, listShareLinks, revokeShareLink, type DocumentShare,
+  createShareLink, listShareLinks, revokeShareLink, loadShareDocumentContext, canMintShare,
+  describeShareRefusal, SHARE_MAX_DAYS, type DocumentShare,
 } from "@/lib/documentShares";
+import { useRole } from "@/components/providers/RoleContext";
+import { publicOrigin } from "@/lib/publicOrigin";
 import QrBadge from "@/components/ui/QrBadge";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
@@ -24,23 +36,31 @@ interface Props {
   createdByName?: string;
 }
 
-const DURATION_OPTIONS = [
+/** Every option expires; the last one is the ceiling. Exported for the test. */
+export const DURATION_OPTIONS = [
   { label: "24 hours", days: 1 },
   { label: "7 days", days: 7 },
   { label: "30 days (default)", days: 30 },
-  { label: "90 days", days: 90 },
-  { label: "Never expires", days: 0 },
+  { label: `${SHARE_MAX_DAYS} days (maximum)`, days: SHARE_MAX_DAYS },
 ];
 
 export default function ShareLinkModal({
   isOpen, onClose, orgId, documentId, documentLabel,
   createdBy, createdByName,
 }: Props) {
+  const { hasAnyRole } = useRole();
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
   const [shares, setShares] = useState<DocumentShare[]>([]);
   // EGRESS-8: whether the caller can read the document. When not, the server
   // lists only the caller's own links and withholds every token — nothing
   // below renders a URL it cannot use, and no new link can be created.
   const [readable, setReadable] = useState(true);
+  // Who may mint (controller tier / granted publisher) and why the document
+  // cannot be shared right now (status / archive / hold) — null = shareable.
+  const [canMint, setCanMint] = useState<boolean | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [currentRev, setCurrentRev] = useState<string | null>(null);
+  const [docStatus, setDocStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,9 +75,18 @@ export default function ShareLinkModal({
       const listing = await listShareLinks(documentId);
       setReadable(listing.readable);
       setShares(listing.shares);
-    } catch (e) { setError((e as Error).message); }
+      const ctx = await loadShareDocumentContext(documentId);
+      setCurrentRev(ctx.rev);
+      setDocStatus(ctx.status);
+      const [allowed, why] = await Promise.all([
+        canMintShare({ orgId, uid: createdBy, libraryId: ctx.libraryId, isController }),
+        describeShareRefusal(documentId),
+      ]);
+      setCanMint(allowed);
+      setRefusal(why);
+    } catch (e) { setError((e as Error).message); setCanMint(false); }
     finally { setLoading(false); }
-  }, [documentId]);
+  }, [documentId, orgId, createdBy, isController]);
 
   useEffect(() => { if (isOpen) void refresh(); }, [isOpen, refresh]);
 
@@ -83,7 +112,13 @@ export default function ShareLinkModal({
     catch (e) { setError((e as Error).message); }
   };
 
-  const baseUrl = typeof window !== "undefined" ? `${window.location.origin}/share/` : "/share/";
+  // PHYS-13: the copied link and the QR carry the PUBLIC origin — a link
+  // minted on a preview deploy must not dead-end an outsider on a Vercel
+  // login. publicOrigin() falls back to the browser origin only when
+  // NEXT_PUBLIC_SITE_URL is unset (see lib/publicOrigin.ts).
+  const origin = publicOrigin();
+  const baseUrl = origin ? `${origin}/share/` : "/share/";
+  const showCreate = readable && canMint === true && refusal === null;
 
   return (
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
@@ -92,7 +127,11 @@ export default function ShareLinkModal({
           <div className="p-2 rounded-lg bg-teal-100 text-teal-700"><LinkIcon className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Share link</div>
-            <div className="text-xs text-[var(--color-text-muted)] truncate">{documentLabel ?? documentId.slice(0, 8)}</div>
+            <div className="text-xs text-[var(--color-text-muted)] truncate">
+              {documentLabel ?? documentId.slice(0, 8)}
+              {currentRev !== null && <> · Rev {currentRev || "0"}</>}
+              {docStatus && <> · {docStatus}</>}
+            </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
@@ -116,7 +155,24 @@ export default function ShareLinkModal({
             </div>
           )}
 
-          {readable && <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
+          {readable && !loading && canMint === false && (
+            <div className="rounded-lg bg-slate-50 border border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                Sharing a document outside the organisation is a Document Control / Admin act, or one for a publisher granted on this library.
+                Ask a controller to mint the link; existing links are listed below.
+              </span>
+            </div>
+          )}
+
+          {readable && !loading && canMint === true && refusal && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>No new link can be created: {refusal}</span>
+            </div>
+          )}
+
+          {showCreate && <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
             <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Create new</div>
             <input
               value={note}
@@ -146,7 +202,9 @@ export default function ShareLinkModal({
               </button>
             </div>
             <div className="text-[10px] text-[var(--color-text-muted)]">
-              Anyone with the resulting URL can open the document until it expires or you revoke it. Every access is counted.
+              Anyone with the resulting URL can download a stamped, uncontrolled copy until the link expires (at most {SHARE_MAX_DAYS} days) or you revoke it.
+              A share always serves the <b>current</b> revision &mdash; today Rev {currentRev || "0"}; if the document is revved, the same link serves the new revision.
+              It stops serving while the document is on hold and permanently once it is superseded, voided or archived. Every download is recorded on the distribution record.
             </div>
           </div>}
 
@@ -224,11 +282,12 @@ export default function ShareLinkModal({
                       <div className="mt-2 text-[10px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-3 gap-y-1">
                         {s.note && <span className="italic text-[var(--color-text-muted)]">&ldquo;{s.note}&rdquo;</span>}
                         {s.createdByName && <span>by {s.createdByName}</span>}
+                        {!dead && currentRev !== null && <span title="A share always serves the current revision">resolves to Rev {currentRev || "0"}</span>}
                         {s.expiresAt && (
                           <span>{isExpired ? "expired" : "expires"} {new Date(s.expiresAt).toLocaleDateString()}</span>
                         )}
                         {isRevoked && <span className="text-rose-700">revoked</span>}
-                        <span className="inline-flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" /> {s.accessCount}</span>
+                        <span className="inline-flex items-center gap-0.5" title="Times the link was opened"><Eye className="w-2.5 h-2.5" /> {s.accessCount}</span>
                       </div>
                       {qrFor === s.id && usable && url && (
                         <div className="mt-2 flex justify-center animate-in fade-in">
