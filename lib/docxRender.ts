@@ -17,6 +17,7 @@
 
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
+import { hasRawXmlTag } from "@/lib/outputTemplateText";
 
 export interface RenderError {
   /** The tag or region that failed, when the library reports one. */
@@ -69,6 +70,23 @@ export function renderTemplate(
       "That file isn't a readable Word/Excel document (it may be .doc, a PDF renamed, or corrupt).",
       [{ message: "zip open failed" }],
     );
+  }
+
+  // XEDGE-11: refuse raw-XML tags outright. `{@tag}` makes docxtemplater
+  // splice the VALUE into the document as literal OOXML — caller-supplied
+  // markup on the company's own letterhead, filed as a controlled draft. The
+  // placeholder spec the analyze UI reviews shows plain fields only, so the
+  // rail is here, on every part the renderer would process (body, headers,
+  // footers, notes, sheets); tags are stripped first so a `{@` Word split
+  // across runs is still seen.
+  for (const name of Object.keys(zip.files)) {
+    if (!name.endsWith(".xml")) continue;
+    if (hasRawXmlTag(zip.files[name].asText().replace(/<[^>]+>/g, ""))) {
+      throw new TemplateRenderError(
+        "This template contains a raw-XML tag ({@…}). Raw tags inject markup rather than text and are not allowed — replace it with a plain {tag}.",
+        [{ tag: "@", message: `raw-XML tag refused in ${name}` }],
+      );
+    }
   }
 
   let doc: Docxtemplater;

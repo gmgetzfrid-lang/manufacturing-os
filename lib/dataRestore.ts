@@ -19,6 +19,7 @@
 
 import { heldRoles } from "@/lib/roleHeld";
 import { primaryRole } from "@/lib/roleCapabilities";
+import { REDACT_COLUMNS } from "@/lib/exportTables";
 import type { Role } from "@/types/schema";
 
 export interface RestoreEnvelopeLike {
@@ -110,6 +111,9 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   distribution_acks: "distribution acknowledgments are the recipient's own act",
   document_review_signoffs: "review sign-offs are bound to the reviewer's e-signature",
   org_configurations: "the capability policy changes only through the audited, controller-gated editor",
+  // XEDGE-3: the download register is the recall population (DIST-1) and the
+  // egress evidence — written only at the download egress, never by import.
+  download_audits: "download audits are written only by the download egress — a restored row would name a copy holder nobody served",
 };
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */
@@ -264,7 +268,68 @@ export function remapRow(
       out[k] = deepRemapValues(v, uidMap, orgPairs);
     }
   }
+  // EGR-7 / XEDGE-10: a bearer column never comes back from a backup. Applied
+  // here — the one place BOTH restore paths (single-shot apply and the chunked
+  // apply-table) pass every row through — so no caller can forget it.
+  return scrubRestoredRow(out);
+}
+
+// ── Bearer columns never return (EGR-7 / XEDGE-10) ───────────────────────
+// The export nulls every column in lib/exportTables.ts REDACT_COLUMNS. A
+// restore must not reinstate them either — from a redacted backup (null) or
+// from an older / hand-edited envelope that still carries the plaintext. The
+// column set is DERIVED from the export map so the two sides cannot drift;
+// lib/__tests__/exportCoverage.test.ts censuses the schema for any new
+// bearer column.
+const BEARER_COLUMNS: ReadonlySet<string> = new Set(
+  Object.values(REDACT_COLUMNS).flatMap((r) => [...r.columns]),
+);
+/** Bearer columns declared NOT NULL UNIQUE (document_shares.token,
+ *  project_intake_links.token): they take an unguessable placeholder so the
+ *  row can land, and the row is marked revoked so the placeholder can never
+ *  be presented. Nullable bearer columns (portal_token, *_encrypted) are nulled. */
+const PLACEHOLDER_COLUMNS: ReadonlySet<string> = new Set(["token"]);
+export const RESTORED_TOKEN_PREFIX = "restored-";
+
+function restoredPlaceholder(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return `${RESTORED_TOKEN_PREFIX}${uuid ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
+}
+
+/** The register note a restored, formerly issued transmittal carries. */
+export const RESTORED_TRANSMITTAL_NOTE = "Restored from a backup: the portal link was not restored (DEC-45). Issue a new transmittal to send these documents again.";
+
+/** Scrub every bearer column of a restored row. Pure apart from the random
+ *  placeholder; returns a new object. A row that carries a scrubbed column and
+ *  a `revoked_at` column arrives REVOKED (shares, intake links); one that
+ *  carries `enabled` arrives DISABLED (export destinations); an ISSUED
+ *  transmittal arrives VOIDED — `trg_transmittals_guard` (20261027) mints a
+ *  fresh portal token for every row INSERTED with status 'issued', which
+ *  would be a live credential nobody chose to issue, so the row lands in the
+ *  one state that keeps the register record and can never present a link.
+ *  Nothing restored can be presented or fire until a person re-issues /
+ *  re-enters it. */
+export function scrubRestoredRow(row: Record<string, unknown>, now: string = new Date().toISOString()): Record<string, unknown> {
+  const hit = Object.keys(row).filter((k) => BEARER_COLUMNS.has(k));
+  if (hit.length === 0) return row;
+  const out: Record<string, unknown> = { ...row };
+  for (const c of hit) out[c] = PLACEHOLDER_COLUMNS.has(c) ? restoredPlaceholder() : null;
+  if ("revoked_at" in out && out.revoked_at == null) out.revoked_at = now;
+  if ("enabled" in out) out.enabled = false;
+  if (hit.includes("portal_token") && out.status === "issued") {
+    out.status = "voided";
+    if ("notes" in out) {
+      const notes = typeof out.notes === "string" ? out.notes.trim() : "";
+      out.notes = notes ? `${notes}\n\n${RESTORED_TRANSMITTAL_NOTE}` : RESTORED_TRANSMITTAL_NOTE;
+    }
+  }
   return out;
+}
+
+/** True when `column` is a bearer column the restore scrubs (exposed for the
+ *  coverage tripwire, which proves export and restore agree). */
+export function isBearerColumn(column: string): boolean {
+  return BEARER_COLUMNS.has(column);
 }
 
 /** Rewrite "orgs/<oldOrg>/…" storage-path prefixes to the new org. Exported so

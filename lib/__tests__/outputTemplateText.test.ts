@@ -23,7 +23,7 @@ describe("findPlaceholders", () => {
   });
 
   it("returns nothing for a template with no tags", () => {
-    expect(findPlaceholders("Plain document with no placeholders.")).toEqual({ fields: [], loops: [] });
+    expect(findPlaceholders("Plain document with no placeholders.")).toEqual({ fields: [], loops: [], raw: [] });
   });
 });
 

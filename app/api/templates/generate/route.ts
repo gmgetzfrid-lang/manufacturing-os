@@ -37,6 +37,7 @@ import { fetchBytes } from "@/lib/r2Bytes";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import {
   autoMapColumns, missingRequirements, renderFilename, uniqueFilenames,
+  pickDeclaredValues, contentDispositionAttachment,
   type Placeholder,
 } from "@/lib/outputTemplateText";
 
@@ -63,7 +64,9 @@ type TemplateRow = {
 };
 
 /** Batch cap per request — big jobs run in slices so a serverless timeout
- *  can never eat a 300-row run silently. */
+ *  can never eat a 300-row run silently. XEDGE-11: the SAME cap bounds the
+ *  render action (every rendered file is held in memory before the zip), and
+ *  the client (lib/outputTemplates.ts RENDER_CHUNK) slices to it. */
 const MAX_ROWS_PER_CALL = 25;
 
 export async function POST(req: NextRequest) {
@@ -336,6 +339,12 @@ export async function POST(req: NextRequest) {
   // ── RENDER ─────────────────────────────────────────────────────────────
   const docs = Array.isArray(body.documents) ? body.documents : [];
   if (docs.length === 0) return bad("Nothing to render.");
+  // XEDGE-11: bounded like the draft path — every rendered file is held in
+  // memory until the zip is built, so an unbounded array is a memory ceiling
+  // reached after the run is already on the record.
+  if (docs.length > MAX_ROWS_PER_CALL) {
+    return bad(`Render at most ${MAX_ROWS_PER_CALL} documents per call (${docs.length} sent); the client slices larger batches.`, 413);
+  }
 
   let templateBytes: Buffer;
   try {
@@ -345,13 +354,17 @@ export async function POST(req: NextRequest) {
   }
 
   const ext = tpl.kind === "xlsx" ? "xlsx" : "docx";
+  // XEDGE-11: only the template's DECLARED tags reach the renderer — a
+  // caller-invented key is dropped, never injected. The filename pattern
+  // resolves against the same declared set.
+  const values = docs.map((d) => pickDeclaredValues(d?.values, placeholders));
   const names = uniqueFilenames(docs.map((d, i) =>
-    d.filename?.trim() || renderFilename(tpl.filename_pattern, d.values, tpl.name, ext, i)));
+    d.filename?.trim() || renderFilename(tpl.filename_pattern, values[i], tpl.name, ext, i)));
 
   const rendered: Array<{ name: string; bytes: Uint8Array }> = [];
   try {
     for (let i = 0; i < docs.length; i++) {
-      rendered.push({ name: names[i], bytes: renderTemplate(templateBytes, docs[i].values) });
+      rendered.push({ name: names[i], bytes: renderTemplate(templateBytes, values[i]) });
     }
   } catch (e) {
     if (e instanceof TemplateRenderError) return bad(e.message, 400);
@@ -360,51 +373,62 @@ export async function POST(req: NextRequest) {
 
   // Production record — what was made, from what, by whom. Its id goes back
   // to the caller so a filing run can amend it with how many landed.
-  const { data: genRow } = await supabaseAdmin.from("output_generations").insert({
-    org_id: orgId, template_id: tpl.id, template_name: tpl.name,
-    source_name: body.sourceName ?? null, document_count: rendered.length,
-    mode, created_by: user.id,
-    created_by_name: await memberDisplayName(orgId, user.id),
-  }).select("id").maybeSingle().then((r) => r, () => ({ data: null }));
-  await supabaseAdmin.from("audit_logs").insert({
-    action: "OUTPUT_DOCS_GENERATED",
-    resource_type: "output_template", resource_id: tpl.id,
-    org_id: orgId, user_id: user.id,
-    details: { template: tpl.name, count: rendered.length, mode, source: body.sourceName ?? null },
-  }).then(() => undefined, () => undefined);
+  // XEDGE-2: written only AFTER the response has been constructed — a header
+  // the runtime refuses must not leave behind a run that says N documents
+  // were produced and an audit row saying they reached someone.
+  const recordProduction = async (): Promise<string | null> => {
+    const { data: genRow } = await supabaseAdmin.from("output_generations").insert({
+      org_id: orgId, template_id: tpl.id, template_name: tpl.name,
+      source_name: body.sourceName ?? null, document_count: rendered.length,
+      mode, created_by: user.id,
+      created_by_name: await memberDisplayName(orgId, user.id),
+    }).select("id").maybeSingle().then((r) => r, () => ({ data: null }));
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "OUTPUT_DOCS_GENERATED",
+      resource_type: "output_template", resource_id: tpl.id,
+      org_id: orgId, user_id: user.id,
+      details: { template: tpl.name, count: rendered.length, mode, source: body.sourceName ?? null },
+    }).then(() => undefined, () => undefined);
+    return (genRow as { id?: string } | null)?.id ?? null;
+  };
 
   const contentType = ext === "xlsx"
     ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
   if (body.returnJson) {
-    return NextResponse.json({
-      generationId: (genRow as { id?: string } | null)?.id ?? null,
-      files: rendered.map((r) => ({
-        name: r.name,
-        contentType,
-        base64: Buffer.from(r.bytes).toString("base64"),
-      })),
-    });
+    const files = rendered.map((r) => ({
+      name: r.name,
+      contentType,
+      base64: Buffer.from(r.bytes).toString("base64"),
+    }));
+    const generationId = await recordProduction();
+    return NextResponse.json({ generationId, files });
   }
 
+  // XEDGE-2: the filename travels as RFC 5987 `filename*` with an ASCII-folded
+  // `filename=` fallback, so an em dash or a CJK character in a document name
+  // (or in the zip name) can never make the response throw.
+  let response: NextResponse;
   if (rendered.length === 1) {
-    return new NextResponse(new Uint8Array(rendered[0].bytes), {
+    response = new NextResponse(new Uint8Array(rendered[0].bytes), {
       headers: {
         "content-type": contentType,
-        "content-disposition": `attachment; filename="${rendered[0].name.replace(/"/g, "")}"`,
+        "content-disposition": contentDispositionAttachment(rendered[0].name),
+      },
+    });
+  } else {
+    const zip = new JSZip();
+    for (const r of rendered) zip.file(r.name, r.bytes);
+    const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    const zipName = `${tpl.name.replace(/[\\/:*?"<>|]+/g, "-")} - ${rendered.length} documents.zip`;
+    response = new NextResponse(new Uint8Array(zipBytes), {
+      headers: {
+        "content-type": "application/zip",
+        "content-disposition": contentDispositionAttachment(zipName),
       },
     });
   }
-
-  const zip = new JSZip();
-  for (const r of rendered) zip.file(r.name, r.bytes);
-  const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
-  const zipName = `${tpl.name.replace(/[\\/:*?"<>|]+/g, "-")} — ${rendered.length} documents.zip`;
-  return new NextResponse(new Uint8Array(zipBytes), {
-    headers: {
-      "content-type": "application/zip",
-      "content-disposition": `attachment; filename="${zipName.replace(/"/g, "")}"`,
-    },
-  });
+  await recordProduction();
+  return response;
 }

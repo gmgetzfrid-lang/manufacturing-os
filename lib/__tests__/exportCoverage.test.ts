@@ -23,8 +23,10 @@ import {
   ORG_SCOPED_TABLES,
   USER_SCOPED_FOR_ORG_TABLES,
   EXPORT_EXCLUDED_TABLES,
+  REDACT_COLUMNS,
+  redactRow,
 } from "@/lib/exportTables";
-import { RESTORE_TABLE_ORDER, CONFLICT_TARGETS, planRestore } from "@/lib/dataRestore";
+import { RESTORE_TABLE_ORDER, CONFLICT_TARGETS, planRestore, isBearerColumn } from "@/lib/dataRestore";
 
 /** Every table name created anywhere in supabase/ (schema.sql + migrations). */
 function discoverCreatedTables(): Set<string> {
@@ -41,9 +43,44 @@ function discoverCreatedTables(): Set<string> {
   return tables;
 }
 
+/** Every column of every table, from CREATE TABLE bodies and ADD COLUMN
+ *  statements across supabase/ (comments stripped). */
+function discoverColumns(): Map<string, Set<string>> {
+  const root = join(process.cwd(), "supabase");
+  const sources: string[] = [readFileSync(join(root, "schema.sql"), "utf8")];
+  for (const name of readdirSync(join(root, "migrations"))) {
+    if (/^\d{8}.*\.sql$/.test(name)) sources.push(readFileSync(join(root, "migrations", name), "utf8"));
+  }
+  const cols = new Map<string, Set<string>>();
+  const add = (t: string, c: string) => {
+    if (!cols.has(t)) cols.set(t, new Set());
+    cols.get(t)!.add(c);
+  };
+  const createRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(([\s\S]*?)\n\);/gi;
+  const alterRe = /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?/gi;
+  const keywords = new Set(["constraint", "primary", "unique", "check", "foreign"]);
+  for (const raw of sources) {
+    const src = raw.replace(/--[^\n]*/g, "");
+    for (const m of src.matchAll(createRe)) {
+      for (const line of m[2].split("\n")) {
+        const c = line.match(/^\s*"?([a-z_][a-z0-9_]*)"?\s+[A-Za-z]/);
+        if (c && !keywords.has(c[1].toLowerCase())) add(m[1].toLowerCase(), c[1].toLowerCase());
+      }
+    }
+    for (const m of src.matchAll(alterRe)) add(m[1].toLowerCase(), m[2].toLowerCase());
+  }
+  return cols;
+}
+
 const created = discoverCreatedTables();
 const exported = new Set<string>([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES]);
 const excluded = new Set<string>(Object.keys(EXPORT_EXCLUDED_TABLES));
+
+// EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
+// not in the pattern — file_key / template_file_key / builtin_key are storage
+// and registry keys, not secrets. `auth` / `p256dh` are the Web Push
+// subscription secrets (push_subscriptions), excluded from the export whole.
+const BEARER_NAME_RE = /(^|_)(token|secret|password)(_|$)|api_key|_encrypted$|^(auth|p256dh)$/;
 
 describe("backup coverage tripwire", () => {
   it("found a plausible number of tables (sanity)", () => {
@@ -99,5 +136,65 @@ describe("backup coverage tripwire", () => {
   it("restore order only contains real tables", () => {
     const bad = RESTORE_TABLE_ORDER.filter((t) => !created.has(t));
     expect(bad, `RESTORE_TABLE_ORDER entries with no CREATE TABLE: ${bad.join(", ")}`).toEqual([]);
+  });
+});
+
+describe("bearer-column redaction tripwire (EGR-7 / XEDGE-10)", () => {
+  const columns = discoverColumns();
+
+  it("the column census sees the schema (sanity)", () => {
+    expect(columns.get("document_shares")).toContain("token");
+    expect(columns.get("push_subscriptions")).toContain("p256dh");
+    expect(["auth", "p256dh", "endpoint"].filter((c) => BEARER_NAME_RE.test(c))).toEqual(["auth", "p256dh"]);
+    // push_subscriptions carries per-device push credentials: excluded whole,
+    // never exported (it was never restored either — SKIP_TABLES).
+    expect(exported.has("push_subscriptions")).toBe(false);
+    expect(excluded.has("push_subscriptions")).toBe(true);
+    expect(columns.get("export_destinations")).toContain("secret_access_key_encrypted");
+    expect(columns.get("transmittals")).toContain("portal_token");
+  });
+
+  it("every credential-named column of an EXPORTED table is redacted", () => {
+    const missing: string[] = [];
+    for (const table of exported) {
+      for (const col of columns.get(table) ?? []) {
+        if (!BEARER_NAME_RE.test(col) && !/^(token)$/.test(col)) continue;
+        if (!(REDACT_COLUMNS[table]?.columns ?? []).includes(col)) missing.push(`${table}.${col}`);
+      }
+    }
+    expect(
+      missing,
+      `Credential-looking columns exported un-redacted (add to REDACT_COLUMNS in lib/exportTables.ts): ${missing.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("every redaction entry names an exported table, a real column and a written reason", () => {
+    for (const [table, r] of Object.entries(REDACT_COLUMNS)) {
+      expect(exported.has(table), `${table} is redacted but not exported`).toBe(true);
+      expect(r.reason.trim().length, `${table} needs a real redaction reason`).toBeGreaterThan(20);
+      for (const col of r.columns) {
+        expect(columns.get(table)?.has(col), `${table}.${col} does not exist in the schema`).toBe(true);
+      }
+    }
+    // The four tables the findings name are all in (push_subscriptions is
+    // excluded whole rather than redacted — nothing of it is org data).
+    expect(Object.keys(REDACT_COLUMNS).sort()).toEqual(["document_shares", "export_destinations", "project_intake_links", "transmittals"]);
+  });
+
+  it("export and restore agree: every redacted column is a bearer column the restore scrubs", () => {
+    for (const r of Object.values(REDACT_COLUMNS)) {
+      for (const col of r.columns) expect(isBearerColumn(col), col).toBe(true);
+    }
+    expect(isBearerColumn("file_url")).toBe(false);
+  });
+
+  it("redactRow nulls exactly the declared columns and leaves other tables untouched", () => {
+    const share = { id: "s1", token: "live", org_id: "o", note: "n" };
+    expect(redactRow("document_shares", share)).toEqual({ id: "s1", token: null, org_id: "o", note: "n" });
+    expect(share.token).toBe("live"); // input never mutated
+    const dest = { id: "d", access_key_id_encrypted: "x", secret_access_key_encrypted: "y", webhook_secret_encrypted: "z", bucket: "b" };
+    expect(redactRow("export_destinations", dest)).toEqual({ id: "d", access_key_id_encrypted: null, secret_access_key_encrypted: null, webhook_secret_encrypted: null, bucket: "b" });
+    const doc = { id: "x", token: "not-a-bearer-here" };
+    expect(redactRow("documents", doc)).toBe(doc);
   });
 });

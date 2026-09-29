@@ -14,7 +14,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getStripe, isStripeConfigured } from "@/lib/stripe";
+import { getStripe, isStripeConfigured, planFromSubscription } from "@/lib/stripe";
 import type Stripe from "stripe";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -53,14 +53,18 @@ export async function POST(req: NextRequest) {
         if (!orgId) break;
 
         const status = mapStripeStatus(sub.status);
-        const plan = (sub.metadata?.plan as string) || null;
+        // XEDGE-14: the plan comes from the PRICE the customer is billed on
+        // (a Customer Portal plan change never rewrites checkout metadata),
+        // falling back to metadata; a null / unmapped plan leaves the stored
+        // value untouched instead of writing NULL over a paying workspace.
+        const { plan, source: planSource } = planFromSubscription(sub);
         const periodEnd = sub.current_period_end
           ? new Date(sub.current_period_end * 1000).toISOString()
           : null;
 
         await supabase.from("orgs").update({
           subscription_status: status,
-          subscribed_plan: plan,
+          ...(plan ? { subscribed_plan: plan } : {}),
           stripe_subscription_id: sub.id,
           current_period_end: periodEnd,
         }).eq("id", orgId);
@@ -72,7 +76,7 @@ export async function POST(req: NextRequest) {
           org_id: orgId,
           user_id: "stripe",
           user_email: "stripe-webhook",
-          details: { stripe_status: sub.status, mapped_status: status, plan, period_end: periodEnd },
+          details: { stripe_status: sub.status, mapped_status: status, plan, plan_source: planSource, period_end: periodEnd },
         });
         break;
       }

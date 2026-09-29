@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { encryptSecret } from "@/lib/serverCrypto";
 import { computeNextRunAt } from "@/lib/exportRunner";
+import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
@@ -44,6 +45,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const orgId = body?.orgId;
   const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  // XEDGE-8: the Growth gate that create applies must hold on edit too —
+  // adding a bucket to an existing (webhook / bucket-less) destination is the
+  // same act as creating one with a bucket.
+  if ("bucket" in body && String(body.bucket ?? "").trim()) {
+    const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
+    if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
+  }
 
   const updates: Record<string, unknown> = { updated_by: auth.userId, updated_at: new Date().toISOString() };
   const fields: (keyof DestinationPatchBody)[] = [

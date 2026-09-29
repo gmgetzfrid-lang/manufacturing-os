@@ -77,6 +77,30 @@ export async function POST(req: NextRequest) {
   }
   const idRemap = mergeNewUserUids(plan.idRemap, created);
 
+  // XEDGE-3 done-when 2: the chunked restore's FIRST step leaves a trail too —
+  // which backup, whose org name won, how many members were linked or minted.
+  // Checked write, and audit_logs is itself an IMMUTABLE_TABLES entry the
+  // restore refuses to import, so the trail cannot be overwritten by the
+  // restore it records.
+  const { error: auditErr } = await sb.from("audit_logs").insert({
+    action: "RESTORE_BEGIN", resource_type: "org", resource_id: orgId, org_id: orgId,
+    user_id: actor.userId, user_email: actor.email,
+    details: {
+      backupOrgId: parsed.manifest.orgId,
+      backupOrgName: parsed.manifest.orgName ?? null,
+      orgNameChoice: parsed.orgNameChoice ?? null,
+      membersInBackup: members.length,
+      linkedUsers: plan.counts.matchedUsers,
+      createdUsers,
+    },
+  });
+  if (auditErr) {
+    return NextResponse.json(
+      { error: `Restore placeholders were created but the restore audit row failed: ${auditErr.message}` },
+      { status: 500 },
+    );
+  }
+
   return NextResponse.json({
     ok: true,
     idRemap,

@@ -28,8 +28,8 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 // coverage tripwire test can import them without pulling in AWS clients.
 // Adding a table to the schema without deciding its backup fate fails the
 // test suite — see that file for the contract.
-import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES } from "@/lib/exportTables";
-export { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, EXPORT_EXCLUDED_TABLES } from "@/lib/exportTables";
+import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, redactRow } from "@/lib/exportTables";
+export { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, EXPORT_EXCLUDED_TABLES, REDACT_COLUMNS } from "@/lib/exportTables";
 
 export interface DataExportManifest {
   schemaVersion: string;
@@ -55,6 +55,11 @@ export interface DataExportManifest {
   /** Space archives (offline zips) that hold binaries this backup can't
    *  include. Full coverage = this backup + these zips. */
   spaceArchives: string[];
+  /** EGR-7 / XEDGE-10: credential columns that were NULLED in this export,
+   *  per table, so a restore knows shares / intake links / portal links must
+   *  be re-issued and destination credentials re-entered rather than
+   *  silently arriving dead. */
+  redactedColumns: Record<string, string[]>;
   notes: string[];
 }
 
@@ -231,8 +236,17 @@ export async function runOrgExport(params: {
       `per your archive settings.`,
     );
   }
+  const redactedColumns: Record<string, string[]> = Object.fromEntries(
+    Object.entries(REDACT_COLUMNS).map(([table, r]) => [table, [...r.columns]]),
+  );
   notes.push(
-    "Every column from the source schema is preserved verbatim. JSON keys mirror Postgres column names (snake_case).",
+    "Every column from the source schema is preserved verbatim EXCEPT the credential columns listed in manifest.redactedColumns, " +
+    "which are exported as null. JSON keys mirror Postgres column names (snake_case).",
+    `REDACTED credential columns (secrets never leave the database): ${
+      Object.entries(REDACT_COLUMNS).map(([t, r]) => r.columns.map((c) => `${t}.${c}`).join(", ")).join("; ")
+    }. After a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), ` +
+    "a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), " +
+    "and export destinations must have their credentials re-entered (restored rows arrive disabled).",
     `Presigned URLs for files expire ${expiresIn} seconds (${(expiresIn / 3600).toFixed(1)} hours) from exportedAt.`,
     "Re-running an export at any time is free and unlimited.",
     "The schema DDL for this snapshot is bundled in the ZIP under schema/ (base schema.sql + migrations/).",
@@ -254,6 +268,7 @@ export async function runOrgExport(params: {
       presignedUrlExpiresIn: expiresIn,
     },
     spaceArchives: shedInfo.archiveIds,
+    redactedColumns,
     notes,
   };
 
@@ -306,7 +321,11 @@ async function dumpTable(
     const { data, error } = await q;
     if (error) throw new Error(error.message);
     const rows = data ?? [];
-    out.push(...rows);
+    // EGR-7 / XEDGE-10: credential columns never leave the database — the
+    // redaction map in lib/exportTables.ts is applied to EVERY dumped row, so
+    // no consumer of the envelope (ZIP, webhook, bucket, JSON download) can
+    // carry a live token or an encrypted destination credential.
+    out.push(...rows.map((r) => redactRow(table, r as Record<string, unknown>)));
     if (rows.length < pageSize) break;
     from += pageSize;
   }

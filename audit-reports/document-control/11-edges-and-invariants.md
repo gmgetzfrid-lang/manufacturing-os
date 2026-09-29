@@ -79,7 +79,7 @@ app/api/templates/generate/route.ts:131 `sheetData = parseWorkbook(await fetchBy
 ## XEDGE-2 · Every multi-document render download throws before it can be sent — a literal em dash in the Content-Disposition header makes NextResponse reject the batch after the production record is already written
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/templates/generate/route.ts:383-388`, `app/api/templates/generate/route.ts:343-354`, `app/api/templates/generate/route.ts:371-377`, `lib/outputTemplateText.ts:120-138`
 - **Re-verified:** hardening pass — **SURVIVES**. `const zipName = `…` — ${rendered.length} documents.zip`` (`generate/route.ts:383`) carries a literal em dash (U+2014) and goes straight into `content-disposition` at `:387`. HTTP header values are latin1; U+2014 is outside it and undici rejects it, so the batch throws **after** the `output_generations` production record is written.
@@ -102,6 +102,18 @@ Executed under this repo's Node (v22.22.2): `new Response("x", { headers: { "con
 - [ ] the production record and audit row are written only after the response has been successfully constructed
 - [ ] a test renders two documents whose names contain an em dash and a CJK character and asserts a 200 with a parseable Content-Disposition
 
+**Resolution (2026-09-23, Round F).** Reproduced first: `app/api/templates/generate/route.ts:403` still carried the literal U+2014 in `zipName`, and `new Response("x", { headers: { "content-disposition": 'attachment; filename="a — b.zip"' } })` throws under this repo's Node — that exact construction is now pinned as a throwing control in the test. Fix: `contentDispositionAttachment(name)` in `lib/outputTemplateText.ts` emits `attachment; filename="<ASCII-folded>"; filename*=UTF-8''<RFC 5987>` — `asciiFoldFilename` strips combining marks (NFKD) and replaces every remaining non-printable-ASCII code point — and the two quoted-string syntax characters `"` and `\` (review fix pass: a client-edited draft name ending in `\` would otherwise have escaped the closing quote and left the header unterminated for a strict RFC 6266 parser) — with `_`, so the header value never leaves the ByteString range and always parses, while `filename*` carries the exact UTF-8 name; both download paths in the route use it and the zip name's separator is an ASCII hyphen. The production record (`output_generations`) and the `OUTPUT_DOCS_GENERATED` audit row moved into `recordProduction()`, called only AFTER `response = new NextResponse(...)` (download) or after the JSON body is built (filing). The client (`lib/outputTemplates.ts downloadNameFromDisposition`) prefers `filename*`.
+- Files: `app/api/templates/generate/route.ts`, `lib/outputTemplateText.ts`, `lib/outputTemplates.ts`.
+- Tests: `lib/__tests__/dcRoundFTemplates.test.ts` ("two documents → 200, an ASCII zip name plus the exact UTF-8 name as filename*", "a single document whose name carries an em dash and CJK → 200 with both parameters", source pin on the write order); `lib/__tests__/dcRoundFTemplateLibs.test.ts` ("contentDispositionAttachment is pure ASCII…", including the failing-before control and a name ending in `\` → `filename="foo_"; filename*=UTF-8''foo%5C`).
+
+**Done-when.**
+- [x] filenames are emitted with RFC 5987 encoding plus an ASCII-folded `filename=` fallback ✓ (`contentDispositionAttachment`).
+- [x] every code point > 0x7F is stripped or transliterated before it reaches a header ✓ — done at the header boundary (`asciiFoldFilename`), deliberately NOT inside `renderFilename` / `uniqueFilenames`: those names are also the file names inside the zip and the document numbers filed into document control, where a CJK title is legitimate; the header is the only place the ByteString rule applies.
+- [x] the production record and audit row are written only after the response has been successfully constructed ✓ (`recordProduction` after `response =`; source-pinned).
+- [x] a test renders two documents whose names contain an em dash and a CJK character and asserts a 200 with a parseable Content-Disposition ✓.
+
+**Scope / residual.** None. The renderer is mocked in the route test; the real renderer is exercised in `dcRoundFTemplateLibs.test.ts` under XEDGE-11.
+
 ---
 
 <a id="xedge-3"></a>
@@ -109,7 +121,7 @@ Executed under this repo's Node (v22.22.2): `new Response("x", { headers: { "con
 ## XEDGE-3 · The chunked restore is a universal, unaudited write primitive: audit_logs, e_signatures and document_acknowledgments are importable with fully client-authored content, and /apply-table writes no audit row at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/restore/apply-table/route.ts:24,38-43,74-89`, `lib/exportTables.ts:53,67,130`, `lib/dataRestore.ts:86-93,249-251`, `app/api/admin/restore/apply/route.ts:130`, `app/api/admin/restore/begin/route.ts:78-85`
 - **Re-verified:** hardening pass — **SURVIVES**. Re-checked: `IMPORTABLE = new Set([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES])` (`apply-table:24`), `ORG_SCOPED_TABLES` lists 104 tables including `audit_logs`, `e_signatures` and `document_acknowledgments`, and `grep -c audit_logs apply-table/route.ts` returns **0**.
@@ -143,7 +155,19 @@ app/api/admin/restore/apply-table/route.ts:38-43 `if (!table || !IMPORTABLE.has(
 - [ ] restored rows carry a `restored_from_backup_at` provenance column surfaced everywhere signatures and acknowledgments are displayed
 - [ ] a test asserts POST /apply-table with table "audit_logs" returns 400
 
-**Partial (2026-09-23, Round F).** `P2 EGRESS` limb only — the `download_audits` table itself. Migration `20261068_dc_roundF_download_audits_record.sql` makes it append-only for members at the database (SELECT for members, INSERT of the caller's own row, no UPDATE / DELETE policy; every row attributed by `user_id` or `share_id` / `transmittal_id`; `org_id` NOT NULL), so the restore path's immutability list has a rail to stand on rather than a convention — see `DIST-9` / `DRLS-8` and DEC-44 §1. Nothing here touches the restore routes, `lib/dataRestore.ts` or `SKIP_TABLES`: the audit / provenance / 400-on-`audit_logs` criteria (all four done-when items) are `P10 EDGES`'s, which lists `lib/dataRestore.ts (download_audits into IMMUTABLE_TABLES)` and the restore routes among its files; the org-boundary defect is admin-and-org `ORG-1` / `BKP-3`. Status stays OPEN for P10 to close.
+**Resolution (2026-09-23, Round F).** Audit / immutability residual only — the org-boundary defect on the single-shot route is admin-and-org `ORG-1` / `BKP-3`. Re-verified first: SURF-8 (Round A) had already put `e_signatures`, `audit_logs`, `document_acknowledgments`, `document_review_signoffs` (and three more) in `IMMUTABLE_TABLES`, refused by `/apply-table` with 400 before any write, and made every chunk write a checked `RESTORE_CHUNK` row — but `download_audits` was still importable and `/begin` wrote no trail. Fix: `download_audits` joins `IMMUTABLE_TABLES` (it is the DIST-1 recall population and the egress evidence — a restored row names a copy holder nobody served); `/begin` writes a checked `RESTORE_BEGIN` audit row (backup org id / name, org-name choice, members in backup, linked, created) and answers 500 if the trail cannot be written. Both rows go to `audit_logs`, which the restore itself refuses to import.
+- Files: `lib/dataRestore.ts`, `app/api/admin/restore/begin/route.ts`.
+- Tests: `lib/__tests__/dcRoundFExportContract.test.ts` ("download_audits is immutable: never planned in, refused by the chunked route with 400 before any write" — drives the real route for all five tables and asserts no database call, "/begin writes a RESTORE_BEGIN audit row naming the backup, as a checked write").
+
+**Done-when.**
+- [x] audit_logs, e_signatures, document_acknowledgments, document_review_signoffs and download_audits are never blind-imported ✓ (SURF-8 + this; no quarantine shadow — they stay in the backup for review).
+- [x] /begin and /apply-table each write a restore audit row, by a path the restore cannot itself overwrite ✓ (`RESTORE_BEGIN` new here; `RESTORE_CHUNK` from SURF-8; `audit_logs` is immutable to the restore).
+- [ ] restored rows carry a `restored_from_backup_at` provenance column surfaced where signatures and acknowledgments are displayed — not done, by design: signatures, acknowledgments and sign-offs are never restored now, so there is no restored row to mark; the column only matters under a future quarantined-shadow design nobody has asked for.
+- [x] a test asserts POST /apply-table with table "audit_logs" returns 400 ✓ (route-level, not a source-text check).
+
+**Scope / residual.** `app/api/admin/restore/apply/route.ts` (single-shot; A&O P1 / ORG-1) untouched — it inherits the `remapRow` scrub but still writes its `DATA_RESTORE` row best-effort; A&O P1 makes it checked.
+
+**P2 EGRESS limb (2026-09-23, Round F).** `P2 EGRESS` limb only — the `download_audits` table itself. Migration `20261068_dc_roundF_download_audits_record.sql` makes it append-only for members at the database (SELECT for members, INSERT of the caller's own row, no UPDATE / DELETE policy; every row attributed by `user_id` or `share_id` / `transmittal_id`; `org_id` NOT NULL), so the restore path's immutability list has a rail to stand on rather than a convention — see `DIST-9` / `DRLS-8` and DEC-44 §1. Nothing here touches the restore routes, `lib/dataRestore.ts` or `SKIP_TABLES`: the audit / provenance / 400-on-`audit_logs` criteria (all four done-when items) are `P10 EDGES`'s, which lists `lib/dataRestore.ts (download_audits into IMMUTABLE_TABLES)` and the restore routes among its files; the org-boundary defect is admin-and-org `ORG-1` / `BKP-3`. Status stays OPEN for P10 to close.
 
 ---
 
@@ -265,7 +289,7 @@ public/sw.js:117 `if (!response || !response.ok || response.type === "opaque") r
 ## XEDGE-7 · Scheduled full-database exports keep firing for canceled workspaces and for destinations whose creator has been removed — the cron checks neither subscription nor membership
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/run-scheduled/route.ts:60-66,106-115`, `lib/serverAuth.ts:69-98`, `app/api/stripe/webhook/route.ts:80-95`, `components/subscription/SubscriptionGate.tsx:41-48`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. Neither cited range contains a subscription-status or org-membership predicate; a grep for `subscription`/`status`/`org_members`/`active` across them returns nothing.
@@ -287,6 +311,17 @@ app/api/data-export/run-scheduled/route.ts:60-66 is the complete selection predi
 - [ ] deactivating a member disables (or flags for re-confirmation) the destinations they created
 - [ ] the billing page and the destinations page show, per destination, when it last ran and who owns it
 
+**Resolution (2026-09-23, Round F).** Reproduced first: `run-scheduled/route.ts` selected on `enabled` / `next_run_at` only; no subscription, plan or membership predicate anywhere in the file. Fix: `lib/exportEntitlement.ts scheduledRunGate(admin, dest, enforceBilling)` runs after the claim and before the build: (1) the last configurer (`updated_by ?? created_by`) must still be an ACTIVE member — always enforced and fail-CLOSED: a membership lookup error is a skip like a definite "no active row" (the claim already advanced `next_run_at`, so a transient fault costs one cycle, never a push a person could not have vetted); it is not billing state — a departed engineer's private bucket must stop receiving the plant's database the night they are deactivated, and the fix is an active Admin re-saving the destination; (2) the subscription (`hasAccess`, the same status rule as `assertOrgHasAccess`) and (3) the cloud-bucket plan rule (`cloudBucketAllowed`) — both applied to ONE read of the org row (`subscription_status, subscribed_plan, trial_ends_at`), so the two billing limbs cannot disagree about whether the row was readable, and with one error rule across all three limbs: a lookup error or a missing row cannot prove entitlement, so it is a skip ("could not be verified; retried next cycle") under the flag and a notice without it — the gate deliberately does NOT call `assertOrgHasAccess`, whose fail-open on lookup error is meant for interactive billable mutations, not an unattended push (review fix pass). Per `DEC-18` the (2)/(3) refusal rides `SUBSCRIPTION_ENFORCE`: off → logged (`console.warn`) and recorded as `gate:notice` diagnostics on the run and `warnings` on the result, and the export proceeds byte-identically; on → skipped. A skip is RECORDED: an `export_runs` row with `status: "cancelled"` and `error_message: "skipped: …"`, plus `last_run_status: "failed"` / `last_run_error` on the destination (the data-export page already renders `last_run_error`), and the clock was already advanced by the claim so it retries next cycle. Both record writes are CHECKED (review fix pass): a failed insert or update is `console.error`ed and named on the sweep's result row (`skipped: …; run row not recorded: …`), so a night with no run row is never a silent gap.
+- Files: `lib/exportEntitlement.ts` (new), `app/api/data-export/run-scheduled/route.ts`.
+- Tests: `lib/__tests__/dcRoundFScheduledExports.test.ts` (gate unit: departed / lookup error → skip, recorded as a cancelled run / no configurer / notices-vs-skips / the org row is read once with the three columns and an orgs lookup error is a skip under the flag and a notice without it; route: cancelled run recorded and nothing delivered for a departed configurer; a skip whose `export_runs` insert fails is logged and named on the result row; flag off → the export proceeds with the would-be skip recorded; flag on → skipped; an entitled destination runs exactly as before).
+
+**Done-when.**
+- [x] the sweep skips destinations whose org fails the subscription check, recording a skipped run rather than silently continuing ✓ — behind `SUBSCRIPTION_ENFORCE` (DEC-18; the same question as admin-and-org BILL-10 / ORG-9); with the flag off the would-be skip is logged and recorded on the run. Uses `hasAccess` (app-side, same status rule as `org_has_active_subscription` and `assertOrgHasAccess`) on the gate's own single org read, so the sweep needs no RPC and a lookup error is never fail-open.
+- [x] deactivating a member disables (or flags for re-confirmation) the destinations they created ✓ — as a run-time flag-for-re-confirmation: a destination whose last configurer is inactive is skipped with "an active Admin must open it and save it again". The deactivation-time hook lives in admin-and-org's membership routes (outside this package).
+- [ ] the billing page and the destinations page show, per destination, when it last ran and who owns it — PARTIAL: the destinations page already shows last run and the last error (`app/(protected)/admin/data-export/page.tsx:418-429`), so the skip reason is visible; the owner column is a UI change outside this package's files → admin-and-org P3.
+
+**Scope / residual.** Owner display (above).
+
 ---
 
 <a id="xedge-8"></a>
@@ -294,7 +329,7 @@ app/api/data-export/run-scheduled/route.ts:60-66 is the complete selection predi
 ## XEDGE-8 · The Growth-plan gate on cloud backup destinations is enforced on create only — PATCH can add the bucket afterwards
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/destinations/route.ts:81-95`, `app/api/data-export/destinations/[id]/route.ts:49-56`
 - **Re-verified:** hardening pass — **SURVIVES**. The plan gate lives only in `destinations/route.ts:81-95`; a grep for `Growth`/`plan` in `destinations/[id]/route.ts` returns **nothing**, so PATCH can add the bucket after creation.
@@ -316,6 +351,17 @@ app/api/data-export/destinations/route.ts:83 `if (body.bucket) {` … :88 `const
 - [ ] the runner skips (and records) destinations whose org no longer holds the entitlement
 - [ ] a test PATCHes a bucket onto a Starter org's destination and asserts 402
 
+**Resolution (2026-09-23, Round F).** Reproduced first: the plan lookup lived only in `destinations/route.ts` POST; `[id]/route.ts` copied `bucket` (and the credentials and the schedule) straight into the update with no plan check. Fix: `lib/exportEntitlement.ts` — `cloudBucketAllowed(plan, status)` (pure; growth / enterprise / trialing) and `assertCloudBucketEntitlement(admin, orgId)` (402 with the same message) — called by POST (replacing the inline block, same semantics including a missing org row → refused), by PATCH whenever the body sets a non-empty `bucket`; the scheduled runner applies the same pure rule (`cloudBucketAllowed`) to the single org row `scheduledRunGate` reads for both billing limbs, for any destination with a bucket (refusal behind `SUBSCRIPTION_ENFORCE`, recorded either way — see XEDGE-7).
+- Files: `lib/exportEntitlement.ts`, `app/api/data-export/destinations/route.ts`, `app/api/data-export/destinations/[id]/route.ts`, `app/api/data-export/run-scheduled/route.ts`.
+- Tests: `lib/__tests__/dcRoundFScheduledExports.test.ts` ("PATCHing a bucket onto a Starter org's destination is 402 and writes nothing", a Growth org may PATCH, a non-bucket PATCH is not gated, POST still refuses, the runner's plan gate).
+
+**Done-when.**
+- [x] the plan gate is a shared helper called by POST, PATCH and the scheduled runner ✓.
+- [x] the runner skips (and records) destinations whose org no longer holds the entitlement ✓ (behind the flag, per DEC-18 — the plan column is billing-webhook-derived and XEDGE-14 shows it could be stale; a hard skip would stop a paying customer's backups over a webhook).
+- [x] a test PATCHes a bucket onto a Starter org's destination and asserts 402 ✓.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="xedge-9"></a>
@@ -323,7 +369,7 @@ app/api/data-export/destinations/route.ts:83 `if (body.bucket) {` … :88 `const
 ## XEDGE-9 · The export SSRF guard validates the URL it is given and then hands the request to fetch, which follows redirects — and resolves DNS separately from the connection
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportRunner.ts:58-76`, `lib/exportRunner.ts:308-313`, `lib/exportRunner.ts:429-438`, `lib/exportRunner.ts:247,412`
 - **Re-verified:** hardening pass — **SURVIVES**, both halves. The guard resolves the host itself — `const { address } = await lookup(host)` (`exportRunner.ts:72`) — and the request is then a plain `await fetch(dest.webhook_url, …)` (`:308`), which follows redirects and resolves DNS again independently of the guard's lookup.
@@ -346,6 +392,18 @@ lib/exportRunner.ts:308-312 — the fetch with no `redirect` option, immediately
 - [ ] every address returned by DNS is checked, not just the first
 - [ ] the test route returns a boolean, not the upstream status code
 
+**Resolution (2026-09-23, Round F).** Reproduced first: `lib/exportRunner.ts` did `await fetch(dest.webhook_url, …)` with default redirect handling right after `assertSafeExternalUrl`, the guard checked only `lookup(host)`'s first address, and `testDestinationConnection` echoed `Webhook returned HTTP ${r.status}`. Fix: `fetchExternalGuarded(url, init)` — `redirect: "manual"`; every `Location` resolved against the current URL and re-run through `assertSafeExternalUrl` before the next request; at most `MAX_REDIRECT_HOPS` (3); a 301 / 302 / 303 on the POST refused outright (the runtime would turn it into a body-less GET and "deliver" nothing); the delivery POST and the HEAD probe both use it; each unread redirect body is cancelled before the next hop so the socket is released rather than held until GC. `assertSafeExternalUrl` now checks every address from `lookup(host, { all: true })` and refuses a name that resolves to nothing. The probe returns a boolean with a generic message — no upstream status is echoed.
+- Files: `lib/exportRunner.ts`.
+- Tests: `lib/__tests__/dcRoundFSsrf.test.ts` (mocked DNS + stubbed fetch: a private redirect is never followed and the body never sent; a public 307 is followed with the body intact and `redirect: "manual"` on every hop; relative Location; the redirect body is cancelled (`bodyUsed`) before the next hop; hop bound; POST 301/302/303 refused; the probe returns no status code; source pin that the delivery goes through the guarded fetch).
+
+**Done-when.**
+- [x] both fetches use redirect: "manual" and re-run assertSafeExternalUrl against any Location before following it (bounded hop count) ✓.
+- [ ] the resolved address is pinned for the connection — NOT done: pinning needs a custom dispatcher (an `undici` Agent with a `connect.lookup`), and `undici` is not a dependency of this repo (the runtime's fetch exposes no lookup hook); connecting to the literal IP instead breaks TLS name verification. Residual: a DNS-rebinding host (public on the guard's lookup, private on the runtime's) remains possible; every hop is re-checked, which closes the redirect variant the finding leads with.
+- [x] every address returned by DNS is checked, not just the first ✓.
+- [x] the test route returns a boolean, not the upstream status code ✓.
+
+**Scope / residual.** The S3 path validates `dest.endpoint` but the AWS SDK resolves and connects on its own (same TOCTOU class; no lookup hook there either) — residual for admin-and-org P3.
+
 ---
 
 <a id="xedge-10"></a>
@@ -353,7 +411,7 @@ lib/exportRunner.ts:308-312 — the fetch with no `redirect` option, immediately
 ## XEDGE-10 · The full-org export dumps export_destinations' encrypted credential columns verbatim, and the restore path can re-import them into a different workspace where the same global key decrypts them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportTables.ts:157,171-176`, `lib/dataExport.ts:31-32`, `app/api/data-export/destinations/route.ts:55-66`, `lib/exportRunner.ts:333-343`, `lib/serverCrypto.ts:22-31`
 - **Re-verified:** hardening pass — **SURVIVES**, and the contrast is the evidence. `export_destinations` sits in `ORG_SCOPED_TABLES` (`exportTables.ts:157`) while `EXPORT_EXCLUDED_TABLES` excludes `ai_connections` on the reasoning *"holds live AI provider API keys — secrets never leave the database"* (`:173-174`). The identical reasoning was never applied to the table holding encrypted bucket credentials.
@@ -375,6 +433,17 @@ lib/exportTables.ts:157 `"export_destinations",` inside ORG_SCOPED_TABLES vs :17
 - [ ] export_destinations is added to SKIP_TABLES so a restore never installs credentials
 - [ ] secrets are encrypted with a per-org derived key, not one deployment-wide key
 
+**Resolution (2026-09-23, Round F).** Reproduced first: `export_destinations` sat in `ORG_SCOPED_TABLES` with no column filtering (`grep -n encrypted lib/dataExport.ts` → nothing) while `ai_connections` was excluded for exactly this reason. Fix: the three `*_encrypted` columns are in `REDACT_COLUMNS` (EGR-7's map) with the confused-deputy reason written beside the `ai_connections` line, so every export nulls them. Restore: rather than skipping the whole table — which would also break `export_runs` restore through its `destination_id` FK and lose the destination's name / bucket / schedule, none of which is a secret — a restored `export_destinations` row is scrubbed by `scrubRestoredRow`: all three credential columns null AND `enabled = false`, so nothing can decrypt and nothing can fire until an Admin re-enters credentials and re-enables. The hostile-envelope case (org B posting org A's ciphertext through `/apply-table`) lands as a disabled, credential-less row; org A's bucket is never reachable.
+- Files: `lib/exportTables.ts`, `lib/dataRestore.ts`, `lib/dataExport.ts`.
+- Tests: `lib/__tests__/dcRoundFExportContract.test.ts` ("a transmittal's portal token is nulled; an export destination loses its credentials and is disabled"), `lib/__tests__/exportCoverage.test.ts` (the census requires all three columns).
+
+**Done-when.**
+- [x] the exporter blanks the three *_encrypted columns ✓.
+- [x] export_destinations is added to SKIP_TABLES so a restore never installs credentials — met by scrub-and-disable instead of SKIP (divergence noted above: SKIP would orphan `export_runs` rows through their FK and lose configuration that carries no secret); no credential is ever installed and nothing fires ✓.
+- [ ] secrets are encrypted with a per-org derived key, not one deployment-wide key — NOT done: re-keying every live `export_destinations` row is a data migration over ciphertext this package cannot inventory from here (DEC-30), and with export redaction plus the restore scrub the deployment-wide key is no longer reachable through a backup. Residual for admin-and-org P3 (destination hygiene).
+
+**Scope / residual.** Per-org key derivation (above).
+
 ---
 
 <a id="xedge-11"></a>
@@ -382,7 +451,7 @@ lib/exportTables.ts:157 `"export_destinations",` inside ORG_SCOPED_TABLES vs :17
 ## XEDGE-11 · The render action accepts an unbounded document array and an arbitrary tag→value map, neither limited to the template's declared placeholders
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/templates/generate/route.ts:66,317-339`, `lib/docxRender.ts:60-99`, `lib/outputTemplateText.ts:32,41-54`
 - **Re-verified:** hardening pass — **SURVIVES** — **and the bound that looks like a refutation is on the other path.** `MAX_ROWS_PER_CALL = 25` (`:66`) is referenced exactly once, at `:162`, slicing spreadsheet rows in the **draft** branch. The render branch is `const docs = Array.isArray(body.documents) ? body.documents : []` with only an empty check (`:317-318`), then `for (let i = 0; i < docs.length; i++)` rendering each into memory (`:332-334`). No upper bound, and `d.values` is an arbitrary tag→value map.
@@ -403,6 +472,17 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 - [ ] render caps `documents.length` at the same MAX_ROWS_PER_CALL the draft path uses, and streams or slices the zip build
 - [ ] values are filtered to the template's declared placeholder tags before reaching renderTemplate
 - [ ] findPlaceholders recognises `@` raw-XML tags and the analyze UI flags them as unsafe, or renderTemplate is configured to refuse them
+
+**Resolution (2026-09-23, Round F).** Reproduced first: `MAX_ROWS_PER_CALL` was referenced once (the draft slice); the render branch took `body.documents` unbounded and passed `docs[i].values` untouched. The raw-XML half — SUSPECTED in the record because node_modules was absent at audit time — is now OBSERVED: with this repo's docxtemplater, a template carrying `{@rawxml}` rendered with `{ rawxml: "<w:p><w:r><w:t>INJECTED</w:t></w:r></w:p>" }` produced a document containing the injected paragraph. Fix: (1) render refuses more than `MAX_ROWS_PER_CALL` (25) documents with 413 before reading the template; the client (`lib/outputTemplates.ts`) slices every batch to `RENDER_CHUNK` = 25 — the filing path renders and files slice by slice (one production record per slice, each closed out with its own filed count), the download path keeps the single-request server zip for ≤ 25 documents and, for larger batches, renders in slices and assembles ONE zip client-side. Names are decided ONCE for the whole batch before slicing (`batchFilenames`: the draft-supplied name, else an index-unique fallback from the template name, through `uniqueFilenames`) and sent explicitly per document — the server's per-call de-duplication would otherwise restart at "(2)" in every slice, and JSZip replaces a same-name entry, so a default template (every row named `<template>.docx`) rendered across three slices lost 35 of 60 documents from the assembled zip and filed 60 documents under 25 repeated numbers; `assembleClientZip` de-duplicates once more before adding entries and names the zip after the template; (2) `pickDeclaredValues(values, placeholders)` keeps only the template's declared tags, so a caller-invented key never reaches `renderTemplate`; (3) `findPlaceholders` now returns `raw` (`{@…}`) so the analyze step can see them, and `renderTemplate` REFUSES any template whose XML parts (body, headers, footers, notes, sheets — tags stripped first so a run-split `{@` is seen) contain a raw tag, with a `TemplateRenderError` the route surfaces as 400.
+- Files: `app/api/templates/generate/route.ts`, `lib/outputTemplateText.ts`, `lib/docxRender.ts`, `lib/outputTemplates.ts`, `components/templates/GenerateModal.tsx` (passes the template name and kind to the render / filing calls).
+- Tests: `lib/__tests__/dcRoundFTemplates.test.ts` ("26 documents → 413 and nothing is rendered or recorded", "25 documents render; a caller-invented tag never reaches the renderer", an undeclared template renders nothing injectable), `lib/__tests__/dcRoundFTemplateLibs.test.ts` (the real docxtemplater: a plain tag fills, a raw tag is refused including run-split and header parts; `findPlaceholders` raw; `pickDeclaredValues`; client slicing), `lib/__tests__/dcRoundFRenderSlices.test.ts` (60 documents all drafted `RFQ.docx` through the real `renderDocuments` / `fileDocumentsToLibrary` against a per-slice-de-duplicating fake server: one zip of 60 distinct entries named after the template, 60 distinct filed numbers; `batchFilenames`, `assembleClientZip`; a ≤ 25 batch never reaches the client zip).
+
+**Done-when.**
+- [x] render caps documents.length at the same MAX_ROWS_PER_CALL the draft path uses, and streams or slices the zip build ✓ (server cap + client slicing; the server's in-RAM zip holds at most 25 files; a sliced batch keeps every document — names are batch-unique across slices and the client zip never overwrites an entry).
+- [x] values are filtered to the template's declared placeholder tags before reaching renderTemplate ✓.
+- [x] findPlaceholders recognises `@` raw-XML tags and the analyze UI flags them as unsafe, or renderTemplate is configured to refuse them ✓ (both recognised and refused at render). The analyze-UI flag is not added: the analyze route and page are outside this package, and the refusal makes such a template unusable regardless.
+
+**Scope / residual.** An analyze-UI warning for `raw` tags (cosmetic; the analyze route already receives `raw` in `FoundTags`).
 
 ---
 
@@ -432,6 +512,17 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 - [ ] the dependency is moved to the vendored SheetJS build ≥0.20.2 (or replaced with a maintained parser such as exceljs) and the lockfile reflects it
 - [ ] parseWorkbook runs on hardened input: a size cap, a sheet cap, and `Object.freeze(Object.prototype)`-style hardening or an isolated worker
 - [ ] a fixture test asserts a workbook whose sheet names include `__proto__` does not mutate Object.prototype
+
+**Partial (2026-09-23, Round F).** Reproduced first: `package.json` pins `"xlsx": "^0.18.5"`, the lockfile resolves `node_modules/xlsx 0.18.5` from the npm registry, and `lib/xlsxData.ts:33` is the single `XLSX.read` sink reached from the draft action (its key is pinned to the org's own upload prefixes since XEDGE-1, so the crafted workbook must be the caller's own upload — still any active member). Landed — the hardening half: `parseWorkbook` refuses more than `MAX_WORKBOOK_BYTES` (25 MB) before parsing; parses with `sheetRows` bounded (`SHEET_ROW_WINDOW` = the 15-row header window + `MAX_SHEET_ROWS` (10,000) + 1) and REFUSES — never silently truncates — a sheet with more than `MAX_SHEET_ROWS` non-empty data rows, or whose used range runs past the read window (`!fullref` for xlsx/xls, a window-filling `!ref` for csv), where the unread rows cannot be trusted blank; the review fix pass replaced a silent cap that reported the capped count as the sheet's row count, so the modal's "N rows" / "N rows left" is always the true count and the last rows of a large sheet are never quietly undrafted (the draft action surfaces the message as a 400 "Couldn't read that spreadsheet: …"; the person splits the workbook); ignores `__proto__` / `constructor` / `prototype` sheet names and any sheet that is not an OWN key of `wb.Sheets`; and runs the parse under `withPrototypeGuard`, which snapshots `Object.prototype` / `Array.prototype` own names, deletes anything the parse added and refuses the file — so a warm server instance is never left polluted for later requests. Fixture test: a real workbook whose sheet name is `__proto__` parses without adding a property to `Object.prototype` and is not addressed as a sheet; a polluting parse is detected and reverted; the byte cap holds; exactly 10,000 data rows parse whole, 10,001 are refused with the data-row message, blank rows do not count, and an over-window xlsx (including a used-range-bloated one) or csv is refused with the row-window message.
+- Files: `lib/xlsxData.ts`.
+- Tests: `lib/__tests__/dcRoundFTemplateLibs.test.ts` ("XEDGE-12 — the workbook parser runs on hardened input").
+
+**Done-when.**
+- [ ] the dependency is moved to the vendored SheetJS build ≥0.20.2 (or replaced with a maintained parser) and the lockfile reflects it — NOT done this wave: it needs `npm install` against `node_modules`, which this package shares (symlinked) with five packages running in parallel, and a lockfile change the integrator must own; a `package.json` edit without the install would leave `npm ci` broken. Unblocking step for the integrator / wave 2: `npm install https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` (or replace with `exceljs`), then re-run `dcRoundFTemplateLibs.test.ts`.
+- [x] parseWorkbook runs on hardened input: a size cap, a sheet cap (a refusal, not a truncation), and prototype hardening ✓ (a detect-and-revert guard rather than `Object.freeze(Object.prototype)`, which would break any library that legitimately extends prototypes in the same server process; no worker isolation).
+- [x] a fixture test asserts a workbook whose sheet names include `__proto__` does not mutate Object.prototype ✓.
+
+**Scope / residual.** The dependency move (above) — the finding stays OPEN for it.
 
 ---
 
@@ -476,7 +567,7 @@ lib/storageOrphans.ts:95 `const { data, error } = await sb.from(table).select(se
 ## XEDGE-14 · subscribed_plan is read only from Stripe subscription metadata, so a plan change made in the billing portal never reaches the app — and an update event without metadata nulls the plan outright
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/stripe/webhook/route.ts:52`, `app/api/stripe/webhook/route.ts:56`, `app/api/stripe/webhook/route.ts:63`, `app/api/stripe/checkout/route.ts:79-81`
 - **Re-verified:** hardening pass — **SURVIVES**. `const plan = (sub.metadata?.plan as string) || null;` (`webhook/route.ts:56`) then `subscribed_plan: plan` (`:63`). Metadata is written at `checkout/route.ts:79-81` and nowhere else, so a portal-side plan change never arrives and a metadata-less update event writes `null` over the stored plan.
@@ -507,5 +598,16 @@ app/api/stripe/webhook/route.ts:56 `const plan = (sub.metadata?.plan as string) 
 - [ ] the webhook derives the plan from `sub.items.data[0].price.id` through a priceId→plan map, falling back to metadata
 - [ ] a null/unmapped plan leaves the stored value unchanged rather than overwriting it with NULL
 - [ ] a test replays a subscription.updated event whose metadata lacks `plan` and asserts subscribed_plan is untouched
+
+**Resolution (2026-09-23, Round F).** Reproduced first: `webhook/route.ts:56` `const plan = (sub.metadata?.plan as string) || null;` then `:63 subscribed_plan: plan` unconditionally; no inverse price map anywhere. Fix (narrow — admin-and-org P4 owns the rest of the webhook): `lib/stripe.ts` gains the documented configuration map `PRICE_ID_ENV_TO_PLAN` (`STRIPE_PRICE_STARTER` → starter, `STRIPE_PRICE_GROWTH` → growth, `STRIPE_PRICE_ENTERPRISE` → enterprise; one variable per sold price — the same variables checkout already uses), `getPlanForPriceId` and `planFromSubscription(sub)` = every item's price id through the map, the first that maps wins (a subscription may carry a seat add-on or metered item ahead of the plan item — review fix pass; the first draft read only `items.data[0]`) → else `metadata.plan` → else null. The webhook spreads `subscribed_plan` into the update ONLY when a plan resolved, and records `plan_source` on the audit row.
+- Files: `lib/stripe.ts`, `app/api/stripe/webhook/route.ts`.
+- Tests: `lib/__tests__/dcRoundFExportContract.test.ts` ("planFromSubscription: price id wins, metadata is the fallback, nothing is null" — including a two-item subscription with the add-on first and items with no price, "a subscription.updated event whose metadata lacks `plan` and whose price is unmapped leaves subscribed_plan untouched" — drives the real route with a mocked signature check, "a portal-side plan change (price id, stale metadata) reaches the app as the billed plan", source pin).
+
+**Done-when.**
+- [x] the webhook derives the plan from the subscription items' price ids through a priceId→plan map, falling back to metadata ✓ (every item, not only `data[0]`).
+- [x] a null/unmapped plan leaves the stored value unchanged rather than overwriting it with NULL ✓.
+- [x] a test replays a subscription.updated event whose metadata lacks `plan` and asserts subscribed_plan is untouched ✓.
+
+**Scope / residual.** The map is env configuration the deployment must supply (`STRIPE_PRICE_*` for every sold price — checkout already requires it). A workspace whose plan was nulled by the old code stays null until its next subscription event.
 
 ---

@@ -77,6 +77,8 @@ about the system.
 | [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
 | [DEC-42](#dec-42) | Supabase identity linking is **required**; the unique index is the backstop, not the mechanism | medium | `IDENT-1`, `IDENT-2`, `IDENT-3` |
 | [DEC-43](#dec-43) | Controllers are **unscoped by design**; a bypass-decided read of a restricted node is audited at the bytes egress | low | `DOCACL-3`, `DEC-2` |
+| [DEC-44](#dec-44) | Content egress rails: `download_audits` append-only, presigned windows ≤ 1 h, the service worker caches no API response | low | `DIST-9`, `DRLS-8`, `EGR-4`, `PKG-11`, `XEDGE-6` |
+| [DEC-45](#dec-45) | Bearer columns never leave the database in an export and never come back from a backup | low | `EGR-7`, `XEDGE-10`, `BKP-1`, `INTK-6` |
 
 ---
 
@@ -691,6 +693,8 @@ log shows what enforcement would have blocked.
 **Reversal.** Enable the flag once the log shows a clean week.
 
 **Risk:** low.
+
+*Landed 2026-09-23 (document-control Round F): the scheduled-export sweep's subscription and plan refusals (`XEDGE-7` / `XEDGE-8`, `lib/exportEntitlement.ts scheduledRunGate`) ride the same `SUBSCRIPTION_ENFORCE` flag — off: the would-be skip is logged and recorded on the run and the destination; on: a cancelled `export_runs` row is recorded and nothing is pushed. The "configurer still an active member" check in the same gate is not billing state and always applies. Fix pass: the gate reads the org row once for both billing limbs and treats an unreadable row like a refusal on that limb (skip under the flag, notice without it — never `assertOrgHasAccess`'s fail-open), and the skip's record writes are checked and surfaced on the sweep result.*
 
 <a id="dec-19"></a>
 ## DEC-19 · `access_requests` — build the surface or remove the feature?
@@ -1781,3 +1785,49 @@ constant — neither reopens member writes to the record.
 *Corrected 2026-09-23 (document-control Round F fix pass): §2 first said "the app's own default" was the only lifetime any caller had asked for. It was not — five image callers asked for 604800. The clamp alone would have left `lib/storage.ts` (cache keyed by the requested window) and the per-component avatar / background / cover caches holding a dead URL for a week; §2 now states the client half of the contract (cache by path, honour the granted window, re-sign at the margin) and names the five callers, which take the granted hour rather than a share-surface route.*
 
 *Corrected 2026-09-23 (document-control Round F, second fix pass): "re-signed in place while on screen" is now literally true — the re-sign gives up only on the route's refusal (a 4xx), keeps the current URL and retries on a bounded backoff (and at once on reconnect) for any transient failure, so a wifi blip or a wake from sleep at the margin no longer blanks the image for the session; the margin is a quarter of the granted window capped at a minute; and an avatar's subscription is held by the mounted avatar and released on unmount, not kept per path for the tab's life. §3's "every sign-out site posts `SIGN_OUT`" means the four click sites; the expiry-driven and cross-tab `SIGNED_OUT` branch in `RoleContext.tsx` is handed to identity-and-session `IS-P1` / public-surfaces `OFF-8` (`XEDGE-6` dw2).*
+
+<a id="dec-45"></a>
+## DEC-45 · Bearer columns never leave the database and never come back from a backup
+
+**Decision. A column whose VALUE is a credential — a share token, a vendor
+intake token, a transmittal portal token, an encrypted destination
+credential — is nulled in every export and never reinstated by a restore.
+A restored share or intake link arrives with an unguessable placeholder
+token and REVOKED; a restored transmittal has no portal token; a restored
+export destination has no credentials and is DISABLED. People re-issue
+links and re-enter credentials; the software never revives them.**
+
+> Made during the document-control Round F (2026-09-23) closing `EGR-7`
+> and `XEDGE-10` (also admin-and-org `BKP-1`, projects-and-cost `INTK-6`).
+
+**Rationale.** `ai_connections` was already excluded from the backup on the
+rule "secrets never leave the database"; the token columns and the
+encrypted destination credentials were the same class and had simply never
+been treated as such. A backup is designed to be mailed around and pushed
+to third-party buckets nightly; a token inside it stays live against
+production long after the backup has aged, and an intake token is a WRITE
+credential. Re-minting on restore was rejected: a link nobody has been sent
+is dead anyway, and a live token minted by the restore would be a
+credential nobody chose to issue.
+
+**Implementation.** `lib/exportTables.ts REDACT_COLUMNS` (the map, with a
+reason per table) and `redactRow`, applied by `dumpTable` to every row;
+`lib/dataRestore.ts scrubRestoredRow`, applied inside `remapRow` so both
+restore paths get it; the manifest, notes and ZIP README name the redacted
+columns. `lib/__tests__/exportCoverage.test.ts` censuses every exported
+table for credential-named columns, so a future bearer column cannot ship
+un-redacted.
+
+**Acceptance.** No export artifact (ZIP, webhook, bucket, JSON download)
+contains a token or an `*_encrypted` value; a restore from any envelope —
+redacted or hand-edited — lands no presentable token and no usable
+credential; the tripwire fails the build for a new bearer column.
+
+**Reversal.** A stated requirement to restore share links live (none
+stated) — then the restore would have to re-mint AND re-notify every
+recipient, decided then.
+
+**Risk:** low — restored rows are dead until a person acts, which is the
+safe side for a credential.
+
+*Landed 2026-09-23 (document-control Round F, fix pass): "a restored transmittal has no portal token" is enforced against the insert rail — `trg_transmittals_guard` (20261027) mints a fresh token for every row inserted as `issued`, so `scrubRestoredRow` lands a formerly issued transmittal as `voided` (the register record survives, a note says why, and no link can ever be presented); a person issues a new transmittal to send again. `push_subscriptions` (per-device Web Push `endpoint` / `p256dh` / `auth`) is excluded from the export whole, and the coverage tripwire also treats `auth` / `p256dh` as bearer names, so the acceptance line holds for every exported table.*

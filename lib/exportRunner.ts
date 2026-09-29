@@ -69,9 +69,49 @@ export async function assertSafeExternalUrl(raw: string): Promise<void> {
     if (isPrivateIp(host)) throw new Error("Blocked private-range destination address");
     return;
   }
-  const { address } = await lookup(host);
-  if (isPrivateIp(address)) {
-    throw new Error(`Blocked destination host resolving to private address ${address}`);
+  // XEDGE-9: check EVERY address the name resolves to, not the first — a
+  // multi-record host with one private A record would otherwise pass on the
+  // luck of the resolver's ordering.
+  const addresses = await lookup(host, { all: true });
+  if (addresses.length === 0) throw new Error("Destination host does not resolve");
+  for (const { address } of addresses) {
+    if (isPrivateIp(address)) {
+      throw new Error(`Blocked destination host resolving to private address ${address}`);
+    }
+  }
+}
+
+/** XEDGE-9: the most hops a destination may redirect through. */
+export const MAX_REDIRECT_HOPS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** fetch() for an admin-supplied destination URL. Redirects are NOT followed
+ *  by the runtime: every Location is re-checked by assertSafeExternalUrl
+ *  before the next request, the chain is bounded, and a redirect that would
+ *  make the runtime drop a POST body (301/302/303 → GET) is refused rather
+ *  than silently delivering nothing. Without this, a public host answering
+ *  307 → http://169.254.169.254/… would receive the whole org ZIP with the
+ *  guard never re-run (the runtime follows redirects and re-resolves DNS on
+ *  its own). Residual: the CONNECTED address is still the runtime's own
+ *  resolution of the checked host (no custom dispatcher without undici). */
+export async function fetchExternalGuarded(url: string, init: RequestInit & { method: string }): Promise<Response> {
+  let current = url;
+  for (let hop = 0; ; hop++) {
+    await assertSafeExternalUrl(current);
+    const res = await fetch(current, { ...init, redirect: "manual" });
+    const location = res.headers.get("location");
+    if (!REDIRECT_STATUSES.has(res.status) || !location) return res;
+    if (hop >= MAX_REDIRECT_HOPS) {
+      throw new Error(`Destination redirected more than ${MAX_REDIRECT_HOPS} times`);
+    }
+    if (init.method === "POST" && res.status !== 307 && res.status !== 308) {
+      throw new Error(`Destination answered with an HTTP ${res.status} redirect, which would drop the export body — point the destination at its final URL`);
+    }
+    let next: string;
+    try { next = new URL(location, current).toString(); } catch { throw new Error("Destination redirected to an invalid URL"); }
+    // The redirect body is never read: release the socket before the next hop.
+    await res.body?.cancel().catch(() => undefined);
+    current = next;
   }
 }
 
@@ -311,8 +351,9 @@ export async function buildAndDeliverExport(params: {
           headers["X-MOS-Signature"] = "sha256=" + hmacSign(signingSecret, `${timestamp}.${bodyHash}`);
         }
         // zipBytes is a Uint8Array; cast through unknown to BodyInit so
-        // Next.js 16's stricter fetch typing accepts it.
-        const res = await fetch(dest.webhook_url, {
+        // Next.js 16's stricter fetch typing accepts it. XEDGE-9: guarded
+        // redirects — every hop is re-checked before the body goes anywhere.
+        const res = await fetchExternalGuarded(dest.webhook_url, {
           method: "POST",
           headers,
           body: zipBytes as unknown as BodyInit,
@@ -458,11 +499,19 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
     if (dest.destination_type === "webhook") {
       if (!dest.webhook_url) return { ok: false, error: "webhook_url is required" };
       await assertSafeExternalUrl(dest.webhook_url);
-      // Send a HEAD probe; customers can short-circuit and 200 it
-      const r = await fetch(dest.webhook_url, { method: "HEAD" }).catch(() => null);
-      if (!r) return { ok: false, error: "Webhook endpoint unreachable" };
+      // Send a HEAD probe; customers can short-circuit and 200 it. XEDGE-9:
+      // redirects are re-checked per hop, and the verdict is a boolean — the
+      // upstream status code is never echoed, so the probe cannot be used as
+      // a liveness / port oracle for whatever a redirect points at.
+      let r: Response;
+      try {
+        r = await fetchExternalGuarded(dest.webhook_url, { method: "HEAD" });
+      } catch (e) {
+        const msg = (e as Error).message;
+        return { ok: false, error: /^(Blocked|Destination)/.test(msg) ? msg : "Webhook endpoint unreachable" };
+      }
       if (r.status >= 400 && r.status !== 405) {
-        return { ok: false, error: `Webhook returned HTTP ${r.status}` };
+        return { ok: false, error: "Webhook endpoint did not accept the probe (it must answer HEAD with a 2xx/3xx or 405)" };
       }
       return { ok: true };
     }
@@ -482,6 +531,12 @@ function buildReadme(envelope: DataExportEnvelope, omittedCount = 0): string {
     : "";
   const shedNote = (m.spaceArchives?.length ?? 0) > 0
     ? `\n## Offline space archives\n\n${m.files.archivedOffline ?? 0} file(s) were archived offline before this export to reclaim cloud storage.\nTheir records are in tables/, but their binaries live ONLY in these space archive zip(s):\n${(m.spaceArchives ?? []).map((id) => `- <archive root>/data/${id}.zip`).join("\n")}\nKeep those zips with this backup for full binary coverage.\n`
+    : "";
+  // EGR-7 / XEDGE-10: say which columns are NOT in this archive and why, so
+  // a restore knows the links must be re-issued rather than arriving dead.
+  const redacted = Object.entries(m.redactedColumns ?? {});
+  const redactedNote = redacted.length > 0
+    ? `\n## Redacted credential columns\n\nSecrets never leave the database. These columns are exported as null:\n${redacted.map(([t, cols]) => `- ${t}: ${cols.join(", ")}`).join("\n")}\nAfter a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), and export destinations must have their credentials re-entered (restored rows arrive disabled).\n`
     : "";
   return `# manufacturing-os export
 
@@ -503,7 +558,7 @@ Schema version: ${m.schemaVersion}
 - schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
 - tables/<name>.json        — one file per table; JSON array of rows
 - files/<storage-path>      — every binary file, path-preserved
-${omittedNote}${shedNote}
+${omittedNote}${shedNote}${redactedNote}
 To rebuild elsewhere: apply schema.sql, then each migration in filename order,
 then import tables/*.json (parents before children), then upload files/* to
 your storage under the same keys.
