@@ -112,7 +112,7 @@ Required signers, invalidation on change, and whether the gate fails open.
 ## RG-3 · A review policy set on an intermediate folder is silently ignored — only the document's immediate parent folder is consulted
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:40-50`, `lib/reviewControl.ts:545-549`, `components/documents/ReviewGateSection.tsx:49-55`, `components/documents/ReviewControlModal.tsx:3-6`, `supabase/schema.sql:94`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified as an absence: I grepped every review_control read site in lib/, app/ and components/ — all four (reviewControl.ts:40-50, reviewControl.ts:545-549, ReviewGateSection.tsx:49-55, and page.tsx's row mapper) consult only doc.collectionId, and path_ids is never used for policy resolution anywhere. ReviewControlModal.tsx:3-4 advertises configuring the policy on 'a LIBRARY or FOLDER' with no hint that only the leaf folder counts, so a policy set on 'Piping / P&IDs' silently governs nothing under 'Piping / P&IDs / Unit 12'. HIGH stands.
@@ -135,6 +135,12 @@ lib/reviewControl.ts:44-49 is the entire container chain. Two search shapes conf
 - [ ] scanReviews, effectiveReviewControlForDocument and ReviewGateSection all call it instead of hand-rolling the two-hop lookup
 - [ ] A test fixture with library=none / mid-folder=require / leaf-folder=undefined resolves to require
 
+**Resolution (2026-09-23, Round F).** Reproduced first: every live resolver read exactly one folder (`doc.collectionId`) and jumped to the library, so `library=none / mid=require / leaf=undefined` resolved to `none`. Closed with ONE shared resolver (DEC-36 — a single chain walk, never a second copy): new `lib/containerChain.ts` — `loadContainerChain(column, doc)` reads the document's own value (or takes it from a caller that already holds the row), the document's folder plus every `path_ids` ancestor in one `.in()` read ordered NEAREST FIRST, then the library; `firstDefinedInChain(chain, isDefined)` is the pure "most specific DEFINED level wins"; `folderChainFromMap(collectionId, map)` builds the same nearest-first list from in-memory rows for bulk callers. Every read captures `{error}` and THROWS (RG-6). Call sites switched: `effectiveReviewControlForDocument` (`lib/reviewControl.ts`) now loads the chain and resolves through the new `resolveReviewControlChain` — this serves RevUpModal, the requests page and, newly, `ReviewGateSection.load()`, which no longer hand-rolls its two-hop read; `scanReviews` selects `path_ids` on its collections read and walks `folderChainFromMap`; the three-argument `resolveEffectiveReviewControl(doc, folder, lib)` is kept as a chain of one folder (byte-for-byte the old contract, pinned by `lib/__tests__/reviewControl.test.ts`). The chain-reaction copy in `lib/docClass.ts` (`effectiveDocClassForDocument`) rides the same resolver, so the PSM/MOC class gate inherits the fix. The SQL twin `review_control_mode_for(p_doc_control, p_collection_id, p_library_id)` (`20261070`, `STABLE SECURITY DEFINER SET search_path = public`) walks document → folder → `unnest(path_ids) WITH ORDINALITY … ORDER BY ord DESC` → library for the publish guard's RG-7 rail. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-3": the finding's fixture (pure and from live rows with `path_ids`), nearest-defined-wins, `folderChainFromMap` ordering, docClass through the chain, and source pins that no `from("collections").select("review_control")` two-hop read survives in `lib/reviewControl.ts` or `ReviewGateSection.tsx`.
+
+**Done-when.** 1 ✓ — `lib/containerChain.ts`, nearest ancestor to library, first DEFINED value. 2 ✓ — `scanReviews`, `effectiveReviewControlForDocument` and `ReviewGateSection` all go through it (pinned). 3 ✓ — "library=none / mid-folder=require / leaf-folder=undefined resolves to require" is the first test, twice (pure fixture and live rows).
+
+**Scope / residual.** `app/(protected)/documents/[libraryId]/page.tsx:276` only copies the document's OWN `review_control` column into the record (no resolution happens there), so it is not a resolver site. Not touched (DEC-31): the ack policy and retention policy resolvers the chain-reaction note mentions — they should adopt `loadContainerChain` when their findings are worked; `routing_control` (DEC-36) must ride it from the start. `ReviewControlModal`'s "LIBRARY or FOLDER" wording is now true for any folder depth.
+
 ---
 
 <a id="rg-4"></a>
@@ -142,7 +148,7 @@ lib/reviewControl.ts:44-49 is the entire container chain. Two search shapes conf
 ## RG-4 · Completion is a bare signature count, so one alternate's signature can substitute for a different discipline's required primary
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:361-369`, `lib/reviewControl.ts:126-132`, `lib/reviewControl.ts:204-217`, `supabase/migrations/20260822_review_completion_guard.sql:48-57`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the auto-activation premise: reviewControl.ts:555-561 `if (r.slot === "alternate" && r.activated === false && ageDays >= timeoutDays) { ... activateAlternate(...) }`. With two primaries (Piping + I&E) and one alternate, Piping + the alternate gives signed=2 >= requiredPrimaries=2, and neither the app gate (:367) nor the trigger (:53) notices that a required discipline never signed. Completion is per-count, never per-reviewer, so there is no place the identity of the missing primary is checked.
@@ -165,6 +171,12 @@ lib/reviewControl.ts:365-367 quoted above; 20260822_review_completion_guard.sql:
 - [ ] Completion is evaluated per slot, not as an aggregate count, in both lib/reviewControl.ts and the publish guard
 - [ ] A never-activated alternate's signature cannot satisfy any slot, enforced in the database not only in the UI
 
+**Resolution (2026-09-23, Round F).** Reproduced first (the finding's own fixture: Piping + I&E primaries, a piping alternate activated and signed → the old arithmetic said `2 >= 2`, complete). Closed with SLOT GROUPS at every layer. **Data:** `document_review_signoffs.slot_group TEXT` (`20261070`) = the policy entry that produced the row — `person:<uid>`, `role:<Role>` or `team:<teamId>` (`slotGroupKey` in `lib/reviewControl.ts`); a primary's group is the slot it holds, an alternate's group is the slot it may stand in for. `expandSet` stamps `groupKey` on every resolved `Reviewer`: role and department alternates are paired by construction; a NAMED alternate is paired through the new `ReviewControl.alternateBacks[uid]` (`types/schema.ts`), edited in `ReviewControlModal` ("stands in for" select per named alternate, amber note when unpaired); an unpaired named alternate resolves with `groupKey: null`, is warned about in the roster-gap escalation, and shows "· alt (unpaired — fills no slot)" in the panel. **App:** `evaluateSlotCompletion(rows)` (pure) — per group, `required` = primary rows in EVERY status, `filled` = rows that are `signed` with a `signature_id` and are a primary or an ACTIVATED alternate; `satisfied = Σ min(required, filled)`; complete iff `required > 0 && satisfied >= required`. It is the one evaluator behind `reviewCompletionForDraft` (now reads all statuses; the displayable roster stays pending/signed), `getReviewSummaries` (the list pill) and `ReviewGateSection`'s "n/m signed" counter. **Database:** the completion `SELECT` in `enforce_document_publish_guard` (`20261070`, body from the live `20261060`; the lineDiff test proves only that SELECT plus the RG-7 rail changed) is the SQL twin — `GROUP BY COALESCE(s.slot_group, '')`, `sum(LEAST(g.reqs, g.filled))`, standby alternates excluded by `(s.slot = 'primary' OR s.activated)`, the RG-1 `e_signatures` join kept; `enforce_review_signoff_guard` (body from the live `20261047`, pure additions) makes `slot_group` immutable, refuses a standby alternate becoming `signed`, and requires the publisher tier (controller / effective owner / library publisher) to flip `activated` — the timeout scan is service-role and passes. Rows written before the migration carry no group and share one legacy group, which reproduces the old aggregate arithmetic for in-flight rosters only (inventory row). Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-4 / DRLS-6": the finding's scenario is NOT complete; a paired alternate fills the slot it backs, a standby or unpaired one fills nothing, one alternate signature fills ONE slot; legacy rows; a voided primary; pill and panel run the same evaluator; group keys stamped from the policy; plus the `20261070` shape tests.
+
+**Done-when.** 1 ✓ — pairing is to a SLOT GROUP (`slot_group` / `alternateBacks`) rather than a `backs_signoff_id`: a role's alternates back any of that role's primaries, which is DEC-37's "a person may hold many slots" read; a slot is satisfied only by its primary or an activated alternate of the same group. 2 ✓ — per slot in `lib/reviewControl.ts` and in the guard, one evaluator each side. 3 ✓ — a never-activated alternate's signature is refused at the sign-off guard (`A standby alternate cannot sign`) and, were one to exist, not counted by the publish guard.
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261070_dc_roundF_review_gate_slots.sql` (DEC-30 — the app tolerates a pre-migration database: `openReviewRoster` retries the upsert without `slot_group` when the column is missing, so the app can deploy before the paste; until the paste, completion is the legacy aggregate). In-flight rosters keep aggregate semantics until they complete. `activateAlternate` (the manual button) is unchanged — the guard now decides who may click it.
+
 ---
 
 <a id="rg-5"></a>
@@ -172,7 +184,7 @@ lib/reviewControl.ts:365-367 quoted above; 20260822_review_completion_guard.sql:
 ## RG-5 · The gate's own policy record is writable by everyone the gate constrains, and setReviewControlPolicy logs the change without checking whether it happened
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:139-150`, `supabase/schema.sql:1063-1073`, `supabase/migrations/20260818_review_before_publish.sql:24-26`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. The publish-guard trigger cannot help: enforce_document_publish_guard returns NEW unless `v_advancing` (20260822:37-42), and a review_control-only UPDATE does not move current_version_id or status. Combined with resolveEffectiveReviewControl:34-37 (`for (const c of [docControl, folderControl, libraryControl]) if (c) return c;`) and the test that pins it (lib/__tests__/reviewControl.test.ts:26 'lets a document-level none override an inherited require'), one PATCH of `{"mode":"none"}` by any active member permanently disables the gate for that document — with no audit row at all if written directly rather than through setReviewControlPolicy.
@@ -197,6 +209,12 @@ lib/reviewControl.ts:144-149 — the update and the logAuditAction are sequentia
 - [ ] setReviewControlPolicy captures {error} and the affected row count and throws on failure; the audit row is written only after a confirmed write
 - [ ] Changing review_control on any level emits an audit row from the database (trigger), so a direct PATCH is still recorded
 
+**Resolution (2026-09-23, Round F).** Reproduced against the current schema: the LIBRARY level was already guarded (`trg_library_sensitive_columns`, `20261036`, lists `review_control`) and the FOLDER level by `collections_update_controllers` (`20261011`), but a DOCUMENT's `review_control` was still member-writable, so one PATCH of `{"mode":"none"}` exempted a controlled drawing with no audit row. Closed by `20261072`: (1) `trg_document_review_control_guard` BEFORE UPDATE ON `documents` (`enforce_document_review_control_change`, SECURITY DEFINER, search_path pinned) — a change to `review_control` takes `is_org_controller(org_id)` or `user_is_effective_owner(owner, collection, library, auth.uid())`; service-role (restore) passes. The library trigger and the collections policy are relied on and PROBED, not re-defined. (2) The app half — `setReviewControlPolicy` captures `{error}` and the affected row count and throws before the audit row (landed in Round E as OWN-14; verified here and left as is). (3) `audit_review_control_change` AFTER UPDATE on `libraries`, `collections` and `documents` writes a `REVIEW_CONTROL_CHANGED` audit row FROM THE DATABASE — level, before / after, the writer's role collection, `via: database | service_role` — so a direct PATCH is recorded exactly like a change made in the policy editor (a UI change carries both rows). DEC-30 inventory captured before apply: document-level overrides, and how many of them switch an inherited `require` OFF (resolved through `review_control_mode_for`, so `20261072` runs after `20261070`). Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "20261072 — review_control governance (RG-5)".
+
+**Done-when.** 1 ✓ — documents by trigger (`20261072`), libraries by `20261036`, folders by `20261011`; not the UI. 2 ✓ — checked write, audit only after it (OWN-14). 3 ✓ — the audit triggers on all three tables.
+
+**Scope / residual.** **Pending migration:** `20261072_dc_roundF_review_control_governance.sql` (after `20261070`). Existing document-level `mode: none` overrides are counted, not reverted — a controller decides per document. The intended "document-level none overrides an inherited require" behaviour is unchanged; what changed is who may write it and that the write is always recorded.
+
 ---
 
 <a id="rg-6"></a>
@@ -204,7 +222,7 @@ lib/reviewControl.ts:144-149 — the update and the logAuditAction are sequentia
 ## RG-6 · The review gate fails OPEN when its policy cannot be read — while the PSM gate three lines away fails closed
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:40-50`, `components/documents/RevUpModal.tsx:193-211`, `components/documents/RevUpModal.tsx:187-189`, `components/documents/RevUpModal.tsx:218-219`, `components/documents/ReviewGateSection.tsx:39-64`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the real behaviour is worse than the finding states: effectiveReviewControlForDocument (reviewControl.ts:40-50) uses `.maybeSingle()` and never throws on a PostgREST error, so the catch at :195 is not even reached — the failed read degrades silently to `{mode:'none'}` with no null to distinguish it. Nothing downstream recovers: the review requirement is enforced ONLY by this client-side branch (RevUpModal.tsx:280-291 chooses submitForReview vs revUpDocument), and the DB completion guard only bites when roster rows already exist (20260822:53 `IF COALESCE(v_primary_reqs, 0) > 0`), which a skipped review never creates. ReviewGateSection.tsx:39-64 swallows the same errors.
@@ -227,6 +245,12 @@ lib/reviewControl.ts:45 `const { data } = await supabase.from("collections").sel
 - [ ] RevUpModal treats a resolution failure as UNKNOWN → fails closed (route through review, or block publish with an explicit 'couldn\'t verify the review policy' message), never as mode 'none'
 - [ ] The Publish/Submit control is disabled until the policy has resolved
 
+**Resolution (2026-09-23, Round F).** Reproduced first: a PostgREST error on the collections read resolved silently to `{mode:'none'}` and RevUpModal published directly. Closed at all three layers. (1) `effectiveReviewControlForDocument` THROWS `Couldn't resolve the review policy: …` on a read error at any level (every read in `lib/containerChain.ts` captures `{error}`), the same contract as `effectiveDocClassForDocument`; a MISSING row still defines nothing. (2) `RevUpModal` tracks `reviewPolicyStatus: loading | resolved | unknown`; a throw sets `unknown` and shows a red banner ("Couldn't verify this document's pre-publish review policy … an unreadable policy is not 'no policy'") with a **Retry** that re-runs the effect; `doPublish` refuses with an explicit message while the policy is loading or unknown, so the `reviewControl ?? { mode: "none" }` coercion can never reach a publish. (3) The Publish button and the branch button are `disabled` until the policy has RESOLVED — a click landing before the async resolve no longer takes the direct path. `ReviewGateSection` renders an unreadable policy as "Pre-publish review policy could not be read … this document is treated as gated" instead of `null`. Server-side backstop: the `20261070` guard rail (RG-7) refuses a direct non-Minor revision of a controlled document whose effective mode is `require` even if a client ever skipped the check. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-6": the throw on either read; RevUpModal state machine, disabled controls, refusal message and retry (source pins); the panel's message.
+
+**Done-when.** 1 ✓ — throws on transient failure on every read. 2 ✓ — UNKNOWN fails closed with an explicit "couldn't verify" message and a retry, never mode `none`. 3 ✓ — Publish/branch disabled until resolved.
+
+**Scope / residual.** The doc-class read in the same effect keeps its own fail-closed flag (unchanged). The pre-existing amber "skipping the reviewers" banner still keys off a RESOLVED policy — with an unknown policy the red banner shows instead.
+
 ---
 
 <a id="rg-7"></a>
@@ -234,7 +258,7 @@ lib/reviewControl.ts:45 `const { data } = await supabase.from("collections").sel
 ## RG-7 · A draft whose reviewer roster failed to save strands the review and simultaneously leaves the database completion guard inert
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:208-239`, `lib/reviewControl.ts:363-369`, `supabase/migrations/20260822_review_completion_guard.sql:53`, `components/documents/ReviewGateSection.tsx:206-213`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both consequences: the draft can never finalize (finalizeReviewedRevision returns reason 'incomplete' at :409-411, and the Publish button is disabled at ReviewGateSection.tsx:214) while the database completion guard is simultaneously inert for that version, so a direct rev-up over it is unblocked. Partial mitigation the finding omits: reviewControl.ts:243-256 does notify the owner and Admin/DocCtrl ('The reviewer roster for X has gaps: ...'), and ReviewGateSection.tsx:206-213 shows a rescue panel — but the message misattributes the cause to 'no reviewers are configured for this library' and the publisher's own alert is flatly false. MEDIUM is appropriate.
@@ -259,6 +283,12 @@ lib/reviewControl.ts:218-222 is the entire failure handling; the alternative pat
 - [ ] The success alert is emitted only after a confirmed roster write
 - [ ] The publish guard blocks promotion of a version whose document's effective review mode is 'require' but which carries zero primary rows, instead of treating an absent roster as 'no gate'
 
+**Resolution (2026-09-23, Round F).** Reproduced first: a failed roster upsert pushed a warning and returned normally, so RevUpModal alerted "Reviewers have been notified" over a draft nobody could sign, and the guard's `v_primary_reqs > 0` precondition let a direct publish over it. Closed at both ends. **App:** `openReviewRoster` now WITHDRAWS on a failed upsert — `withdrawStrandedSubmission` compare-and-set-releases `documents.pending_version_id` (only where it still equals the draft) and retires the draft (`superseded_at`), a `REVIEW_ROSTER_FAILED` audit row records the error and whether the withdraw fully landed, and the function THROWS naming what happened ("The submission was withdrawn: nothing is in review" or, if a withdraw write failed, exactly which one so a controller clears it). Reviewer notifications and the `REVIEW_REQUESTED` audit row are written only AFTER a confirmed upsert. `submitForReview` (`lib/revisions.ts`, P3's file, unchanged) `await`s the roster, so the throw reaches RevUpModal before the "Submitted for review" alert (pinned by source order). **Database (`20261070`):** when a version being made current has zero primary slots, the guard now (a) refuses a version with `review_state = 'in_review'` and no `intake_link_id` ("submitted for review but has no reviewer roster") and (b) refuses a direct revision of a CONTROLLED document (`OLD.current_version_id IS NOT NULL`) whose `change_type` is not Minor/Correction when the effective mode along the container chain (`review_control_mode_for`, RG-3's SQL twin) is `require` — an absent roster is no longer "no gate". Intake submissions (the approve click is their review), `publisher_choice`, and a document's first controlled revision are exempt. DEC-30 inventory captured before apply: in-review drafts with zero primary rows and no intake link (they can no longer be promoted — resubmit them) and libraries in `require` mode. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-7": the failed upsert throws / releases the pointer with CAS / retires the draft / audits / notifies nobody; the pre-`20261070` fallback; the alert ordering; the guard rails' placement inside the version-advance block, before the DEC-21 clause and the controller short-circuit.
+
+**Done-when.** 1 ✓ — the submission is withdrawn (pointer cleared, draft superseded), not stranded. 2 ✓ — the alert is reachable only after the confirmed write. 3 ✓ — the guard blocks promotion of a roster-less in-review draft and of a required-review Major direct publish.
+
+**Scope / residual.** **Pending migration:** `20261070`. The withdraw is two writes, not a transaction — a partial withdraw is named in the thrown message and the audit row. The Inspector's rescue card is unchanged and is now reachable only when the policy resolved to nobody (the RG-8 escalation says why). Drafts already stranded in production are counted by the inventory row; each needs a resubmit.
+
 ---
 
 <a id="rg-8"></a>
@@ -266,7 +296,7 @@ lib/reviewControl.ts:218-222 is the entire failure handling; the alternative pat
 ## RG-8 · No reviewer independence: the submitting publisher is placed on their own draft's roster and may sign it, and their signature auto-finalizes the publish
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:196-232`, `lib/reviewControl.ts:126-132`, `lib/reviewControl.ts:316-332`, `components/documents/ReviewGateSection.tsx:82`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide search confirms the absence: no `excludeSelf`/self-review check exists in lib/reviewControl.ts, lib/revisions.ts (submitForReview), or any migration touching document_review_signoffs (20260818/20260822/20260828/20260830). The e_signatures RLS only requires `signer_user_id = auth.uid()` and active membership (20260720_e_signatures.sql:56-60), and the 20260822 publish guard's completion test counts signed rows without regard to who created the version. A sole-Engineer roster is self-approving end to end.
@@ -288,6 +318,12 @@ lib/reviewControl.ts:224 filters notifications but not rows; :128-131 expandRevi
 - [ ] openReviewRoster excludes the draft's created_by from the primary and alternate sets, and warns when that empties the roster (reusing the existing zero-primary escalation)
 - [ ] recordReviewSignoff refuses a signature whose signerUserId equals the draft version's created_by
 - [ ] The policy editor states plainly that a reviewer who authors a revision is skipped for that revision
+
+**Resolution (2026-09-23, Round F).** Reproduced first: `expandReviewers` had no notion of the author and `recordReviewSignoff` accepted the submitter's own signature. Closed under DEC-21's per-library flag (`review_control.requireIndependentReviewer`, default ON) at three layers. **Roster:** `expandReviewers(orgId, control, { excludeUid })` removes the author from BOTH sets and reports `authorSkipped`; `openReviewRoster` reads the draft's `document_versions.created_by` (falling back to the actor rather than letting the author through), applies the exclusion when `libraryRequiresIndependentReviewer`, records `authorSkipped` in the `REVIEW_REQUESTED` audit row, and when the exclusion empties the roster the existing zero-primary escalation to the owner and controllers says so ("the only reviewer the policy resolved authored this revision and was skipped"). **Signing:** `recordReviewSignoff` refuses the author BEFORE minting the e-signature, failing closed on an unreadable version row. **Database (`20261070`):** `enforce_review_signoff_guard` refuses the →`signed` transition when `document_versions.created_by = auth.uid()` unless the library opted out. **Editor:** `ReviewControlModal` states "A reviewer who authors a revision is skipped on that revision's roster and cannot sign it". Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-8": the author is skipped and the skip recorded; an emptied roster escalates with the reason; an opted-out library keeps the author; the signing refusal mints no signature and a refused read fails closed; the editor text and the guard clause.
+
+**Done-when.** 1 ✓ — excluded from primaries and alternates, escalation reused. 2 ✓ — refused at `recordReviewSignoff` and at the database. 3 ✓ — stated in the policy editor.
+
+**Scope / residual.** **Pending migration:** `20261070`. The existing DEC-21 PROMOTE-time clause (at least one signed primary who is not the publisher) is unchanged — independence now holds at roster, signing and promote. A library that opted out keeps single-person review at every layer by design.
 
 ---
 
@@ -329,7 +365,7 @@ components/signatures/SignatureCeremony.tsx:61-65 for identityReady including th
 ## RG-10 · The external intake route repoints pending_version_id and can publish over a live review under service role, orphaning the sign-off roster
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:320-334`, `supabase/migrations/20260822_review_completion_guard.sql:32-34`, `components/projects/IntakePanel.tsx:234-241`, `components/projects/IntakePanel.tsx:247-262`, `lib/reviewControl.ts:516-522`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The headline scenario is false: an assigned document mid-review cannot have pending_version_id repointed — the route 409s. A much narrower path does survive: when `link.allow_auto_supersede && linkAuthored` the guard is skipped, `autoNow` (route.ts:302) is true, and route.ts:322-327 sets `current_version_id` + `pending_version_id: null` through supabaseAdmin, which the publish guard waves through (`IF v_actor IS NULL THEN RETURN NEW;`, 20260822_review_completion_guard.sql:32-34), leaving the old draft's roster rows 'pending' on an un-superseded version that scanReviews (lib/reviewControl.ts:518-520) keeps chasing. That requires the org to have explicitly granted auto-supersede on a vendor-authored document that an org publisher separately put into review — hence LOW, not MEDIUM.
@@ -354,6 +390,12 @@ components/signatures/SignatureCeremony.tsx:61-65 for identityReady including th
 - [ ] The publish guard does not blanket-exempt service role for the review-completion branch (only for the authority branch), or the intake route re-checks completion itself
 - [ ] IntakePanel's reject path voids the pending draft's sign-off rows so scanReviews stops chasing them
 
+**Resolution (2026-09-23, Round F).** Confirmed the surviving path (trusted link + link-authored document + an org-side roster on the pending draft) and the TOCTOU race. `app/api/intake/upload/route.ts`: with a pending draft, the route now reads that draft's `document_review_signoffs` rows in (`pending`,`signed`) and refuses **409** ("A reviewer sign-off is in progress…") when any exist — on the trusted path too; an unreadable roster refuses **503** (fail closed); the old 409 for a non-trusted link stays. Both pointer writes are COMPARE-AND-SET on the pending pointer read earlier (the `submitForReview` discipline): the ordinary path sets `pending_version_id` only where it is still NULL, the auto path promotes only where `pending_version_id` and `current_version_id` both still match; a lost race retires the just-inserted version (`superseded_at`) and answers 409 instead of overwriting a pointer it never read; the auto path also retires the link's own earlier roster-free draft rather than leaving it dangling `in_review`. Both paths stamp `supersedes_version_id` so an intake draft records the base it was made against (REV-5). `IntakePanel`'s reject now voids the rejected draft's pending/signed sign-off rows (zero rows is the normal intake case) and surfaces a refusal; its approve reads the shared `finalizeReasonMessage`. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-10": 409 with a roster on a trusted link-authored document; 503 on an unreadable roster; the ordinary path's base stamp and CAS-from-NULL; a pointer that moved between read and write withdraws with 409; the auto path's two-pointer CAS (source pin); the reject's void.
+
+**Done-when.** 1 ✓ — refuses to repoint while any roster row is pending/signed. 2 ✓ — the route re-checks itself: a repoint is possible only over a roster-free draft, so the service-role escape has no completion to skip; the guard's NULL-actor return is unchanged. 3 ✓ — reject voids the draft's sign-offs.
+
+**Scope / residual.** The guard's `IF v_actor IS NULL THEN RETURN NEW` is left as is (every server route runs as service role; narrowing it is a cross-package change and the intake route now does its own check). `IntakePanel` approve keeps `requireRosterComplete: false` — documented intent, and the authenticated promote is still bound by the guard.
+
 ---
 
 <a id="rg-11"></a>
@@ -361,7 +403,7 @@ components/signatures/SignatureCeremony.tsx:61-65 for identityReady including th
 ## RG-11 · The rev-up form opens pre-selected on the change type that switches the review gate off, and remembers it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/RevUpModal.tsx:97`, `components/documents/RevUpModal.tsx:143-145`, `components/documents/RevUpModal.tsx:311`, `lib/reviewControl.ts:55-62`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every factual element is confirmed. Downgraded because the mitigating control the finding itself quotes actually renders in exactly the risky state and names the remedy: RevUpModal.tsx:643-651 shows the amber banner whenever `reviewControl && reviewControl.mode !== "none" && effMode === "none"`, telling the publisher the gate is being skipped and to set Change Type to Major. The gate is bypassed by a bad default, but never silently — that is a defaulting/UX defect, not a MEDIUM control failure.
@@ -383,6 +425,12 @@ RevUpModal.tsx:97 initial state; :143-145 the localStorage rehydrate; :311 the p
 - [ ] The change-type control opens unset (or on the non-exempt option) and the publisher must choose; the remembered value never pre-selects an exemption
 - [ ] Taking the Minor/Correction hatch in a mode 'require' library writes a distinct audit action (e.g. REVIEW_GATE_SKIPPED_MINOR) with the declared reason
 - [ ] The register/evidence pack can list revisions published under the hatch
+
+**Resolution (2026-09-23, Round F).** `RevUpModal`: the change type opens UNSET (`""` with a disabled "Choose…" option, field labelled `Change Type *` with the rule as its hint), is required ("Choose the change type — Major, Minor or Correction. It decides whether this revision needs reviewer sign-off."), and is never remembered — the per-library `localStorage` memory now stores `issueType` only and the rehydrate no longer sets `changeType`; an explicit launcher preset (check-in's Correction card) still applies. Taking the hatch — a direct publish where the resolved policy is not `none` but `effMode` is (`Minor` / `Correction`) — writes a distinct `REVIEW_GATE_SKIPPED` audit row on the document with `versionId`, `revisionLabel`, `changeType`, `policyMode`, `declaredReason` (the change narrative the publisher wrote) and `branched`. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-11": unset initial state, required, never rehydrated, memory shape, the preset path; the audit row's condition and details.
+
+**Done-when.** 1 ✓ — opens unset, publisher must choose, memory never pre-selects. 2 ✓ — `REVIEW_GATE_SKIPPED` with the declared reason. 3 ◐ — partially: the audit action is the listing key (`audit_logs` filtered on `REVIEW_GATE_SKIPPED` lists every revision published under the hatch, per document or per org); no register column or evidence-pack section was added (DEC-31 — the evidence pack is the drafting-flow area's `gatherEvidence`; it lists audit rows by action once it reads them).
+
+**Scope / residual.** The pre-existing amber banner ("skipping the reviewers") stays. The MOC gate's reliance on the same declaration (`DCK-1`) is unchanged here.
 
 ---
 
@@ -416,6 +464,10 @@ lib/reviewControl.ts:444-446 and :447-449 quoted above — compare :429-434, whe
 - [ ] The promote and its bookkeeping happen inside one transactional RPC so current_version_id can never point at a row still marked in_review
 - [ ] Viewer/history surfaces resolve the controlled file through documents.current_version_id rather than re-deriving 'newest non-in_review'
 
+**Partial (2026-09-23, Round F).** Verified against current code and pinned; one done-when item is not landed. Done-when 1 HOLDS at base: the relabel/approve `UPDATE` and the `superseded_at` stamp in `finalizeReviewedRevision` capture `{error}` and the row count and THROW naming the inconsistent state (Round E lineage — the "EGRESS-6/OWN-14" checked writes); now pinned by `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-12" (a refused relabel throws `could not be relabeled to Rev 4 … Version history is inconsistent` after the promote landed; a refused supersede throws). Done-when 3 VERIFIED: `MultiDocViewer`, `/api/share/resolve` and `/api/share/file` all follow `documents.current_version_id` FIRST and use the `review_state` filter only as the no-pointer fallback (pinned by source order); REV-5 (this round) additionally compare-and-sets both pointers on the promote and gives every refusal a message (`finalizeReasonMessage`). Done-when 2 — the promote and its bookkeeping in ONE transactional RPC — is NOT done: it needs a SECURITY DEFINER function that reproduces promote + relabel + supersede while still firing `trg_document_publish_guard` as the caller, i.e. the `publish_revision` contract's territory (`lib/revisions.ts`, P3 LIFECYCLE), and is deferred to that package; recorded here so the split is visible. The `provenance: "declared"` backfill stays best-effort (it tolerates a pre-migration column) — it does not affect which file is served or listed.
+
+**Scope / residual.** Stays OPEN for done-when 2 only. `HistoryDrawer`, `lib/timeline.ts` and `CompareRevisionsModal` still list by `review_state`; with the relabel now throwing loudly, a promoted-but-unrelabeled version is a named incident rather than a silent one.
+
 ---
 
 <a id="rg-13"></a>
@@ -445,5 +497,9 @@ Two search shapes: grep -rn 'useRevLetters' across .ts/.tsx/.sql, and a case-ins
 - [ ] letterLabelFor is passed the resolved control and returns baseRev unchanged when useRevLetters === false, with the draft distinguished by review_state rather than the label
 - [ ] ReviewControlModal exposes the toggle, or the field is deleted from types/schema.ts and the migration comment
 - [ ] The letter sequence handles a letter-valued base rev and exhaustion past Z explicitly rather than falling through to string concatenation
+
+**Partial (2026-09-23, Round F).** The function and the editor half landed; the call-site switch lives in P3's file. `letterLabelFor(baseRev, existingDraftLabel, { useRevLetters })` returns `baseRev` unchanged when `useRevLetters === false` (the draft is then distinguished by `review_state` alone); the letter sequence is explicit — `nextLetterSuffix` is a bijective base-26 increment (`"" → A`, `Z → AA`, `AZ → BA`), a letter-valued base drafts as `A → AA → AB` (the suffix is whatever follows the base, so it is never confused with the base itself), an existing label that does not start with the base is bumped on its own trailing letters, and there is no fall-through to string concatenation. `ReviewControlModal` exposes the toggle ("Label in-review drafts with a letter suffix (2A, 2B …)", default on) and saves `useRevLetters`; the `types/schema.ts` comment documents the semantics. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-13". **Not done (recorded split):** the caller `lib/revisions.ts:877` (`letterLabelFor(baseRev, existingLabel)`) is P3 LIFECYCLE's file per the fleet plan and must pass `{ useRevLetters: control.useRevLetters }` — `control` is already resolved a few lines below it; until P3 lands that one-line switch the toggle is inert in production, and the `20260818` migration comment is unchanged.
+
+**Scope / residual.** Stays OPEN until P3's call-site switch. The integrator should merge P3 before a release exposes the toggle, or the finding's own failure scenario (a setting that reads as configured and does nothing) is reproduced for the window between.
 
 ---

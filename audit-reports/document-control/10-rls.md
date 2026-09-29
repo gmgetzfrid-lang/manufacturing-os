@@ -212,7 +212,7 @@ A policy census across the document-control schema.
 ## DRLS-6 · `document_review_signoffs` INSERT is unconstrained, so the database review-completion guard can be satisfied with forged sign-offs
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260828_integrity_hardening.sql:223-226`, `supabase/migrations/20260822_review_completion_guard.sql:46-58`, `lib/reviewControl.ts:363-368`, `lib/reviewControl.ts:355`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct: inserting N rows with slot='alternate', status='signed' raises v_signed without raising v_primary_reqs, satisfying the guard while the real primaries stay pending. The only structural brake, `doc_review_signoff_unique_idx ON (document_version_id, reviewer_user_id)` (20260818_review_before_publish.sql:76-77), does not help — reviewer_user_id is a bare UUID with no FK, so distinct arbitrary values satisfy it. The precondition in the summary is accurate: the forger still needs publish authority or effective ownership to clear the role branch of the same trigger.
@@ -237,6 +237,12 @@ A policy census across the document-control schema.
 - [ ] The completion guard counts only sign-offs backed by an `e_signatures` row whose `signer_user_id` equals the row's `reviewer_user_id`
 - [ ] The guard's primary count and lib/reviewControl.ts:365's `requiredPrimaries` apply the same status filter, pinned by a test that voids a primary row and asserts both agree
 - [ ] A test inserts a forged signed alternate row and asserts the promote is still refused
+
+**Resolution (2026-09-23, Round F).** The RG-1 rails (`20261030`: pending + no signature on INSERT; the guard's `e_signatures` join) stood; the remaining holes were the membership-only INSERT (any member could open a roster naming themself as an ACTIVATED alternate and then sign it with their own signature) and the app/guard disagreement on the primary count. `20261070` re-issues `doc_review_signoff_insert`: `status = 'pending'`, `signature_id IS NULL`, `signed_at IS NULL` (kept), a primary must be born `activated`, an alternate born standby, the row's `org_id` must equal the document's, and the writer must be the PUBLISHER tier — `is_org_controller` / `user_is_effective_owner` / `user_can_publish_on_library` (opening a roster is a publisher's act: `submitForReview` runs after `authorizePublish`). The completion count is per slot in both the app (`evaluateSlotCompletion`) and the guard, and BOTH count primaries in every status (RG-4) — the disagreement is gone. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-4 / DRLS-6": the forged shapes (a `signed` row without a signature, an unpaired or standby alternate) satisfy nothing; a VOIDED primary is a required slot in the app exactly as the guard counts it (with a shape pin that the guard's primary filter carries no status term); the INSERT policy shape.
+
+**Done-when.** 1 ✓ / ◐ — `status <> 'pending'` cannot be inserted; "a `reviewer_user_id` other than one the policy resolved" is not enforced literally (that would put the policy resolution into the policy expression) — it is replaced by the publisher-tier rail plus the standing RG-2 guard: a row can only ever BECOME signed by that reviewer's own e-signature for this draft, so a fabricated `reviewer_user_id` is a pending row nobody can sign, and a self-named activated alternate cannot be inserted. 2 ✓ — signature-backed rows only, signer = reviewer (`20261030`, kept). 3 ✓ — same status filter both sides, pinned by the voided-primary test. 4 ✓ — the forged signed alternate row never satisfies the pure evaluator, and `lib/__tests__/reviewSignoffIntegrity.test.ts` (RG-1) keeps the guard-side assertion.
+
+**Scope / residual.** **Pending migration:** `20261070`. `document_review_signoffs_member_all` was already dropped by `20261029`/`20261030` (re-dropped defensively there), so no permissive policy ORs this rail away (DRLS-1). Restore runs service-role and bypasses RLS as before.
 
 ---
 

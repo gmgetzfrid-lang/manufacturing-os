@@ -193,7 +193,7 @@ lib/downloads.ts:47 — "Pass viewingCurrentVersion=false when showing an older/
 ## REV-5 · `finalizeReviewedRevision` has no expected-base check and unconditionally writes `status: "Issued"` — a review sign-off resurrects a retired document and can clobber a newer revision
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:402-439`, `lib/reviewControl.ts:429-433`, `lib/reviewControl.ts:444-455`, `lib/reviewControl.ts:316-332`, `lib/revisions.ts:1414-1468`, `lib/revisions.ts:1325-1355`, `lib/documentLifecycle/common.ts:266-281`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both consequences hold. The DB review gate cannot stop it either: 20260822:46-58 checks sign-offs on NEW.current_version_id, which is the fully-signed draft. One caveat that does not refute it — the same trigger's authority check still applies, so an auto-finalize by a reviewer without publish rights raises and is swallowed by the `catch` at reviewControl.ts:330; the finding's scenario (Doc Control / Admin, who short-circuit at `IF v_role IN ('Admin','DocCtrl') THEN RETURN NEW`) is squarely reachable.
@@ -217,6 +217,12 @@ lib/reviewControl.ts:430 — `.update({ current_version_id: pendingId, rev: base
 - [ ] Finalize refuses to promote when `documents.current_version_id` has moved past the draft's `supersedes_version_id`, returning a conflict rather than clobbering.
 - [ ] Finalize refuses (or requires an explicit un-retire) when the document's status is `Superseded`, `Archived` or `Void`, instead of writing `"Issued"`.
 - [ ] The relabel, `superseded_at` stamp and provenance writes check `{error}` and surface a partial-publish failure.
+
+**Resolution (2026-09-23, Round F).** Reproduced first: the promote compare-and-set was on `pending_version_id` only and wrote `status: "Issued"` unconditionally. `finalizeReviewedRevision` (`lib/reviewControl.ts`) now: reads the document's `status` and refuses with reason `retired` when it is in the shared `NOT_CURRENT_STATUSES` (`lib/aiBoundary.ts` — Superseded / Void / Archived; never an inline list) BEFORE anything is written; reads the draft's `supersedes_version_id` (set at submit time, and now on both intake paths too) and refuses with `stale_base` when it is not the document's `current_version_id` — a NULL base is unknown and unknown is refused, not waved through; the promote compare-and-sets `pending_version_id` AND `current_version_id`, so the expected-base check is atomic with the write; zero rows with the pending pointer still set is answered `conflict` (never assumed to be "already published"). Every reason has a human message through the new `finalizeReasonMessage`, used by `ReviewGateSection` and `IntakePanel` (retired: "a review sign-off can't bring it back. Un-retire it first…"; stale_base: "reject it and submit a fresh revision on the current one"). The post-promote relabel and supersede writes are checked and throw (RG-12 pins them). Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "REV-5": every not-current status refused with no write; a moved-on base and an unrecorded base refused; the promote's two CAS legs, and a concurrent move → `conflict`; every reason has a message shared by the panel and the intake approve.
+
+**Done-when.** 1 ✓ — refuses when `current_version_id` ≠ the draft's `supersedes_version_id`, atomically on the write. 2 ✓ — refuses on Superseded / Archived / Void (un-retire is the OWN-15 lifecycle path, not a sign-off). 3 ✓ — relabel and `superseded_at` writes check `{error}` and throw; the provenance backfill stays best-effort (pre-migration column tolerance; it does not decide what is served).
+
+**Scope / residual.** An intake draft created before this round carries no `supersedes_version_id` and will be refused as `stale_base` on approve — reject and resubmit it (the message says so). The mutators the verifier lists (revert / supersede / archive / split / merge) are P3's; this end closes the defect on its own, so the other end is now hygiene.
 
 ---
 
@@ -257,7 +263,7 @@ lib/revisions.ts:623-626 — the comment stating the invariant: "A direct (non-b
 ## REV-7 · A branch publish bypasses the review gate entirely, and the active-label unique index excludes branches — an unreviewed version lands in the chain carrying the SAME revision label as the controlled copy
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/RevUpModal.tsx:279`, `components/documents/RevUpModal.tsx:292-308`, `components/documents/RevUpModal.tsx:322-332`, `supabase/migrations/20260823_publish_contract.sql:57-68`, `supabase/migrations/20260828_integrity_hardening.sql:140-178`, `lib/revisions.ts:407-409,657-667`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified: the partial index's own predicate excludes is_branch = TRUE, so the RPC's `EXCEPTION WHEN unique_violation` duplicate-label backstop cannot fire for a branch, and a branch row can carry the identical active label '3'. MEDIUM is right — the branch is never promoted to current, it opens a revision_branches debt row, and RevUpModal:305-308 raises a loud modal saying it is NOT the current revision.
@@ -281,6 +287,12 @@ components/documents/RevUpModal.tsx:279 — `if (willReview && !asBranch) {`; Re
 - [ ] A branch publish in a `require`-review library either opens a review roster or is refused.
 - [ ] Two active rows on one document cannot carry the same `revision_label`, branch or not.
 - [ ] A deployment check asserts `document_versions_active_label_uniq` actually exists.
+
+**Resolution (2026-09-23, Round F).** Both surviving halves closed. **UI (`RevUpModal`):** the branch button is `disabled` while `willReview` (and until the policy has resolved — RG-6), and `doPublish(true)` refuses with "This library requires reviewer sign-off for this change — a branch can't skip it"; after a `DuplicateLabelError` the suggested label is the one PAST the interloper's (`conflict?.currentRev`), not the stale form's. **Database (`20261071`):** `document_versions_active_label_uniq_v2 ON document_versions(record_id, revision_label) WHERE superseded_at IS NULL` — no `is_branch` term, so two active rows on one document cannot share a label whether or not one is a branch, and `publish_revision`'s `EXCEPTION WHEN unique_violation → 'duplicate_label'` backstop now fires for the branch INSERT too; created inside a `DO` block that downgrades a failure to a NOTICE and keeps the `20260823` index, so pre-existing duplicates (inventoried before apply, branch-shaped ones counted separately) never leave the table unindexed; the old index is dropped only after the new one exists. The FIRST probe of the paste is the deployment check the finding asks for (index exists, unique, branch-inclusive), and the third asserts the RPC's backstop is intact. Tests — `lib/__tests__/dcRoundFReviewGate.test.ts` "REV-7": the UI refusals and the post-conflict suggestion; the migration's index definition, drop ordering, NOTICE path, probe shape and inventory.
+
+**Done-when.** 1 ✓ — a branch in a `require` library is refused (the roster path is `submitForReview`, which the publisher must take). 2 ✓ — `20261071`. 3 ✓ — the paste's first probe plus the shape test.
+
+**Scope / residual.** **Pending migration:** `20261071_dc_roundF_active_label_index.sql`. If the inventory reports duplicate active pairs the index is NOT built and the probe reads `false` — reconcile (supersede or relabel the stale row) and re-run. `resolveBranch` semantics (never promotes) are unchanged.
 
 ---
 
