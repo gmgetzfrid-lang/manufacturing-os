@@ -16,31 +16,80 @@ import { listTurnoverItems, computeTurnoverProgress } from "@/lib/turnover";
 import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/lib/checklists";
 import { computeForecast } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
+import { liveMilestones, isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
 
 async function safe<T>(p: PromiseLike<T>, fallback: T): Promise<T> {
   try { return await p; } catch { return fallback; }
 }
 
-interface ReportData {
+export interface ReportGateLine { text: string; ok: boolean | null }
+
+/** What was open when the project was completed — the gate snapshot the
+ *  override audit row carries (projects-tab SAF-14). Rendered as recorded;
+ *  the live figures above it are today's rows. */
+export interface ReportCloseout {
+  at: string | null;
+  reason: string | null;
+  gates: ReportGateLine[];
+}
+
+export interface ReportData {
   project: Record<string, unknown>;
   rollup: ReturnType<typeof computeCostRollup>;
   forecastSentence: string | null;
   cos: ReturnType<typeof summarizeChangeOrders>;
-  milestones: Array<{ name: string; planned_at: string | null; status: string }>;
+  milestones: Array<{ name: string; planned_at: string | null; status: string; imported: boolean }>;
   overdue: number;
   turnover: ReturnType<typeof computeTurnoverProgress>;
   checklistLines: Array<{ title: string; kind: string; satisfied: number; applicable: number; needsEvidence: number; complete: boolean }>;
   punchOpen: number;
   parties: Array<{ name: string; kind: string | null; trade: string | null }>;
+  closeout: ReportCloseout | null;
 }
 
-async function gatherReportData(orgId: string, projectId: string): Promise<ReportData> {
-  const [projRow, accounts, entries, coList, msRows, turnoverItems, checklists, punchRows, partyRows] = await Promise.all([
+/**
+ * Read a recorded gate snapshot tolerantly. The override audit row's
+ * `details` carries it under `gates` (an array of `{ text, ok }` lines, or a
+ * keyed object of booleans / `{ ok, text }` entries); anything else is
+ * rendered as text so a recorded fact is never dropped on the floor.
+ */
+export function parseGateSnapshot(details: unknown): ReportGateLine[] | null {
+  if (!details || typeof details !== "object") return null;
+  const d = details as Record<string, unknown>;
+  const raw = d.gates ?? d.gateSnapshot ?? d.closeoutGates ?? d.closeout_gates;
+  if (raw == null) return null;
+  const line = (key: string | null, v: unknown): ReportGateLine | null => {
+    if (typeof v === "boolean") return { text: key ?? String(v), ok: v };
+    if (typeof v === "string" || typeof v === "number") return { text: key ? `${key}: ${v}` : String(v), ok: null };
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      const text = [o.text, o.label, o.name].find((x) => typeof x === "string") as string | undefined;
+      const okRaw = [o.ok, o.passed, o.pass].find((x) => typeof x === "boolean") as boolean | undefined;
+      const detail = [o.detail, o.count, o.value].find((x) => typeof x === "string" || typeof x === "number");
+      const base = text ?? key ?? "";
+      if (!base && detail == null) return null;
+      return { text: detail != null && text !== undefined ? `${base} — ${detail}` : base || String(detail), ok: okRaw ?? null };
+    }
+    return null;
+  };
+  const out: ReportGateLine[] = [];
+  if (Array.isArray(raw)) {
+    for (const v of raw) { const l = line(null, v); if (l) out.push(l); }
+  } else if (typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) { const l = line(k, v); if (l) out.push(l); }
+  } else {
+    const l = line(null, raw); if (l) out.push(l);
+  }
+  return out;
+}
+
+export async function gatherReportData(orgId: string, projectId: string): Promise<ReportData> {
+  const [projRow, accounts, entries, coList, msRows, turnoverItems, checklists, punchRows, partyRows, closeoutRows] = await Promise.all([
     safe(supabase.from("projects").select("*").eq("id", projectId).maybeSingle().then((r) => r.data), null),
     safe(listAccounts(orgId, projectId), []),
     safe(listEntries(orgId, projectId), []),
     safe(listChangeOrders(projectId), []),
-    safe(supabase.from("milestones").select("name, planned_at, status, percent_complete, source").eq("project_id", projectId).order("planned_at").limit(500)
+    safe(supabase.from("milestones").select("id, name, planned_at, status, percent_complete, source").eq("project_id", projectId).order("planned_at").limit(500)
       .then((r) => (r.error ? [] : ((r.data ?? []) as Array<Record<string, unknown>>))), []),
     safe(listTurnoverItems(orgId, projectId), []),
     safe(listChecklists(orgId, projectId), []),
@@ -48,15 +97,23 @@ async function gatherReportData(orgId: string, projectId: string): Promise<Repor
       .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ status: string }>))), []),
     safe(supabase.from("project_parties").select("name, kind, trade").eq("project_id", projectId).limit(100)
       .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ name: string; kind: string | null; trade: string | null }>))), []),
+    // The completion override's audit row — newest first; its details carry
+    // the gate snapshot once lib/projects.ts records one (SAF-14).
+    safe(supabase.from("audit_logs").select("timestamp, details")
+      .eq("resource_type", "project").eq("resource_id", projectId).eq("action", "PROJECT_COMPLETED")
+      .order("timestamp", { ascending: false }).limit(1)
+      .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ timestamp: string | null; details: unknown }>))), []),
   ]);
   const project = (projRow ?? {}) as Record<string, unknown>;
 
-  const live = msRows.filter((m) => (m.source as string | null) == null || m.source === "manual" || m.source === "app");
-  const pctIdx = milestonePctIndex(live.map((m, i) => ({
-    id: String(i), percentComplete: (m.percent_complete as number | null) ?? null, status: String(m.status ?? "planned"),
+  // Every stored milestone counts — imported rows are commitments
+  // (lib/milestoneLiveness). The EV index is keyed by the real milestone
+  // id so pinned accounts resolve, exactly as the Costs tab computes it.
+  const live = liveMilestones(msRows as Array<Record<string, unknown> & { source?: string | null }>);
+  const pctIdx = milestonePctIndex(live.map((m) => ({
+    id: String(m.id), percentComplete: (m.percent_complete as number | null) ?? null, status: String(m.status ?? "planned"),
   })));
-  void pctIdx; // EV pinning uses milestone ids; report uses account-level rollup below
-  const rollup = computeCostRollup(accounts, entries, new Map());
+  const rollup = computeCostRollup(accounts, entries, pctIdx);
 
   const dates = live.map((m) => (m.planned_at ? String(m.planned_at).slice(0, 10) : null)).filter((v): v is string => !!v).sort();
   const forecast = computeForecast({
@@ -85,22 +142,30 @@ async function gatherReportData(orgId: string, projectId: string): Promise<Repor
     cos: summarizeChangeOrders(coList),
     milestones: live.map((m) => ({
       name: String(m.name ?? ""), planned_at: (m.planned_at as string | null) ?? null, status: String(m.status ?? "planned"),
+      imported: isImportedMilestone(m),
     })),
-    overdue: live.filter((m) => {
-      const t = m.planned_at ? Date.parse(String(m.planned_at)) : NaN;
-      return Number.isFinite(t) && t < now && String(m.status) !== "completed";
-    }).length,
+    overdue: live.filter((m) => isOverdueMilestone(m as { planned_at?: string | null; status?: string | null }, now)).length,
     turnover: computeTurnoverProgress(turnoverItems),
     checklistLines,
     punchOpen: punchRows.filter((p) => p.status === "open").length,
     parties: partyRows,
+    closeout: (() => {
+      const row = closeoutRows[0];
+      if (!row) return null;
+      const details = (row.details && typeof row.details === "object") ? row.details as Record<string, unknown> : {};
+      return {
+        at: row.timestamp ?? null,
+        reason: typeof details.reason === "string" ? details.reason : null,
+        gates: parseGateSnapshot(details) ?? [],
+      };
+    })(),
   };
 }
 
 const esc = (s: unknown) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-function renderReportHtml(d: ReportData): string {
+export function renderReportHtml(d: ReportData): string {
   const p = d.project;
   const cur = d.rollup.currencies[0] ?? "USD";
   const money = (n: number) => fmtMoney(n, cur);
@@ -135,7 +200,7 @@ ${p.success_criteria ? `<p><b>Success criteria:</b> ${esc(p.success_criteria)}</
 ${row("Budget", `<span class="num">${esc(money(d.rollup.budget))}</span>`)}
 ${row("Committed (promised)", `<span class="num">${esc(money(d.rollup.committed))}</span>`)}
 ${row("Spent (real money out)", `<span class="num">${esc(money(d.rollup.spent))}</span>`)}
-${row("Remaining", `<span class="num ${d.rollup.remaining < 0 ? "flag" : "ok"}">${esc(money(d.rollup.remaining))}</span>`)}
+${row("Budget less spent", `<span class="num ${d.rollup.remaining < 0 ? "flag" : "ok"}">${esc(money(d.rollup.remaining))}</span> <span class="muted">— open commitments are not deducted</span>`)}
 ${d.rollup.cpi != null ? row("Cost performance (CPI)", `<span class="num">${d.rollup.cpi.toFixed(2)}</span> — ${d.rollup.cpi >= 1 ? "getting more work per dollar than planned" : "spending faster than earning"}`) : ""}
 ${d.forecastSentence ? row("Forecast", esc(d.forecastSentence)) : ""}
 ${d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> — ${d.cos.byReason.map((r) => `${esc(CO_REASON_LABEL[r.reason])}: ${esc(money(r.amount))}`).join("; ")}`) : ""}
@@ -144,7 +209,7 @@ ${d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} ch
 
 <h2>Schedule</h2>
 ${d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
-<p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} milestones complete${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}</p>
+<p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} milestones complete${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}${d.milestones.some((m) => m.imported) ? ` · <span class="muted">${d.milestones.filter((m) => m.imported).length} imported from the schedule file</span>` : ""}</p>
 <table>${d.milestones.slice(0, 25).map((m) => row(
   m.planned_at ? new Date(m.planned_at).toLocaleDateString() : "—",
   `${esc(m.name)} <span class="muted">— ${esc(m.status.replace("_", " "))}</span>`,
@@ -162,6 +227,14 @@ ${row("Turnover package", d.turnover.required === 0 ? `<span class="muted">No re
   : `<span class="num">${d.turnover.accepted}/${d.turnover.required}</span> accepted${d.turnover.outstanding.length > 0 ? ` · outstanding: ${esc(d.turnover.outstanding.slice(0, 6).join(", "))}${d.turnover.outstanding.length > 6 ? "…" : ""}` : ""}`)}
 ${row("Punch list", d.punchOpen === 0 ? `<span class="ok">Clear</span>` : `<span class="flag">${d.punchOpen} open</span>`)}
 </table>
+${d.closeout ? `
+<h2>Closeout</h2>
+<p>Completed ${d.closeout.at ? esc(new Date(d.closeout.at).toLocaleDateString()) : "—"}${d.closeout.reason ? ` · <i>${esc(d.closeout.reason)}</i>` : ""}</p>
+${d.closeout.gates.length > 0 ? `<p class="muted">Gate state recorded at completion (what was open then — the figures above are today's rows):</p>
+<table>${d.closeout.gates.map((g) => row(
+  g.ok == null ? "recorded" : g.ok ? "clear" : "open",
+  `<span class="${g.ok == null ? "muted" : g.ok ? "ok" : "flag"}">${esc(g.text)}</span>`,
+)).join("")}</table>` : `<p class="muted">No gate snapshot was recorded with this completion — the quality figures above are today's rows, not closeout day's.</p>`}` : ""}
 
 ${d.parties.length ? `<h2>Companies on the job</h2><ul>${d.parties.map((x) =>
   `<li>${esc(x.name)}${x.kind ? ` <span class="muted">(${esc(x.kind)}${x.trade ? `, ${esc(x.trade)}` : ""})</span>` : ""}</li>`).join("")}</ul>` : ""}

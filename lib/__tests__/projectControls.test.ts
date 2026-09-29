@@ -4,7 +4,7 @@ import {
   type ParsedQuote,
 } from "@/lib/bidTab";
 import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/costSeries";
-import { computeProjectHealth, buildCoachItems, type ProjectStateSnapshot } from "@/lib/projectHealth";
+import { computeProjectHealth, buildCoachItems, CLOSEOUT_GATE_POLICY, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
   validateRubricFindings, QUALITY_MANUAL_RUBRIC,
@@ -180,6 +180,70 @@ describe("projectHealth", () => {
     const idx = (id: string) => items.findIndex((i) => i.id === id);
     expect(idx("confirm-docs")).toBeGreaterThanOrEqual(0);
     expect(idx("confirm-docs")).toBeLessThan(idx("pin-ev"));
+  });
+
+  // projects-tab UX-3 / UX-4 / UX-5 / UX-6 · projects-and-cost QUAL-9 —
+  // the coach's copy describes the product that exists. Every rule fires
+  // here (the "everything missing" snapshot), so every string is checked.
+  const everyItem = () => buildCoachItems(snapshot({
+    budget: 0, spent: 0, cpi: null, accountCount: 0, accountsPinned: 0, partyCount: 0, quoteCount: 2, unawardedRfqGroups: 1,
+    pendingCostDocs: 3, milestoneCount: 0, spi: null, hasBaseline: false, hasSow: false, hasPurpose: false, hasGoals: false,
+    checklistCount: 0, checklistNeedsEvidence: 2, turnoverRequired: 4, turnoverAccepted: 1, intakeLinkCount: 0, membersCount: 1,
+  }), "p1").concat(buildCoachItems(snapshot({ budget: 50_000, partyCount: 2, intakeLinkCount: 0, milestoneCount: 3, hasBaseline: false, accountsPinned: 0 }), "p1"));
+
+  it("coach copy claims no unbuilt mechanism (UX-3 / UX-4 / UX-5 / QUAL-9)", () => {
+    const text = everyItem().map((i) => `${i.title} ${i.payoff}`).join("\n");
+    expect(text).not.toMatch(/auto-green/i);                 // nothing runs on its own (UX-3)
+    expect(text).not.toMatch(/process themselves/i);        // a human clicks Read (UX-4)
+    expect(text).not.toMatch(/gated on|is gated|blocked until/i); // gates are checks with an override (UX-5 / QUAL-9)
+    expect(text).not.toMatch(/scored on it|are scored/i);   // party_id is never set (MON-7) — no scoring claim
+    expect(text).not.toMatch(/waiting for your confirmation|confirmed quotes/i); // no confirm action exists (UX-6)
+  });
+
+  it("every coach action names a verb that exists and links to a place it can be done (UX-6)", () => {
+    const tabs = new Set(["costs", "schedule", "quality", "intake", "members", "documents", "activity"]);
+    for (const it of everyItem()) {
+      const m = /^\/projects\/p1(?:\?tab=([a-z]+))?$/.exec(it.href);
+      expect(m, it.href).not.toBeNull();
+      if (m![1]) expect(tabs.has(m![1]), it.href).toBe(true);
+    }
+    const byId = new Map(everyItem().map((i) => [i.id, i]));
+    // The verbs on the quotes panel are Award and Post as actual — not "confirm".
+    expect(byId.get("confirm-docs")!.payoff).toMatch(/award the winner/);
+    expect(byId.get("confirm-docs")!.payoff).toMatch(/post them as actual/);
+    // The evidence sweep is a button on the Quality tab, named exactly.
+    expect(byId.get("evidence")!.payoff).toContain("Check evidence we already hold");
+    expect(byId.get("evidence")!.href).toBe("/projects/p1?tab=quality");
+    // SOW / purpose now have an editor (EditProjectModal, opened from the header).
+    expect(byId.get("sow")!.title).toContain("Edit project");
+    expect(byId.get("purpose")!.title).toContain("Edit project");
+    expect(byId.get("sow")!.href).toBe("/projects/p1");
+    // Intake copy says what happens: drafts land; the AI read is a click.
+    expect(byId.get("links")!.payoff).toMatch(/as drafts/);
+    expect(byId.get("links")!.payoff).toMatch(/run the AI read/i);
+  });
+
+  it("gate strictness has one source of truth, and the coach quotes it (QUAL-9 / UX-5)", () => {
+    expect(CLOSEOUT_GATE_POLICY.blocking).toBe(false);
+    expect(CLOSEOUT_GATE_POLICY.summary).toMatch(/not blocks/);
+    const turnover = everyItem().find((i) => i.id === "turnover")!;
+    expect(turnover.payoff).toBe(CLOSEOUT_GATE_POLICY.summary);
+    expect(CLOSEOUT_GATE_POLICY.overrideNote).toBe("You can complete anyway — the open items stay on the record and in the report.");
+  });
+
+  it("no advertised metric is hard-coded null: the schedule payoff promises SPI and the Schedule part shows it (UX-6 / PM-3)", () => {
+    const schedule = everyItem().find((i) => i.id === "schedule")!;
+    expect(schedule.payoff).toContain("SPI");
+    const part = computeProjectHealth(snapshot({ milestoneCount: 4, overdueMilestones: 0, spi: 0.8 })).parts.find((p) => p.label === "Schedule")!;
+    expect(part.detail).toContain("SPI 0.80");
+    expect(part.score).toBe(80);
+  });
+
+  it("the Cost part reads committed exposure alongside spend (COST-2 consumer)", () => {
+    const part = computeProjectHealth(snapshot({ cpi: null, budget: 100_000, spent: 40_000, committed: 60_000 })).parts.find((p) => p.label === "Cost")!;
+    expect(part.detail).toBe("40% of budget spent · 60% committed");
+    const noCommit = computeProjectHealth(snapshot({ cpi: null, budget: 100_000, spent: 40_000, committed: 0 })).parts.find((p) => p.label === "Cost")!;
+    expect(noCommit.detail).toBe("40% of budget spent");
   });
 });
 

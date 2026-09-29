@@ -8,10 +8,13 @@
 // steps resurface here; new gaps (unread quotes, checklist items needing
 // evidence, an outstanding turnover package) appear as the project runs.
 // Pure engine (lib/projectHealth) + one bounded gather (lib/projectSnapshot).
+// The gather is memoised per project and aborted on unmount, so a tab
+// mounting underneath (Costs, Quality) does not re-run thirteen queries
+// whose results would be thrown away.
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronRight, Sparkles, ArrowRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles, ArrowRight, AlertTriangle } from "lucide-react";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import { computeProjectHealth, buildCoachItems, type ProjectHealth, type CoachItem } from "@/lib/projectHealth";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
@@ -27,17 +30,22 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   const [open, setOpen] = useState(true);
   const [showAll, setShowAll] = useState(false);
 
+  const [readFailures, setReadFailures] = useState<string[]>([]);
+
   useEffect(() => {
-    let cancelled = false;
+    // Abort on unmount / re-key: in-flight requests are cancelled (once no
+    // other subscriber shares the memoised round), not merely ignored.
+    const controller = new AbortController();
     void (async () => {
       try {
-        const snap = await gatherProjectSnapshot(orgId, projectId);
-        if (cancelled) return;
+        const snap = await gatherProjectSnapshot(orgId, projectId, { signal: controller.signal });
+        if (controller.signal.aborted) return;
         setHealth(computeProjectHealth(snap));
         setItems(buildCoachItems(snap, projectId));
+        setReadFailures(snap.readFailures ?? []);
       } catch { /* coach is an enhancement — never breaks the page */ }
     })();
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, [orgId, projectId, refreshKey]);
 
   const band = useMemo(() => {
@@ -70,6 +78,12 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
         )}
       </button>
 
+      {open && readFailures.length > 0 && (
+        <div role="status" className="mx-4 mt-2 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.08] px-2.5 py-1.5 text-[11px] text-[var(--color-text)]">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
+          <span>Could not read {readFailures.join(", ")} — the score and suggestions below treat {readFailures.length === 1 ? "it" : "them"} as unknown, not as empty.</span>
+        </div>
+      )}
       {open && (
         <div className="px-4 pb-4 pt-1 border-t border-[var(--color-border)] grid md:grid-cols-[auto_1fr] gap-x-6 gap-y-3">
           {/* Health: the dial + each part showing its work. */}

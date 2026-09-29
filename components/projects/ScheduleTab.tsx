@@ -26,6 +26,7 @@ import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
+import { isImportedMilestone } from "@/lib/milestoneLiveness";
 import { supabase } from "@/lib/supabase";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -120,9 +121,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   }, [projectId, refresh]);
 
   // Filtered view (toggle for ghost rows). Metrics still computed
-  // over ALL milestones — ghost rows ARE commitments from the
-  // imported schedule, so they count.
-  const ghostFiltered = useMemo(() => showGhost ? milestones : milestones.filter((m) => m.source === "manual"), [milestones, showGhost]);
+  // over ALL milestones — ghost rows ARE commitments from the imported
+  // schedule (lib/milestoneLiveness is the one place that says so, and the
+  // health snapshot and the printed report read the same rule).
+  const ghostFiltered = useMemo(() => showGhost ? milestones : milestones.filter((m) => !isImportedMilestone(m)), [milestones, showGhost]);
 
   // Search / filter for the Planning list (reuses the Execution engine).
   const [planFilter, setPlanFilter] = useState<ScheduleFilter>(EMPTY_FILTER);

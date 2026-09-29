@@ -49,7 +49,27 @@ export interface ProjectStateSnapshot {
   // Delegation
   intakeLinkCount: number;
   membersCount: number;
+  /** Tables the gather could NOT read (a refused or failed query). Their
+   *  counts above are zeros standing in for "unknown" — the coach names
+   *  them instead of presenting the zeros as the truth. */
+  readFailures?: string[];
 }
+
+/**
+ * How strict the closeout gates are — the ONE statement the coach, the
+ * closeout dialog and the report all describe. The gates are checks with
+ * an override, not walls: the owner can complete anyway, and the open
+ * items go on the record (the override audit row and the printed report).
+ * Nothing in transitionProjectStatus refuses a completion over an open
+ * gate, so no copy may say "gated" or "blocked".
+ */
+export const CLOSEOUT_GATE_POLICY = {
+  blocking: false,
+  /** One sentence for any surface that mentions the gates. */
+  summary: "Closeout gates are checks with an override, not blocks — open items are recorded on the closeout, never blocked.",
+  /** The dialog's line under the gate list. */
+  overrideNote: "You can complete anyway — the open items stay on the record and in the report.",
+} as const;
 
 export interface HealthPart { label: string; score: number | null; detail: string }
 
@@ -80,7 +100,7 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
     // from there — going over must never score higher than staying under.
     parts.push({
       label: "Cost", score: burned <= 1 ? 100 - clamp((burned - 0.85) * 400, 0, 40) : clamp(60 - (burned - 1) * 200),
-      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " — over budget" : ""}`,
+      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " — over budget" : ""}${s.committed > 0 ? ` · ${Math.round((s.committed / s.budget) * 100)}% committed` : ""}`,
     });
   } else {
     parts.push({ label: "Cost", score: null, detail: "No budget set yet" });
@@ -179,8 +199,8 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   });
   if (s.pendingCostDocs > 0) add({
     id: "confirm-docs", kind: "cost", weight: 92,
-    title: `Review ${s.pendingCostDocs} read document${s.pendingCostDocs === 1 ? "" : "s"} waiting for your confirmation`,
-    payoff: "Confirmed quotes join the bid comparison; confirmed invoices post as spend.",
+    title: `${s.pendingCostDocs} read document${s.pendingCostDocs === 1 ? "" : "s"} waiting on you`,
+    payoff: "Read quotes are already in the bid comparison — award the winner; read invoices post as spend when you post them as actual.",
     href: `${base}?tab=costs`,
   });
   if (s.quoteCount > 0 && s.unawardedRfqGroups > 0) add({
@@ -203,13 +223,13 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   });
   if (!s.hasSow) add({
     id: "sow", kind: "setup", weight: 64,
-    title: "Attach a Summary of Work",
+    title: "Attach a Summary of Work (Edit project, in the header)",
     payoff: "Feeds RFQs, checklist assessments, and the project report.",
-    href: `${base}?tab=quality`,
+    href: base,
   });
   if (!s.hasPurpose || !s.hasGoals) add({
     id: "purpose", kind: "setup", weight: 58,
-    title: "Write the purpose & goals (from the wizard's skipped step)",
+    title: "Write the purpose & goals (Edit project, in the header)",
     payoff: "Everyone who opens the project knows why it exists.",
     href: base,
   });
@@ -222,13 +242,13 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   if (s.checklistNeedsEvidence > 0) add({
     id: "evidence", kind: "quality", weight: 76,
     title: `Provide evidence for ${s.checklistNeedsEvidence} checklist item${s.checklistNeedsEvidence === 1 ? "" : "s"}`,
-    payoff: "Each one auto-greens the moment its document lands.",
+    payoff: "Nothing runs on its own — run \"Check evidence we already hold\" on the Quality tab; items with a matching document on file turn green with the citation attached.",
     href: `${base}?tab=quality`,
   });
   if (s.turnoverRequired > 0 && s.turnoverAccepted < s.turnoverRequired) add({
     id: "turnover", kind: "quality", weight: 68,
     title: `Chase the turnover package — ${s.turnoverRequired - s.turnoverAccepted} item${s.turnoverRequired - s.turnoverAccepted === 1 ? "" : "s"} outstanding`,
-    payoff: "Closeout is gated on acceptance; contractors are scored on it.",
+    payoff: CLOSEOUT_GATE_POLICY.summary,
     href: `${base}?tab=quality`,
   });
   if (s.partyCount === 0 && s.budget > 0) add({
@@ -240,7 +260,7 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   if (s.intakeLinkCount === 0 && s.partyCount > 0) add({
     id: "links", kind: "delegation", weight: 46,
     title: "Send contractors their upload links",
-    payoff: "Their documents and quotes land here and process themselves.",
+    payoff: "Their documents and quotes land on the Intake tab as drafts — run the AI read from the Costs tab to tabulate a quote.",
     href: `${base}?tab=intake`,
   });
   if (s.membersCount <= 1) add({
