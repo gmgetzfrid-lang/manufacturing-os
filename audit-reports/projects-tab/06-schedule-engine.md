@@ -234,6 +234,8 @@ through it. Delete the other two rules.
 - The pulse strip and the summary strip cannot disagree.
 - A test pins the due-today case across three timezones.
 
+**Partial (2026-09-23, projects Round G).** Consumer limb (two sites this package owns): `lib/projectSnapshot.ts:115-119` and `lib/projectReport.ts:88-91` no longer compute `planned < Date.now()`. Both call `isOverdueMilestone(row, now)` from the new `lib/milestoneLiveness.ts` — not completed AND the planned day (UTC) is before today's (UTC) day, matching the wall-clock-as-UTC storage convention — so a task due today is not overdue in any timezone and the health penalty is no longer docked a day early. Test: `lib/__tests__/projectSnapshot.test.ts` "overdue is by UTC day: due today is not overdue anywhere (SCH-5's measured case)" pins the finding's measured row (now `2026-08-21T16:00Z`, due `2026-08-21T00:00Z` → not overdue; `2026-08-20` → overdue; `23:59Z` on the due day → not; `00:00Z` next day → overdue); `projectReport.test.ts` "due today is not overdue on paper either". The remaining four sites — `ScheduleTab.tsx:518`, `executionReport.ts:136`, `scheduleFilter.ts:101`, `ScheduleProgress.tsx:49-53`, `ExecutionView.tsx:949` — are P6b's; P6b can route them through `isOverdueMilestone` (or re-export it from `lib/scheduleProgress.ts`) and close this finding.
+
 ---
 
 ## SCH-6 · Hiding imported rows changes almost every number, and the tooltip says it doesn't

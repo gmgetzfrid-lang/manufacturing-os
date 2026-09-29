@@ -391,7 +391,7 @@ lib/checklists.ts:103 — `const { data } = await supabase...` with no `error` d
 ## QUAL-9 · The coach tells the project owner that closeout is gated on turnover acceptance; it is not, and the gates are explicitly advisory
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projectHealth.ts:228-233`, `lib/projectHealth.ts:231`, `app/(protected)/projects/[id]/page.tsx:625-651`, `app/(protected)/projects/[id]/page.tsx:645-650`, `components/projects/QualityTab.tsx:14-17`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The copy claim is accurate — the coach asserts a gate that does not exist and Confirm is never blocked. But the confirmation dialog states the true position in plain language at the exact moment of decision, so nobody reaches 'Complete' still believing the system will stop them; this is misleading marketing copy, not an operative deception.
@@ -424,6 +424,15 @@ lib/projectHealth.ts:231 `payoff: "Closeout is gated on acceptance; contractors 
 - [ ] The coach copy states what actually happens ("open turnover items will be recorded on the closeout, not blocked"), or the gate is made real.
 - [ ] No UI string claims contractor scoring from turnover until MON-7 is fixed.
 - [ ] A single source of truth describes gate strictness, referenced by both the coach text and the dialog.
+
+**Resolution (2026-09-23, projects Round G).** Closed with projects-tab `UX-5` / `UX-3` / `UX-6` (same package, same pass). Package default taken: the coach describes a check-with-override; the gates stay advisory; the scoring claim is removed until `MON-7` / `COST-12` land. `lib/projectHealth.ts` exports `CLOSEOUT_GATE_POLICY` — `blocking: false`, `summary` (*"Closeout gates are checks with an override, not blocks — open items are recorded on the closeout, never blocked."*) and `overrideNote` (the dialog's exact line) — and the coach's `turnover` payoff **is** `CLOSEOUT_GATE_POLICY.summary`. No coach string claims contractor scoring. Tests: `lib/__tests__/projectControls.test.ts` "gate strictness has one source of truth, and the coach quotes it (QUAL-9 / UX-5)" and "coach copy claims no unbuilt mechanism" (`gated on` / `scored on it` absent). Reproduced: `projectHealth.ts:231` at `8276cad` as quoted.
+
+**Done-when.**
+- The coach copy states what actually happens — ✓.
+- No UI string claims contractor scoring from turnover until `MON-7` is fixed — ✓ for user-facing strings (the `QualityTab.tsx:17` and `lib/turnover.ts:8-9` lines are code comments in P2's files, not UI strings).
+- A single source of truth describes gate strictness, referenced by both the coach text and the dialog — coach ✓; dialog: not done in this package — the consumer line is `app/(protected)/projects/[id]/page.tsx:649` (J8's file; its text is byte-identical to `CLOSEOUT_GATE_POLICY.overrideNote`, so the swap is a one-line import). Listed under `filesOutsidePlan`.
+
+**Scope / residual.** The dialog-side import for J8.
 
 ---
 
@@ -459,6 +468,8 @@ lib/evidencePack.ts:147-154 — the five-query `Promise.all`. lib/evidencePack.t
 - [ ] It renders the turnover package with per-item status, reviewer name, review date and note, and the punch list with closure dates and actors.
 - [ ] The footer names what the pack does and does not cover.
 - [ ] Items satisfied by the automated sweep are visually distinguished from human decisions in the printed pack.
+
+*Round G note (2026-09-23, projects Round G): left OPEN by plan — `lib/evidencePack.ts` waits for document-control P7 TRANSMITTALS (`TRX-13`) to merge first; nothing in that file was touched by this package.*
 
 ---
 

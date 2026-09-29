@@ -137,7 +137,7 @@ memory.
 ## PERF-3 · The coach re-gathers on every Costs and Quality mount, throwing away thirteen queries every time
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
 - **Locations:**
@@ -169,6 +169,15 @@ and add an `AbortController` to the coach.
 - Opening Costs gathers the snapshot once.
 - The snapshot query selects only the columns it reads.
 - An unmounted coach's in-flight requests are aborted.
+
+**Resolution (2026-09-23, projects Round G).** Delivered inside `lib/projectSnapshot.ts` + `components/projects/ProjectCoach.tsx`, not by lifting state into `page.tsx` or the tabs. **Gather once:** `gatherProjectSnapshot` memoises one in-flight round per `org:project` — a second caller while the round is in flight, or within `SNAPSHOT_REUSE_MS` (1.5 s) of it settling, shares the result (the mount-time `onDataChanged` bump from the Costs/Quality tab lands inside that window; a real mutation seconds later re-gathers); `fresh: true` and `gatherProjectSnapshotUncached` bypass it. **Column lists:** `projects` selects `purpose, goals, sow_document_id, job_kind`; `cost_documents` selects `kind, status, rfq_group, vendor_name, file_name` — no `select("*")`, no `parsed` blobs. **Abort:** the coach creates an `AbortController` per effect run and passes `signal`; every direct query carries `.abortSignal(signal)`, and when the last interested caller aborts, the shared round's controller aborts the requests (a caller that shares a round another caller still wants does not cancel it). Tests: `lib/__tests__/projectSnapshot.test.ts` "two concurrent requests for the same project share one round of queries", "aborting the last interested caller cancels the round; the next call starts fresh", "one waiter aborting does not cancel a round another caller still wants", "a caller that arrives already aborted is refused without a query", "selects only the columns it reads" (source pin). Reproduced: `ProjectCoach.tsx:30-41` at `8276cad` set `cancelled = true` only; `projectSnapshot.ts:22,25` selected `*`.
+
+**Done-when.**
+- Opening Costs gathers the snapshot once — ✓ (the coach's initial round and the tab-mount bump share one round).
+- The snapshot query selects only the columns it reads — ✓.
+- An unmounted coach's in-flight requests are aborted — ✓.
+
+**Scope / residual.** `CostsTab.tsx:83` / `QualityTab.tsx:72` still call `onDataChanged?.()` from inside `refresh` (P3's / P2's files); with the memo that call is now served from the shared round instead of re-running thirteen queries, which is what this finding's done-when asks for. `listAccounts` / `listEntries` (`lib/costs.ts`, P3's) do not take a signal and are not aborted. The coach shows a `role="status"` note naming any table the gather could not read (`readFailures`) instead of presenting zeros — the README's "silent fallback where an honest gap belongs" pattern, reader side of `REL-6` / PC `QUAL-8`.
 
 ---
 
@@ -206,6 +215,8 @@ the loop the suppression prevents.
 **Done when.**
 - The suppression is gone, or it carries a comment explaining exactly what it holds back.
 - Removing it cannot produce a loop.
+
+**Partial (2026-09-23, projects Round G).** The half this package owns landed: `gatherProjectSnapshot` is memoised per project (`PERF-3`), so a `coachKey` bump inside the reuse window costs no queries. But the loop this finding describes is in the *tabs'* own effects — `CostsTab.tsx:84` and `QualityTab.tsx:73` (`// eslint-disable-next-line react-hooks/exhaustive-deps` over a `refresh` that calls `onDataChanged` from inside itself) — and those are P3's and P2's files. Removing the suppression there requires moving `onDataChanged?.()` out of `refresh` into the mutation handlers (then the honest dependency list is `[orgId, projectId]` with no warning) and, optionally, `useCallback` on the inline arrow at `page.tsx:494` (J8's). Left OPEN for those packages; listed under this package's `filesOutsidePlan`. Done-when not met here: the suppression is still present at both sites; the loop remains latent (the shipped code is correct today, as the pass noted).
 
 ---
 
@@ -521,7 +532,7 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 |---|---|---|
 | PERF-1 | CRITICAL | OPEN |
 | PERF-2 | CRITICAL | OPEN |
-| PERF-3 | HIGH | OPEN |
+| PERF-3 | HIGH | RESOLVED |
 | PERF-4 | HIGH | OPEN |
 | PERF-5 | HIGH | OPEN |
 | PERF-6 | HIGH | OPEN |

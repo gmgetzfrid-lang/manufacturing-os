@@ -77,6 +77,7 @@ about the system.
 | [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
 | [DEC-42](#dec-42) | Supabase identity linking is **required**; the unique index is the backstop, not the mechanism | medium | `IDENT-1`, `IDENT-2`, `IDENT-3` |
 | [DEC-43](#dec-43) | Controllers are **unscoped by design**; a bypass-decided read of a restricted node is audited at the bytes egress | low | `DOCACL-3`, `DEC-2` |
+| [DEC-44](#dec-44) | Imported schedule rows are **commitments everywhere** — one liveness predicate (`lib/milestoneLiveness.ts`) for health, coach, report and EV | low | `MON-6`, `PM-3`, `SCH-5` |
 
 ---
 
@@ -1698,5 +1699,52 @@ ownership) would have served anyway leaves none.
 **Reversal.** A stated per-area controller requirement AND `DEC-5` (stable
 role ids) — then scope lives on the id, is checked in `node_visible` after
 the `Admin` branch, and an unscoped controller keeps today's behaviour.
+
+**Risk:** low.
+
+<a id="dec-44"></a>
+## DEC-44 · Imported schedule rows are commitments everywhere
+
+**Decision. A milestone row that came from a scheduling tool (`source` in
+`p6` / `msproject` / `csv` / `mpxj`) counts for every metric exactly as a
+typed row does — the health score, the coach, the printed report and the
+earned-value rollup. "Ghost" describes how the row is EDITED (read-only in
+the UI), never whether it counts. The rule is written once, in
+`lib/milestoneLiveness.ts`, and every consumer imports it.**
+
+> Made during projects Round G (2026-09-23) under the protocol's fail-safe
+> rule, closing projects-tab `MON-6` and projects-and-cost `PM-3`.
+
+**Rationale.** Two surfaces on one page disagreed: the Schedule and Costs
+tabs read every row (and told the user imported rows "still count toward the
+earned-value rollup"), while the health snapshot and the report filtered to
+`source == null || "manual" || "app"` — a NOT NULL column with a CHECK, so
+the filter collapsed to manual-only. A 400-activity P6 import scored "No
+schedule yet", was nagged to "Add a schedule" forever, and printed "No
+schedule loaded" for a job twelve activities late. The safe direction for a
+capital project is the one where the imported commitments are visible to the
+score the boss reads; a filter that hides them fails toward a confident,
+wrong page.
+
+**Implementation.** `isLiveMilestone` (every stored row), `liveMilestones`,
+`isImportedMilestone` (for view toggles only) and `isOverdueMilestone`
+(UTC-day, the storage convention) in `lib/milestoneLiveness.ts`; consumed by
+`lib/projectSnapshot.ts`, `lib/projectReport.ts` and
+`components/projects/ScheduleTab.tsx`. `spi` is computed from
+`computeScheduleMetrics` over the same rows and is `null` while nothing is
+due (never a fabricated 1.00).
+
+**Do not** reintroduce a source filter in a consumer. A surface that wants to
+HIDE imported rows from a list uses `isImportedMilestone` on the view and
+keeps its metrics over the full set.
+
+**Acceptance.** A project whose only milestones are imported reports a real
+milestone count, overdue count, baseline state and SPI; the report prints its
+milestone table; the coach does not ask for a schedule that exists
+(`lib/__tests__/projectSnapshot.test.ts`, `lib/__tests__/projectReport.test.ts`).
+
+**Reversal.** A stated facility requirement that imported rows are reference
+only — then the flag is a per-import choice stored on the row, read by the
+same predicate, and the Schedule tab's copy changes with it.
 
 **Risk:** low.
