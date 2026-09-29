@@ -13,7 +13,7 @@ import {
   FilePlus2, Search,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { finalizeReviewedRevision } from "@/lib/reviewControl";
+import { finalizeReviewedRevision, finalizeReasonMessage } from "@/lib/reviewControl";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import TransitionInPanel from "@/components/projects/TransitionInPanel";
 import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
@@ -238,7 +238,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer",
         requireRosterComplete: false,
       });
-      if (!res.published) throw new Error(res.reason || "Couldn't approve");
+      if (!res.published) throw new Error(finalizeReasonMessage(res.reason));
       setMsg(`${p.label} Rev ${p.revLabel ?? ""} approved — it is now the current revision.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
@@ -259,6 +259,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       const { error: dErr } = await supabase.from("documents")
         .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId);
       if (dErr) throw new Error(`Couldn't clear the pending revision: ${dErr.message}`);
+      // RG-10: close out any sign-off rows on the rejected draft, so the daily
+      // scan and the reviewers' inboxes stop chasing a draft nothing points at.
+      // Zero rows is the normal case (an intake draft has no roster).
+      const { error: voidErr } = await supabase.from("document_review_signoffs")
+        .update({ status: "void", updated_at: new Date().toISOString() })
+        .eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]);
+      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${voidErr.message}`);
       await supabase.from("audit_logs").insert({
         action: "INTAKE_REJECTED",
         resource_type: "document", resource_id: p.docId,

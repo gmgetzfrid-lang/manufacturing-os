@@ -201,19 +201,30 @@ export interface AckPolicy {
 export type ReviewControlMode = "require" | "publisher_choice" | "none";
 
 /** Pre-publish review policy. Attaches to a library, folder, or document; the most
- *  specific DEFINED level wins. Configuring it is authority-gated (Admin/DocCtrl
- *  or a delegated owner). A Minor change and a rev that came from a drafting
- *  ticket always skip the gate regardless of mode. */
+ *  specific DEFINED level wins along the WHOLE container chain (document →
+ *  folder → ancestor folders → library; lib/containerChain.ts). Configuring it
+ *  is authority-gated (Admin/DocCtrl or the level's effective owner, enforced
+ *  at the database). A Minor/Correction change skips the gate regardless of
+ *  mode; a rev that came from a drafting ticket never does (DEC-23). */
 export interface ReviewControl {
   mode: ReviewControlMode;
-  /** Primary reviewers who must sign off (named people + whole roles + departments). */
+  /** Primary reviewers who must sign off (named people + whole roles + departments).
+   *  Every resolved primary is a SLOT that must be satisfied (RG-4). */
   reviewerIds?: string[];
   reviewerRoles?: string[];
   reviewerTeamIds?: string[];
-  /** Backups that step in when a primary is slow (timeout) or out (manual). */
+  /** Backups that step in when a primary is slow (timeout) or out (manual).
+   *  An alternate can only satisfy the slot it stands in for: a role's
+   *  alternates back that role's primaries, a department's alternates back
+   *  that department's, and a NAMED alternate backs the entry named in
+   *  `alternateBacks` — unpaired, they can satisfy no slot. */
   alternateIds?: string[];
   alternateRoles?: string[];
   alternateTeamIds?: string[];
+  /** RG-4 / DEC-37: which slot a NAMED alternate stands in for, keyed by the
+   *  alternate's uid; the value is a slot-group key — `person:<uid>` (a named
+   *  primary), `role:<Role>` or `team:<teamId>`. */
+  alternateBacks?: Record<string, string>;
   /** Auto-activate alternates once a primary is this many days overdue. Default 7. */
   timeoutDays?: number;
   /** People/roles/departments who may SEE the in-review draft (besides reviewers
@@ -221,8 +232,10 @@ export interface ReviewControl {
   draftViewerIds?: string[];
   draftViewerRoles?: string[];
   draftViewerTeamIds?: string[];
-  /** Auto-manage the 2A/2B letter suffix during review (default true). */
-  useRevLetters?: boolean;
+  // RG-13: the former `useRevLetters` field is DELETED, not wired. In-review
+  // drafts always carry the letter suffix (2A, 2B …): a draft that kept the
+  // base label would collide with its own un-superseded predecessor under
+  // the branch-inclusive active-label index (20261071) on every resubmit.
   /** DEC-21 (library level): when the publisher is themselves on the roster,
    *  at least one signed PRIMARY must be someone else. Defaults ON wherever a
    *  required-review roster is configured; `false` opts a library out. */

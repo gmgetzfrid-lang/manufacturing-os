@@ -35,6 +35,7 @@ import {
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { effectiveDocClassForDocument, type DocClass } from "@/lib/docClass";
+import { logAuditAction } from "@/lib/audit";
 import { getMyEditBase } from "@/lib/intents";
 import { postActivity } from "@/lib/activityThread";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
@@ -110,7 +111,10 @@ export default function RevUpModal({
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [revisionLabel, setRevisionLabel] = useState("");
   const [issueType, setIssueType] = useState<DocumentVersion["issueType"]>("Issued for Construction");
-  const [changeType, setChangeType] = useState<DocumentVersion["changeType"]>("Minor");
+  // RG-11: the change type opens UNSET. "Minor" is the escape hatch that
+  // switches the review gate (and the PSM MOC gate) off, so it must never be
+  // the value nobody chose — the publisher declares it every time.
+  const [changeType, setChangeType] = useState<DocumentVersion["changeType"] | "">("");
   const [changeLog, setChangeLog] = useState("");
   const [drawnByName, setDrawnByName] = useState(actorEmail ?? "");
   const [checkedByName, setCheckedByName] = useState("");
@@ -144,9 +148,10 @@ export default function RevUpModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
 
-  // Remember the last-used issue purpose + change type PER LIBRARY — a
-  // publisher shipping ten IFC sheets should not re-pick both dropdowns ten
-  // times (and shouldn't get a governance-relevant default they never chose).
+  // Remember the last-used issue purpose PER LIBRARY — a publisher shipping
+  // ten IFC sheets should not re-pick it ten times. The CHANGE TYPE is never
+  // remembered (RG-11): a remembered "Minor" pre-selected the review-gate
+  // exemption for every later revision, so the publisher declares it each time.
   const memoryKey = `mfg.revup.${libraryId}`;
 
   // On open: suggest the next rev label, load the version list for the base
@@ -157,10 +162,10 @@ export default function RevUpModal({
     setRevisionLabel(suggestNextRevisionLabel(doc.rev));
     try {
       const remembered = JSON.parse(localStorage.getItem(memoryKey) ?? "null") as
-        { issueType?: DocumentVersion["issueType"]; changeType?: DocumentVersion["changeType"] } | null;
+        { issueType?: DocumentVersion["issueType"] } | null;
       if (remembered?.issueType) setIssueType(remembered.issueType);
-      if (remembered?.changeType) setChangeType(remembered.changeType);
     } catch { /* private mode */ }
+    setChangeType("");
     // An explicit caller preset beats the remembered value — the launcher
     // knows what this publish IS (e.g. check-in's Correction card).
     if (presetChangeType) setChangeType(presetChangeType);
@@ -209,14 +214,24 @@ export default function RevUpModal({
   // "We couldn't check the class" is NOT "no class declared" — on a transient
   // resolution failure the MOC gate fails CLOSED (drawing rules assumed).
   const [docClassUnknown, setDocClassUnknown] = useState(false);
+  // RG-6: the review policy fails CLOSED, like the class gate beside it. Until
+  // it has RESOLVED nothing can be published; a read failure is "unknown" —
+  // never "no gate" — and the form says so and offers a retry.
+  const [reviewPolicyStatus, setReviewPolicyStatus] = useState<"loading" | "resolved" | "unknown">("loading");
+  const [reviewPolicyError, setReviewPolicyError] = useState<string | null>(null);
+  const [policyAttempt, setPolicyAttempt] = useState(0);
   useEffect(() => {
     if (!isOpen) return;
     let alive = true;
+    setReviewPolicyStatus("loading");
+    setReviewPolicyError(null);
     (async () => {
       try {
         const c = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
-        if (alive) setReviewControl(c);
-      } catch { if (alive) setReviewControl(null); }
+        if (alive) { setReviewControl(c); setReviewPolicyStatus("resolved"); }
+      } catch (e) {
+        if (alive) { setReviewControl(null); setReviewPolicyStatus("unknown"); setReviewPolicyError((e as Error).message || "unknown error"); }
+      }
       try {
         const cls = await effectiveDocClassForDocument({ id: doc.id, collectionId: doc.collectionId ?? null, libraryId });
         if (alive) { setDocClass(cls); setDocClassUnknown(false); }
@@ -225,10 +240,12 @@ export default function RevUpModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, libraryId]);
+  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, libraryId, policyAttempt]);
 
   // The mode that actually applies to THIS rev-up — a Minor/Correction change is
-  // an escape hatch that always publishes directly (no sign-off cycle).
+  // an escape hatch that always publishes directly (no sign-off cycle). An
+  // unresolved policy is not a mode at all: the publish controls stay disabled.
+  const policyResolved = reviewPolicyStatus === "resolved";
   const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType });
   const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);
 
@@ -291,9 +308,22 @@ export default function RevUpModal({
     setError(null);
     if (!file) return setError("Please attach the new PDF.");
     if (!revisionLabel.trim()) return setError("Revision label is required.");
+    if (!changeType) return setError("Choose the change type — Major, Minor or Correction. It decides whether this revision needs reviewer sign-off.");
     if (!changeLog.trim()) return setError("Describe what changed (required).");
+    // RG-6: fail closed — an unverified review policy never publishes directly.
+    if (!policyResolved) {
+      return setError(
+        reviewPolicyStatus === "loading"
+          ? "Still checking this document's review policy — try again in a moment."
+          : `Couldn't verify the review policy (${reviewPolicyError ?? "unknown error"}) — nothing was published. Retry, or ask Document Control.`,
+      );
+    }
     if (asBranch && branchReason.trim().length < 5) {
       return setError("A branch needs a reason (at least 5 characters) — it becomes an open item until reconciled.");
+    }
+    // REV-7: a branch is still a publish — it cannot skip a required review.
+    if (asBranch && willReview) {
+      return setError("This library requires reviewer sign-off for this change — a branch can't skip it. Go back and submit the revision for review instead.");
     }
     if (lockedByOther && !overrideReason.trim()) {
       return setError(
@@ -355,6 +385,19 @@ export default function RevUpModal({
         });
         onDirectPublished?.(newVersion, !!branched);
         onSuccess(newVersion);
+        // RG-11: taking the Minor/Correction hatch in a gated library is a
+        // distinct, auditable act — the declared reason is the change
+        // narrative the publisher wrote for it.
+        if (reviewControl && reviewControl.mode !== "none" && effMode === "none") {
+          void logAuditAction({
+            action: "REVIEW_GATE_SKIPPED", resourceType: "document", resourceId: doc.id ?? "",
+            orgId, userId: actorUserId, userEmail: actorEmail, userRole: actorRole,
+            details: {
+              versionId: newVersion.id ?? null, revisionLabel: newVersion.revisionLabel ?? revisionLabel,
+              changeType, policyMode: reviewControl.mode, declaredReason: effectiveChangeLog.trim(), branched: !!branched,
+            },
+          });
+        }
         if (branched) {
           // The branch is real but NOT current — make sure that lands.
           void appAlert({
@@ -363,8 +406,9 @@ export default function RevUpModal({
           });
         }
       }
-      // Remember the choices that worked for next time (per library).
-      try { localStorage.setItem(memoryKey, JSON.stringify({ issueType, changeType })); } catch { /* ignore */ }
+      // Remember the issue purpose that worked for next time (per library) —
+      // never the change type (RG-11).
+      try { localStorage.setItem(memoryKey, JSON.stringify({ issueType })); } catch { /* ignore */ }
       // Reset form state
       setFile(null);
       setSourceFile(null);
@@ -385,7 +429,10 @@ export default function RevUpModal({
         try { setVersions(await listVersions(doc.id!)); } catch { /* diff falls back */ }
       } else if (e instanceof DuplicateLabelError) {
         setError(`${e.message} The document may have advanced while this form was open — check Version History.`);
-        setRevisionLabel(suggestNextRevisionLabel(doc.rev));
+        // REV-7: after a stale-base conflict the interloper's label is the one
+        // that collided (branches are unique-indexed too, 20261071) — suggest
+        // the label AFTER theirs, not the stale form's.
+        setRevisionLabel(suggestNextRevisionLabel(conflict?.currentRev ?? doc.rev));
       } else {
         console.error("Rev up failed", e);
         setError((e as Error).message || "Rev up failed");
@@ -538,7 +585,8 @@ export default function RevUpModal({
                     </button>
                     <button
                       onClick={() => doPublish(true)}
-                      disabled={submitting || branchReason.trim().length < 5}
+                      disabled={submitting || branchReason.trim().length < 5 || willReview || !policyResolved}
+                      title={willReview ? "This revision requires reviewer sign-off — a branch cannot skip it (REV-7)" : undefined}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
                     >
                       {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}
@@ -692,12 +740,27 @@ export default function RevUpModal({
                 </p>
               )}
             </Field>
-            <Field label="Change Type">
-              <select value={changeType} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className={inputClass}>
+            <Field label="Change Type *" hint="Major goes through review where it is required; Minor / Correction is replacement-in-kind">
+              <select value={changeType} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"] | "")} className={inputClass}>
+                <option value="" disabled>Choose…</option>
                 {CHANGE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
           </div>
+
+          {/* RG-6: the policy read failed CLOSED — say so, offer a retry, and
+              keep the publish controls off until it resolves. */}
+          {reviewPolicyStatus !== "resolved" && (
+            <div className={`rounded-lg border p-3 text-[12px] flex items-start gap-2 ${reviewPolicyStatus === "unknown" ? "border-red-300 bg-red-50 text-red-800" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+              {reviewPolicyStatus === "unknown" ? <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> : <Loader2 className="w-4 h-4 mt-0.5 shrink-0 animate-spin" />}
+              <span>
+                {reviewPolicyStatus === "unknown"
+                  ? <>Couldn&apos;t verify this document&apos;s <b>pre-publish review policy</b> ({reviewPolicyError ?? "unknown error"}). Nothing can be published until it is known — an unreadable policy is not &quot;no policy&quot;.{" "}
+                      <button type="button" onClick={() => setPolicyAttempt((n) => n + 1)} className="font-black underline">Retry</button></>
+                  : <>Checking this document&apos;s pre-publish review policy…</>}
+              </span>
+            </div>
+          )}
 
           {/* The escape hatch made visible: a review-gated library where the
               chosen change type (Minor/Correction) bypasses the gate. The
@@ -918,7 +981,8 @@ export default function RevUpModal({
             </button>
             <button
               onClick={() => doPublish(false)}
-              disabled={submitting || !file}
+              disabled={submitting || !file || !policyResolved}
+              title={policyResolved ? undefined : "The review policy has not resolved — publishing is held until it does (RG-6)"}
               className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50 ${willReview ? "bg-violet-600 hover:bg-violet-500" : "bg-orange-600 hover:bg-orange-500"}`}
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
