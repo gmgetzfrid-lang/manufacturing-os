@@ -1,0 +1,429 @@
+{
+ "area": "notifications",
+ "openCount": 102,
+ "claimStatus": "UNCLAIMED — planned 2026-09-23 against the live tree (branch claude/report-audit-findings-a3i90l @ ba7bfcb, Round E merged, DC wave 1 running). No file claimed, no finding IN_PROGRESS. 99-fix-sequencing.md is binding: N1 (NEDGE-2) merges before any attention-grabbing package (N10, N12); N5 (OS-1) merges before the person-to-person nudge; N2 (GAP-201) before N11 (GAP-202).",
+ "waves": {
+  "A (now, concurrent with DC wave 1 — no DC wave-1 file touched)": ["N1 PREFS-GATE", "N2 KIND-REGISTRY", "N5 DISPATCH-AND-WRITE-HOLES", "N7 CORNER"],
+  "B (after wave A merges; still concurrent with DC wave 1 except where noted)": ["N3 SURFACES (after N2, N7)", "N4 FEED-PROVIDER-AND-REALTIME (after N2, N7)", "N8 PRODUCERS-FREE (after N2)", "N6 EMAIL-PIPELINE-AND-CRON (after N1, N2, N5 AND DC P5 HOLDS merged — shared cron file)"],
+  "C (after DC wave 2 + public-surfaces PKG-1 merge)": ["N10 PUSH (after N1, N5, N6, PKG-1)"],
+  "D (after all DC waves, IS-P1 SESS-6 and admin-and-org P1 merge)": ["N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT", "N11 TRAIL", "N12 NUDGES (after N3, N4, N9, N10)"]
+ },
+ "recordOnlyCloses": {
+  "DELIV-4 (dw1+dw2)": "20261047 email_notif_select_own_or_admin + email_notif_update_admin_requeue + trg_email_requeue_columns (R&P SURF-17/SURF-18) — Admin/Manager can now read and requeue dead letters; residual dw3/dw4 (error destructuring, green state only on a demonstrated read) in N6",
+  "DELIV-1 (dw1+dw2)": "20261047 email_notif_insert requires the recipient address to belong to an org member and forbids metadata.external; lib/notifications.ts:103-106 records queueExternalEmail removed (SURF-17), external mail only via /api/transmittal/send-email; residual dw3 (actor attribution on the queued row) in N6",
+  "NEDGE-7 (subscriptions half of dw2)": "20261042/20261043 revoke_member deletes the member's subscriptions rows (SURF-1 / DEC-20); admin/users/page.tsx:244-274 routes removal through the RPC; residual (RLS org predicate, notifications tombstone, test) in N5",
+  "PROD-4 (ticket half, dw3)": "R&P WF-18/WF-19: lib/ticketTransitions.ts:215 activity recipients include assignedEngineerId and workflow-action/route.ts:320-326 merges the queue pool into unread_by/recipients; the verifier had already dropped this half — verify and record in N9",
+  "PROD-2 ('no such screen exists')": "EGRESS-5 / DEC-19 (20261023, commit 44711ca) built the pending list, the decline route (app/api/admin/access-requests/route.ts) and the per-IP limiter; the producer is still absent — N8 adds it",
+  "OS-11": "closes by record once N10 lands the push channel (the three registrations become truthful) — no edit to lib/schemaExpectations.ts / lib/exportTables.ts / lib/dataRestore.ts, which PS-VERIFY, DC P10 and A&O P2 own"
+ },
+ "packages": [
+  {
+   "name": "N1 PREFS-GATE — preferences that save, and an email preference gate that can see the recipient (Phase 0 lead + GAP-203)",
+   "findings": ["NEDGE-2", "DELIV-12", "DELIV-2", "DELIV-9", "RT-10"],
+   "severityMix": "1 CRITICAL, 1 HIGH, 2 MEDIUM, 1 LOW",
+   "files": [
+    "app/(protected)/settings/notifications/page.tsx (Prefs type + DEFAULTS + cadence buttons :30/:40/:151 take the DB vocabulary 'instant'; load-fallback :69 maps nothing legacy because no row ever stored 'immediate'; save() :84-91 surfaces a 23514 check_violation distinctly; new 'Pop-up toasts' toggle row; Hourly/Daily removed from the offered set — decision below)",
+    "new lib/notificationPrefs.ts (DIGEST_FREQUENCIES as const = the CHECK list; shouldSendForEvent + the email_enabled/digest_frequency checks exported ONCE so N6's digest and lib/notifications.ts share them; readToastPreference(uid) for N3's NotificationListener)",
+    "lib/notifications.ts (queueEmail :50-100: preference + 60s dedupe evaluated through the new SECURITY DEFINER RPC email_gate(org, to_user, event_type, resource_id) instead of the RLS-blind SELECTs at :53-57 and :67-75; an RPC error is NOT silent-all-on — send but stamp metadata.pref_gate='unverified' and console.warn; QueueEmailInput gains link?: string for N6)",
+    "new migration 2026NNNN_notif_prefs_gate.sql (email_gate(): STABLE SECURITY DEFINER, callable by an active member of p_org only, returns false when prefs deny OR a same (to_user,event,resource) row exists in the last 60s; ADD COLUMN notification_preferences.toast_enabled BOOLEAN NOT NULL DEFAULT TRUE; DROP COLUMN inapp_enabled per the 20260723:11 comment; push_enabled untouched — N10 reads it)",
+    "lib/__tests__/notificationsLib.test.ts (extend) + new lib/__tests__/notificationPrefs.test.ts (DEFAULTS round-trips against the CHECK list; email_enabled=false from a non-service context queues nothing; a gate error is observable on the row)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "None on other packages — this is the sequencing file's 'one that goes first'",
+    "DEC-30: paste the SQL; the page fix (one word) is RESOLVED on the code half before the RPC is applied — queueEmail must tolerate a missing RPC (fall back to today's behaviour + warn) until the migration is confirmed",
+    "GAP-203 'Do not': do not widen the CHECK to accept both spellings; do not move email queueing server-side here (that is N5/N6)",
+    "NEDGE-9 (digest ignores 'never') is GAP-203's third defect but lives in app/api/cron/maintenance/route.ts, which DC P5 HOLDS is editing now — N6 consumes this package's exported gate there"
+   ],
+   "sequencingNotes": "Phase 0 item 1. Order: NEDGE-2/DELIV-12 (vocabulary) → RT-10 column + toggle → email_gate RPC → queueEmail switch (DELIV-2, DELIV-9) → tests. Ships alone and first; nothing in N10/N12 may merge before this does.",
+   "decisionsNeeded": [
+    "Which spelling wins: default 'instant' (the stored/CHECK value; zero migration, zero data change; UI label 'Immediately')",
+    "Hourly/Daily cadence buttons: default REMOVE them from the offered set (they are advertised 'not implemented' and NEDGE-9's digest is the only digest); the CHECK keeps accepting them so nothing breaks",
+    "inapp_enabled: default DROP (never read; the page's stated policy is bell rows always on, and durable obligations must never be suppressible) and add toast_enabled for RT-10/TAX-9 instead",
+    "email_gate failure semantics: default fail-OPEN for delivery (send) but never silently — metadata.pref_gate='unverified' + warn — because a dropped compliance email is worse than an unwanted one; recall/safety categories are un-mutable regardless (dispatch.ts:59-66)"
+   ],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "N2 KIND-REGISTRY — every kind mapped, build-error enforced, counts computed once (GAP-201 + the registry file GAP-207 derives from)",
+   "findings": ["PROD-1", "TRAIL-2", "DELIV-3", "TAX-2", "OS-12", "RT-6", "TRAIL-5", "TRAIL-13", "TAX-7", "PROD-10", "TAX-11", "NEDGE-13", "PROD-8", "OS-7", "TAX-5"],
+   "severityMix": "1 HIGH, 14 MEDIUM",
+   "files": [
+    "new lib/notificationKinds.ts (KIND_META: Record<NotificationKind, { section; actionRequired; compliance; icon key; tone; group; pushWorthy? }> — ONE literal; sectionForKind derives from it; a `satisfies Record<NotificationKind, KindMeta>` makes an unclassified kind a tsc error; per-kind section decisions written as comments — GAP-201 acceptance 4)",
+    "lib/inAppNotifications.ts (union :10-60: REMOVE task_reminder/task_nudge/morning_digest/task_overdue_digest (zero producers, PROD-8/OS-7/NEDGE-13); ADD storage_alert, storage_platform_r2, storage_platform_db (PROD-10/TAX-11 — the set is finite: storageUsage.ts:219/:231); 'scratchpad' AttentionSection deleted)",
+    "hooks/useTicketNotifications.ts (:70-134 sectionForKind + emptySectionCounts read KIND_META; default arm `const _never: never = kind`; :326 actionKinds → KIND_META.actionRequired; :348 tally(section, actionRequired) so a notification can turn a badge red (TRAIL-5); :303/:352 actionRequiredCount/unreadCount derived from items so every consumer agrees (TRAIL-13); counts {all, action, activity} computed here once (TAX-7); dead exports totalNotifications removed; vocabulary note in the header)",
+    "components/notifications/NotificationCenter.tsx :76-85 and components/cockpit/AttentionFeed.tsx :22/:85-89 (consume the hook's counts; AttnFilter key 'unread' → 'activity' to match its label — TAX-7 dw1)",
+    "app/(protected)/inbox/page.tsx :71-77 and components/dashboard/widgets.tsx :666-677/:1220 (consume the hook's counts instead of recomputing)",
+    "components/notifications/NotificationBell.tsx :19-44 KIND_ICON (dead task_overdue_digest entry removed; icon keys for the three storage kinds) — the icon map itself is converted to derive from KIND_META by N3",
+    "lib/storageAlerts.ts :56-66 and lib/storageUsage.ts :250-258 (route through notify()/notifyMany() with the typed kind; the 7-day dedupe read stays)",
+    "lib/activityThread.ts :145-165 (input.kind 'handoff' → kind 'checkout_handoff', 'markup_ref' → 'markup_request' instead of collapsing all six to checkout_message — PROD-8 dw2; channels: ['inapp'] for plain chat posts — PROD-7 dw3, the one free site)",
+    "new lib/__tests__/notificationKinds.test.ts (enumerates the union: no member resolves to an unrendered section; every KIND_META entry has an icon; sectionCounts.documents.actionRequired > 0 for a checkout_conflict row; a produced-kinds census of `kind:` literals under app/lib/components is a subset of the union)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "None on other packages. GAP-201 'Do not': map deliberately per kind, not everything to 'documents'; do not delete emitted kinds (ack_*, review_*, legal_hold_* are legally significant); do not fix without the never-guard",
+    "TAX-5 is completed across three packages: this package owns lib/notificationKinds.ts, the section/actionRequired/compliance columns and the parity test; N3 converts KIND_ICON, attentionVisual, KIND_GROUPS and the toast isError to derive from it; N6 converts COMPLIANCE_KINDS in the cron. Record TAX-5 RESOLVED when N6 merges (acceptance 1 needs all seven maps)",
+    "The 'requests' section rows must keep evaluating under policy + activeMemberCount (WF-24 / DEC-12 / DEC-37, hook :141-155) — do not touch that block",
+    "New kinds for N8 (milestone_*, access_request_*) and N9's kind split are added to KIND_META by those packages after this merges"
+   ],
+   "sequencingNotes": "Phase 0 item 2 — 'still the highest-value change in the area'. NEDGE-1 is REFUTED: do the work for PROD-1/TRAIL-2/DELIV-3/TAX-2 and size it as a rail-badge gap, not a missed-notification defect. Order: registry file → union cleanup → hook → storage/activityThread producers → consumers → tests. Where a kind lands (documents/projects/requests/bell-only) is recorded per kind in the registry comments; 'other' must be provably empty for every produced kind (a test), and if it is kept as a bucket the bell owns it.",
+   "decisionsNeeded": [
+    "Home for the 26 (now 28) unmapped kinds: default — every document-scoped kind (ack_*, review_*, library_doc_*, effective_now, owner_*, deletion_requested, retention_eligible, legal_hold_*, access_recert_due, revision_published_over_checkout) → 'documents'; project_comment → 'projects'; security_export, orchestrator_message, member_revoked, library_unowned, storage_* → bell-only (section 'other' is removed from the type; these tally nowhere and the header bell owns them — TAX-2/RT-6 dw)",
+    "actionRequired for compliance kinds: default ack_requested, review_requested, review_invalidated, ack_overdue, review_overdue, access_recert_due, effective_now = true (so the Documents badge can pulse red for a PSM obligation); FYI kinds false — this is the change the sequencing file calls out under TRAIL-5"
+   ],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "N3 SURFACES — an honest doorway, accessible surfaces, one toast per event (GAP-202 step 1 + NEDGE-5)",
+   "findings": ["TAX-1", "TRAIL-3", "NEDGE-5", "RT-2", "TAX-4", "TAX-3", "TAX-9", "RT-5", "RT-9"],
+   "severityMix": "5 HIGH, 3 MEDIUM, 1 LOW",
+   "files": [
+    "components/notifications/NotificationCenter.tsx (open(filter, section?) :23/:37; CenterPanel filters items by item.section :81-85; header count :116 equals the badge that opened it and names the section; empty state names the section; role=dialog already at :99 — add focus-in on open / focus-restore on close)",
+    "components/cockpit/AttentionFeed.tsx (section prop; attentionVisual :35-51 and KIND_GROUPS :63-68 derive from lib/notificationKinds.ts KIND_META — TAX-5 limb)",
+    "components/navigation/Sidebar.tsx :541-550 only (the badge button passes its leaf's section to openCenter; aria-label on the count button; the DOORWAY comment becomes true)",
+    "components/notifications/NotificationBell.tsx (:99-112 aria-label 'Notifications, N need attention', aria-haspopup, aria-expanded, count span aria-hidden; :129-130 dropdown becomes a labelled dialog with focus management, Escape at :76 preserved; :134 renders 'N need action' next to the total using actionRequiredCount (RT-9); 'Mark all read' relabelled 'Mark notifications read' with the residual action count explained; KIND_ICON derives from KIND_META; dead variant='sidebar' branch :113-127 deleted — never mounted)",
+    "components/providers/NotificationListener.tsx (:38-73 the org-wide checkout_messages channel REMOVED — the durable checkout_message notification already reaches participants (RT-2/TAX-4 dw2, TAX-3 dw4); :80-100 tone from KIND_META.actionRequired (an action-required kind is never a blue info toast — TAX-3 dw1) and action-required toasts do not auto-dismiss (duration 0) — TAX-3 dw3; reads toast_enabled from N1 (readToastPreference, tolerant of a missing column) — TAX-9 dw1/RT-10 consumer; a burst of N inserts within 6s coalesces into one 'N new notifications' toast that opens the Center — TAX-9 dw4/OS-4 dw2; the seed/first-run guard :17-36 goes with the channel (RT-5))",
+    "new lib/__tests__/notificationCenterScope.test.ts + notificationListener.test.ts (one postActivity → exactly one showToast per participant, zero for an uninvolved member — TAX-4 dw4; section filter count equals badge count; bell accessible name contains the count)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "N2 merged (item.section and KIND_META.actionRequired exist; AttnFilter key rename)",
+    "N7 merged (owns components/providers/ToastProvider.tsx and components/ui/CornerDock.tsx: the toast cap, role='status', aria-label on the dismiss button and the dock's aria-live region land there — NEDGE-5 dw2/dw4 are verified here, not re-implemented)",
+    "N1 merged or tolerated: toast_enabled read must fail open (show toasts) when the column is absent",
+    "TAX-3 dw2 (one wording for the force-release event) needs the 'SYSTEM ALERT:' line at lib/checkoutEpisodes.ts:646 — DC P6 CHECKOUT's file, running now; N9 changes that one line after P6 merges and this package records the split",
+    "OS-5 (bell animation) is deliberately NOT here — it is GAP-204's and lands in N12 after this package's aria/live-region work, per the sequencing file's Phase 5 item 1"
+   ],
+   "sequencingNotes": "Phase 0 items 3 (TAX-1/TRAIL-3) and Phase 2 (RT-2), plus the accessibility prerequisite for every Phase 5 item. Order: NEDGE-5 (bell + center) → TAX-1/TRAIL-3 → RT-2/TAX-4 channel removal → tone/coalesce → RT-9 → tests. Keep app/globals.css:385-392 as the reduced-motion mechanism (animation utilities only).",
+   "decisionsNeeded": [
+    "Remove vs narrow the checkout_messages toast channel: default REMOVE (the durable row already toasts participants through the notifications channel; narrowing by ACL client-side would still read every org message)",
+    "Action-required toast persistence: default duration 0 (stays until dismissed) rather than a separate 'history' — the bell row IS the durable trace"
+   ],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "N4 FEED-PROVIDER-AND-REALTIME — one subscription per tab, reconcile on return, a true count, and the publication/replica-identity gaps",
+   "findings": ["RT-3", "TRAIL-8", "RT-1", "RT-8", "RT-4", "RT-12", "TAX-6", "DELIV-10", "TRAIL-7", "PROD-7", "TRAIL-9", "TRAIL-12"],
+   "severityMix": "1 HIGH, 8 MEDIUM, 3 LOW",
+   "files": [
+    "new components/providers/AttentionProvider.tsx (the hook's state and its ONE realtime channel hoisted; fetchAll debounced 300-600ms trailing per components/projects/ScheduleTab.tsx:112-116; .subscribe((status) => …) re-runs fetchAll on every SUBSCRIBED after the first; visibilitychange + focus + a 60s visible-only interval per app/(protected)/inbox/page.tsx:117-127; CHANNEL_ERROR/TIMED_OUT expose stale:true; the reconcile pass records the ids it just wrote and ignores their echo (RT-8) and runs once per tab; ticket select lists the attention columns only, not select('*'))",
+    "hooks/useTicketNotifications.ts (becomes a thin context reader with the SAME export name and return shape so Sidebar/Bell/Center/inbox/widgets need no change; TRAIL-9: hold_released retires the matching unread hold_opened, branch_resolved retires branch_open (match resourceId + metadata.branchId), header comment :25-27 narrowed to what is true; TRAIL-12: rows with resourceType 'document' and no link get their library resolved in one batched documents query and link to /documents/<lib>?doc=<id> — never /search?q=<uuid>)",
+    "lib/inAppNotifications.ts (listMyNotifications gains a created_at cursor + returns {rows, total} via count:'exact'; countUnread(orgId) becomes the badge's number — PROD-7 dw1, TAX-6 dw1, TRAIL-7 dw1; the .catch(() => []) at hook :224 becomes a surfaced error state — DELIV-10 dw5)",
+    "components/notifications/NotificationCenter.tsx / components/cockpit/AttentionFeed.tsx ('showing newest N of M' + a load-more that pages the cursor — TAX-6 dw2; no other change)",
+    "lib/inbox.ts :243-244 (unread count org-scoped so it agrees with the bell — DELIV-10 dw4)",
+    "app/(protected)/layout.tsx (mount AttentionProvider once inside NotificationCenterProvider :239 — one line; N7 merged first)",
+    "new migration 2026NNNN_realtime_publication_and_identity.sql (idempotent ALTER PUBLICATION supabase_realtime ADD TABLE milestones, table_views with the pg_publication_tables guard from 20260727:50-54; REPLICA IDENTITY FULL on documents, checkout_sessions, libraries, collections; tickets gets the unfiltered-DELETE companion listener in the provider instead — decision below)",
+    "new lib/__tests__/attentionProvider.test.ts + realtimePublication.test.ts (a tripwire scanning every `table:` literal passed to .on('postgres_changes') under app/lib/components/hooks against the ADD TABLE statements in supabase/ — RT-12 dw3; one ticket write → one refetch; a rejoin reconciles; countUnread independent of page size)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "N2 merged (same hook file; registry-derived sections)",
+    "N7 merged (app/(protected)/layout.tsx mount region)",
+    "DEC-30 inventory before the migration: SELECT tablename FROM pg_publication_tables WHERE pubname='supabase_realtime' — someone may have added milestones/table_views by hand; the migration is idempotent either way",
+    "PROD-7 dw2 (resolveRecipients comment) is one line in lib/notify/dispatch.ts — N5's file, merged before this wave; dw3's library_doc_added site is app/(protected)/documents/[libraryId]/page.tsx:2384-2397 (DC P6 / IS-P1) → N9",
+    "Verified sound (report 05): every existing channel tears down on unmount; the CAS/orphan-reclaim in the drain is untouched here"
+   ],
+   "sequencingNotes": "Phase 2 items 1-3 (RT-1, TAX-6, RT-3). The provider is the prerequisite the sequencing file names for GAP-202 in-page markers ('adding in-page markers without making the fan-out worse'). Order: provider hoist (RT-3/TRAIL-8) → status callback + reconcile-on-return (RT-1) → self-suppressed reconcile (RT-8) → true count + cursor (TAX-6/DELIV-10/TRAIL-7/PROD-7) → document-kind supersession (TRAIL-9) → link resolution (TRAIL-12) → migration + tripwire (RT-4/RT-12).",
+   "decisionsNeeded": [
+    "RT-4 shape for tickets: default NOT REPLICA IDENTITY FULL on tickets (rows carry comments/history/attachments JSONB — WAL cost on every write); use the unfiltered-DELETE companion listener from lib/libraryCollections.ts:419-427 in the provider; FULL on documents/checkout_sessions/libraries/collections which have hard-delete paths",
+    "Ticket cap (500 newest-first) — default keep the cap but count action-required tickets with a head count so the badge number is exact (TRAIL-7 dw1) and show 'showing N of M'"
+   ],
+   "alreadyResolvedElsewhere": [
+    "WF-24 (Round E): the ticket half of the feed already evaluates under policy + activeMemberCount (hook :141-155, :300) — keep it verbatim when hoisting"
+   ]
+  },
+  {
+   "name": "N5 DISPATCH-AND-WRITE-HOLES — the notifications write rails, org-scoped read, active-member recipients, and email-subject redaction (Phase 1)",
+   "findings": ["NEDGE-3", "NEDGE-6", "OS-1", "DELIV-6", "DELIV-13", "NEDGE-7"],
+   "severityMix": "4 HIGH, 1 MEDIUM, 1 LOW",
+   "files": [
+    "lib/notify/dispatch.ts (resolveRecipients :77-89 filters the FINAL set — involved[] included — against active org membership once, centrally (NEDGE-3 dw1); emailsFor :145-157 adds .eq('status','active') (dw2); the email subject for role-broadcast audiences is category-derived, never input.title with a free-text reason (NEDGE-6 dw2); resolveRecipients comment corrected (PROD-7 dw2); channels doc comment 'all three' corrected)",
+    "lib/notify/recipients.ts (resolveFollowers :23-45 gains the same membership filter as a defence in depth; resolveRoleRecipients unchanged — it is already correct, per the NEDGE-3 correction)",
+    "new migration A 2026NNNN_notifications_write_rails.sql (BEFORE INSERT trigger enforce_notification_insert, SECURITY DEFINER, returns NEW immediately when auth.uid() IS NULL (service role/cron): (1) actor_user_id := auth.uid() when NULL, RAISE when set to someone else — DELIV-6 dw1/dw4, so a client row can never impersonate 'System'; (2) recipient must be an active member of notifications.org_id; (3) kind must exist in a new notification_kinds reference table seeded from lib/notificationKinds.ts — DELIV-6 dw2 / OS-1 dw3 / TAX-11 dw3; (4) link NULL or app-relative ('/…', no scheme) — DELIV-6 dw3; (5) rate cap: RAISE when the actor has inserted > 60 rows in the last minute — OS-1 dw4; policy notifications_org_insert kept, the trigger is the validation the 20260723:42-45 comment defers to)",
+    "new migration B 2026NNNN_notifications_read_scope.sql (notifications_own_select/update/delete gain AND EXISTS active org_members(org_id, auth.uid()) — NEDGE-7 dw1; UPDATE gets a WITH CHECK + trigger pinning every column except read_at — DELIV-13 dw1; DELETE narrowed to read_at IS NOT NULL AND kind NOT compliance (from notification_kinds) — DELIV-13 dw2; revoke_member RE-CREATED VERBATIM from its NEWEST body (20261043:45-140) plus one statement: UPDATE notifications SET org_tombstoned_at = now() for the member's rows in that org, and the SELECT policy excludes tombstoned rows — NEDGE-7 dw2; DEC-30 inventories: notifications rows whose user_id is no longer an active member of org_id; rows with a link not starting with '/')",
+    "lib/__tests__/notificationWriteRails.test.ts (new; replays schema.sql + migrations to pin the policy/trigger set; a removed member's token returns zero rows for the org — NEDGE-7 dw3; suspended watcher gets neither bell nor email, active watcher gets both — NEDGE-3 dw3; kind allowlist parity with Object.keys(KIND_META))"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "N2 merged before migration A is authored (the kinds table is seeded from the cleaned union; the parity test lives here)",
+    "DEC-43 governs NEDGE-6: controllers are unscoped by design, so Admin/DocCtrl receiving a hold title in-app is consistent with policy; the closed part is the egress (email subject) and the follower path — NEDGE-6 dw3 is narrowed to non-controller followers via the existing node-visibility check, not a new ACL walk",
+    "DEC-20 / 20261043: revoke_member is re-created from its newest body with lineDiff proof, never from 20261042",
+    "GAP-206 prerequisite: OS-1 must be RESOLVED before N12 ships the person-to-person nudge; the nudge's own server route + per-(ticket,sender,recipient) window are N12's — this package's trigger cap is the backstop, not the feature limit",
+    "The dedupe watermarks that read notifications rows (lib/distributionAcks.ts:328-345, lib/storageAlerts.ts:56-59, cron :343-346) are protected by the read_at-only UPDATE rail and the compliance-kind DELETE exclusion (DELIV-13 dw3 satisfied without moving them)",
+    "NEDGE-3 dw3's post-restore 'all-inactive org' assertion belongs to admin-and-org P1 (restore/apply) — pointer, not fixed here"
+   ],
+   "sequencingNotes": "Phase 1 — 'close the two write holes'. DELIV-1 is largely closed by 20261047; the remaining hole is the notifications table. The trigger approach keeps every one of the ~30 client-side notify()/emit() writers (report 01 census; all use the anon client) working without a route migration, which DEC-31 forbids as one change. Order: dispatch membership filter (NEDGE-3) → migration B (read scope, revoke sweep) → migration A (write rails) → NEDGE-6 subject → tests. Wave A: none of these files is in a DC package.",
+   "decisionsNeeded": [
+    "Rate cap number: default 60 inserts/actor/minute (a bulk ack fan-out to 30 people is one emit; a poke button cannot exceed it without intent)",
+    "Removed member's rows: default tombstone (org_tombstoned_at) rather than delete — the archive stays for investigators; the member loses SELECT",
+    "DELETE policy: default keep user hard-delete only for read, non-compliance rows ('clear all' stays a feature); compliance kinds become dismiss-only",
+    "New DEC to record (next free number; DC P2 is taking DEC-44): 'notifications.kind is allow-listed at the database from a reference table that a test pins to the TypeScript registry'"
+   ],
+   "alreadyResolvedElsewhere": [
+    "NEDGE-7 subscriptions sweep ← 20261042/20261043 revoke_member (SURF-1 / DEC-20)",
+    "NEDGE-3 role path ← already correct (resolveRoleRecipients filters status='active' and reads roles[]) — do not edit it"
+   ]
+  },
+  {
+   "name": "N6 EMAIL-PIPELINE-AND-CRON — absolute links, one render layer, honest drain reporting, a preference-aware digest, observable inserts",
+   "findings": ["NEDGE-4", "DELIV-5", "NEDGE-10", "NEDGE-12", "DELIV-11", "NEDGE-9", "DELIV-7", "DELIV-4", "DELIV-1", "DELIV-8"],
+   "severityMix": "3 HIGH, 6 MEDIUM, 1 LOW",
+   "files": [
+    "new lib/emailRender.ts (renderNotificationEmail({title, body, link, orgName}) → {subject, bodyText, bodyHtml}: absolute action link built from publicOrigin() (lib/publicOrigin.ts:17-22) and REFUSED — throws — when it is empty (the XEDGE-5 lesson); tokenizeMentions applied to comment text so @[Name](uuid) never leaves the system; footer linking /settings/notifications; escapeHtml carried forward for every interpolation — report 08 'verified sound')",
+    "new lib/recordTime.ts (formatRecordTime(iso, tz?) → ISO-8601 with offset plus a zone label; the shared helper NEDGE-12 dw1 asks for; org timezone read from org_configurations when present, else UTC labelled as such)",
+    "lib/notifications.ts (:16-27 QueueEmailInput.link consumed; ticketUrl :207-212 built from publicOrigin() and its test updated — DELIV-5 dw2)",
+    "lib/notify/dispatch.ts (:126-137 forwards input.link and renders through emailRender for the 17 emit() sites that pass no email override; :93-94 logs a structured warning and returns {recipients: 0} when the audience resolves empty — DELIV-7 dw4)",
+    "lib/inAppNotifications.ts (notify() :81-100 returns boolean, still never throws; notifyMany returns {sent, failed} — DELIV-7 dw1; the invariant that a failed signal never rolls back a publish stays)",
+    "app/api/tickets/comment/route.ts :296-362 and app/api/tickets/workflow-action/route.ts :619-741 (fanOut email region ONLY: link = `${publicOrigin()}/requests/…` via emailRender; the notifications/email_notifications inserts destructure error and log — DELIV-7 dw3; nothing else in these routes)",
+    "app/api/notifications/send-queued/route.ts :163-176 (List-Unsubscribe + List-Unsubscribe-Post headers pointing at a signed one-click route — NEDGE-10 dw1) + new app/api/notifications/unsubscribe/route.ts (sets email_enabled=false for the signed uid; depends on N1 so the row can exist)",
+    "app/api/cron/maintenance/route.ts (drain loop :103-120 reads processed for continuation, surfaces configured:false/deferred and failed>0 as result fields + errors; second pass :220-235 reports instead of swallowing — DELIV-11; escalateStaleCheckouts :343-378 pushes insErr into result.errors and formats started_at through recordTime — DELIV-7/NEDGE-12; queueComplianceDigests :393-455 uses N1's exported gate (digest_frequency='never' + per-category), adds .is('read_at', null), orders + pages the 2000-row scan, checks the insert error, carries an absolute /inbox link, COMPLIANCE_KINDS derives from KIND_META — NEDGE-9/NEDGE-4 dw3/TAX-5 limb; the per-day dedupe :430-436 preserved)",
+    "app/(protected)/admin/settings/page.tsx :66-102 (count and requeue destructure error, requeue reads back the affected-row count, the green 'No failed deliveries' renders only after a successful read; DocCtrl-visible copy states who can requeue — DELIV-4 dw3/dw4)",
+    "app/api/admin/purge/route.ts :42/:70/:160 ('suppressed' removed from the delivered set; suppressed rows are listed in the plan and purged only after being reported — DELIV-8)",
+    "new migration 2026NNNN_email_notifications_attribution.sql (queued_by UUID, BEFORE INSERT trigger sets it to auth.uid() for authenticated callers, service role leaves NULL — DELIV-1 dw3; extend trg_email_requeue_columns from 20261047 to keep queued_by immutable)",
+    "lib/__tests__/emailRender.test.ts (new: no href starts with a bare '/' in any rendered body — NEDGE-4 dw2/DELIV-5 dw3; mentions render as names; refuses an empty origin) + lib/__tests__/maintenanceDrain.test.ts (new: {processed:100, sent:0, failed:100} is not reported as an empty queue; configured:false surfaces)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "N1 merged (exported preference gate; QueueEmailInput.link field; unsubscribe target needs a saveable row — NEDGE-10 dw3)",
+    "N2 merged (notify() file; KIND_META.compliance for COMPLIANCE_KINDS)",
+    "N5 merged (lib/notify/dispatch.ts base body)",
+    "DC P5 HOLDS merged — it adds one step to app/api/cron/maintenance/route.ts; public-surfaces PS-VERIFY (prune call) and admin-and-org P5 (prune_signup_attempts) touch the same file later and rebase on this",
+    "NEDGE-12's second body site app/api/transmittal/route.ts:181 is DC P7 TRANSMITTALS' file (wave 2) → N9 changes that one line to recordTime after P7 merges",
+    "The three remaining raw-insert producers (app/api/intake/upload/route.ts :105/:198/:409 — DC P4; app/api/transmittal/route.ts:161 — DC P7; app/api/data-export/run/route.ts:55 — admin-and-org P3) get a pointer from DELIV-7/NEDGE-13 to destructure error on their next edit; DEC-31",
+    "public-surfaces PS-STAMP owns lib/publicOrigin.ts's server fallback (VERCEL_PROJECT_PRODUCTION_URL) — consume it if merged, else emailRender refuses an empty origin rather than defaulting to ''",
+    "drafting-flow (unplanned) owns the two ticket routes; this package edits the fanOut email builders only and records the split",
+    "Verified sound (report 08): the CAS claim in send-queued :140-153, the 7-day 'suppressed' recovery bound :98-111, the per-day digest dedupe :430-436 and escapeHtml on every template interpolation must survive; DEC-29 diff-check"
+   ],
+   "sequencingNotes": "Phase 0 items 4-5 (DELIV-4, DELIV-5/NEDGE-4) plus the Phase 2 reporting defects. Waits only for the cron file to be free (DC P5) — everything else is wave-A merged. Order: emailRender + recordTime → ticket routes → dispatch forward → digest → drain reporting → admin panel → purge → attribution migration → tests.",
+   "decisionsNeeded": [
+    "Digest timing/timezone (NEDGE-12 dw2/dw3): default keep the 03:00 UTC cron (no new vercel.json entry — cron :305-310), label the digest by the recipient's org timezone when configured, else label 'UTC'; an org-level timezone setting is recorded as a new finding, not built here",
+    "One-click unsubscribe scope: default sets email_enabled=false (master switch) — the documented meaning of that toggle",
+    "Suppressed rows (DELIV-8): default report-then-purge in the same plan UI; no admin 'abandon' action added"
+   ],
+   "alreadyResolvedElsewhere": [
+    "DELIV-4 dw1/dw2 ← 20261047 SELECT/UPDATE policies (SURF-17/SURF-18)",
+    "DELIV-1 dw1/dw2 ← 20261047 email_notif_insert + queueExternalEmail removal (SURF-17)"
+   ]
+  },
+  {
+   "name": "N7 CORNER — the dock gets a contract: cap, priority, offsets, mobile, dismissals that stick, failures that show, jobs that survive (report 06 + TAX-14/TAX-8/RT-11/OS-4)",
+   "findings": ["STACK-1", "STACK-2", "STACK-3", "STACK-4", "STACK-5", "STACK-6", "STACK-7", "STACK-8", "STACK-9", "STACK-10", "STACK-11", "STACK-13", "TAX-14", "TAX-8", "RT-11", "OS-4"],
+   "severityMix": "12 MEDIUM, 4 LOW",
+   "files": [
+    "components/ui/CornerDock.tsx (portaled to document.body at the top band from a new lib/zLayers.ts (STACK-10 dw1, TAX-14 dw4); slots {jobs (pinned nearest the corner), transient} with an explicit priority instead of append order and a visible cap of 3-4 + '+N more' expander (STACK-9); max-h-[calc(100dvh-2rem)] overflow-y-auto (RT-11 dw3/OS-4 dw3); bottom offset from a --dock-bottom CSS var any page tray sets (STACK-7 dw2); left shift from a 'right rail occupied' context the drawers set (STACK-11); resolves the target with useLayoutEffect/observer so the fallback never paints a duplicate and retries when the dock mounts after auth (STACK-5); mobile collapses to one summary pill (STACK-7 dw3); role='region' aria-live='polite' on the dock — NEDGE-5 dw2 for N3)",
+    "components/providers/ToastProvider.tsx (cap newest 3-4, remainder collapsed into one card that opens the Center; identical (kind+resourceId) toasts within a window coalesce with a count; the auto-dismiss timer starts only when the card is within the visible stack; cards w-[min(20rem,calc(100vw-2rem))]; role='status' on the list, role='alert' for error toasts, aria-label 'Dismiss' on the X — RT-11/OS-4/STACK-7/NEDGE-5 limb)",
+    "new lib/zLayers.ts (every overlay layer number in one module; dock strictly above modal/backdrop layers) + components/documents/MetadataStagingModal.tsx :461, components/assets/AssetPhotoUploader.tsx :140, components/documents/CustomizeNodeModal.tsx :98 read their z from it (STACK-10 dw2)",
+    "new hooks/useDismissed.ts (the FirstRunHint pattern — components/ui/FirstRunHint.tsx:22-47 — generalised: localStorage keyed by org, hydration-safe, cleared on sign-out alongside the intel-status- keys) — TAX-8 dw1 / STACK-6 dw2",
+    "components/providers/KnowledgeIndexIndicator.tsx (:92 setHidden(false) removed — new work reopens as the minimized pill at most; :109 the empty catch binds the error into DriveState.failed[] and the card renders 'N document(s) could not be indexed' with the reason and a link to /knowledge/[libraryId], never a green check when failed.length > 0 — STACK-3/STACK-6/TAX-8)",
+    "components/providers/BackupIndicator.tsx (:27 renders through CornerPortal in the jobs slot instead of fixed bottom-5 left-5 — STACK-8 dw1 / TAX-14 dw2 without touching ServiceWorkerManager; minimize pill per KnowledgeIndexIndicator :131-146; Cancel behind appConfirm — STACK-8 dw2/dw3)",
+    "components/providers/UploadIndicator.tsx (:24-25/:55-60 a 'cancelled' status rendered neutral 'Stopped' on the done timing — STACK-2 dw2; per-file failure text stays visible under the new cap)",
+    "lib/storage.ts (:62-65 UploadActivityStatus gains 'cancelled'; both catch sites emit it for UploadCancelledError before rethrowing — STACK-2 dw1; the multipart catch gets the same branch)",
+    "lib/uploadActivity.ts (a beforeunload guard registered while inFlight > 0, modelled on lib/clientBackup.ts:211-248 — STACK-13 dw1)",
+    "components/system/UpdatePill.tsx :41-47 (reload suppressed with a warning while isUploading() — STACK-13 dw2)",
+    "components/knowledge/SemanticIndexPanel.tsx (:65 a cleanup sets stopRef.current = true on unmount so the loop cannot outlive its Stop control; optionally publishes to a module store + CornerPortal card — STACK-1)",
+    "components/documents/EditOverlapBanner.tsx (:41-42 dismissed persisted via useDismissed; 'Heads-up sent' derived from recent overlap_advisory rows for (uid, documentId) rather than local state — TAX-8 dw3; the notifyMany write itself is unchanged here)",
+    "components/documents/StagingTray.tsx :20 (sets --dock-bottom while mounted) + components/documents/InspectorDrawer.tsx :42 / components/documents/HistoryDrawer.tsx :161 (set the right-rail-occupied context while open) — STACK-7/STACK-11",
+    "components/projects/UndoToastHost.tsx :21 + components/graph/BackToGraphChip.tsx :24 (one bottom-centre dock mirroring CornerDock; both portal into it — STACK-4)",
+    "app/(protected)/layout.tsx :72-80 (mount order: dock first, indicators, BackToGraphChip through the centre dock; nothing else in this file — N4 adds its provider at :239 later)",
+    "new lib/__tests__/cornerDock.test.ts (40 upload events do not exceed the cap; a cancelled upload renders 'Stopped'; a failed ingest never renders the green branch; toast coalescing)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "None on other packages — wave A; none of these files is in a DC, public-surfaces, admin-and-org or identity plan (checked against all four)",
+    "components/pwa/ServiceWorkerManager.tsx is public-surfaces PKG-1's (OFF-3/OFF-4) — NOT edited: STACK-8/TAX-14 are satisfied by moving BackupIndicator into the right dock; TAX-14 dw3 ('one component owns a newer build exists', UpdatePill + the SW waiting-worker signal) is recorded as a new finding to be worked after PKG-1 merges, per DEC-31",
+    "Every layout/animation claim in report 06 was read from classes, not observed (sequencing 'Verification you cannot skip') — each is reproduced in a browser before and after; STACK-5 and STACK-9's ToastProvider-outside-ProtectedContent timing is SUSPECTED and is the first thing to observe",
+    "app/globals.css:385-392 reduced-motion rule covers animation utilities — keep the class route for any new motion"
+   ],
+   "sequencingNotes": "Report 06 in one package because CornerDock + ToastProvider are the shared substrate of every finding in it. Order: zLayers + dock contract (STACK-9/10/11/5/7) → toast cap/coalesce (RT-11/OS-4) → jobs (STACK-2/3/6/8/13/1) → dismissals (TAX-8) → bottom-centre (STACK-4) → TAX-14 residual recorded. N3 (aria on bell/center) and N4 (layout mount) follow.",
+   "decisionsNeeded": [
+    "Visible cap: default 4 cards (toasts + job cards together), '+N more' opens the Center",
+    "Dock layer: default portal to document.body at a top band above every modal (alternative: renumber every modal below 300)",
+    "TAX-14 dw3 (unify the two 'new version' surfaces): default DEFER to after PKG-1, opened as a new finding here rather than touching PKG-1's file"
+   ],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "N8 PRODUCERS-FREE — the census holes whose files no other fleet owns (Phase 2 census, severity order)",
+   "findings": ["PROD-3", "PROD-14", "PROD-2", "PROD-5", "PROD-11", "PROD-6"],
+   "severityMix": "2 HIGH, 4 MEDIUM",
+   "files": [
+    "lib/branches.ts (:216 resolveBranch audience mirrors announceBranchOpened :148 — { involved: [branch.createdBy], roles: ['DocCtrl'] }; resolving marks the matching unread branch_open rows read by metadata.branchId — PROD-3 dw1/dw2; the actor-strip at dispatch :87 still applies)",
+    "lib/markupRequests.ts (:46-95 createMarkupRequest emits kind 'markup_request', category 'assignment', to input.requestedFromUserId regardless of projectId; updateMarkupRequest :119-148 notifies the original requester on resolve/share — PROD-14)",
+    "app/api/auth/request-access/route.ts (:103-116 after the insert: emit to the Admin/DocCtrl pool with a link to the pending list, actor NULL — PROD-2 dw1; the rate limiter and IDENT-3 handling untouched) + app/api/admin/access-requests/route.ts :58-62 (decline queues an email to the address on the row via /api path, server-side) + app/api/admin/create-user/route.ts :40-41 (approval emails the requester) — PROD-2 dw2",
+    "new lib/libraryNotify.ts (notifyLibraryDocsAdded(orgId, libraryId, count, firstLabel) extracted from app/(protected)/documents/[libraryId]/page.tsx:2384-2397 verbatim, audience {followers:true}, channels ['inapp'] per PROD-7 dw3) + components/documents/CsvImportModal.tsx :166 (calls it after a successful batch — PROD-5 dw1/dw2; the page's own call-site swap is N9's, after DC P6/IS-P1)",
+    "lib/milestones.ts (setMilestoneStatus, applyMilestoneMoves emit to audience { projectId } — the dispatcher branch nothing takes today; milestone assignment emits a new kind milestone_assigned to the assignee; a slip past baseline emits to the project owner — PROD-11; new kinds registered in lib/notificationKinds.ts (N2 merged) with section 'projects')",
+    "lib/changeOrders.ts, lib/checklists.ts, lib/turnover.ts (change-order submit/approve/reject → project members + cost owner; punch/checklist assignment → assignee — PROD-6 dw1/dw2; lib/costs.ts, lib/companies.ts, lib/equipmentBridgeServer.ts left silent with the decision recorded in each file's header — PROD-6 dw3; lib/documentShares.ts is DC P1 SHARE's — pointer only)",
+    "lib/inAppNotifications.ts + lib/notificationKinds.ts (add milestone_assigned, milestone_slipped, change_order_status, access_request_pending — one edit each, N2 merged)",
+    "lib/__tests__/producers.test.ts (new: resolving a branch clears the DocCtrl pool's branch_open; a markup request without a project still notifies; a CSV import notifies library followers; a milestone move reaches project members)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "N2 merged (new kinds must be registered or the never-guard fails the build — that is the point)",
+    "N5 merged (recipients are filtered to active members; the write rails accept the new kinds because the reference table is seeded from KIND_META)",
+    "admin-and-org P5 (app/api/auth/request-access/route.ts — ORG-8 residual) and P8 (app/api/admin/create-user/route.ts — ALOG-4) edit the same routes LATER and rebase on this; A&O runs after the DC waves",
+    "projects-and-cost / projects-tab (unplanned) own lib/milestones.ts, lib/changeOrders.ts, lib/checklists.ts, lib/turnover.ts conceptually — cross-reference from those areas when planned; this package adds emit() calls only, no behaviour change to the mutators",
+    "DEC-35: audiences derive from roles the way holds.ts:267 already does (Admin/DocCtrl are system roles, not facility vocabulary); no new role-name branching",
+    "PROD-6/PROD-11 are 'deliberately last' in Phase 2 — do them after PROD-2/PROD-14/PROD-3 within this package"
+   ],
+   "sequencingNotes": "Phase 2 census holes in the sequencing file's order: PROD-2 → PROD-14 → PROD-3 (PROD-9 is N9's — DC P5 owns lib/holds.ts) → PROD-5 → then PROD-6/PROD-11 last. Wave B; concurrent with DC wave 1 because none of these files is in a DC package.",
+   "decisionsNeeded": [
+    "PROD-2 audience: default the org's Admin + DocCtrl pool (mirrors the holds audience), bell + email, link to the pending list",
+    "PROD-6 scope: default wire change orders (submit/approve/reject) and punch/checklist assignment only; costs, companies, equipment registry recorded as deliberately silent (pull surfaces exist)",
+    "PROD-11 slip threshold: default any move of a baselined milestone's date past its baseline notifies the project owner once per rebase, not per milestone"
+   ],
+   "alreadyResolvedElsewhere": [
+    "PROD-2 pending list + decline route + limiter ← EGRESS-5 / DEC-19 (20261023, commit 44711ca)"
+   ]
+  },
+  {
+   "name": "N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — the fixes that live in document-control's files, plus splitting the overloaded kinds (after the DC waves)",
+   "findings": ["PROD-9", "PROD-4", "PROD-12", "NEDGE-11", "NEDGE-8", "TRAIL-4", "PROD-13", "TAX-13", "OS-6"],
+   "severityMix": "9 MEDIUM",
+   "files": [
+    "lib/holds.ts :249-267 (resolve effectiveOwnerForDocument (lib/ownership.ts:35) and add the owner uid; pass audience.projectId when the document is on a project — PROD-9; after DC P5 HOLDS)",
+    "lib/projects.ts :678-712 (notifyProjectAudience passes audience { projectId, followers: true } instead of hand-resolving members ∪ watchers — PROD-4 dw2) + lib/staleCopies.ts :294-305, lib/workPackages.ts :333-345, lib/checkoutEpisodes.ts :658-667, lib/revisionImpact.ts :135-150, lib/distributionAcks.ts :168-192 (document-scoped emits add followers: true alongside involved — PROD-4 dw1; a test asserts a subscriptions row on a document reaches resolveRecipients for every document kind — dw4; after DC P2/P5/P6/P8)",
+    "lib/transmittals.ts (:381-383 transmittalPortalUrl → publicOrigin(), refusing to build a relative link — NEDGE-11 dw1; sendTransmittalEmail :274-310 refuses/warns on an empty origin — dw2; issueTransmittal :550-584 emits an internal transmittal_issued row to the document owner/library followers; acknowledgeTransmittal :586-620 emits the same ack_complete the portal route writes — PROD-12; after DC P7) + app/api/transmittal/route.ts :161-185 (the manual and portal ack paths converge on one helper; :181 timestamp through lib/recordTime.ts — NEDGE-12's second site) + app/api/transmittal/send-email/route.ts (absolute-origin assertion; test asserts an https:// href — NEDGE-11 dw3)",
+    "lib/dataRestore.ts :92-99 (SKIP_TABLES.subscriptions removed — it is the watch table, not billing (lib/subscriptions.ts:3-5 vs lib/subscription.ts:3-5); subscriptions joins the restore order with uid remapping; a restore test asserts a non-zero subscriptions count — NEDGE-8 dw1/dw3; after DC P10 and admin-and-org P1)",
+    "app/(protected)/documents/[libraryId]/page.tsx (:1300-1335 the ?doc= deep-link effect marks that document's unread notifications read for the current user, the pattern at app/(protected)/requests/[id]/page.tsx:982-984 — TRAIL-4 dw1; :2384-2397 notifyLibrarySubscribers replaced by N8's lib/libraryNotify.ts — PROD-5 call-site half, PROD-7 dw3; after DC P6 and IS-P1) + app/(protected)/projects/[id]/page.tsx (project_* rows marked read on visit — TRAIL-4 dw2; after IS-P1)",
+    "app/(protected)/checkouts/page.tsx :242-269/:483-518 (the nudge's 'already sent' state and refusal derived from recent checkout_conflict rows carrying metadata.nudge for (actor, recipient, document) inside a cooldown — the lib/distributionAcks.ts:328-345 pattern — and the write goes through N12's nudge helper once it exists — OS-6; after DC P6)",
+    "kind split (PROD-13/TAX-13): lib/distributionAcks.ts :168-192/:431-440 → ack_requested / ack_overdue (existing kinds) and its read-back :335-340 drops 'doc_superseded'; lib/staleCopies.ts :297 → doc_recalled; lib/revisionImpact.ts :138 → doc_upstream_changed; lib/workPackages.ts :336 and lib/postPublish.ts :213 → package_doc_stale / package_doc_retired; lib/checkoutEpisodes.ts :661 → checkout_force_released; app/api/cron/maintenance/route.ts :365 → checkout_stale_escalation; lib/projects.ts :1111 → checkout_auto_released; app/api/intake/upload/route.ts :411 keeps doc_superseded (a real supersede); lib/checkoutEpisodes.ts :646 'SYSTEM ALERT:' wording aligned with the notification title — TAX-3 dw2; each new kind classified in lib/notificationKinds.ts with its own icon/section/actionRequired — TAX-13 dw3; no kind's meaning depends on metadata — dw2",
+    "new migration 2026NNNN_notification_kind_split.sql (INSERT the new kinds into notification_kinds; UPDATE existing notifications rows by their metadata discriminators — ackRequest → ack_requested, recall → doc_recalled, workPackageId → package_doc_stale, retirement → package_doc_retired, autoReleasedSessionId → checkout_auto_released; DEC-30 inventory counts per discriminator first; rows with no discriminator stay doc_superseded)",
+    "lib/__tests__/kindSplit.test.ts (new: every producer's kind literal is in the union and classified; the distributionAcks read-back finds its own rows under the new kinds; the backfill mapping is exhaustive over the discriminators the audit enumerated)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "DC wave 1 (P2 EGRESS: lib/staleCopies.ts; P5 HOLDS: lib/holds.ts, lib/distributionAcks.ts; P6 CHECKOUT: lib/checkoutEpisodes.ts, lib/projects.ts, app/(protected)/checkouts/page.tsx, app/(protected)/documents/[libraryId]/page.tsx; P10 EDGES: lib/dataRestore.ts) and wave 2 (P7 TRANSMITTALS: lib/transmittals.ts, app/api/transmittal/*; P8 FIELD: lib/workPackages.ts; P1 SHARE: lib/documentShares.ts pointer) ALL merged — every file here is in a DC package",
+    "identity IS-P1 SESS-6 merged (documents/[libraryId]/page.tsx, projects/[id]/page.tsx)",
+    "admin-and-org P1 merged (lib/dataRestore.ts planRestore) — or hand NEDGE-8 to A&O P1 as a one-line pointer if it runs first; A&O did not plan it, so this package owns it",
+    "N2, N5, N6 merged (registry, write rails accept new kinds via the reference table, recordTime helper, dispatch link forwarding)",
+    "GAP-207 'Do not split overloaded kinds' inside the registry consolidation — this is the separate change with its own migration the spec asks for",
+    "DEC-30: paste the backfill SQL; the code half is RESOLVED when the producers write the new kinds; old rows render under the old kind until the migration is confirmed (KIND_META keeps doc_superseded)",
+    "DEC-31: PROD-4's 'every document-scoped emit' means the five sites the finding cites, not a census conversion"
+   ],
+   "sequencingNotes": "Wave D — waits for the document-control fleets because every file is theirs; TRAIL-4 additionally waits for IS-P1. Order: PROD-9 → PROD-4 → NEDGE-11/PROD-12 → NEDGE-8 → TRAIL-4/PROD-5 call site → OS-6 → the kind split last (largest blast radius; migration inventory first).",
+   "decisionsNeeded": [
+    "New kind names for the split: default doc_recalled, doc_upstream_changed, package_doc_stale, package_doc_retired, checkout_force_released, checkout_stale_escalation, checkout_auto_released; distribution acks reuse ack_requested/ack_overdue",
+    "NEDGE-8 dw2 (rename lib/subscription.ts vs lib/subscriptions.ts apart): default DEFER — ~20 importers; record as a new finding; fix the SKIP_TABLES entry and its justification now",
+    "OS-6 cooldown window: default 24h per (actor, recipient, document), refused by the writer with a legible reason"
+   ],
+   "alreadyResolvedElsewhere": [
+    "PROD-4 ticket half (dw3) ← R&P WF-18/WF-19 (lib/ticketTransitions.ts:215, workflow-action/route.ts:320-326) — verify and record; no edit to lib/ticketTransitions.ts (public-surfaces PKG-5 / drafting-flow file)"
+   ]
+  },
+  {
+   "name": "N10 PUSH — connect the two built ends of Web Push (GAP-205); OS-11 closes by record",
+   "findings": ["OS-2", "TAX-12", "DELIV-14", "RT-7", "OS-3", "OS-9", "OS-10", "OS-11"],
+   "severityMix": "7 MEDIUM, 1 LOW",
+   "files": [
+    "new lib/push/sendPush.ts (web-push re-added to package.json; VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT in .env.example next to CRON_SECRET, whose stale reminders/run comment is corrected; sendPushSafe(payload) NEVER throws and never blocks inapp/email — the deleted 0bb13ed contract; 404/410 delete the push_subscriptions row — OS-2 dw4)",
+    "lib/notify/dispatch.ts (:20 NotifChannel gains 'push'; a third block guarded by channels.includes('push') that sends only for KIND_META.pushWorthy kinds, only to recipients with push_enabled AND at least one push_subscriptions row, with a kind-titled body carrying no document number/reason/requester name — OS-9 dw1-dw4, OS-10 dw1/dw3, GAP-205 'Do not put restricted content in the push body'; after N5/N6)",
+    "new app/api/push/subscribe/route.ts + app/api/push/unsubscribe/route.ts (authenticated; insert/delete own endpoint rows — the table's own-row RLS from 20260804 already fits)",
+    "new components/settings/PushOptIn.tsx mounted on app/(protected)/settings/notifications/page.tsx (N1 merged): a 'Turn on notifications for this device' control that explains what will be sent BEFORE calling Notification.requestPermission(), then registration.pushManager.subscribe({userVisibleOnly:true, applicationServerKey}) from navigator.serviceWorker.ready; a decline is recorded and the app stops asking; 'denied' renders an explanatory state; the push_enabled toggle rendered as a real control — OS-3, OS-10 dw2, TAX-12 dw1/dw3",
+    "public/sw.js :225-260 ONLY (the push/notificationclick block: read data.url/tag exactly as sendPush writes them; the 'reminder cron' comment corrected) — after DC P2 EGRESS (XEDGE-6) and public-surfaces PKG-1 SW-OFFLINE, whose caching/version sections are not touched",
+    "app/api/cron/maintenance/route.ts (one step: prune push_subscriptions rows flagged dead by 410s and stale last_reminded_at; NO new vercel.json entry — cron :305-310 / sequencing 'No new cron entry, ever'; after N6 and PS-VERIFY)",
+    "lib/__tests__/sw.test.ts (extend, PKG-1's harness: notificationclick focuses an existing client and navigates it rather than opening a duplicate — GAP-205 acceptance 4) + new lib/__tests__/pushChannel.test.ts (emit with channels ['inapp'] never attempts push; push_enabled=false stops delivery without unsubscribing; a 410 prunes)",
+    "record-only: lib/schemaExpectations.ts:103, lib/exportTables.ts:169, lib/dataRestore.ts:98 become truthful — OS-11 closes with no edit (those files are PS-VERIFY's, DC P10's and A&O P2's)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "N1 merged and its migration applied (GAP-203: no push without a working opt-out — push_enabled can be set only once the page saves)",
+    "N5 merged (dispatch.ts base; DEC-43 redaction posture reused for the push body)",
+    "N6 merged (cron file ownership sequence: DC P5 → N6 → PS-VERIFY → this → A&O P5)",
+    "DC P2 EGRESS (XEDGE-6, DEC-44 'sw caches no API response') and public-surfaces PKG-1 merged — public/sw.js and lib/__tests__/sw.test.ts are theirs first; this package edits only the push block on the merged file",
+    "N2 merged (KIND_META.pushWorthy — the per-kind decision GAP-207 says must not become a seventh map)",
+    "The build-vs-remove fork (DELIV-14 dw2 / OS-2 dw5): the owner asked for OS presence, so BUILD; if reversed, the removal set is sw.js push block + 20260804 + the three registrations + push_enabled, in one change"
+   ],
+   "sequencingNotes": "Phase 5 item 4 (after NEDGE-5 in N3, the login nudge is N12). Four lenses (OS-2, TAX-12, DELIV-14, RT-7) found the same decapitated stack — one build closes all four; record each with the pointer. Order: sendPushSafe + env → subscribe routes + opt-in → dispatch channel → sw.js block → cron prune → tests. iOS needs the installed PWA (app/manifest.ts already satisfies it).",
+   "decisionsNeeded": [
+    "Which kinds are push-worthy: default SMALL — checkout_force_released, hold_opened, ack_requested, review_requested, ticket_mention, ticket_assigned; everything else bell/email only",
+    "push_enabled default for existing rows: default leave TRUE but gate delivery on an explicit per-device push_subscriptions row (OS-10 dw1) — nobody receives a push without having clicked the control",
+    "Sender location: default inside emit() at event time (not batched in the cron) so push is timely; the cron only prunes"
+   ],
+   "alreadyResolvedElsewhere": [
+    "OS-11 ← closes by record once this package lands (no file edit)"
+   ]
+  },
+  {
+   "name": "N11 TRAIL — the badge continues below the sidebar: library, folder and document markers through the ACL the list uses (GAP-202 steps 3)",
+   "findings": ["TRAIL-1", "TRAIL-6", "TRAIL-11", "TAX-10"],
+   "severityMix": "2 MEDIUM, 2 LOW",
+   "files": [
+    "components/providers/AttentionProvider.tsx / hooks/useTicketNotifications.ts (N4's; adds useAttentionFor(section | resourceId) and a per-library / per-folder roll-up map alongside sectionCounts — TAX-10 dw1, TRAIL-6 dw2; each document-scoped item is resolved ONCE to (library_id, collection_id) through the container-chain resolver DC P4 REVIEW lands (lib/containerChain.ts / lib/docClass.ts:49-58) — never a third walk; the folder count fans up collections.pathIds — TRAIL-6 dw3; a failed resolution renders as unknown, never zero — GAP-202 acceptance 6; the roll-up runs under the viewer's own client so a document the ACL hides is never counted — the permission trap)",
+    "new components/documents/AttentionDot.tsx (the requests queue's red-pulsing / blue dot vocabulary from app/(protected)/requests/page.tsx:1001-1039, one component — TRAIL-11 dw1/dw3, source documented as notification-derived)",
+    "app/(protected)/documents/page.tsx :445-460 (library card count), components/documents/FolderRail.tsx + FolderGrid.tsx (per-folder roll-up for the open library), components/documents/DocGridView.tsx + the document table row in app/(protected)/documents/[libraryId]/page.tsx (per-row marker; mark the path to the thing, not every row — GAP-202 'Do not put a number on every row'), app/(protected)/projects/page.tsx :216-228 (project card marker — TRAIL-11 dw2)",
+    "producers outside DC's files carry metadata.libraryId at emit time where they already hold it (lib/branches.ts:144, components/documents/EditOverlapBanner.tsx:92) — TRAIL-6 dw1 for the free producers; DC producers (holds, distributionAcks, staleCopies, postPublish) are read through the provider's resolution instead of being edited",
+    "new lib/__tests__/attentionRollup.test.ts (a document notification rolls up to its folder and library and both clear when read; a viewer without read on the document sees no count that includes it — both directions; a failed roll-up query is 'unknown')"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "N2 (GAP-201 — 'Build the badge roll-up before mapping the kinds and you will roll up 22 of 48') and N4 (one provider per tab — 'a prerequisite for adding in-page markers without making the fan-out worse') merged",
+    "N3 merged (GAP-202 step 1, the section-scoped Center) and N9 merged (step 2, mark-read on arrival) — steps 3-4 are here and in N2 (TRAIL-5)",
+    "DC P4 REVIEW merged — it owns lib/docClass.ts and creates the DEC-36 container-chain resolver; DC P6 CHECKOUT and identity IS-P1 SESS-6 merged — they own app/(protected)/documents/[libraryId]/page.tsx, documents/page.tsx, projects/page.tsx",
+    "GAP-202 'Do not': no notifications-per-container table; no service-role roll-up handed to the client; no third chain walk",
+    "TAX-10 dw4 (one named 'Nudge' replacing three ad-hoc pokes) is delivered for tickets by N12/GAP-206; the three document pokes (EditOverlapBanner sendHeadsUp, DistributionRecall nudgeStaleHolders — DC P2's file, orchestrator notify_personnel) keep their names and are recorded as a new finding — DEC-31"
+   ],
+   "sequencingNotes": "Phase 3 — 'only after Phase 0's sectionForKind fix'. Wave D. Order: selector + roll-up in the provider → AttentionDot → library cards → folder rail/grid → document rows → project cards → tests. Acceptance is GAP-202's six items, checked individually.",
+   "decisionsNeeded": [
+    "Marker density: default a count on the library card and on the folders on the path to a badged document; a dot (no number) on the document row; nothing on unaffected rows",
+    "Source of truth: default notification-derived (matches the sidebar); the register-state alternative (lib/docControlRegister.ts) is recorded as the future path for per-document compliance pills"
+   ],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "N12 NUDGES — the login nudge with the bell animation, and the person-to-person nudge recorded on the ticket (GAP-204 + GAP-206)",
+   "findings": ["OS-8", "OS-5"],
+   "severityMix": "2 LOW (+ GAP-204, GAP-206 build specs)",
+   "files": [
+    "new migration 2026NNNN_notification_seen_and_nudge.sql (notification_preferences.notifications_seen_at TIMESTAMPTZ and nudge_dismissed_until TIMESTAMPTZ — own-row RLS already fits; no new table — OS-8 dw1/dw3; DEC-30 paste)",
+    "components/providers/AttentionProvider.tsx (N4's; stamps notifications_seen_at when the bell or the Center opens — OS-8 dw1; exposes newSinceSeen = max(created_at) > seen_at and a count-increase event for the animation)",
+    "new components/notifications/LoginNudge.tsx mounted in app/(protected)/layout.tsx beside NotificationListener :72 (inside the auth gate, below RoleProvider, inside NotificationCenterProvider): a dismissible corner card in N7's dock, fires at most once per session and never within the server-remembered dismissal window, never when unread is zero, dismissal counts as seen not read, ignores RoleContext's SIGNED_IN re-emits (RoleContext.tsx is PKG-1's and IS-P1's — read via useRole only) — GAP-204 acceptance 1-3, OS-8 dw2/dw4",
+    "components/notifications/NotificationBell.tsx (N3's; a time-boxed spin on a count INCREASE and a count-up as animation utilities so app/globals.css:385-392 neutralises them under prefers-reduced-motion; the treatment distinguishes action-required from FYI so it does not collide with Sidebar.tsx:518's red pulse — OS-5 dw1-dw3, GAP-204 acceptance 4-6)",
+    "new app/api/tickets/nudge/route.ts (server route modelled on app/api/tickets/comment/route.ts:26-146: verifies the caller is involved in the ticket, derives the recipient from lib/ticketAttention.ts / WorkflowEngine.getActions — offered only when the ticket is waiting on that specific person; refuses a second nudge inside the window with a legible reason; writes a ticket_comments/history entry ('Nudged <name> — needs engineer sign-off') so the ticket carries the record; emits ticket_nudge (new kind, section 'requests', KIND_ICON entry — OS-7 dw1/dw3) with bell + preference-gated email, deep-linked to the action; no free text; no role-pool recipient — GAP-206 acceptance 1-5)",
+    "new lib/nudgeRateLimit.ts (count recent rows in a window, FAIL OPEN on a query error — the signup limiter's stated behaviour app/api/auth/signup/route.ts:19-33 / request-access :18-28; the second caller, so extracting it is in scope — GAP-206 acceptance 6; also consumed by N9's OS-6 checkouts nudge)",
+    "app/(protected)/requests/[id]/page.tsx :2057-2059 (a 'Nudge' button beside the engineer-reviewer status dot, shown only when the route would accept it, with the visible 'Nudged N×' count — after IS-P1 and PS PKG-5; coordinate with the drafting-flow fleet when planned)",
+    "lib/notificationKinds.ts + lib/inAppNotifications.ts (ticket_nudge added — N2 merged) + the notification_kinds reference row (N5's table)",
+    "lib/__tests__/loginNudge.test.ts + ticketNudgeRoute.test.ts (new: once per session; dismissal survives reload and another device; zero unread → no nudge; reduced-motion disables the spin; a second nudge in the window is refused; every nudge appears in ticket history; a rate-limit query failure does not block)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "N1 merged and applied (GAP-203 — 'no working opt-out, no nudge'; the sequencing file's whole rationale for NEDGE-2 going first)",
+    "N3 merged (NEDGE-5 — 'Accessibility is a prerequisite, not a follow-up': aria-label on the bell, the polite live region, the labelled dialog)",
+    "N5 merged and applied (OS-1 — 'a nudge button on top of an unconstrained insert path is a harassment vector'); N2 merged (GAP-206 depends on GAP-201 so the nudge kind badges the Requests row, not the dead scratchpad bucket — OS-7)",
+    "N4 merged (provider owns the seen stamp), N7 merged (the card lives in the dock), N9 merged (OS-6 consumes the limiter), N10 merged if push is to be excluded from repeat nudges ('Do not escalate the channel on repeat')",
+    "identity IS-P1 SESS-6 and public-surfaces PKG-5 merged (app/(protected)/requests/[id]/page.tsx); drafting-flow (unplanned) owns that page and lib/ticketTransitions.ts — the nudge writes through the comment/history path, not through computeTransition",
+    "DEC-38 / DEC-39: the nudge is a recorded event on the ticket (never only the bell) and a delivered push/bell is not a delivery record; DEC-12/DEC-37 govern who counts as 'the person it waits on' via the engine",
+    "GAP-204 'Do not': no blocking modal; no animation on every render; no localStorage-only dismissal; GAP-206 'Do not': no free recipient picker, no free text, no channel escalation"
+   ],
+   "sequencingNotes": "Phase 5 items 2, 3 and 5 — last in the area by the sequencing file's order (1 accessibility → 2 login nudge → 3 animation → 4 push → 5 poke). Order inside the package: seen-stamp migration + provider → LoginNudge → bell animation (OS-5) → limiter → nudge route → request-page button → tests.",
+   "decisionsNeeded": [
+    "Nudge window: default 24h per (ticket, sender, recipient); visible count on the ticket",
+    "Login-nudge dismissal window: default 8h server-side (nudge_dismissed_until), once per browser session on top",
+    "Animation: default one 600ms spin + a 1-2-3 count-up on increase only; no permanent pulse"
+   ],
+   "alreadyResolvedElsewhere": []
+  }
+ ],
+ "crossAreaFileOverlaps": [
+  "app/api/cron/maintenance/route.ts ↔ DC P5 HOLDS (one step, running now), public-surfaces PS-VERIFY (prune call), admin-and-org P5 (one step) — notifications N6 owns the drain/digest/escalation regions and N10 adds one prune step; serialize DC P5 → N6 → PS-VERIFY → N10 → A&O P5",
+  "public/sw.js ↔ DC P2 EGRESS (XEDGE-6, running now: isCacheableResponse, VERSION, SIGN_OUT/SESSION) then public-surfaces PKG-1 SW-OFFLINE (full rewrite of the cache policy). THE DEAD PUSH HANDLERS (sw.js:225-260) cited by OS-2/TAX-12/DELIV-14/RT-7 ARE OWNED BY NOTIFICATIONS N10, which edits only that block after PKG-1 merges; P2 and PKG-1 must leave the block in place (or, if push is not rebuilt, N10 removes it together with 20260804 and the three registrations). lib/__tests__/sw.test.ts is P2's/PKG-1's harness; N10 extends it",
+  "lib/holds.ts, lib/distributionAcks.ts ↔ DC P5 HOLDS (wave 1) — N9 PROD-9/PROD-4/PROD-13 after",
+  "lib/checkoutEpisodes.ts, lib/projects.ts, app/(protected)/checkouts/page.tsx, app/(protected)/documents/[libraryId]/page.tsx ↔ DC P6 CHECKOUT (wave 1) — N9 TAX-3 wording line, TAX-13, PROD-4, OS-6, TRAIL-4, PROD-5 call site after; N11 markers after",
+  "lib/staleCopies.ts, components/documents/DistributionRecall.tsx ↔ DC P2 EGRESS (wave 1) — N9 kind split after; DistributionRecall's 'Recall sent' name stays (TAX-10 residual recorded)",
+  "lib/docClass.ts + the new lib/containerChain.ts (DEC-36) ↔ DC P4 REVIEW (wave 1) — N11 consumes, never re-implements",
+  "app/api/intake/upload/route.ts ↔ DC P4 REVIEW — three raw notifications inserts get a DELIV-7/NEDGE-13 pointer, not an edit",
+  "lib/transmittals.ts, app/api/transmittal/route.ts, app/api/transmittal/send-email/route.ts ↔ DC P7 TRANSMITTALS (wave 2) — N9 NEDGE-11/PROD-12/NEDGE-12 after",
+  "lib/workPackages.ts ↔ DC P8 FIELD (wave 2); lib/documentShares.ts ↔ DC P1 SHARE (wave 2) — N9 after / PROD-6 pointer",
+  "lib/dataRestore.ts ↔ DC P10 EDGES (IMMUTABLE_TABLES) and admin-and-org P1/P2 — N9 NEDGE-8 after both",
+  "lib/schemaExpectations.ts, lib/exportTables.ts ↔ PS-VERIFY, DC P10, A&O P2 — notifications never edits them (OS-11 closes by record; N4's tripwire is a new test file)",
+  "app/(protected)/admin/settings/page.tsx ↔ admin-and-org P8 (:110 only) — N6 edits :66-102 first; A&O rebases",
+  "app/api/admin/purge/route.ts ↔ admin-and-org P7 ALOG-8 (audit row) — N6 DELIV-8 edits the status filters first; A&O rebases",
+  "app/api/auth/request-access/route.ts ↔ admin-and-org P5 (ORG-8 residual); app/api/admin/create-user/route.ts ↔ A&O P8 (ALOG-4) — N8 PROD-2 first; A&O rebases",
+  "app/api/tickets/comment/route.ts, app/api/tickets/workflow-action/route.ts, lib/ticketTransitions.ts, app/(protected)/requests/[id]/page.tsx ↔ drafting-flow (unplanned; Round E WF-19/WF-24 just landed) and public-surfaces PKG-5 — N6 edits the fanOut email builders only; N12 adds the nudge button after IS-P1/PKG-5; PROD-4's ticket half closes by record (WF-18/19)",
+  "components/pwa/ServiceWorkerManager.tsx, components/providers/RoleContext.tsx ↔ public-surfaces PKG-1 (OFF-3/OFF-4/OFF-8) and identity IS-P1 — notifications never edits them (N7 moves BackupIndicator instead; N12 reads useRole only; TAX-14 dw3 recorded as a new finding for after PKG-1)",
+  "app/(protected)/documents/page.tsx, projects/page.tsx, projects/[id]/page.tsx, documents/[libraryId]/page.tsx ↔ identity IS-P1 SESS-6 (after all DC waves) — N9/N11/N12 after IS-P1",
+  "lib/publicOrigin.ts ↔ public-surfaces PS-STAMP (server fallback) — N6/N9 consume; emailRender refuses an empty origin rather than defaulting",
+  "app/(protected)/layout.tsx ↔ no other fleet; inside notifications N7 (:72-80) → N4 (:239) → N12 (:72) in that order",
+  "hooks/useTicketNotifications.ts, lib/inAppNotifications.ts, lib/notify/dispatch.ts ↔ no other fleet; inside notifications N2 → N4/N5/N6/N8 → N9/N10/N11/N12 in wave order",
+  "lib/milestones.ts, lib/changeOrders.ts, lib/checklists.ts, lib/turnover.ts, components/projects/ScheduleTab.tsx ↔ projects-and-cost / projects-tab (unplanned) — N8 adds emit() calls only; RT-12's fix is a migration + test, no ScheduleTab edit"
+ ],
+ "notes": "COVERAGE: all 102 OPEN ids assigned exactly once (N1 5, N2 15, N3 9, N4 12, N5 6, N6 10, N7 16, N8 6, N9 9, N10 8, N11 4, N12 2); the three REFUTED (NEDGE-1, STACK-12, TRAIL-10) are not queued (DEC-41). Gap specs: GAP-201→N2, GAP-203→N1, GAP-207→N2/N3/N6 (registry) + N9 (split), GAP-202→N3 (step 1) + N9 (step 2) + N2 (step 4) + N11 (step 3), GAP-205→N10, GAP-204/GAP-206→N12. VERIFIED AGAINST THE LIVE TREE (2026-09-23): NEDGE-2 reproduces verbatim (page :30/:40/:151 'immediate' vs schema.sql:673 CHECK 'instant'); sectionForKind still defaults to 'other' and the union is now 50 kinds (member_revoked, library_unowned added by R&P) so 28 are unmapped; tally(section,false) at hook :348; limit 50 at :223; useId channels at :182/:268; no subscribe status callback; ticket routes still build `/requests/${id}` at comment:304 and workflow-action:632; NotificationListener still has the org-wide checkout_messages channel (:38-73); ToastProvider/CornerDock uncapped; transmittalPortalUrl still reads window.location.origin (:381-383); SKIP_TABLES.subscriptions still carries the billing justification (dataRestore.ts:97); no pushManager/VAPID/web-push anywhere; zero aria-live/aria-label in NotificationBell.tsx and ToastProvider.tsx; beforeunload only in clientBackup and plot-plans; lib/containerChain.ts does not exist yet (DC P4 creates it). RECORD-ONLY CLOSES from Round E / R&P are listed under recordOnlyCloses — each is reproduced against the cited migration/route before being marked (DEC-29) and the reverse pointer written in the R&P report. CONCURRENCY WITH THE DOCUMENT-CONTROL WAVES: wave A (N1 PREFS-GATE, N2 KIND-REGISTRY, N5 DISPATCH-AND-WRITE-HOLES, N7 CORNER) and wave B (N3 SURFACES, N4 FEED-PROVIDER, N8 PRODUCERS-FREE) touch no file in DC wave 1 (P2/P4/P5/P6/P9/P10) or wave 2 and can run NOW; N6 EMAIL-PIPELINE waits only for DC P5 HOLDS to release app/api/cron/maintenance/route.ts; N10 PUSH waits for DC P2 + PKG-1 (public/sw.js); N9, N11 and N12 wait for every DC wave plus IS-P1 (and N9 for A&O P1) because every file they touch belongs to those fleets — the reason is file ownership, not logic. The DECs cited are all decided; no undecided DEC blocks a package. DC P2's in-flight DEC-44 (sw caches no API response) constrains N10's sw.js block. One new DEC to add (next free number after DC P2 takes DEC-44): the DB-side notification kind allowlist (N5). Product decisions are listed per package with a fail-safe default that applies unless overridden. MIGRATIONS: ~9 expected (N1 1, N4 1, N5 2, N6 1, N9 1, N10 1, N12 1, N2/N3/N7/N8/N11 0), five with a DEC-30 inventory before apply (N4 publication membership, N5 orphaned/tombstone rows and off-origin links, N9 discriminator counts); every migration re-creates a function from its NEWEST body (revoke_member from 20261043, trg_email_requeue_columns from 20261047) with lineDiff proof, never from an older file. NEW FINDINGS TO OPEN (DEC-31 remainders): update-available unification (TAX-14 dw3, after PKG-1); lib/subscription.ts vs lib/subscriptions.ts rename (NEDGE-8 dw2); org-level timezone setting (NEDGE-12 dw3); one named document-side poke (TAX-10 dw4). Every package runs the full ship loop (tsc → eslint touched → vitest → next build) and reproduces before fixing; every animation/layout claim (report 06, N7) is observed in a browser because none was."
+}
