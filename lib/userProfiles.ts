@@ -10,17 +10,17 @@
 //   * Never the ROLE letter — an avatar identifies a person, not a job.
 //
 // Fetches are batched + cached module-wide (avatars repeat constantly in
-// lists), and avatar paths resolve to signed URLs once per session.
+// lists), and avatar paths stay signed while an avatar showing them is mounted.
 
 import { supabase } from "@/lib/supabase";
-import { getSignedUrlForPath, peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
+import { peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
 
 export interface UserProfile {
   uid: string;
   displayName: string | null;
   email: string | null;
   avatarPath: string | null;
-  /** Resolved signed URL — filled lazily by resolveAvatarUrl. */
+  /** Resolved signed URL — read through cachedAvatarUrl (lib/storage's cache). */
   avatarUrl?: string | null;
 }
 
@@ -59,10 +59,12 @@ export function avatarToneOf(nameOrEmail?: string | null): string {
 const profileCache = new Map<string, UserProfile>();
 // Avatar URLs live in lib/storage's shared cache, which carries the window the
 // SERVER granted (EGR-4 / DEC-44 §2 — an hour, not the week this file used to
-// ask for). Per path seen this session: one subscription that re-signs before
-// the window closes and re-renders every avatar through notify(), or the
-// `null` marker for a path that could not be signed (not retried, as before).
-const avatarSubscriptions = new Map<string, () => void>();
+// ask for). Per path ON SCREEN: one ref-counted subscription (held by every
+// mounted UserAvatar showing it) that re-signs before the window closes and
+// re-renders avatars through notify(); it ends with the last holder, so an
+// avatar scrolled out of a roster hours ago is not re-signed all day. A path
+// the route refused to sign keeps a `null` marker (not retried, as before).
+const avatarHolds = new Map<string, { count: number; url: string | null; release: () => void }>();
 const failedAvatarPaths = new Set<string>();
 let pendingUids = new Set<string>();
 let pendingPromise: Promise<void> | null = null;
@@ -72,8 +74,8 @@ const listeners = new Set<Listener>();
 /** Test hook. */
 export function clearProfileCache(): void {
   profileCache.clear();
-  for (const unsubscribe of avatarSubscriptions.values()) unsubscribe();
-  avatarSubscriptions.clear();
+  for (const hold of avatarHolds.values()) hold.release();
+  avatarHolds.clear();
   failedAvatarPaths.clear();
 }
 
@@ -141,28 +143,42 @@ export function requestProfile(uid: string): void {
   })();
 }
 
-/** Resolve an avatar storage path to a signed URL, kept live for the session:
- *  the first call subscribes the path (re-signed before each granted window
- *  closes; avatars re-render through notify()), later calls read the cache. */
-export async function resolveAvatarUrl(path: string): Promise<string | null> {
-  if (failedAvatarPaths.has(path)) return null;
-  const live = peekSignedUrl(path);
-  if (live) return live.url;
-  try {
-    const url = await getSignedUrlForPath(path);
-    if (!avatarSubscriptions.has(path)) {
-      // A re-sign that fails ends the subscription by itself (no retry).
-      avatarSubscriptions.set(path, subscribeSignedUrl(path, (u) => {
-        if (u === null) failedAvatarPaths.add(path);
-        notify();
-      }));
-    }
-    notify();
-    return url;
-  } catch {
-    failedAvatarPaths.add(path);
-    return null;
+/** Keep `path` signed while the caller is on screen — UserAvatar holds it
+ *  from mount to unmount. The first holder of a path opens ONE lib/storage
+ *  subscription (a URL now, re-signed before each granted window closes;
+ *  a transient re-sign failure keeps the URL held, a refusal marks the path);
+ *  later holders share it; the last release ends it. Avatars re-render
+ *  through notify() only when the path's URL actually changes. Returns the
+ *  release; calling it twice is harmless. */
+export function holdAvatarUrl(path: string): () => void {
+  if (failedAvatarPaths.has(path)) return () => {};
+  let hold = avatarHolds.get(path);
+  if (!hold) {
+    const h = { count: 0, url: peekSignedUrl(path)?.url ?? null, release: () => {} };
+    h.release = subscribeSignedUrl(path, (u) => {
+      if (u === null) failedAvatarPaths.add(path);
+      if (u === h.url) return;
+      h.url = u;
+      notify();
+    });
+    avatarHolds.set(path, h);
+    hold = h;
   }
+  hold.count++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    hold.count--;
+    if (hold.count > 0) return;
+    hold.release();
+    if (avatarHolds.get(path) === hold) avatarHolds.delete(path);
+  };
+}
+
+/** Test hook: how many avatar paths currently hold a subscription. */
+export function heldAvatarPathCount(): number {
+  return avatarHolds.size;
 }
 
 /** Synchronous read of an already-resolved, still-live avatar URL:

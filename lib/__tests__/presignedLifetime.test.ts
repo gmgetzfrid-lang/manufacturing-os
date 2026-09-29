@@ -16,6 +16,12 @@
 //     cache that believed them would have served a dead URL for seven days.
 //     subscribeSignedUrl re-signs before the granted window closes; a census
 //     over the client call sites proves nobody asks above the ceiling.
+//   * Resilience of the re-sign (second fix pass): a re-sign that fails for a
+//     transient reason (the network after a laptop wakes, a 5xx) keeps the
+//     URL the caller holds and retries on a bounded backoff — only a REFUSAL
+//     (4xx) ends the subscription with `null`. The margin is a quarter of the
+//     granted window capped at a minute, so a short grant is never dead on
+//     arrival. Avatars hold their subscription only while mounted.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -78,6 +84,7 @@ import {
   resolvePresignedLifetime, PRESIGNED_MAX_SECONDS, PRESIGNED_MIN_SECONDS, PRESIGNED_DEFAULT_SECONDS,
 } from "@/lib/presignedLifetime";
 import { getSignedUrlForPath, peekSignedUrl, subscribeSignedUrl, clearSignedUrlCache } from "@/lib/storage";
+import { holdAvatarUrl, cachedAvatarUrl, onProfilesChanged, clearProfileCache, heldAvatarPathCount } from "@/lib/userProfiles";
 
 const root = process.cwd();
 const ORG = "12345678-1234-1234-1234-123456789abc";
@@ -260,6 +267,7 @@ describe("lib/storage — the client cache honours the granted window, not the r
     seq = 0;
     answer = () => ({ url: `https://r2/signed-${++seq}`, expiresIn: PRESIGNED_MAX_SECONDS });
     clearSignedUrlCache();
+    clearProfileCache();
     vi.stubGlobal("fetch", vi.fn(async (input: string) => {
       fetches.push(String(input));
       return new Response(JSON.stringify(answer()), { status: 200, headers: { "content-type": "application/json" } });
@@ -333,6 +341,214 @@ describe("lib/storage — the client cache honours the granted window, not the r
     await vi.advanceTimersByTimeAsync(PRESIGNED_MAX_SECONDS * 2000);
     expect(seen).toEqual([null]);
     stop();
+  });
+
+  // ── Second fix pass: a failed re-sign is not the end of the image ──────
+
+  /** fetch that fails `failures` times (rejecting like a dropped connection
+   *  or answering `status`) and then signs normally. */
+  function flakyFetch(failures: number, status?: number) {
+    let n = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      fetches.push(String(input));
+      if (n++ < failures) {
+        if (status) return new Response("busy", { status });
+        throw new TypeError("Failed to fetch");
+      }
+      return new Response(JSON.stringify(answer()), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+  }
+
+  it("a re-sign that fails transiently keeps the URL the caller holds and retries — never null, never a dead image", async () => {
+    const seen: Array<string | null> = [];
+    const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(seen).toEqual(["https://r2/signed-1"]);
+    flakyFetch(1);                                                            // the hourly re-sign hits a dropped connection
+    await vi.advanceTimersByTimeAsync((PRESIGNED_MAX_SECONDS - 60) * 1000);  // the margin: re-sign attempted and failed
+    expect(fetches).toHaveLength(2);
+    expect(seen).toEqual(["https://r2/signed-1"]);                          // no null — the caller keeps what it has
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(fetches).toHaveLength(2);                                          // not yet — bounded backoff, not a hammer
+    await vi.advanceTimersByTimeAsync(1_000);                                 // 15 s after the failure
+    expect(fetches).toHaveLength(3);
+    expect(seen).toEqual(["https://r2/signed-1", "https://r2/signed-2"]);
+    expect(peekSignedUrl(PATH)?.url).toBe("https://r2/signed-2");
+    stop();
+  });
+
+  it("the retry backs off 15 s → 30 s → 60 s (capped), resets after a success, and a 5xx is transient too", async () => {
+    flakyFetch(4, 503);
+    const seen: Array<string | null> = [];
+    const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(1);                                          // failed
+    await vi.advanceTimersByTimeAsync(15_000); expect(fetches).toHaveLength(2); // +15 s
+    await vi.advanceTimersByTimeAsync(30_000); expect(fetches).toHaveLength(3); // +30 s
+    await vi.advanceTimersByTimeAsync(60_000); expect(fetches).toHaveLength(4); // +60 s
+    await vi.advanceTimersByTimeAsync(60_000); expect(fetches).toHaveLength(5); // +60 s (capped) — this one signs
+    expect(seen).toEqual(["https://r2/signed-1"]);                          // nothing but the real URL ever reached the caller
+    flakyFetch(1);
+    await vi.advanceTimersByTimeAsync((PRESIGNED_MAX_SECONDS - 60) * 1000);  // next margin: fails once
+    expect(fetches).toHaveLength(6);
+    await vi.advanceTimersByTimeAsync(15_000);                                // backoff restarted at 15 s after a success
+    expect(fetches).toHaveLength(7);
+    expect(seen).toEqual(["https://r2/signed-1", "https://r2/signed-2"]);
+    stop();
+  });
+
+  it("coming back online (or to the foreground) retries at once instead of waiting out the backoff", async () => {
+    const win = new EventTarget();
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" as string });
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", doc);
+    flakyFetch(1);
+    const seen: Array<string | null> = [];
+    const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(1);
+    expect(seen).toEqual([]);
+    win.dispatchEvent(new Event("online"));                                   // wifi is back — do not wait 15 s
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(2);
+    expect(seen).toEqual(["https://r2/signed-1"]);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(fetches).toHaveLength(2);                                          // the backoff timer was replaced, not doubled up
+    // Not in a failed state: neither event triggers a call.
+    win.dispatchEvent(new Event("online"));
+    doc.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(2);
+    // A hidden tab waits for the foreground.
+    flakyFetch(1);
+    await vi.advanceTimersByTimeAsync((PRESIGNED_MAX_SECONDS - 60) * 1000 - 15_000); // the margin of the URL signed at t=0
+    expect(fetches).toHaveLength(3);
+    doc.visibilityState = "hidden";
+    doc.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(3);
+    doc.visibilityState = "visible";
+    doc.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(4);
+    expect(seen).toEqual(["https://r2/signed-1", "https://r2/signed-2"]);
+    stop();
+    win.dispatchEvent(new Event("online"));                                   // unsubscribed: listeners are gone
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(fetches).toHaveLength(4);
+  });
+
+  it("a REFUSAL (403 / 404 / 400) ends the subscription with one null — the route's answer will not change on retry", async () => {
+    for (const status of [403, 404, 400]) {
+      clearSignedUrlCache();
+      fetches.length = 0;
+      vi.stubGlobal("fetch", vi.fn(async (input: string) => { fetches.push(String(input)); return new Response("no", { status }); }));
+      const seen: Array<string | null> = [];
+      const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+      await vi.advanceTimersByTimeAsync(PRESIGNED_MAX_SECONDS * 2000);
+      expect(seen, String(status)).toEqual([null]);
+      expect(fetches, String(status)).toHaveLength(1);
+      stop();
+    }
+    // 429 is the server asking for patience, not an answer about the path.
+    clearSignedUrlCache();
+    fetches.length = 0;
+    flakyFetch(1, 429);
+    const seen: Array<string | null> = [];
+    const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(seen).toEqual(["https://r2/signed-1"]);
+    stop();
+  });
+
+  it("the margin is a quarter of the granted window, capped at 60 s — a 60 s grant is live on arrival and re-signed at 45 s", async () => {
+    answer = () => ({ url: `https://r2/short-${++seq}`, expiresIn: 60 });
+    const seen: Array<string | null> = [];
+    const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(seen).toEqual(["https://r2/short-1"]);
+    expect(peekSignedUrl(PATH)?.url).toBe("https://r2/short-1");             // live, not refused by a 60 s margin
+    expect(peekSignedUrl(PATH)?.margin).toBe(15_000);
+    await vi.advanceTimersByTimeAsync(44_000);
+    expect(fetches).toHaveLength(1);
+    expect(peekSignedUrl(PATH)?.url).toBe("https://r2/short-1");
+    await vi.advanceTimersByTimeAsync(1_000);                                 // 45 s: inside the 15 s margin
+    expect(fetches).toHaveLength(2);
+    expect(seen).toEqual(["https://r2/short-1", "https://r2/short-2"]);
+    stop();
+    // The hour keeps its full minute.
+    clearSignedUrlCache();
+    answer = () => ({ url: "https://r2/hour", expiresIn: PRESIGNED_MAX_SECONDS });
+    await getSignedUrlForPath(PATH);
+    expect(peekSignedUrl(PATH)?.margin).toBe(60_000);
+  });
+
+  // ── Avatars: the subscription lives exactly as long as an avatar shows the path ──
+
+  it("holdAvatarUrl is ref-counted per path: one subscription shared by every mounted avatar, ended by the last release", async () => {
+    const AV = "avatars/u1/avatar-1.png";
+    let notified = 0;
+    const off = onProfilesChanged(() => { notified++; });
+    expect(cachedAvatarUrl(AV)).toBeUndefined();
+    const releaseA = holdAvatarUrl(AV);
+    const releaseB = holdAvatarUrl(AV);                                       // the same person in two rows
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(1);
+    expect(cachedAvatarUrl(AV)).toBe("https://r2/signed-1");
+    expect(notified).toBe(1);                                                 // one re-render for one new URL
+    expect(heldAvatarPathCount()).toBe(1);
+    const releaseC = holdAvatarUrl(AV);                                       // mounted onto a live URL: nothing to announce
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notified).toBe(1);
+    releaseA(); releaseA();                                                   // double release is harmless
+    releaseC();
+    await vi.advanceTimersByTimeAsync((PRESIGNED_MAX_SECONDS - 60) * 1000);  // B is still on screen: re-signed at the margin
+    expect(fetches).toHaveLength(2);
+    expect(cachedAvatarUrl(AV)).toBe("https://r2/signed-2");
+    expect(notified).toBe(2);
+    releaseB();                                                               // the last avatar showing it unmounts
+    expect(heldAvatarPathCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(PRESIGNED_MAX_SECONDS * 1000);
+    expect(fetches).toHaveLength(2);                                          // no re-sign for a path nobody is looking at
+    expect(notified).toBe(2);
+    holdAvatarUrl(AV);                                                        // back on screen after the hour: signed again
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveLength(3);
+    off();
+  });
+
+  it("a refused avatar path is marked null once and never held or re-fetched; a transient failure is not a mark", async () => {
+    const AV = "avatars/u2/avatar-9.png";
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => { fetches.push(String(input)); return new Response("no", { status: 403 }); }));
+    const releaseRefused = holdAvatarUrl(AV);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cachedAvatarUrl(AV)).toBeNull();
+    releaseRefused();
+    expect(heldAvatarPathCount()).toBe(0);
+    holdAvatarUrl(AV);                                                        // a later mount asks nothing
+    await vi.advanceTimersByTimeAsync(PRESIGNED_MAX_SECONDS * 1000);
+    expect(fetches).toHaveLength(1);
+    const AV2 = "avatars/u3/avatar-2.png";
+    flakyFetch(1);
+    const release = holdAvatarUrl(AV2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cachedAvatarUrl(AV2)).toBeUndefined();                             // not resolved yet — not "could not be signed"
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(cachedAvatarUrl(AV2)).toMatch(/^https:\/\/r2\/signed-/);
+    release();
+  });
+
+  it("source pins: UserAvatar holds the path from its effect (released on unmount); the branding provider seeds or clears the logo before subscribing", () => {
+    const avatar = readFileSync(join(root, "components/ui/UserAvatar.tsx"), "utf8");
+    expect(avatar).toMatch(/return holdAvatarUrl\(avatarPath\);/);
+    expect(avatar).not.toMatch(/resolveAvatarUrl/);
+    const branding = readFileSync(join(root, "components/providers/OrgBrandingProvider.tsx"), "utf8");
+    const seed = branding.indexOf("setLogoUrl(peekSignedUrl(logoPath)?.url ?? null);");
+    const sub = branding.indexOf("return subscribeSignedUrl(logoPath, setLogoUrl);");
+    expect(seed).toBeGreaterThan(-1);
+    expect(sub).toBeGreaterThan(seed);
+    const profiles = readFileSync(join(root, "lib/userProfiles.ts"), "utf8");
+    expect(profiles).not.toMatch(/resolveAvatarUrl|avatarSubscriptions/);
   });
 
   it("census: no client call site asks for more than the ceiling (the five week-long sites are gone)", () => {
