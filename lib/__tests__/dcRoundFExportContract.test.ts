@@ -68,6 +68,7 @@ vi.mock("@/lib/stripe", async (importOriginal) => ({
 import { REDACT_COLUMNS } from "@/lib/exportTables";
 import {
   IMMUTABLE_TABLES, isImmutableTable, isSkippedTable, planRestore, remapRow, scrubRestoredRow, RESTORED_TOKEN_PREFIX,
+  RESTORED_TRANSMITTAL_NOTE,
 } from "@/lib/dataRestore";
 import { planFromSubscription, getPlanForPriceId } from "@/lib/stripe";
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
@@ -106,8 +107,18 @@ describe("EGR-7 / XEDGE-10 — the restore never reinstates a bearer column", ()
     expect(fresh.revoked_at).toBe("2026-09-23T00:00:00.000Z");
   });
 
-  it("a transmittal's portal token is nulled; an export destination loses its credentials and is disabled", () => {
-    expect(scrubRestoredRow({ id: "t", portal_token: "abc", status: "issued" })).toEqual({ id: "t", portal_token: null, status: "issued" });
+  it("a transmittal's portal token is nulled and an ISSUED one lands VOIDED, so the insert rail cannot mint a fresh token", () => {
+    // trg_transmittals_guard (20261027) mints NEW.portal_token for every row
+    // INSERTED with status 'issued' — the exact re-mint DEC-44 rejects.
+    const trigger = src("supabase/migrations/20261027_dc_phase1_unguarded_doors.sql");
+    expect(trigger).toMatch(/IF NEW\.status = 'issued'\s+AND \(TG_OP = 'INSERT' OR OLD\.status IS DISTINCT FROM 'issued'\) THEN\s+NEW\.portal_token := /);
+    const issued = scrubRestoredRow({ id: "t", portal_token: "abc", status: "issued", notes: "sent 3 sheets" });
+    expect(issued).toEqual({ id: "t", portal_token: null, status: "voided", notes: `sent 3 sheets\n\n${RESTORED_TRANSMITTAL_NOTE}` });
+    expect(scrubRestoredRow({ id: "t", portal_token: "abc", status: "issued", notes: null }).notes).toBe(RESTORED_TRANSMITTAL_NOTE);
+    // draft / acknowledged / voided rows never trip the mint condition and keep their status
+    for (const status of ["draft", "acknowledged", "voided"]) {
+      expect(scrubRestoredRow({ id: "t", portal_token: "abc", status, notes: "n" })).toEqual({ id: "t", portal_token: null, status, notes: "n" });
+    }
     const dest = scrubRestoredRow({
       id: "d", enabled: true, bucket: "b",
       access_key_id_encrypted: "enc", secret_access_key_encrypted: "enc", webhook_secret_encrypted: "enc",
@@ -129,8 +140,10 @@ describe("EGR-7 / XEDGE-10 — the restore never reinstates a bearer column", ()
     expect(e).toMatch(/redactedColumns: Record<string, string\[\]>;/);
     expect(e).toMatch(/REDACTED credential columns \(secrets never leave the database\)/);
     expect(e).not.toMatch(/"Every column from the source schema is preserved verbatim\. JSON keys/);
+    expect(e).toMatch(/a restored transmittal has no portal link \(an issued one arrives VOIDED on the register/);
     const r = src("lib/exportRunner.ts");
     expect(r).toMatch(/## Redacted credential columns/);
+    expect(r).toMatch(/a restored transmittal has no portal link \(an issued one arrives VOIDED on the register/);
     expect(r).toMatch(/\$\{omittedNote\}\$\{shedNote\}\$\{redactedNote\}/);
     // the decision is written down next to the ai_connections exclusion
     expect(src("lib/exportTables.ts")).toMatch(/re-issued, never\s+\*\s+revived/);

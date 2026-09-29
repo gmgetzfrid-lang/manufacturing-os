@@ -109,6 +109,8 @@ export async function fetchExternalGuarded(url: string, init: RequestInit & { me
     }
     let next: string;
     try { next = new URL(location, current).toString(); } catch { throw new Error("Destination redirected to an invalid URL"); }
+    // The redirect body is never read: release the socket before the next hop.
+    await res.body?.cancel().catch(() => undefined);
     current = next;
   }
 }
@@ -534,7 +536,7 @@ function buildReadme(envelope: DataExportEnvelope, omittedCount = 0): string {
   // a restore knows the links must be re-issued rather than arriving dead.
   const redacted = Object.entries(m.redactedColumns ?? {});
   const redactedNote = redacted.length > 0
-    ? `\n## Redacted credential columns\n\nSecrets never leave the database. These columns are exported as null:\n${redacted.map(([t, cols]) => `- ${t}: ${cols.join(", ")}`).join("\n")}\nAfter a restore, share links, vendor intake links and transmittal portal links must be RE-ISSUED (restored rows arrive revoked), and export destinations must have their credentials re-entered (restored rows arrive disabled).\n`
+    ? `\n## Redacted credential columns\n\nSecrets never leave the database. These columns are exported as null:\n${redacted.map(([t, cols]) => `- ${t}: ${cols.join(", ")}`).join("\n")}\nAfter a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), and export destinations must have their credentials re-entered (restored rows arrive disabled).\n`
     : "";
   return `# manufacturing-os export
 

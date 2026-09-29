@@ -6,7 +6,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath } from "@/lib/storage";
-import type { Placeholder } from "@/lib/outputTemplateText";
+import { uniqueFilenames, type Placeholder } from "@/lib/outputTemplateText";
 
 export type { Placeholder } from "@/lib/outputTemplateText";
 
@@ -202,16 +202,38 @@ export function chunkDocuments<T>(documents: readonly T[], size: number = RENDER
   return out;
 }
 
+const ZIP_NAME_BAD = /[\\/:*?"<>|]+/g;
+
+/** One filename per document, unique across the WHOLE batch, decided before
+ *  the batch is sliced. The server de-duplicates per call, so a name that
+ *  repeats (a template with no filename pattern names every row
+ *  `<template>.docx`) would otherwise restart at "(2)" in every slice and the
+ *  assembled zip / the filed document numbers would collide across slices.
+ *  A document without a draft-supplied name gets an index-unique fallback.
+ *  Pure. */
+export function batchFilenames(
+  documents: ReadonlyArray<{ filename?: string }>,
+  templateName?: string,
+  kind: "docx" | "xlsx" = "docx",
+): string[] {
+  const base = (templateName ?? "").replace(ZIP_NAME_BAD, "-").trim() || "document";
+  return uniqueFilenames(documents.map((d, i) => d.filename?.trim() || `${base}-${i + 1}.${kind}`));
+}
+
 /** Render every slice of a batch as JSON (base64 files). Each slice is its
- *  own production record on the server; the ids come back in order. */
+ *  own production record on the server; the ids come back in order. Every
+ *  document is sent with an explicit, batch-unique filename. */
 async function renderAllAsJson(input: {
-  orgId: string; templateId: string; sourceName?: string; mode?: string;
+  orgId: string; templateId: string; templateName?: string; templateKind?: "docx" | "xlsx";
+  sourceName?: string; mode?: string;
   documents: RenderDoc[];
 }): Promise<{ generationIds: string[]; files: RenderedFile[]; perGeneration: Array<{ generationId: string | null; count: number }> }> {
   const generationIds: string[] = [];
   const files: RenderedFile[] = [];
   const perGeneration: Array<{ generationId: string | null; count: number }> = [];
-  for (const slice of chunkDocuments(input.documents)) {
+  const names = batchFilenames(input.documents, input.templateName, input.templateKind);
+  const named = input.documents.map((d, i) => ({ values: d.values, filename: names[i] }));
+  for (const slice of chunkDocuments(named)) {
     const out = await api<{ generationId: string | null; files: RenderedFile[] }>(
       "/api/templates/generate",
       {
@@ -234,7 +256,8 @@ async function renderAllAsJson(input: {
  *  a controlled document (rev 0), through the same path a manual upload
  *  takes — RLS, versioning, and audit all apply. Returns how many landed. */
 export async function fileDocumentsToLibrary(input: {
-  orgId: string; templateId: string; templateName: string; sourceName?: string; mode?: string;
+  orgId: string; templateId: string; templateName: string; templateKind?: "docx" | "xlsx";
+  sourceName?: string; mode?: string;
   documents: Array<{ values: Record<string, string>; filename?: string }>;
   target: FilingTarget;
   actorUserId: string; actorEmail?: string;
@@ -312,20 +335,35 @@ function triggerDownload(blob: Blob, name: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** Assemble the rendered slices into ONE zip. JSZip silently REPLACES an
+ *  entry of the same name, so the names are de-duplicated once more here —
+ *  a zip of N documents always holds N entries. Returns the zip bytes and
+ *  its download name. */
+export async function assembleClientZip(
+  files: ReadonlyArray<{ name: string; base64: string }>,
+  templateName?: string,
+): Promise<{ bytes: Uint8Array; name: string; entries: string[] }> {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  const names = uniqueFilenames(files.map((f) => f.name));
+  files.forEach((f, i) => zip.file(names[i], Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0))));
+  const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+  const base = (templateName ?? "").replace(ZIP_NAME_BAD, "-").trim() || "documents";
+  return { bytes, name: `${base} - ${files.length} documents.zip`, entries: names };
+}
+
 /** Render the reviewed documents and download the file (or zip). A batch
  *  within the server's per-call cap downloads exactly as before; a larger
  *  batch is rendered in slices and assembled into ONE zip client-side. */
 export async function renderDocuments(input: {
-  orgId: string; templateId: string; sourceName?: string; mode?: string;
+  orgId: string; templateId: string; templateName?: string; templateKind?: "docx" | "xlsx";
+  sourceName?: string; mode?: string;
   documents: Array<{ values: Record<string, string>; filename?: string }>;
 }): Promise<void> {
   if (input.documents.length > RENDER_CHUNK) {
     const out = await renderAllAsJson(input);
-    const { default: JSZip } = await import("jszip");
-    const zip = new JSZip();
-    for (const f of out.files) zip.file(f.name, Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)));
-    const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
-    triggerDownload(blob, `documents - ${out.files.length} documents.zip`);
+    const zip = await assembleClientZip(out.files, input.templateName);
+    triggerDownload(new Blob([zip.bytes as BlobPart], { type: "application/zip" }), zip.name);
     return;
   }
   const token = await authToken();

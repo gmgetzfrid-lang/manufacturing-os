@@ -72,6 +72,15 @@ describe("fetchExternalGuarded (XEDGE-9 done-when 1)", () => {
     expect(state.fetches.every((f) => f.init.redirect === "manual" && f.init.body === "ZIP")).toBe(true);
   });
 
+  it("cancels the unread redirect body before the next hop (socket released, not held until GC)", async () => {
+    const hop = new Response("<html>moved</html>", { status: 307, headers: { location: "https://other.example/final" } });
+    state.responses = [hop, ok()];
+    const res = await fetchExternalGuarded("https://hooks.example/in", { method: "POST", body: "ZIP" });
+    expect(res.status).toBe(200);
+    expect(hop.bodyUsed).toBe(true);
+    expect(state.fetches).toHaveLength(2);
+  });
+
   it("resolves a relative Location against the current URL and re-checks it", async () => {
     state.responses = [redirect(308, "/v2/in"), ok(204)];
     const res = await fetchExternalGuarded("https://hooks.example/v1/in", { method: "POST", body: "ZIP" });

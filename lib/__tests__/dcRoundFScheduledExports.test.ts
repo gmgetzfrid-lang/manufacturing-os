@@ -18,6 +18,7 @@ const state = vi.hoisted(() => {
   return {
     log: [] as Array<{ table: string; calls: Array<{ m: string; args: unknown[] }> }>,
     memberActive: true,
+    memberError: null as string | null,
     subStatus: "active",
     plan: "growth",
     destination: {} as Record<string, unknown>,
@@ -33,6 +34,7 @@ function makeClient() {
         if (has("update")) return { data: [{ id: state.destination.id }], error: null };
         return { data: [state.destination], error: null };
       case "org_members":
+        if (state.memberError) return { data: null, error: { message: state.memberError } };
         return { data: state.memberActive ? { uid: "u-1" } : null, error: null };
       case "orgs":
         return { data: { subscription_status: state.subStatus, trial_ends_at: null, subscribed_plan: state.plan }, error: null };
@@ -94,7 +96,7 @@ const sweep = () => runScheduled(new NextRequest("https://app/api/data-export/ru
 const prevEnforce = process.env.SUBSCRIPTION_ENFORCE;
 beforeEach(() => {
   state.log = []; state.delivered = [];
-  state.memberActive = true; state.subStatus = "active"; state.plan = "growth";
+  state.memberActive = true; state.memberError = null; state.subStatus = "active"; state.plan = "growth";
   state.destination = { ...DUE };
   delete process.env.SUBSCRIPTION_ENFORCE;
 });
@@ -120,6 +122,20 @@ describe("scheduledRunGate (XEDGE-7)", () => {
     const q = logged("org_members")[0].calls;
     expect(q.find((c) => c.m === "eq" && c.args[0] === "uid")?.args[1]).toBe("u-1");
     expect(q.find((c) => c.m === "eq" && c.args[0] === "status")?.args[1]).toBe("active");
+  });
+  it("fails CLOSED: a membership lookup error is a skip (retried next cycle), never a push", async () => {
+    state.memberError = "permission denied for table org_members";
+    const v = await scheduledRunGate(makeClient() as never, DUE, false);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/could not be verified \(permission denied for table org_members\); retried next cycle/);
+    expect(v.notices).toEqual([]);
+    // the sweep records it like any other skip and delivers nothing
+    state.log = [];
+    const res = await sweep();
+    expect(res.status).toBe(200);
+    expect(state.delivered).toEqual([]);
+    expect(arg("export_runs", "insert")).toMatchObject({ status: "cancelled" });
+    expect(String((arg("export_runs", "insert") as { error_message?: string }).error_message)).toMatch(/could not be verified/);
   });
   it("a destination with no recorded configurer is skipped until an Admin re-saves it", async () => {
     const v = await scheduledRunGate(makeClient() as never, { ...DUE, created_by: null, updated_by: null }, false);

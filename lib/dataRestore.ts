@@ -296,11 +296,19 @@ function restoredPlaceholder(): string {
   return `${RESTORED_TOKEN_PREFIX}${uuid ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }
 
+/** The register note a restored, formerly issued transmittal carries. */
+export const RESTORED_TRANSMITTAL_NOTE = "Restored from a backup: the portal link was not restored (DEC-44). Issue a new transmittal to send these documents again.";
+
 /** Scrub every bearer column of a restored row. Pure apart from the random
  *  placeholder; returns a new object. A row that carries a scrubbed column and
  *  a `revoked_at` column arrives REVOKED (shares, intake links); one that
- *  carries `enabled` arrives DISABLED (export destinations) — so nothing
- *  restored can be presented or fire until a person re-issues / re-enters it. */
+ *  carries `enabled` arrives DISABLED (export destinations); an ISSUED
+ *  transmittal arrives VOIDED — `trg_transmittals_guard` (20261027) mints a
+ *  fresh portal token for every row INSERTED with status 'issued', which
+ *  would be a live credential nobody chose to issue, so the row lands in the
+ *  one state that keeps the register record and can never present a link.
+ *  Nothing restored can be presented or fire until a person re-issues /
+ *  re-enters it. */
 export function scrubRestoredRow(row: Record<string, unknown>, now: string = new Date().toISOString()): Record<string, unknown> {
   const hit = Object.keys(row).filter((k) => BEARER_COLUMNS.has(k));
   if (hit.length === 0) return row;
@@ -308,6 +316,13 @@ export function scrubRestoredRow(row: Record<string, unknown>, now: string = new
   for (const c of hit) out[c] = PLACEHOLDER_COLUMNS.has(c) ? restoredPlaceholder() : null;
   if ("revoked_at" in out && out.revoked_at == null) out.revoked_at = now;
   if ("enabled" in out) out.enabled = false;
+  if (hit.includes("portal_token") && out.status === "issued") {
+    out.status = "voided";
+    if ("notes" in out) {
+      const notes = typeof out.notes === "string" ? out.notes.trim() : "";
+      out.notes = notes ? `${notes}\n\n${RESTORED_TRANSMITTAL_NOTE}` : RESTORED_TRANSMITTAL_NOTE;
+    }
+  }
   return out;
 }
 

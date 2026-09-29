@@ -166,7 +166,7 @@ export const ORG_SCOPED_TABLES = [
 
 /** User-scoped tables exported alongside (membership in this org acts as
  *  the join — we only include rows for users who belong to the org). */
-export const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences", "push_subscriptions"] as const;
+export const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences"] as const;
 
 /** Tables that exist in the schema but are DELIBERATELY not exported.
  *  Each needs a reason — the coverage tripwire enforces the decision. */
@@ -180,6 +180,8 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "cached AI line traces over drawing sheets — regenerated on demand from the drawings themselves; no authored data lives here",
   signup_attempts:
     "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
+  push_subscriptions:
+    "per-device Web Push credentials (endpoint, p256dh, auth) — secrets never leave the database, and a push registration is machine-specific and never restored; each device re-subscribes",
 };
 
 /** EGR-7 / XEDGE-10: columns whose VALUE is a live credential. The same rule
@@ -203,7 +205,7 @@ export const REDACT_COLUMNS: Record<string, { columns: readonly string[]; reason
   },
   transmittals: {
     columns: ["portal_token"],
-    reason: "the sole credential for the external transmittal portal; the recipient's link is re-sent after a restore",
+    reason: "the sole credential for the external transmittal portal; a restored issued transmittal arrives VOIDED (the insert rail would otherwise mint a fresh token) and a new transmittal is issued to send again",
   },
   export_destinations: {
     columns: ["access_key_id_encrypted", "secret_access_key_encrypted", "webhook_secret_encrypted"],

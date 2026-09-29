@@ -78,8 +78,9 @@ const excluded = new Set<string>(Object.keys(EXPORT_EXCLUDED_TABLES));
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
 // not in the pattern — file_key / template_file_key / builtin_key are storage
-// and registry keys, not secrets.
-const BEARER_NAME_RE = /(^|_)(token|secret|password)(_|$)|api_key|_encrypted$/;
+// and registry keys, not secrets. `auth` / `p256dh` are the Web Push
+// subscription secrets (push_subscriptions), excluded from the export whole.
+const BEARER_NAME_RE = /(^|_)(token|secret|password)(_|$)|api_key|_encrypted$|^(auth|p256dh)$/;
 
 describe("backup coverage tripwire", () => {
   it("found a plausible number of tables (sanity)", () => {
@@ -143,6 +144,12 @@ describe("bearer-column redaction tripwire (EGR-7 / XEDGE-10)", () => {
 
   it("the column census sees the schema (sanity)", () => {
     expect(columns.get("document_shares")).toContain("token");
+    expect(columns.get("push_subscriptions")).toContain("p256dh");
+    expect(["auth", "p256dh", "endpoint"].filter((c) => BEARER_NAME_RE.test(c))).toEqual(["auth", "p256dh"]);
+    // push_subscriptions carries per-device push credentials: excluded whole,
+    // never exported (it was never restored either — SKIP_TABLES).
+    expect(exported.has("push_subscriptions")).toBe(false);
+    expect(excluded.has("push_subscriptions")).toBe(true);
     expect(columns.get("export_destinations")).toContain("secret_access_key_encrypted");
     expect(columns.get("transmittals")).toContain("portal_token");
   });
@@ -169,7 +176,8 @@ describe("bearer-column redaction tripwire (EGR-7 / XEDGE-10)", () => {
         expect(columns.get(table)?.has(col), `${table}.${col} does not exist in the schema`).toBe(true);
       }
     }
-    // The four tables the findings name are all in.
+    // The four tables the findings name are all in (push_subscriptions is
+    // excluded whole rather than redacted — nothing of it is org data).
     expect(Object.keys(REDACT_COLUMNS).sort()).toEqual(["document_shares", "export_destinations", "project_intake_links", "transmittals"]);
   });
 

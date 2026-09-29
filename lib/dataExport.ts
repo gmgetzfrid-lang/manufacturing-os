@@ -244,7 +244,8 @@ export async function runOrgExport(params: {
     "which are exported as null. JSON keys mirror Postgres column names (snake_case).",
     `REDACTED credential columns (secrets never leave the database): ${
       Object.entries(REDACT_COLUMNS).map(([t, r]) => r.columns.map((c) => `${t}.${c}`).join(", ")).join("; ")
-    }. After a restore, share links, vendor intake links and transmittal portal links must be RE-ISSUED (restored rows arrive revoked), ` +
+    }. After a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), ` +
+    "a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), " +
     "and export destinations must have their credentials re-entered (restored rows arrive disabled).",
     `Presigned URLs for files expire ${expiresIn} seconds (${(expiresIn / 3600).toFixed(1)} hours) from exportedAt.`,
     "Re-running an export at any time is free and unlimited.",

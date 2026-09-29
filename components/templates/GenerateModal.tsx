@@ -70,7 +70,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       const numberTag = template.placeholders.find((p) =>
         /number|no$|id$|tag/i.test(p.tag) && p.kind === "data")?.tag;
       const res = await fileDocumentsToLibrary({
-        orgId, templateId: template.id, templateName: template.name,
+        orgId, templateId: template.id, templateName: template.name, templateKind: template.kind,
         sourceName: source?.name, mode,
         documents: docs.map((d) => ({ values: d.values, filename: d.filename })),
         target: { libraryId: fileInto, numberTag },
@@ -139,7 +139,8 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
     setBusy("render");
     try {
       await renderDocuments({
-        orgId, templateId: template.id, sourceName: source?.name, mode,
+        orgId, templateId: template.id, templateName: template.name, templateKind: template.kind,
+        sourceName: source?.name, mode,
         documents: docs.map((d) => ({ values: d.values, filename: d.filename })),
       });
       showToast({

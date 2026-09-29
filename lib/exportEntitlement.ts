@@ -54,8 +54,10 @@ export type ScheduledRunVerdict =
   | { ok: false; reason: string; notices: string[] };
 
 /** Decide whether a due scheduled destination may run right now. Never
- *  throws: a lookup ERROR on the membership check is a notice (fail-open on a
- *  transient database fault), a definite "no active row" is a skip. */
+ *  throws. The membership check fails CLOSED: a lookup error is a skip like a
+ *  definite "no active row" — the claim already advanced `next_run_at`, so a
+ *  transient database fault costs one cycle, never a push to a destination
+ *  whose configurer could not be verified. */
 export async function scheduledRunGate(
   admin: SupabaseClient,
   dest: ScheduledGateDestination,
@@ -75,8 +77,9 @@ export async function scheduledRunGate(
     .eq("org_id", dest.org_id).eq("uid", configurer).eq("status", "active")
     .maybeSingle();
   if (memberErr) {
-    notices.push(`configurer membership could not be checked (${memberErr.message}); proceeding`);
-  } else if (!member) {
+    return { ok: false, reason: `the configurer's membership could not be verified (${memberErr.message}); retried next cycle`, notices };
+  }
+  if (!member) {
     return { ok: false, reason: "the member who last configured this destination is no longer active in this workspace — an active Admin must open it and save it again to re-confirm", notices };
   }
 
