@@ -11,8 +11,11 @@
 //   assess — given the project's real context (purpose, job kind, SOW,
 //     document register, equipment tags, milestones), propose per-item
 //     applicability: does this line apply to THIS job, or is it N/A — with
-//     the reasoning stated. Returned for review; applyAssessment writes it
-//     and never overrides a human's decision.
+//     the reasoning stated. Each proposal carries the item's CURRENT state
+//     (status, whether evidence is attached, whether a human decided it) so
+//     the per-item review can name the proposals that target a satisfied
+//     item (QUAL-5 / SAF-2). Returned for review; applyAssessment writes
+//     only what the reviewer ticked and never overrides a human's decision.
 //
 // Authority: any active member can run proposals (they spend the caller's
 // own AI key, and saving is where write authority is enforced).
@@ -112,9 +115,12 @@ export async function POST(req: NextRequest) {
     .eq("id", checklistId).eq("project_id", projectId).maybeSingle();
   if (!checklist) return bad("Checklist not found.", 404);
   const { data: itemRows } = await supabaseAdmin
-    .from("checklist_items").select("id, seq, section, text, manual_note")
+    .from("checklist_items").select("id, seq, section, text, manual_note, status, evidence")
     .eq("checklist_id", checklistId).order("seq").limit(300);
-  const items = ((itemRows ?? []) as Array<{ id: string; seq: number; section: string | null; text: string; manual_note: string | null }>);
+  const items = ((itemRows ?? []) as Array<{
+    id: string; seq: number; section: string | null; text: string; manual_note: string | null;
+    status: string | null; evidence: unknown;
+  }>);
   if (items.length === 0) return bad("This checklist has no items to assess.", 404);
 
   // The project's REAL context — the assessment grounds on what the
@@ -178,21 +184,34 @@ export async function POST(req: NextRequest) {
   try { parsed = block ? (JSON.parse(block) as { assessments?: unknown[] }) : null; }
   catch { return bad("The assessment wasn't valid JSON — try again.", 502); }
   const byRef = new Map(items.map((it) => [it.id.slice(0, 8), it]));
-  const proposals: Array<{ itemId: string; applicability: "applies" | "na" | "unknown"; rationale: string }> = [];
+  const proposals: Array<{
+    itemId: string; applicability: "applies" | "na" | "unknown"; rationale: string;
+    /** The item as it stands, so the review can say what the proposal would undo. */
+    current: { text: string; section: string | null; status: string; hasEvidence: boolean; humanDecided: boolean; protectedFromDowngrade: boolean };
+  }> = [];
   for (const raw of parsed?.assessments ?? []) {
     const a = raw as { ref?: string; applicability?: string; rationale?: string };
     const item = a.ref ? byRef.get(a.ref) : undefined;
     if (!item) continue;
     if (a.applicability !== "applies" && a.applicability !== "na" && a.applicability !== "unknown") continue;
+    const status = String(item.status ?? "open");
+    const hasEvidence = Array.isArray(item.evidence) && item.evidence.length > 0;
     proposals.push({
       itemId: item.id,
       applicability: a.applicability,
       rationale: String(a.rationale ?? "").slice(0, 1000),
+      current: {
+        text: item.text, section: item.section, status, hasEvidence,
+        humanDecided: Boolean(item.manual_note),
+        protectedFromDowngrade: status === "satisfied" || hasEvidence,
+      },
     });
   }
   if (proposals.length === 0) return bad("The assessment returned nothing usable — try again.", 502);
   return NextResponse.json({
     proposals,
     humanDecided: items.filter((it) => it.manual_note).length,
+    // QUAL-5 dw3: how many proposed N/As target an item already satisfied or evidence-bearing.
+    protectedNaCount: proposals.filter((p) => p.applicability === "na" && p.current.protectedFromDowngrade).length,
   });
 }
