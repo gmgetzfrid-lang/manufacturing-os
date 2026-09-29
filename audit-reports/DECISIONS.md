@@ -1292,6 +1292,8 @@ facility with no configuration must keep working exactly as it does today.
 
 **Risk:** medium — wide, but mechanical.
 
+*Landed 2026-09-23 (projects Round G): the schedule-editing predicate — `can_edit_project_schedule(p_org, p_project)` in `20261098`, `caller_holds_any_role` over the four roles `20260907` listed inline, or the project owner — is read by `apply_milestone_moves`, `set_project_baseline` and `clear_project_baseline` (`20261099`) instead of a fresh literal in each; registered as a collection funnel in `authorityCensus.test.ts`. See `SCHED-4`, `SCHED-3`.*
+
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
 
@@ -1700,3 +1702,63 @@ role ids) — then scope lives on the id, is checked in `node_visible` after
 the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
+
+<a id="dec-44"></a>
+## DEC-44 · A schedule re-import is a reviewed merge, never a guess
+
+**Decision. The importer decides nothing it cannot read from the file, shows
+what it would do before it writes, and never erases what the crew recorded.
+Concretely: (1) day-first vs month-first is decided once from the whole file —
+a file that cannot decide it asks the user once, and the answer applies to
+every row; (2) a row the file does not carry is reported as "not in this
+file" and left alone — removal is a separate explicit action; (3) progress,
+status and actual dates recorded in the app survive a re-import unless the
+user opts in per import; (4) identity is the source system's id where one
+exists, otherwise a hash of the row's own content — never its position and
+never its name alone; (5) relationship type and lag are captured on every
+link; the engine honours finish-to-start, and everything else is stored on
+the task and reported as "not enforced" until the reflow has its own test;
+(6) a file that holds several projects asks which one and never merges; (7)
+MS Project's Predecessors resolve through the ID column, and an unresolvable
+token is counted, not guessed; (8) a level-0 summary row is the root parent,
+not a sibling leaf; (9) shift is recomputed by every date-writing path and
+existing rows are recomputed only on request; (10) the approved baseline is
+set and cleared only through RPCs that enforce the schedule-editing
+predicate, keep every prior snapshot, and audit themselves; (11) a batch move
+leaves a per-row reschedule breadcrumb, the same one a single edit leaves;
+(12) an import is capped at 5 MB / 5,000 rows, shows progress, can be
+cancelled, and tags every row it touched with its batch id.**
+
+> Made during projects Round G (2026-09-23) under the protocol's fail-safe
+> rule, taking the defaults the fleet plan proposed for `GAP-403`, `SCH-1`,
+> `SCH-2`, `SCH-3`, `SCH-8`, `SCH-14`, `SCH-16` and `SCHED-1`, `SCHED-3`,
+> `SCHED-6`, `SCHED-8`, `SCHED-9`, `SCHED-11`.
+
+**Rationale.** A weekly re-import is the normal case, and every one of these
+defaults replaces a silent guess with either the file's own evidence or a
+question the user answers once. The alternatives — a locale default for
+dates, treating an absent row as deleted, a file-name namespace for identity,
+flattening SS / FF to FS — each looked cheaper and each was a data-integrity
+defect in the audit.
+
+**Implementation.** `lib/scheduleParsers.ts` (`detectDateConvention`,
+`contentKey`, `ParsedLink`, `ParseOptions`, `SCHEDULE_IMPORT_LIMITS`),
+`lib/milestones.ts` (`importMilestonesFromParsed` with `dryRun` /
+`overwriteProgress` / `signal` / `onProgress`, `applyMilestoneMoves`,
+`setBaseline` / `clearBaseline`), `lib/scheduleFilter.ts` (`shiftForStart`),
+`components/projects/ScheduleImportModal.tsx`, migrations `20261097`,
+`20261098`, `20261099`.
+
+**Acceptance.** Inserting a row at the top of a source file leaves every
+other row's identity and progress intact; a genuinely ambiguous date file
+imports nothing until asked; a re-import with no changes issues no write; an
+SS + FF ladder creates no cycle; the anon key cannot call the batch-move or
+baseline RPCs.
+
+**Reversal.** Per item, by a stated requirement: a facility that wants a
+locale default for dates changes the modal's radio default, not the parser;
+a facility that wants "missing = deleted" adds it as the separate explicit
+action this decision already reserves.
+
+**Risk:** low — every default fails toward asking or leaving data alone.
+

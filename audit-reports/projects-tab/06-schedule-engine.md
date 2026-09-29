@@ -16,7 +16,7 @@ and a wrong health score.
 ## SCH-1 · Day/month dates are silently rewritten as month/day, and the comment claims a guard the code lacks
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleParsers.ts:918-925` — `coerceIso`
@@ -62,12 +62,18 @@ their locale) and apply the answer to the whole file. Never guess per row.
 - The chosen interpretation is shown in the import result.
 - A test covers a D/M/Y file whose values are all ≤ 12.
 
+**Resolution (2026-09-23, projects Round G).** Day-first vs month-first is now a property of the FILE, decided once. `lib/scheduleParsers.ts` `detectDateConvention(text)` scans every slash date in the whole file: any first part > 12 proves D/M/Y, any second part > 12 proves M/D/Y; neither is genuinely ambiguous, both is a self-contradicting file. `runParser` applies the file's verdict to every row; an ambiguous (or contradicting) file withholds its rows (`needsDateConvention: true`, `rows: []`) until the caller supplies `ParseOptions.dateConvention`, and a file that fixed its own convention ignores the user's answer. `coerceIso(value, convention)` is a pure function of the pair: it validates month 1–12 / day 1–31 and returns `""` (the row is skipped and counted as "date could not be read as day/month/year") instead of emitting a month 15 for Postgres to reject. The result carries `dates: { convention, decidedBy: "file" | "user" | "none", sample }`; the comment that promised a guard now describes the code. `components/projects/ScheduleImportModal.tsx` keeps the dropped bytes, asks once with a two-way radio (no default — never guess), re-parses on the answer, and prints the applied reading and its evidence (`fixed by the file: 15/08/2026` or `your choice`) above the preview and again in the import result. Tests: `lib/__tests__/scheduleParsers.test.ts` "SCH-1 ·" — a D/M/Y file parses every row (including the ≤ 12 rows) as D/M/Y; an M/D/Y file likewise; an all-≤-12 file asks once, the answer applies to every row and is reported, and the two answers give the two readings; the user cannot override a file that decided; a contradicting file asks and skips the impossible rows under the chosen reading; ISO dates never ask.
+
+**Done-when.** 1 ✓ (`15/08/2026` anywhere → every row D/M/Y). 2 ✓ (one radio, rows withheld until answered). 3 ✓ (convention + sample in the modal and the result panel). 4 ✓ (the all-≤-12 fixture, both answers).
+
+**Scope / residual.** The scan is over the whole text, task names included, so a slash date inside a name counts as evidence for the file — accepted (it is the same document, and it errs toward asking, not guessing). The MS Project / P6 XML paths carry ISO dates and never reach the question; `coerceIso`'s `Z`-attachment for offset-less datetimes is `PC SCHED-9`'s half of the same function.
+
 ---
 
 ## SCH-2 · Re-importing the weekly schedule wipes progress the crew logged in the app
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -99,12 +105,18 @@ all-or-nothing choice.
 - The import modal shows what would be overwritten before it writes.
 - A test asserts a progressed row survives a zero-progress re-import.
 
+**Resolution (2026-09-23, projects Round G — the engine half of GAP-403; the modal's review step lands here too because the modal is this package's).** `lib/milestones.ts` `importMilestonesFromParsed` separates PLAN fields (name, dates, structure, links, description, rich columns) from ACTUALS (`status`, `percent_complete`, `actual_at`, `actual_start_at`). A row with local progress (`hasLocalProgress`: percent > 0, status ≠ planned, or an actual date) keeps its actuals unless the caller passes `overwriteProgress: true`; a file that carries no progress column at all claims nothing and never touches them, opt-in or not. Before any write the importer reads the existing rows once and computes an `ImportPlan` — `added / changed / unchanged / notInFile (+ names) / localProgressAtRisk[{ id, name, localPercent, localStatus, filePercent }]` — and `dryRun: true` returns it with nothing written. Rows the file does not mention are counted, named and left alone: an import never deletes (GAP-403 "do not treat a row missing from the new file as deleted"). `ScheduleImportModal.tsx` runs a dry run first ("Review changes"), shows the plan with the at-risk rows and a checkbox "Overwrite the progress recorded here with the file's values" (off; ticking it re-plans), and only then offers "Import N changes"; the old tip strip that promised "upserts rows with stable IDs" now says what happens. Tests: `lib/__tests__/scheduleImportWriters.test.ts` "SCH-2 ·" — a progressed row (60 % / in_progress, 100 % / completed) survives a zero-progress re-import with NO write issued; a file with no % column never touches progress even on opt-in; opt-in replaces the values and the plan said so; dry run writes nothing.
+
+**Done-when.** 1 ✓ (preserved by default; a re-import that changes nothing issues no write at all). 2 ✓ (plan panel before the write, with the rows named). 3 ✓ (`first import lands the file's progress; a zero-progress re-import leaves the crew's 60% and in_progress alone`).
+
+**Scope / residual.** The choice is all-or-nothing per import, as the finding allowed ("a per-row or all-or-nothing choice"); per-row picking is a modal refinement for the PT surface packages. `importGhostMilestones` (the legacy CSV-paste path) is untouched and keeps its old semantics — it has no UI caller in the projects tab.
+
 ---
 
 ## SCH-3 · CSV re-import matches rows by position, so inserting one row scrambles every row after it
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleParsers.ts:710` — `externalRef: id ? \`${refTag}:${id}\` : \`${refTag}-row:${rowIndex}\``
@@ -139,6 +151,12 @@ keys on is the outline position, which renumbers on every insert — only
 - Adding a row to a keyless CSV and re-importing does not overwrite unrelated rows.
 - Two different CSVs into one project do not collide.
 - MS Project CSV prefers `Unique ID`, and warns when it falls back.
+
+**Resolution (2026-09-23, projects Round G).** Identity is content, never position. `lib/scheduleParsers.ts`: a keyless CSV row is keyed `<tag>-key:<fnv1a(name | planned finish | planned start)>` (`contentKey`), so a row inserted above cannot re-point any other row and two different files cannot collide on an index; rows identical in content within one file get a `#n` suffix and a warning instead of overwriting each other. MS Project CSV splits the old synonym race into `id: ["unique id","uid"]` (the key) and `seq: ["id","task id"]` (the outline position): Unique ID is preferred, and a file that carries only ID is keyed on it with the warning `Rows are keyed on the "ID" column, which MS Project renumbers when rows are inserted — add "Unique ID" to the export …`. Every result names its `keyColumn` (`Unique ID` / `ID` / `content (name + dates)` / `UID` / `ObjectId` / `task_id`), and the modal shows it ("Re-imports match rows on …") above the preview and in the result. Migration `20261097_prj_roundG_import_identity.sql` adds `milestones.import_batch_id` (SCH-14) and the DEC-30 inventory of rows still keyed by position (`csv-row:` / `msp-row:`) — they are NOT rewritten (a position cannot be mapped to content after the fact); the next re-import of that file adds content-keyed rows beside them and reports the old ones as "not in file". Tests: `scheduleParsers.test.ts` "SCH-3 ·" (content keys; top insert leaves every other ref intact and no `csv-row:` survives; two files do not collide; duplicate suffixing; Unique ID preferred / ID warned) and `scheduleImportWriters.test.ts` "SCH-3 ·" (after a top insert: 1 added, 3 unchanged, every id and the crew's progress intact; a filtered export reports 2 not-in-file and deletes nothing).
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓.
+
+**Scope / residual.** The plan's `milestones.source_key` column was not added: the 20260704 project-scoped unique index on `external_ref` already IS the identity rail, and a second identity column nothing else reads would be a second source of truth (the DB-8 shape). Namespacing by file name was deliberately not used either — a renamed file would duplicate the whole schedule; two files whose rows are identical in name and dates share a key because they describe the same task. Pending migration: `supabase/migrations/20261097_prj_roundG_import_identity.sql` (the importer degrades without it: `import_batch_id` is dropped from the write and the hierarchy fields are kept).
 
 ---
 
@@ -330,7 +348,7 @@ view."
 ## SCH-8 · Every P6 relationship type is imported as finish-to-start, and lag is discarded
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -359,6 +377,12 @@ neither.
 **Done when.**
 - Non-FS relationships are either honoured or explicitly skipped and reported.
 - Importing a normal P6 network with SS/FF pairs does not create a cycle.
+
+**Resolution (2026-09-23, projects Round G — parser half; the reflow's use of lag is P6b's / PC-4's).** Every relationship is captured with its type and lag and only finish-to-start becomes a `depends_on` edge. `lib/scheduleParsers.ts`: `ParsedLink { predecessorExternalRef, type: FS | SS | FF | SF, lagHours }` on each row (`links`), read from MS Project XML `<PredecessorLink><Type>` (0 = FF, 1 = FS, 2 = SF, 3 = SS) and `<LinkLag>` (tenths of a minute), P6 XML `<Relationship><Type>` ("Start to Start" …) and `<Lag>` (hours), XER `TASKPRED.pred_type` (`PR_FS` …) and `lag_hr_cnt`, and CSV tokens (`2SS+1d`, `3FF`, `2FS+2h`). `splitLinks` puts FS into `dependsOnExternalRefs`, counts the rest as not enforced, and serialises everything the engine does not carry onto the task as `attributes.source_links` (`"SS msp-uid:1 +8h; FF msp-uid:3"`) so it is stored and visible. The result's `links` census (`fs / notEnforced / withLag / unresolved`) drives two warnings: `N start-to-start / finish-to-finish / start-to-finish links captured but not enforced — the schedule engine honours finish-to-start only …` and `N finish-to-start links carry lag; the lag is recorded on the task but not applied by the reflow.` Tests: `scheduleParsers.test.ts` "SCH-8 ·" (CSV tokens; XER `PR_SS` + `PR_FF` pair between two activities creates no edge) and `scheduleParsersXml.test.ts` "SCH-8 ·" / "P6 XML ·" (MSPDI Type + LinkLag; a P6 SS + FF ladder creates NO edge in either direction — no cycle — and is recorded with its lag).
+
+**Done-when.** 1 ✓ (recorded, reported with a count, never flattened). 2 ✓ (the SS + FF fixture yields no `dependsOn` on either activity).
+
+**Scope / residual.** Option (b) of the remediation, made honest: non-FS links are stored on the task rather than dropped, so the engine half (PC-4 / P6b honouring lag and, after its own test, SS/FF) can read them back without a re-import. FS lag is recorded but not applied until that lands.
 
 ---
 
@@ -537,7 +561,7 @@ editable, plan does not.
 ## SCH-14 · Import has no size cap, no row cap, and two sequential round trips per row
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / ux
 - **Locations:**
@@ -563,6 +587,12 @@ rather than firing them all at once.
 - A 5,000-row import completes in seconds, not minutes, or is refused with a limit.
 - Progress is visible and the operation is cancellable.
 - Closing the tab mid-import does not leave a half-written schedule (or the partial state is recoverable).
+
+**Resolution (2026-09-23, projects Round G).** Caps: `SCHEDULE_IMPORT_LIMITS = { maxBytes: 5 MB, maxRows: 5,000 }` (`lib/scheduleParsers.ts`). The modal refuses a larger file BEFORE decoding it, naming the size and the limit; the importer refuses more rows than the cap with the count and the limit named and writes nothing (the modal disables the buttons and says so too). Round trips: `importMilestonesFromParsed` reads the existing rows ONCE (paged at PostgREST's 1,000), inserts new rows in chunks of 200, updates changed rows in chunks of 200 as an upsert by primary key (the existing row's provenance travels with it), never writes an unchanged row, and wires structure in batches of 25 concurrent updates only for rows whose parent / predecessors changed. A schema error on a chunk steps down a tier (`import_batch_id` first, then the 20260703 hierarchy fields) and retries; any other chunk error isolates the bad rows one at a time so one unreadable row does not sink two hundred. Progress + cancel: `onProgress({ done, total, phase })` and an `AbortSignal`; the modal shows a bar with a Cancel button; a cancelled import stops between chunks, returns `cancelled: true` and `Import cancelled after N of M rows. Rows written so far are tagged with batch <id>.` Every row an import inserts or updates carries `import_batch_id` (migration `20261097`), so the partial state is visible and reversible, and re-importing the same file completes it (the merge is idempotent). Tests: `scheduleImportWriters.test.ts` "SCH-14 ·" — 5,001 rows refused with the limit named and nothing written; 1,000 new rows land in exactly 5 inserts with progress `[0, 200, …, 1000]` and every row tagged; cancel at 200 of 450 stops with 200 rows written and the message naming the batch; a bad row inside a chunk is isolated per row; a database without `20261097` drops `import_batch_id` alone and keeps the hierarchy fields.
+
+**Done-when.** 1 ✓ (5,000 rows = 25 chunked requests plus structure; more is refused with the limit named). 2 ✓ (bar + Cancel). 3 ✓ as "recoverable": PostgREST has no client transaction, so a closed tab still leaves rows behind — but they are tagged with the batch id and the next import of the same file finishes the merge; nothing is half-written within a row.
+
+**Scope / residual.** The structure pass is chunked but still per-row (25 in flight); folding parent / predecessor ids into the chunked upsert would need a second full write of every row, which costs more than it saves. Passes 2 and 3 are one pass now.
 
 ---
 
@@ -595,7 +625,7 @@ is the right answer now that the edges exist.
 ## SCH-16 · Re-import can add structure but never remove it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:** `lib/milestones.ts:1072-1107` — passes 2 and 3
@@ -614,6 +644,12 @@ Leave rows absent from the file untouched.
 **Done when.**
 - Removing a predecessor upstream and re-importing clears it locally.
 - Un-parenting upstream clears the local parent.
+
+**Resolution (2026-09-23, projects Round G).** For every row the file carries, the importer sets `parent_id` and `depends_on` to exactly what the file says — `NULL` / `[]` when it says none — and skips the write when nothing changed; rows the file does not mention are not touched (`lib/milestones.ts` `importMilestonesFromParsed`, structure pass; a database without `20260715` keeps the hierarchy write and drops the links). Test: `scheduleImportWriters.test.ts` "SCH-16 ·" — a predecessor removed upstream is cleared locally (`depends_on: []`), an un-parented task gets `parent_id: null`, the untouched sibling keeps its parent, and exactly one structure write is issued.
+
+**Done-when.** 1 ✓. 2 ✓.
+
+**Scope / residual.** None beyond the finding: removal of rows stays a separate explicit action (GAP-403), so a task that disappears from the file keeps its structure.
 
 ---
 

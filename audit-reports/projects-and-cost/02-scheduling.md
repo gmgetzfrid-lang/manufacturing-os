@@ -31,7 +31,7 @@ Read as an algorithm, not as code.
 ## SCHED-1 · MS Project's project-summary task (OutlineLevel 0) is coerced to level 1 and lands as a top-level LEAF spanning the whole job, double-counting in every rollup
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleParsers.ts:247`, `lib/scheduleParsers.ts:252-261`, `lib/scheduleParsers.ts:838-839`, `lib/executionReport.ts:121-124`, `lib/milestones.ts:657-659`, `lib/criticalPath.ts:43-49`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Holds, and the CSV path proves the coercion is the bug: scheduleParsers.ts:681 `const outlineLevel = outRaw ? Number(outRaw) : null` preserves 0, and reconstructHierarchyFromOutline (:847-852) walks `for (let l = lvl - 1; l >= 0; l--)` — level 0 works correctly there. Extra unclaimed harm: the summary row is an incomplete leaf finishing at the job finish and starting at the job start, so criticalPath.ts seeds it into the chain and the backward walk terminates in one step, collapsing the critical path.
@@ -54,6 +54,12 @@ lib/scheduleParsers.ts:247 verbatim: `const outlineLevel = Number(outlineLevelRa
 - [ ] A level-0 row is either imported as the root parent of the level-1 phases or skipped with a warning, never as a sibling leaf
 - [ ] Dropped rows clear their level from recentByLevel so a deeper row cannot inherit a stale parent
 - [ ] A fixture containing <UID>0</UID><OutlineLevel>0</OutlineLevel> asserts the phases are its children (or that it was skipped)
+
+**Resolution (2026-09-23, projects Round G).** `lib/scheduleParsers.ts` `parseMsProjectXml`: the outline level is parsed with an explicit NaN test (`outlineLevelRaw.trim() === "" ? NaN : Number(…)`, fallback 1 only for NaN), so `0` survives as `0`. A file that carries a level-0 row shifts every level up by one (`levelOffset`), so the project-summary row imports at level 1 as the ROOT PARENT of the phases (level 2), which keeps `assignGroupColors`' single-root anchoring and makes every structural `isLeaf` correct — it is no longer a top-level leaf spanning the job, and it no longer seeds the critical path. A warning says so. A row dropped for a missing name or date (or an unreadable date) now clears its own level and everything deeper from `recentByLevel`, so a deeper row cannot inherit a stale parent. Tests: `lib/__tests__/scheduleParsersXml.test.ts` "SCHED-1 ·" — the `<UID>0</UID><OutlineLevel>0</OutlineLevel>` fixture asserts the phases are its children and their leaves theirs; a task without OutlineLevel is still level 1; the child of a dropped level-2 row does NOT attach to the previous level-2 sibling.
+
+**Done-when.** 1 ✓. 2 ✓ (imported as the root parent). 3 ✓. 4 ✓.
+
+**Scope / residual.** The root row's own `PercentComplete` is imported as its progress like any other summary's; rollups derive leaf-ness structurally and ignore it, as before. The CSV path (`reconstructHierarchyFromOutline`) already handled level 0 and is unchanged.
 
 ---
 
@@ -86,6 +92,12 @@ lib/scheduleParsers.ts:247 verbatim: `const outlineLevel = Number(outlineLevelRa
 - [ ] The Report's "Work hours" card is hidden or explicitly labelled "not supplied by this import" when plannedHours is 0, rather than printing 0 / 0 h
 - [ ] A parser test asserts a non-null durationHours on a fixture that carries work
 
+**Partial (2026-09-23, projects Round G).** The parser half and the writer half landed; the report card is a projects-tab surface outside this package's files. `lib/scheduleParsers.ts`: MS Project XML `<Work>` (`PT40H0M0S`, via `isoDurationToHours`; 8-hour days for a `P#D` part) reaches `durationHours`, with `<Duration>` as the fallback and summaries left null; P6 XML `<PlannedDuration>` (else `<AtCompletionDuration>`) and XER `target_drtn_hr_cnt` (else `target_work_qty`) do the same; MS Project / generic CSV read a `Work` / `Duration` / `Hours` column through `durationTextToHours` (`40 hrs`, `5 days` = 40, `2 wks` = 80, `90 mins` = 1.5). `lib/milestones.ts` already wrote `duration_hours` from the row; it now receives a value. Tests: `scheduleParsersXml.test.ts` (Work → 40, Duration → 8, summary → null; P6 PlannedDuration → 16), `scheduleParsers.test.ts` (XER 24 / 16; CSV text units).
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✗ not done — `components/projects/ExecutionReportView.tsx:62-68` (the "Work hours" card printing `0 / 0 h`) is not in this package's file list (PT owns the report surface); the change is one condition: hide the card, or label it "not supplied by this import", when `plannedHours === 0`. 4 ✓ (`a non-null durationHours on a fixture that carries work`, four formats).
+
+**Scope / residual.** Item 3 stays with the projects-tab report package; once the importer populates hours the card stops printing `0 / 0 h` for new imports of files that carry work, but a file without work values still reaches it. Effort-weighting itself (`effectiveWeight`) is `SCHED-14`'s.
+
 ---
 
 <a id="sched-3"></a>
@@ -93,7 +105,7 @@ lib/scheduleParsers.ts:247 verbatim: `const outlineLevel = Number(outlineLevelRa
 ## SCHED-3 · The approved baseline is writable and erasable by any active org member, can half-apply, is never shown on the timeline, and every batch move rewrites past it without a word
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/milestones.ts:1462-1502`, `lib/milestones.ts:1504-1514`, `supabase/migrations/20260614_phase7_milestones.sql (milestones_member_all policy)`, `supabase/migrations/20260706_milestones_baseline.sql:1-12`, `components/projects/TaskDetailPanel.tsx:480-483`, `components/projects/ScheduleTab.tsx:201-215`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four sub-claims verified. Sharpest point the finding understates: setBaseline is audited but clearBaseline is not, so any active member can erase the approved plan silently. ScheduleTab.tsx:206 promises 'Every view will then show how far the schedule drifts from it' while the timeline draws no baseline bar; drift appears only in the execution report and the task detail panel.
@@ -119,6 +131,12 @@ lib/milestones.ts:1509-1511 verbatim — `const { error } = await supabase.from(
 - [ ] setBaseline applies as one statement (or RPC) so it cannot half-apply, and a partial baseline is reported to the user
 - [ ] A batch move that pushes any row past its baseline finish says so in the move-confirmation sheet, the way the single-task form already does
 
+**Resolution (2026-09-23, projects Round G).** Migration `20261099_prj_roundG_baseline_authority.sql`: `set_project_baseline(p_org, p_project)` / `clear_project_baseline(p_org, p_project)` (SECURITY DEFINER, `SET search_path = public`, EXECUTE revoked from PUBLIC and anon) enforce the SAME predicate `apply_milestone_moves` enforces — `caller_is_active_member` + `can_edit_project_schedule` (20261098: `caller_holds_any_role` over the batch-move RPC's four roles, or the project owner) — and refuse the anon key the same way (`auth.role() IS DISTINCT FROM 'service_role'`). Each applies as ONE `UPDATE` over the project (no half-apply), writes the prior snapshot to the new `milestone_baseline_history (org_id, project_id, taken_at, taken_by, reason, row_count, rows)` first — every re-baseline and every clear keeps what it replaced — and writes its own `audit_logs` row (`SCHEDULE_BASELINED` / `SCHEDULE_BASELINE_CLEARED`) with the count and the history id. The rail: `trg_milestones_baseline_write_guard` (BEFORE UPDATE) refuses any change to the four `baseline_*` columns unless the transaction-local flag the RPCs set is present (a trigger, because `milestones_member_all` is a permissive FOR ALL and a second policy would be decorative — DRLS-1). History has RLS with a member SELECT policy and no write policy. DEC-30 inventory in the result set: projects whose LEAF rows are half-baselined, and projects with any baseline. `lib/milestones.ts` `setBaseline` / `clearBaseline` are one RPC call each, returning `{ ok, count, via, historyId }`; a refusal is returned as-is; the legacy per-row path runs only when the RPC is absent (PGRST202) and is now audited too, and its partial result is reported as partial (`Baseline applied to 1 of 2 tasks — …`). `components/projects/MovePreviewSheet.tsx` (one line): `N tasks would finish past the approved baseline.` computed from the targets and the delta, alongside the existing warnings. Tests: `lib/__tests__/milestoneRpcMigration.test.ts` (both RPCs' predicate, flag, one UPDATE, history-before-update, audit, grants; the guard's four columns and 42501; the history table's RLS shape; the leaf inventory) and `scheduleImportWriters.test.ts` "SCHED-3 ·" (RPC call and result; a 42501 is not retried through the legacy path; legacy partial reported; clear audited on both paths).
+
+**Done-when.** 1 ✓ (pending migration). 2 ✓ (audited on both paths — it still has no UI caller, kept because the RPC now has one path to it). 3 ✓ (one statement; the legacy fallback reports partial). 4 ✓ (the sheet warns from the targets it is shown).
+
+**Scope / residual.** The sheet computes drift over the dragged `targets`; the cascade's descendants and dependents are not in that list (`ExecutionView` only hands it the selection), so PT `SCH-4`'s "same input" would pass the computed change set into the sheet — the warning line is written to take it. On a database without the migration the button keeps working through the legacy path with today's semantics (no rail, per-row writes) — the rail is the migration. Pending migration: `supabase/migrations/20261099_prj_roundG_baseline_authority.sql` (after `20261098`, which defines `can_edit_project_schedule`).
+
 ---
 
 <a id="sched-4"></a>
@@ -126,7 +144,7 @@ lib/milestones.ts:1509-1511 verbatim — `const { error } = await supabase.from(
 ## SCHED-4 · apply_milestone_moves skips its entire authorization block whenever auth.uid() is NULL, and SECURITY DEFINER means RLS does not backstop it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260907_milestone_batch_move.sql:20-47`, `supabase/migrations/20260907_milestone_batch_move.sql:49-59`, `lib/milestones.ts:303-307`, `supabase/migrations/20260614_phase7_milestones.sql (milestones_member_all)`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the claim of absence: the anon role's default PUBLIC EXECUTE is never revoked here, unlike every comparable RPC in the repo. The practical exploit is privilege escalation rather than pure anonymous access — milestones_member_all is `TO authenticated`, so ids must come from a signed-in session, but any member without schedule-editing rights can re-issue the call with a bare anon key and skip the role check entirely.
@@ -148,6 +166,12 @@ Migration text, verbatim: `IF v_uid IS NULL THEN\n    -- service role: trusted s
 - [ ] The NULL-uid branch tests auth.role() = 'service_role' explicitly rather than treating any absent uid as trusted
 - [ ] EXECUTE on apply_milestone_moves is revoked from anon (and from public) and granted only to authenticated
 - [ ] A test or manual probe with the anon key and no session receives 42501, not a successful move
+
+**Resolution (2026-09-23, projects Round G).** Migration `20261098_prj_roundG_apply_milestone_moves.sql` — one re-creation of `apply_milestone_moves`, base `20260907`, shipped together with PT `SCH-7`'s optimistic lock as the sequencing file requires. The NULL-uid branch now tests `auth.role() IS DISTINCT FROM 'service_role'` and raises 42501 for anything else (the anon key has no uid and used to walk straight past); `REVOKE ALL … FROM PUBLIC, anon; GRANT EXECUTE … TO authenticated, service_role`. The inline role list is gone: the predicate lives once in `can_edit_project_schedule(p_org, p_project)` (`caller_holds_any_role` over the same four roles `20260907` listed, OR the project owner — the same set, no widening), registered as a collection funnel in `lib/__tests__/authorityCensus.test.ts` (DEC-35). The return type changes to JSONB (`{ count, matched, unmatched }`), so the old signature is dropped first; the client accepts both shapes. The result set prints `has_function_privilege('anon', …)` BEFORE (inventory, captured ahead of the transaction) and AFTER (probe), plus authenticated / service_role, the `auth.role()` and lock probes (prosrc verbatim, apostrophes doubled), the search_path pins, and the SCHED-9 recompute-candidate inventory. `lib/__tests__/milestoneRpcMigration.test.ts` pins the drop-then-create, the grants, the explicit role test, the predicate call, and a lineDiff against the live `20260907` body: exactly the header, the INT return, the headline-role read + inline list, the blind escape and the per-element count are removed; every added line is a comment, the role test, the membership / predicate calls, the lock, the shift CASE, the diagnostics or the jsonb result; the transaction shape and the UPDATE's core survive verbatim.
+
+**Done-when.** 1 ✓. 2 ✓ (pending migration). 3 ✓ by probe: no live database here, so the migration's own result set is the probe — `anon can NOT execute apply_milestone_moves (after)` must read `true` and the inventory row shows what it was before; the shape test pins the REVOKE / GRANT pair and the `auth.role()` branch.
+
+**Scope / residual.** The repo-wide `auth.uid() IS NULL` idiom in other functions (20260901, 20260831, 20261011) is out of scope per DEC-31 — this was the only one both skipping the check AND directly RPC-callable with attacker-controlled arguments. Pending migration: `supabase/migrations/20261098_prj_roundG_apply_milestone_moves.sql`.
 
 ---
 
@@ -193,7 +217,7 @@ b1 is `status: "completed"` and moved nine days. sequenceSiblings with a complet
 ## SCHED-6 · A multi-project P6 export merges every project's activities into the one target project — no proj_id filter exists on either P6 path
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleParsers.ts:349-365`, `lib/scheduleParsers.ts:383-413`, `lib/scheduleParsers.ts:479-502`, `lib/scheduleParsers.ts:527-557`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence. No filter, no warning, and no project picker — ScheduleImportModal contains no mention of proj_id or multiple projects. The proj_node_flag handling actively produces the described symptom: every project in the file contributes its own top-level phase to the one target project.
@@ -215,6 +239,12 @@ b1 is `status: "completed"` and moved nine days. sequenceSiblings with a complet
 - [ ] The parsers detect more than one project in the file (multiple PROJECT rows / <Project> elements) and either ask which to import or report the count
 - [ ] Rows are filtered to the chosen project's proj_id / Project ObjectId
 - [ ] A fixture with two projects asserts only one project's activities are returned
+
+**Resolution (2026-09-23, projects Round G).** Both P6 paths detect the projects and never merge. `lib/scheduleParsers.ts` P6 XML: every `<Project>` with an `<ObjectId>` is listed (`projects: [{ id, name, rows }]`, rows counted by enclosing project; `<BaselineProject>` is not a project); XER: distinct `TASK.proj_id` values, named from the `PROJECT` table. A file with more than one project returns `needsProjectChoice: true`, `rows: []` and the warning `This file holds N projects (…). Choose which one to import — they are never merged into one board.`; with `ParseOptions.projectId` the WBS and activities are filtered to that project (XML by the enclosing `<Project>`, XER by `proj_id` on both `TASK` and `PROJWBS`) and `selectedProjectId` is reported. A single-project file needs no choice. `ScheduleImportModal.tsx` shows a picker (`name · N rows`) and re-parses the kept bytes on the choice; when several projects exist it also says which one is being imported. Tests: `scheduleParsers.test.ts` "SCHED-6 ·" (two-project XER: listed with counts and withheld; with a choice only that project's activities + WBS; single-project needs no choice) and `scheduleParsersXml.test.ts` "P6 XML ·" (two `<Project>` elements withheld; chosen project only, baseline copies excluded).
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓.
+
+**Scope / residual.** A consequence of the enclosing-project filter: activities under `<BaselineProject>` are no longer harvested into the live schedule even for a single-project file — that was a latent merge of the same shape.
 
 ---
 
@@ -253,7 +283,7 @@ Executed against the real module: `deriveSummaryStatus({ total: 3, done: 0, bloc
 ## SCHED-8 · MS Project CSV predecessors are matched against whichever id column won the synonym race, so a file with both Unique ID and ID wires dependencies to the wrong tasks
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleParsers.ts:579-590`, `lib/scheduleParsers.ts:634-648`, `lib/scheduleParsers.ts:686-701`, `lib/scheduleParsers.ts:710`, `lib/milestones.ts:1090-1099`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The only guard present is `if (iPred >= 0 && iId >= 0)` (line 686), which checks that SOME id column exists, not that it is the same numbering the Predecessors column uses — MS Project's Predecessors field displays sequential IDs, not Unique IDs. Mis-resolved refs silently produce a wrong `depends_on` edge (no error surfaces, since only unresolvable refs are dropped by the `.filter(Boolean)` at 1095).
@@ -276,6 +306,12 @@ lib/scheduleParsers.ts:585 verbatim: `id:       ["unique id", "uid", "id", "task
 - [ ] Unresolvable predecessor tokens are counted and reported in the import warnings rather than dropped
 - [ ] A CSV fixture with divergent Unique ID and ID columns asserts the links land on the right rows
 
+**Resolution (2026-09-23, projects Round G).** MS Project CSV now carries two column roles: the row key (`unique id` / `uid`) and the sequential id (`id` / `task id`), with `predVia: "seq"` — predecessor tokens resolve through the ID column's numbering (`refByPredId`, built from the sequential column) to the row's Unique-ID-keyed `externalRef`, after every row has been read. A file with Unique ID but no ID does not guess against the Unique ID namespace: links are skipped with `Predecessor links were not imported: the "Predecessors" column refers to the ID column, which this file does not carry.` (generic CSV keeps `predVia: "key"` — our own convention names refs directly). Tokens that name no row (or the row itself) are counted (`links.unresolved`) and reported: `N predecessor references pointed at a row that is not in this file and were not linked.` The comment that claimed the case was handled is replaced by code that handles it. Tests: `scheduleParsers.test.ts` "SCHED-8 ·" — the divergent fixture (`Unique ID 14` vs `ID 14`) lands links on the right rows, `Ship`'s `14` resolves to nothing rather than to `Test`, and the two unresolvable tokens are counted; the Unique-ID-only file skips with the warning.
+
+**Done-when.** 1 ✓ (resolved through ID; the row key stays Unique ID). 2 ✓. 3 ✓.
+
+**Scope / residual.** None beyond the finding. The importer's pass still drops a ref whose row failed to insert — that count is in the row errors, not the link census.
+
 ---
 
 <a id="sched-9"></a>
@@ -283,7 +319,7 @@ lib/scheduleParsers.ts:585 verbatim: `id:       ["unique id", "uid", "id", "task
 ## SCHED-9 · Shift (day/night) is derived by parsing an offset-less imported datetime as browser-local, then frozen — so it is wrong by the importer's UTC offset and never follows the task
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/milestones.ts:902-910`, `lib/milestones.ts:975`, `lib/scheduleParsers.ts:911-914`, `lib/scheduleFilter.ts:104`, `lib/scheduleFilter.ts:26-27`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Import runs client-side (components/projects/ScheduleImportModal.tsx:154 calls importMilestonesFromParsed in a "use client" component), so the local zone really is the importer's browser zone. Repo-wide grep for `shift` in lib/milestones.ts confirms line 975 is the ONLY write of the column — neither updateMilestone/applyMilestoneMoves nor the RPC recompute it, so it never follows a moved task; the filter at lib/scheduleFilter.ts:104 (`!f.shifts.includes(m.shift)`) trusts the frozen value.
@@ -306,6 +342,12 @@ lib/milestones.ts:905-909 verbatim: `const d = new Date(plannedStartIso); if (is
 - [ ] shiftFromStart is computed from the same UTC reading the rest of the app uses, or shift becomes derived rather than stored
 - [ ] Moving a task's planned start across the 06:00/18:00 boundary updates or invalidates its shift
 - [ ] A test pins the shift assigned to an 08:00 and a 19:00 import under a non-UTC TZ
+
+**Resolution (2026-09-23, projects Round G).** One UTC reading everywhere. `lib/scheduleParsers.ts` `coerceIso` attaches `Z` to an offset-less datetime (`2026-06-01T19:00:00` → `…Z`; an explicit `Z` / `±hh:mm` is kept), so the parsed value matches the wall-clock-as-UTC storage convention on every machine. The single implementation is `lib/scheduleFilter.ts` `shiftForStart(iso)` (06:00–17:59 UTC → day, else night, null without a start); `lib/milestones.ts` `shiftFromStart` delegates to it, and the filter classifies a row with no stored label from its start (a stored label — possibly a hand correction — still wins). Shift follows the task: `updateMilestone` recomputes it whenever `plannedStartAt` is patched without an explicit `shift`, keeping a hand-set `swing` (never derivable from a start); `apply_milestone_moves` (20261098) does the same in SQL (`EXTRACT(HOUR FROM start AT TIME ZONE 'UTC') BETWEEN 6 AND 17`, `swing` kept); the per-row fallback goes through `updateMilestone`. Existing imported rows are NOT recomputed (they may have been hand-corrected): `20261098`'s result set inventories `source IN ('p6','msproject','csv','mpxj') AND shift IS NOT NULL` and the projects holding them, so the opt-in can be sized. Tests: `scheduleParsersXml.test.ts` (offset-less `08:00` / `19:00` starts get `Z` and classify day / night under Asia/Kolkata, America/Los_Angeles, Pacific/Auckland and UTC), `scheduleImportWriters.test.ts` "SCHED-9 ·" (the importer labels 08:00 day / 19:00 night under Asia/Kolkata; `updateMilestone` re-labels a start crossing 18:00, keeps swing, defers to an explicit shift; the filter classifies an unlabelled row and the boundary at 17:59 / 18:00), `milestoneRpcMigration.test.ts` (the RPC's CASE).
+
+**Done-when.** 1 ✓. 2 ✓ (one function, three readers). 3 ✓ (`updateMilestone` and the RPC; the legacy fallback through `updateMilestone`). 4 ✓.
+
+**Scope / residual.** `setTaskDuration` and `rebaseSchedule` move finish / both dates by a whole number of days, which cannot cross the boundary, and are P6b's region; `groupTasksUnderParent` writes no start. A per-project "recompute shift" action is not built — the inventory says how many rows it would touch.
 
 ---
 
@@ -344,7 +386,7 @@ Executed against the real module. (a) Long-lead: leaves `order` (Jan 1–5) and 
 ## SCHED-11 · The drag path — the primary way dates move — writes no per-task reschedule breadcrumb, and its one batch audit row is fire-and-forget
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/milestones.ts:247-270`, `lib/milestones.ts:293-327`, `lib/milestones.ts:321-326`, `supabase/migrations/20260907_milestone_batch_move.sql:49-59`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim confirmed on every point. listMilestoneNotes (lib/milestones.ts:557-563) reads milestone_notes, which the RPC never writes, so a dragged task's activity panel genuinely shows only status changes.
@@ -366,6 +408,12 @@ lib/milestones.ts:326 verbatim: `}).then(() => undefined, () => undefined);`. li
 - [ ] A batch move records the before/after dates for each moved row (in the audit details or as milestone_notes), not just a count
 - [ ] The audit insert's error is surfaced or retried rather than swallowed
 - [ ] The 50-id truncation either goes away or is flagged in the row ("showing 50 of N")
+
+**Resolution (2026-09-23, projects Round G — with PT `SCH-7`'s client half).** `lib/milestones.ts` `applyMilestoneMoves` returns `MoveBatchResult { matched, unmatched, count, via, auditError? }`. It reads the rows as they stand (dates, `updated_at`, status) in one query per 200 ids, sends each move with `expected_updated_at` (the caller's `expectedUpdatedAt` when supplied, else the row as read) to the RPC, and accepts both the `20260907` INT and the `20261098` `{ count, matched, unmatched }` result. For every matched row whose finish moved it writes a `milestone_notes` row — `kind: 'reschedule'`, `status_at`, `Finish +N days → date`, the same shape `updateMilestone` writes — in one batched insert, so the task's own trail shows the drag. The batch `audit_logs` row is a CHECKED write: `{ error }` is read, the insert is retried once, and a second refusal is surfaced as `auditError` (never `.then(() => undefined, () => undefined)`); its `details` carry `count` (the true ROW_COUNT), `requested`, `unmatched`, `shown`, `total`, `truncated` and `moves: [{ id, before: { start, finish }, after: { start, finish } }]` for the first 50 — "showing 50 of N" is explicit, not silent. Tests: `scheduleImportWriters.test.ts` "SCH-7 / SCHED-11 ·" — expected `updated_at` per row and unmatched surfaced; breadcrumb per row + the audit payload's before / after; a refused audit insert retried once then surfaced with `shown: 50, total: 60, truncated: true`; the INT result and the PGRST202 fallback (which recomputes shift through `updateMilestone`).
+
+**Done-when.** 1 ✓ (both: breadcrumbs and audit details). 2 ✓ (retried once, then surfaced). 3 ✓ (`shown / total / truncated` in the row).
+
+**Scope / residual.** `components/projects/ScheduleTab.tsx` (PT's) still awaits the call without reading the result: rendering `unmatched` ("which moves were rejected", PT `SCH-7` dw1) and `auditError` is the PT surface's half, and the call site's `expectedUpdatedAt` should come from the loaded milestone's `updatedAt` for the lock to catch a stale VIEW rather than only the read-to-write window. The optimistic lock itself is in `20261098` (`SCHED-4`'s record).
 
 ---
 
