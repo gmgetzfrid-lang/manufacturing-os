@@ -13,6 +13,13 @@
 // HARDENED input: a byte cap, a per-sheet row cap, unsafe sheet names
 // ignored, and a prototype guard that detects and reverts any own property
 // the parse adds to Object.prototype / Array.prototype, refusing the file.
+//
+// The row cap REFUSES, never truncates: the draft action reports
+// `rows.length` as the sheet's row count and the modal drafts "N rows left"
+// from it, so a silently cut sheet would read as complete while its tail
+// was never drafted. A sheet with more data rows than the cap — or whose
+// used range runs past the bounded read window, where we cannot know what
+// the unread rows hold — is refused with a message that says how to split it.
 
 import * as XLSX from "xlsx";
 import { cellToText } from "@/lib/outputTemplateText";
@@ -27,10 +34,13 @@ export interface SheetData {
 
 /** Largest workbook the generator will parse. */
 export const MAX_WORKBOOK_BYTES = 25 * 1024 * 1024;
-/** Data rows parsed per sheet (the draft path slices 25 at a time anyway). */
+/** Most data rows a sheet may hold; more is refused (never silently cut). */
 export const MAX_SHEET_ROWS = 10_000;
 /** Rows scanned for the header row — see the findIndex below. */
 const HEADER_SCAN_ROWS = 15;
+/** Physical rows the parser reads per sheet: the header window, the data
+ *  cap, and one more so an over-cap sheet always shows a row past the cap. */
+export const SHEET_ROW_WINDOW = HEADER_SCAN_ROWS + MAX_SHEET_ROWS + 1;
 /** Sheet names that would address the prototype chain rather than a sheet. */
 const UNSAFE_SHEET_NAMES: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -67,7 +77,14 @@ export function withPrototypeGuard<T>(fn: () => T): T {
   return result;
 }
 
-/** Parse a workbook (xlsx/xls/csv) into headers + row objects. */
+/** Rows spanned by an A1-style range string; 0 when absent or unparseable. */
+function rangeRows(ref: unknown): number {
+  if (typeof ref !== "string" || !ref) return 0;
+  try { return XLSX.utils.decode_range(ref).e.r + 1; } catch { return 0; }
+}
+
+/** Parse a workbook (xlsx/xls/csv) into headers + row objects. Throws when
+ *  the sheet holds more than MAX_SHEET_ROWS data rows (see the header). */
 export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): SheetData {
   if (bytes.byteLength > MAX_WORKBOOK_BYTES) {
     throw new Error(
@@ -77,8 +94,8 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
   const wb = withPrototypeGuard(() => XLSX.read(bytes, {
     type: "buffer",
     cellDates: true,
-    // Bound the work per sheet: header scan window + the data rows we keep.
-    sheetRows: HEADER_SCAN_ROWS + MAX_SHEET_ROWS,
+    // Bound the work per sheet: header scan window + the data cap + 1.
+    sheetRows: SHEET_ROW_WINDOW,
   }));
   // Only sheets that are OWN keys of wb.Sheets under a safe name are real;
   // "__proto__" as a sheet name addresses the prototype, not a sheet.
@@ -89,6 +106,15 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
   if (!sheetName) return { sheetName: "", headers: [], rows: [], sheetNames };
 
   const ws = wb.Sheets[sheetName];
+  // A read the window cut is refused outright: `!fullref` (xlsx/xls) keeps
+  // the sheet's whole used range when `sheetRows` trimmed it, and a `!ref`
+  // that fills the window (csv leaves no `!fullref`) may have been trimmed.
+  const seenRows = Math.max(rangeRows(ws["!fullref"]), rangeRows(ws["!ref"]));
+  if (rangeRows(ws["!fullref"]) > SHEET_ROW_WINDOW || rangeRows(ws["!ref"]) >= SHEET_ROW_WINDOW) {
+    throw new Error(
+      `Sheet "${sheetName}" runs to row ${seenRows.toLocaleString("en-US")} or beyond; the generator reads at most ${MAX_SHEET_ROWS.toLocaleString("en-US")} data rows per sheet. Remove the trailing rows or split it into smaller workbooks.`,
+    );
+  }
   const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false, defval: "" });
 
   // Find the header row — scan the first 15 rows for the first plausible one.
@@ -100,7 +126,7 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
   const headers = rawHeaders.map((h, i) => h || `Column ${i + 1}`);
 
   const rows: Array<Record<string, string>> = [];
-  for (let r = headerIdx + 1; r < matrix.length && rows.length < MAX_SHEET_ROWS; r++) {
+  for (let r = headerIdx + 1; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
     const obj: Record<string, string> = {};
     let any = false;
@@ -109,7 +135,13 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
       obj[h] = v;
       if (v) any = true;
     });
-    if (any) rows.push(obj);
+    if (!any) continue;
+    if (rows.length >= MAX_SHEET_ROWS) {
+      throw new Error(
+        `Sheet "${sheetName}" has more than ${MAX_SHEET_ROWS.toLocaleString("en-US")} data rows; the generator drafts at most ${MAX_SHEET_ROWS.toLocaleString("en-US")} per sheet. Split it into smaller workbooks.`,
+      );
+    }
+    rows.push(obj);
   }
   return { sheetName, headers, rows, sheetNames };
 }

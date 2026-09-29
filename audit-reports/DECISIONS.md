@@ -692,7 +692,7 @@ log shows what enforcement would have blocked.
 
 **Risk:** low.
 
-*Landed 2026-09-23 (document-control Round F): the scheduled-export sweep's subscription and plan refusals (`XEDGE-7` / `XEDGE-8`, `lib/exportEntitlement.ts scheduledRunGate`) ride the same `SUBSCRIPTION_ENFORCE` flag — off: the would-be skip is logged and recorded on the run and the destination; on: a cancelled `export_runs` row is recorded and nothing is pushed. The "configurer still an active member" check in the same gate is not billing state and always applies.*
+*Landed 2026-09-23 (document-control Round F): the scheduled-export sweep's subscription and plan refusals (`XEDGE-7` / `XEDGE-8`, `lib/exportEntitlement.ts scheduledRunGate`) ride the same `SUBSCRIPTION_ENFORCE` flag — off: the would-be skip is logged and recorded on the run and the destination; on: a cancelled `export_runs` row is recorded and nothing is pushed. The "configurer still an active member" check in the same gate is not billing state and always applies. Fix pass: the gate reads the org row once for both billing limbs and treats an unreadable row like a refusal on that limb (skip under the flag, notice without it — never `assertOrgHasAccess`'s fail-open), and the skip's record writes are checked and surfaced on the sweep result.*
 
 <a id="dec-19"></a>
 ## DEC-19 · `access_requests` — build the surface or remove the feature?

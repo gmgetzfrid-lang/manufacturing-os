@@ -16,7 +16,7 @@ import {
   findPlaceholders, hasRawXmlTag, pickDeclaredValues, asciiFoldFilename, contentDispositionAttachment,
 } from "@/lib/outputTemplateText";
 import { renderTemplate, TemplateRenderError, extractDocxText } from "@/lib/docxRender";
-import { parseWorkbook, withPrototypeGuard, MAX_WORKBOOK_BYTES, MAX_SHEET_ROWS } from "@/lib/xlsxData";
+import { parseWorkbook, withPrototypeGuard, MAX_WORKBOOK_BYTES, MAX_SHEET_ROWS, SHEET_ROW_WINDOW } from "@/lib/xlsxData";
 import { chunkDocuments, downloadNameFromDisposition, RENDER_CHUNK } from "@/lib/outputTemplates";
 
 /** A minimal but real .docx: content types, package rels, one paragraph. */
@@ -36,6 +36,9 @@ describe("XEDGE-2 — header-safe filenames", () => {
     expect(asciiFoldFilename("a\"b\r\nc")).toBe("a_b_c");
     expect(asciiFoldFilename("")).toBe("document");
     expect(asciiFoldFilename("—")).toBe("_");
+    // a backslash is quoted-string escape syntax: it must never precede the closing quote
+    expect(asciiFoldFilename("foo\\")).toBe("foo_");
+    expect(asciiFoldFilename("a\\b.docx")).toBe("a_b.docx");
   });
   it("contentDispositionAttachment is pure ASCII and carries the exact UTF-8 name as filename*", () => {
     const h = contentDispositionAttachment("RFQ — 12 documents.zip");
@@ -46,6 +49,10 @@ describe("XEDGE-2 — header-safe filenames", () => {
     expect(contentDispositionAttachment('x"\r\ny.docx')).toBe("attachment; filename=\"xy.docx\"; filename*=UTF-8''xy.docx");
     // RFC 5987 reserves ' ( ) * — they are percent-encoded
     expect(contentDispositionAttachment("a'(b)*.docx")).toContain("filename*=UTF-8''a%27%28b%29%2A.docx");
+    // a name ending in a backslash (a reviewed draft's edited filename) still terminates the quoted-string
+    const trailing = contentDispositionAttachment("foo\\");
+    expect(trailing).toBe("attachment; filename=\"foo_\"; filename*=UTF-8''foo%5C");
+    expect(trailing).not.toMatch(/\\"/);
     // the header construction the runtime refused before now succeeds
     expect(() => new Response("x", { headers: { "content-disposition": h } })).not.toThrow();
     expect(() => new Response("x", { headers: { "content-disposition": 'attachment; filename="a — b.zip"' } })).toThrow();
@@ -136,12 +143,50 @@ describe("XEDGE-12 — the workbook parser runs on hardened input", () => {
     expect(withPrototypeGuard(() => 42)).toBe(42);
   });
 
-  it("rows are capped per sheet", () => {
+  const dataRows = (n: number): unknown[][] => {
     const rows: unknown[][] = [["WO", "Desc"]];
-    for (let i = 0; i < MAX_SHEET_ROWS + 200; i++) rows.push([String(i), "x"]);
-    const out = parseWorkbook(workbook([{ name: "Big", rows }]));
+    for (let i = 0; i < n; i++) rows.push([String(i), "x"]);
+    return rows;
+  };
+
+  it("a sheet with exactly MAX_SHEET_ROWS data rows parses whole and reports the true count", () => {
+    const out = parseWorkbook(workbook([{ name: "Big", rows: dataRows(MAX_SHEET_ROWS) }]));
     expect(out.headers).toEqual(["WO", "Desc"]);
     expect(out.rows.length).toBe(MAX_SHEET_ROWS);
     expect(out.rows[0]).toEqual({ WO: "0", Desc: "x" });
+    expect(out.rows[MAX_SHEET_ROWS - 1]).toEqual({ WO: String(MAX_SHEET_ROWS - 1), Desc: "x" });
+  });
+
+  it("one data row over the cap is REFUSED, never silently truncated to a wrong row count", () => {
+    // MAX_SHEET_ROWS + 1 data rows: the physical sheet (header + data) is 10,002 rows,
+    // inside the read window, so this is the data-row limb of the refusal.
+    expect(() => parseWorkbook(workbook([{ name: "Big", rows: dataRows(MAX_SHEET_ROWS + 1) }])))
+      .toThrow(/Sheet "Big" has more than 10,000 data rows; the generator drafts at most 10,000 per sheet\. Split it/);
+    // blank rows between data rows do not count toward the cap (and are not returned)
+    const sparse = dataRows(MAX_SHEET_ROWS - 10);
+    for (let i = 1; i <= 20; i++) sparse.splice(i * 3, 0, ["", ""]);
+    expect(sparse.length).toBeLessThan(SHEET_ROW_WINDOW);
+    expect(parseWorkbook(workbook([{ name: "Sparse", rows: sparse }])).rows.length).toBe(MAX_SHEET_ROWS - 10);
+  });
+
+  it("a sheet whose used range runs past the bounded read window is refused (xlsx via !fullref, csv via a filled !ref)", () => {
+    // xlsx: well over the window — sheetRows trims the read, !fullref keeps the truth
+    expect(() => parseWorkbook(workbook([{ name: "Big", rows: dataRows(MAX_SHEET_ROWS + 200) }])))
+      .toThrow(new RegExp(`Sheet "Big" runs to row ${(MAX_SHEET_ROWS + 201).toLocaleString("en-US")} or beyond; the generator reads at most 10,000 data rows per sheet\\. Remove the trailing rows or split it`));
+    // xlsx: a few data rows plus one stray cell far below (used-range bloat) — unread rows cannot be trusted blank
+    const ws = XLSX.utils.aoa_to_sheet(dataRows(5));
+    ws[XLSX.utils.encode_cell({ r: SHEET_ROW_WINDOW + 500, c: 0 })] = { t: "s", v: "stray" };
+    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: SHEET_ROW_WINDOW + 500, c: 1 } });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Bloat");
+    expect(() => parseWorkbook(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer))
+      .toThrow(/Sheet "Bloat" runs to row 10,517 or beyond/);
+    // csv: no !fullref exists, so a !ref that fills the window is the cut signal
+    const csv = Buffer.from(dataRows(SHEET_ROW_WINDOW + 10).map((r) => r.join(",")).join("\n"));
+    expect(() => parseWorkbook(csv)).toThrow(/runs to row 10,016 or beyond/);
+    // csv under the window parses whole
+    const small = Buffer.from(dataRows(30).map((r) => r.join(",")).join("\n"));
+    expect(parseWorkbook(small).rows.length).toBe(30);
+    expect(SHEET_ROW_WINDOW).toBe(MAX_SHEET_ROWS + 16);
   });
 });

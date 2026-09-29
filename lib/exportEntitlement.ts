@@ -18,7 +18,8 @@
 // active Admin re-saving the destination.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { assertOrgHasAccess, type AuthError } from "@/lib/serverAuth";
+import type { AuthError } from "@/lib/serverAuth";
+import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
 
 /** Plans that include cloud-bucket backup destinations. */
 export const CLOUD_BUCKET_PLANS: ReadonlySet<string> = new Set(["growth", "enterprise"]);
@@ -31,6 +32,18 @@ export function cloudBucketAllowed(plan: string | null | undefined, status: stri
 
 export const CLOUD_BUCKET_REFUSAL =
   "Cloud backup destinations (S3/R2) require the Growth plan. Upgrade in Billing to enable scheduled cloud backups.";
+
+/** Same wording as `assertOrgHasAccess` (lib/serverAuth.ts) — one message
+ *  for a lapsed workspace wherever it is refused. */
+export const SUBSCRIPTION_INACTIVE_REFUSAL =
+  "This workspace's subscription is inactive. Renew billing to continue.";
+
+/** The org columns the scheduled gate reads — ONCE — for both billing limbs. */
+interface OrgBillingRow {
+  subscription_status?: string | null;
+  subscribed_plan?: string | null;
+  trial_ends_at?: string | null;
+}
 
 /** Null when the org may hold a bucket destination; a 402 AuthError otherwise. */
 export async function assertCloudBucketEntitlement(admin: SupabaseClient, orgId: string): Promise<AuthError | null> {
@@ -54,10 +67,14 @@ export type ScheduledRunVerdict =
   | { ok: false; reason: string; notices: string[] };
 
 /** Decide whether a due scheduled destination may run right now. Never
- *  throws. The membership check fails CLOSED: a lookup error is a skip like a
- *  definite "no active row" — the claim already advanced `next_run_at`, so a
- *  transient database fault costs one cycle, never a push to a destination
- *  whose configurer could not be verified. */
+ *  throws. One error rule for all three limbs: a lookup that errors (or finds
+ *  no row) cannot prove entitlement, so it is treated exactly like a definite
+ *  refusal on that limb — the membership limb skips; the subscription and
+ *  plan limbs skip under SUBSCRIPTION_ENFORCE and notice without it. The
+ *  claim already advanced `next_run_at`, so a transient database fault costs
+ *  one cycle, never a push a person could not have vetted. (This gate does
+ *  NOT call `assertOrgHasAccess`, whose fail-open on lookup error is meant
+ *  for interactive billable mutations, not an unattended export.) */
 export async function scheduledRunGate(
   admin: SupabaseClient,
   dest: ScheduledGateDestination,
@@ -83,20 +100,36 @@ export async function scheduledRunGate(
     return { ok: false, reason: "the member who last configured this destination is no longer active in this workspace — an active Admin must open it and save it again to re-confirm", notices };
   }
 
-  // (2) Subscription (DEC-18: refusal behind the flag).
-  const sub = await assertOrgHasAccess(admin, dest.org_id);
-  if (sub) {
-    if (enforceBilling) return { ok: false, reason: `workspace subscription inactive — ${sub.error}`, notices };
-    notices.push(`subscription gate would skip this run (SUBSCRIPTION_ENFORCE off): ${sub.error}`);
+  // (2) + (3) Billing state, read ONCE (DEC-18: refusal behind the flag).
+  const billing = (limb: string, reason: string): ScheduledRunVerdict | null => {
+    if (enforceBilling) return { ok: false, reason, notices };
+    notices.push(`${limb} gate would skip this run (SUBSCRIPTION_ENFORCE off): ${reason}`);
+    return null;
+  };
+  const { data: orgData, error: orgErr } = await admin
+    .from("orgs").select("subscription_status, subscribed_plan, trial_ends_at")
+    .eq("id", dest.org_id).maybeSingle();
+  const org = (orgData as OrgBillingRow | null) ?? null;
+  if (orgErr || !org) {
+    // Neither limb can be proven from an unreadable or missing row.
+    const verdict = billing("billing", `the workspace's subscription could not be verified (${orgErr?.message ?? "no workspace row"}); retried next cycle`);
+    return verdict ?? { ok: true, notices };
+  }
+
+  // (2) Subscription — the same status rule as assertOrgHasAccess.
+  const info: SubscriptionInfo = {
+    status: (org.subscription_status as SubscriptionInfo["status"]) || "trialing",
+    trialEndsAt: org.trial_ends_at ?? null,
+  };
+  if (!hasAccess(info)) {
+    const verdict = billing("subscription", `workspace subscription inactive — ${SUBSCRIPTION_INACTIVE_REFUSAL}`);
+    if (verdict) return verdict;
   }
 
   // (3) Plan entitlement for a bucket destination (same rule as create/PATCH).
-  if (dest.bucket) {
-    const plan = await assertCloudBucketEntitlement(admin, dest.org_id);
-    if (plan) {
-      if (enforceBilling) return { ok: false, reason: `plan no longer includes cloud bucket destinations — ${plan.error}`, notices };
-      notices.push(`plan gate would skip this run (SUBSCRIPTION_ENFORCE off): ${plan.error}`);
-    }
+  if (dest.bucket && !cloudBucketAllowed(org.subscribed_plan, org.subscription_status)) {
+    const verdict = billing("plan", `plan no longer includes cloud bucket destinations — ${CLOUD_BUCKET_REFUSAL}`);
+    if (verdict) return verdict;
   }
 
   return { ok: true, notices };

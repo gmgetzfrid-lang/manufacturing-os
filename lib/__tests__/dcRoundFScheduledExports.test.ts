@@ -19,6 +19,8 @@ const state = vi.hoisted(() => {
     log: [] as Array<{ table: string; calls: Array<{ m: string; args: unknown[] }> }>,
     memberActive: true,
     memberError: null as string | null,
+    orgError: null as string | null,
+    runInsertError: null as string | null,
     subStatus: "active",
     plan: "growth",
     destination: {} as Record<string, unknown>,
@@ -37,8 +39,10 @@ function makeClient() {
         if (state.memberError) return { data: null, error: { message: state.memberError } };
         return { data: state.memberActive ? { uid: "u-1" } : null, error: null };
       case "orgs":
+        if (state.orgError) return { data: null, error: { message: state.orgError } };
         return { data: { subscription_status: state.subStatus, trial_ends_at: null, subscribed_plan: state.plan }, error: null };
       case "export_runs":
+        if (state.runInsertError && has("insert")) return { data: null, error: { message: state.runInsertError } };
         return { data: { id: "run-1" }, error: null };
       default:
         return { data: null, error: null };
@@ -96,7 +100,7 @@ const sweep = () => runScheduled(new NextRequest("https://app/api/data-export/ru
 const prevEnforce = process.env.SUBSCRIPTION_ENFORCE;
 beforeEach(() => {
   state.log = []; state.delivered = [];
-  state.memberActive = true; state.memberError = null; state.subStatus = "active"; state.plan = "growth";
+  state.memberActive = true; state.memberError = null; state.orgError = null; state.runInsertError = null; state.subStatus = "active"; state.plan = "growth";
   state.destination = { ...DUE };
   delete process.env.SUBSCRIPTION_ENFORCE;
 });
@@ -159,6 +163,29 @@ describe("scheduledRunGate (XEDGE-7)", () => {
     const hook = await scheduledRunGate(makeClient() as never, DUE, true);
     expect(hook.ok).toBe(true);
   });
+  it("reads the org row ONCE for both billing limbs, with one error rule: unverifiable → skip under the flag, notice without it", async () => {
+    state.log = [];
+    const both = await scheduledRunGate(makeClient() as never, { ...DUE, bucket: "b" }, true);
+    expect(both.ok).toBe(true);
+    expect(logged("orgs")).toHaveLength(1);
+    expect(logged("orgs")[0].calls.find((c) => c.m === "select")?.args[0]).toBe("subscription_status, subscribed_plan, trial_ends_at");
+    // a lookup error is NOT the interactive helper's fail-open: under the flag it is a skip like a lapsed workspace
+    state.orgError = "connection reset";
+    const on = await scheduledRunGate(makeClient() as never, { ...DUE, bucket: "b" }, true);
+    expect(on.ok).toBe(false);
+    if (!on.ok) expect(on.reason).toBe("the workspace's subscription could not be verified (connection reset); retried next cycle");
+    const off = await scheduledRunGate(makeClient() as never, { ...DUE, bucket: "b" }, false);
+    expect(off.ok).toBe(true);
+    expect(off.notices).toEqual(["billing gate would skip this run (SUBSCRIPTION_ENFORCE off): the workspace's subscription could not be verified (connection reset); retried next cycle"]);
+    // the sweep records the flag-on skip as a cancelled run and delivers nothing
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    state.log = [];
+    const res = await sweep();
+    expect(res.status).toBe(200);
+    expect(state.delivered).toEqual([]);
+    expect(arg("export_runs", "insert")).toMatchObject({ status: "cancelled" });
+    expect(String((arg("export_runs", "insert") as { error_message?: string }).error_message)).toMatch(/^skipped: the workspace's subscription could not be verified/);
+  });
 });
 
 describe("POST /api/data-export/run-scheduled (XEDGE-7 / XEDGE-8 runner half)", () => {
@@ -175,6 +202,22 @@ describe("POST /api/data-export/run-scheduled (XEDGE-7 / XEDGE-8 runner half)", 
     const dest = arg("export_destinations", "update", 1);
     expect(dest).toMatchObject({ last_run_status: "failed" });
     expect(String(dest?.last_run_error)).toMatch(/^skipped:/);
+  });
+
+  it("a skip whose record writes fail is logged and named on the sweep result — never a silent gap", async () => {
+    state.memberActive = false;
+    state.runInsertError = "new row violates check constraint export_runs_status_check";
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await sweep();
+    const body = await res.json();
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/\[run-scheduled\] destination dest-1: run row not recorded: new row violates/));
+    err.mockRestore();
+    expect(state.delivered).toEqual([]);
+    expect(body.results[0].ok).toBe(false);
+    expect(body.results[0].error).toMatch(/^skipped: the member who last configured this destination is no longer active/);
+    expect(body.results[0].error).toMatch(/; run row not recorded: new row violates check constraint export_runs_status_check$/);
+    // the destination's last-run status was still attempted after the failed insert
+    expect(arg("export_destinations", "update", 1)).toMatchObject({ last_run_status: "failed" });
   });
 
   it("with SUBSCRIPTION_ENFORCE off a canceled workspace still exports, and the would-be skip is recorded on the run", async () => {

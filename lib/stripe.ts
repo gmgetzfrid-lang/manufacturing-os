@@ -73,13 +73,15 @@ export interface SubscriptionPlanSource {
   metadata?: Record<string, string> | null;
 }
 
-/** The plan a subscription is on: its first item's price id through the
- *  map, else the checkout-time metadata, else null — and null means "leave
- *  the stored plan untouched", never "write NULL". */
+/** The plan a subscription is on: the first of its items whose price id is
+ *  in the map (a subscription may also carry seat add-ons or metered items,
+ *  in any order), else the checkout-time metadata, else null — and null
+ *  means "leave the stored plan untouched", never "write NULL". */
 export function planFromSubscription(sub: SubscriptionPlanSource): { plan: string | null; source: "price" | "metadata" | null } {
-  const priceId = sub.items?.data?.[0]?.price?.id ?? null;
-  const fromPrice = getPlanForPriceId(priceId);
-  if (fromPrice) return { plan: fromPrice, source: "price" };
+  for (const item of sub.items?.data ?? []) {
+    const fromPrice = getPlanForPriceId(item?.price?.id);
+    if (fromPrice) return { plan: fromPrice, source: "price" };
+  }
   const fromMeta = (sub.metadata?.plan ?? "").trim();
   if (fromMeta) return { plan: fromMeta, source: "metadata" };
   return { plan: null, source: null };

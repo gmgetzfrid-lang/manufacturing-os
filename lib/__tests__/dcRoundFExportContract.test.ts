@@ -231,6 +231,9 @@ describe("XEDGE-14 — subscribed_plan from the price id, never NULL over a payi
       expect(getPlanForPriceId(null)).toBeNull();
       expect(planFromSubscription({ items: { data: [{ price: { id: "price_g" } }] }, metadata: { plan: "starter" } })).toEqual({ plan: "growth", source: "price" });
       expect(planFromSubscription({ items: { data: [{ price: { id: "price_nope" } }] }, metadata: { plan: "starter" } })).toEqual({ plan: "starter", source: "metadata" });
+      // a multi-item subscription (seat add-on first, plan second): every item is tried before metadata
+      expect(planFromSubscription({ items: { data: [{ price: { id: "price_seat_addon" } }, { price: { id: "price_g" } }] }, metadata: { plan: "starter" } })).toEqual({ plan: "growth", source: "price" });
+      expect(planFromSubscription({ items: { data: [{ price: null }, {}, { price: { id: "price_s" } }] }, metadata: {} })).toEqual({ plan: "starter", source: "price" });
       expect(planFromSubscription({ items: { data: [{ price: { id: "price_nope" } }] }, metadata: {} })).toEqual({ plan: null, source: null });
       expect(planFromSubscription({})).toEqual({ plan: null, source: null });
     });

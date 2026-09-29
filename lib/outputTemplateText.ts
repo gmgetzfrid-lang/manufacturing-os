@@ -173,13 +173,16 @@ export function renderFilename(
  *  makes the runtime throw when the response is constructed, and anything
  *  above 0x7F is unreliable across clients. Fold to printable ASCII for the
  *  legacy `filename=` parameter: strip combining marks (é → e), replace every
- *  remaining non-ASCII or control character with "_", drop quotes. */
+ *  remaining non-ASCII or control character with "_", and replace the two
+ *  characters that are syntax inside an RFC 6266 quoted-string — `"` ends it
+ *  and `\` escapes the next character, so a trailing backslash would turn
+ *  the closing quote into `\"` and leave the header unterminated. */
 export function asciiFoldFilename(name: string): string {
   const folded = name.normalize("NFKD").replace(/[̀-ͯ]/g, "");
   let out = "";
   for (const ch of folded) {
     const code = ch.codePointAt(0) ?? 0;
-    out += code >= 0x20 && code <= 0x7e && ch !== '"' ? ch : "_";
+    out += code >= 0x20 && code <= 0x7e && ch !== '"' && ch !== "\\" ? ch : "_";
   }
   out = out.replace(/_{2,}/g, "_").trim();
   return out || "document";

@@ -104,13 +104,16 @@ async function handler(req: NextRequest) {
     // configured it, the workspace's subscription, or the plan the bucket
     // feature is sold on (lib/exportEntitlement.ts). A skip is RECORDED — a
     // cancelled run plus the destination's last-run status — never a silent
-    // continue; the clock was already advanced by the claim above.
+    // continue; the clock was already advanced by the claim above. Both
+    // record writes are CHECKED: a failure is logged and named on the sweep
+    // result, so a night with no run row is never a silent gap.
     const gate = await scheduledRunGate(sb, dest, enforceBilling);
     for (const n of gate.notices) console.warn(`[run-scheduled] destination ${dest.id}: ${n}`);
     if (!gate.ok) {
       const at = new Date().toISOString();
       const skipMsg = `skipped: ${gate.reason}`;
-      await sb.from("export_runs").insert({
+      const unrecorded: string[] = [];
+      const { error: runErr } = await sb.from("export_runs").insert({
         org_id: dest.org_id,
         destination_id: dest.id,
         trigger_type: "scheduled",
@@ -122,12 +125,15 @@ async function handler(req: NextRequest) {
         completed_at: at,
         duration_ms: 0,
       });
-      await sb.from("export_destinations").update({
+      if (runErr) unrecorded.push(`run row not recorded: ${runErr.message}`);
+      const { error: destErr } = await sb.from("export_destinations").update({
         last_run_at: at,
         last_run_status: "failed",
         last_run_error: skipMsg.slice(0, 500),
       }).eq("id", dest.id);
-      results.push({ destinationId: dest.id, ok: false, error: skipMsg });
+      if (destErr) unrecorded.push(`last-run status not recorded: ${destErr.message}`);
+      for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
+      results.push({ destinationId: dest.id, ok: false, error: [skipMsg, ...unrecorded].join("; ") });
       continue;
     }
 
