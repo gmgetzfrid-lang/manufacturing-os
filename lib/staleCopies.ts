@@ -137,47 +137,108 @@ export async function listMyStaleCopies(
 }
 
 export interface RecallHolder {
+  /** The member's uid — or, for an EXTERNAL copy, a stable key naming the
+   *  channel it left through (`share:<share_id>` / `transmittal:<transmittal_id>`). */
   userId: string;
   userEmail: string | null;
   lastDownloadedRev: string | null;
   lastDownloadedAt: string;
   hasCurrent: boolean;
+  /** DIST-9 / DIST-7 / TRX-9: the copy went out through a share link or the
+   *  transmittal portal — there is no member account to nudge; the recall
+   *  has to go back through that channel. */
+  external?: boolean;
+  /** download_audits.source, when the row recorded one. */
+  source?: string | null;
+}
+
+export interface DocumentRecall {
+  holders: RecallHolder[];
+  /** DIST-11: the row cap was hit — holders may be MISSING. */
+  capped: boolean;
+  /** DIST-9 dw3: the record could not be READ. An empty list here is a gap
+   *  in the evidence, not "nobody holds a copy" — render it as a gap. */
+  unavailable: boolean;
+}
+
+/** The row shape getDocumentRecall reads. `source` / `share_id` /
+ *  `transmittal_id` arrive with migration 20261068; a pre-migration database
+ *  answers the legacy column list instead (see the fallback below). */
+type RecallRow = {
+  user_id: string | null;
+  user_email: string | null;
+  version_id: string;
+  created_at: string;
+  source?: string | null;
+  share_id?: string | null;
+  transmittal_id?: string | null;
+};
+const RECALL_COLUMNS = "user_id, user_email, version_id, created_at, source, share_id, transmittal_id";
+const RECALL_COLUMNS_LEGACY = "user_id, user_email, version_id, created_at";
+
+/** PostgREST's answer when a selected column does not exist yet (the
+ *  20261068 columns on a database that has not applied it). Anything else is
+ *  a real read failure and is reported as a gap, never as an empty list. */
+function isUnknownColumnError(error: { code?: unknown; message?: unknown } | null): boolean {
+  if (!error) return false;
+  const code = String(error.code ?? "");
+  const message = String(error.message ?? "");
+  return code === "42703" || code === "PGRST204" || /does not exist|schema cache/i.test(message);
+}
+
+/** The holder key for one row: the member, or the external channel. */
+function holderKeyOf(r: RecallRow): string | null {
+  if (r.user_id) return r.user_id;
+  if (r.share_id) return `share:${r.share_id}`;
+  if (r.transmittal_id) return `transmittal:${r.transmittal_id}`;
+  return null;
 }
 
 /** Distribution recall for one document: everyone who pulled a copy in the
  *  window, split into "has the current rev" vs "holding an outdated one".
  *  `capped` is the DIST-11 honesty flag: when the row cap was hit, holders
- *  may be MISSING and the UI must say so instead of asserting completeness. */
+ *  may be MISSING and the UI must say so instead of asserting completeness.
+ *  `unavailable` is the DIST-9 one: the record could not be read at all. */
 export async function getDocumentRecall(
   documentId: string,
   currentVersionId: string | null,
-): Promise<{ holders: RecallHolder[]; capped: boolean }> {
-  if (!currentVersionId) return { holders: [], capped: false };
+): Promise<DocumentRecall> {
+  if (!currentVersionId) return { holders: [], capped: false, unavailable: false };
+  const unavailable: DocumentRecall = { holders: [], capped: false, unavailable: true };
   try {
     const since = new Date(Date.now() - DOC_RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
-    const { data } = await supabase
+    const query = (columns: string) => supabase
       .from("download_audits")
-      .select("user_id, user_email, version_id, created_at")
+      .select(columns)
       .eq("document_id", documentId)
       .gt("created_at", since)
       .not("version_id", "is", null)
       .order("created_at", { ascending: false })
       .limit(DOC_RECALL_ROW_CAP);
-    const rows = (data as Array<{ user_id: string; user_email: string | null; version_id: string; created_at: string }>) ?? [];
+    let { data, error } = await query(RECALL_COLUMNS);
+    // Pre-20261068 database: the attribution columns are not there yet —
+    // read the legacy shape (every row is a member's own pull).
+    if (error && isUnknownColumnError(error)) ({ data, error } = await query(RECALL_COLUMNS_LEGACY));
+    if (error) return unavailable;
+    const rows = (data as unknown as RecallRow[] | null) ?? [];
     const capped = rows.length >= DOC_RECALL_ROW_CAP;
-    if (rows.length === 0) return { holders: [], capped };
+    if (rows.length === 0) return { holders: [], capped, unavailable: false };
 
     const byUser = new Map<string, RecallHolder & { latestVersionId: string }>();
     for (const r of rows) {
-      const existing = byUser.get(r.user_id);
+      const key = holderKeyOf(r);
+      if (!key) continue; // unattributed — the 20261068 CHECK forbids it; never guess
+      const existing = byUser.get(key);
       if (!existing) {
-        byUser.set(r.user_id, {
-          userId: r.user_id,
-          userEmail: r.user_email,
+        byUser.set(key, {
+          userId: key,
+          userEmail: r.user_email ?? null,
           latestVersionId: r.version_id,
           lastDownloadedRev: null,
           lastDownloadedAt: r.created_at,
           hasCurrent: r.version_id === currentVersionId,
+          external: !r.user_id,
+          source: r.source ?? null,
         });
       } else if (!existing.hasCurrent && r.version_id === currentVersionId) {
         // Any pull of the current version counts, even if they later
@@ -203,9 +264,11 @@ export async function getDocumentRecall(
         .map(({ latestVersionId: _ignored, ...h }) => h)
         .sort((a, b) => Number(a.hasCurrent) - Number(b.hasCurrent) || Date.parse(b.lastDownloadedAt) - Date.parse(a.lastDownloadedAt)),
       capped,
+      unavailable: false,
     };
   } catch {
-    return { holders: [], capped: false };
+    // DIST-9: a record that could not be read is a GAP, not an empty list.
+    return unavailable;
   }
 }
 
@@ -288,9 +351,41 @@ export async function nudgeStaleHolders(input: {
   actorName?: string | null;
   /** Recorded on the audit row: a controller's click vs the publish fan-out. */
   source?: "manual" | "auto";
+  /** DIST-9 dw3: the record could not be READ (getDocumentRecall's flag).
+   *  Nobody can be nudged from it — the audit row says the recall could not
+   *  be evaluated, so the publish never passes as "nobody was stale". */
+  unavailable?: boolean;
 }): Promise<number> {
+  if (input.unavailable) {
+    try {
+      await logRevisionEvent({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        versionId: input.currentVersionId ?? "",
+        userId: input.actorUserId,
+        userEmail: input.actorName ?? "",
+        userRole: "",
+        type: "DISTRIBUTION_RECALL",
+        details: {
+          source: input.source ?? "manual",
+          currentRev: input.currentRev,
+          recipientCount: 0,
+          recipients: [],
+          externalCopies: 0,
+          unavailable: true,
+        },
+      });
+    } catch { /* the gap is already on the panel */ }
+    return 0;
+  }
   const outdated = input.holders.filter((h) => !h.hasCurrent);
-  if (outdated.length === 0) return 0;
+  // DIST-9 / DIST-7: an EXTERNAL copy (share link, transmittal portal) has no
+  // member account behind it — nothing here can reach it. Members only; the
+  // audit row records how many external copies were left out so the gap is
+  // on the record, not silently dropped.
+  const reachable = outdated.filter((h) => !h.external);
+  const externalCopies = outdated.length - reachable.length;
+  if (reachable.length === 0) return 0;
   await emit({
     orgId: input.orgId,
     category: "recall",
@@ -301,7 +396,7 @@ export async function nudgeStaleHolders(input: {
     resource: { type: "document", id: input.documentId },
     actorUserId: input.actorUserId,
     actorName: input.actorName ?? undefined,
-    audience: { involved: outdated.map((h) => h.userId) },
+    audience: { involved: reachable.map((h) => h.userId) },
     metadata: { recall: true },
   });
   // DIST-10: durable record — actor, version, recipient list, timestamp.
@@ -317,10 +412,11 @@ export async function nudgeStaleHolders(input: {
       details: {
         source: input.source ?? "manual",
         currentRev: input.currentRev,
-        recipientCount: outdated.length,
-        recipients: outdated.map((h) => ({ userId: h.userId, email: h.userEmail, heldRev: h.lastDownloadedRev })),
+        recipientCount: reachable.length,
+        recipients: reachable.map((h) => ({ userId: h.userId, email: h.userEmail, heldRev: h.lastDownloadedRev })),
+        externalCopies,
       },
     });
   } catch { /* the recall itself already went out */ }
-  return outdated.length;
+  return reachable.length;
 }

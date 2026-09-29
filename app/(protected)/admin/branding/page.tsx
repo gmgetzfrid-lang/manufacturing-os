@@ -67,7 +67,7 @@ export default function AdminBrandingPage() {
       const path = `orgs/${activeOrgId}/branding/logo-${rand}.${ext}`;
       await uploadToPath(file, path, { contentType: file.type });
       setLogoPath(path);
-      try { setLogoPreview(await getSignedUrlForPath(path, 604800)); } catch { /* keep object url */ }
+      try { setLogoPreview(await getSignedUrlForPath(path)); } catch { /* keep object url */ }
     } catch (e) {
       await appAlert({ message: `Logo upload failed: ${e instanceof Error ? e.message : "unknown"}`, tone: "danger" });
     } finally { setUploading(false); }

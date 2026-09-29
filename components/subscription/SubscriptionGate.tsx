@@ -22,6 +22,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Lock, CreditCard, Download, LogOut } from "lucide-react";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
+import { clearServiceWorkerSession } from "@/lib/swSession";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
 import { useRole } from "@/components/providers/RoleContext";
 import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
@@ -106,7 +107,7 @@ function SubscriptionBlocked({
             <Download className="w-4 h-4" /> Export your data
           </Link>
           <button
-            onClick={() => { setPreferMicrosoft(false); void supabase.auth.signOut(); }}
+            onClick={() => { setPreferMicrosoft(false); void clearServiceWorkerSession(); void supabase.auth.signOut(); }}
             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-sm font-semibold transition-colors"
           >
             <LogOut className="w-4 h-4" /> Sign out

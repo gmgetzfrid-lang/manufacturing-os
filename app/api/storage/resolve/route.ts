@@ -15,6 +15,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { assertSafeStorageKey } from "@/lib/storageKey";
+import { PRESIGNED_MAX_SECONDS } from "@/lib/presignedLifetime";
 
 export const runtime = "nodejs";
 
@@ -80,8 +81,13 @@ export async function GET(req: NextRequest) {
   // the archived prompt so the user still has a path forward.
   try {
     await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: path }));
-    const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }), { expiresIn: 3600 });
-    return NextResponse.json({ archived: false, url });
+    // EGR-4 / DEC-44 §2: the same ceiling as /api/storage/download-url — no
+    // issuer is looser than another — and a signed payload is never cacheable.
+    const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }), { expiresIn: PRESIGNED_MAX_SECONDS });
+    return NextResponse.json(
+      { archived: false, url, expiresIn: PRESIGNED_MAX_SECONDS },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch {
     const s = await settingsFor();
     return NextResponse.json({ archived: true, missing: true, archiveId: v?.archive_id ?? null, root: s.root, namingNote: s.namingNote, fileName });

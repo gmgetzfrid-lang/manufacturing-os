@@ -16,7 +16,7 @@
 import React, { useEffect, useState } from "react";
 import {
   requestProfile, cachedProfile, onProfilesChanged,
-  resolveAvatarUrl, cachedAvatarUrl, initialsOf, avatarToneOf,
+  holdAvatarUrl, cachedAvatarUrl, initialsOf, avatarToneOf,
 } from "@/lib/userProfiles";
 
 interface UserAvatarProps {
@@ -43,12 +43,14 @@ export default function UserAvatar({
   const profile = uid ? cachedProfile(uid) : undefined;
   const bestName = profile?.displayName || name || profile?.email || email || null;
 
-  // Kick off (or read) the signed-URL resolve for the photo.
+  // Hold the photo's signed URL for as long as this avatar is on screen: the
+  // shared cache signs it (and re-signs it before the granted window closes)
+  // while at least one avatar holds the path, and stops when the last one
+  // unmounts. Re-renders arrive through onProfilesChanged.
   const avatarPath = profile?.avatarPath ?? null;
   useEffect(() => {
-    if (avatarPath && cachedAvatarUrl(avatarPath) === undefined) {
-      void resolveAvatarUrl(avatarPath);
-    }
+    if (!avatarPath) return;
+    return holdAvatarUrl(avatarPath);
   }, [avatarPath]);
   const photoUrl = avatarPath ? cachedAvatarUrl(avatarPath) : null;
 

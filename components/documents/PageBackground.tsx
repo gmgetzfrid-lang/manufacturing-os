@@ -5,25 +5,21 @@
 // always sit on top (text never lands directly on the image). Two kinds:
 //   * tint  — a soft theme wash (brand or neutral)
 //   * image — a cover photo at clamped low opacity over the canvas color
-// Image paths are signed at render (7-day) and cached.
+// Image paths are signed for the window the server grants (EGR-4 / DEC-44 §2)
+// through lib/storage's shared cache and re-signed before it closes.
 
 import React, { useEffect, useState } from "react";
-import { getSignedUrlForPath } from "@/lib/storage";
+import { peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
 import type { ResolvedBackground } from "@/lib/pageHeader";
 
-const cache = new Map<string, string>();
-
 export default function PageBackground({ bg }: { bg: ResolvedBackground }) {
-  const [src, setSrc] = useState<string | undefined>(bg.imagePath ? cache.get(bg.imagePath) : undefined);
+  const [src, setSrc] = useState<string | undefined>(bg.imagePath ? peekSignedUrl(bg.imagePath)?.url : undefined);
 
   useEffect(() => {
     const path = bg.imagePath;
-    if (bg.type !== "image" || !path || cache.has(path)) return;
-    let active = true;
-    getSignedUrlForPath(path, 604800)
-      .then((u) => { cache.set(path, u); if (active) setSrc(u); })
-      .catch(() => { /* fall back to tint base */ });
-    return () => { active = false; };
+    if (bg.type !== "image" || !path) return;
+    // null = could not be signed → fall back to the tint base
+    return subscribeSignedUrl(path, (u) => setSrc(u ?? undefined));
   }, [bg.type, bg.imagePath]);
 
   const tintBase = bg.tint === "brand"

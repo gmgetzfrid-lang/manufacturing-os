@@ -9,12 +9,17 @@
  *     so you always get fresh content online and a graceful screen offline.
  *   - Next.js RSC navigation payloads: NEVER cached — they pin specific
  *     build chunks, and a stale one runs old app code after a deploy.
- *   - Same-origin GET API/data: network-first with cache fallback, so data
- *     is fresh online and recently-viewed screens still work offline.
+ *   - Same-origin GET data (non-API): network-first with cache fallback, so
+ *     it is fresh online and still available offline.
  *
- * Deliberately NOT cached: cross-origin requests (Supabase, R2 signed URLs,
- * Stripe, fonts) and any non-GET request. Signed URLs expire and auth must
- * always hit the network, so we never serve those from cache.
+ * Deliberately NOT cached (v6, XEDGE-6): cross-origin requests (Supabase, R2
+ * signed URLs, Stripe, fonts), any non-GET request, ANY same-origin /api/
+ * response (the JSON that carries a signed URL, the streamed share PDF), and
+ * any response the server marked Cache-Control: no-store or private. Signed
+ * URLs expire and auth must always hit the network, so we never serve those
+ * from cache — and a bearer credential or a controlled document must never
+ * sit in a device-wide cache that outlives the session (see the SESSION and
+ * SIGN_OUT messages below).
  *
  * Hard rule 1: a handler passed to respondWith() must never RESOLVE to
  * `undefined` — the browser fails the request with "Failed to convert value to
@@ -33,10 +38,16 @@
 // Bumping VERSION drops every old cache on activate — the escape hatch when
 // caching behavior changes (v4: RSC payloads are never cached; data GETs are
 // network-first — stale-while-revalidate was serving old app navigations.
-// v5: stop inventing 504s — see the honesty rule below).
-const VERSION = "mfgos-v5";
+// v5: stop inventing 504s — see the honesty rule below. v6: no-store /
+// private and every /api/ response stay OUT of the cache, and the cache no
+// longer outlives the session — XEDGE-6; the bump itself drops every cache a
+// v5 worker filled with signed-URL JSON or share PDFs).
+const VERSION = "mfgos-v6";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
+// The signed-in identity the worker last saw (see rememberSession below).
+const SESSION_CACHE = `${VERSION}-session`;
+const SESSION_KEY = "/__mfgos/session";
 
 const SHELL_ASSETS = ["/", "/offline", "/icon.svg", "/manifest.webmanifest"];
 
@@ -64,10 +75,51 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Allow the page to tell a freshly-installed worker to take over immediately.
+// Allow the page to tell a freshly-installed worker to take over immediately,
+// and (v6) to tell it who is signed in / that nobody is any more.
 self.addEventListener("message", (event) => {
-  if (event.data === "SKIP_WAITING") self.skipWaiting();
+  if (event.data === "SKIP_WAITING") { self.skipWaiting(); return; }
+  const msg = event.data;
+  if (!msg || typeof msg !== "object") return;
+  let work;
+  if (msg.type === "SIGN_OUT") work = forgetSession();
+  else if (msg.type === "SESSION" && typeof msg.id === "string" && msg.id) work = rememberSession(msg.id);
+  if (work && event.waitUntil) event.waitUntil(work);
 });
+
+/* ─── The cache does not outlive the session (v6, XEDGE-6) ─────────────────
+ * RUNTIME_CACHE is device-wide: on a shared field tablet the next person would
+ * otherwise be served the previous person's pages from disk, and a cached copy
+ * outlived the share revocation that was its only kill switch. The page posts
+ * SIGN_OUT before tearing the session down, and SESSION (with the signed-in
+ * uid) once it knows who is in; the identity the worker last saw lives in its
+ * own tiny cache so it survives the worker being stopped and restarted. An
+ * identity the worker has never seen, or a different one, purges everything
+ * cached at runtime. The shell cache (hashed build assets, the offline page)
+ * carries no data and is left alone. Everything here is best-effort: a cache
+ * that cannot be read counts as "unknown", which purges. */
+function purgeRuntimeCache() {
+  return caches.delete(RUNTIME_CACHE).catch(() => undefined);
+}
+async function forgetSession() {
+  try {
+    const cache = await caches.open(SESSION_CACHE);
+    await cache.delete(SESSION_KEY);
+  } catch { /* nothing remembered */ }
+  await purgeRuntimeCache();
+}
+async function rememberSession(id) {
+  let previous = null;
+  let cache = null;
+  try {
+    cache = await caches.open(SESSION_CACHE);
+    const stored = await cache.match(SESSION_KEY);
+    previous = stored ? await stored.text() : null;
+  } catch { previous = null; }
+  if (previous !== null && previous === id) return;
+  await purgeRuntimeCache();
+  try { if (cache) await cache.put(SESSION_KEY, new Response(id)); } catch { /* best-effort */ }
+}
 
 function isSameOrigin(url) {
   try {
@@ -111,10 +163,39 @@ function wasAborted(request, err) {
   return !!err && err.name === "AbortError";
 }
 
-// Best-effort cache write. Only stores complete, cacheable responses, and never
+/** Same-origin API responses are never cached, whatever their headers say
+ *  (v6, XEDGE-6): /api/storage/download-url answers with a bearer URL,
+ *  /api/share/file streams a controlled PDF, and a cached copy of either is
+ *  replayable by whoever holds the device after a revocation, a supersession
+ *  or a sign-out. The allow-list is empty on purpose — a path goes on it only
+ *  with a stated reason that its payload is safe to replay offline. */
+const CACHEABLE_API_PREFIXES = [];
+function isCacheableRequest(request) {
+  try {
+    const path = new URL(request.url).pathname;
+    if (!path.startsWith("/api/")) return true;
+    return CACHEABLE_API_PREFIXES.some((p) => path.startsWith(p));
+  } catch {
+    return false;
+  }
+}
+
+/** The whole cacheability decision (v6): a complete, non-opaque, OK response
+ *  to a cacheable request that the server did not mark no-store / private.
+ *  Cache-Control is honoured HERE because Cache Storage does not honour it
+ *  for us — cache.put() stores whatever it is handed. */
+function isCacheableResponse(request, response) {
+  if (!response || !response.ok || response.type === "opaque") return false;
+  if (!isCacheableRequest(request)) return false;
+  const cc = (response.headers && response.headers.get("Cache-Control")) || "";
+  if (/\bno-store\b/i.test(cc) || /\bprivate\b/i.test(cc)) return false;
+  return true;
+}
+
+// Best-effort cache write. Only stores cacheable responses (above), and never
 // rejects into the response path.
 function cachePut(cacheName, request, response) {
-  if (!response || !response.ok || response.type === "opaque") return;
+  if (!isCacheableResponse(request, response)) return;
   const copy = response.clone();
   caches.open(cacheName).then((c) => c.put(request, copy)).catch(() => undefined);
 }
@@ -203,7 +284,8 @@ self.addEventListener("fetch", (event) => {
   // Other same-origin GETs → network-first with cache fallback. (Was
   // stale-while-revalidate, which quietly served outdated app data right
   // after deploys; fresh-when-online + cached-when-offline is the contract
-  // Field Mode actually needs.)
+  // Field Mode actually needs.) /api/ responses are never stored and never
+  // replayed — see isCacheableRequest — so offline they fail honestly.
   event.respondWith(
     (async () => {
       try {
@@ -211,7 +293,7 @@ self.addEventListener("fetch", (event) => {
         cachePut(RUNTIME_CACHE, request, res);
         return res;
       } catch (err) {
-        const cached = await caches.match(request);
+        const cached = isCacheableRequest(request) ? await caches.match(request) : undefined;
         if (cached) return cached;
         if (wasAborted(request, err)) throw err;
         return unavailableResponse();

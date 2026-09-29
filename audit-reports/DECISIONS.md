@@ -1700,3 +1700,84 @@ role ids) — then scope lives on the id, is checked in `node_visible` after
 the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
+
+<a id="dec-44"></a>
+## DEC-44 · The download record, the presigned window, and the worker's cache
+
+**Decision. Three rails for content egress, decided together because each
+one is where the other two would otherwise leak:**
+
+1. **`download_audits` is an append-only record.** Members read their org's
+   rows and insert only their OWN pull (`user_id = auth.uid()`, in an org
+   they belong to); no member policy admits UPDATE or DELETE. A pull that is
+   not a member's act — a share-link download, a transmittal-portal download
+   — is a service-role row with `user_id` NULL and the channel on the row
+   (`source`, `share_id` / `transmittal_id`; a CHECK requires one of the
+   three attributions). The attribution columns are plain uuids, not foreign
+   keys: the record outlives the share or transmittal it names and never
+   blocks their deletion. `org_id` is NOT NULL. A record that cannot be READ
+   is rendered as a gap, never as an empty "all current".
+2. **Long-lived access lives on the share surface, never on a presigned
+   URL.** A presigned R2 URL is a bearer capability nothing can revoke, so
+   the window it opens is the whole control: every issuer under `app/api`
+   signs for at most `PRESIGNED_MAX_SECONDS` (3600, the app's own default),
+   the caller's `expiresIn` is clamped into `[60, 3600]` or refused when it
+   is not an integer, and the signed payload is `Cache-Control: no-store`.
+   The client believes the GRANTED window, never the requested one:
+   `lib/storage.ts` caches one URL per path for the `expiresIn` the route
+   answered and re-signs at the margin before it closes. Six in-repo sites
+   ask for 3600; five image callers (the org logo, avatars, folder covers,
+   page backgrounds, the branding preview) used to ask for a week and now
+   take the granted hour, re-signed in place while on screen — images are
+   not share-surface material, so they are not routed there. Anything that
+   must outlast an hour or be forwarded is a `document_shares` row — it has
+   an expiry and a `revoked_at`.
+3. **The service worker caches no API response.** `public/sw.js` refuses to
+   store any same-origin `/api/` response (allow-list empty, on purpose) and
+   any response marked `no-store` / `private`, never replays an `/api/` entry
+   offline, and its runtime cache does not outlive the session: every
+   sign-out site posts `SIGN_OUT`, the protected layout posts the signed-in
+   `SESSION` id, and an identity the worker has not seen purges the cache.
+
+> Made during the document-control Round F (2026-09-23, package P2 EGRESS)
+> closing `DIST-9`, `DRLS-8`, `EGR-4`, `PKG-11`, `XEDGE-6` and the
+> `download_audits` limb of `XEDGE-3`. A first attempt (2026-09-17) landed the
+> same design and was lost to a container recycle before its records were
+> committed; this is the rewrite.
+
+**Rationale.** `download_audits` is the only evidence base for stale-copy
+recall and for the PSM answer "who has had this drawing, and when" — a record
+any member could edit is not a record (`audit_logs`, six lines above it in
+`schema.sql`, already had the append-only shape). The presigned URL and the
+worker's cache are the two places a copy of a controlled document escapes
+every later decision — a revoked membership, an ACL deny, a hold, a
+supersession, a share revocation — so each is bounded to the shortest window
+the app itself needs, and the durable, revocable form of external access is
+the one that already exists.
+
+**Implementation.** Migration `20261068` (policies, columns, the attribution
+CHECK, the org backfill and NOT NULL with a `NOT VALID` fallback when the
+DEC-30 inventory shows rows with no document to backfill from);
+`lib/presignedLifetime.ts` + `/api/storage/download-url` + `/api/storage/resolve`
+(a census test keeps every `getSignedUrl` under `app/api` on the ceiling);
+`public/sw.js` v6 + `lib/swSession.ts` posted from the four sign-out sites and
+the protected layout; `lib/staleCopies.ts` reads the new shape with a legacy
+fallback, flags external copies, and reports `unavailable`.
+
+**Acceptance.** A member's `DELETE` / `PATCH` on `download_audits` is refused
+and a member's INSERT with another `user_id` is refused; the live policy set
+is exactly `{download_audits_select: SELECT, download_audits_insert_own: INSERT}`;
+`?expiresIn=604800` signs for 3600 and `?expiresIn=abc` is a 400; a
+`no-store` or `/api/` response is never written to Cache Storage and
+`SIGN_OUT` empties it.
+
+**Reversal.** A stated need for offline API data on field devices adds a
+path to the worker's allow-list WITH a written reason its payload is safe to
+replay; a stated need for longer presigned windows raises the ceiling in one
+constant — neither reopens member writes to the record.
+
+**Risk:** low — every change narrows; nobody gains anything on apply.
+
+*Corrected 2026-09-23 (document-control Round F fix pass): §2 first said "the app's own default" was the only lifetime any caller had asked for. It was not — five image callers asked for 604800. The clamp alone would have left `lib/storage.ts` (cache keyed by the requested window) and the per-component avatar / background / cover caches holding a dead URL for a week; §2 now states the client half of the contract (cache by path, honour the granted window, re-sign at the margin) and names the five callers, which take the granted hour rather than a share-surface route.*
+
+*Corrected 2026-09-23 (document-control Round F, second fix pass): "re-signed in place while on screen" is now literally true — the re-sign gives up only on the route's refusal (a 4xx), keeps the current URL and retries on a bounded backoff (and at once on reconnect) for any transient failure, so a wifi blip or a wake from sleep at the margin no longer blanks the image for the session; the margin is a quarter of the granted window capped at a minute; and an avatar's subscription is held by the mounted avatar and released on unmount, not kept per path for the tab's life. §3's "every sign-out site posts `SIGN_OUT`" means the four click sites; the expiry-driven and cross-tab `SIGNED_OUT` branch in `RoleContext.tsx` is handed to identity-and-session `IS-P1` / public-surfaces `OFF-8` (`XEDGE-6` dw2).*

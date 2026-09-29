@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { canServeContent, controllerBypassDecided } from "@/lib/permissions";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { assertSafeStorageKey } from "@/lib/storageKey";
+import { resolvePresignedLifetime } from "@/lib/presignedLifetime";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 export async function GET(req: NextRequest) {
@@ -28,6 +29,16 @@ export async function GET(req: NextRequest) {
   // about them — a key like orgs/<mine>/../../orgs/<other>/x would otherwise
   // authorize against my prefix while naming something else.
   try { assertSafeStorageKey(path); } catch { return NextResponse.json({ error: "Invalid path" }, { status: 400 }); }
+
+  // EGR-4 / PKG-11 / DEC-44 §2: the URL's lifetime is the server's decision.
+  // A presigned URL is a bearer capability nothing can revoke, so the window
+  // it opens IS the control: absent → the default, garbage → 400 (never NaN
+  // into the presigner), otherwise clamped to the shared ceiling. Decided
+  // before any lookup so a bad request costs nothing.
+  const lifetime = resolvePresignedLifetime(req.nextUrl.searchParams.get("expiresIn"));
+  if (!lifetime.ok) {
+    return NextResponse.json({ error: lifetime.reason }, { status: 400 });
+  }
 
   // Authorize the KEY, not just the session. Every sensitive R2 key is
   // orgs/<orgId>/… — require the caller to be an active member of that org, or
@@ -195,14 +206,19 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");
-
   const command = new GetObjectCommand({
     Bucket: R2_BUCKET,
     Key: path,
   });
 
-  const url = await getSignedUrl(r2, command, { expiresIn });
+  const url = await getSignedUrl(r2, command, { expiresIn: lifetime.seconds });
 
-  return NextResponse.json({ url });
+  // The payload IS a bearer credential: never cacheable (XEDGE-6 — the
+  // service worker refuses no-store and every /api/ response anyway; the
+  // header is the contract every other cache honours). `expiresIn` is what
+  // was GRANTED, so a caller can record the real window, not what it asked.
+  return NextResponse.json(
+    { url, expiresIn: lifetime.seconds },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

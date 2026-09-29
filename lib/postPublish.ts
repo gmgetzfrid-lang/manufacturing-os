@@ -119,7 +119,10 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
         closeStaleAcksForDocument(input.documentId, currentVersionId),
       ).catch(() => { /* best-effort */ });
       const { getDocumentRecall, nudgeStaleHolders } = await import("@/lib/staleCopies");
-      const { holders } = await getDocumentRecall(input.documentId, currentVersionId);
+      // DIST-9 dw3: an UNREADABLE record is not "nobody is stale" — the
+      // nudge writes a DISTRIBUTION_RECALL row saying it could not be
+      // evaluated instead of silently nudging nobody.
+      const { holders, unavailable } = await getDocumentRecall(input.documentId, currentVersionId);
       await nudgeStaleHolders({
         orgId: input.orgId,
         documentId: input.documentId,
@@ -128,6 +131,7 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
         currentRev: input.newRev,
         currentVersionId,
         holders,
+        unavailable,
         actorUserId: input.actorUserId,
         actorName: input.actorName,
         source: "auto",
