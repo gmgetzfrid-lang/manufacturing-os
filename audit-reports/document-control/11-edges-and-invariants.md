@@ -245,7 +245,7 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 - **Severity:** HIGH
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `public/sw.js:114-120`, `public/sw.js:156-177`, `public/sw.js:203-220`, `app/api/share/file/route.ts:145-151`, `app/api/storage/download-url/route.ts:144-153`
+- **Locations:** `public/sw.js:114-120`, `public/sw.js:156-177`, `public/sw.js:203-220`, `app/api/share/file/route.ts:126-132`, `app/api/storage/download-url/route.ts:144-153`
 - **Re-verified:** hardening pass — **SURVIVES**. `cachePut` tests only `response.ok` and `response.type !== "opaque"` (`sw.js:117`) — **no `Cache-Control` inspection at all** — so a `no-store` authenticated document response is written to durable Cache Storage.
 - **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Survives, and the download-url half is slightly worse than stated: grep for Cache-Control across app/api/storage/download-url/route.ts returns nothing, so the signed-URL JSON at :153 carries no cache directive at all rather than a no-store the SW overrides. Nothing clears Cache Storage on sign-out — the only caches.delete in the repo is the version sweep at sw.js:59-60, keyed on VERSION, and grep across app/components/lib finds no caches.* call outside a test — so RUNTIME_CACHE is device-wide and survives both sign-out and share revocation. caches.match keys on URL (headers other than Vary are not part of the key), so a second user on the shared tablet replays the first user's bytes.
 

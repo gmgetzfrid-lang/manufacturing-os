@@ -1798,6 +1798,8 @@ constant — neither reopens member writes to the record.
 
 *Corrected 2026-09-23 (document-control Round F, second fix pass): "re-signed in place while on screen" is now literally true — the re-sign gives up only on the route's refusal (a 4xx), keeps the current URL and retries on a bounded backoff (and at once on reconnect) for any transient failure, so a wifi blip or a wake from sleep at the margin no longer blanks the image for the session; the margin is a quarter of the granted window capped at a minute; and an avatar's subscription is held by the mounted avatar and released on unmount, not kept per path for the tab's life. §3's "every sign-out site posts `SIGN_OUT`" means the four click sites; the expiry-driven and cross-tab `SIGNED_OUT` branch in `RoleContext.tsx` is handed to identity-and-session `IS-P1` / public-surfaces `OFF-8` (`XEDGE-6` dw2).*
 
+*Landed 2026-09-23 (document-control Round F wave 2, P1 SHARE): §1's share-link row is now written — `app/api/share/file/route.ts` inserts `user_id` NULL + `share_id` + `source` with the served `version_id`, BEFORE the bytes leave, and a refused write refuses the download (`503 unrecorded`, logged) rather than shipping an unrecorded copy; `lib/staleCopies.ts` already keys such rows `share:<id>` and flags them external. The per-access IP / user-agent trail lives beside it in `document_share_accesses` (20261081), controller-readable, service-role written. See `DIST-7`, `EGR-3`, `SHR-5`, `SHR-10`.*
+
 <a id="dec-45"></a>
 ## DEC-45 · Bearer columns never leave the database and never come back from a backup
 
@@ -1843,3 +1845,78 @@ recipient, decided then.
 safe side for a credential.
 
 *Landed 2026-09-23 (document-control Round F, fix pass): "a restored transmittal has no portal token" is enforced against the insert rail — `trg_transmittals_guard` (20261027) mints a fresh token for every row inserted as `issued`, so `scrubRestoredRow` lands a formerly issued transmittal as `voided` (the register record survives, a note says why, and no link can ever be presented); a person issues a new transmittal to send again. `push_subscriptions` (per-device Web Push `endpoint` / `p256dh` / `auth`) is excluded from the export whole, and the coverage tripwire also treats `auth` / `p256dh` as bearer names, so the acceptance line holds for every exported table.*
+
+<a id="dec-46"></a>
+## DEC-46 · External share links: who mints, how long, what serves, what is recorded
+
+**Decision. A public share link is a controlled-distribution act, and its
+rules are the publish rules:**
+
+1. **Who mints:** the org's controllers (Admin / DocCtrl by the role
+   COLLECTION — `is_org_controller`) or a publisher granted on the document's
+   library (`user_can_publish_on_library`, the database's own evaluator). Not
+   every member, and not the effective owner as such — a share is a copy
+   leaving the building, and the tier that issues the revision is the tier
+   that lets it out. Enforced by the INSERT policy (20261080) and mirrored in
+   the modal (`canMintShare`), which explains rather than hides.
+2. **How long:** every share expires. "Never expires" is removed; 30 days is
+   the default and 90 the ceiling, enforced by trigger on INSERT and on any
+   change to `expires_at` (a never-expiring legacy row is capped at
+   `created_at + 90 days` on apply — one older than that expires then).
+3. **What may be shared, and what serves:** never a Draft, a Superseded /
+   Void / Archived document (the shared `NOT_CURRENT_STATUSES`), an archived
+   record, or a document under an active hold — refused WITH THE REASON at
+   mint time (`document_share_refusal`, `describeShareRefusal`) and at every
+   resolve (`lib/shareServe.ts`), fail-closed when the hold set cannot be
+   read. A retired document's outstanding links stop serving the moment its
+   status changes; supersede also revokes them for the record (`DIST-1`).
+4. **Which revision:** a share always serves the CURRENT issued revision. No
+   version pinning. Stated in the modal, on every link row, on the landing
+   page and in the stamped footer, so neither party can believe otherwise.
+5. **What is recorded:** every download is a `download_audits` row attributed
+   by `share_id` (DEC-44 §1) written before the bytes leave — a refused
+   write refuses the download; every access (open or download) is a
+   `document_share_accesses` row with IP, user agent, kind and version. No
+   recipient identification: possession of the token is the whole
+   authorization, and the record says what it knows rather than a name
+   nobody verified.
+6. **Revocation is durable:** `revoked_at`, once set, never clears or moves,
+   a revoked share cannot be re-dated, and creators revoke but only
+   controllers DELETE (retention). Creating and revoking write `audit_logs`.
+
+> Made during document-control Round F wave 2 (2026-09-23, package P1
+> SHARE + public-surfaces PKG-3) closing `DRLS-5`, `DRLS-7`, `DIST-6`,
+> `DIST-7`, `EGR-3`, `EGR-5`, `EGR-6`, `REV-10`, `SHR-3` … `SHR-13`,
+> `PHYS-13`. The defaults were stated to the system's owner on 2026-09-17
+> and applied unless overridden.
+
+**Rationale.** A share link is the one channel that hands a controlled
+drawing to someone with no account, no ACL and no recall path. Every other
+door — publish, transmittal, distribution ack — already asks who, what state,
+which revision and where is the record; the share link asked only "does the
+token exist". Aligning it with the publish tier and the not-current set makes
+"outside the building" no weaker than "inside".
+
+**Implementation.** `lib/shareRules.ts` (pure), `lib/shareServe.ts`
+(server), `lib/documentShares.ts` (client mint path),
+`components/documents/ShareLinkModal.tsx`, `app/share/[token]/page.tsx`,
+`app/api/share/{resolve,file}/route.ts`; migrations `20261080`
+(minting tier, refusal rail, durable revocation, 90-day ceiling) and
+`20261081` (per-access record, pinned counter); `lib/__tests__/shareRoutes.test.ts`.
+
+**Acceptance.** A Viewer's INSERT into `document_shares` is refused; a
+controller's INSERT on a Draft / Superseded / held document is refused with
+the reason; `expires_at` NULL or > 90 days is refused; a Superseded or held
+document answers `withdrawn` / `on_hold` on both routes; a share download
+produces exactly one `download_audits` row with `share_id` before the bytes;
+`UPDATE document_shares SET revoked_at = NULL` on a revoked row raises.
+
+**Reversal.** A stated need for a longer-lived external link (a customer
+contract, a regulator) raises the ceiling in one constant and one interval —
+never reinstates "never". A stated need for recipient identification adds a
+gate on the landing page and a `recipient` column on the access row, decided
+then. A stated need for owners to share widens the INSERT arm to
+`user_can_publish_doc`.
+
+**Risk:** low — every change narrows; a never-expiring link older than 90
+days expires on apply, which the migration's inventory counts before the fact.

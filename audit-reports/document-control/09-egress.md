@@ -87,7 +87,7 @@ app/api/transmittal/route.ts:41-43 — `.from("document_versions").select("file_
 ## EGR-2 · document_shares WITH CHECK validates org_id but never that document_id belongs to that org — cross-tenant byte exfiltration via /api/share/file
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260623_document_shares.sql:38-54`, `lib/documentShares.ts:46-54`, `app/api/share/file/route.ts:42-58`, `app/api/share/file/route.ts:92-96`, `app/api/share/resolve/route.ts:43-48`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: `document_shares` appears only in 20260623_document_shares.sql and 20260818_followups_rls.sql (the latter only defines bump_share_access) — there is no trigger, CHECK, or FK pairing (org_id, document_id). The policy is FOR ALL with no role gate, so any active member including a Viewer can insert an attacker-chosen token pointing at any documents.id, and both /api/share/resolve and /api/share/file serve it with the service role, bypassing RLS entirely.
@@ -121,6 +121,16 @@ Both clauses test `document_shares.org_id`. Nothing correlates `document_shares.
 - [ ] A share cannot be created for a document the creator cannot read — the ACL/visibility check from /api/storage/download-url:64-90 runs at share-creation time, at resolve time, or both
 - [ ] createShareLink checks the returned {error} (see the unchecked-write finding) so a policy rejection surfaces to the user instead of appearing to succeed
 
+**Resolution (2026-09-23, document-control Round F wave 2).** **Record-only close — resolved by roles-and-permissions `EGRESS-1`** (Round D, 2026-08-24) and re-verified against the current tree: `20261022_document_shares_acl_scope.sql:44-57` correlates the two columns in the INSERT `WITH CHECK` (`d.id = document_shares.document_id AND d.org_id = document_shares.org_id`, plus `node_visible` — the creator must be able to read it); `20261026` binds `created_by = auth.uid()` and makes `document_id` / `org_id` / `created_by` immutable by trigger; `20261037:119-135` re-states the policy with the 6-arg `node_visible` (the newest live body, byte-carried again by `supabase/migrations/20261080_dc_roundF_share_minting_and_revocation.sql`, which only ADDS arms); both public routes org-join the document (`.eq("org_id", share.org_id)`, now in the shared `lib/shareServe.ts:105-110`, asserted by `lib/__tests__/shareResolveRoute.test.ts` and `lib/__tests__/shareRoutes.test.ts`); `createShareLink` throws on `{ error }` (`lib/documentShares.ts:121-160`). The 20261022 / 20261026 headers record them applied and verified live on 2026-08-24.
+
+**Done-when.**
+1. ✓ (20261022, re-created 20261037 / 20261080) the WITH CHECK correlates `document_id` with `org_id` and the membership test.
+2. ✓ Both routes filter the documents lookup by `org_id` and 404 on a miss.
+3. ✓ At creation (`node_visible` in the policy) AND at resolve time (`shareStillAuthorized`, the creator's CURRENT read decision).
+4. ✓ `createShareLink` checks the returned error (and now maps a policy refusal to a sentence — `DIST-6`).
+
+**Scope / residual.** None. Same as public-surfaces `SHR-1` (recorded there) and intelligence `DACL-4`.
+
 ---
 
 <a id="egr-3"></a>
@@ -128,7 +138,7 @@ Both clauses test `document_shares.org_id`. Nothing correlates `document_shares.
 ## EGR-3 · download_audits has no `source` column — every external share-link download fails its audit insert silently, so the PSM distribution record is empty for outsiders
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:129-141`, `app/api/share/file/route.ts:14-16`, `supabase/schema.sql:789-799`, `lib/staleCopies.ts:40`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep confirms the absence: no migration in supabase/migrations/ mentions download_audits at all, so nothing ever adds `source`. PostgREST rejects the whole insert (unknown column), and supabase-js returns `{error}` rather than throwing — so the catch never even fires and the discarded error means zero external-download rows exist. lib/staleCopies.ts:40 and every other reader query only (document_id, version_id, created_at), so nothing surfaces the gap.
@@ -163,6 +173,21 @@ app/api/share/file/route.ts:139 — `source: stamped ? "share_link" : "share_lin
 - [ ] The insert checks the returned {error} and logs loudly — an audit write that fails must be visible, not swallowed by `catch { }`
 - [ ] A test inserts the exact payload share/file sends and asserts a row lands, so column drift on the distribution record fails the build
 - [ ] Once fixed, note that historical share downloads are unrecoverable — the gap should be documented for the compliance record
+
+**Resolution (2026-09-23, document-control Round F wave 2).** Same fix as `DIST-7` (one route, one migration): `20261068` (P2 EGRESS, wave 1) added `source`, `share_id`, `transmittal_id` and made `user_id` nullable behind `CHECK download_audits_attributed`; `app/api/share/file/route.ts:102-119` now writes that shape (`user_id: null`, `share_id`, `source`), destructures `{ error }`, logs a refusal loudly and refuses the download `503 unrecorded` before any byte leaves. The route header comment ("The download_audits row is written HERE") is true again — and stronger: written BEFORE the bytes, or nothing leaves.
+- Files: `app/api/share/file/route.ts`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "happy path: the record lands BEFORE the bytes, attributed to the SHARE" (asserts exactly one row with the exact keys), "a refused download_audits write REFUSES the download (503 unrecorded)".
+- Reproduced: as `DIST-7`; `supabase/schema.sql` still declares the nine-column table (the numbered sequence is the source of truth — `20261068` adds the columns).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2583 tests).
+- Pending migration: `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` (P2, wave 1 — **not applied**).
+
+**Done-when.**
+1. ✓ `source TEXT` is added by `20261068` (the export dumps `select *`, so the column rides the backup with no expectation list to extend; `lib/downloads.ts`'s expectations are P8's).
+2. ✓ `{ error }` checked; a failed audit write is logged with the share / document / version and REFUSES the download — never swallowed.
+3. ✓ The test drives the exact payload the route sends and asserts exactly one `download_audits` row with `share_id`, `source`, `version_id`, `user_id: null` — column drift on the record now fails the build (the same test proves a refused insert is a refused download).
+4. ✓ **Compliance note, for the record:** every share-link download made before `20261068` was applied AND this route deployed was rejected by PostgREST on the unknown `source` column and discarded. Those external pulls were never recorded and cannot be reconstructed; the only trace of that period is `document_shares.access_count` / `access_last_at` (link opens, not downloads).
+
+**Scope / residual.** None beyond the historical gap. Public-surfaces `SHR-5` / `PHYS-8` (share limb) close on the same change.
 
 ---
 
@@ -214,7 +239,7 @@ app/api/storage/download-url/route.ts:144 — `const expiresIn = parseInt(req.ne
 ## EGR-5 · A share link always serves the CURRENT version and ignores document status and active holds — a voided or held drawing keeps flowing to outsiders
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:53-81`, `app/api/share/file/route.ts:102-118`, `app/api/verify/route.ts:34-108`, `lib/documentGuards.ts:139-146`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed and the status half is worse than stated: `Void` is a real status that docRetired does not test, so a voided document returns isCurrent:true and app/verify/[docId]/page.tsx:65,99 paints `bg-emerald-600` / "CURRENT". Holds are never consulted on either route — lib/documentGuards.ts:139-148 is the only hold block and it fires solely inside evaluatePublishGuard.
@@ -238,6 +263,20 @@ app/api/share/file/route.ts:54-55 — the select list contains no `status` and n
 - [ ] /api/verify reports active holds so a scanned QR cannot answer 'current' for a drawing that is operationally blocked
 - [ ] A decision is recorded and reflected in the UI about whether a share tracks the current version or pins the version shared — today it silently does the former
 
+**Resolution (2026-09-23, document-control Round F wave 2).** Both routes (through `lib/shareServe.ts`) refuse a `Void`, `Archived`, `Superseded` or `Draft` document (`410 withdrawn` with the reason and the status) and a held one (`423 on_hold`, fail-closed on an unreadable hold set) — `DRLS-5`. The stamped footer (`shareFooterNotice`) now reads `<label> Rev <served label> (<status>) at time of download — a share always serves the current revision.` followed by "Scan the QR to confirm it is still current." ONLY when a verify URL was stamped (`SHR-11`). The decision the fourth criterion asks for is recorded as DEC-46 and reflected in the UI: the share modal ("A share always serves the **current** revision — today Rev X; if the document is revved, the same link serves the new revision … stops serving while on hold and permanently once superseded, voided or archived"), every live link row ("resolves to Rev X"), the landing page ("This link always serves the **current** revision at the moment you download — it is not pinned…", with the status beside the rev), and the footer on the copy.
+- Files: `lib/shareServe.ts`, `app/api/share/file/route.ts`, `app/api/share/resolve/route.ts`, `components/documents/ShareLinkModal.tsx`, `app/share/[token]/page.tsx`, `audit-reports/DECISIONS.md` (DEC-46)
+- Tests: `lib/__tests__/shareRoutes.test.ts` — the refusal cases under `DRLS-5`; "the footer instructs a scan ONLY when a verify URL was stamped, and states the served rev, status and the always-current rule"; "the modal offers no never-expires option … states always-current"; "the landing page renders withdrawn / on_hold … states the always-current rule and the status".
+- Reproduced: as `DRLS-5` (no `status` selected, no `document_holds` read, footer `… scan the QR …` unconditional at base `:123`).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2583 tests).
+
+**Done-when.**
+1. ✓ `share/file` and `share/resolve` refuse a Void / Archived (and Superseded / Draft) document with the reason — a withdrawn drawing never leaves as a plain UNCONTROLLED copy.
+2. ✓ The stamp carries the document status. An active-hold NOTICE is not stamped because a held document is not served at all (refused `423 on_hold` — the fail-safe reading of "clearly mark": a copy that would carry a hold banner does not leave).
+3. ✓ Already landed — `/api/verify` reads `document_holds` (`app/api/verify/route.ts:50-57`, `DIST-2`, Phase 2; verified); PS-VERIFY owns any further change there.
+4. ✓ DEC-46: a share tracks the CURRENT revision, no version pinning — stated in the modal, on every link row, on the landing page and in the footer.
+
+**Scope / residual.** The legal-hold / ACL limb credited to intelligence `DACL-4` is closed by `shareStillAuthorized` (`EGRESS-1`) plus these refusals. Same defect as public-surfaces `SHR-3` / `SHR-7` (recorded there).
+
 ---
 
 <a id="egr-6"></a>
@@ -245,7 +284,7 @@ app/api/share/file/route.ts:54-55 — the select list contains no `status` and n
 ## EGR-6 · Share revocation and every download-audit write ignore supabase-js {error} — a revoked link can stay live and a failed distribution record reads as success
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/documentShares.ts:68-73`, `lib/documentShares.ts:59-66`, `lib/downloads.ts:131-146`, `lib/docPack.ts:114-123`, `components/viewers/MultiDocViewer.tsx:747`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. REFUTED in its headline mechanism: the share panel is NOT optimistic — it re-fetches after revoke, and the row is rendered from the server value (`const isRevoked = !!s.revokedAt` at line 148, showing "revoked" only at line 204), so a rejected UPDATE leaves the link visibly still live rather than reading as revoked. What survives is the narrower, already-covered point that every download-audit write discards its {error} (the same swallowing that makes EGR-3 silent), so I'd drop this to LOW as a code-hygiene finding.
@@ -278,6 +317,20 @@ lib/documentShares.ts:68-73 — the full body of revokeShareLink; no `const { er
 - [ ] listShareLinks (:59-66) likewise surfaces its error rather than returning [] on failure — an empty share list currently looks identical to a failed query
 - [ ] Every download_audits write checks {error} and logs loudly; an audit write that fails must never be indistinguishable from one that succeeded
 - [ ] MultiDocViewer skips (or repairs) rows with a null org_id rather than submitting writes RLS is guaranteed to reject
+
+**Resolution (2026-09-23, document-control Round F wave 2).** The `lib/documentShares.ts` limb, re-verified and extended. `revokeShareLink` (`:179-196`) already destructured `{ error }`, `.select("id")`-ed the touched row and threw on zero rows (R&P `EGRESS-7`, 2026-08) — it now selects `id, org_id, document_id` back and writes a `SHARE_LINK_REVOKED` `audit_logs` row on the document; `listShareLinks` (`:162-177`) already threw on a failed listing (R&P `EGRESS-8` — it goes through `/api/share/list`, which answers 500 on a query error), so the modal's `error` banner, never "None yet.", is what a failed list renders; `createShareLink` now also writes `SHARE_LINK_CREATED`. The one `download_audits` write in this package's files — `app/api/share/file/route.ts` — checks `{ error }` and refuses the download on failure (`DIST-7` / `EGR-3`).
+- Files: `lib/documentShares.ts`, `app/api/share/file/route.ts`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "revoke selects the row back (zero rows throws — EGRESS-7) and writes SHARE_LINK_REVOKED on the document", "mints … writes SHARE_LINK_CREATED", "a refused download_audits write REFUSES the download (503 unrecorded)".
+- Reproduced: the verifier's correction already narrowed this to "the swallowed error and the void return"; the current `revokeShareLink` is not that code (checked write since `EGRESS-7`), so the limb was re-verified rather than re-fixed; the `share/file` write was the still-live half (base `:139-151`).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2583 tests).
+
+**Done-when.**
+1. ✓ `revokeShareLink` destructures `{ error }`, requests `.select(...)`, throws on error or zero rows; the modal catches and shows the message and re-reads the list (`EGRESS-7`, verified).
+2. ✓ `listShareLinks` surfaces its error (throws; the modal renders the error banner, not the empty state) — `EGRESS-8`, verified.
+3. ◐ `app/api/share/file/route.ts` — ✓ checked, loud, fail-closed. `lib/downloads.ts:131-146` is `DIST-9`'s P8 limb (P8 FIELD owns that file); `lib/docPack.ts` / `components/viewers/MultiDocViewer.tsx:747` are drafting-flow `EVID-5`'s sites — not this package's files; the owning IDs are named rather than fixed twice.
+4. ✗ `MultiDocViewer` null-`org_id` handling — `EVID-5` (drafting-flow), whose verifier also found the scenario speculative (`orgId` is populated on every doc the viewer loads).
+
+**Scope / residual.** As stated in 3 and 4: the remaining download-audit writers are owned by `DIST-9` (P8) and `EVID-5`.
 
 ---
 

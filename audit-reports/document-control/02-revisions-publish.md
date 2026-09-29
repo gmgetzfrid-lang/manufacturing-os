@@ -365,7 +365,7 @@ lib/effectiveDate.ts:91 — `const todayISO = () => new Date().toISOString().sli
 ## REV-10 · Live share tokens keep serving a Superseded, Archived or split-away document to an unauthenticated external party — neither share route checks `documents.status` and no retirement path revokes a share
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:42-58`, `app/api/share/file/route.ts:103-116`, `app/api/share/resolve/route.ts:32-47`, `lib/documentShares.ts:46,61,69`, `lib/revisions.ts:1414-1539`, `lib/revisions.ts:1325-1355`, `lib/documentLifecycle/common.ts:266-281`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves: no status check in either share route, and no retirement path revokes a share. supersedeDocument (revisions.ts:1454-1467) and markSupersededAndLink (documentLifecycle/common.ts:266-281) set status='Superseded' and never look at document_shares. Partial mitigation the finding does not mention: the delivered PDF is stamped 'UNCONTROLLED — SHARED COPY' with a /verify QR, and app/api/verify/route.ts:88 `const docRetired = d.status === 'Superseded' || d.status === 'Archived'` does return docStatus/isCurrent=false — but the share landing page never surfaces status, so the outsider only learns it by scanning the QR. MEDIUM stands.
@@ -389,6 +389,19 @@ app/api/share/file/route.ts:54-56 — `.select("id, document_number, title, name
 - [ ] `/api/share/resolve` and `/api/share/file` refuse, or clearly label, a document whose status is `Superseded`, `Archived` or `Void`.
 - [ ] Superseding, archiving, splitting or merging a document revokes or flags its outstanding share tokens.
 - [ ] The shared-copy stamp on a retired document says it was retired, not just which revision it was.
+
+**Resolution (2026-09-23, document-control Round F wave 2).** The route half. Both public share routes resolve through `lib/shareServe.ts`, which reads `documents.status` and `archived_at` and refuses a `Superseded`, `Archived`, `Void` (the shared `NOT_CURRENT_STATUSES`) or `Draft` document with the reason — `410 { error: "withdrawn", reason: "This document has been withdrawn (superseded) and no longer serves.", documentStatus }` — on the metadata route (the landing page now renders a "Document withdrawn" state with that sentence and "any copy you hold from this link is not controlled") and on the bytes route (nothing is fetched or stamped). So the on-screen gap the verifier called sharpest is closed, and a split-away source (which goes `Superseded`) stops serving the moment its status changes, with no revoke needed. The retirement-time revoke that the chain-reaction note prefers already exists for supersede (`DIST-1`, Phase 7c: `lib/revisions.ts:1541-1551` revokes outstanding links and records the count on the `SUPERSEDE_DOC` audit event — verified); archive-time revocation is not added here.
+- Files: `lib/shareServe.ts`, `app/api/share/resolve/route.ts`, `app/api/share/file/route.ts`, `app/share/[token]/page.tsx`
+- Tests: `lib/__tests__/shareRoutes.test.ts` — "a Superseded document is refused with the reason (410 withdrawn)", "Void, Archived, Draft and archived_at are all refused", "withdrawn and held documents are refused on the metadata path too, with the reason", "the landing page renders withdrawn / on_hold with the server's reason".
+- Reproduced: as `DRLS-5` — base routes select no `status`; `lib/revisions.ts` and `lib/documentLifecycle/common.ts` archive writers (`:1361`, `:86`) touch no `document_shares` row.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (194 files / 2583 tests).
+
+**Done-when.**
+1. ✓ `/api/share/resolve` and `/api/share/file` refuse a `Superseded`, `Archived` or `Void` document (and a Draft) with the reason.
+2. ✓ Superseding / splitting / merging REVOKES (`DIST-1`, the source goes Superseded and its links are revoked in `supersedeDocument`) and every retirement, archiving included, FLAGS: the token answers `withdrawn` with the status on the page and 410 on the bytes. An archive-time `document_shares` revoke is not added — `lib/revisions.ts` is P3 LIFECYCLE's file this wave and the serve-time refusal already makes the link dead; P3 may add the revoke for the record.
+3. ✓ Stronger than asked: a retired document's copy no longer leaves at all; a served copy's footer states the status it left with (`Rev B (Issued) at time of download — a share always serves the current revision`).
+
+**Scope / residual.** The lifecycle half (revoke-on-archive for the audit record) — P3 LIFECYCLE, `lib/revisions.ts`. The stated default "a share always serves the current revision" is DEC-46.
 
 ---
 
