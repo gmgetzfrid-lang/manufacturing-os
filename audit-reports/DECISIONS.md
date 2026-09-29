@@ -1292,6 +1292,8 @@ facility with no configuration must keep working exactly as it does today.
 
 **Risk:** medium — wide, but mechanical.
 
+*Landed 2026-09-23 (projects Round G): the quality program's machine actor is a reserved sentinel, not a facility role — `MACHINE_ACTOR_SWEEP` (`"evidence sweep"`) / `MACHINE_ACTOR_ASSESSMENT` (`"AI assessment"`) in `lib/checklistEngine.ts`, written as `updated_by = NULL` + `updated_by_name = <sentinel>` by `runAutoEvidence` / `applyAssessment`; a human write always carries a uid. Checklist kinds stay seed data (`CHECKLIST_KIND_LABEL`), and the turnover subject match reads the seeded item names, never a role. See `QUAL-6`, `DEC-44`.*
+
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
 
@@ -1700,3 +1702,77 @@ role ids) — then scope lives on the id, is checked in `node_visible` after
 the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
+
+<a id="dec-44"></a>
+
+## DEC-44 · The quality record's evidence contract
+
+**Decision. A green on a PSSR / MI / QA-QC line means one of two things, and
+the row says which: a PERSON decided it (a typed reason or a person-attached
+chip, uid on the row), or the MACHINE proved it against an admitted document
+and will withdraw the green the moment that proof is gone. Nothing else is
+green.**
+
+The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-4`,
+`QUAL-1` / `2` / `5` / `6` / `7` / `8` / `11` / `12` / `13`, `PERF-7`, `UX-7` / `8` /
+`10`) adopted, recorded so nobody re-litigates them per surface:
+
+1. **Evidence register** (`SAF-1`, `QUAL-13`): only documents at `Issued` or
+   `Locked` with a `current_version_id` are admissible; `NOT_CURRENT_STATUSES`
+   (`lib/aiBoundary.ts`) and `Draft` never are; an external (intake) submission
+   counts only once its version is `approved`; documents attached to ACCEPTED
+   turnover items are listed first. A title match inside that register is the
+   citation; a title match outside it is nothing. Equipment-tag binding via
+   `document_assets` is a follow-on, not built.
+2. **Retraction** (`QUAL-1`): an auto-only green whose probe no longer proves
+   it goes to `needs_evidence` on the next sweep, stale auto chips removed,
+   one audit row per item. A human chip or note is never touched. The
+   migration lists stale greens (inventory) and never rewrites them.
+3. **Bulk AI action** (`SAF-2`, `QUAL-5`): per-item review, every row unticked
+   by default, apply writes only ticked ids, the audit row carries the ids.
+   The assessment never moves a satisfied or evidence-bearing item to N/A —
+   such proposals are listed and locked; the human N/A control (with a
+   reason) is the only way.
+4. **The reason bar** (`SAF-4` / `GAP-405`): 10 non-whitespace characters, no
+   canned text, enforced server-side in `lib/checklists.ts` / `lib/turnover.ts`
+   (`reasonProblem`) and mirrored by `appPrompt({ required, minLength })`.
+   No placeholder is ever written. Waived is its own bucket.
+5. **Completion basis** (`QUAL-2`): `project_checklists.completed_basis` is
+   `'human'` only when every counted item carries a human decision; only a
+   `'human'` MI completion is citable by another checklist.
+6. **Machine actor** (`QUAL-6`, `DEC-35`): `updated_by = NULL` + a sentinel
+   name. Provenance is carried by the existing `updated_by` / `updated_by_name`
+   pair and `evidence[].source` / `documentId`; no `satisfied_by` /
+   `satisfied_how` columns were added (a column the sweep must write breaks
+   the sweep until the migration is applied — `DEC-30`).
+7. **Turnover history** (`QUAL-11`): `turnover_review_events`, append-only at
+   the database; a rejection is a `nonconformance` event, a reopen of an
+   accepted / waived item is a `reopen` event with a required reason; there is
+   no separate NCR module (a follow-on capability if a facility wants
+   disposition / corrective-action tracking).
+8. **Punch record** (`QUAL-7`): `closed_by_name`, `description`, `location`,
+   `closure_note` as nullable text; photos / attachments deferred.
+9. **Checked writes** (`SAF-3` / `GAP-402` narrow): `lib/checkedWrite.ts` is the
+   one helper; every quality decision write uses it and audits only after a
+   confirmed match; the census in `lib/__tests__/checkedWrite.test.ts` holds
+   the quality files at zero raw writes and ratchets the money files until
+   `J3` converts them.
+10. **Batching** (`PERF-7`): parallel batches of 50 checked, `updated_at`-guarded
+    client writes — not a server-side RPC, which would tie both paths to a
+    pending migration.
+
+**Rationale.** A pre-startup safety review is signed. The audit found the
+green could come from a contractor's filename, survive the document's voiding,
+launder itself into a "complete" checklist another checklist then cites, be
+mass-N/A'd behind a count, and be recorded as done by a write the database had
+refused. Each default above closes one of those doors without weakening the
+one invariant that was sound — a human's note keeps every automated pass out.
+
+**Reversal.** Per default, by a facility's stated requirement: a stricter
+register (assets), a stricter bar (longer reasons, no accept-without-document),
+an NCR module. None of the defaults can be loosened below "a person or an
+admitted document", which is the contract itself.
+
+**Risk:** low–medium — the register is narrower than before (existing intake-
+title greens retract on the next sweep, visibly, with an audit row each), and
+four writes now depend on migration `20261091` being applied.

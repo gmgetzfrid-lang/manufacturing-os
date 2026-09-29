@@ -266,6 +266,14 @@ return.
 - A successful sweep renders in a non-error tone.
 - A failed intake action renders in an error tone.
 
+**Partial (2026-09-23, projects Round G — QualityTab half).** `components/projects/QualityTab.tsx` has a `Notice` with a tone (`error` / `success` / `info`): the sweep's "nothing new to prove or demand" is `info`, a sweep that proved / demanded / withdrew items is `success` with the tallies, "Applied N; left M alone…" is `success`, refusals are `error` (`role="alert"`). The single `setErr` channel is gone; each section and each checklist card carries its own notice.
+
+**Done-when.**
+- ✓ A successful sweep renders in a non-error tone.
+- ✗ A failed intake action renders in an error tone — `components/projects/IntakePanel.tsx` :292 is P1 / DC P4's file, not edited here; this record stays OPEN for that limb.
+
+**Scope / residual.** The IntakePanel limb.
+
 ---
 
 ## UX-8 · Errors render at the top of the page while the action that raised them is far below
@@ -299,6 +307,15 @@ explain why on the button.
 **Done when.**
 - An error from a control below the fold is visible without scrolling.
 - "Mark complete" is disabled with a visible reason when it would be refused.
+
+**Partial (2026-09-23, projects Round G — QualityTab half).** In `components/projects/QualityTab.tsx` every notice renders inside the section or card whose control raised it (the checklist card's notice sits directly under its buttons; the turnover and punch sections have their own), and the page-level banner is reserved for a failed load with a Retry. "Mark complete" is disabled — with `aria-disabled` and a title — while the gate would refuse (no items, or N unsatisfied), and the reason is printed beside the button; the server-side refusal (`lib/checklists.ts` :218-223 gate, unchanged) is still the authority.
+
+**Done-when.**
+- ✓ An error from a quality control below the fold is visible without scrolling (rendered beside the control).
+- ✓ "Mark complete" is disabled with a visible reason when it would be refused.
+- ✗ `components/projects/CostsTab.tsx` :119-124 (and the cost panels raising into it) — P3 / J3's limb, not edited here; this record stays OPEN for that half.
+
+**Scope / residual.** The costs half (J3).
 
 ---
 
@@ -365,6 +382,14 @@ database migration (20261013) applied."*
 **Done when.**
 - Empty, broken and forbidden render differently.
 - No raw Postgres string reaches a user in the Projects area (see `REL-3`).
+
+**Partial (2026-09-23, projects Round G — the load-bearing safety read; PC QUAL-8).** `listChecklists`, `listChecklistItems`, `listTurnoverItems` and `listPunchItems` throw a translated error on a read failure instead of returning `[]` (`describeWriteError` in `lib/checkedWrite.ts`: 42P01 → "This needs the latest database migration applied", 42501 / RLS → "You don't have permission…", else the message); `readChecklistItems` returns `{ rows, error }` for the completion gate, which now refuses on a read error (QUAL-8). `QualityTab` renders a failed load as "The quality program couldn't be loaded — <reason> · Retry" and a failed item load inside the card with Retry — never "No checklists yet". `listTurnoverReviewEvents` is the one deliberate exception (an empty history before the migration, since the items still render). Tests: `lib/__tests__/checklists.test.ts` `"listChecklists / listChecklistItems throw on a read error instead of returning []"`; `lib/__tests__/turnover.test.ts` `"listTurnoverItems / listPunchItems throw on a read error"`.
+
+**Done-when.**
+- ✓ Empty, broken and forbidden render differently on the quality tab (empty state / "couldn't be loaded — needs the latest migration" / "you don't have permission").
+- ✗ No raw Postgres string reaches a user in the Projects area — the quality lib maps the two common codes and the rest carry the message; the costs half is REL-2 / REL-3 in P3 (J3) and the `QuotesPanel.tsx` :545 limb is P4's. This record stays OPEN for those halves.
+
+**Scope / residual.** `lib/projectReport.ts` (PC-9's) wraps these readers in its own `safe()` and is unaffected by the throw.
 
 ---
 

@@ -318,7 +318,7 @@ customer's own key, and a 504 burns it entirely.
 ## PERF-7 · Applying an AI assessment issues one update per item, sequentially
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** availability / data-integrity
 - **Locations:**
@@ -346,6 +346,15 @@ server-side.
 - Applying a 300-item assessment is one round trip, or a small handful.
 - Failures are reported, not swallowed.
 - Two concurrent sweeps cannot lose evidence.
+
+**Resolution (2026-09-23, projects Round G).** `writeItemPatches` (`lib/checklists.ts`) writes both the assessment's and the sweep's patches in parallel batches of `WRITE_BATCH = 50` (`Promise.all` per batch) — a 300-item assessment is six round trips of wall-clock, not three hundred; the `items.find` inside the sweep loop is a `Map`. Every write is a checked write guarded on the row's `updated_at` as read (`.eq("updated_at", …)` or `.is("updated_at", null)`): a row someone else changed between the read and the write matches zero rows and is reported as `refused` ("N items changed while the sweep ran and were left alone — run it again") — two concurrent sweeps cannot lose a chip, and the sweep's evidence append is never applied to a stale row. Per-row failures are no longer swallowed: `failed` / `refused` counts and the first error come back and the card shows them in the error tone; the audit row carries only the ids that landed. Tests: `lib/__tests__/checklists.test.ts` `"writes are guarded on updated_at as read (a concurrent change refuses) and run in parallel batches (PERF-7)"` (120 items, every write carries the guard, one audit row with 120 ids), `"a concurrent change between read and write is a refusal, not a lost chip"`, `"a refused write (RLS zero rows) reports an error…"`.
+
+**Done-when.**
+- ✓ Applying a 300-item assessment is a small handful of round trips (ceil(n/50) parallel batches — 6 for 300), not n sequential ones.
+- ✓ Failures are reported, not swallowed.
+- ✓ Two concurrent sweeps cannot lose evidence (optimistic guard on `updated_at`).
+
+**Scope / residual.** A single-statement server-side apply (an RPC) was deliberately not added: it would make both paths depend on a migration being applied (DEC-30) for a MEDIUM-severity gain; the batched, guarded client writes need none. Recorded in DEC-44.
 
 ---
 

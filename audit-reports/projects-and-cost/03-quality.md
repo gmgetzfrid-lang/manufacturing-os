@@ -31,7 +31,7 @@ Whether a green item means something a person would sign.
 ## QUAL-1 · Auto-evidence never retracts: a satisfied safety item survives the deletion, voiding or supersession of the only document that proved it, and the citation cannot be traced back to any document row
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklistEngine.ts:135-158`, `lib/checklistEngine.ts:143`, `lib/checklistEngine.ts:154-156`, `lib/checklistEngine.ts:59-63`, `lib/checklists.ts:315-320`, `lib/checklists.ts:51`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg holds. Line 143 (`if (item.status === "satisfied" && item.evidence.some((e) => e.source === "manual")) continue;`) confirms auto-satisfied items ARE re-swept — so the sweep sees the missing proof and still declines to retract. I also found the voiding case is worse than stated: the register query at lib/checklists.ts:258 (`.select("title, name, document_number").eq("collection_id", collectionId)`) filters on nothing at all, so a Voided or superseded document keeps supplying live evidence indefinitely.
@@ -67,6 +67,16 @@ lib/checklistEngine.ts:154 `} else if (item.status === "open") {` — the sole p
 - [ ] The evidence chip renders the cited document's current status, so a Void/Superseded citation is visible.
 - [ ] A test pins: satisfy on a matching title, remove the title from `documentTitles`, re-run — the item is no longer satisfied.
 
+**Resolution (2026-09-23, projects Round G).** The sweep now retracts. `applyAutoEvidence` (`lib/checklistEngine.ts`) has a third branch: an item at `satisfied` whose chips are all `source: "auto"` and whose rule probe returns null is returned as `{ status: "needs_evidence", removeAutoEvidence: true, retracted: true }`; a still-proven item whose auto chip names a different citation gets `removeAutoEvidence` + the current chip (replaced, never supplemented); an item with a manual chip or a manual note is skipped exactly as before (line 141/143 precedence untouched; `firstDocMatch` byte-identical). `AutoEvidenceResult.addedEvidence` now carries `documentId`, resolved from the new `ProjectEvidenceState.documents` register (`documentForProof` — the register row whose label produced the citation; turnover-attached documents are listed first so a shared title resolves to the accepted one). `runAutoEvidence` (`lib/checklists.ts`) drops the auto chips when asked, keeps every human chip, stamps the machine actor (QUAL-6) and writes one `CHECKLIST_AUTO_EVIDENCE` audit row whose `items[]` carries `itemId / from / to / retracted / citation / documentId`. The register itself is filtered per SAF-1 (Issued/Locked with a current version; a Void or Superseded document simply leaves it, which is what triggers the retraction). `components/projects/QualityTab.tsx` `EvidenceChip` looks the cited documents up by id and renders `· <status> rev <rev>`; a chip on a Void / Superseded / Draft document turns rose and its title says the citation no longer proves anything. Tests: `lib/__tests__/projectControls.test.ts` `"QUAL-1: satisfy on a matching title, remove the title, re-run — the item is no longer satisfied and the auto chip is dropped"`, `"QUAL-1: a stale auto chip is REPLACED…"`, `"QUAL-1: a satisfied item with a human chip or a human note is never retracted…"`; `lib/__tests__/checklists.test.ts` `"RETRACTS: satisfy on a matching title, void the document, re-run…"`, `"never touches a human chip…"`, `"satisfies on an Issued document with the documentId attached…"`. Reproduced first: the pre-fix engine test with the title removed returned `[]` for the satisfied item (no downgrade path existed).
+
+**Done-when.**
+- ✓ `applyAutoEvidence` returns a downgrade for a `satisfied` item whose only evidence is `source: "auto"` and whose probe no longer returns proof.
+- ✓ Auto-attached evidence carries the `documentId` it matched; stale auto chips are removed (not supplemented) on re-run.
+- ✓ The evidence chip renders the cited document's current status (and revision), so a Void/Superseded citation is visible.
+- ✓ Test pins satisfy → remove title → re-run ⇒ not satisfied.
+
+**Scope / residual.** Existing stale greens in production are not rewritten by the migration (DEC-30 inventory row "satisfied items whose evidence is auto-only" lists their count); the next sweep on each checklist retracts them with an audit row per item. A `satisfied` item with NO chips and no note (a shape only legacy rows can have) is left alone — silence over guessing.
+
 ---
 
 <a id="qual-2"></a>
@@ -74,7 +84,7 @@ lib/checklistEngine.ts:154 `} else if (item.status === "open") {` — the sole p
 ## QUAL-2 · Auto-evidence launders itself into human-grade proof: an MI checklist greened entirely by document-title matches, then completed, satisfies "mechanical integrity" items on every other checklist with no person in the chain
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklists.ts:288-293`, `lib/checklists.ts:290`, `lib/checklistEngine.ts:80-83`, `lib/checklists.ts:214-231`, `lib/checklistEngine.ts:74-79`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The laundering chain is real and reproducible as described — title strings become item-level greens, which become a checklist status, which becomes a proof token consumed by other checklists in the project, and no code anywhere distinguishes auto from manual at either hop. One nuance on the wording: a person is technically in the chain — someone with canManage must click "Mark complete" (QualityTab.tsx:381-384 → setChecklistStatus) — but that click attests to nothing item-level, so the substance of the finding is unaffected.
@@ -110,6 +120,16 @@ lib/checklists.ts:290 `miChecklistComplete: checklists.some((c) => c.kind === "m
 - [ ] The turnover rule matches the checklist item's subject against the accepted item's name rather than firing on a non-empty list.
 - [ ] `setChecklistStatus` distinguishes a checklist completed on auto-evidence from one completed on human sign-off, and only the latter is citable as evidence elsewhere.
 - [ ] A test pins: an MI checklist satisfied purely by auto-evidence does not satisfy a PSSR mechanical-integrity item.
+
+**Resolution (2026-09-23, projects Round G).** Three cuts in the laundering chain. (1) `setChecklistStatus` records what a completion rested on: `completionBasis(items)` (`lib/checklistEngine.ts`, pure) is `'human'` only when every item that counted toward the gate — satisfied or N/A — carries a human decision (a `manual_note` or a person-attached chip), else `'auto'`; the value is written to the new `project_checklists.completed_basis` column (`supabase/migrations/20261091_prj_roundG_quality_rails.sql`) and into the `CHECKLIST_STATUS` audit row; the card badge reads "complete (auto)" when it is auto. (2) `gatherProjectEvidenceState` selects `completed_basis` and sets `miChecklistComplete` only for `kind = 'mi' AND status = 'complete' AND completed_basis = 'human'` — a pre-migration row (no column) or an auto completion fails closed. (3) The turnover rule (`acceptedTurnoverMatch`) no longer fires on a non-empty list: the checklist line and an accepted item must share a subject word (`weld`, `nde`, `mtr`, `pressure`…; a generic-word stoplist keeps "records" / "package" / "turnover" from matching), and the citation names that one item. Tests: `lib/__tests__/projectControls.test.ts` `"QUAL-2: the turnover rule needs a SUBJECT match…"`, `"QUAL-2: an MI checklist completed on auto-evidence alone does not satisfy a PSSR mechanical-integrity item…"`; `lib/__tests__/checklists.test.ts` `"records completed_basis: auto when a green rests on the sweep alone, human when every counted item carries a person"`, `"miChecklistComplete requires completed_basis = 'human' (QUAL-2) and fails closed when the column is missing"`. The migration backfills completed checklists: zero human-decided items → `'auto'`; every counted item human → `'human'`; mixed → NULL (not citable until re-completed).
+
+**Done-when.**
+- ✓ `miChecklistComplete` requires the MI checklist's items to carry human decisions (via `completed_basis = 'human'`), not merely `status = 'complete'`.
+- ✓ The turnover rule matches the item's subject against the accepted item's name.
+- ✓ `setChecklistStatus` distinguishes a completion on auto-evidence from one on human sign-off; only the latter is citable.
+- ✓ Test pins: an auto-only MI checklist does not satisfy a PSSR mechanical-integrity item.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261091_prj_roundG_quality_rails.sql` (the `completed_basis` column — until applied, "Mark complete" fails with the migration message and `miChecklistComplete` is always false). PC-6 (J2b) builds the sign-off authority on top of this basis.
 
 ---
 
@@ -204,7 +224,7 @@ supabase/migrations/20261013:279-288 — identical `USING`/`WITH CHECK` pairs fo
 ## QUAL-5 · Re-running the AI assessment silently converts already-satisfied items — evidence attached — to N/A, dropping them out of the completion gate while their green evidence chips stay on screen
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklists.ts:158-171`, `lib/checklists.ts:167`, `lib/checklists.ts:338-350`, `components/projects/QualityTab.tsx:455-464`, `components/projects/QualityTab.tsx:293-319`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The one mitigation I found and weighed: the confirm dialog at QualityTab.tsx:307-309 discloses the count of proposed N/As and says "Items you've decided by hand are never touched" — but it never says already-satisfied, evidence-bearing items are among them, and "decided by hand" means manual_note specifically, so a reviewer who clicked "✓ Satisfied"... does get a note prompt (QualityTab.tsx:428-433 always passes promptNote), while the sweep's own greens have no note and are unprotected. Minor overstatement in the wording: the flipped row is rendered at `opacity-50` with an N/A status dot, so the stale chips are greyed rather than fully green.
@@ -240,6 +260,16 @@ lib/checklists.ts:167 `if (p.applicability === "na" && item.status !== "na") pat
 - [ ] The confirmation dialog states how many proposed N/As target currently-satisfied items.
 - [ ] A test pins: satisfied item + `na` proposal ⇒ not silently flipped.
 
+**Resolution (2026-09-23, projects Round G).** `applyAssessment` (`lib/checklists.ts`) takes `confirmedItemIds` — the ids the reviewer ticked in the per-item review (SAF-2) — and, for every proposal, refuses an `na` on an item that `isProtectedFromDowngrade` (status `satisfied` or any evidence attached): the whole patch is skipped (no `applicability`, no `status`, so the item cannot leave the count through either column), counted as `skippedProtected`, and the human who really wants it N/A uses the item's own control, which requires a reason and records it (the `manual_note` precedence is unchanged). The assess route (`app/api/projects/checklist/route.ts`) now selects `status` and `evidence` and returns each proposal's `current { text, section, status, hasEvidence, humanDecided, protectedFromDowngrade }` plus `protectedNaCount`; `AssessmentReview` in `components/projects/QualityTab.tsx` lists every proposal with its rationale and current state, states "N of the proposed N/As target an item that is already satisfied or has evidence attached — the assessment will not change them", and renders those rows unticked and untickable. Tests: `lib/__tests__/checklists.test.ts` `"writes only the ticked ids; a satisfied or evidence-bearing item is never flipped to N/A…"` (asserts status AND applicability untouched, evidence intact); `lib/__tests__/checklistRoute.test.ts` `"each proposal carries the item's current state; protectedNaCount…"`. Reproduced first against the pre-fix loop: a satisfied item with an auto chip and an `na` proposal was written `status: 'na'` with the chip still on the row.
+
+**Done-when.**
+- ✓ `applyAssessment` refuses to downgrade an item that is `satisfied` or carries evidence (the only route to N/A for such an item is the per-item human control with a reason).
+- ✓ The assessment can no longer set `applicability: 'na'` on an evidence-bearing item; the human path records why (the required `manual_note`).
+- ✓ The confirmation states how many proposed N/As target currently-satisfied items.
+- ✓ Test pins: satisfied item + `na` proposal ⇒ not flipped.
+
+**Scope / residual.** None for this finding; the row-level "N/A but evidence attached" state can still be produced by a human N/A on a satisfied item, and it now carries that human's reason.
+
 ---
 
 <a id="qual-6"></a>
@@ -247,7 +277,7 @@ lib/checklists.ts:167 `if (p.applicability === "na" && item.status !== "na") pat
 ## QUAL-6 · A checklist item the machine turned green records no actor at all, and the sweep's audit row is a count — nothing in the system says which items were auto-satisfied or by which run
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checklists.ts:311-324`, `lib/checklists.ts:315`, `lib/checklists.ts:321-323`, `supabase/migrations/20261013_project_controls_program.sql:165-167`, `lib/checklists.ts:192-196`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The core holds: the sweep stamps updated_at with no actor, and the audit row is a bare count. But the narrated scenario is impossible — updated_by_name is written only by updateChecklistItem, whose only caller always sets manual_note, and applyAutoEvidence skips any item with manual_note; so the stale-'mreyes' misattribution cannot occur (the column stays NULL). 'Nothing says which items were auto-satisfied' is also false: every auto-green carries an evidence entry with source:"auto", rendered as an emerald chip titled 'Found by the evidence sweep' (QualityTab.tsx:458-459).
@@ -290,6 +320,16 @@ lib/checklists.ts:315 `const patch: Record<string, unknown> = { status: r.status
 - [ ] A checklist item row (or a companion event row) can answer "who set this status, when, on what basis" without joining aggregate counts.
 - [ ] The UI labels an auto-satisfied item as machine-verified, separately from a human decision.
 
+**Resolution (2026-09-23, projects Round G).** A reserved machine actor (DEC-35: a sentinel, never a facility role): `MACHINE_ACTOR_SWEEP = "evidence sweep"` and `MACHINE_ACTOR_ASSESSMENT = "AI assessment"` (`lib/checklistEngine.ts`, with `isMachineActorName`). `runAutoEvidence` and `applyAssessment` write `updated_by: null, updated_by_name: <sentinel>` on every row they touch; the human path (`updateChecklistItem`) writes the uid and the email prefix as before, so a row always answers "person or machine" without a join. Both audit rows carry `items[]` — the sweep's with `itemId / from / to / retracted / citation / documentId`, the assessment's with `itemId / from {applicability, status} / to {…}` — plus the tallies. `ChecklistItemRow` renders "Machine-verified (evidence sweep) · <date> — not a human sign-off" on a satisfied item whose actor is the sentinel, separately from the accent-coloured "Human decision (name): note". Tests: `lib/__tests__/checklists.test.ts` `"satisfies on an Issued document with the documentId attached and the machine actor stamped; the audit row names the item and citation"`, `"writes only the ticked ids…"` (asserts `updated_by` null + sentinel and the audit `items`); `lib/__tests__/projectControls.test.ts` `"QUAL-6: the machine actor is a reserved sentinel, never a person's name"`.
+
+**Done-when.**
+- ✓ `runAutoEvidence` and `applyAssessment` stamp a distinguishable machine actor (never the calling human, never a stale value).
+- ✓ The audit row records the item ids changed, prior and new status, and the citation attached.
+- ✓ A checklist item row answers "who set this status, when, on what basis" from `updated_by / updated_by_name / updated_at` + `evidence[].source / documentId`, with no aggregate join.
+- ✓ The UI labels an auto-satisfied item as machine-verified, separately from a human decision.
+
+**Scope / residual.** The PT brief's `satisfied_by / satisfied_how` columns were not added: the existing `updated_by` / `updated_by_name` pair plus `evidence[].source` already carry who/what and how, and a new column the sweep must write would break the sweep until the migration is applied (DEC-30). Recorded in DEC-44.
+
 ---
 
 <a id="qual-7"></a>
@@ -297,7 +337,7 @@ lib/checklists.ts:315 `const patch: Record<string, unknown> = { status: r.status
 ## QUAL-7 · Closing a punch item records an actor nobody can read, and a punch item carries no location, description or verification — the closeout snag list is a list of strings
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/turnover.ts:263-280`, `lib/turnover.ts:106-119`, `lib/turnover.ts:41-52`, `components/projects/QualityTab.tsx:685-701`, `supabase/migrations/20261013_project_controls_program.sql:191-204`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The data-model half is exactly right — a punch item is title + due date + status, and closed_by is a write-only orphan. The 'actor nobody can read' half is overstated: audit_logs records PUNCH_STATUS with the actor's email, item title and timestamp, and that trail is rendered in the project evidence pack (evidencePack.ts:193-194, 227-228), so who closed an item is recoverable.
@@ -332,6 +372,15 @@ lib/turnover.ts:269 `row.closed_by = input.actor.uid;`. lib/turnover.ts:106-119 
 - [ ] `punch_items` carries `closed_by_name` and `mapPunch` exposes it; the UI shows who closed each item and when.
 - [ ] A punch item can record what the snag is beyond a one-line title (location/tag, description) and what evidence closed it.
 - [ ] Closing a punch item is distinguishable from voiding one in the rendered record, not only by dot colour.
+
+**Resolution (2026-09-23, projects Round G).** `supabase/migrations/20261091_prj_roundG_quality_rails.sql` adds `punch_items.closed_by_name`, `description`, `location`, `closure_note` (nullable text). `setPunchStatus` (`lib/turnover.ts`) writes `closed_by_name` and `closure_note` on done/void (and clears all four closure columns on reopen); void REQUIRES a reason meeting the bar (SAF-4), done takes an optional "what was done / who verified" note; the `PUNCH_STATUS` audit row carries `from`, `status` and the note. `addPunchItem` takes `location` and `description`; `mapPunch` / `PunchItem` expose `closedByName`, `closureNote`, `description`, `location`. `PunchSection` (`components/projects/QualityTab.tsx`) has location/details inputs, renders `@ location`, and a closed row carries a chip — emerald "done by <name> on <date>" or rose "voided by <name> on <date>" — plus the closure note line; the Void control is a labelled button that prompts for the reason. Tests: `lib/__tests__/turnover.test.ts` `"done stamps closed_by_name + closure_note; void is distinguishable on the row; reopen clears them"`, `"a punch item records location and description"`, `"void refuses a blank or canned reason"`; `lib/__tests__/qualityRailsMigration.test.ts` pins the four columns.
+
+**Done-when.**
+- ✓ `punch_items` carries `closed_by_name`; `mapPunch` exposes it; the UI shows who closed each item and when.
+- ✓ A punch item records location/tag and a description beyond the title, and a closure note says what closed it.
+- ✓ Closing is distinguishable from voiding in the rendered record (chip text and tone, not only the dot).
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261091_prj_roundG_quality_rails.sql` (until applied, closing a punch item fails with the migration message — the write names columns that do not yet exist). Photos / attachments on a punch item are deferred to a follow-on finding (DEC-44). Rows closed before the migration keep `closed_by_name` NULL; their closer is in the `PUNCH_STATUS` audit rows (inventory row in the migration's result set).
 
 ---
 
@@ -383,6 +432,16 @@ lib/checklists.ts:103 — `const { data } = await supabase...` with no `error` d
 - [ ] A checklist with zero items cannot be marked complete (today it passes the gate vacuously).
 - [ ] The closeout dialog renders an explicit "gates could not be loaded" state and blocks Confirm, instead of omitting the panel.
 - [ ] A test asserts: item read errors ⇒ `setChecklistStatus('complete')` returns `ok: false`.
+
+**Partial (2026-09-23, projects Round G).** The gate now fails closed. `readChecklistItems` (`lib/checklists.ts`, new) returns `{ rows, error }` and `listChecklistItems` throws on a read error instead of returning `[]` (`listChecklists`, `listTurnoverItems`, `listPunchItems` likewise — UX-10's lib half). `setChecklistStatus('complete')` reads through `readChecklistItems` and refuses on a read error ("Couldn't verify the items, so the checklist stays open: …") and on zero items ("nothing was verified"); the blocking filter itself is unchanged. `applyAssessment` and `runAutoEvidence` also refuse on a failed read. `ChecklistCard` renders "The items couldn't be loaded — <reason> · Retry" instead of an empty list, disables "Mark complete" while the gate would refuse and says why beside it (UX-8). Tests: `lib/__tests__/checklists.test.ts` `"item read error ⇒ ok:false, nothing written"`, `"zero items ⇒ ok:false (no vacuous completion)"`, `"the gate itself is unchanged…"`, `"listChecklists / listChecklistItems throw on a read error instead of returning []"`.
+
+**Done-when.**
+- ✓ `listChecklistItems` returns a distinguishable error; `setChecklistStatus` refuses to complete when the item read failed.
+- ✓ A checklist with zero items cannot be marked complete.
+- ✗ The closeout dialog's explicit "gates could not be loaded" state — NOT done here: `app/(protected)/projects/[id]/page.tsx` is J8 PROJECT-MODEL's file; this record stays OPEN until that limb lands.
+- ✓ Test asserts: item read error ⇒ `setChecklistStatus('complete')` returns `ok: false`.
+
+**Scope / residual.** The `gatherProjectEvidenceState` fail-closed tolerance is untouched (the only fail-open read — the completion gate's — changed). Remaining: the closeout-dialog limb (J8).
 
 ---
 
@@ -467,7 +526,7 @@ lib/evidencePack.ts:147-154 — the five-query `Promise.all`. lib/evidencePack.t
 ## QUAL-11 · Turnover acceptance is terminal in the interface — an erroneously accepted quality package can never be reopened or revoked, and there is no nonconformance record despite the rubric naming one
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/QualityTab.tsx:568-582`, `components/projects/QualityTab.tsx:573-575`, `lib/turnover.ts:190-212`, `lib/checklistEngine.ts:176`, `lib/turnover.ts:223-234`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: no reopen/revoke path, no 'acceptance withdrawn' field, no audit action for one, and no nonconformance record anywhere despite the rubric scoring contractors on having an NCR process. Severity MEDIUM is right.
@@ -503,6 +562,15 @@ components/projects/QualityTab.tsx:570-582 — the four conditional buttons; no 
 - [ ] A rejection's reviewer, date and note are preserved when the item is later accepted (a review history, not an overwrite).
 - [ ] A rejected turnover item produces a nonconformance record the contractor's scorecard and the project report can both read.
 
+**Resolution (2026-09-23, projects Round G).** `supabase/migrations/20261091_prj_roundG_quality_rails.sql` creates `turnover_review_events` (`org_id, project_id, item_id, from_status, to_status, kind CHECK IN ('review','reopen','nonconformance'), reviewer, reviewer_name, note, document_id, created_at`) — RLS on, member SELECT, own-row INSERT (`reviewer = auth.uid()` under `is_org_controller(org_id) OR user_owns_project(project_id)`, tied to a real item of the same org/project), no UPDATE/DELETE policy and both verbs revoked from `authenticated`/`anon`. `reviewTurnoverItem` (`lib/turnover.ts`) appends one event per decision after the checked status write — a rejection as `kind = 'nonconformance'` — so a rejection's reviewer, date and note survive the later acceptance as a row; a history row that cannot be written is reported, never dropped. New `reopenTurnoverItem({ item, reason, actor })`: accepted/waived only, reason required (SAF-4 bar), a checked update conditional on the status as read, `TURNOVER_REOPENED` audit row, a `kind = 'reopen'` event carrying the reason and the reviewed document; the row goes back to `received` with its decision columns cleared (the acceptance lives in the history). `listTurnoverReviewEvents` reads the history (empty, not an error, before the migration). `TurnoverSection` renders "Reopen" on accepted/waived rows and each item's history lines ("NONCONFORMANCE received → rejected by jchen on … — note"). Authority for the reopen is the write policy's (a controller or the project owner), not a new one. Tests: `lib/__tests__/turnover.test.ts` `"a rejection lands, audits after the confirmed match, and appends a NONCONFORMANCE event…"`, `"the rejection survives a later acceptance as history (not an overwrite)…"`, `"reopens to received, clears the row's decision, audits, and keeps the acceptance as a reopen event"`, `"only an accepted or waived item can be reopened, and only with a real reason"`; `lib/__tests__/qualityRailsMigration.test.ts` pins the table, its constraints and the append-only policy set.
+
+**Done-when.**
+- ✓ An accepted or waived turnover item can be reopened, with a required reason; the reversal is recorded (event row) and audited.
+- ✓ A rejection's reviewer, date and note are preserved when the item is later accepted (a history, not an overwrite).
+- ✓ A rejected item produces a nonconformance record (`kind = 'nonconformance'`) readable by the scorecard and the report through `listTurnoverReviewEvents` / the table.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261091_prj_roundG_quality_rails.sql` (until applied, a review decision returns "The item is now <status>, but the review history row was not written: … migration …" — the status write itself lands). Wiring the nonconformance count into the company scorecard is PC-8's (J5) and into the report PC-9's; no separate NCR module (DEC-44). MON-11's rejection notice (one `emit()`) is P3's limb and is not here.
+
 ---
 
 <a id="qual-12"></a>
@@ -510,7 +578,7 @@ components/projects/QualityTab.tsx:570-582 — the four conditional buttons; no 
 ## QUAL-12 · checklist_items.org_id is caller-supplied and its WITH CHECK never ties it to the parent checklist, so a project owner can stamp quality rows with another workspace's org id
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261013_project_controls_program.sql:272-278`, `supabase/migrations/20261013_project_controls_program.sql:250-260`, `lib/checklists.ts:130-134`, `supabase/migrations/20261013_project_controls_program.sql:153-155`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct as written, and worse than stated: lib/exportTables.ts:104 lists checklist_items among ORG_SCOPED_TABLES 'dumped by org_id', so injected rows would be pulled into workspace B's backup. In-app exposure is narrower than the summary implies — listChecklistItems (checklists.ts:103-104) and projectSnapshot.ts:80-82 both query by checklist_id, never by org_id, so org B's UI would not surface them.
@@ -545,6 +613,15 @@ supabase/migrations/20261013:273-277 — the policy text quoted above; the `org_
 - [ ] `createChecklist` derives the item rows' `org_id` from the header row it just inserted rather than from its caller.
 - [ ] A test or policy fixture pins that an item cannot be written with an `org_id` differing from its checklist's.
 
+**Resolution (2026-09-23, projects Round G).** `supabase/migrations/20261091_prj_roundG_quality_rails.sql`: `checklist_items_org_matches_parent()` (SECURITY DEFINER, `SET search_path = public`) fires `BEFORE INSERT OR UPDATE` on `checklist_items` and raises `check_violation` when `NEW.org_id IS DISTINCT FROM` the parent checklist's `org_id` (and `foreign_key_violation` when the parent is missing); `checklist_items_write` is dropped and re-created from its newest definition (20261013) with the USING half and both authority disjuncts byte-carried and `WITH CHECK` gaining `AND org_id = (SELECT c.org_id FROM project_checklists c WHERE c.id = checklist_items.checklist_id)` — the lineDiff in `lib/__tests__/qualityRailsMigration.test.ts` shows exactly the wrapped opener and that one predicate. App half: `createChecklist` (`lib/checklists.ts`) inserts the header with `.select("id, org_id")` and stamps the item rows with the header row's `org_id`, not the caller's argument. DEC-30 inventory row "checklist_items whose org_id differs from the parent checklist" is captured before the transaction; a non-zero count needs a human (the trigger will refuse UPDATEs to those rows until corrected). Tests: `lib/__tests__/checklists.test.ts` `"stamps item rows with the HEADER row's org_id, not the caller's argument"`; `lib/__tests__/qualityRailsMigration.test.ts` `"the trigger function is SECURITY DEFINER with search_path pinned, refuses a foreign org and a missing parent"`, `"checklist_items_write is re-created from 20261013 byte-faithfully except for the added WITH CHECK predicate"`; `lib/__tests__/searchPathPin.test.ts` admits the new function.
+
+**Done-when.**
+- ✓ `checklist_items_write`'s `WITH CHECK` requires `org_id` to equal the parent `project_checklists.org_id` (and the trigger enforces it for every writer, including the service role).
+- ✓ `createChecklist` derives the item rows' `org_id` from the header row it just inserted.
+- ✓ A test pins that an item cannot be written with a differing `org_id` — as a shape pin on the trigger body and the policy text (no live database in the loop, DEC-30).
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261091_prj_roundG_quality_rails.sql`. The read policy still keys on the column (unchanged); with the column now tied to the parent that is correct.
+
 ---
 
 <a id="qual-13"></a>
@@ -552,7 +629,7 @@ supabase/migrations/20261013:273-277 — the policy text quoted above; the `org_
 ## QUAL-13 · turnover_items.document_id is a dead foreign key: the accepted turnover record never points at the document that was accepted, and the evidence gather's turnover-document branch is permanently empty
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/turnover.ts:190-212`, `lib/turnover.ts:199`, `components/projects/QualityTab.tsx:518-534`, `components/projects/QualityTab.tsx:531`, `lib/checklists.ts:266-282`, `supabase/migrations/20261013_project_controls_program.sql:181`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search — no UI or server path anywhere attaches a document to a turnover item, so the FK at 20261013…:181 is dead and the evidence gather's turnover-document branch is structurally empty. The other read of turnover_items (QuotesPanel.tsx:577) selects only `name`.
@@ -599,5 +676,15 @@ lib/turnover.ts:199 — the only assignment to `row.document_id`. Two differentl
 - [ ] The turnover row renders a link to the document and revision that was accepted.
 - [ ] The auto-evidence register prefers documents attached to *accepted* turnover items over raw intake-folder titles.
 - [ ] `document_id` is either written by the normal workflow or the column and its query branch are removed.
+
+**Resolution (2026-09-23, projects Round G).** The column is live. `TurnoverSection` (`components/projects/QualityTab.tsx`) answers Accept with a `DocPicker` ("which document did you review?" — search by number/title, or "Accept without naming a document"); the chosen id goes to `reviewTurnoverItem({ documentId })`, which writes `turnover_items.document_id` (unchanged line) and carries it into the `TURNOVER_REVIEWED` audit row and the review event (QUAL-11). The row renders the reviewed document's label, current status and revision, linked to `/documents/<library>?doc=<id>` when its library is known. `gatherProjectEvidenceState` (`lib/checklists.ts`) now reads `turnover_items.document_id` for ACCEPTED items only, admits those documents into the register FIRST (`viaTurnover: true`) ahead of intake-folder titles, so a title shared between an accepted package and a raw upload resolves to the accepted one; a rejected item's document does not count. Tests: `lib/__tests__/turnover.test.ts` `"the rejection survives a later acceptance as history…and the accept carries the reviewed document"`; `lib/__tests__/checklists.test.ts` `"documents on ACCEPTED turnover items come first, carry viaTurnover, and a rejected item's document does not count"`.
+
+**Done-when.**
+- ✓ The turnover review UI offers selecting the submitted document on accept and stores its id.
+- ✓ The turnover row renders the accepted document (label, status, revision; a link when the library is known).
+- ✓ The auto-evidence register prefers documents attached to accepted turnover items over raw intake-folder titles.
+- ✓ `document_id` is written by the normal workflow.
+
+**Scope / residual.** "Offered, not required": accepting without a document remains possible (the seed lists include items — a completion sign-off — that are not documents). `seedTurnoverItems` / `addTurnoverItem` keep `partyId` threaded (COST-12's turnover limb is unchanged; COST-12 itself is PC-8's).
 
 ---

@@ -14,7 +14,7 @@ that matters — plus the audit trail that is supposed to prove what happened.
 ## SAF-1 · A contractor's self-typed filename can turn a PSSR item green
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:** `lib/checklists.ts:250-266` — `gatherProjectEvidenceState`
@@ -65,12 +65,22 @@ green."
 - The evidence chip shows the cited document's status and revision.
 - A test pins "unreviewed draft with a matching title does not satisfy."
 
+**Resolution (2026-09-23, projects Round G — with PC QUAL-1 / QUAL-13; GAP-404 acceptance 1).** The evidence register has a contract. `gatherProjectEvidenceState` (`lib/checklists.ts`) selects `id, title, name, document_number, status, rev, current_version_id` and admits a document only when `status ∈ EVIDENCE_DOCUMENT_STATUSES` (`Issued`, `Locked`), `NOT_CURRENT_STATUSES` (`lib/aiBoundary.ts`) does not hold it, and `current_version_id` is set; it then reads `document_versions` for the admitted ids and drops any whose current version has `provenance = 'external'` without `review_state = 'approved'`. A Draft — a contractor's self-typed filename — never reaches `documentTitles`, so `firstDocMatch` (byte-identical) cannot cite it. Documents on accepted turnover items are admitted first (QUAL-13). Every auto chip carries the `documentId` it matched (QUAL-1), and `EvidenceChip` in `components/projects/QualityTab.tsx` renders the cited document's current status and revision — rose when it has since left Issued/Locked. Tests: `lib/__tests__/checklists.test.ts` `"an unreviewed Draft with a matching title does NOT enter the register; Void / Superseded / no-current-version are out too"`, `"an external (intake) submission counts only once its version is approved"`; `lib/__tests__/projectControls.test.ts` `"QUAL-1: satisfy on a matching title…"` (documentId on the chip). Reproduced first: the pre-fix gather selected `title, name, document_number` with no status filter (the register query at :258).
+
+**Done-when.**
+- ✓ A `Draft` document cannot satisfy any checklist item.
+- ✓ An externally-submitted, unapproved document cannot satisfy any checklist item.
+- ✓ The evidence chip shows the cited document's status and revision.
+- ✓ A test pins "unreviewed draft with a matching title does not satisfy."
+
+**Scope / residual.** Remediation item 3 (require a `document_assets` link when the item names equipment) is not built — the register is status- and provenance-gated, the match is still title-based within it; recorded in DEC-44 as a follow-on. The AI assessment's context (`app/api/projects/checklist/route.ts` :129) still lists intake titles as *context* for the model's applicability proposal — a proposal, never a green.
+
 ---
 
 ## SAF-2 · The AI can mark thirty of forty PSSR items not-applicable behind one count-only confirmation
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:**
@@ -101,6 +111,15 @@ ticked. Keep the existing "a human already decided this" skip.
 - No item can be set N/A by the bulk path without appearing individually in a review list.
 - The default state of the review list applies nothing.
 - The applied set is recorded in the audit row by item id, not just by count.
+
+**Resolution (2026-09-23, projects Round G — with PC QUAL-5; GAP-404 acceptance 2).** The count-only confirm is gone. `assess()` in `components/projects/QualityTab.tsx` now opens `AssessmentReview`: every proposal listed with its item text, section, the AI's rationale and the item's current state, each with its own checkbox, all UNTICKED by default; "Tick every applicable proposal" and "Clear" are explicit actions; Apply is disabled at zero ticked and writes only the ticked ids. `applyAssessment` (`lib/checklists.ts`) takes `confirmedItemIds` and skips every proposal not in it (`skippedUnconfirmed`) — a call with none writes nothing and audits nothing. The `CHECKLIST_ASSESSED` audit row carries `items[]` (`itemId`, prior and new `applicability`/`status`) plus the tallies. The human-decided skip (`manual_note`) is kept, and QUAL-5's protection (never N/A a satisfied or evidence-bearing item) rides the same list. Tests: `lib/__tests__/checklists.test.ts` `"a count-only call (no confirmed ids) writes NOTHING and audits nothing"`, `"writes only the ticked ids…"` (audit `items` by id). Reproduced first: the pre-fix `applyAssessment` wrote every proposal in the array behind `appConfirm`'s count text.
+
+**Done-when.**
+- ✓ No item can be set N/A by the bulk path without appearing individually in the review list.
+- ✓ The default state of the review list applies nothing.
+- ✓ The applied set is recorded in the audit row by item id, not just by count.
+
+**Scope / residual.** The finding's claim that the bulk write sets `manual_note` was already refuted by the verifier; it still does not — an assessment N/A stays machine territory (stamped `AI assessment`, QUAL-6) and the sweep skips it only because it is `na`.
 
 ---
 
@@ -139,12 +158,21 @@ error when it is empty. Only write the audit row after a confirmed match.
 - A zero-match write returns an error and writes no audit row.
 - A test simulates the zero-match case for at least one path per file.
 
+**Partial (2026-09-23, projects Round G — GAP-402 narrow).** The helper and the quality sites. New `lib/checkedWrite.ts`: `checkedWrite(q)` takes a chain ending in `.select("id")`, requires a non-empty match, and returns `{ ok: true, ids }` or a typed failure — `refused` ("Nothing was changed — you don't have permission…, or someone else changed it first") for the RLS zero-row shape, `db` with `describeWriteError` (42P01 → "needs the latest database migration", 42501 / RLS text → "don't have permission", else the message) — never throwing raw Postgres text; the shape mirrors OWN-14 (`lib/ownership.ts` `setLibraryOwnerTeam`). Every decision write in `lib/checklists.ts` (`createChecklist` items + rollback, `applyAssessment`, `updateChecklistItem`, `setChecklistStatus`, `runAutoEvidence`) and `lib/turnover.ts` (`seedTurnoverItems`, `addTurnoverItem`, `reviewTurnoverItem`, `reopenTurnoverItem`, the review-event insert, `addPunchItem`, `setPunchStatus`) goes through it and writes its audit row only after a confirmed match. Census: `lib/__tests__/checkedWrite.test.ts` fails when an `.update(` / `.delete(` on a supabase chain in `lib/checklists.ts` or `lib/turnover.ts` is not inside `checkedWrite(...)`, and when either file re-grows the `const { error } = await supabase…update(` shape; for `lib/costs.ts`, `lib/costDocs.ts`, `lib/changeOrders.ts` it RATCHETS (3 / 5 / 3 unchecked sites at 8276cad — may fall, never rise). Tests: `lib/__tests__/checklists.test.ts` `"an RLS-refused override returns the refusal and writes NO audit row"`, `"a refused write (RLS zero rows) reports an error and writes no audit row"` (assessment), `"a refused status write reports the refusal and audits nothing"`, `"an RLS-refused sweep writes no audit row"`; `lib/__tests__/turnover.test.ts` `"an RLS-refused decision returns the refusal, writes NO audit row and NO history row"`, `"a refused reopen audits nothing"`, `"a refused seed…"`, `"an RLS-refused close…"`. Reproduced first: the memory stand-in answering `{ data: [], error: null }` made the pre-fix `reviewTurnoverItem` return `ok: true` and write `TURNOVER_REVIEWED`.
+
+**Done-when.**
+- ✓ `checklists.ts` and `turnover.ts` — every decision write verifies the row count. ✗ `costs.ts` (and `changeOrders.ts` / `costDocs.ts`): J3 MONEY-LEDGER's (PC-7) sites; the ratchet in the census holds their count at the baseline until J3 converts them. This record stays OPEN for that half.
+- ✓ A zero-match write returns an error and writes no audit row (on every quality path).
+- ✓ Tests simulate the zero-match case per file — `checklists.ts` and `turnover.ts` here; `costs.ts` with J3.
+
+**Scope / residual.** `audit()` in both files stays best-effort (a failed audit insert never blocks the decision it follows — that is PERS-7 / EVID-6's question in drafting-flow, not this one). Remaining for SAF-3: the three money files (J3), after which the census ratchet can drop to zero and this record flips to RESOLVED.
+
 ---
 
 ## SAF-4 · Every route to a green closeout gate accepts a blank reason on one keypress
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / audit integrity
 - **Locations:**
@@ -204,6 +232,16 @@ green in about a dozen keystrokes, and the audit log will record
 - No placeholder string is ever written as a reason.
 - `computeTurnoverProgress` reports `waived` separately from `accepted`.
 - Tests pin each of the three, and the progress-bucket change.
+
+**Resolution (2026-09-23, projects Round G — GAP-405 server half + prompt).** The bar is server-side and the prompt mirrors it. `reasonProblem()` / `REASON_MIN_LENGTH = 10` (`lib/checklistEngine.ts`): a blank or whitespace reason, fewer than 10 non-whitespace characters, or a canned string (`decided by reviewer`, `n/a`, `not applicable`, `ok`, …) is refused with the reason why. `updateChecklistItem` requires it on every status/applicability change (satisfied, N/A, reopen) — the `|| "decided by reviewer"` fallback is deleted from `components/projects/QualityTab.tsx`; `reviewTurnoverItem` requires it on reject and waive; `reopenTurnoverItem` and `setPunchStatus('void')` require it (punch-void now prompts, with a labelled button). `appPrompt` (`components/providers/DialogProvider.tsx`, :107 region) gains additive `required` / `minLength` options: a submit that does not meet them shows the problem inline (`role="alert"`) and keeps the box open; Cancel is still the only way to `null`; the default is unchanged for the ~90 other call sites. `computeTurnoverProgress` reports `waived` as its own bucket — `accepted` counts accepted only — and the header reads "a/req accepted · w waived" (`pct` still counts both as met, documented). Tests: `lib/__tests__/checklists.test.ts` `"refuses a blank, short or canned reason on N/A, satisfied and reopen — nothing written, nothing audited"` (asserts no `decided by reviewer` ever reaches a write); `lib/__tests__/turnover.test.ts` `"reject and waive refuse a blank, whitespace, short or canned reason…"`, `"void refuses a blank or canned reason"`, `"only an accepted or waived item can be reopened, and only with a real reason"`, `"reports accepted and waived separately"`; `lib/__tests__/projectControls.test.ts` `"SAF-4: the reason bar refuses blank, short and canned reasons and accepts a real one"`.
+
+**Done-when.**
+- ✓ None of the three controls (checklist N/A / satisfied / reopen, turnover waive & reject, punch void) can complete with an empty reason — refused server-side, and the prompt cannot settle blank.
+- ✓ No placeholder string is ever written as a reason.
+- ✓ `computeTurnoverProgress` reports `waived` separately from `accepted`.
+- ✓ Tests pin each of the three and the progress-bucket change.
+
+**Scope / residual.** Waive is still offered on an `open` item (a never-delivered requirement can be waived, with a reason on the record — that is what a waiver is); `lib/projectSnapshot.ts` `turnoverAccepted` still counts waived as met for the closeout gate (J7/J8's file) — the report (`lib/projectReport.ts`) now shows accepted-only through the changed bucket.
 
 ---
 
