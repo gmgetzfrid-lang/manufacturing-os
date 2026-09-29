@@ -17,7 +17,7 @@ import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import type { SigningCredential } from "@/lib/eSignatures";
 import {
   listDraftRoster, recordReviewSignoff, activateAlternate,
-  finalizeReviewedRevision, resolveEffectiveReviewControl,
+  finalizeReviewedRevision, finalizeReasonMessage, effectiveReviewControlForDocument, evaluateSlotCompletion,
   type ReviewSignoffRow,
 } from "@/lib/reviewControl";
 import type { DocumentRecord, ReviewControl } from "@/types/schema";
@@ -33,6 +33,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   const [draftFileUrl, setDraftFileUrl] = useState<string | null>(null);
   const [roster, setRoster] = useState<ReviewSignoffRow[]>([]);
   const [control, setControl] = useState<ReviewControl | null>(null);
+  // RG-6: "we couldn't read the policy" is shown as exactly that — never as
+  // "no gate" (the old load swallowed the error and rendered nothing).
+  const [policyUnknown, setPolicyUnknown] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [signing, setSigning] = useState(false);
@@ -41,19 +44,19 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     if (!doc.id) return;
     setLoading(true);
     try {
-      const [{ data: d }, { data: lib }] = await Promise.all([
-        supabase.from("documents").select("pending_version_id, review_control, collection_id").eq("id", doc.id).maybeSingle(),
-        supabase.from("libraries").select("review_control").eq("id", doc.libraryId).maybeSingle(),
-      ]);
+      const { data: d } = await supabase.from("documents").select("pending_version_id, review_control, collection_id").eq("id", doc.id).maybeSingle();
       const pv = (d?.pending_version_id as string | null) ?? null;
       setPendingVersionId(pv);
-      let folder: ReviewControl | null = null;
+      // RG-3: the whole container chain (folder → ancestors → library) through
+      // the one shared resolver, not a hand-rolled two-hop copy.
       const colId = (d?.collection_id as string | null) ?? doc.collectionId ?? null;
-      if (colId) {
-        const { data: c } = await supabase.from("collections").select("review_control").eq("id", colId).maybeSingle();
-        folder = (c?.review_control as ReviewControl) ?? null;
+      try {
+        setControl(await effectiveReviewControlForDocument({ reviewControl: (d?.review_control as ReviewControl | null) ?? null, collectionId: colId, libraryId: doc.libraryId }));
+        setPolicyUnknown(null);
+      } catch (e) {
+        setControl(null);
+        setPolicyUnknown((e as Error).message || "unknown error");
       }
-      setControl(resolveEffectiveReviewControl((d?.review_control as ReviewControl) ?? null, folder, (lib?.review_control as ReviewControl) ?? null));
       if (pv) {
         const [roster, { data: ver }] = await Promise.all([
           listDraftRoster(doc.id, pv),
@@ -77,8 +80,12 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   }, [uid]);
 
   const primaries = roster.filter((r) => r.slot === "primary");
-  const signedCount = roster.filter((r) => r.status === "signed").length;
-  const complete = primaries.length > 0 && signedCount >= primaries.length;
+  // RG-4: the panel judges completion PER SLOT with the same evaluator as the
+  // finalize step and the database guard — "2/2 signed" can no longer mean
+  // two piping signatures and no instrumentation review.
+  const completion = evaluateSlotCompletion(roster);
+  const signedCount = completion.satisfied;
+  const complete = completion.complete;
   const draftLabel = roster[0]?.revisionLabel || null;
   const mine = roster.find((r) => r.reviewerUserId === uid && r.status === "pending" && (r.slot === "primary" || r.activated));
   // RG-9: the typed-name check compares against the membership display name (the server records the same).
@@ -127,7 +134,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     setBusy(true);
     try {
       const res = await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail });
-      if (!res.published) { await appAlert({ tone: "danger", message: res.reason === "incomplete" ? "Not all required reviewers have signed off yet." : `Couldn't publish: ${res.reason ?? "unknown"}` }); }
+      if (!res.published) { await appAlert({ tone: "danger", message: finalizeReasonMessage(res.reason) }); }
       await load(); onChanged?.();
     } finally { setBusy(false); }
   };
@@ -140,6 +147,13 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
 
   // Nothing in review: show the effective mode (and stay quiet if none).
   if (!loading && !pendingVersionId) {
+    if (policyUnknown) {
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-[11px] text-red-800">
+          <b>Pre-publish review policy could not be read</b> ({policyUnknown}). Until it can, this document is treated as gated — a revision can&apos;t be published directly.
+        </div>
+      );
+    }
     if (!control || control.mode === "none") return null;
     return (
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
@@ -173,7 +187,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       <div className="flex items-center gap-2">
         <ShieldCheck className="w-4 h-4 text-violet-600" />
         <span className="text-xs font-black uppercase tracking-wider text-violet-700">In review{draftLabel ? ` · ${draftLabel}` : ""}</span>
-        {!loading && <span className="ml-auto text-[10px] font-bold text-violet-700">{signedCount}/{primaries.length} signed</span>}
+        {!loading && <span className="ml-auto text-[10px] font-bold text-violet-700" title="Required sign-offs satisfied, per reviewer slot">{signedCount}/{completion.requiredPrimaries || primaries.length} signed</span>}
       </div>
 
       {loading ? (
@@ -196,7 +210,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
               <div key={r.id} className="flex items-center gap-2 text-[11px] py-0.5">
                 <span className="min-w-0 truncate text-[var(--color-text)]">
                   {r.reviewerName || r.reviewerUserId}
-                  {r.slot === "alternate" && <span className="text-[var(--color-text-muted)]"> · alt</span>}
+                  {r.slot === "alternate" && <span className="text-[var(--color-text-muted)]"> · alt{r.slotGroup ? "" : " (unpaired — fills no slot)"}</span>}
                   {r.reviewerRole ? <span className="text-[var(--color-text-muted)]"> · {r.reviewerRole}</span> : null}
                 </span>
                 <span className="ml-auto shrink-0">{statusChip(r)}</span>

@@ -104,6 +104,11 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [timeoutDays, setTimeoutDays] = useState(7);
   const [requireIndependent, setRequireIndependent] = useState(true);
+  // RG-4: which slot each NAMED alternate stands in for (alternate uid → slot
+  // group key). Role / department alternates are paired by construction.
+  const [alternateBacks, setAlternateBacks] = useState<Record<string, string>>({});
+  // RG-13: the 2A / 2B letter suffix on in-review drafts (default on).
+  const [useRevLetters, setUseRevLetters] = useState(true);
 
   // Document class declaration (20261012) — 'drawing' makes MOC mandatory on
   // non-minor publishes and routes check-in changes through drafting;
@@ -148,6 +153,8 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         setViewerTeams(c.draftViewerTeamIds ?? []);
         setTimeoutDays(c.timeoutDays ?? 7);
         setRequireIndependent(c.requireIndependentReviewer !== false);
+        setAlternateBacks(c.alternateBacks ?? {});
+        setUseRevLetters(c.useRevLetters !== false);
         const [rp, ap, vp] = await Promise.all([resolvePeople(c.reviewerIds), resolvePeople(c.alternateIds), resolvePeople(c.draftViewerIds)]);
         if (alive) { setReviewers(rp); setAlternates(ap); setViewers(vp); }
       }
@@ -160,12 +167,21 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   const save = async () => {
     setBusy(true);
     try {
+      // Pairings survive only for alternates still named AND slots still configured.
+      const validKeys = new Set(slotOptions.map((o) => o.key));
+      const backs: Record<string, string> = {};
+      for (const a of alternates) {
+        const k = alternateBacks[a.uid];
+        if (k && validKeys.has(k)) backs[a.uid] = k;
+      }
       const control: ReviewControl = {
         mode,
         reviewerIds: reviewers.map((p) => p.uid), reviewerRoles, reviewerTeamIds: reviewerTeams,
         alternateIds: alternates.map((p) => p.uid), alternateRoles, alternateTeamIds: alternateTeams,
+        alternateBacks: backs,
         draftViewerIds: viewers.map((p) => p.uid), draftViewerRoles: viewerRoles, draftViewerTeamIds: viewerTeams,
         timeoutDays,
+        useRevLetters,
         ...(level === "library" ? { requireIndependentReviewer: requireIndependent } : {}),
       };
       await setReviewControlPolicy({ level, id, orgId, control, actorId: uid, actorName: userName });
@@ -194,6 +210,15 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
 
   const gated = mode !== "none";
   const noReviewers = gated && reviewers.length === 0 && reviewerRoles.length === 0 && reviewerTeams.length === 0;
+  // The slots a named alternate can stand in for: each named primary, each
+  // primary role, each primary department (the keys lib/reviewControl.ts
+  // stamps on roster rows as slot_group).
+  const slotOptions: Array<{ key: string; label: string }> = [
+    ...reviewers.map((p) => ({ key: `person:${p.uid}`, label: p.name || p.email })),
+    ...reviewerRoles.map((r) => ({ key: `role:${r}`, label: `everyone holding ${r}` })),
+    ...reviewerTeams.map((t) => ({ key: `team:${t}`, label: `the ${allTeams.find((x) => x.id === t)?.name ?? "department"} department` })),
+  ];
+  const unpairedAlternates = alternates.filter((a) => !alternateBacks[a.uid] || !slotOptions.some((o) => o.key === alternateBacks[a.uid]));
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
@@ -252,9 +277,32 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
 
             {gated && (
               <>
-                <div className="text-[10px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change and a rev from a drafting ticket always skip the gate.</div>
-                <PickRow orgId={orgId} label="Primary reviewers (must sign off)" people={reviewers} setPeople={setReviewers} roles={reviewerRoles} setRoles={setReviewerRoles} allTeams={allTeams} teamIds={reviewerTeams} setTeamIds={setReviewerTeams} />
+                <div className="text-[10px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change skips the gate (and is recorded as skipping it). A rev raised from a drafting ticket never skips it (DEC-23).</div>
+                <PickRow orgId={orgId} label="Primary reviewers (every resolved primary is a slot that must be signed)" people={reviewers} setPeople={setReviewers} roles={reviewerRoles} setRoles={setReviewerRoles} allTeams={allTeams} teamIds={reviewerTeams} setTeamIds={setReviewerTeams} />
+                {(level !== "library" || requireIndependent) && (
+                  <div className="text-[10px] text-[var(--color-text-muted)]">A reviewer who authors a revision is skipped on that revision&apos;s roster and cannot sign it — a reviewer never signs their own work (DEC-21).</div>
+                )}
                 <PickRow orgId={orgId} label="Alternates (step in if a primary is slow / out)" people={alternates} setPeople={setAlternates} roles={alternateRoles} setRoles={setAlternateRoles} allTeams={allTeams} teamIds={alternateTeams} setTeamIds={setAlternateTeams} />
+                <div className="text-[10px] text-[var(--color-text-muted)]">An alternate stands in for ONE slot: a role&apos;s alternates back that role&apos;s primaries, a department&apos;s back that department&apos;s, and a named alternate backs the primary you pair them with below. An unpaired alternate can sign but satisfies nothing.</div>
+                {alternates.length > 0 && (
+                  <div className="space-y-1">
+                    {alternates.map((a) => (
+                      <div key={a.uid} className="flex items-center gap-2 text-[11px]">
+                        <span className="min-w-0 truncate text-[var(--color-text)]">{a.name || a.email}</span>
+                        <span className="text-[var(--color-text-muted)] shrink-0">stands in for</span>
+                        <select
+                          value={alternateBacks[a.uid] && slotOptions.some((o) => o.key === alternateBacks[a.uid]) ? alternateBacks[a.uid] : ""}
+                          onChange={(e) => setAlternateBacks((m) => ({ ...m, [a.uid]: e.target.value }))}
+                          className="text-[11px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 outline-none focus:border-[var(--color-accent)] min-w-0"
+                        >
+                          <option value="">— not paired —</option>
+                          {slotOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                    {unpairedAlternates.length > 0 && <div className="text-[11px] text-amber-600">{unpairedAlternates.map((a) => a.name || a.email).join(", ")}: not paired with a primary slot — their signature will not count toward completion.</div>}
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-[var(--color-text-muted)]">Activate alternates after</span>
                   <input type="number" min={1} value={timeoutDays} onChange={(e) => setTimeoutDays(Math.max(1, parseInt(e.target.value) || 1))} className="text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 w-16 outline-none focus:border-[var(--color-accent)]" />
@@ -266,6 +314,10 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                   )}
                   <span className="text-[11px] text-[var(--color-text-muted)]">days</span>
                 </div>
+                <label className="inline-flex items-center gap-2 text-xs text-[var(--color-text-muted)] cursor-pointer select-none" title="RG-13: on, an in-review draft is labelled with a letter after the target rev (2A, 2B …); off, the draft keeps the target label and is told apart by its review state only.">
+                  <input type="checkbox" checked={useRevLetters} onChange={(e) => setUseRevLetters(e.target.checked)} />
+                  Label in-review drafts with a letter suffix (2A, 2B …)
+                </label>
                 <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} allTeams={allTeams} teamIds={viewerTeams} setTeamIds={setViewerTeams} />
                 {noReviewers && <div className="text-[11px] text-amber-600">Add at least one primary reviewer (person, role, or department), or a rev can never publish.</div>}
               </>

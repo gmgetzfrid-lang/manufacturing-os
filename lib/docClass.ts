@@ -23,6 +23,7 @@
 // did before this feature existed.
 
 import { supabase } from "@/lib/supabase";
+import { loadContainerChain, firstDefinedInChain } from "@/lib/containerChain";
 
 export type DocClass = "drawing" | "procedure";
 
@@ -45,16 +46,18 @@ export function resetDocClassSchemaFlag(): void {
 
 const isDocClass = (v: unknown): v is DocClass => v === "drawing" || v === "procedure";
 
-/** Most specific DEFINED level wins — identical to resolveEffectiveReviewControl. */
+/** Most specific DEFINED level wins — identical to resolveEffectiveReviewControl.
+ *  A single folder is a chain of one; the live resolver below walks every
+ *  ancestor through the shared lib/containerChain.ts (RG-3, DEC-36). */
 export function resolveEffectiveDocClass(
   docClass?: string | null,
   folderClass?: string | null,
   libraryClass?: string | null,
 ): DocClass | null {
-  for (const c of [docClass, folderClass, libraryClass]) {
-    if (isDocClass(c)) return c;
-  }
-  return null;
+  return firstDefinedInChain<string>(
+    { document: docClass, folders: [{ id: "folder", value: folderClass }], library: libraryClass },
+    isDocClass,
+  ) as DocClass | null;
 }
 
 /**
@@ -73,25 +76,10 @@ export async function effectiveDocClassForDocument(doc: {
 }): Promise<DocClass | null> {
   if (docClassSchemaMissing) return null;
   try {
-    let docLevel: string | null = null;
-    let folderLevel: string | null = null;
-    let libLevel: string | null = null;
-    if (doc.id) {
-      const { data, error } = await supabase.from("documents").select("doc_class").eq("id", doc.id).maybeSingle();
-      if (error) throw error;
-      docLevel = (data as { doc_class?: string | null } | null)?.doc_class ?? null;
-    }
-    if (doc.collectionId) {
-      const { data, error } = await supabase.from("collections").select("doc_class").eq("id", doc.collectionId).maybeSingle();
-      if (error) throw error;
-      folderLevel = (data as { doc_class?: string | null } | null)?.doc_class ?? null;
-    }
-    if (doc.libraryId) {
-      const { data, error } = await supabase.from("libraries").select("doc_class").eq("id", doc.libraryId).maybeSingle();
-      if (error) throw error;
-      libLevel = (data as { doc_class?: string | null } | null)?.doc_class ?? null;
-    }
-    return resolveEffectiveDocClass(docLevel, folderLevel, libLevel);
+    const chain = await loadContainerChain<string>("doc_class", {
+      id: doc.id ?? null, collectionId: doc.collectionId ?? null, libraryId: doc.libraryId ?? null,
+    });
+    return firstDefinedInChain<string>(chain, isDocClass) as DocClass | null;
   } catch (e) {
     if (isMissingDocClassSchema(e)) { docClassSchemaMissing = true; return null; }
     // Real failure — the caller must decide, not inherit a silent "no class".

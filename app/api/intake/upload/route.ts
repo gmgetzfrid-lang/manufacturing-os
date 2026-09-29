@@ -255,8 +255,23 @@ export async function POST(req: NextRequest) {
       .from("documents").select("id, document_number, title, name, rev, current_version_id, pending_version_id, library_id, checked_out_by, legal_hold")
       .eq("id", docId).maybeSingle();
     if (!d) return bad("Document not found.", 404);
-    if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored)) {
-      return bad("Your previous submission for this document is still in review — it must be approved or rejected first.", 409);
+    if (d.pending_version_id) {
+      // RG-10: a pending draft that carries a reviewer roster is an ORG
+      // review in progress (sign-offs pending or already given). Repointing
+      // the pending pointer past it — even on a trusted, link-authored
+      // document — would orphan those sign-offs on a draft nothing points
+      // at. Refuse; the review must complete or be rejected first. An
+      // unreadable roster refuses too (fail closed).
+      const { data: rosterRows, error: rosterErr } = await supabaseAdmin
+        .from("document_review_signoffs").select("id")
+        .eq("document_version_id", d.pending_version_id as string).in("status", ["pending", "signed"]).limit(1);
+      if (rosterErr) return bad("The document's review state could not be verified — try again.", 503);
+      if ((rosterRows?.length ?? 0) > 0) {
+        return bad("A reviewer sign-off is in progress on this document — it must be completed or rejected before a new submission can be taken.", 409);
+      }
+      if (!(link.allow_auto_supersede && linkAuthored)) {
+        return bad("Your previous submission for this document is still in review — it must be approved or rejected first.", 409);
+      }
     }
     targetDoc = d as Record<string, unknown>;
   }
@@ -371,25 +386,53 @@ export async function POST(req: NextRequest) {
       review_state: autoNow ? null : "in_review",
       provenance: "external",
       intake_link_id: link.id,
-      supersedes_version_id: autoNow ? ((targetDoc?.current_version_id as string | null) ?? null) : null,
+      // REV-5: the base this submission was made against, on BOTH paths —
+      // finalizeReviewedRevision refuses to promote a draft whose base is no
+      // longer the controlled revision (a NULL base is "unknown", and unknown
+      // is refused, not waved through).
+      supersedes_version_id: (targetDoc?.current_version_id as string | null) ?? null,
     })
     .select("id").single();
   if (verErr || !ver) return bad(`Couldn't record the submission: ${verErr?.message ?? "unknown"}`, 500);
   const versionId = String(ver.id);
 
   // ── Route it: pending review, or trusted own-work supersede ──
+  // RG-10: both pointer writes are COMPARE-AND-SET on the pending pointer
+  // read above (the same discipline as submitForReview) — a submission that
+  // races an org publisher's submitForReview never overwrites a pointer it
+  // did not read. The loser retires its own version row and says so.
+  const priorPending = (targetDoc?.pending_version_id as string | null) ?? null;
+  const withdraw = async (why: string) => {
+    await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", versionId).then(() => undefined, () => undefined);
+    return bad(why, 409);
+  };
   if (autoNow) {
     const prevCurrent = (targetDoc?.current_version_id as string | null) ?? null;
-    await supabaseAdmin.from("documents")
+    let promote = supabaseAdmin.from("documents")
       .update({ current_version_id: versionId, rev: revLabel || "A", revision: revLabel || "A", status: "Issued", pending_version_id: null, updated_at: nowIso })
       .eq("id", documentId);
+    promote = priorPending ? promote.eq("pending_version_id", priorPending) : promote.is("pending_version_id", null);
+    promote = prevCurrent ? promote.eq("current_version_id", prevCurrent) : promote.is("current_version_id", null);
+    const { data: promoted, error: promoteErr } = await promote.select("id");
+    if (promoteErr) return withdraw(`Couldn't publish the submission: ${promoteErr.message}`);
+    if (!promoted || promoted.length === 0) return withdraw("The document changed while your submission was being recorded — please submit it again.");
     if (prevCurrent) {
       await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", prevCurrent);
     }
+    if (priorPending) {
+      // The link's own earlier submission (roster-free, checked above) is
+      // retired rather than left dangling 'in_review' with nothing pointing at it.
+      await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", priorPending).is("superseded_at", null)
+        .then(() => undefined, () => undefined);
+    }
   } else {
-    await supabaseAdmin.from("documents")
+    const { data: pointed, error: pointErr } = await supabaseAdmin.from("documents")
       .update({ pending_version_id: versionId, updated_at: nowIso })
-      .eq("id", documentId);
+      .eq("id", documentId)
+      .is("pending_version_id", null)
+      .select("id");
+    if (pointErr) return withdraw(`Couldn't queue the submission for review: ${pointErr.message}`);
+    if (!pointed || pointed.length === 0) return withdraw("Another revision of this document just went into review — your submission was not taken. Try again once it is approved or rejected.");
   }
 
   // ── Notify the project team + audit ──
