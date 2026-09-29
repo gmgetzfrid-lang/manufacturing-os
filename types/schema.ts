@@ -232,10 +232,10 @@ export interface ReviewControl {
   draftViewerIds?: string[];
   draftViewerRoles?: string[];
   draftViewerTeamIds?: string[];
-  /** Auto-manage the 2A/2B letter suffix during review (default true). When
-   *  false the in-review draft keeps the base label and is distinguished by
-   *  `review_state` alone (RG-13: `letterLabelFor(base, existing, { useRevLetters })`). */
-  useRevLetters?: boolean;
+  // RG-13: the former `useRevLetters` field is DELETED, not wired. In-review
+  // drafts always carry the letter suffix (2A, 2B …): a draft that kept the
+  // base label would collide with its own un-superseded predecessor under
+  // the branch-inclusive active-label index (20261071) on every resubmit.
   /** DEC-21 (library level): when the publisher is themselves on the roster,
    *  at least one signed PRIMARY must be someone else. Defaults ON wherever a
    *  required-review roster is configured; `false` opts a library out. */

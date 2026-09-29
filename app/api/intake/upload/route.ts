@@ -426,13 +426,23 @@ export async function POST(req: NextRequest) {
         .then(() => undefined, () => undefined);
     }
   } else {
-    const { data: pointed, error: pointErr } = await supabaseAdmin.from("documents")
+    // A prior pending draft reaching THIS branch is the link's own roster-
+    // free submission on a trusted link whose instant promote was withheld
+    // (hold / checkout / creator authority): the roster check above refused
+    // every other shape. Repoint over exactly that draft — CAS on the
+    // pointer read — and retire it, as the auto path does; from NULL
+    // otherwise. A pointer that moved to anything else is a lost race.
+    let point = supabaseAdmin.from("documents")
       .update({ pending_version_id: versionId, updated_at: nowIso })
-      .eq("id", documentId)
-      .is("pending_version_id", null)
-      .select("id");
+      .eq("id", documentId);
+    point = priorPending ? point.eq("pending_version_id", priorPending) : point.is("pending_version_id", null);
+    const { data: pointed, error: pointErr } = await point.select("id");
     if (pointErr) return withdraw(`Couldn't queue the submission for review: ${pointErr.message}`);
     if (!pointed || pointed.length === 0) return withdraw("Another revision of this document just went into review — your submission was not taken. Try again once it is approved or rejected.");
+    if (priorPending) {
+      await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", priorPending).is("superseded_at", null)
+        .then(() => undefined, () => undefined);
+    }
   }
 
   // ── Notify the project team + audit ──

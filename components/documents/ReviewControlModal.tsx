@@ -107,8 +107,6 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   // RG-4: which slot each NAMED alternate stands in for (alternate uid → slot
   // group key). Role / department alternates are paired by construction.
   const [alternateBacks, setAlternateBacks] = useState<Record<string, string>>({});
-  // RG-13: the 2A / 2B letter suffix on in-review drafts (default on).
-  const [useRevLetters, setUseRevLetters] = useState(true);
 
   // Document class declaration (20261012) — 'drawing' makes MOC mandatory on
   // non-minor publishes and routes check-in changes through drafting;
@@ -154,7 +152,6 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         setTimeoutDays(c.timeoutDays ?? 7);
         setRequireIndependent(c.requireIndependentReviewer !== false);
         setAlternateBacks(c.alternateBacks ?? {});
-        setUseRevLetters(c.useRevLetters !== false);
         const [rp, ap, vp] = await Promise.all([resolvePeople(c.reviewerIds), resolvePeople(c.alternateIds), resolvePeople(c.draftViewerIds)]);
         if (alive) { setReviewers(rp); setAlternates(ap); setViewers(vp); }
       }
@@ -181,7 +178,6 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         alternateBacks: backs,
         draftViewerIds: viewers.map((p) => p.uid), draftViewerRoles: viewerRoles, draftViewerTeamIds: viewerTeams,
         timeoutDays,
-        useRevLetters,
         ...(level === "library" ? { requireIndependentReviewer: requireIndependent } : {}),
       };
       await setReviewControlPolicy({ level, id, orgId, control, actorId: uid, actorName: userName });
@@ -314,10 +310,6 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                   )}
                   <span className="text-[11px] text-[var(--color-text-muted)]">days</span>
                 </div>
-                <label className="inline-flex items-center gap-2 text-xs text-[var(--color-text-muted)] cursor-pointer select-none" title="RG-13: on, an in-review draft is labelled with a letter after the target rev (2A, 2B …); off, the draft keeps the target label and is told apart by its review state only.">
-                  <input type="checkbox" checked={useRevLetters} onChange={(e) => setUseRevLetters(e.target.checked)} />
-                  Label in-review drafts with a letter suffix (2A, 2B …)
-                </label>
                 <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} allTeams={allTeams} teamIds={viewerTeams} setTeamIds={setViewerTeams} />
                 {noReviewers && <div className="text-[11px] text-amber-600">Add at least one primary reviewer (person, role, or department), or a rev can never publish.</div>}
               </>

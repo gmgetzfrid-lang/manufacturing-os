@@ -1406,7 +1406,7 @@ whether independence is enforced at all.
 **Risk:** medium — reduces enforcement relative to a naive reading of `DEC-12`,
 deliberately.
 
-*Landed 2026-09-23 (document-control Round F), for the review roster: independence is a property of a SLOT there too — every primary row is a slot in its `slot_group` (`person:<uid>` / `role:<Role>` / `team:<teamId>`), a slot is satisfied by its own primary or by an ACTIVATED alternate of the same group, one signature fills one slot, and a person resolved by several policy entries holds one row in the most specific entry (person > role > team). A named alternate is paired with the slot it backs through `ReviewControl.alternateBacks`; unpaired, it satisfies nothing and the roster says so. See `RG-4`.*
+*Landed 2026-09-23 (document-control Round F), for the review roster: independence is a property of a SLOT there too — every primary row is a slot in its `slot_group` (`person:<uid>` / `role:<Role>` / `team:<teamId>`), a slot is satisfied by its own primary or by an ACTIVATED alternate of the same group, one signature fills one slot, and a person resolved by several policy entries holds ONE row — in the most specific entry (person > role > team), and between two listed ROLES in the first listed role they hold (policy list order decides): the other role's slot is not opened by them, and the policy editor warns that it opens no slot rather than silently requiring nothing for it (one row per person-and-group is not this round's shape). A named alternate is paired with the slot it backs through `ReviewControl.alternateBacks`; unpaired, it satisfies nothing and the roster says so. See `RG-4`.*
 
 <a id="dec-38"></a>
 ## DEC-38 · A consent window may not advance without a delivery record

@@ -124,15 +124,30 @@ async function expandSet(
     // ADD-1: a reviewer ROLE resolves to everyone holding it — headline or additive.
     const { data } = await supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", orgId).eq("status", "active").or(roleFilter(roleList));
     const rows = (data ?? []) as Array<Record<string, unknown>>;
+    // `covered` = roles SOMEONE active holds (ADD-1: a role resolves to
+    // everyone holding it). DEC-37: a person holding SEVERAL listed roles
+    // fills ONE slot — the first listed role they hold (list order decides) —
+    // so `placed` is the roles that actually opened a slot; a role that is
+    // held but whose every holder is already placed in another role's slot
+    // opens no slot, and the policy editor says so rather than silently
+    // requiring nothing for it.
     const covered = new Set<string>();
+    const placed = new Set<string>();
     for (const r of rows) {
       const held = heldRoles(r as { role?: unknown; roles?: unknown });
       const matched = roleList.find((x) => held.includes(x)) ?? (r.role as string);
       for (const h of held) if (roleList.includes(h)) covered.add(h);
       const uidv = r.uid as string;
-      if (!out.has(uidv)) out.set(uidv, { uid: uidv, name: (r.display_name as string) || (r.email as string) || null, role: matched, source: "role", groupKey: slotGroupKey.role(matched) });
+      if (out.has(uidv)) continue;
+      placed.add(matched);
+      out.set(uidv, { uid: uidv, name: (r.display_name as string) || (r.email as string) || null, role: matched, source: "role", groupKey: slotGroupKey.role(matched) });
     }
-    for (const role of roleList) if (!covered.has(role)) warnings.push(`${label}: role "${role}" has no active members`);
+    for (const role of roleList) {
+      if (placed.has(role)) continue;
+      warnings.push(covered.has(role)
+        ? `${label}: role "${role}" opens no slot — everyone holding it already fills another listed role's slot (a person holds one slot); list "${role}" first or name a person`
+        : `${label}: role "${role}" has no active members`);
+    }
   }
   const teamList = uniq(teams);
   if (teamList.length) {
@@ -246,10 +261,12 @@ export function nextLetterSuffix(suffix: string): string {
  *  the base itself); an existing label that does not start with the base is
  *  bumped on its own trailing letters.
  *
- *  RG-13: `useRevLetters: false` returns the base unchanged — the draft is
- *  then distinguished by `review_state` alone, not by its label. */
-export function letterLabelFor(baseRev: string, existingDraftLabel?: string | null, opts?: { useRevLetters?: boolean | null }): string {
-  if (opts?.useRevLetters === false) return baseRev;
+ *  RG-13: the suffix is ALWAYS applied. A draft that kept the base label
+ *  would collide with its own predecessor under the branch-inclusive
+ *  active-label index (20261071: one label per un-superseded row on a
+ *  document) on every resubmit, so the never-read `useRevLetters` field was
+ *  deleted rather than wired. */
+export function letterLabelFor(baseRev: string, existingDraftLabel?: string | null): string {
   if (existingDraftLabel) {
     if (existingDraftLabel.toUpperCase().startsWith(baseRev.toUpperCase())) {
       return `${baseRev}${nextLetterSuffix(existingDraftLabel.slice(baseRev.length))}`;
@@ -536,8 +553,13 @@ export async function recordReviewSignoff(input: {
 
 // ── Completion + roster reads ────────────────────────────────────────────────
 
-export async function listDraftRoster(documentId: string, versionId?: string | null): Promise<ReviewSignoffRow[]> {
-  let q = supabase.from("document_review_signoffs").select("*").eq("document_id", documentId).in("status", ["pending", "signed"]);
+/** The draft's roster rows. Displayable rows are `pending` / `signed`;
+ *  `allStatuses` returns every row (voided / invalidated too), which is what
+ *  `evaluateSlotCompletion` must be fed — a voided primary is still a slot
+ *  (RG-4 / DRLS-6), exactly as `reviewCompletionForDraft` and the guard count. */
+export async function listDraftRoster(documentId: string, versionId?: string | null, opts?: { allStatuses?: boolean }): Promise<ReviewSignoffRow[]> {
+  let q = supabase.from("document_review_signoffs").select("*").eq("document_id", documentId);
+  if (!opts?.allStatuses) q = q.in("status", ["pending", "signed"]);
   if (versionId) q = q.eq("document_version_id", versionId);
   const { data } = await q.order("slot", { ascending: true }).order("reviewer_name", { ascending: true });
   return ((data ?? []) as Array<Record<string, unknown>>).map(rowToSignoff);
@@ -693,8 +715,16 @@ export async function finalizeReviewedRevision(input: {
   // (supersedes_version_id, set at submit / intake time); if the document
   // has moved on since — a revert, a direct publish whose pointer clear did
   // not land — the promote would clobber the newer revision.
+  // A recorded base that differs is always refused. An UNRECORDED base is
+  // refused for a roster-reviewed draft (the reviewers signed a specific
+  // delta); for a project-intake approval (`requireRosterComplete: false` —
+  // the approve click IS the review, and the controller is looking at the
+  // current revision) it is bound to the current revision NOW, atomically,
+  // by the CAS below. Intake drafts submitted before this round carry no
+  // base (the route stamps it since RG-10; 20261070 backfills the rest).
   const draftBase = (ver?.supersedes_version_id as string | null) ?? null;
-  if (draftBase !== previousVersionId) return { published: false, reason: "stale_base" };
+  const intakeApproval = input.requireRosterComplete === false;
+  if (draftBase !== previousVersionId && !(draftBase === null && intakeApproval)) return { published: false, reason: "stale_base" };
   const nowIso = new Date().toISOString();
 
   // Promote FIRST — this is the update the publish-guard trigger inspects

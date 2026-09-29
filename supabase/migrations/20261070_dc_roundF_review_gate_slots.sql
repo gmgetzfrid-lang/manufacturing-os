@@ -34,6 +34,17 @@
 --     lib/containerChain.ts) is 'require' is refused when no roster exists.
 --     A document's first controlled revision is not a revision through the
 --     gate (OLD.current_version_id IS NULL passes, as the app does).
+--   · REV-5 — finalizeReviewedRevision now refuses a draft whose recorded
+--     base (supersedes_version_id) is not the current revision. Intake
+--     submissions made BEFORE this round carry no base (the route stamped it
+--     only on the auto path); they are inventoried and BACKFILLED here to
+--     the revision current at apply time, one audit row per document
+--     (REVIEW_BASE_BACKFILLED), so no in-flight vendor revision has to be
+--     rejected and re-uploaded.
+--   · review_control_mode_for is SECURITY INVOKER: called from the
+--     SECURITY DEFINER publish guard it reads past RLS as the trigger does;
+--     called by a member it reads only what their RLS lets them see, so
+--     nobody can probe another org's review mode by id.
 --
 -- Bodies: enforce_review_signoff_guard starts from the live 20261047 body,
 -- enforce_document_publish_guard from the live 20261060 body; each change is
@@ -59,6 +70,11 @@ SELECT 'in-review intake submissions (exempt from the roster rails; the approve 
   FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
  WHERE v.review_state = 'in_review' AND v.intake_link_id IS NOT NULL
 UNION ALL
+SELECT 'of which with NO recorded base on a document that has a current revision (REV-5: backfilled below, audited per document)', COUNT(*)
+  FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
+ WHERE v.review_state = 'in_review' AND v.intake_link_id IS NOT NULL
+   AND v.supersedes_version_id IS NULL AND d.current_version_id IS NOT NULL
+UNION ALL
 SELECT 'roster rows on drafts still in review (all become the legacy slot group)', COUNT(*)
   FROM document_review_signoffs s JOIN documents d ON d.pending_version_id = s.document_version_id
 UNION ALL
@@ -80,6 +96,29 @@ BEGIN;
 ALTER TABLE document_review_signoffs ADD COLUMN IF NOT EXISTS slot_group TEXT;
 COMMENT ON COLUMN document_review_signoffs.slot_group IS
   'RG-4: the review slot this row holds (primary) or may stand in for (alternate): person:<uid> | role:<Role> | team:<teamId>. NULL = legacy row (pre-20261070) or an unpaired named alternate, which satisfies no slot.';
+
+-- ── REV-5: bind the base of in-flight intake drafts that never recorded one ─
+-- Only pending (in_review) INTAKE drafts on a document that has a current
+-- revision; the base becomes the revision current NOW — the same binding a
+-- controller's approve click makes. Idempotent (NULL bases only). One audit
+-- row per document, service-role shaped (user_id NULL), in this transaction.
+WITH backfilled AS (
+  UPDATE document_versions v
+     SET supersedes_version_id = d.current_version_id
+    FROM documents d
+   WHERE d.pending_version_id = v.id
+     AND d.current_version_id IS NOT NULL
+     AND v.intake_link_id IS NOT NULL
+     AND v.review_state = 'in_review'
+     AND v.supersedes_version_id IS NULL
+  RETURNING v.id AS version_id, v.record_id AS document_id, d.org_id, d.current_version_id
+)
+INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
+SELECT 'REVIEW_BASE_BACKFILLED', 'document', document_id::text, org_id, NULL, NULL, NULL,
+       jsonb_build_object('via', 'migration', 'migration', '20261070',
+                          'versionId', version_id, 'supersedesVersionId', current_version_id,
+                          'reason', 'REV-5: intake draft submitted before the route recorded its base; bound to the revision current at apply time')
+  FROM backfilled;
 
 -- ── DRLS-6 / RG-4: opening a roster is a publisher''s act, in roster shape ───
 DROP POLICY IF EXISTS doc_review_signoff_insert ON document_review_signoffs;
@@ -113,8 +152,12 @@ CREATE POLICY doc_review_signoff_insert ON document_review_signoffs FOR INSERT W
 -- ── RG-7: the effective review MODE along the container chain (SQL twin of
 --    lib/containerChain.ts: document → folder → ancestors nearest first →
 --    library; a DEFINED level is a stored policy object) ────────────────────
+-- SECURITY INVOKER on purpose: from the SECURITY DEFINER publish guard it
+-- runs as the guard's owner (past RLS, as the trigger must); called directly
+-- by a member it sees only their own org's rows (RLS), so it cannot be used
+-- to probe another org's collection or library review mode by id.
 CREATE OR REPLACE FUNCTION review_control_mode_for(p_doc_control jsonb, p_collection_id uuid, p_library_id uuid)
-RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+RETURNS text LANGUAGE sql STABLE SET search_path = public AS $$
   SELECT COALESCE(
     CASE WHEN jsonb_typeof(p_doc_control) = 'object' THEN COALESCE(p_doc_control->>'mode', 'none') END,
     (SELECT COALESCE(c.review_control->>'mode', 'none')
@@ -462,10 +505,20 @@ SELECT 'review_control_mode_for walks folder → ancestors (path_ids, nearest fi
           FROM pg_proc WHERE proname = 'review_control_mode_for'),
        NULL::text
 UNION ALL
-SELECT 'all three functions are SECURITY DEFINER with search_path pinned',
+SELECT 'both guards are SECURITY DEFINER with search_path pinned; review_control_mode_for is SECURITY INVOKER (no cross-org probe) and pinned',
        (SELECT bool_and(prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%')
-          FROM pg_proc WHERE proname IN ('enforce_document_publish_guard', 'enforce_review_signoff_guard', 'review_control_mode_for')),
+          FROM pg_proc WHERE proname IN ('enforce_document_publish_guard', 'enforce_review_signoff_guard'))
+       AND (SELECT NOT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'review_control_mode_for'),
        NULL::text
+UNION ALL
+SELECT 'inventory (after apply): pending intake drafts with NO recorded base on a document with a current revision (REV-5; expect 0)', NULL::boolean,
+       (SELECT COUNT(*) FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
+         WHERE v.review_state = 'in_review' AND v.intake_link_id IS NOT NULL
+           AND v.supersedes_version_id IS NULL AND d.current_version_id IS NOT NULL)::text
+UNION ALL
+SELECT 'inventory (after apply): REVIEW_BASE_BACKFILLED audit rows written by this paste', NULL::boolean,
+       (SELECT COUNT(*) FROM audit_logs WHERE action = 'REVIEW_BASE_BACKFILLED' AND details->>'migration' = '20261070')::text
 UNION ALL
 SELECT 'inventory (before apply): ' || what, NULL::boolean, n::text FROM _dc_f70_before
 UNION ALL

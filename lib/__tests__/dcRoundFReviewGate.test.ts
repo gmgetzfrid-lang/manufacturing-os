@@ -21,7 +21,9 @@
 //          pending pointer; reject voids the draft's sign-offs.
 //   RG-11  the change type opens unset and is never remembered; the hatch
 //          writes REVIEW_GATE_SKIPPED.
-//   RG-13  letterLabelFor honours useRevLetters and handles Z / letter bases.
+//   RG-13  the letter suffix is always on — the never-read useRevLetters
+//          field is DELETED (a base-labelled draft would collide with its own
+//          predecessor under 20261071); Z / letter bases are explicit.
 //   RG-5   document-level review_control is guarded + audited (20261072).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -132,7 +134,7 @@ vi.mock("@/lib/ownership", () => ({
 import { firstDefinedInChain, folderChainFromMap, loadContainerChain } from "@/lib/containerChain";
 import {
   resolveEffectiveReviewControl, resolveReviewControlChain, effectiveReviewControlForDocument,
-  evaluateSlotCompletion, reviewCompletionForDraft, expandReviewers, openReviewRoster, recordReviewSignoff,
+  evaluateSlotCompletion, reviewCompletionForDraft, listDraftRoster, expandReviewers, openReviewRoster, recordReviewSignoff,
   finalizeReviewedRevision, finalizeReasonMessage, letterLabelFor, nextLetterSuffix, slotGroupKey,
 } from "@/lib/reviewControl";
 import { resolveEffectiveDocClass, effectiveDocClassForDocument } from "@/lib/docClass";
@@ -254,6 +256,13 @@ describe("RG-6 — a policy that cannot be read is unknown, never 'none'", () =>
     expect(p).toContain("Pre-publish review policy could not be read");
     expect(p).toMatch(/setPolicyUnknown\(\(e as Error\)\.message/);
   });
+  it("setLevelRevUp (the batch path) refuses a sheet whose policy could not be read — never a direct publish", () => {
+    const b = src("lib/documentLifecycle/setRevUp.ts");
+    expect(b).toMatch(/\} catch \(e\) \{[\s\S]*?throw new Error\(`Couldn't verify the pre-publish review policy for \$\{sheet\.doc\.documentNumber/);
+    expect(b).not.toMatch(/unresolved policy → direct publish/);
+    // the throw is caught by the per-sheet handler and lands in `failed`, like every other refusal
+    expect(b.indexOf("Couldn't verify the pre-publish review policy")).toBeLessThan(b.indexOf("failed.push({"));
+  });
 });
 
 // ── RG-4 / DRLS-6 · per-slot completion ─────────────────────────────────────
@@ -303,14 +312,46 @@ describe("RG-4 / DRLS-6 — completion is evaluated per slot group", () => {
     expect(guard).toContain("count(*) FILTER (WHERE s.slot = 'primary') AS reqs,");
     expect(guard).not.toMatch(/FILTER \(WHERE s\.slot = 'primary' AND s\.status/);
   });
-  it("the list pill and the panel run the same evaluator", () => {
+  it("the list pill and the panel run the same evaluator over the same UNFILTERED input (every row, all statuses)", () => {
     const rc = src("lib/reviewControl.ts");
     const summaries = rc.slice(rc.indexOf("export async function getReviewSummaries"), rc.indexOf("export function reviewStatusFor"));
     expect(summaries).toContain("evaluateSlotCompletion(agg.rows)");
     expect(summaries).not.toMatch(/agg\.signed >= agg\.primaries/);
     const panel = src("components/documents/ReviewGateSection.tsx");
-    expect(panel).toContain("const completion = evaluateSlotCompletion(roster);");
+    expect(panel).toContain("listDraftRoster(doc.id, pv, { allStatuses: true })");
+    expect(panel).toContain("const completion = evaluateSlotCompletion(rosterAll);");
+    expect(panel).toContain('setRoster(all.filter((r) => r.status === "pending" || r.status === "signed"));');
+    expect(panel).not.toMatch(/evaluateSlotCompletion\(roster\)/);
     expect(panel).not.toMatch(/signedCount >= primaries\.length/);
+  });
+  it("listDraftRoster filters for display unless asked for every status; a voided primary flips the panel's verdict exactly as it flips finalize's", async () => {
+    db.tables.document_review_signoffs = [
+      { id: "r1", document_id: "d1", document_version_id: "v1", reviewer_user_id: "u1", slot: "primary", activated: true, status: "signed", signature_id: "s1", slot_group: "person:u1", assigned_at: "2026-09-01" },
+      { id: "r2", document_id: "d1", document_version_id: "v1", reviewer_user_id: "u2", slot: "primary", activated: true, status: "void", signature_id: null, slot_group: "person:u2", assigned_at: "2026-09-01" },
+    ];
+    const shown = await listDraftRoster("d1", "v1");
+    expect(shown.map((r) => r.id)).toEqual(["r1"]);
+    const all = await listDraftRoster("d1", "v1", { allStatuses: true });
+    expect(all.map((r) => r.id)).toEqual(["r1", "r2"]);
+    expect(evaluateSlotCompletion(shown).complete).toBe(true);  // the displayable subset alone would have enabled Publish
+    expect(evaluateSlotCompletion(all).complete).toBe(false);   // what finalize and the guard see — and now the panel
+    expect((await reviewCompletionForDraft("d1", "v1")).complete).toBe(false);
+  });
+  it("DEC-37: a person holding two listed roles fills ONE slot (the first listed role they hold); the other role is not silently covered by them", async () => {
+    db.tables.org_members = [
+      { org_id: "o1", uid: "a", display_name: "A", email: "a@x", status: "active", role: "I&E", roles: ["I&E", "Piping"] },
+      { org_id: "o1", uid: "b", display_name: "B", email: "b@x", status: "active", role: "I&E", roles: ["I&E"] },
+    ];
+    const r = await expandReviewers("o1", { mode: "require", reviewerRoles: ["I&E", "Piping"] });
+    expect(r.primaries.map((x) => [x.uid, x.groupKey])).toEqual([["a", "role:I&E"], ["b", "role:I&E"]]);
+    expect(r.warnings).toEqual([expect.stringMatching(/role "Piping" opens no slot — everyone holding it already fills another listed role's slot/)]);
+    // list order decides which slot a multi-role holder takes: Piping first places A there and B still covers I&E
+    const swapped = await expandReviewers("o1", { mode: "require", reviewerRoles: ["Piping", "I&E"] });
+    expect(swapped.primaries.map((x) => [x.uid, x.groupKey])).toEqual([["a", "role:Piping"], ["b", "role:I&E"]]);
+    expect(swapped.warnings).toEqual([]);
+    // a role nobody holds keeps its own message
+    const empty = await expandReviewers("o1", { mode: "require", reviewerRoles: ["I&E", "Civil"] });
+    expect(empty.warnings).toEqual([expect.stringMatching(/role "Civil" has no active members/)]);
   });
   it("slot group keys are stamped from the policy entry that resolved each reviewer", async () => {
     db.tables.org_members = [
@@ -451,13 +492,25 @@ describe("REV-5 — finalizeReviewedRevision has an expected-base and a status g
     }
     expect(src("lib/reviewControl.ts")).toContain("NOT_CURRENT_STATUSES.has(String(docRow.status ?? \"\"))");
   });
-  it("refuses a draft whose recorded base is no longer the controlled revision (or was never recorded)", async () => {
-    seedDoc({ current_version_id: "v3b" }); // the document moved past v3
+  it("refuses a draft whose recorded base is no longer the controlled revision; an UNRECORDED base is refused for a roster-reviewed draft", async () => {
+    seedDoc({ current_version_id: "v3b" }); // the document moved past v3 — refused on the intake path too
     expect(await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", requireRosterComplete: false })).toEqual({ published: false, reason: "stale_base" });
     seedDoc({});
-    db.tables.document_versions[0].supersedes_version_id = null; // unknown base
-    expect(await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", requireRosterComplete: false })).toEqual({ published: false, reason: "stale_base" });
+    db.tables.document_versions[0].supersedes_version_id = null; // unknown base on a draft the reviewers signed
+    db.tables.document_review_signoffs = [{ id: "r1", document_id: "d1", document_version_id: "v4A", reviewer_user_id: "u1", slot: "primary", activated: true, status: "signed", signature_id: "s1", slot_group: "person:u1" }];
+    expect(await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1" })).toEqual({ published: false, reason: "stale_base" });
     expect(db.writes.filter((w) => w.table === "documents")).toEqual([]);
+  });
+  it("an intake approval (no roster — the approve click IS the review) binds an UNRECORDED base to the current revision atomically through the CAS", async () => {
+    seedDoc({});
+    db.tables.document_versions[0].supersedes_version_id = null; // a vendor revision submitted before the route stamped its base
+    db.tables.document_versions.push({ id: "v3", revision_label: "3", superseded_at: null });
+    db.errors["document_versions.update"] = [{ message: "stop after the promote" }]; // the bookkeeping past this point is RG-12's
+    await expect(finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", requireRosterComplete: false })).rejects.toThrow(/could not be relabeled/);
+    const promote = db.writes.find((w) => w.table === "documents" && w.method === "update");
+    expect(promote?.filters).toContainEqual(["eq", "current_version_id", "v3"]); // bound to the revision the approver is looking at
+    expect(promote?.filters).toContainEqual(["eq", "pending_version_id", "v4A"]);
+    expect(src("lib/reviewControl.ts")).toContain('if (draftBase !== previousVersionId && !(draftBase === null && intakeApproval)) return { published: false, reason: "stale_base" };');
   });
   it("the promote compare-and-sets BOTH pointers, and zero rows with the pointer still set is a conflict, not success", async () => {
     seedDoc({});
@@ -490,13 +543,14 @@ describe("REV-5 — finalizeReviewedRevision has an expected-base and a status g
 });
 
 // ── RG-13 · letters ──────────────────────────────────────────────────────────
-describe("RG-13 — useRevLetters is honoured and the letter sequence is explicit", () => {
-  it("useRevLetters=false keeps the base label; default behaviour is unchanged", () => {
-    expect(letterLabelFor("2", null, { useRevLetters: false })).toBe("2");
-    expect(letterLabelFor("2", "2A", { useRevLetters: false })).toBe("2");
+describe("RG-13 — the letter suffix is always on (the never-read toggle is deleted) and the letter sequence is explicit", () => {
+  it("letterLabelFor has no off switch: every in-review draft gets a letter after the base", () => {
     expect(letterLabelFor("2")).toBe("2A");
     expect(letterLabelFor("2", "2A")).toBe("2B");
     expect(letterLabelFor("R3", "R3")).toBe("R3A");
+    const rc = src("lib/reviewControl.ts");
+    expect(rc).toMatch(/export function letterLabelFor\(baseRev: string, existingDraftLabel\?: string \| null\): string \{/);
+    expect(rc).not.toMatch(/useRevLetters\?:|opts\?\.useRevLetters/);
   });
   it("exhaustion past Z and a letter-valued base are explicit, not string concatenation", () => {
     expect(nextLetterSuffix("")).toBe("A");
@@ -509,10 +563,13 @@ describe("RG-13 — useRevLetters is honoured and the letter sequence is explici
     expect(letterLabelFor("A", "AA")).toBe("AB");
     expect(letterLabelFor("A", "AZ")).toBe("AAA");
   });
-  it("the policy editor exposes the toggle; the call-site switch in lib/revisions.ts is P3's (recorded split)", () => {
-    const m = src("components/documents/ReviewControlModal.tsx");
-    expect(m).toContain("useRevLetters,");
-    expect(m).toContain("checked={useRevLetters} onChange={(e) => setUseRevLetters(e.target.checked)}");
+  it("neither the policy editor nor the policy type carries useRevLetters — a base-labelled draft would collide with its own predecessor under 20261071 on resubmit", () => {
+    expect(src("components/documents/ReviewControlModal.tsx")).not.toMatch(/RevLetters/);
+    const t = src("types/schema.ts");
+    expect(t).not.toMatch(/useRevLetters\?: boolean/);
+    expect(t).toContain("the former `useRevLetters` field is DELETED, not wired");
+    // the index that makes a same-label resubmit impossible: one label per un-superseded row, branches included
+    expect(mig("20261071_dc_roundF_active_label_index.sql")).toMatch(/document_versions_active_label_uniq_v2\s*\n\s*ON document_versions\(record_id, revision_label\)\s*\n\s*WHERE \(superseded_at IS NULL\);/);
   });
 });
 
@@ -623,6 +680,23 @@ describe("RG-10 — the intake route never repoints past a live review", () => {
     const retire = db.writes.find((w) => w.table === "document_versions" && w.method === "update");
     expect(retire?.args[0]).toHaveProperty("superseded_at");
     expect(retire?.filters).toContainEqual(["eq", "id", "v-new"]);
+  });
+  it("a trusted link DEMOTED from auto-publish repoints over its own roster-free earlier draft (CAS on that pointer), retires it, and says why the promote was withheld", async () => {
+    seed();
+    db.tables.document_versions = [{ id: "v-prev", record_id: "d1", intake_link_id: "lnk1", superseded_at: null }]; // the link's own pending, roster-free draft
+    db.tables.documents = [{ id: "d1", document_number: "P-101", rev: "2", current_version_id: "v2", pending_version_id: "v-prev", library_id: "lib1", checked_out_by: null, legal_hold: true }];
+    const res = await post({ docId: "d1", revLabel: "3" });
+    expect(res.status).toBe(200);
+    const ptr = db.writes.find((w) => w.table === "documents" && w.method === "update");
+    expect(ptr?.args[0]).toMatchObject({ pending_version_id: "v-new" });
+    expect(ptr?.args[0]).not.toHaveProperty("current_version_id"); // demoted: queued for review, never promoted
+    expect(ptr?.filters).toContainEqual(["eq", "pending_version_id", "v-prev"]);
+    expect(ptr?.filters).not.toContainEqual(["is", "pending_version_id", null]);
+    const retire = db.writes.find((w) => w.table === "document_versions" && w.method === "update" && w.filters.some(([, c, v]) => c === "id" && v === "v-prev"));
+    expect(retire?.args[0]).toHaveProperty("superseded_at");
+    expect(retire?.filters).toContainEqual(["is", "superseded_at", null]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-new")).toMatchObject({ review_state: "in_review", supersedes_version_id: "v2" });
+    expect(String((db.tables.notifications?.[0] as Record<string, unknown> | undefined)?.body)).toMatch(/Auto-publish was withheld: the document is under legal hold/);
   });
   it("the trusted auto path CASes both pointers and retires the link's own roster-free earlier draft", () => {
     const r = src("app/api/intake/upload/route.ts");
@@ -752,13 +826,27 @@ describe("20261070 — review gate slots (bodies from 20261047 / 20261060)", () 
     expect(fn).toMatch(/CASE WHEN jsonb_typeof\(p_doc_control\) = 'object'/);
     expect(fn).toMatch(/unnest\(c\.path_ids\) WITH ORDINALITY AS p\(id, ord\)[\s\S]*ORDER BY p\.ord DESC\s*\n\s*LIMIT 1/);
     expect(fn).toMatch(/FROM libraries l\s*\n\s*WHERE l\.id = p_library_id/);
-    expect(fn).toContain("STABLE SECURITY DEFINER SET search_path = public");
+    expect(fn).toContain("STABLE SET search_path = public");
+    expect(fn).not.toContain("SECURITY DEFINER"); // invoker rights: no cross-org probe by id (the DEFINER guard still reads past RLS)
+    const verify0 = m70.slice(m70.indexOf("-- ── Verification + inventory"));
+    expect(verify0).toMatch(/SELECT NOT prosecdef AND array_to_string\(proconfig, ','\) LIKE '%search_path=public%'\s*\n\s*FROM pg_proc WHERE proname = 'review_control_mode_for'/);
     expect(m70.indexOf("CREATE TEMP TABLE IF NOT EXISTS _dc_f70_before")).toBeLessThan(m70.indexOf("\nBEGIN;"));
     expect(m70).toMatch(/ALTER TABLE document_review_signoffs ADD COLUMN IF NOT EXISTS slot_group TEXT;/);
     const verify = m70.slice(m70.indexOf("-- ── Verification + inventory"));
     expect(verify).toMatch(/NULL::boolean, n::text FROM _dc_f70_before/);
     expect(verify).not.toMatch(/pg_policies[^\n]*::text[^\n]*LIKE/); // deparsed qual/with_check, never a bare cast
     expect((verify.match(/UNION ALL/g) ?? []).length).toBeGreaterThanOrEqual(9);
+  });
+  it("REV-5: in-flight intake drafts with no recorded base are inventoried BEFORE apply and backfilled inside the transaction, one audit row per document", () => {
+    const before = between(m70, "CREATE TEMP TABLE IF NOT EXISTS _dc_f70_before", "\nBEGIN;");
+    expect(before).toMatch(/NO recorded base on a document that has a current revision \(REV-5: backfilled below, audited per document\)[\s\S]*?v\.intake_link_id IS NOT NULL\s*\n\s*AND v\.supersedes_version_id IS NULL AND d\.current_version_id IS NOT NULL/);
+    const txn = between(m70, "\nBEGIN;", "\nCOMMIT;");
+    expect(txn).toMatch(/UPDATE document_versions v\s*\n\s*SET supersedes_version_id = d\.current_version_id\s*\n\s*FROM documents d\s*\n\s*WHERE d\.pending_version_id = v\.id\s*\n\s*AND d\.current_version_id IS NOT NULL\s*\n\s*AND v\.intake_link_id IS NOT NULL\s*\n\s*AND v\.review_state = 'in_review'\s*\n\s*AND v\.supersedes_version_id IS NULL/);
+    expect(txn).toMatch(/INSERT INTO audit_logs \(action, resource_type, resource_id, org_id, user_id, user_email, user_role, details\)\s*\n\s*SELECT 'REVIEW_BASE_BACKFILLED', 'document', document_id::text, org_id, NULL, NULL, NULL,/);
+    expect(txn).toContain("'migration', '20261070'");
+    const verify = m70.slice(m70.indexOf("-- ── Verification + inventory"));
+    expect(verify).toContain("pending intake drafts with NO recorded base on a document with a current revision (REV-5; expect 0)");
+    expect(verify).toContain("REVIEW_BASE_BACKFILLED audit rows written by this paste");
   });
 });
 

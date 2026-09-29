@@ -32,6 +32,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   const [pendingVersionId, setPendingVersionId] = useState<string | null>(null);
   const [draftFileUrl, setDraftFileUrl] = useState<string | null>(null);
   const [roster, setRoster] = useState<ReviewSignoffRow[]>([]);
+  // RG-4: every row of the draft, voided ones included — the completion
+  // evaluator is fed this, never the displayable subset.
+  const [rosterAll, setRosterAll] = useState<ReviewSignoffRow[]>([]);
   const [control, setControl] = useState<ReviewControl | null>(null);
   // RG-6: "we couldn't read the policy" is shown as exactly that — never as
   // "no gate" (the old load swallowed the error and rendered nothing).
@@ -58,13 +61,14 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
         setPolicyUnknown((e as Error).message || "unknown error");
       }
       if (pv) {
-        const [roster, { data: ver }] = await Promise.all([
-          listDraftRoster(doc.id, pv),
+        const [all, { data: ver }] = await Promise.all([
+          listDraftRoster(doc.id, pv, { allStatuses: true }),
           supabase.from("document_versions").select("file_url").eq("id", pv).maybeSingle(),
         ]);
-        setRoster(roster);
+        setRosterAll(all);
+        setRoster(all.filter((r) => r.status === "pending" || r.status === "signed"));
         setDraftFileUrl((ver?.file_url as string) ?? null);
-      } else { setRoster([]); setDraftFileUrl(null); }
+      } else { setRosterAll([]); setRoster([]); setDraftFileUrl(null); }
     } finally { setLoading(false); }
   }, [doc.id, doc.libraryId, doc.collectionId]);
 
@@ -80,10 +84,12 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   }, [uid]);
 
   const primaries = roster.filter((r) => r.slot === "primary");
-  // RG-4: the panel judges completion PER SLOT with the same evaluator as the
-  // finalize step and the database guard — "2/2 signed" can no longer mean
-  // two piping signatures and no instrumentation review.
-  const completion = evaluateSlotCompletion(roster);
+  // RG-4: the panel judges completion PER SLOT with the same evaluator — AND
+  // the same input (every row, all statuses) — as the finalize step and the
+  // database guard, so "2/2 signed" can no longer mean two piping signatures
+  // and no instrumentation review, and a voided primary still counts as an
+  // unfilled slot here exactly as it does at publish time.
+  const completion = evaluateSlotCompletion(rosterAll);
   const signedCount = completion.satisfied;
   const complete = completion.complete;
   const draftLabel = roster[0]?.revisionLabel || null;

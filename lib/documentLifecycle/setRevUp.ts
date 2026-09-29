@@ -81,7 +81,13 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
         // Batch bumps have no per-sheet "route through review?" checkbox, so
         // publisher_choice defaults to the safe side: through review.
         willReview = effectiveModeForRevUp({ control, changeType }) !== "none";
-      } catch { /* unresolved policy → direct publish, as before */ }
+      } catch (e) {
+        // RG-6: an unresolved policy is UNKNOWN, never "no policy". The sheet
+        // is refused (it lands in `failed`, like RevUpModal's refusal) — a
+        // batch never publishes a sheet directly because its gate could not
+        // be read.
+        throw new Error(`Couldn't verify the pre-publish review policy for ${sheet.doc.documentNumber ?? sheet.doc.id ?? "this sheet"} — it was not published: ${(e as Error).message}`);
+      }
 
       if (willReview) {
         await submitForReview(common);
