@@ -24,6 +24,37 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 **147 findings** — 18 CRITICAL, 53 HIGH, 64 MEDIUM, 12 LOW.
 
+### Round F wave 1 (2026-09-23 → 2026-09-29) — six packages in parallel
+
+Six implementers worked disjoint packages in worktrees cut from one base, each
+followed by an adversarial reviewer and a fix pass (twice where the re-review
+still found a major); the integrator merged each package as it landed and ran
+the full loop on the merged tree every time (tsc 0, eslint 0, 193 files /
+2548 tests, `next build` 0, corpus index green). A session-limit cascade cut
+the first run short on 2026-09-23; the surviving worktrees were resumed on
+2026-09-29 with their implementations cached and their reviews run live.
+
+| Package | Resolved | Partial / left to a named owner |
+|---|---|---|
+| P2 EGRESS — the download record, presigned windows, the worker's cache | `DRLS-8`, `EGR-4`, `PKG-11`, `XEDGE-6`, `DIST-8` (record-only → `SURF-12`) | `DIST-9` (P8's `lib/downloads.ts` limb), `XEDGE-3` (its table limb; the rest landed in P10) — `DEC-44` |
+| P4 REVIEW — the review gate: ancestor-chain policy, per-slot completion, roster integrity | `RG-3`, `RG-4`, `RG-5`, `RG-6`, `RG-7`, `RG-8`, `RG-10`, `RG-11`, `RG-13`, `REV-5`, `REV-7`, `DRLS-6` | `RG-12` (promote + bookkeeping in one transaction — P3's `lib/revisions.ts`) — `DEC-21` / `DEC-36` / `DEC-37` landed |
+| P5 HOLDS — hold integrity, the shared hold gate, hold card / verify | `HLD-5`, `HLD-7`, `HLD-9`, `HLD-10`, `HLD-14`; `HLD-8` with P6 | `HLD-1` (the helper `lib/holdGate.ts` and its holds-owned call sites; wave 2 wires P1 / P3 / P7 / P8) — `DEC-25` / `DEC-35` landed |
+| P6 CHECKOUT — the lock, force-release, the check-in register, the dashboard | `DCK-4`, `DCK-5`, `DCK-6`, `DCK-7`, `DCK-9`, `DCK-10`, `DCK-11`, `DCK-12`, `DCK-13`, `DCK-14`, `HLD-11`, `DRLS-12`, `DIST-5`; `HLD-8` with P5 | — |
+| P9 RECORDS — retention, recertification, legal-hold records, the shed | `RET-3`, `RET-5`, `RET-6`, `RET-7`, `RET-8`, `RET-9`, `RET-10`, `RET-12`, `RET-13`, `RET-14`, `DRLS-4`, `DRLS-11`, `HLD-6` | `RET-4`, `RET-11` (scoped in the fix pass), `HLD-1` dispose limb |
+| P10 EDGES — export/restore secrets, scheduled-export entitlement, billing edges, the schema bootstrap census | `XEDGE-2`, `XEDGE-3`, `XEDGE-7`, `XEDGE-8`, `XEDGE-9`, `XEDGE-10`, `XEDGE-11`, `XEDGE-14`, `EGR-7`, `PKG-14`, `HLD-12` | `XEDGE-12` (hardening landed; the rest is a decision) — `DEC-45` (bearer columns), `DEC-18` landed |
+
+**Integration notes.** P2 and P10 each minted a `DEC-44`; P10's became `DEC-45`
+(bearer columns never leave the database) and every reference in its files was
+re-pointed. `HLD-8` closed across P5 (queue page, strip) and P6 (the Inspector).
+`HLD-1`'s dispose gate (P9) carries its own hold read because P5's helper had
+not merged; wave 2 re-points it at `lib/holdGate.ts`.
+
+**Hand-applied migrations (DEC-30, one paste for the wave):** `20261068`,
+`20261070`, `20261071`, `20261072`, `20261073`, `20261074`, `20261075`,
+`20261077` — printed as ONE script whose final result set carries every probe
+and inventory count. None widens; `20261071` builds a unique index only when
+no duplicate active label exists (its first probe says which world applied).
+
 ### Progress — session 2026-08-24
 
 **Phase 1 of [`99-fix-sequencing.md`](./99-fix-sequencing.md) — the unguarded
