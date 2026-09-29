@@ -12,7 +12,7 @@
 
 import React, { useEffect, useState } from "react";
 import { NodeIcon } from "@/lib/nodeIcons";
-import { getSignedUrlForPath } from "@/lib/storage";
+import { peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
 
 export interface NodeAppearanceLike {
   color?: string | null;
@@ -22,27 +22,22 @@ export interface NodeAppearanceLike {
 }
 
 // Covers may be a direct URL (pasted) or an R2 storage path (uploaded).
-// Storage paths need a fresh signed URL; cache resolutions for ~50 min
-// (signed for the 7-day max) so a grid of covers doesn't re-sign per render.
-const SIGN_TTL_MS = 50 * 60 * 1000;
-const signedCache = new Map<string, { url: string; at: number }>();
+// Storage paths need a signed URL: lib/storage caches one per path for the
+// window the SERVER granted (EGR-4 / DEC-44 §2 — an hour, not a requested
+// week) so a grid of covers doesn't re-sign per render, and the subscription
+// re-signs before the window closes so a cover left on screen never 403s.
 const isDirectUrl = (s: string) => /^(https?:|data:|blob:)/i.test(s);
 
 function useCoverSrc(cover?: string): string | undefined {
   const direct = !!cover && isDirectUrl(cover);
-  // Seed from any cached URL during render (pure map read); the effect
-  // owns freshness (TTL) and re-signing, so no setState-in-render cascade.
-  const cachedUrl = cover && !direct ? signedCache.get(cover)?.url : undefined;
+  // Seed from the shared cache during render (pure map read); the effect
+  // owns freshness and re-signing, so no setState-in-render cascade.
+  const cachedUrl = cover && !direct ? peekSignedUrl(cover)?.url : undefined;
   const [signed, setSigned] = useState<string | undefined>(cachedUrl);
   useEffect(() => {
     if (!cover || direct) return;
-    const hit = signedCache.get(cover);
-    if (hit && Date.now() - hit.at < SIGN_TTL_MS) return; // fresh — render used cachedUrl
-    let active = true;
-    getSignedUrlForPath(cover, 604800)
-      .then((u) => { signedCache.set(cover, { url: u, at: Date.now() }); if (active) setSigned(u); })
-      .catch(() => { /* fall back to color panel */ });
-    return () => { active = false; };
+    // null = could not be signed → fall back to the color panel
+    return subscribeSignedUrl(cover, (u) => setSigned(u ?? undefined));
   }, [cover, direct]);
   if (direct) return cover;
   return signed ?? cachedUrl;

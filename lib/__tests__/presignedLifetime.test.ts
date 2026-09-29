@@ -10,8 +10,14 @@
 //   * /api/storage/resolve signs on the same ceiling and is no-store too.
 //   * A census over every getSignedUrl call under app/api: no literal above
 //     the ceiling, no caller-controlled value anywhere.
+//   * The CLIENT half of the contract (lib/storage): the shared cache is keyed
+//     by path and remembers the window the server GRANTED, never the one the
+//     caller asked for — five image callers used to ask for a week, and a
+//     cache that believed them would have served a dead URL for seven days.
+//     subscribeSignedUrl re-signs before the granted window closes; a census
+//     over the client call sites proves nobody asks above the ceiling.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
@@ -54,6 +60,9 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     rpc: vi.fn(async () => ({ data: false, error: null })),
   },
 }));
+vi.mock("@/lib/supabase", () => ({
+  supabase: { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "client-token" } } })) } },
+}));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({})) }, R2_BUCKET: "test-bucket" }));
 vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class {}, HeadObjectCommand: class {} }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({
@@ -68,6 +77,7 @@ import { GET as resolveUrl } from "@/app/api/storage/resolve/route";
 import {
   resolvePresignedLifetime, PRESIGNED_MAX_SECONDS, PRESIGNED_MIN_SECONDS, PRESIGNED_DEFAULT_SECONDS,
 } from "@/lib/presignedLifetime";
+import { getSignedUrlForPath, peekSignedUrl, subscribeSignedUrl, clearSignedUrlCache } from "@/lib/storage";
 
 const root = process.cwd();
 const ORG = "12345678-1234-1234-1234-123456789abc";
@@ -233,5 +243,124 @@ describe("getSignedUrl census under app/api — no issuer is looser than the cei
     const resolveSrc = readFileSync(join(root, "app/api/storage/resolve/route.ts"), "utf8");
     expect(resolveSrc).toMatch(/expiresIn: PRESIGNED_MAX_SECONDS/);
     expect(resolveSrc).toMatch(/"Cache-Control": "no-store"/);
+  });
+});
+
+// ── the client half: lib/storage caches what was GRANTED, keyed by path ──────
+describe("lib/storage — the client cache honours the granted window, not the requested one", () => {
+  const PATH = "orgs/o1/branding/logo.png";
+  const fetches: string[] = [];
+  let answer: () => Record<string, unknown> = () => ({ url: "https://r2/signed-1", expiresIn: PRESIGNED_MAX_SECONDS });
+  let seq = 0;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-23T08:00:00Z"));
+    fetches.length = 0;
+    seq = 0;
+    answer = () => ({ url: `https://r2/signed-${++seq}`, expiresIn: PRESIGNED_MAX_SECONDS });
+    clearSignedUrlCache();
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      fetches.push(String(input));
+      return new Response(JSON.stringify(answer()), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("a caller asking for a week gets the URL, but the cache expires it when the SERVER said it does", async () => {
+    const before = Date.now();
+    const url = await getSignedUrlForPath(PATH, 604800);
+    expect(url).toBe("https://r2/signed-1");
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0]).toMatch(/expiresIn=604800/); // the request still says what it wants; the server decides
+    const cached = peekSignedUrl(PATH);
+    expect(cached?.url).toBe(url);
+    expect(cached!.expiresAt).toBeLessThanOrEqual(before + PRESIGNED_MAX_SECONDS * 1000);
+    expect(cached!.expiresAt).toBeGreaterThan(before + (PRESIGNED_MAX_SECONDS - 5) * 1000);
+  });
+
+  it("is keyed by PATH alone — a different requested window does not fork a second entry", async () => {
+    await getSignedUrlForPath(PATH, 604800);
+    expect(await getSignedUrlForPath(PATH)).toBe("https://r2/signed-1");
+    expect(await getSignedUrlForPath(PATH, 900)).toBe("https://r2/signed-1");
+    expect(fetches).toHaveLength(1);
+  });
+
+  it("re-signs once the granted window is within the safety margin — never serves the dead URL", async () => {
+    await getSignedUrlForPath(PATH, 604800);
+    vi.setSystemTime(Date.now() + (PRESIGNED_MAX_SECONDS - 120) * 1000); // 2 min of life left
+    expect(peekSignedUrl(PATH)?.url).toBe("https://r2/signed-1");
+    vi.setSystemTime(Date.now() + 90 * 1000);                              // 30 s left — inside the margin
+    expect(peekSignedUrl(PATH)).toBeUndefined();
+    expect(await getSignedUrlForPath(PATH, 604800)).toBe("https://r2/signed-2");
+    expect(fetches).toHaveLength(2);
+  });
+
+  it("a server that does not report the grant is assumed to have signed for at most the ceiling", async () => {
+    answer = () => ({ url: "https://r2/legacy" });
+    const before = Date.now();
+    await getSignedUrlForPath(PATH, 604800);
+    expect(peekSignedUrl(PATH)!.expiresAt).toBe(before + PRESIGNED_MAX_SECONDS * 1000);
+    clearSignedUrlCache();
+    answer = () => ({ url: "https://r2/legacy-short" });
+    await getSignedUrlForPath(PATH, 600);
+    expect(peekSignedUrl(PATH)!.expiresAt).toBe(before + 600 * 1000);
+  });
+
+  it("subscribeSignedUrl hands out a URL now and a fresh one before the granted window closes; unsubscribe stops it", async () => {
+    const seen: Array<string | null> = [];
+    const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(seen).toEqual(["https://r2/signed-1"]);
+    await vi.advanceTimersByTimeAsync((PRESIGNED_MAX_SECONDS - 61) * 1000);
+    expect(seen).toEqual(["https://r2/signed-1"]);                          // still live — no needless re-sign
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(seen).toEqual(["https://r2/signed-1", "https://r2/signed-2"]); // re-signed at the margin, not after the 403
+    expect(fetches).toHaveLength(2);
+    stop();
+    await vi.advanceTimersByTimeAsync(PRESIGNED_MAX_SECONDS * 1000);
+    expect(seen).toHaveLength(2);
+    expect(fetches).toHaveLength(2);
+  });
+
+  it("a path that cannot be signed is reported once as null and not retried", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
+    const seen: Array<string | null> = [];
+    const stop = subscribeSignedUrl(PATH, (u) => seen.push(u));
+    await vi.advanceTimersByTimeAsync(PRESIGNED_MAX_SECONDS * 2000);
+    expect(seen).toEqual([null]);
+    stop();
+  });
+
+  it("census: no client call site asks for more than the ceiling (the five week-long sites are gone)", () => {
+    function walk(dir: string): string[] {
+      return readdirSync(dir).flatMap((f) => {
+        const p = join(dir, f);
+        if (f === "node_modules" || f === "__tests__" || f === ".next") return [];
+        return statSync(p).isDirectory() ? walk(p) : /\.tsx?$/.test(f) ? [p] : [];
+      });
+    }
+    const files = ["components", "lib", "app"].flatMap((d) => walk(join(root, d)));
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const file of files) {
+      const src = readFileSync(file, "utf8");
+      for (const m of src.matchAll(/\b(getSignedUrlForPath|resolveFileUrl|resolveFileUrlDetailed)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)) {
+        seen++;
+        const args = m[2].split(",").map((s) => s.trim());
+        const lifetime = args[1];
+        if (lifetime && /^\d+$/.test(lifetime) && Number(lifetime) > PRESIGNED_MAX_SECONDS) offenders.push(`${file.replace(root + "/", "")}: ${m[0]}`);
+      }
+    }
+    expect(seen).toBeGreaterThanOrEqual(10);
+    expect(offenders).toEqual([]);
+    // the five former week-long callers read the shared cache instead of keeping their own
+    for (const f of ["components/providers/OrgBrandingProvider.tsx", "components/documents/PageBackground.tsx", "components/documents/NodeCover.tsx", "lib/userProfiles.ts"]) {
+      expect(readFileSync(join(root, f), "utf8"), f).toMatch(/subscribeSignedUrl\(/);
+    }
+    expect(readFileSync(join(root, "app/(protected)/admin/branding/page.tsx"), "utf8")).not.toMatch(/604800/);
   });
 });

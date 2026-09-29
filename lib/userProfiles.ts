@@ -13,7 +13,7 @@
 // lists), and avatar paths resolve to signed URLs once per session.
 
 import { supabase } from "@/lib/supabase";
-import { getSignedUrlForPath } from "@/lib/storage";
+import { getSignedUrlForPath, peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
 
 export interface UserProfile {
   uid: string;
@@ -57,7 +57,13 @@ export function avatarToneOf(nameOrEmail?: string | null): string {
 // ─── Batched, cached profile reads ───────────────────────────────────────
 
 const profileCache = new Map<string, UserProfile>();
-const urlCache = new Map<string, string | null>();
+// Avatar URLs live in lib/storage's shared cache, which carries the window the
+// SERVER granted (EGR-4 / DEC-44 §2 — an hour, not the week this file used to
+// ask for). Per path seen this session: one subscription that re-signs before
+// the window closes and re-renders every avatar through notify(), or the
+// `null` marker for a path that could not be signed (not retried, as before).
+const avatarSubscriptions = new Map<string, () => void>();
+const failedAvatarPaths = new Set<string>();
 let pendingUids = new Set<string>();
 let pendingPromise: Promise<void> | null = null;
 type Listener = () => void;
@@ -66,7 +72,9 @@ const listeners = new Set<Listener>();
 /** Test hook. */
 export function clearProfileCache(): void {
   profileCache.clear();
-  urlCache.clear();
+  for (const unsubscribe of avatarSubscriptions.values()) unsubscribe();
+  avatarSubscriptions.clear();
+  failedAvatarPaths.clear();
 }
 
 /** Subscribe to "profiles arrived" — UserAvatar re-renders through this. */
@@ -133,23 +141,35 @@ export function requestProfile(uid: string): void {
   })();
 }
 
-/** Resolve an avatar storage path to a signed URL, cached per session. */
+/** Resolve an avatar storage path to a signed URL, kept live for the session:
+ *  the first call subscribes the path (re-signed before each granted window
+ *  closes; avatars re-render through notify()), later calls read the cache. */
 export async function resolveAvatarUrl(path: string): Promise<string | null> {
-  if (urlCache.has(path)) return urlCache.get(path) ?? null;
+  if (failedAvatarPaths.has(path)) return null;
+  const live = peekSignedUrl(path);
+  if (live) return live.url;
   try {
-    const url = await getSignedUrlForPath(path, 604800); // a week — same as the org logo
-    urlCache.set(path, url);
+    const url = await getSignedUrlForPath(path);
+    if (!avatarSubscriptions.has(path)) {
+      // A re-sign that fails ends the subscription by itself (no retry).
+      avatarSubscriptions.set(path, subscribeSignedUrl(path, (u) => {
+        if (u === null) failedAvatarPaths.add(path);
+        notify();
+      }));
+    }
     notify();
     return url;
   } catch {
-    urlCache.set(path, null);
+    failedAvatarPaths.add(path);
     return null;
   }
 }
 
-/** Synchronous read of an already-resolved avatar URL. */
+/** Synchronous read of an already-resolved, still-live avatar URL:
+ *  `undefined` = not resolved (or no longer live) — ask; `null` = could not be signed. */
 export function cachedAvatarUrl(path: string): string | null | undefined {
-  return urlCache.get(path);
+  if (failedAvatarPaths.has(path)) return null;
+  return peekSignedUrl(path)?.url;
 }
 
 /** Save the current user's avatar (or null to remove). Path convention:

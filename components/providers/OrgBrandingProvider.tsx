@@ -10,7 +10,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { useRole } from "@/components/providers/RoleContext";
 import { useTheme } from "@/components/providers/ThemeProvider";
 import { getOrgBranding, saveOrgBranding, type OrgBranding } from "@/lib/orgBranding";
-import { getSignedUrlForPath } from "@/lib/storage";
+import { subscribeSignedUrl } from "@/lib/storage";
 
 interface OrgBrandingCtx {
   branding: OrgBranding | null;
@@ -36,13 +36,16 @@ export function OrgBrandingProvider({ children }: { children: React.ReactNode })
   const applyBranding = useCallback(async (b: OrgBranding | null) => {
     setBranding(b);
     applyOrgPalette(b?.palette ?? null);
-    if (b?.logoPath) {
-      try { setLogoUrl(await getSignedUrlForPath(b.logoPath, 604800)); }
-      catch { setLogoUrl(null); }
-    } else {
-      setLogoUrl(null);
-    }
   }, [applyOrgPalette]);
+
+  // The logo is signed for the window the SERVER grants (an hour — EGR-4 /
+  // DEC-44 §2, no longer a requested week) and re-signed before it closes:
+  // this provider stays mounted for the whole session.
+  const logoPath = branding?.logoPath ?? null;
+  useEffect(() => {
+    if (!logoPath) { setLogoUrl(null); return; }
+    return subscribeSignedUrl(logoPath, setLogoUrl);
+  }, [logoPath]);
 
   const load = useCallback(async () => {
     if (!activeOrgId) { void applyBranding(null); return; }

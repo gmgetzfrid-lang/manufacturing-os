@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { PRESIGNED_MAX_SECONDS } from "@/lib/presignedLifetime";
 
 export type UploadProgress = {
   bytesTransferred: number;
@@ -104,26 +105,46 @@ async function getPresignedUploadUrl(
 }
 
 // ── Shared presigned-URL cache ───────────────────────────────────────────────
-// A signed download URL is deterministic for its (path, expiry window) and stays
-// valid for `expiresIn` seconds (default 1h). Re-minting one on every file open
-// is a wasted round-trip — each costs a server-side auth.getUser + org-membership
-// query + presign. Cache by path so re-opens (and the same drawing shown as a
-// thumbnail, a cover, AND in the viewer) reuse one URL, and dedup concurrent
-// callers to a single in-flight request. Previously every image component kept
-// its own private cache and the PDF viewers had none.
-type SignedEntry = { url: string; expiresAt: number };
-const signedUrlCache = new Map<string, SignedEntry>();
-const signedUrlInflight = new Map<string, Promise<string>>();
+// A signed download URL stays valid for the window the SERVER granted — the
+// route clamps whatever `expiresIn` a caller asks for and answers with the
+// window it actually signed (EGR-4 / PKG-11, DEC-44 §2). Re-minting one on
+// every file open is a wasted round-trip — each costs a server-side
+// auth.getUser + org-membership query + presign. Cache by PATH (the server
+// decides the window, so a requested value must never fork entries) so
+// re-opens (and the same drawing shown as a thumbnail, a cover, AND in the
+// viewer) reuse one URL, dedup concurrent callers to a single in-flight
+// request, and remember the GRANTED expiry so a URL is never handed out past
+// the life the server gave it, whatever the caller asked for. The image
+// components that used to keep week-long private caches now read this one.
+export type SignedUrl = { url: string; expiresAt: number };
+const signedUrlCache = new Map<string, SignedUrl>();
+const signedUrlInflight = new Map<string, Promise<SignedUrl>>();
+/** A cached URL is reused only while it has this much life left. */
+const SIGNED_URL_MARGIN_MS = 60_000;
 
-async function getPresignedDownloadUrl(path: string, expiresIn = 3600): Promise<string> {
-  const key = `${path}::${expiresIn}`;
-  const now = Date.now();
-  const cached = signedUrlCache.get(key);
-  // Reuse while it still has a comfortable margin of life left.
-  if (cached && cached.expiresAt - now > 60_000) return cached.url;
-  const inflight = signedUrlInflight.get(key);
+/** Synchronous read of a still-live cached URL for `path` — the render-time
+ *  seed for an image component; `undefined` when there is none (expired
+ *  entries are not returned: an <img> mounted on one would 403). */
+export function peekSignedUrl(path: string): SignedUrl | undefined {
+  const cached = signedUrlCache.get(path);
+  return cached && cached.expiresAt - Date.now() > SIGNED_URL_MARGIN_MS ? cached : undefined;
+}
+
+/** Test hook. */
+export function clearSignedUrlCache(): void {
+  signedUrlCache.clear();
+  signedUrlInflight.clear();
+}
+
+async function getPresignedDownloadUrlEntry(path: string, expiresIn = PRESIGNED_MAX_SECONDS): Promise<SignedUrl> {
+  const live = peekSignedUrl(path);
+  if (live) return live;
+  const inflight = signedUrlInflight.get(path);
   if (inflight) return inflight;
   const p = (async () => {
+    // Counted from BEFORE the request, so the client's idea of the window is
+    // never longer than the server's.
+    const now = Date.now();
     const token = await getAuthToken();
     const res = await fetch(
       `/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=${expiresIn}`,
@@ -145,12 +166,43 @@ async function getPresignedDownloadUrl(path: string, expiresIn = 3600): Promise<
       }
       throw new Error("Failed to get download URL");
     }
-    const { url } = await res.json();
-    signedUrlCache.set(key, { url, expiresAt: now + expiresIn * 1000 });
-    return url as string;
+    const { url, expiresIn: granted } = await res.json() as { url: string; expiresIn?: unknown };
+    // The GRANTED window, never the requested one. A server that predates the
+    // `expiresIn` answer is assumed to have signed for the ceiling at most.
+    const seconds = typeof granted === "number" && Number.isFinite(granted) && granted > 0
+      ? granted
+      : Math.min(expiresIn, PRESIGNED_MAX_SECONDS);
+    const entry: SignedUrl = { url, expiresAt: now + seconds * 1000 };
+    signedUrlCache.set(path, entry);
+    return entry;
   })();
-  signedUrlInflight.set(key, p);
-  try { return await p; } finally { signedUrlInflight.delete(key); }
+  signedUrlInflight.set(path, p);
+  try { return await p; } finally { signedUrlInflight.delete(path); }
+}
+
+async function getPresignedDownloadUrl(path: string, expiresIn = PRESIGNED_MAX_SECONDS): Promise<string> {
+  return (await getPresignedDownloadUrlEntry(path, expiresIn)).url;
+}
+
+/** Keeps `path` signed for as long as the subscription lasts: `cb` receives a
+ *  URL now and a fresh one shortly before each granted window closes — for
+ *  the images that stay on screen all shift (the org logo in the sidebar, a
+ *  folder cover, a page background, an avatar). A path that cannot be signed
+ *  gets `null` once and is not retried, the same give-up its callers had.
+ *  Returns the unsubscribe. */
+export function subscribeSignedUrl(path: string, cb: (url: string | null) => void): () => void {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const tick = async () => {
+    let entry: SignedUrl | null = null;
+    try { entry = await getPresignedDownloadUrlEntry(path); } catch { entry = null; }
+    if (!active) return;
+    cb(entry?.url ?? null);
+    if (!entry) return;
+    timer = setTimeout(() => { void tick(); }, Math.max(entry.expiresAt - Date.now() - SIGNED_URL_MARGIN_MS, 1000));
+  };
+  void tick();
+  return () => { active = false; if (timer) clearTimeout(timer); };
 }
 
 /** Thrown when a storage key's binary was shed to an offline space archive —
@@ -183,9 +235,10 @@ export async function resolveFileUrlDetailed(value: string, expiresIn = 3600): P
 }
 
 /** Public helper for any UI that needs to display an R2 object by its
- *  storage path. Returns a presigned URL that's valid for `expiresIn`
- *  seconds (default 1 hour). Cached + deduped (see above). */
-export async function getSignedUrlForPath(path: string, expiresIn = 3600): Promise<string> {
+ *  storage path. Returns a presigned URL valid for the window the server
+ *  granted (at most `expiresIn`, itself capped at the shared ceiling — the
+ *  server clamps, the client caches what was granted). Cached + deduped. */
+export async function getSignedUrlForPath(path: string, expiresIn = PRESIGNED_MAX_SECONDS): Promise<string> {
   return getPresignedDownloadUrl(path, expiresIn);
 }
 

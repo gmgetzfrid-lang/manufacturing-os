@@ -351,7 +351,33 @@ export async function nudgeStaleHolders(input: {
   actorName?: string | null;
   /** Recorded on the audit row: a controller's click vs the publish fan-out. */
   source?: "manual" | "auto";
+  /** DIST-9 dw3: the record could not be READ (getDocumentRecall's flag).
+   *  Nobody can be nudged from it — the audit row says the recall could not
+   *  be evaluated, so the publish never passes as "nobody was stale". */
+  unavailable?: boolean;
 }): Promise<number> {
+  if (input.unavailable) {
+    try {
+      await logRevisionEvent({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        versionId: input.currentVersionId ?? "",
+        userId: input.actorUserId,
+        userEmail: input.actorName ?? "",
+        userRole: "",
+        type: "DISTRIBUTION_RECALL",
+        details: {
+          source: input.source ?? "manual",
+          currentRev: input.currentRev,
+          recipientCount: 0,
+          recipients: [],
+          externalCopies: 0,
+          unavailable: true,
+        },
+      });
+    } catch { /* the gap is already on the panel */ }
+    return 0;
+  }
   const outdated = input.holders.filter((h) => !h.hasCurrent);
   // DIST-9 / DIST-7: an EXTERNAL copy (share link, transmittal portal) has no
   // member account behind it — nothing here can reach it. Members only; the

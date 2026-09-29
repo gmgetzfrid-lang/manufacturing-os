@@ -40,25 +40,37 @@ function defaultNavigator(): NavigatorLike | undefined {
 /** Posts one message to every worker that could be serving this origin — the
  *  controller plus the registration's active / waiting / installing workers,
  *  de-duplicated (in a browser the controller IS the active worker). Returns
- *  whether anything was reached. Never throws. */
+ *  whether anything was reached. Never throws.
+ *
+ *  The controller is posted SYNCHRONOUSLY, before any await: every sign-out
+ *  site calls this un-awaited and RoleContext answers SIGNED_OUT with a hard
+ *  navigation, which can begin before a registration lookup resolves — a
+ *  message behind that await might never be sent, and the cache would
+ *  survive the sign-out it was meant to end. */
 export async function postServiceWorkerMessage(
   message: SwSessionMessage,
   nav: NavigatorLike | undefined = defaultNavigator(),
 ): Promise<boolean> {
+  const reached = new Set<WorkerLike>();
   try {
     const sw = nav?.serviceWorker;
     if (!sw) return false;
-    const targets = new Set<WorkerLike>();
-    if (sw.controller) targets.add(sw.controller);
+    if (sw.controller) {
+      sw.controller.postMessage(message);
+      reached.add(sw.controller);
+    }
     if (sw.getRegistration) {
       const reg = await sw.getRegistration();
-      for (const w of [reg?.active, reg?.waiting, reg?.installing]) if (w) targets.add(w);
+      for (const w of [reg?.active, reg?.waiting, reg?.installing]) {
+        if (w && !reached.has(w)) {
+          w.postMessage(message);
+          reached.add(w);
+        }
+      }
     }
-    if (targets.size === 0) return false;
-    for (const w of targets) w.postMessage(message);
-    return true;
+    return reached.size > 0;
   } catch {
-    return false;
+    return reached.size > 0;
   }
 }
 

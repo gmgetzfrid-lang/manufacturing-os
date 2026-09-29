@@ -63,6 +63,10 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Pre-apply inventory (aggregate counts only; read BEFORE the change) ─────
+-- Outside the transaction, so a failure inside BEGIN…COMMIT leaves it behind
+-- in a pooled SQL-editor session: dropped first so a re-run re-captures the
+-- inventory instead of failing on "relation already exists".
+DROP TABLE IF EXISTS dc_round_f_68_before;
 CREATE TEMP TABLE dc_round_f_68_before AS
 SELECT 'BEFORE: download_audits rows (all)' AS inventory, COUNT(*)::text AS n
   FROM download_audits

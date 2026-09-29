@@ -199,7 +199,10 @@ describe("XEDGE-6 — what the worker will and will not store", () => {
     expect(caches.delete).not.toHaveBeenCalledWith(RUNTIME);
   });
 
-  it("still caches a plain HTML navigation (Field Mode keeps working)", async () => {
+  // Next marks dynamically rendered pages `private, no-cache, no-store, …`,
+  // so those shells no longer cache offline (XEDGE-6 residual); a navigation
+  // the server did NOT mark no-store still does.
+  it("still caches a navigation the server did not mark no-store (Field Mode keeps its static shells)", async () => {
     const { handlers, puts } = loadServiceWorker({
       fetchImpl: async () => new Response("<html>page</html>", { status: 200, headers: { "Content-Type": "text/html" } }),
     });
@@ -331,6 +334,22 @@ describe("lib/swSession — the page's side of the contract", () => {
     const nav = { serviceWorker: { controller: null, getRegistration: async () => ({ active: { postMessage: (m: unknown) => posted.push(m) } }) } };
     expect(await postServiceWorkerMessage({ type: "SIGN_OUT" }, nav)).toBe(true);
     expect(posted).toEqual([{ type: "SIGN_OUT" }]);
+  });
+
+  it("posts to the controller SYNCHRONOUSLY — before the registration lookup, which a hard sign-out navigation may never let resolve", () => {
+    const posted: unknown[] = [];
+    const controller = { postMessage: (m: unknown) => posted.push(m) };
+    const nav = { serviceWorker: { controller, getRegistration: () => new Promise<never>(() => { /* never resolves */ }) } };
+    void clearServiceWorkerSession(nav); // un-awaited, exactly as every sign-out site calls it
+    expect(posted).toEqual([{ type: "SIGN_OUT" }]);
+  });
+
+  it("a registration lookup that throws AFTER the controller was posted still reports success, and the controller is posted once", async () => {
+    const posted: unknown[] = [];
+    const controller = { postMessage: (m: unknown) => posted.push(m) };
+    expect(await clearServiceWorkerSession({ serviceWorker: { controller, getRegistration: async () => { throw new Error("nope"); } } })).toBe(true);
+    expect(await announceServiceWorkerSession("uid-b", { serviceWorker: { controller, getRegistration: async () => ({ active: controller, waiting: null }) } })).toBe(true);
+    expect(posted).toEqual([{ type: "SIGN_OUT" }, { type: "SESSION", id: "uid-b" }]);
   });
 
   it("is best-effort: no service worker API, no worker, or a throwing registration lookup → false, never a throw", async () => {

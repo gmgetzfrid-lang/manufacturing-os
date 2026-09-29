@@ -10,8 +10,13 @@
 // (document_shares: an expiry and a revoked_at), never on a presigned URL.
 //
 // One resolver, three outcomes:
-//   absent / blank   → the default (the app's own 3600 — the only value any
-//                       in-repo caller has ever asked for);
+//   absent / blank   → the default (3600, the app's own default: six in-repo
+//                       sites ask for exactly that; five image callers — the
+//                       org logo, avatars, folder covers, page backgrounds,
+//                       the branding preview — used to ask for a WEEK and now
+//                       take the default, with lib/storage caching only the
+//                       window the server GRANTED and re-signing before it
+//                       closes);
 //   not an integer   → refused (the route answers 400) — never NaN-through;
 //   otherwise        → clamped into [MIN, MAX], with `clamped` set so the
 //                       route can report what it actually granted.

@@ -1723,8 +1723,15 @@ one is where the other two would otherwise leak:**
    signs for at most `PRESIGNED_MAX_SECONDS` (3600, the app's own default),
    the caller's `expiresIn` is clamped into `[60, 3600]` or refused when it
    is not an integer, and the signed payload is `Cache-Control: no-store`.
-   Anything that must outlast an hour or be forwarded is a `document_shares`
-   row — it has an expiry and a `revoked_at`.
+   The client believes the GRANTED window, never the requested one:
+   `lib/storage.ts` caches one URL per path for the `expiresIn` the route
+   answered and re-signs at the margin before it closes. Six in-repo sites
+   ask for 3600; five image callers (the org logo, avatars, folder covers,
+   page backgrounds, the branding preview) used to ask for a week and now
+   take the granted hour, re-signed in place while on screen — images are
+   not share-surface material, so they are not routed there. Anything that
+   must outlast an hour or be forwarded is a `document_shares` row — it has
+   an expiry and a `revoked_at`.
 3. **The service worker caches no API response.** `public/sw.js` refuses to
    store any same-origin `/api/` response (allow-list empty, on purpose) and
    any response marked `no-store` / `private`, never replays an `/api/` entry
@@ -1770,3 +1777,5 @@ replay; a stated need for longer presigned windows raises the ceiling in one
 constant — neither reopens member writes to the record.
 
 **Risk:** low — every change narrows; nobody gains anything on apply.
+
+*Corrected 2026-09-23 (document-control Round F fix pass): §2 first said "the app's own default" was the only lifetime any caller had asked for. It was not — five image callers asked for 604800. The clamp alone would have left `lib/storage.ts` (cache keyed by the requested window) and the per-component avatar / background / cover caches holding a dead URL for a week; §2 now states the client half of the contract (cache by path, honour the granted window, re-sign at the margin) and names the five callers, which take the granted hour rather than a share-surface route.*

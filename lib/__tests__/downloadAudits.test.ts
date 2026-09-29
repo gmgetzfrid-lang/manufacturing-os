@@ -90,6 +90,9 @@ describe("20261068 — download_audits becomes an append-only, attributed record
     const begin = m.indexOf("\nBEGIN;");
     const commit = m.indexOf("\nCOMMIT;");
     expect(temp).toBeGreaterThan(0);
+    // the temp table is outside the transaction: a failed run leaves it in a
+    // pooled session, so a re-run must drop it first (and re-capture)
+    expect(m.slice(0, temp)).toMatch(/DROP TABLE IF EXISTS dc_round_f_68_before;\s*$/);
     expect(begin).toBeGreaterThan(temp);
     expect(commit).toBeGreaterThan(begin);
     const inv = m.slice(temp, begin);
@@ -154,9 +157,32 @@ describe("policy census — the live download_audits policy set, replayed from s
     const files = readdirSync(dir).filter((f) => /^\d{8}/.test(f) && f.endsWith(".sql")).sort().map((f) => join(dir, f));
     return [join(root, "supabase", "schema.sql"), ...files];
   }
-  const polRe = /CREATE\s+POLICY\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?download_audits"?\s+(?:AS\s+\w+\s+)?FOR\s+(\w+)/gi;
+  // FOR is optional in CREATE POLICY and defaults to ALL — a policy written
+  // without it is the widest shape there is, so the census must count it as
+  // ALL rather than not see it. ALTER POLICY can change USING / WITH CHECK
+  // without a CREATE; the replay cannot model it, so it fails loudly.
+  const polRe = /CREATE\s+POLICY\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?download_audits"?(?:\s+AS\s+\w+)?(?:\s+FOR\s+(\w+))?/gi;
   const dropRe = /DROP\s+POLICY\s+IF\s+EXISTS\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?download_audits"?/gi;
+  const alterRe = /ALTER\s+POLICY\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?download_audits"?/gi;
   const doRe = /\bDO\s+(\$\w*\$)([\s\S]*?)\1\s*;/gi;
+  type Ev = { at: number; kind: "create" | "drop"; name: string; cmd?: string };
+  function policyEvents(txt: string, file = "<inline>"): Ev[] {
+    const events: Ev[] = [];
+    for (const a of txt.matchAll(alterRe)) expect.fail(`${file}: ALTER POLICY ${a[1]} ON download_audits — the census replays CREATE / DROP only; extend it before trusting it`);
+    for (const m of txt.matchAll(polRe)) events.push({ at: m.index ?? 0, kind: "create", name: m[1], cmd: (m[2] ?? "ALL").toUpperCase() });
+    for (const m of txt.matchAll(dropRe)) events.push({ at: m.index ?? 0, kind: "drop", name: m[1] });
+    return events.sort((a, b) => a.at - b.at);
+  }
+
+  it("counts a CREATE POLICY without FOR as ALL, sees AS PERMISSIVE / RESTRICTIVE, and refuses ALTER POLICY", () => {
+    expect(policyEvents('CREATE POLICY "download_audits_member" ON download_audits TO authenticated USING (true);').map((e) => [e.name, e.cmd]))
+      .toEqual([["download_audits_member", "ALL"]]);
+    expect(policyEvents("CREATE POLICY x ON public.download_audits AS RESTRICTIVE FOR DELETE USING (false);").map((e) => [e.name, e.cmd]))
+      .toEqual([["x", "DELETE"]]);
+    expect(policyEvents("CREATE POLICY y ON download_audits AS PERMISSIVE USING (true);").map((e) => [e.name, e.cmd]))
+      .toEqual([["y", "ALL"]]);
+    expect(() => policyEvents("ALTER POLICY download_audits_select ON download_audits USING (true);")).toThrow(/ALTER POLICY/);
+  });
 
   it("is exactly {download_audits_insert_own: INSERT, download_audits_select: SELECT} — no UPDATE, DELETE or ALL survives", () => {
     const live = new Map<string, string>();
@@ -171,12 +197,7 @@ describe("policy census — the live download_audits policy set, replayed from s
       for (const d of txt.matchAll(doRe)) {
         if (/EXECUTE\s+format|CREATE\s+POLICY/i.test(d[2])) expect(d[2], `${file}: a DO block creates policies and names download_audits`).not.toMatch(/download_audits/);
       }
-      type Ev = { at: number; kind: "create" | "drop"; name: string; cmd?: string };
-      const events: Ev[] = [];
-      for (const m of txt.matchAll(polRe)) events.push({ at: m.index ?? 0, kind: "create", name: m[1], cmd: m[2].toUpperCase() });
-      for (const m of txt.matchAll(dropRe)) events.push({ at: m.index ?? 0, kind: "drop", name: m[1] });
-      events.sort((a, b) => a.at - b.at);
-      for (const ev of events) {
+      for (const ev of policyEvents(txt, file)) {
         if (ev.kind === "create") { live.set(ev.name, ev.cmd!); if (ev.name === "download_audits_org_access") sawOriginal = true; }
         else live.delete(ev.name);
       }
@@ -278,6 +299,24 @@ describe("nudgeStaleHolders reaches MEMBERS only and records the external copies
     expect(n).toBe(0);
     expect(state.emits).toHaveLength(0);
     expect(state.audits).toHaveLength(0);
+  });
+
+  it("an UNREADABLE record nudges nobody and puts that on the record — never a silent 'nobody was stale' (the auto path)", async () => {
+    const n = await nudgeStaleHolders({
+      orgId: "org1", documentId: "d1", docLabel: "P-101", currentRev: "5", currentVersionId: "v5",
+      holders: [], unavailable: true, actorUserId: "ctrl", actorName: "doccontrol", source: "auto",
+    });
+    expect(n).toBe(0);
+    expect(state.emits).toHaveLength(0);
+    expect(state.audits).toHaveLength(1);
+    expect(state.audits[0]).toMatchObject({ type: "DISTRIBUTION_RECALL", documentId: "d1", versionId: "v5", userId: "ctrl" });
+    expect(state.audits[0].details).toEqual({ source: "auto", currentRev: "5", recipientCount: 0, recipients: [], externalCopies: 0, unavailable: true });
+  });
+
+  it("the publish pipeline forwards the reader's flag to the nudge", () => {
+    const src = read("lib/postPublish.ts");
+    expect(src).toMatch(/const \{ holders, unavailable \} = await getDocumentRecall\(input\.documentId, currentVersionId\);/);
+    expect(src).toMatch(/holders,\s*unavailable,/);
   });
 });
 
