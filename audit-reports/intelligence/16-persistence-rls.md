@@ -193,7 +193,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 ## IRLS-6 · 20260806_intelligence_layer.sql ALTERs a table that is not created until 20260911 — the whole file rolls back on a fresh database
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260806_intelligence_layer.sql:57-61`, `supabase/migrations/20260911_knowledge_ai.sql:91`, `lib/schemaExpectations.ts:1-13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on a fresh DB: knowledge_questions does not exist in supabase/schema.sql (grep over its 1341 lines returns nothing), there is no README or ordering manifest in supabase/migrations, and lib/schemaExpectations.ts:4-5 states migrations are "applied BY HAND in the Supabase SQL editor" — where a multi-statement script runs as one implicit transaction, so the whole file rolls back. The knock-on is real too: 20260807_link_proposals.sql:95 does `ALTER TABLE document_related_resources ADD COLUMN…` on a table only created at 20260806:68, inside the file that just aborted.
@@ -216,7 +216,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] a fresh-database replay of migrations in filename order completes with zero errors
 - [ ] /api/admin/schema-health is run against a fresh install and reports every EXPECTED_TABLE present
 
-**Resolution (2026-09-30, intelligence Round G).** Confirmed first with a static in-order replay of every numbered migration against the `schema.sql` baseline. It found exactly one ALTER reaching a table that is created later: `20260806` → `knowledge_questions`, which `20260911` creates. What landed:
+**Partial (2026-09-30, intelligence Round G).** Code complete, pending verification: criteria 2 and 3 need a fresh-database replay that this environment cannot run. Confirmed first with a static in-order replay of every numbered migration against the `schema.sql` baseline. It found exactly one ALTER reaching a table that is created later: `20260806` → `knowledge_questions`, which `20260911` creates. What landed:
 
 - In `supabase/migrations/20260806_intelligence_layer.sql`, the ALTER and its two indexes now run inside `DO $$ … IF to_regclass('public.knowledge_questions') IS NOT NULL THEN … END IF; END $$;`. The statements are byte-for-byte the originals. Every live deployment already has the table, so the file behaves as before there. On a fresh replay the file no longer rolls back.
 - New `supabase/migrations/20261123_intel_roundG_knowledge_questions_order.sql` carries the SAME statements after `20260911`, inside one transaction, and ends in one verification SELECT (`check, ok, n`): the column exists as a STORED generated column over question and answer, and both indexes exist. On a live database it is three no-ops.
@@ -230,10 +230,10 @@ Tests: `lib/__tests__/intelRoundGMigrationOrder.test.ts`:
 
 **Done-when.**
 - ✓ The `knowledge_questions` ALTER and its two indexes are guarded in `20260806` with the `to_regclass` DO block AND carried by a migration dated after `20260911`.
-- Not verified here: a fresh-database replay of the migrations in filename order completing with zero errors. This environment has no database. The static in-order replay census over every numbered migration finds no remaining ALTER-before-CREATE and stands in until someone replays the sequence into an empty project.
-- Not verified here: running `/api/admin/schema-health` against a fresh install. Same reason; it belongs to the same replay.
+- ✗ Not verified: a fresh-database replay of the migrations in filename order completing with zero errors. This environment has no database. The static in-order replay census over every numbered migration finds no remaining ALTER-before-CREATE, but it is a stand-in, not the replay.
+- ✗ Not verified: running `/api/admin/schema-health` against a fresh install. Same reason; it belongs to the same replay.
 
-**Scope / residual.** Pending migration: `20261123_intel_roundG_knowledge_questions_order.sql`. On live deployments it is a no-op, and its SELECT confirms the column and indexes. The census only checks ALTER-before-CREATE ordering; other fresh-replay hazards (a function body referencing a later table, say) are outside it. I-07's DWG-9 (`20261009_trace_method.sql`) is the same class, in a separate file.
+**Scope / residual.** Pending migration: `20261123_intel_roundG_knowledge_questions_order.sql`. On live deployments it is a no-op, and its SELECT confirms the column and indexes. The census only checks ALTER-before-CREATE ordering; other fresh-replay hazards (a function body referencing a later table, say) are outside it. I-07's DWG-9 (`20261009_trace_method.sql`) is the same class, in a separate file. OPEN until someone replays the numbered sequence into an empty project and runs schema-health against it.
 
 ---
 

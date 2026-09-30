@@ -61,14 +61,17 @@ knowledgeIngest.ts:102-103 `const obj = await r2.send(new GetObjectCommand({ Buc
 **Resolution (2026-09-30, intelligence Round G).** Reproduced first (DEC-29) against the pre-fix engine. A row re-pointed at Rev 4 between the batch's download and its commit was stamped `status: 'ready', pages_indexed: 1`, with Rev 3's chunks under it. What landed, in `lib/knowledgeIngest.ts` `ingestKnowledgeDocBatch`:
 
 - **Compare-and-set at commit.** The final UPDATE is conditional on everything the batch read: `.eq("ingest_claimed_by", driver).eq("file_key", …).eq("source_version_id", …).eq("pages_indexed", from)`, with `.select("id")`. Zero rows means the row moved: re-pointed, deleted, or the claim was lost. The batch then deletes exactly the chunk and entity rows it inserted (by id), never touches the row, and returns `superseded: true`. The row keeps saying what it says (`stale`, `pages_indexed: 0`, the new `source_rev`) and stays queued for the correct re-index.
-- **One lease for both writers.** The rev-up refresh in `lib/knowledgeSourceSync.ts` now goes through `resetKnowledgeIndex` (ING-3), which takes the SAME claim. A refresh that finds a batch mid-write is reported `busy` and counted as `deferred`. The next sync pass does it. It no longer lands under the batch. The mirror-image variant the verifier added (the sync lands first, and the batch indexes pages 51+ of the new file as if 1–50 were done) is closed the same way: the claim makes the two exclusive, and the commit compares `pages_indexed`.
+- **One lease for both writers.** The rev-up refresh in `lib/knowledgeSourceSync.ts` now goes through `resetKnowledgeIndex` (ING-3), which takes the SAME claim. When a batch holds it, still writing the OLD revision, the refresh does not wait and does not defer (`supersedeBusy`): it re-points the row at once, with its own compare-and-set on the file and version the row named, and deletes the old index. That batch's commit then misses (the file, the version and `pages_indexed` all moved) and it withdraws what it wrote. So the superseded revision is never completed to `ready`, and it is not served until the library's next rotation turn. A same-file reset (the drawing rebuild, a library re-index) cannot be seen by the compare-and-set of a batch that started at page 0, so it still reports that document `busy` and waits its turn. The mirror-image variant the verifier added (the sync lands first, and the batch indexes pages 51+ of the new file as if 1–50 were done) is closed the same way: the commit compares `pages_indexed`.
+- **A refresh that did not land comes round first.** If a refresh fails before the row moves, or another sync re-pointed the row first, the library's `last_synced_at` is set to NULL (never synced), which the cron's rotation reaches first (ILIFE-13).
 
-Tests: `lib/__tests__/ingestLock.test.ts` ("a rev-up that lands mid-batch: the batch withdraws its rows and the row keeps saying 'stale'", "the rev-up refresh never lands under a batch holding the claim — it is deferred", "a deleted row mid-batch is superseded, not an error"), and `lib/__tests__/sourceSync.test.ts` ("ING-1: a mirror mid-batch is deferred, not reset under the batch").
+Tests:
+- `lib/__tests__/ingestLock.test.ts`: "a rev-up that lands mid-batch: the batch withdraws its rows and the row keeps saying 'stale'"; "a rev-up that lands while a batch writes the OLD revision re-points the row at once; the batch's commit misses and withdraws" (the whole refresh runs just before the batch's commit); "a same-file reset … waits its turn"; "a deleted row mid-batch is superseded, not an error".
+- `lib/__tests__/sourceSync.test.ts`: "ING-1: a rev-up that finds a batch writing the old revision re-points the row at once — Rev 3 never reaches 'ready'"; "a purge that fails before the row moves leaves the old version, and the library comes round FIRST next run".
 
 **Done-when.**
 - ✓ The batch's final UPDATE is conditional on the `file_key` and `source_version_id` it read, and on the claim and the starting `pages_indexed`. A zero-row result means "superseded, discard this batch".
 - ✓ Chunks, and the entity rows, inserted by a superseded batch are removed, by id. Another writer's rows are never touched.
-- ✓ The sync refresh and the ingest batch share the claim introduced for ING-2 (`claimIngestLease`, called by both `ingestKnowledgeDocBatch` and `resetKnowledgeIndex`).
+- ✓ The sync refresh and the ingest batch share the claim introduced for ING-2 (`claimIngestLease`, called by both `ingestKnowledgeDocBatch` and `resetKnowledgeIndex`). A rev-up that finds the claim held supersedes the batch rather than waiting behind it.
 
 **Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. Without it the batch runs unclaimed and its commit compares `file_key` and `source_version_id` only. That still catches this finding's rev-up case. The drawing rebuild in `app/api/knowledge/drawing/route.ts` is I-07's file. It still resets rows without the claim until I-07 moves it onto `resetKnowledgeIndex` (the plan says it will). Until then, a rebuild that lands under a first batch (`pages_indexed` 0 → 0, same file) is the one interleaving the compare-and-set cannot see. Decision: `DEC-54`.
 
@@ -161,19 +164,22 @@ lib/knowledgeSourceSync.ts:242-247 deletes only `.from("knowledge_chunks")`; the
   - the MACHINE-derived `entity_mentions` (`is_explicit = false`; a person's pin survives);
   - on a rev-up, the cached `knowledge_line_traces`. Their migration comment assumed a new revision gets a new row, and it does not.
 
-  Only then does it reset the row, with every counter zeroed. Deletes run first and the row last, so a failure leaves the row on the old version and the next pass repeats the whole reset.
-- **The refresh uses it.** The rev-up REFRESH branch of `syncKnowledgeLibrarySources` calls it with the new `file_key` / version / rev. A failure is skipped and reported the same way `chunkErr` was.
+  The ORDER is what makes an interrupted reset safe. On a rev-up, the cached traces go first, while the row still names the old file. A failure there leaves everything as it was, and the next pass repeats the whole reset. Next, THE ROW is queued (`stale`, every counter zeroed, re-pointed on a rev-up), BEFORE any chunk or entity is deleted. An interrupted reset therefore leaves a queued row, never a `ready` row whose chunks are gone (which Ask would silently return nothing for). A delete that fails after that is reported, and it is not lost. The first batch of the new index generation, under the claim, clears EVERY chunk and page entity of the document before writing, not just its own page range. The mention pass replaces the machine mentions when the document reaches `ready`.
+- **The refresh uses it.** The rev-up REFRESH branch of `syncKnowledgeLibrarySources` calls it with the new `file_key` / version / rev. Every failure is reported in the sync's errors, as `chunkErr` was.
+- **Mentions come back.** The reset drops the machine mentions, so `ingestKnowledgeDocBatch` rebuilds them (`rebuildDocumentMentions`, the route's old 8-second-capped mention pass, moved into the lib) wherever a batch takes the document to `ready`. That covers the cron drain too, not only the interactive route. An accepted partial index rebuilds them as well.
 - **Pruning.** Every main-pass ingest batch deletes chunks and entities with `page > pageCount`.
 - **Existing residue.** `20261122` §7 deletes the page entities and chunks already sitting past their document's page count. They are counted in the pre-apply inventory.
 
-Tests: `lib/__tests__/sourceSync.test.ts` ("chunks, page entities, machine mentions and cached traces go; a person's pin stays; the row restarts", "rev N has fewer sheets than rev N-1: after the re-read no entity survives past the new page count", "a failed entity purge skips the refresh…"), and `lib/__tests__/ingestLock.test.ts` ("a revision with fewer sheets keeps nothing past its last page").
+Tests:
+- `lib/__tests__/sourceSync.test.ts`: "chunks, page entities, machine mentions and cached traces go; a person's pin stays; the row restarts"; "rev N has fewer sheets than rev N-1: after the re-read no entity survives past the new page count"; "the row is queued BEFORE the index is deleted: a purge that fails part-way never leaves a 'ready' row without its chunks"; "a purge that fails before the row moves leaves the old version…"; "a cron-drained rev-up gets its document↔equipment mentions back when the re-index reaches 'ready'".
+- `lib/__tests__/ingestLock.test.ts`: "a revision with fewer sheets keeps nothing past its last page"; "a new index generation's first batch clears everything the last one left — even past its own page range".
 
 **Done-when.**
 - ✓ The refresh branch deletes `knowledge_page_entities` for the document alongside `knowledge_chunks`. It also deletes machine mentions and, on a rev-up, cached traces.
 - ✓ A re-ingest of a document whose page count shrank prunes entity rows (and chunks) with `page > page_count`.
 - ✓ A test covers "rev N has fewer sheets than rev N-1" and asserts no entity row survives past the new page count.
 
-**Scope / residual.** The code needs no migration. `20261122` §7 cleans residue already in the database (pending apply). Some old-revision tags cannot be found in SQL: a re-ingest that completed before this landed may have left them on pages the new file still has, because entity rows carry no revision. The next rev-up or rebuild clears them, and the inventory counts the stale-mirror population. Rows the Bridge already derived from superseded tags (`documents.asset_tags`, `document_assets`) are I-11's GAP-309 delta, which consumes this reset. They are not purged here. Decision: `DEC-54`.
+**Scope / residual.** The code needs no migration. `20261122` §7 cleans residue already in the database (pending apply). If a reset is interrupted after the row is queued, the old rows it had not yet deleted stay until the re-index's first batch. The document is `stale`, so Ask does not retrieve it, but the entity readers do not filter on status. Some old-revision tags cannot be found in SQL: a re-ingest that completed before this landed may have left them on pages the new file still has, because entity rows carry no revision. The next rev-up or rebuild clears them, and the inventory counts the stale-mirror population. Rows the Bridge already derived from superseded tags (`documents.asset_tags`, `document_assets`) are I-11's GAP-309 delta, which consumes this reset. They are not purged here. Decision: `DEC-54`.
 
 ---
 
@@ -182,7 +188,7 @@ Tests: `lib/__tests__/sourceSync.test.ts` ("chunks, page entities, machine menti
 ## ING-4 · Tables are never atomic: splitTables/chunkPageText's whole table path is unreachable from ingestion
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeText.ts:305`, `lib/knowledgeText.ts:53-86`, `lib/knowledgeText.ts:88-127`, `lib/knowledgeIngest.ts:316-328`, `lib/knowledgeVision.ts:49-51`, `lib/__tests__/knowledgeText.test.ts:312-345`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The code claim is exactly right and decisive. Severity lowered because the finding missed a live guard: the safety net splitTables' own comment claims to have retired ('the answer prompt then had to carry a standing disclaimer … needs no disclaimer') is STILL in the prompt — app/api/knowledge/ask/route.ts:1501-1502 requires a '**Check:**' line 'whenever a value comes from a table, because PDF table extraction jumbles numbers'. Answers built on jumbled tables are therefore still flagged to the reader, making this a serious quality regression rather than an unguarded wrong-value path.
@@ -207,7 +213,7 @@ Executed a verbatim type-stripped transcription of splitPageIntoSections/splitTa
 - [ ] A test asserts on the FULL ingest path (lines[] → splitPageIntoSections → chunkPageText), not on chunkPageText with a hand-made newline string
 - [ ] A vision-transcribed table with ' | ' separators comes out of the ingest path as one chunk containing '\n' between rows
 
-**Resolution (2026-09-30, intelligence Round G).** Per 99, the demonstration was re-run against a real ingested document shape before the chunker was touched. A PDF written with pdf-lib was read back through unpdf's text layer, with ingestion's own line rebuild, and run through `splitPageIntoSections` → `chunkPageText`. The re-run found:
+**Partial (2026-09-30, intelligence Round G).** Code complete, pending activation: chunker 2 is built and tested, but no library uses it until `20261122` is applied and a controller runs the re-index. Today the only way to run it is the API; the button is I-02's. Per 99, the demonstration was re-run against a real ingested document shape before the chunker was touched. A PDF written with pdf-lib was read back through unpdf's text layer, with ingestion's own line rebuild, and run through `splitPageIntoSections` → `chunkPageText`. The re-run found:
 
 - **The finding holds.** The production path (the space join) yields one flattened chunk: `…TABLE 3 - BOLT TORQUE Size Torque Notes 1/2" 45 ft-lb dry 3/4" 100 ft-lb dry…`.
 - **The proposed one-line fix was not enough.** With the lines kept, the text-layer table was STILL not detected. `isTableLine`'s pattern `\S\s{2,}\S+\s{2,}\S` needs the middle cell to be a single token, and `1/2"   45 ft-lb   dry` has a space in it. The existing unit test "column-aligned text-layer tables are detected too" had been passing on the prose path, never as a table.
@@ -224,25 +230,29 @@ Chunker 1 stays byte-for-byte what it was. The inline line rebuild moved into `p
 
 A library moves only by an explicit action: `POST /api/knowledge/ingest { action: "reindex", libraryId, chunker: 2 }` in `app/api/knowledge/ingest/route.ts`, which calls `reindexLibraryChunks` in `lib/knowledgeIngest.ts`.
 
-- It is controller-only (the role collection decides) and audited as `KNOWLEDGE_LIBRARY_REINDEXED`.
-- It reports `visionPagesToReread`, the AI-vision pages the re-index will read (and bill) again.
-- It resets every document through `resetKnowledgeIndex`. A document mid-batch is reported `busy`.
+- It is controller-only (the role collection decides).
+- **A dry run comes first.** `dryRun: true` changes nothing. It answers `{ documents, toReset, visionPagesToReread }`: the documents a run would reset, and the AI-vision pages they would read (and bill) again. That is the number to confirm before anything is deleted.
+- **The intent is recorded before anything is reset.** A real run writes `KNOWLEDGE_LIBRARY_REINDEXED` (chunker, `toReset`, `visionPagesToReread`) first, as a checked write. A run that cannot be recorded changes nothing. Only then is the library's choice recorded, and then its documents are reset through `resetKnowledgeIndex`.
+- **It is bounded and resumable.** Documents are reset one at a time until the invocation's deadline. The answer says `remaining`: run it again to continue. A document already on the chosen chunker, or with nothing indexed yet (its first batch takes the library's choice), is skipped. A re-run therefore never resets, or re-bills, a document twice. A document mid-batch is reported `busy`, and the next run picks it up.
+- **An interrupted reset is safe.** The reset queues each row before it deletes anything (ING-3), so a kill mid-document leaves that document re-queued, not `ready` with no chunks.
 
 `knowledge_libraries.chunk_version` records the library's choice. `knowledge_documents.chunk_version` stamps the chunker a document started with, so its chunk boundaries never mix.
 
 Tests:
 - `lib/__tests__/knowledgeText.test.ts`: "re-run on a REAL extracted PDF…", "the repo's real P&ID fixtures: chunker 2 invents no table and loses no word", "a vision-transcribed table…", "keepLines…", "a text-layer row with multi-word cells is a table line…", "the FIGURE 5-1 span table now really is its own chunk", and the `pageLinesFromTextItems` block.
 - `lib/__tests__/ingestLock.test.ts`: "a vision-read table is ONE chunk…", "chunker 1 … is unchanged", "a document keeps the chunker it started with…".
-- `lib/__tests__/ingestRoute.test.ts`: the reindex block.
+- `lib/__tests__/ingestRoute.test.ts`: the reindex block ("a dry run says what the re-index would reset and re-bill — before anything is changed", "the intent is audited first, then every document resets" — including a re-run that resets nothing, "a run that cannot record its intent changes nothing", "… the next run picks it up", "bounded by a deadline…").
 
-**Done-when.**
-- ✓ `splitPageIntoSections` keeps line structure, so `splitTables` sees real rows. This holds under chunker 2. Chunker 1 is deliberately unchanged per the decision: every chunk boundary moves, and so does every vision bill.
-- ✓ Tests assert on the FULL ingest path over real PDFs (pdf-lib → unpdf → the production line rebuild → `splitPageIntoSections` → `chunkPageText`), and through `ingestKnowledgeDocBatch`.
-- ✓ A vision-transcribed table with ` | ` separators comes out of the ingest path as ONE chunk with `\n` between its rows. This is asserted as a pure function and through the engine.
+**Done-when.** Each criterion holds under chunker 2 only. The default ingestion path (chunker 1) is deliberately unchanged, per the decision: every chunk boundary moves, and so does every vision bill.
+- ✓ (chunker 2) `splitPageIntoSections` keeps line structure, so `splitTables` sees real rows.
+- ✓ (chunker 2) Tests assert on the FULL ingest path over real PDFs (pdf-lib → unpdf → the production line rebuild → `splitPageIntoSections` → `chunkPageText`), and through `ingestKnowledgeDocBatch`.
+- ✓ (chunker 2) A vision-transcribed table with ` | ` separators comes out of the ingest path as ONE chunk with `\n` between its rows. This is asserted as a pure function and through the engine.
+- ✗ Not yet active anywhere. No library reaches chunker 2 until `20261122` is pasted and a controller runs the re-index.
 
 **Scope / residual.**
 - Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (the two `chunk_version` columns). Without it the action answers 424 naming the migration, and every library stays on chunker 1.
-- The "Re-index with table-aware chunking" button on the knowledge library page (`app/(protected)/knowledge/[id]/page.tsx`) is I-02's file. It is handed over with the API contract above. Until it lands, the action is reachable through the API only.
+- The "Re-index with table-aware chunking" button on the knowledge library page (`app/(protected)/knowledge/[id]/page.tsx`) is I-02's file. It is handed over with the API contract above: a dry run to show `visionPagesToReread`, then the run, repeated while `remaining` > 0 and the last run reset something. Until it lands, the action is reachable through the API only.
+- OPEN until `20261122` is applied and the I-02 button ships.
 - The meaning index re-embeds the new chunks through its own pipeline. Re-arming it after ingestion is I-02's SEM-8.
 - The answer prompt's table-value "Check:" line (`app/api/knowledge/ask/route.ts`, I-03) is left as is, because chunker 1 libraries still need it.
 
@@ -313,19 +323,37 @@ knowledgeIngest.ts:195-196 `// Provider hiccup: leave the page textless rather t
 - **The failed read is recorded.** The page keeps whatever its text layer holds, and its number goes onto `knowledge_documents.vision_failed_pages` with the provider's message (`visionError`).
 - **The document is held.** It does not reach `ready` while any failed page remains.
 - **The page is retried on the next pass.** Once the main pass is through, a batch re-reads only the failed pages (forced vision, the page's section recovered from the chunk before it, its chunks and entities rewritten) and removes each one it reads.
-- **A retry that cannot succeed says so.** If a retry pass fails again on every page it tries, or there is no AI key to retry with, the batch throws a plain message (`visionRetryMessage`: which pages, why, and what to do). The route and the drain record it on the row as `error`, so nothing is parked silently.
-- **The explicit exit.** `POST /api/knowledge/ingest { documentId, action: "accept-partial" }` is controller-only and audited as `KNOWLEDGE_DOC_PARTIAL_ACCEPTED` with the page list. It makes the document `ready` with the unread pages still listed.
+- **A retry that cannot run, or fails again, is said, and it never errors the document.** Ask retrieves only documents in `ready` or `indexing`, so marking a partly-read document `error` would drop ALL of it from answers. Instead the batch returns `visionRetryBlocked` and "parks" the row, under its compare-and-set, releasing the claim in the same UPDATE. The document keeps its whole index and stays `indexing`. `error` carries the plain message (`visionRetryMessage`: which pages, why, what to do, and that the rest is searchable meanwhile). `knowledge_documents.vision_retry_after` (new in `20261122`) records when the pages are next tried:
+  - **No AI key** (a keyless controller's tab, the cron without a sponsored key): stamped now. This is decided before anything is downloaded. It holds no driver back, but it files the document behind every document with real work in the cron's queue. The drain orders `vision_retry_after` NULLS FIRST, so waiting documents can never fill its 20-row head.
+  - **Every retried page refused again** (a provider still rate-limiting): a back-off of `VISION_RETRY_BACKOFF_MS` (30 minutes). No driver, with a key or without, asks the provider again before then; each finds the back-off and does nothing.
+
+  The route answers these with 409 and the message, so a library-page loop stops with the real reason instead of "stalled". The drain moves on. A successful retry clears both `error` and `vision_retry_after`.
+- **The explicit exit.** `POST /api/knowledge/ingest { documentId, action: "accept-partial" }` is controller-only and audited as `KNOWLEDGE_DOC_PARTIAL_ACCEPTED` with the page list. It makes the document `ready` with the unread pages still listed. It takes the document's ingest claim, like every writer: while a retry batch holds the claim it answers 409, and the acceptance and the claim's release are one UPDATE. A batch commit never writes back a `vision_partial_accepted` it read (only a new generation clears it), so no batch in flight can undo an audited acceptance. The document's mentions are rebuilt on acceptance.
+- **The API contract is kept.** `pagesIndexed` stays the resume point, the field clients' stall detectors key on. The failure-adjusted count is the new `pagesReadable`.
 
 A transcript under 60 characters (the model saw nothing legible) is counted as a read, empty page (`empty_pages`, ING-11), not a failure, because re-reading it changes nothing.
 
-Tests: `lib/__tests__/ingestLock.test.ts` ING-6 block ("records the page, holds 'ready', retries it on the next pass, then completes", "a retry pass in which every page fails again says so…", "a retry with no AI key names what is needed", "an accepted partial index is 'ready' with the unread pages still listed"), and `lib/__tests__/ingestRoute.test.ts` ("accept-partial: …", "accept-partial refuses…", "a member without a controller role…", "the response says how many pages AI vision could not read").
+Tests:
+- `lib/__tests__/ingestLock.test.ts` ING-6 block:
+  - "records the page, holds 'ready', retries it on the next pass, then completes";
+  - "a retry pass in which every page fails again backs off and says so — the document stays 'indexing' and retrievable" (with the back-off holding, then running out and completing);
+  - "a keyless driver (a controller's tab without a key) leaves the document 'indexing' and retrievable, with the reason on the row";
+  - "the cron drain without a sponsored key does the same — never 'error', never billed";
+  - "documents waiting on a vision retry can never hold the head of the cron's queue";
+  - "an accepted partial index is 'ready' with the unread pages still listed".
+- `lib/__tests__/ingestRoute.test.ts`:
+  - "a keyless controller's POST on a document awaiting a vision retry: 409 with the reason; the document stays 'indexing' and searchable";
+  - "accept-partial takes the claim: refused while a retry batch holds it…";
+  - "an accepted partial index is not undone by a batch that runs afterwards; its mentions are rebuilt";
+  - "accept-partial: …", "accept-partial refuses…", "a member without a controller role…";
+  - "the response says how many pages AI vision could not read".
 
 **Done-when.**
 - ✓ Failed pages are recorded per document (`vision_failed_pages`). They are surfaced on the ingest response's `visionSkipReason` ("N pages could not be read by AI vision (…) — retried automatically…"), which the app-shell indicator renders directly under "N pages read by AI vision". Showing it permanently on the library's document list is `app/(protected)/knowledge/[id]/page.tsx`, I-02's file; the column is on every row it already reads.
-- ✓ The pages are re-queued, not committed as read. The document does not reach `ready` while any remain, except by an explicit, audited acceptance.
+- ✓ The pages are re-queued, not committed as read. The document does not reach `ready` while any remain, except by an explicit, audited acceptance. It is never pushed out of retrieval meanwhile: a retry that cannot run, or fails again, leaves it `indexing` with the reason on the row, never `error`.
 - ✗ Not done here. The DRAWING FACTS prompt block is in `app/api/knowledge/ask/route.ts` (I-03 is its sole owner). The count it needs is `knowledge_documents.vision_failed_pages`.
 
-**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (`vision_failed_pages`, `vision_partial_accepted`). Without it the unclaimed path cannot record a failure: the page is committed textless as before. OPEN until I-03 states the unread count in DRAWING FACTS.
+**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (`vision_failed_pages`, `vision_retry_after`, `vision_partial_accepted`). Without it the unclaimed path cannot record a failure: the page is committed textless as before. The "accept the partial index" exit is reachable through the API only. Its button, and showing `error` on a document that is still `indexing`, are on `app/(protected)/knowledge/[id]/page.tsx`, I-02's file. That page shows `error` only for status `error` today. OPEN until I-03 states the unread count in DRAWING FACTS.
 
 ---
 
@@ -334,7 +362,7 @@ Tests: `lib/__tests__/ingestLock.test.ts` ING-6 block ("records the page, holds 
 ## ING-7 · Chunk boundaries are page-scoped: a provision spanning a page break is never in one chunk, and the 160-char overlap does not cross pages
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:123`, `lib/knowledgeIngest.ts:316-328`, `lib/knowledgeText.ts:140-161`, `lib/knowledgeIngest.ts:119`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. True by construction, and slightly understated — chunking is per SECTION SEGMENT within a page (knowledgeIngest.ts:316-321), so a provision straddling a section heading is split too. I searched for a mitigation and found none: the ask route has no neighbouring-page expansion, the orchestrator has no read-page tool, and the per-document cap of 3 in fuseTier (ask/route.ts:526-533) actively reduces the chance both sides of a page break are retrieved together.
@@ -358,20 +386,31 @@ lib/knowledgeIngest.ts:123 opens the page loop; lines 316-328 build and push chu
 - [ ] Ingestion carries a tail of the previous page's text into the first chunk of the next page (the same way last_section is carried), or chunks over a rolling multi-page buffer
 - [ ] A test asserts that a sentence straddling a page break appears intact in at least one chunk
 
-**Resolution (2026-09-30, intelligence Round G).** Reproduced with the finding's own example: under chunker 1, the provision "Preheat shall be maintained at not less than 175F for P-No. 5 materials over 1/2 in. nominal thickness, except …", split across a page break, appears intact in no chunk. What landed is part of chunker 2 (see ING-4 and `DEC-54`; opt-in per library, never automatic):
+**Partial (2026-09-30, intelligence Round G).** Code complete, pending activation (as ING-4): the carry is part of chunker 2, which no library uses until `20261122` is applied and a controller re-indexes it. Reproduced with the finding's own example: under chunker 1, the provision "Preheat shall be maintained at not less than 175F for P-No. 5 materials over 1/2 in. nominal thickness, except …", split across a page break, appears intact in no chunk. What landed is part of chunker 2 (see ING-4 and `DEC-54`; opt-in per library, never automatic):
 
 - **`pageTail` (`lib/knowledgeText.ts`).** It finds the unfinished sentence at the foot of a page: the words after the last stop that is followed by a capital, so the standards' abbreviations ("P-No. 5", "1/2 in.") do not cut it short. It is empty when the page ends on a sentence end, and capped at 400 characters, surrogate-safe.
 - **The carry (`ingestKnowledgeDocBatch`).** Like `last_section`, the tail is carried into the first chunk of the next page when that page continues the same section. It is marked `[cont. from p. N]` so a reader checking page N+1 can see which words came from page N.
 - **Across batches.** Across a batch boundary the tail is read back from the last chunk stored for the previous page. A chunk with a line break is a table and carries nothing.
 - **Short heads survive.** A short continuation at the top of a page used to be dropped by `chunkProse`'s 40-character floor. It now travels with its beginning.
+- **Prose only.** A drawing sheet has no sentence to finish. Its foot is a title block or a tag list, and carrying that onto the next sheet would put sheet N's tags on sheet N+1. A review probe showed a transcript's whole title block and tag list coming back as the "tail". So:
+  - `pageTail` returns nothing for a page with no sentence end anywhere, for a tail with no lowercase word (a label run such as `V-101 SUCTION DRUM P-201A CHARGE PUMP`), and for a tail that already holds a carried marker. A carry is never stacked onto the next page.
+  - The engine carries neither out of nor into a sheet-like page: one that declared a title block (a `self` entity, text layer or vision transcript alike), or a sparse page dense with tags. Across a batch boundary, a stored page with a `self` entity carries nothing.
+  - The page's own tail is taken before any carry is prepended to it.
 
-Tests: `lib/__tests__/ingestLock.test.ts` ("a sentence straddling a page break appears intact in one chunk under chunker 2 — and in none under chunker 1", "the carried sentence crosses a batch boundary too (read back from the stored last chunk of page 50)"), and `lib/__tests__/knowledgeText.test.ts` (the ING-7 block, including the finding's sentence).
+Tests:
+- `lib/__tests__/ingestLock.test.ts`:
+  - "a sentence straddling a page break appears intact in one chunk under chunker 2 — and in none under chunker 1";
+  - "the carried sentence crosses a batch boundary too (read back from the stored last chunk of page 50)";
+  - "a drawing set carries nothing from sheet to sheet under chunker 2 (vision transcripts and text-layer sheets alike)". This covers a sheet whose foot is a lowercase note, and it fails if the sheet gate is removed;
+  - "a carry is never carried on…".
+- `lib/__tests__/knowledgeText.test.ts`: the ING-7 block, including the finding's sentence, and "carries prose only: a page with no sentence end, a label run, or a carry is never carried".
 
-**Done-when.**
-- ✓ Ingestion carries a tail of the previous page's text into the first chunk of the next page, the same way `last_section` is carried, including across batch boundaries.
-- ✓ A test asserts that a sentence straddling a page break appears intact in at least one chunk.
+**Done-when.** Both criteria hold under chunker 2 only.
+- ✓ (chunker 2) Ingestion carries a tail of the previous prose page's text into the first chunk of the next page, the same way `last_section` is carried, including across batch boundaries.
+- ✓ (chunker 2) A test asserts that a sentence straddling a page break appears intact in at least one chunk.
+- ✗ Not yet active anywhere (see ING-4).
 
-**Scope / residual.** Activation, the pending migration and the UI button are ING-4's. Neighbour-chunk expansion at retrieval time was not built; it was not asked for. A carried tail places up to 400 characters of page N's text in a chunk cited as page N+1, and the marker says so.
+**Scope / residual.** Activation, the pending migration and the UI button are ING-4's. Neighbour-chunk expansion at retrieval time was not built; it was not asked for. A carried tail places up to 400 characters of page N's prose in a chunk cited as page N+1, and the marker says so. The mention indexer (`lib/mentionIndexer.ts`, I-08's file) reads chunks page by page. A tag named inside a carried prose sentence is therefore also counted on page N+1. The handoff: strip the `[cont. from p. N] …` line (`hasCarriedMarker` in `lib/knowledgeText.ts`) before matching. Drawing sheets never carry, so their tag lists are unaffected. OPEN until ING-4 is activated.
 
 ---
 
@@ -452,16 +491,16 @@ app/(protected)/knowledge/[id]/page.tsx:1520 `if (!/\.pdf$/i.test(file.name)) {`
 - [ ] A non-PDF upload does not leave an R2 object and an errored row behind
 - [ ] The error surfaced when a spreadsheet is uploaded names the right destination (the asset CSV importer) rather than a pdf.js internal message
 
-**Resolution (2026-09-30, intelligence Round G).** Confirmed first by reading, as the finding did: nothing on the server looked at the bytes before `getDocumentProxy`. What landed in `app/api/knowledge/ingest/route.ts`: on a document's first batch (`pages_indexed = 0`) the route reads the first KB of the stored object with a ranged GET (`sniffStoredFile`) and classifies it with `sniffBytes` (`lib/knowledgeIngest.ts`). The classes are `%PDF-` in the first 1,024 bytes; the ZIP container of .xlsx/.docx or the OLE container of .xls/.doc; PNG/JPEG/TIFF; text; unknown. This happens before pdf.js sees the file. When the file is not a PDF:
+**Resolution (2026-09-30, intelligence Round G).** Confirmed first by reading, as the finding did: nothing on the server looked at the bytes before `getDocumentProxy`. What landed is in the engine, so it covers BOTH drivers that can meet the file first: the interactive route, and the cron drain for an upload whose tab closed before its first POST. On a document's first batch (`pages_indexed = 0`), `ingestKnowledgeDocBatch` reads the first KB of the stored object under the claim with a ranged GET (`sniffStoredFile`). It classifies the bytes with `sniffBytes` and returns `notPdf` before pdf.js sees them. The classes are `%PDF-` in the first 1,024 bytes; the ZIP container of .xlsx/.docx or the OLE container of .xls/.doc; PNG/JPEG/TIFF; text; unknown. This happens before pdf.js sees the file. The caller then applies the one refusal, `refuseNonPdf` (`lib/knowledgeIngest.ts`). The route calls it with the controller's id and the drain with none. When the file is not a PDF:
 
 - **An upload** is a row with no source whose key is under `orgs/<org>/knowledge/`. Its row is deleted, its R2 object is deleted, `KNOWLEDGE_DOC_REJECTED` is audited, and the answer is 415 with a plain message (`notPdfMessage`), for example: *Only PDF files can be indexed — "equipment-list.pdf" is not a PDF (it looks like an Excel or Word file). To load an equipment list, open Operating areas and use Import CSV — it takes .xlsx, .xls and .csv.* The importer (`components/assets/AssetCsvImportModal.tsx`) now takes spreadsheets.
 - **A mirrored controlled file** is marked `error` with the same message. Its object is never deleted, because it belongs to doc control.
 
-Tests: `lib/__tests__/ingestRoute.test.ts` ING-9 block ("classifies by leading bytes", "a renamed spreadsheet upload is refused with the importer named, and leaves nothing behind", "a mirrored controlled file is marked with the message, never deleted", "a real PDF passes the sniff and indexes").
+Tests: `lib/__tests__/ingestRoute.test.ts` ING-9 block ("classifies by leading bytes", "a renamed spreadsheet upload is refused with the importer named, and leaves nothing behind", "a mirrored controlled file is marked with the message, never deleted", "a real PDF passes the sniff and indexes"), and `lib/__tests__/ingestLock.test.ts` ("ING-9 — the cron drain refuses a non-PDF exactly as the route does": the upload's row and object removed and audited with no user, the importer named; a mirror marked, never deleted).
 
 **Done-when.**
 - ✓ The route checks the leading bytes for `%PDF` before downloading or parsing, and returns "Only PDF files can be indexed…" in plain language.
-- ✓ A non-PDF upload leaves neither an R2 object nor an errored row behind. A mirror's object is doc control's and is not an upload.
+- ✓ A non-PDF upload leaves neither an R2 object nor an errored row behind, whichever driver meets it first: the route or the cron drain. A mirror's object is doc control's and is not an upload.
 - ✓ The error for a spreadsheet names the right destination (Operating areas → Import CSV) instead of a pdf.js internal message.
 
 **Scope / residual.** No migration. The browser-side `.pdf` check on the knowledge page is unchanged; that file is I-02's.
@@ -550,7 +589,7 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("empty pages accumulate across batche
 ## ING-12 · vision_pages is monotonic forever — rebuild and rev-up reset every other counter but not this one, so the per-sheet 'read by AI vision' verdict is永 sticky and the count inflates
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:458-467`, `app/api/knowledge/drawing/route.ts:371`, `lib/knowledgeSourceSync.ts:248-260`, `app/api/knowledge/drawing/route.ts:290-297`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide grep: `pages_indexed: 0` appears in exactly those two reset sites and neither touches vision_pages; no other code path writes the column. A rebuild that produces zero tags and zero chars still reports verdict 'vision' once status returns to 'ready'.
@@ -574,7 +613,7 @@ knowledgeIngest.ts:461-466 is the sole writer. drawing/route.ts:371 `.update({ s
 - [ ] Both reset paths (drawing rebuild, sourceSync refresh) set vision_pages: 0
 - [ ] The sheet verdict derives from the current index state (chunks/tags present) rather than a cumulative counter, or the counter is scoped to the current index generation
 
-**Resolution (2026-09-30, intelligence Round G).** Reproduced first (DEC-29) against the pre-fix sync: after a rev-up refresh the mirror still read `vision_pages: 3`. What landed:
+**Partial (2026-09-30, intelligence Round G).** Reproduced first (DEC-29) against the pre-fix sync: after a rev-up refresh the mirror still read `vision_pages: 3`. What landed:
 
 - **The reset zeroes it.** `resetKnowledgeIndex` (`lib/knowledgeIngest.ts`) sets `vision_pages: 0` along with `empty_pages`, the vision retry queue and a partial acceptance. The sync refresh uses it.
 - **A new generation starts from zero.** `ingestKnowledgeDocBatch` treats a batch that starts at page 0 as the start of a new index generation and restarts every counter there. That covers the drawing rebuild's current block in `app/api/knowledge/drawing/route.ts` (I-07's file), which resets the row without touching `vision_pages`: the rebuild's first re-read batch zeroes it. On a database without `20261122`, the legacy path does the same.
@@ -583,9 +622,9 @@ knowledgeIngest.ts:461-466 is the sole writer. drawing/route.ts:371 `.update({ s
 Tests: `lib/__tests__/sourceSync.test.ts` ("chunks, page entities, machine mentions and cached traces go…" asserts `vision_pages: 0`, "the shared reset without a file change…"), and `lib/__tests__/ingestLock.test.ts` ("ING-12: a re-index restarts every counter at page 0 — even after the drawing rebuild's own reset, which does not zero them", which uses the exact fields that route writes today).
 
 **Done-when.**
-- ✓ The sourceSync refresh writes `vision_pages: 0`. The drawing rebuild's reset is covered at its re-read's first batch. The rebuild itself writes the zero once I-07 moves it onto `resetKnowledgeIndex`, as I-07's plan says.
+- Half done. ✓ The sourceSync refresh writes `vision_pages: 0`. ✗ The drawing rebuild's reset (`app/api/knowledge/drawing/route.ts`, I-07's file) still does not write it. Its count is zeroed only when the re-read's first batch commits. The rebuild writes the zero itself once I-07 moves it onto `resetKnowledgeIndex`.
 - ✓ The counter is scoped to the current index generation. A rebuild with no key that reads nothing ends at `vision_pages: 0`, so the per-sheet verdict can no longer report the previous run's "vision".
 
-**Scope / residual.** No migration is needed: `vision_pages` exists since `20260922`. Values already inflated in the database stay until each document's next re-index; the `20261122` inventory counts documents whose `vision_pages` exceeds their page count.
+**Scope / residual.** No migration is needed: `vision_pages` exists since `20260922`. Values already inflated in the database stay until each document's next re-index; the `20261122` inventory counts documents whose `vision_pages` exceeds their page count. OPEN until I-07's rebuild calls `resetKnowledgeIndex`.
 
 ---

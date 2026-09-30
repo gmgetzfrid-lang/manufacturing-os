@@ -460,15 +460,16 @@ lib/knowledgeSourceSync.ts:303-310 `const { data, error } = await supabaseAdmin.
 - **Oldest first.** Each library is ordered by its oldest `knowledge_sources.last_synced_at`, a new column in `20261122`. A never-synced library comes first.
 - **Orgs are interleaved.** Libraries are taken round-robin across orgs, each org's oldest first.
 - **Time-bounded.** The pass runs until its budget (45 s by default; `maxLibraries` 500) instead of `.slice(0, 25)`.
-- **Every reconcile stamps the cursor.** `syncKnowledgeLibrarySources` stamps `last_synced_at`, from the cron or on demand, so the heartbeat reaches the others next.
+- **Every reconcile stamps the cursor.** `syncKnowledgeLibrarySources` stamps `last_synced_at`, from the cron or on demand, so the heartbeat reaches the others next. The exception is a library where a rev-up did not land, because it failed before the row moved or another sync re-pointed the row first. That library is set to NULL (never synced), so the next run reaches it FIRST. A rev-up that finds a batch writing the old revision no longer waits: it supersedes the batch (ING-1).
 - **Pre-migration fallback.** With no cursor column, the start rotates by the day, so the same prefix is not the only one ever reached.
-- **The result says what waits.** It reports `unsynced` (libraries left for the next run) and `deferred` (rev-ups waiting on a batch, ING-1).
+- **The result says what waits.** It reports `unsynced` (libraries left for the next run) and `deferred` (rev-ups another sync landed first).
 
 Tests: `lib/__tests__/sourceSync.test.ts` ILIFE-13 block:
 - "reads past 1,000 source rows, never-synced libraries first, then the oldest";
 - "orgs are interleaved so one tenant's shelf count cannot starve another";
 - "stops at its time budget and says how many wait";
-- "without the cursor column it still rotates by the day rather than repeating one prefix".
+- "without the cursor column it still rotates by the day rather than repeating one prefix";
+- and, in the ING-3 block, "a purge that fails before the row moves leaves the old version, and the library comes round FIRST next run".
 
 **Done-when.**
 - ✓ Library selection rotates by a `last_synced_at` cursor persisted per library, so every library is reached within ceil(libraries / per-run) runs.
