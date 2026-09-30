@@ -16,7 +16,7 @@ import { listTurnoverItems, computeTurnoverProgress } from "@/lib/turnover";
 import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/lib/checklists";
 import { computeForecast } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
-import { liveMilestones, isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
+import { liveMilestones, isImportedMilestone, isOverdueMilestone, PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
 
 async function safe<T>(p: PromiseLike<T>, fallback: T): Promise<T> {
   try { return await p; } catch { return fallback; }
@@ -39,6 +39,10 @@ export interface ReportData {
   forecastSentence: string | null;
   cos: ReturnType<typeof summarizeChangeOrders>;
   milestones: Array<{ name: string; planned_at: string | null; status: string; imported: boolean }>;
+  /** How many milestone rows the project has. Larger than
+   *  `milestones.length` only when the schedule exceeds
+   *  PROJECT_MILESTONE_READ_LIMIT — the report then says "first N of M". */
+  milestoneTotal: number;
   overdue: number;
   turnover: ReturnType<typeof computeTurnoverProgress>;
   checklistLines: Array<{ title: string; kind: string; satisfied: number; applicable: number; needsEvidence: number; complete: boolean }>;
@@ -89,8 +93,15 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     safe(listAccounts(orgId, projectId), []),
     safe(listEntries(orgId, projectId), []),
     safe(listChangeOrders(projectId), []),
-    safe(supabase.from("milestones").select("id, name, planned_at, status, percent_complete, source").eq("project_id", projectId).order("planned_at").limit(500)
-      .then((r) => (r.error ? [] : ((r.data ?? []) as Array<Record<string, unknown>>))), []),
+    // The same first rows by planned date the snapshot reads and the Costs
+    // tab's capped read returns (PROJECT_MILESTONE_READ_LIMIT), so the EV
+    // index — and the CPI — agree; the exact count discloses a larger one.
+    safe(supabase.from("milestones").select("id, name, planned_at, status, percent_complete, source", { count: "exact" })
+      .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)
+      .then((r) => (r.error
+        ? { rows: [] as Array<Record<string, unknown>>, total: 0 }
+        : { rows: (r.data ?? []) as Array<Record<string, unknown>>, total: r.count ?? (r.data ?? []).length })),
+      { rows: [] as Array<Record<string, unknown>>, total: 0 }),
     safe(listTurnoverItems(orgId, projectId), []),
     safe(listChecklists(orgId, projectId), []),
     safe(supabase.from("punch_items").select("status").eq("project_id", projectId).limit(500)
@@ -109,7 +120,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
   // Every stored milestone counts — imported rows are commitments
   // (lib/milestoneLiveness). The EV index is keyed by the real milestone
   // id so pinned accounts resolve, exactly as the Costs tab computes it.
-  const live = liveMilestones(msRows as Array<Record<string, unknown> & { source?: string | null }>);
+  const live = liveMilestones(msRows.rows as Array<Record<string, unknown> & { source?: string | null }>);
   const pctIdx = milestonePctIndex(live.map((m) => ({
     id: String(m.id), percentComplete: (m.percent_complete as number | null) ?? null, status: String(m.status ?? "planned"),
   })));
@@ -144,6 +155,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
       name: String(m.name ?? ""), planned_at: (m.planned_at as string | null) ?? null, status: String(m.status ?? "planned"),
       imported: isImportedMilestone(m),
     })),
+    milestoneTotal: Math.max(msRows.total, live.length),
     overdue: live.filter((m) => isOverdueMilestone(m as { planned_at?: string | null; status?: string | null }, now)).length,
     turnover: computeTurnoverProgress(turnoverItems),
     checklistLines,
@@ -174,6 +186,8 @@ export function renderReportHtml(d: ReportData): string {
 
   const row = (label: string, value: string) =>
     `<tr><td class="k">${esc(label)}</td><td>${value}</td></tr>`;
+  const truncated = d.milestoneTotal > d.milestones.length;
+  const firstOf = `first ${d.milestones.length} of ${d.milestoneTotal} by planned date`;
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Project report — ${esc(p.name)}</title>
@@ -201,7 +215,7 @@ ${row("Budget", `<span class="num">${esc(money(d.rollup.budget))}</span>`)}
 ${row("Committed (promised)", `<span class="num">${esc(money(d.rollup.committed))}</span>`)}
 ${row("Spent (real money out)", `<span class="num">${esc(money(d.rollup.spent))}</span>`)}
 ${row("Budget less spent", `<span class="num ${d.rollup.remaining < 0 ? "flag" : "ok"}">${esc(money(d.rollup.remaining))}</span> <span class="muted">— open commitments are not deducted</span>`)}
-${d.rollup.cpi != null ? row("Cost performance (CPI)", `<span class="num">${d.rollup.cpi.toFixed(2)}</span> — ${d.rollup.cpi >= 1 ? "getting more work per dollar than planned" : "spending faster than earning"}`) : ""}
+${d.rollup.cpi != null ? row("Cost performance (CPI)", `<span class="num">${d.rollup.cpi.toFixed(2)}</span> — ${d.rollup.cpi >= 1 ? "getting more work per dollar than planned" : "spending faster than earning"}${truncated ? ` <span class="muted">— earned value from the ${firstOf} schedule activities, as on the Costs tab</span>` : ""}`) : ""}
 ${d.forecastSentence ? row("Forecast", esc(d.forecastSentence)) : ""}
 ${d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> — ${d.cos.byReason.map((r) => `${esc(CO_REASON_LABEL[r.reason])}: ${esc(money(r.amount))}`).join("; ")}`) : ""}
 ${d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} change order${d.cos.open === 1 ? "" : "s"} open</span>`) : ""}
@@ -209,7 +223,7 @@ ${d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} ch
 
 <h2>Schedule</h2>
 ${d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
-<p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} milestones complete${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}${d.milestones.some((m) => m.imported) ? ` · <span class="muted">${d.milestones.filter((m) => m.imported).length} imported from the schedule file</span>` : ""}</p>
+<p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} milestones complete${truncated ? ` <span class="muted">(${firstOf} — every figure in this section counts those)</span>` : ""}${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}${d.milestones.some((m) => m.imported) ? ` · <span class="muted">${d.milestones.filter((m) => m.imported).length} imported from the schedule file</span>` : ""}</p>
 <table>${d.milestones.slice(0, 25).map((m) => row(
   m.planned_at ? new Date(m.planned_at).toLocaleDateString() : "—",
   `${esc(m.name)} <span class="muted">— ${esc(m.status.replace("_", " "))}</span>`,
@@ -261,10 +275,12 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
   const cur = d.rollup.currencies[0] ?? "USD";
   const money = (n: number) => fmtMoney(n, cur);
   const lines: string[] = [];
+  const truncated = d.milestoneTotal > d.milestones.length;
+  const firstOf = `the first ${d.milestones.length} of ${d.milestoneTotal} activities by planned date`;
 
   if (d.rollup.budget > 0) {
     const overUnder = d.rollup.remaining >= 0 ? "under" : "over";
-    lines.push(`COST: Finished ${money(Math.abs(d.rollup.remaining))} ${overUnder} the ${money(d.rollup.budget)} budget${d.rollup.cpi != null ? ` (CPI ${d.rollup.cpi.toFixed(2)})` : ""}.`);
+    lines.push(`COST: Finished ${money(Math.abs(d.rollup.remaining))} ${overUnder} the ${money(d.rollup.budget)} budget${d.rollup.cpi != null ? ` (CPI ${d.rollup.cpi.toFixed(2)}${truncated ? `; earned value from ${firstOf}` : ""})` : ""}.`);
   }
   for (const r of d.cos.byReason) {
     const why: Record<CoReason, string> = {
@@ -276,10 +292,11 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
     };
     lines.push(`CHANGE ORDERS (${CO_REASON_LABEL[r.reason]}): ${r.count} for ${money(r.amount)} — ${why[r.reason]}.`);
   }
+  const scheduleScope = truncated ? ` (counted over ${firstOf})` : "";
   if (d.overdue > 0) {
-    lines.push(`SCHEDULE: ${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date — check which activities slipped and why.`);
+    lines.push(`SCHEDULE: ${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date${scheduleScope} — check which activities slipped and why.`);
   } else if (d.milestones.length > 0) {
-    lines.push("SCHEDULE: No overdue milestones at report time.");
+    lines.push(`SCHEDULE: No overdue milestones at report time${scheduleScope}.`);
   }
   if (d.turnover.rejected > 0) {
     lines.push(`QUALITY: ${d.turnover.rejected} turnover item${d.turnover.rejected === 1 ? "" : "s"} rejected on first submission — feed the rejection reasons back to the contractor's record.`);

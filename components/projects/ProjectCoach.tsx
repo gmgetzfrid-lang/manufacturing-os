@@ -8,16 +8,19 @@
 // steps resurface here; new gaps (unread quotes, checklist items needing
 // evidence, an outstanding turnover package) appear as the project runs.
 // Pure engine (lib/projectHealth) + one bounded gather (lib/projectSnapshot).
-// The gather is memoised per project and aborted on unmount, so a tab
-// mounting underneath (Costs, Quality) does not re-run thirteen queries
-// whose results would be thrown away. The memo is shared only where no
-// write can sit behind the request: the mount run and the first re-key;
-// every later re-key follows a mutation and gathers fresh.
+// The gather is aborted on unmount / re-key. Sharing a round is opt-in and
+// the coach opts in only where no write can sit behind the request: the
+// FIRST re-key, which is the Costs or Quality tab's mount-time refresh
+// bumping the key while the coach's own mount round is still landing — so
+// that tab mount does not re-run thirteen queries. The mount run gathers
+// its own round (the page's refresh() shows a spinner and remounts the
+// coach after every write), and every later re-key follows a mutation
+// inside the tab, so both gather fresh.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Sparkles, ArrowRight, AlertTriangle } from "lucide-react";
-import { gatherProjectSnapshot, refreshNeedsFreshSnapshot } from "@/lib/projectSnapshot";
+import { gatherProjectSnapshot, snapshotRekeyMayShare } from "@/lib/projectSnapshot";
 import { computeProjectHealth, buildCoachItems, type ProjectHealth, type CoachItem } from "@/lib/projectHealth";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 
@@ -34,21 +37,22 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
 
   const [readFailures, setReadFailures] = useState<string[]>([]);
   const [notMigrated, setNotMigrated] = useState<string[]>([]);
-  // The key's initial and previous values: the first change is the page's
-  // own initial refresh (or a tab mounting) and shares the in-flight round;
-  // any later change follows a write and must not be served from a round
-  // whose queries were issued before it.
+  // The key's initial and previous values: only the first change (a tab
+  // mounting underneath) may share the round in flight; the mount run and
+  // every later change must not be served from a round whose queries were
+  // issued before a write.
   const keys = useRef<{ initial: number | undefined; prev: number | undefined }>({ initial: refreshKey, prev: refreshKey });
 
   useEffect(() => {
     // Abort on unmount / re-key: in-flight requests are cancelled (once no
-    // other subscriber shares the memoised round), not merely ignored.
+    // other subscriber shares the round — the re-key's own run, subscribed
+    // in the same tick, can still join it), not merely ignored.
     const controller = new AbortController();
-    const fresh = refreshNeedsFreshSnapshot(keys.current.initial, keys.current.prev, refreshKey);
+    const share = snapshotRekeyMayShare(keys.current.initial, keys.current.prev, refreshKey);
     keys.current.prev = refreshKey;
     void (async () => {
       try {
-        const snap = await gatherProjectSnapshot(orgId, projectId, { signal: controller.signal, fresh });
+        const snap = await gatherProjectSnapshot(orgId, projectId, { signal: controller.signal, share });
         if (controller.signal.aborted) return;
         setHealth(computeProjectHealth(snap));
         setItems(buildCoachItems(snap, projectId));
@@ -92,12 +96,12 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
       {open && readFailures.length > 0 && (
         <div role="status" className="mx-4 mt-2 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.08] px-2.5 py-1.5 text-[11px] text-[var(--color-text)]">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
-          <span>Could not read {readFailures.join(", ")} — the score and suggestions below treat {readFailures.length === 1 ? "it" : "them"} as unknown, not as empty.</span>
+          <span>Could not read {listJoin(readFailures)} — the parts of the score and the suggestions that depend on {readFailures.length === 1 ? "it" : "them"} are left out, not counted as empty.</span>
         </div>
       )}
       {open && notMigrated.length > 0 && (
         <div role="status" className="mx-4 mt-2 text-[11px] text-[var(--color-text-muted)]">
-          The database has not been migrated for {notMigrated.join(" and ")} (migration 20261013) — suggestions about {notMigrated.length === 1 ? "it" : "them"} are off until it is applied.
+          The database has not been migrated for {listJoin(notMigrated)} (migration 20261013) — the parts of the score and the suggestions that need {notMigrated.length === 1 ? "it" : "them"} are left out until it is applied.
         </div>
       )}
       {open && (
@@ -156,4 +160,10 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
       )}
     </div>
   );
+}
+
+/** "a", "a and b", "a, b and c". */
+function listJoin(xs: string[]): string {
+  if (xs.length <= 1) return xs.join("");
+  return `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 }

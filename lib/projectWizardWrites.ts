@@ -169,6 +169,38 @@ export async function runWizardFollowUpWrites(
   return { failures };
 }
 
+/**
+ * What the user typed for one refused step, as plain lines the failure
+ * panel shows read-only (and copies). A refusal that is not transient — a
+ * CHECK or numeric-overflow rejection, an RLS denial — fails the same way on
+ * Retry, and "Open project anyway" or the close X then leaves only these
+ * lines to re-enter from, so they are shown, never only held in state.
+ * `sowLabel` names the attached Summary of Work (the write carries its id).
+ */
+export function retainedRowLines(input: WizardWriteInput, step: WizardWriteStep, sowLabel?: string | null): string[] {
+  const money = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  switch (step) {
+    case "details": {
+      const d = input.details;
+      const out: string[] = [];
+      if (d.purpose.trim()) out.push(`Purpose: ${d.purpose.trim()}`);
+      for (const g of d.goals) out.push(`Goal: ${g}`);
+      if (d.successCriteria.trim()) out.push(`Success criteria: ${d.successCriteria.trim()}`);
+      out.push(`Job size: ${d.jobKind}`);
+      if (d.sowDocumentId) out.push(`Summary of Work: ${sowLabel?.trim() || d.sowDocumentId}`);
+      return out;
+    }
+    case "budget":
+      return input.accounts.map((a) => `${a.name} — ${a.type} — ${money(a.budget)} USD`);
+    case "schedule":
+      return input.milestones.map((m) => `${m.name} — ${m.date}`);
+    case "team":
+      return input.parties.map((p) => [p.name, p.kind, p.trade].filter((x) => !!x && x.trim()).join(" — "));
+    case "turnover":
+      return [];
+  }
+}
+
 /** One line naming what did not save: "4 budget lines and 2 milestones". */
 export function summarizeWizardFailures(failures: WizardWriteFailure[]): string {
   const labels = failures.map((f) => f.label);

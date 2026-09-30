@@ -19,17 +19,33 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/supabase", () => {
+  // Honours what the report's bound depends on: order("planned_at"),
+  // limit(n) and select(…, { count: "exact" }) — as PostgREST does.
   function chain(table: string) {
     const c: Record<string, unknown> = {};
-    const settle = () => Promise.resolve(state.errors[table]
-      ? { data: null, error: { message: state.errors[table] } }
-      : { data: state.tables[table] ?? [], error: null });
+    let limit: number | null = null;
+    let orderBy: string | null = null;
+    let wantCount = false;
+    const settle = () => {
+      if (state.errors[table]) return Promise.resolve({ data: null, error: { message: state.errors[table] }, count: null });
+      let rows = [...(state.tables[table] ?? [])];
+      if (orderBy) {
+        const k = orderBy;
+        rows.sort((a, b) => String(a[k] ?? "\uffff").localeCompare(String(b[k] ?? "\uffff")));
+      }
+      const total = rows.length;
+      if (limit != null) rows = rows.slice(0, limit);
+      return Promise.resolve({ data: rows, error: null, count: wantCount ? total : null });
+    };
     const handler: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
         if (prop === "then") {
           return (resolve: (v: unknown) => void, reject?: (e: unknown) => void) => settle().then(resolve, reject);
         }
-        return () => {
+        return (...args: unknown[]) => {
+          if (prop === "select") wantCount = (args[1] as { count?: string } | undefined)?.count === "exact";
+          if (prop === "limit") limit = Number(args[0]);
+          if (prop === "order" && orderBy == null) orderBy = String(args[0]);
           if (prop === "maybeSingle") {
             return settle().then((r) => ({ data: Array.isArray(r.data) ? (r.data[0] ?? null) : null, error: r.error }));
           }
@@ -44,6 +60,7 @@ vi.mock("@/lib/supabase", () => {
 
 import { gatherReportData, renderReportHtml, parseGateSnapshot, draftLessonsLearned } from "@/lib/projectReport";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex } from "@/lib/costs";
+import { PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
 
 const DAY = 86_400_000;
 const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toISOString();
@@ -102,6 +119,66 @@ describe("the printed report's CPI (MON-5 / PM-12)", () => {
     expect(html).toContain("Budget less spent");
     expect(html).toContain("open commitments are not deducted");
     expect(html).not.toMatch(/<td class="k">Remaining<\/td>/);
+  });
+});
+
+/** A P6-scale schedule: `n` imported activities, one a day, ascending. */
+const bigSchedule = (n: number) => Array.from({ length: n }, (_, i) => ({
+  id: `m${String(i).padStart(4, "0")}`,
+  name: `Activity ${i}`,
+  planned_at: new Date(Date.UTC(2026, 0, 1) + i * DAY).toISOString(),
+  status: i < 100 ? "completed" : "planned",
+  percent_complete: i === 550 ? 40 : (i < 100 ? 100 : 0),
+  source: "p6",
+}));
+
+describe("the report reads the same schedule rows as the Costs tab (MON-5 at P6 scale)", () => {
+  it("600 activities, an account pinned to row 550: the report CPI equals the Costs-tab computation", async () => {
+    state.tables.milestones = bigSchedule(600);
+    state.tables.cost_accounts = [
+      { id: "a1", project_id: "p1", name: "Tie-in welding", budget: 50_000, currency: "USD", wbs_milestone_id: "m0550", status: "active" },
+    ];
+    state.tables.cost_entries = [
+      { id: "e1", cost_account_id: "a1", project_id: "p1", entry_type: "actual", amount: 10_000, status: "posted", entry_date: iso(-1) },
+    ];
+    const d = await gatherReportData("org1", "p1");
+    // Every row read: row 550 is in the EV index (the old limit(500) cut it).
+    expect(d.milestones).toHaveLength(600);
+    expect(d.milestoneTotal).toBe(600);
+    expect(d.rollup.cpi).toBeCloseTo(2, 6); // EV 40% × 50,000 = 20,000 / actual 10,000
+
+    // The Costs tab: every row ordered by planned_at (CostsTab.tsx), id-keyed index.
+    const [accounts, entries] = await Promise.all([listAccounts("org1", "p1"), listEntries("org1", "p1")]);
+    const tab = computeCostRollup(accounts, entries, milestonePctIndex(
+      state.tables.milestones.map((m) => ({ id: String(m.id), percentComplete: m.percent_complete as number, status: String(m.status) })),
+    ));
+    expect(d.rollup.cpi).toBe(tab.cpi);
+
+    const html = renderReportHtml(d);
+    expect(html).toContain("100/600 milestones complete");
+    expect(html).toContain("600 imported from the schedule file");
+    expect(html).not.toMatch(/first \d+ of/);
+  });
+
+  it("a schedule larger than the bound says 'first N of M' instead of passing a subset off as the whole", async () => {
+    state.tables.milestones = bigSchedule(PROJECT_MILESTONE_READ_LIMIT + 200);
+    const d = await gatherReportData("org1", "p1");
+    expect(d.milestones).toHaveLength(PROJECT_MILESTONE_READ_LIMIT);
+    expect(d.milestoneTotal).toBe(PROJECT_MILESTONE_READ_LIMIT + 200);
+    const html = renderReportHtml(d);
+    expect(html).toContain(`first ${PROJECT_MILESTONE_READ_LIMIT} of ${PROJECT_MILESTONE_READ_LIMIT + 200} by planned date`);
+    const draft = await draftLessonsLearned("org1", "p1");
+    expect(draft).toContain(`the first ${PROJECT_MILESTONE_READ_LIMIT} of ${PROJECT_MILESTONE_READ_LIMIT + 200} activities by planned date`);
+  });
+
+  it("the report's bound is the snapshot's bound (source pin)", async () => {
+    const fs = await import("node:fs");
+    for (const f of ["../projectReport.ts", "../projectSnapshot.ts"]) {
+      const src = fs.readFileSync(new URL(f, import.meta.url), "utf8");
+      const ms = src.slice(src.indexOf('from("milestones")'), src.indexOf('from("milestones")') + 400);
+      expect(ms, f).toMatch(/\.order\("planned_at"\)/);
+      expect(ms, f).toContain(".limit(PROJECT_MILESTONE_READ_LIMIT)");
+    }
   });
 });
 

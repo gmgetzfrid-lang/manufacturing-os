@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  parseMoneyInput, prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures,
+  parseMoneyInput, prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures, retainedRowLines,
   type WizardWriteDeps, type WizardWriteInput, type WizardWriteStep,
 } from "@/lib/projectWizardWrites";
 
@@ -148,5 +148,37 @@ describe("runWizardFollowUpWrites — nothing fails silently (UX-1 / PM-13)", ()
       purpose: "Replace E-301", goals: null, success_criteria: "Back by June 30", job_kind: "capital",
       sow_document_id: "doc9", setup_state: { basics: "done", budget: "skipped" },
     });
+  });
+});
+
+describe("retainedRowLines — a persistent refusal still leaves what was typed on screen (UX-1 / PM-13)", () => {
+  it("a data refusal fails the same way on Retry, so the typed rows are shown for every failed step", async () => {
+    // A CHECK / numeric-overflow rejection is not transient: Retry resends
+    // the same rows and is refused again.
+    const overflow = { message: "numeric field overflow", code: "22003" };
+    const { d } = deps({ cost_accounts: overflow });
+    const first = await runWizardFollowUpWrites(input(), d);
+    const again = await runWizardFollowUpWrites(input(), d, new Set<WizardWriteStep>(first.failures.map((f) => f.step)));
+    expect(again.failures.map((f) => f.step)).toEqual(["budget"]);
+    // …so the panel lists the four lines, readable and copyable, before
+    // "Open project anyway" or the X can discard them.
+    expect(retainedRowLines(input(), "budget")).toEqual([
+      "Piping subcontract — subcontract — 200,000 USD",
+      "Scaffolding — subcontract — 40,000 USD",
+      "Engineering hours — labor — 50,000 USD",
+      "Contingency — other — 15,000 USD",
+    ]);
+  });
+
+  it("covers every step that carries typed input", () => {
+    expect(retainedRowLines(input(), "schedule")).toEqual(["Mobilize — 2026-10-01", "Demo complete — 2026-10-15"]);
+    expect(retainedRowLines(input(), "team")).toEqual(["Gulf Mechanical — contractor — piping"]);
+    const details = input({ details: { purpose: "Replace E-301", goals: ["Zero recordables", "On budget"], successCriteria: "Back by June", jobKind: "capital", sowDocumentId: "doc-1", setupState: {} } });
+    expect(retainedRowLines(details, "details", "SOW-0142")).toEqual([
+      "Purpose: Replace E-301", "Goal: Zero recordables", "Goal: On budget", "Success criteria: Back by June",
+      "Job size: capital", "Summary of Work: SOW-0142",
+    ]);
+    // Nothing typed feeds the turnover seeds.
+    expect(retainedRowLines(input(), "turnover")).toEqual([]);
   });
 });

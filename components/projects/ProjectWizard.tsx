@@ -26,7 +26,7 @@ import { listCompanies, type Company } from "@/lib/companies";
 import { Field } from "@/components/ui/Field";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures,
+  prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures, retainedRowLines,
   type WizardWriteDeps, type WizardWriteFailure, type WizardWriteInput, type WizardWriteStep,
 } from "@/lib/projectWizardWrites";
 import type { ProjectVisibility } from "@/types/schema";
@@ -287,13 +287,33 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
                 <div className="min-w-0">
                   <div className="font-black">The project was created, but {summarizeWizardFailures(failures)} did not save.</div>
-                  <ul className="mt-2 space-y-1">
-                    {failures.map((f) => (
-                      <li key={f.step}><b>{f.label}</b> — {f.message}</li>
-                    ))}
+                  <ul className="mt-2 space-y-2">
+                    {failures.map((f) => {
+                      const lines = createdProjectId ? retainedRowLines(writeInput(setupStateForRetry, createdProjectId), f.step, sowDoc?.label) : [];
+                      return (
+                        <li key={f.step}>
+                          <div><b>{f.label}</b> — {f.message}</div>
+                          {lines.length > 0 && (
+                            <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5">
+                              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                                What you typed
+                                <button type="button" onClick={() => void navigator.clipboard?.writeText(lines.join("\n")).catch(() => undefined)}
+                                  aria-label={`Copy what you typed for ${f.label}`}
+                                  className="ml-auto normal-case tracking-normal text-[var(--color-accent)] hover:underline">
+                                  Copy
+                                </button>
+                              </div>
+                              <ul className="mt-1 space-y-0.5 select-text font-mono text-[11px] text-[var(--color-text)]">
+                                {lines.map((l, i) => <li key={i} className="break-words">{l}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                   <p className="mt-2 text-[var(--color-text-muted)]">
-                    What you typed is still here. Retry the unsaved parts, or open the project and add them from its tabs later.
+                    What you typed is listed above. Retry the unsaved parts — if the same refusal comes back, copy the lines, open the project, and add them from its tabs.
                   </p>
                 </div>
               </div>

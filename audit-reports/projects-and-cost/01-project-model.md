@@ -555,7 +555,7 @@ lib/projectReport.ts:55-59 quoted verbatim above. lib/projectReport.ts:43: `supa
 - A test asserts that for a pinned account + 50%-complete milestone `gatherReportData().rollup.cpi` is non-null and equals the Costs tab value — ✓.
 - The forecast sentence and `draftLessonsLearned` are re-checked now that cpi is populated — ✓ (both tested).
 
-**Scope / residual.** The gate-snapshot shape is read tolerantly because PC-2 (J8) had not merged when this landed; if J8 stores it under another key, `parseGateSnapshot` is the one place to add it. Closes `COST-1`'s report half by pointer.
+**Scope / residual.** The gate-snapshot shape is read tolerantly because PC-2 (J8) had not merged when this landed; if J8 stores it under another key, `parseGateSnapshot` is the one place to add it. Closes `COST-1`'s report half by pointer. *Fix pass (2026-09-30):* the first done-when ("`rollup.cpi` matches the Costs tab and the health score") had one hole. The report still read `limit(500)` while the snapshot read 1,000 unordered, so for an imported schedule over 500 activities the three surfaces used different rows. All three now read the same first `PROJECT_MILESTONE_READ_LIMIT` (1,000) rows by planned date, and the report discloses "first N of M" beyond that. Detail and tests are in projects-tab `MON-5`.
 
 ---
 
@@ -605,7 +605,7 @@ ProjectWizard.tsx:157-163 (`if (accErr) console.warn(...)`), :167-172 (`.then(()
 **Done-when.**
 - Each follow-up write's failure is collected and shown to the user (a banner naming exactly what did not save) instead of `console.warn` — ✓ (the banner is in the wizard before routing; `page.tsx` is J8's, and the wizard holds the rows).
 - The milestones insert binds its error like the others — ✓.
-- The user's typed rows survive a partial failure — ✓ (retained in state; one-click retry of only the refused steps).
+- The user's typed rows survive a partial failure — ✓. They are retained in state, and **Retry unsaved** re-runs only the refused steps; that recovers a transient refusal. A persistent refusal (CHECK / overflow / RLS) fails the same way on retry. For that case the failure panel shows each failed step's typed rows read-only with a **Copy** button (`retainedRowLines`, 2026-09-30 fix pass), so **Open project anyway** or the X no longer discard rows the user never saw. Editing a refused row in place is not offered (see projects-tab `UX-1`).
 - A test simulates a `cost_accounts` insert error and asserts the wizard surfaces it — ✓.
 
 **Scope / residual.** See `UX-1`.

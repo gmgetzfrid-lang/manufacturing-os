@@ -60,3 +60,14 @@ export function isOverdueMilestone(m: MilestoneOverdueRow, nowMs: number = Date.
   if (!Number.isFinite(planned)) return false;
   return startOfDayUTCms(planned) < startOfDayUTCms(nowMs);
 }
+
+/**
+ * How many milestone rows a project-level reader in this module's
+ * consumers takes, ordered by `planned_at`: the health snapshot and the
+ * printed report read the SAME first rows, which is also what the Costs
+ * and Schedule tabs get from their unbounded `order("planned_at")` read
+ * under the API's default 1,000-row response cap. So every surface
+ * computes earned value, CPI and overdue over the same rows; the report
+ * counts the total and says "first N of M" when a schedule is larger.
+ */
+export const PROJECT_MILESTONE_READ_LIMIT = 1000;

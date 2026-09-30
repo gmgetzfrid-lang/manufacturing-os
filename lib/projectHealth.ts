@@ -49,28 +49,80 @@ export interface ProjectStateSnapshot {
   // Delegation
   intakeLinkCount: number;
   membersCount: number;
-  /** Tables the gather could NOT read (a refused or failed query). Their
-   *  counts above are zeros standing in for "unknown" — the coach names
-   *  them instead of presenting the zeros as the truth. */
+  /** Reads the gather could NOT make (a refused or failed query), named by
+   *  their SNAPSHOT_READS label. Their counts above are zeros standing in
+   *  for "unknown": computeProjectHealth scores every part that depends on
+   *  one as null, and buildCoachItems drops every suggestion that would be
+   *  raised by the zero — the coach names them instead of presenting the
+   *  zeros as the truth. */
   readFailures?: string[];
-  /** Fields the database has not been migrated for (20261013): the read
-   *  fell back to the pre-migration column list, so these fields are
-   *  unknown — a known state, named as such, not a failed read. */
+  /** What the database has not been migrated for (20261013): a SNAPSHOT_READS
+   *  label for a table that does not exist yet, PROJECT_FIELDS_NOT_MIGRATED
+   *  for the projects columns, or "RFQ groups". A known state, named as
+   *  such, not a failed read — the parts and suggestions that need it are
+   *  left out the same way. */
   notMigrated?: string[];
+}
+
+/** The gather's read labels (lib/projectSnapshot names a failed or
+ *  not-migrated read by these) — the key from a read to the health parts
+ *  and coach items it feeds. */
+export const SNAPSHOT_READS = {
+  project: "project",
+  costAccounts: "cost accounts",
+  costEntries: "cost entries",
+  costDocuments: "cost documents",
+  parties: "companies on the job",
+  changeOrders: "change orders",
+  milestones: "milestones",
+  checklists: "checklists",
+  checklistItems: "checklist items",
+  turnover: "turnover items",
+  punch: "punch items",
+  intakeLinks: "intake links",
+  members: "members",
+} as const;
+
+/** The notMigrated entry for the four projects columns migration 20261013
+ *  added (purpose, goals, job_kind, sow_document_id) — before it, none of
+ *  them can be read, so every suggestion about them is left out. */
+export const PROJECT_FIELDS_NOT_MIGRATED = "purpose, goals, job size and Summary of Work";
+
+const R = SNAPSHOT_READS;
+
+/** Which of `reads` the snapshot could not read, and which the database
+ *  has not been migrated for. */
+function gapsIn(s: ProjectStateSnapshot, reads: string[]): { failed: string[]; notMigrated: string[] } {
+  const failed = reads.filter((r) => (s.readFailures ?? []).includes(r));
+  const notMigrated = reads.filter((r) => !failed.includes(r) && (s.notMigrated ?? []).includes(r));
+  return { failed, notMigrated };
+}
+
+/** A part that depends on a read the snapshot does not have scores null
+ *  (excluded from the composite) and says why — never a zero scored as
+ *  the truth. */
+function unknownPart(label: string, s: ProjectStateSnapshot, reads: string[]): HealthPart | null {
+  const g = gapsIn(s, reads);
+  if (g.failed.length > 0) return { label, score: null, detail: `Could not read ${g.failed.join(", ")}` };
+  if (g.notMigrated.length > 0) return { label, score: null, detail: `Needs migration 20261013 (${g.notMigrated.join(", ")})` };
+  return null;
 }
 
 /**
  * How strict the closeout gates are — the ONE statement the coach, the
  * closeout dialog and the report all describe. The gates are checks with
  * an override, not walls: the owner can complete anyway, and the open
- * items go on the record (the override audit row and the printed report).
- * Nothing in transitionProjectStatus refuses a completion over an open
- * gate, so no copy may say "gated" or "blocked".
+ * items simply stay open. Nothing in transitionProjectStatus refuses a
+ * completion over an open gate, so no copy may say "gated" or "blocked".
+ * Nor may it say the open items are "recorded on the closeout": today the
+ * completion's audit row carries only the reason (lib/projects.ts), and the
+ * report says "No gate snapshot was recorded". That wording is J8's to
+ * switch on when PC-2 / SAF-14 records the gate snapshot.
  */
 export const CLOSEOUT_GATE_POLICY = {
   blocking: false,
   /** One sentence for any surface that mentions the gates. */
-  summary: "Closeout gates are checks with an override, not blocks — open items are recorded on the closeout, never blocked.",
+  summary: "Closeout gates are checks with an override, not blocks — you can complete anyway; open items stay open on the record.",
   /** The dialog's line under the gate list. */
   overrideNote: "You can complete anyway — the open items stay on the record and in the report.",
 } as const;
@@ -91,8 +143,17 @@ const clamp = (n: number, lo = 0, hi = 100) => Math.min(hi, Math.max(lo, n));
 export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
   const parts: HealthPart[] = [];
 
+  // Each part first checks the reads it depends on: a refused read's zeros
+  // are not scored (a refused checklist_items read is not "Checklists
+  // clear"). Cost needs the milestones read too once an account is pinned —
+  // earned value comes from those tasks' progress.
+  const costUnknown = unknownPart("Cost", s,
+    [R.costAccounts, R.costEntries, ...(s.accountsPinned > 0 ? [R.milestones] : [])]);
+
   // Cost health: CPI-centered when available, else budget-vs-spent sanity.
-  if (s.cpi != null && s.cpi > 0) {
+  if (costUnknown) {
+    parts.push(costUnknown);
+  } else if (s.cpi != null && s.cpi > 0) {
     parts.push({
       label: "Cost", score: clamp(s.cpi * 100, 0, 120) > 100 ? 100 : clamp(s.cpi * 100),
       detail: s.cpi >= 1 ? `CPI ${s.cpi.toFixed(2)} — getting more done per dollar than planned` : `CPI ${s.cpi.toFixed(2)} — spending faster than earning`,
@@ -111,7 +172,10 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
   }
 
   // Schedule health.
-  if (s.milestoneCount > 0) {
+  const scheduleUnknown = unknownPart("Schedule", s, [R.milestones]);
+  if (scheduleUnknown) {
+    parts.push(scheduleUnknown);
+  } else if (s.milestoneCount > 0) {
     const spiScore = s.spi != null ? clamp(s.spi * 100) : null;
     const overduePenalty = clamp((s.overdueMilestones / Math.max(s.milestoneCount, 1)) * 200, 0, 60);
     parts.push({
@@ -126,7 +190,10 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
   }
 
   // Controls discipline: change orders relative to budget.
-  if (s.budget > 0 && (s.approvedCoAmount > 0 || s.openChangeOrders > 0)) {
+  const controlUnknown = unknownPart("Change control", s, [R.costAccounts, R.changeOrders]);
+  if (controlUnknown) {
+    parts.push(controlUnknown);
+  } else if (s.budget > 0 && (s.approvedCoAmount > 0 || s.openChangeOrders > 0)) {
     const growth = s.approvedCoAmount / s.budget;
     parts.push({
       label: "Change control",
@@ -140,7 +207,10 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
   // Quality & closeout readiness. Only signals that EXIST contribute — a
   // project with turnover requirements but no checklist doesn't collect a
   // vacuous "checklists clear" credit (and vice versa).
-  if (s.checklistCount > 0 || s.turnoverRequired > 0) {
+  const qualityUnknown = unknownPart("Quality", s, [R.checklists, R.checklistItems, R.turnover, R.punch]);
+  if (qualityUnknown) {
+    parts.push(qualityUnknown);
+  } else if (s.checklistCount > 0 || s.turnoverRequired > 0) {
     const qparts: number[] = [];
     if (s.checklistCount > 0) {
       const unresolved = s.checklistOpenItems + s.checklistNeedsEvidence;
@@ -182,20 +252,32 @@ export interface CoachItem {
   kind: "setup" | "cost" | "schedule" | "quality" | "delegation";
 }
 
+/** Where the project-details editor is, and who has it: the header's
+ *  Edit button renders only for the owner and Admin / DocCtrl
+ *  (page.tsx `canManage`), so the item says so instead of naming a control
+ *  most members cannot see. */
+const EDIT_PROJECT_WHO = "The Edit button shows for the project owner, admins and document control — anyone else, ask the owner.";
+
 /** The "what do I feed you" ruleset. Returns items sorted most-valuable
- *  first. Every rule states its payoff — no nagging without a reason. */
+ *  first. Every rule states its payoff — no nagging without a reason.
+ *  A rule that fires on an ABSENCE (no budget, no schedule, no SOW …) is
+ *  dropped when the read behind it failed or is not migrated: a zero that
+ *  stands in for "unknown" never raises a suggestion. */
 export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): CoachItem[] {
   const base = `/projects/${projectId}`;
   const items: CoachItem[] = [];
   const add = (i: CoachItem) => items.push(i);
+  const gap = new Set([...(s.readFailures ?? []), ...(s.notMigrated ?? [])]);
+  const known = (...reads: string[]) => reads.every((r) => !gap.has(r));
+  const projectKnown = known(R.project, PROJECT_FIELDS_NOT_MIGRATED);
 
-  if (s.budget <= 0) add({
+  if (known(R.costAccounts) && s.budget <= 0) add({
     id: "budget", kind: "cost", weight: 100,
     title: "Add a budget (2 min)",
     payoff: "Unlocks the burn bar, the S-curve, and the finish-cost forecast.",
     href: `${base}?tab=costs`,
   });
-  if (s.milestoneCount === 0) add({
+  if (known(R.milestones) && s.milestoneCount === 0) add({
     id: "schedule", kind: "schedule", weight: 95,
     title: "Add a schedule — import a file or type a few milestones",
     payoff: "Unlocks the execution board, overdue alerts, and schedule health (SPI).",
@@ -213,31 +295,31 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
     payoff: "The award posts the contract to your budget automatically.",
     href: `${base}?tab=costs`,
   });
-  if (s.budget > 0 && s.accountCount > 0 && s.accountsPinned === 0 && s.milestoneCount > 0) add({
+  if (known(R.costAccounts, R.milestones) && s.budget > 0 && s.accountCount > 0 && s.accountsPinned === 0 && s.milestoneCount > 0) add({
     id: "pin-ev", kind: "cost", weight: 80,
     title: "Pin budget lines to schedule tasks",
     payoff: "Unlocks Cost health (CPI) — earned value against real progress.",
     href: `${base}?tab=costs`,
   });
-  if (s.milestoneCount > 0 && !s.hasBaseline) add({
+  if (known(R.milestones) && s.milestoneCount > 0 && !s.hasBaseline) add({
     id: "baseline", kind: "schedule", weight: 72,
     title: "Set a schedule baseline",
     payoff: "Drift becomes visible — you'll see slips against the original plan.",
     href: `${base}?tab=schedule`,
   });
-  if (!s.hasSow) add({
+  if (projectKnown && !s.hasSow) add({
     id: "sow", kind: "setup", weight: 64,
-    title: "Attach a Summary of Work (Edit project, in the header)",
-    payoff: "Feeds RFQs, checklist assessments, and the project report.",
+    title: "Attach a Summary of Work (Edit button in the header)",
+    payoff: `Feeds RFQs, checklist assessments, and the project report. ${EDIT_PROJECT_WHO}`,
     href: base,
   });
-  if (!s.hasPurpose || !s.hasGoals) add({
+  if (projectKnown && (!s.hasPurpose || !s.hasGoals)) add({
     id: "purpose", kind: "setup", weight: 58,
-    title: "Write the purpose & goals (Edit project, in the header)",
-    payoff: "Everyone who opens the project knows why it exists.",
+    title: "Write the purpose & goals (Edit button in the header)",
+    payoff: `Everyone who opens the project knows why it exists. ${EDIT_PROJECT_WHO}`,
     href: base,
   });
-  if (s.checklistCount === 0) add({
+  if (known(R.checklists) && s.checklistCount === 0) add({
     id: "checklist", kind: "quality", weight: 55,
     title: "Upload a PSSR / QA-QC checklist",
     payoff: "The system reads it, works out what applies to THIS job, and tracks the gaps for you.",
@@ -255,19 +337,19 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
     payoff: CLOSEOUT_GATE_POLICY.summary,
     href: `${base}?tab=quality`,
   });
-  if (s.partyCount === 0 && s.budget > 0) add({
+  if (known(R.parties, R.costAccounts) && s.partyCount === 0 && s.budget > 0) add({
     id: "parties", kind: "delegation", weight: 50,
     title: "Add the companies working this job",
     payoff: "Spending gets attributed, and their performance record starts building.",
     href: `${base}?tab=costs`,
   });
-  if (s.intakeLinkCount === 0 && s.partyCount > 0) add({
+  if (known(R.intakeLinks, R.parties) && s.intakeLinkCount === 0 && s.partyCount > 0) add({
     id: "links", kind: "delegation", weight: 46,
     title: "Send contractors their upload links",
-    payoff: "Their documents and quotes land on the Intake tab as drafts — run the AI read from the Costs tab to tabulate a quote.",
+    payoff: "Documents land on the Intake tab for review; quotes land on the Costs tab as drafts — run the AI read there to tabulate them.",
     href: `${base}?tab=intake`,
   });
-  if (s.membersCount <= 1) add({
+  if (known(R.members) && s.membersCount <= 1) add({
     id: "members", kind: "delegation", weight: 40,
     title: "Add teammates",
     payoff: "Watchers see progress without asking you for updates.",
