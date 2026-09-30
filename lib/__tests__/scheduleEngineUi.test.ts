@@ -145,11 +145,19 @@ describe("PERF-5 · the board renders a window of rows, not every row", () => {
 
 describe("SCHED-12 (limb c) · the timeline's critical-path control says what it is", () => {
   it("the button and the legend name the links and the calendar caveat (working days Mon–Fri, no holidays)", async () => {
-    await render(board(schedule));
+    // Weekday work only (the manual task finishes Fri 03-06): the Mon–Fri clock.
+    await render(board(schedule.map((m) => (m.id === "m" ? { ...m, plannedAt: "2026-03-06T00:00:00Z" } : m))));
     const btn = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Critical path"));
     expect(btn?.getAttribute("title")).toMatch(/chain of finish-to-start links that drives the finish date \(working days Mon–Fri — no holiday calendar\)/);
     const legend = [...host.querySelectorAll("span[title]")].find((s) => (s.getAttribute("title") ?? "").startsWith("On the critical path"));
     expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*working days Mon–Fri, no holiday calendar/);
+  });
+  it("a plan with unfinished weekend work is measured on every day, and the button and the legend say so (third review pass)", async () => {
+    await render(board(schedule)); // the manual task runs Fri 03-06 → Sun 03-08
+    const btn = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Critical path"));
+    expect(btn?.getAttribute("title")).toMatch(/drives the finish date \(every day, weekends included — no holiday calendar\)/);
+    const legend = [...host.querySelectorAll("span[title]")].find((s) => (s.getAttribute("title") ?? "").startsWith("On the critical path"));
+    expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*every day, weekends included, no holiday calendar/);
   });
 });
 

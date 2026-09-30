@@ -187,7 +187,9 @@ const WORK_EPOCH_MS = 4 * DAY_MS;
  *  from Saturday 00:00 to Monday 00:00, so a Saturday or Sunday instant reads
  *  the same as the Monday 00:00 after it. The critical path measures gaps and
  *  float on it (PC SCHED-10): a Friday finish followed by a Monday start is
- *  a hand-off, not two days of float. No holidays (no project calendar). */
+ *  a hand-off, not two days of float — unless the plan has unfinished weekend
+ *  work, when it counts every day (lib/criticalPath.ts `calendar`). No
+ *  holidays (no project calendar). */
 export function workingTimeMs(ms: number): number {
   if (!Number.isFinite(ms)) return ms;
   const since = ms - WORK_EPOCH_MS;

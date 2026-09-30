@@ -22,6 +22,9 @@
 // Driven against an in-memory PostgREST chain mock (vi.hoisted + Proxy).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createClient } from "@supabase/supabase-js";
 
 type Row = Record<string, unknown>;
 const db = vi.hoisted(() => ({
@@ -33,6 +36,9 @@ const db = vi.hoisted(() => ({
   // Row-level security on DELETE: false = the policy filters the row out
   // (PostgREST then deletes nothing and returns no error).
   deleteAllowed: null as null | ((table: string, row: Row) => boolean),
+  // Row-level security on UPDATE: false = the row is filtered out (0 rows
+  // updated, no error — what PostgREST answers).
+  updateAllowed: null as null | ((table: string, row: Row) => boolean),
   clock: 0,
 }));
 
@@ -42,15 +48,25 @@ function builder(table: string) {
     switch (op) {
       case "eq": return r[col] === val;
       case "in": return (val as unknown[]).includes(r[col]);
-      case "contains": return Array.isArray(r[col]) && (val as unknown[]).every((v) => (r[col] as unknown[]).includes(v));
+      case "contains": {
+        // JSONB containment: the value arrives as JSON text (see JSONB_COLS).
+        const want = typeof val === "string" ? (JSON.parse(val) as unknown[]) : (val as unknown[]);
+        return Array.isArray(r[col]) && want.every((v) => (r[col] as unknown[]).includes(v));
+      }
       default: return true;
     }
   });
+  // PostgREST's wire format: postgrest-js sends an ARRAY `contains` value as a
+  // Postgres array literal (cs.{a,b}) — against a JSONB column that is not
+  // JSON and the read fails 22P02. Only a JSON string (cs.["a"]) is valid there.
+  const JSONB_COLS = new Set(["depends_on"]);
+  const badJsonb = () => state.filters.find(([col, op, val]) => op === "contains" && JSONB_COLS.has(col) && typeof val !== "string");
   const exec = () => {
     const t = (db.tables[table] ??= []);
     if (state.op === "select") {
       const err = db.failSelect?.(table);
       if (err) return { data: null, error: err };
+      if (badJsonb()) return { data: null, error: { code: "22P02", message: "invalid input syntax for type json" } };
       let out = t.filter(match);
       if (state.order) { const [c, asc] = state.order; out = out.slice().sort((a, b) => (String(a[c]) < String(b[c]) ? -1 : 1) * (asc ? 1 : -1)); }
       if (state.limit != null) out = out.slice(0, state.limit);
@@ -77,7 +93,7 @@ function builder(table: string) {
     db.writes.push({ table, method: "update", payload: state.payload, filters: state.filters.slice() });
     const err = db.failUpdate?.(table, state.payload as Row, state.filters);
     if (err) return { data: null, error: { message: err } };
-    const target = t.filter(match);
+    const target = t.filter((r) => match(r) && (db.updateAllowed ? db.updateAllowed(table, r) : true));
     for (const r of target) Object.assign(r, state.payload as Row, table === "milestones" && "planned_at" in (state.payload as Row) ? {} : {});
     return { data: state.single ? (target[0] ?? null) : target, error: null };
   };
@@ -130,7 +146,7 @@ const ms = () => db.tables.milestones ?? [];
 const row = (o: Row): Row => ({ org_id: ORG, project_id: PROJECT, status: "planned", source: "manual", depends_on: [], ...o });
 
 beforeEach(() => {
-  db.tables = {}; db.writes = []; db.rpcImpl = null; db.failUpdate = null; db.failSelect = null; db.deleteAllowed = null;
+  db.tables = {}; db.writes = []; db.rpcImpl = null; db.failUpdate = null; db.failSelect = null; db.deleteAllowed = null; db.updateAllowed = null;
   audited.length = 0;
 });
 
@@ -357,6 +373,7 @@ describe("SCH-17 · deleting a phase never orphans its subtree", () => {
       descendants: 3, newParentId: "root", dependents: [{ id: "x", name: "Handover" }],
     });
   });
+  const src = () => readFileSync(join(process.cwd(), "lib/milestones.ts"), "utf8");
   const missing = () => { db.rpcImpl = (fn) => (fn === "delete_milestone_keep_subtree" ? { data: null, error: { code: "PGRST202", message: "Could not find the function public.delete_milestone_keep_subtree(p_id) in the schema cache" } } : { data: null, error: null }); };
   const deletedAudit = () => audited.filter((e) => e.type === "MILESTONE_DELETED");
 
@@ -443,6 +460,37 @@ describe("SCH-17 · deleting a phase never orphans its subtree", () => {
       expect(await deleteMilestone("P", USER)).toEqual({ reparented: 2, unlinked: 1 });
       expect(ms().find((r) => r.id === "k1")!.parent_id).toBeNull();
       expect(db.writes.filter((w) => w.method === "update" && "parent_id" in (w.payload as Row))).toEqual([]);
+    });
+    it("an unlink that matches 0 rows (RLS, or the task is gone) is named, and neither counted nor audited as unlinked", async () => {
+      seed(); missing();
+      db.updateAllowed = (t, r) => !(t === "milestones" && r.id === "x");
+      await expect(deleteMilestone("P", USER)).rejects.toThrow(/^“Phase 1” was deleted, but the link from “Handover” was not removed \(the task could not be changed, or is gone\) — if it is still there it names the deleted task; remove it in that task's links\.$/);
+      expect(ms().find((r) => r.id === "P")).toBeUndefined();
+      expect(ms().find((r) => r.id === "k1")!.parent_id).toBe("root"); // the re-parent still went
+      expect(ms().find((r) => r.id === "x")!.depends_on).toEqual(["P", "k1"]);
+      const a = deletedAudit()[0].details as Record<string, unknown>;
+      expect(a.dependents).toEqual([]);
+      expect(a.dependentCount).toBe(0);
+      expect(a.incomplete).toEqual([expect.stringMatching(/^the link from “Handover” was not removed/)]);
+      // Every unlink asks for the row back.
+      expect(src()).toMatch(/\.update\(\{ depends_on: next, updated_at: now, updated_by: actorUserId \}\)\s*\.eq\("id", d\.id\)\s*\.select\("id"\)/);
+    });
+    it("REVIEW BLOCKER (third pass): the dependents read sends JSON for the JSONB depends_on column — the wire format PostgREST accepts", async () => {
+      // What the real client puts on the wire (postgrest-js, the version the app ships).
+      const urls: string[] = [];
+      const client = createClient("http://db.test", "anon", {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        global: { fetch: (async (u: RequestInfo | URL) => { urls.push(String(u)); return new Response("[]", { status: 200, headers: { "content-type": "application/json" } }); }) as typeof fetch },
+      });
+      const id = "8f2a3c4e-1111-2222-3333-444455556666";
+      await client.from("milestones").select("id, name, depends_on").contains("depends_on", JSON.stringify([id])).eq("project_id", "p");
+      await client.from("milestones").select("id, name, depends_on").contains("depends_on", [id]).eq("project_id", "p");
+      const q = urls.map((u) => decodeURIComponent(new URL(u).search));
+      expect(q[0]).toContain(`depends_on=cs.["${id}"]`); // valid JSON: depends_on @> '["<id>"]'
+      expect(q[1]).toContain(`depends_on=cs.{${id}}`);   // an array literal — 22P02 against JSONB
+      // …and lib/milestones.ts sends the JSON form (the mock above refuses the other with 22P02).
+      expect(src()).toMatch(/\.contains\("depends_on", JSON\.stringify\(\[id\]\)\)/);
+      expect(src()).not.toMatch(/\.contains\("depends_on", \[/);
     });
     it("a step that fails AFTER the delete says what already happened, and the audit row is still written (with what is incomplete)", async () => {
       seed(); missing();

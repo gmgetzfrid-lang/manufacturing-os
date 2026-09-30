@@ -995,7 +995,10 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   const { data: kidRows, error: kidErr } = await supabase.from("milestones").select("id, name").eq("parent_id", id);
   if (kidErr && !looksLikeUnknownColumn(kidErr.message)) throw new Error(`Could not read the sub-tasks (${kidErr.message}) — nothing was deleted.`);
   const children = (kidErr ? [] : (kidRows ?? [])) as Array<{ id: string; name: string }>;
-  let depQ = supabase.from("milestones").select("id, name, depends_on").contains("depends_on", [id]);
+  // depends_on is JSONB (20260715): the containment value goes as JSON text.
+  // An array would be sent as a Postgres array literal (cs.{uuid}), which is
+  // not JSON — PostgREST answers 22P02 and every delete was refused here.
+  let depQ = supabase.from("milestones").select("id, name, depends_on").contains("depends_on", JSON.stringify([id]));
   depQ = m.projectId ? depQ.eq("project_id", m.projectId) : depQ.eq("org_id", m.orgId);
   const { data: depRows, error: depErr } = await depQ;
   if (depErr && !looksLikeUnknownColumn(depErr.message)) throw new Error(`Could not read the tasks that depend on it (${depErr.message}) — nothing was deleted.`);
@@ -1024,16 +1027,23 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
       incomplete.push(`${plural(n)} could not be moved up a level — ${n === 1 ? "it is" : "they are"} at the top level now`);
     }
   }
+  // Each unlink is read back: an update RLS filters, or one that finds the
+  // dependent already gone, matches 0 rows without an error — named, and not
+  // counted or audited as unlinked.
+  const unlinked: typeof dependents = [];
   for (const d of dependents) {
     const next = (d.depends_on ?? []).filter((x) => x !== id);
-    const { error: linkErr } = await supabase.from("milestones")
+    const { data: linkRows, error: linkErr } = await supabase.from("milestones")
       .update({ depends_on: next, updated_at: now, updated_by: actorUserId })
-      .eq("id", d.id);
+      .eq("id", d.id)
+      .select("id");
     if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${linkErr.message}) — it still names the deleted task; remove it in that task's links`);
+    else if (!Array.isArray(linkRows) || linkRows.length === 0) incomplete.push(`the link from “${d.name}” was not removed (the task could not be changed, or is gone) — if it is still there it names the deleted task; remove it in that task's links`);
+    else unlinked.push(d);
   }
-  await audit(children, dependents, incomplete);
+  await audit(children, unlinked, incomplete);
   if (incomplete.length > 0) throw new Error(`“${m.name}” was deleted, but ${incomplete.join("; ")}.`);
-  return { reparented: children.length, unlinked: dependents.length };
+  return { reparented: children.length, unlinked: unlinked.length };
 }
 
 // ─── Reads ──────────────────────────────────────────────────────

@@ -37,7 +37,7 @@ import {
   computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, planCascade,
   reflowNodesFromMilestones, CascadeRefusedError, isLocked, type ReflowNode, type DateChange,
 } from "@/lib/scheduleReflow";
-import { computeCriticalPath } from "@/lib/criticalPath";
+import { computeCriticalPath, pathCalendarLabel, type PathCalendar } from "@/lib/criticalPath";
 import { isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
 import { rowWindow, scrollTopToReveal } from "@/lib/rowWindow";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
@@ -853,7 +853,7 @@ export default function ExecutionView({
           <button
             onClick={() => setShowCritical((v) => !v)}
             title={critical.linked
-              ? "Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (working days Mon–Fri — no holiday calendar)"
+              ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${pathCalendarLabel(critical.calendar)} — no holiday calendar)`
               : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it"}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
           >
@@ -1009,7 +1009,7 @@ export default function ExecutionView({
           </div>
         </div>
 
-        <Legend />
+        <Legend calendar={critical.calendar} />
       </div>
       )}
 
@@ -1616,7 +1616,7 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
 
 // ─── Status affordances ────────────────────────────────────────
 
-function Legend() {
+function Legend({ calendar }: { calendar: PathCalendar }) {
   const entries: Array<[MilestoneStatus, string]> = [
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
@@ -1643,7 +1643,7 @@ function Legend() {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="On the critical path — the chain of finish-to-start links that drives the finish date (working days Mon–Fri, no holiday calendar; a task with no links counts only if it ends at the finish)">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title={`On the critical path — the chain of finish-to-start links that drives the finish date (${pathCalendarLabel(calendar)}, no holiday calendar; a task with no links counts only if it ends at the finish)`}>
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">

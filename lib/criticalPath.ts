@@ -34,6 +34,15 @@
 // weekly hand-off broke the chain and the path stopped at the last weekend.
 // Float is reported in working days.
 //
+// Unless the plan works weekends. With no project calendar the clock is
+// INFERRED from the plan (the `calendar` field): when any unfinished leaf
+// starts or finishes on a Saturday or Sunday (wall-clock-as-UTC) — a weekend
+// shutdown, a 24/7 turnaround — every day is a working day and the path runs
+// on the 7-day clock (calendar time; a lag's working days are calendar days).
+// On the Mon–Fri clock weekend work weighs nothing: every weekend instant
+// collapses onto Friday 24:00, so a Saturday task with a day of slack, or an
+// unlinked Saturday-morning job, read as "ending at the finish" and critical.
+//
 // The PATH is the chain of DRIVING links traced back from the finish —
 // Primavera's "longest path": start from the unfinished leaves that are ready
 // within the tolerance of the finish, and follow each predecessor link whose
@@ -49,7 +58,7 @@
 // reported and left out. Pure.
 
 import type { Milestone } from "@/types/schema";
-import { DAY_MS, afterLagMs, fsReadyMs, lagWorkingMs, reflowNodesFromMilestones, workingGapMs, workingTimeMs } from "@/lib/scheduleReflow";
+import { DAY_MS, afterLagMs, fsReadyMs, lagWorkingMs, reflowNodesFromMilestones, workingTimeMs } from "@/lib/scheduleReflow";
 import { leafPercent } from "@/lib/scheduleProgress";
 
 export interface CriticalPathResult {
@@ -59,9 +68,14 @@ export interface CriticalPathResult {
   finish: string | null;
   /** Hours still to do on the path: Σ planned hours × (100 − % complete) / 100. */
   remainingHours: number;
-  /** Total float per unfinished leaf, in WORKING days — Monday to Friday
-   *  (leaves in a loop are absent). */
+  /** Total float per unfinished leaf, in working days of `calendar` —
+   *  Monday to Friday, or every day on a plan that works weekends (leaves in
+   *  a loop are absent). */
   floatDays: Map<string, number>;
+  /** The clock every gap and float was measured on, inferred from the plan:
+   *  "seven-day" when an unfinished leaf starts or finishes on a Saturday or
+   *  Sunday, else "mon-fri". */
+  calendar: PathCalendar;
   /** Whether any finish-to-start link connects two leaves at all. */
   linked: boolean;
   /** Unfinished leaves with no link in or out — they count only when they
@@ -71,6 +85,18 @@ export interface CriticalPathResult {
   cycle: string[] | null;
 }
 
+/** The working week the path is measured on (see the header). */
+export type PathCalendar = "mon-fri" | "seven-day";
+
+/** How a caption names the clock: "working days Mon–Fri", or "every day,
+ *  weekends included" for a plan that works weekends. */
+export function pathCalendarLabel(calendar: PathCalendar): string {
+  return calendar === "seven-day" ? "every day, weekends included" : "working days Mon–Fri";
+}
+
+/** Saturday or Sunday, wall-clock-as-UTC (the stored form of a planned date). */
+const onWeekend = (ms: number) => { const wd = new Date(ms).getUTCDay(); return wd === 0 || wd === 6; };
+
 const startMs = (m: Milestone) => Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string));
 const finishMs = (m: Milestone) => Date.parse(m.plannedAt as string);
 
@@ -79,7 +105,7 @@ export function computeCriticalPath(
   opts?: { toleranceDays?: number },
 ): CriticalPathResult {
   const tolerance = (opts?.toleranceDays ?? 1) * DAY_MS;
-  const empty: CriticalPathResult = { ids: new Set(), finish: null, remainingHours: 0, floatDays: new Map(), linked: false, unlinked: 0, cycle: null };
+  const empty: CriticalPathResult = { ids: new Set(), finish: null, remainingHours: 0, floatDays: new Map(), calendar: "mon-fri", linked: false, unlinked: 0, cycle: null };
 
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
@@ -133,7 +159,24 @@ export function computeCriticalPath(
     }
   }
 
-  // Ready instants (calendar) and, on the working clock, ready / occupied.
+  // The clock (see the header): Mon–Fri, unless an unfinished leaf starts or
+  // finishes on a weekend — then every day counts. Lag on the 7-day clock is
+  // its working days as calendar days, so the backward pass (lagWorkingMs)
+  // and the driving test (lagEnd) still agree.
+  const unfinished = (id: string) => { const m = byId.get(id)!; return m.status !== "completed" && !m.actualAt; };
+  const calendar: PathCalendar = leafIds.some((id) => {
+    if (!unfinished(id)) return false;
+    const m = byId.get(id)!;
+    const f = finishMs(m);
+    const s = Number.isFinite(startMs(m)) ? startMs(m) : f;
+    return onWeekend(s) || onWeekend(f);
+  }) ? "seven-day" : "mon-fri";
+  const clock = calendar === "seven-day" ? (ms: number) => ms : workingTimeMs;
+  const lagEnd = calendar === "seven-day"
+    ? (readyMs: number, lagH: number) => readyMs + lagWorkingMs(lagH)
+    : afterLagMs;
+
+  // Ready instants (calendar) and, on the path's clock, ready / occupied.
   const ready = new Map<string, number>();
   const readyW = new Map<string, number>();
   const occupiedW = new Map<string, number>();
@@ -144,8 +187,8 @@ export function computeCriticalPath(
     const s = Number.isFinite(startMs(m)) ? startMs(m) : f;
     const r = fsReadyMs(f);
     ready.set(id, r);
-    readyW.set(id, workingTimeMs(r));
-    occupiedW.set(id, Math.max(0, workingGapMs(s, r)));
+    readyW.set(id, clock(r));
+    occupiedW.set(id, Math.max(0, clock(r) - clock(s)));
     projectFinish = Math.max(projectFinish, f);
   }
 
@@ -170,16 +213,13 @@ export function computeCriticalPath(
   const cycle = leafIds.filter((id) => !inOrder.has(id));
 
   // Unfinished and analysable: not completed, no actual finish, not in a loop.
-  const open = (id: string) => {
-    const m = byId.get(id)!;
-    return m.status !== "completed" && !m.actualAt && inOrder.has(id);
-  };
+  const open = (id: string) => unfinished(id) && inOrder.has(id);
   // The finish the float is measured against: the latest ready instant of an
   // UNFINISHED leaf (a completed task's planned date gates nothing).
   let projectReadyW = -Infinity;
   for (const id of order) if (open(id)) projectReadyW = Math.max(projectReadyW, readyW.get(id)!);
 
-  const lateReady = new Map<string, number>(); // working clock
+  const lateReady = new Map<string, number>(); // the path's clock
   for (let i = order.length - 1; i >= 0; i--) {
     const id = order[i];
     if (!open(id)) continue;
@@ -201,7 +241,7 @@ export function computeCriticalPath(
   }
 
   // The driving chain(s), traced back from the finish through driving links,
-  // each gap measured in working time.
+  // each gap measured on the path's clock.
   const preds = new Map<string, Array<{ p: string; lag: number }>>();
   for (const [p, row] of succ) for (const [sId, lag] of row) {
     const arr = preds.get(sId) ?? []; arr.push({ p, lag }); preds.set(sId, arr);
@@ -215,7 +255,7 @@ export function computeCriticalPath(
     const startW = readyW.get(id)! - occupiedW.get(id)!;
     for (const { p, lag } of preds.get(id) ?? []) {
       if (!open(p) || ids.has(p)) continue;
-      if (startW - workingTimeMs(afterLagMs(ready.get(p)!, lag)) < tolerance) stack.push(p);
+      if (startW - clock(lagEnd(ready.get(p)!, lag)) < tolerance) stack.push(p);
     }
   }
   let remainingHours = 0;
@@ -231,6 +271,7 @@ export function computeCriticalPath(
     finish: Number.isFinite(projectFinish) ? new Date(projectFinish).toISOString() : null,
     remainingHours,
     floatDays,
+    calendar,
     linked,
     unlinked,
     cycle: cycle.length > 0 ? cycle : null,

@@ -13,9 +13,15 @@
 // Friday) — a weekly chain handed off Friday → Monday is one driving chain,
 // not a path cut back to the last week — and a finished task with the latest
 // planned date no longer empties the path.
+//
+// Third fix pass: on the Mon–Fri clock weekend work weighed nothing, so a
+// weekend shutdown or a 7-day outage marked tasks with real slack (or every
+// task) critical. The clock is now inferred from the plan: any unfinished
+// leaf starting or finishing on a Saturday or Sunday puts the path on the
+// 7-day clock (`calendar: "seven-day"`).
 
 import { describe, it, expect } from "vitest";
-import { computeCriticalPath } from "@/lib/criticalPath";
+import { computeCriticalPath, pathCalendarLabel } from "@/lib/criticalPath";
 import { afterLagMs, lagWorkingMs, workingGapMs, workingTimeMs, DAY_MS } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
@@ -74,11 +80,13 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
     ];
     const r = computeCriticalPath(ms);
     expect([...r.ids].sort()).toEqual(["A1", "A2"]);
-    // Float in WORKING days: B2 is ready Sun 03-08 and could slip to Wed 03-11
-    // (Mon, Tue); C, ready Fri 03-06, has Fri, Mon, Tue.
-    expect(r.floatDays.get("B1")).toBe(2);
-    expect(r.floatDays.get("B2")).toBe(2);
-    expect(r.floatDays.get("C")).toBe(3);
+    // This plan works weekends (A1, B1 and C start Sun 03-01; B2 finishes Sat
+    // 03-07), so every day counts: B2 is ready Sun 03-08 00:00 and could slip
+    // to Wed 03-11 00:00 (3 days); C, ready Fri 03-06, has 5.
+    expect(r.calendar).toBe("seven-day");
+    expect(r.floatDays.get("B1")).toBe(3);
+    expect(r.floatDays.get("B2")).toBe(3);
+    expect(r.floatDays.get("C")).toBe(5);
     expect(r.unlinked).toBe(1);
   });
 
@@ -130,6 +138,7 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
       mk({ id: "W3", plannedStartAt: d("2026-06-15"), plannedAt: d("2026-06-19"), dependsOn: ["W2"] }),
     ];
     const r = computeCriticalPath(ms);
+    expect(r.calendar).toBe("mon-fri");
     expect([...r.ids].sort()).toEqual(["W1", "W2", "W3"]); // was ["W3"]: 2 calendar days of "float" at each weekend
     expect(r.floatDays.get("W1")).toBe(0);
     expect(r.floatDays.get("W2")).toBe(0);
@@ -178,10 +187,71 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
     expect([...actual.ids].sort()).toEqual(["a", "b"]);
   });
 
+  // Review (third pass) probes: on the Mon–Fri clock both came back with
+  // tasks that have real slack at 0 float — [Z, P, Y, X] and [Q, B, A].
+  it("a 7-day outage (Sat → Sun → Mon) runs on the 7-day clock: a Friday predecessor with two days of slack is not critical", () => {
+    const ms: Milestone[] = [
+      mk({ id: "X", plannedStartAt: d("2026-06-06"), plannedAt: d("2026-06-06") }), // Sat
+      mk({ id: "Y", plannedStartAt: d("2026-06-07"), plannedAt: d("2026-06-07"), dependsOn: ["X"] }), // Sun
+      mk({ id: "Z", plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-08"), dependsOn: ["Y", "P"] }), // Mon
+      mk({ id: "P", plannedStartAt: d("2026-06-04"), plannedAt: d("2026-06-05") }), // Thu–Fri
+    ];
+    const r = computeCriticalPath(ms);
+    expect(r.calendar).toBe("seven-day");
+    expect([...r.ids].sort()).toEqual(["X", "Y", "Z"]);
+    expect(r.floatDays.get("P")).toBe(2); // Saturday and Sunday
+    expect(r.floatDays.get("X")).toBe(0);
+    expect(r.floatDays.get("Y")).toBe(0);
+  });
+
+  it("a weekend-only shutdown: the timed Sat → Sun chain drives; an unlinked Saturday-morning job 29 hours before the finish does not", () => {
+    const ms: Milestone[] = [
+      mk({ id: "A", plannedStartAt: "2026-06-06T08:00:00Z", plannedAt: "2026-06-06T17:00:00Z" }),
+      mk({ id: "B", plannedStartAt: "2026-06-07T08:00:00Z", plannedAt: "2026-06-07T17:00:00Z", dependsOn: ["A"] }),
+      mk({ id: "Q", plannedStartAt: "2026-06-06T08:00:00Z", plannedAt: "2026-06-06T12:00:00Z" }),
+    ];
+    const r = computeCriticalPath(ms);
+    expect(r.calendar).toBe("seven-day");
+    expect([...r.ids].sort()).toEqual(["A", "B"]);
+    expect(r.floatDays.get("Q")).toBe(1.2); // 29 h
+    expect(r.floatDays.get("A")).toBe(0.6); // the overnight hand-off, 15 h
+    expect(r.floatDays.get("B")).toBe(0);
+  });
+
+  it("on the 7-day clock a lag's working days are calendar days, in the backward pass and the driving test alike", () => {
+    const ms: Milestone[] = [
+      mk({ id: "X", externalRef: "msp:1", plannedStartAt: d("2026-06-06"), plannedAt: d("2026-06-06") }), // Sat, ready Sun 00:00
+      // +1 working day → Mon 00:00; Z starts Tue: one day of float, not driving.
+      mk({ id: "Z", externalRef: "msp:2", plannedStartAt: d("2026-06-09"), plannedAt: d("2026-06-09"), dependsOn: ["X"], attributes: { source_links: "FS msp:1 +8h" } }),
+    ];
+    const r = computeCriticalPath(ms);
+    expect(r.calendar).toBe("seven-day");
+    expect([...r.ids]).toEqual(["Z"]);
+    expect(r.floatDays.get("X")).toBe(1);
+    const tight = computeCriticalPath(ms.map((m) => (m.id === "Z" ? { ...m, plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-08") } : m)));
+    expect([...tight.ids].sort()).toEqual(["X", "Z"]);
+    expect(tight.floatDays.get("X")).toBe(0);
+  });
+
+  it("only UNFINISHED weekend work switches the clock: a completed Saturday task leaves a weekday chain on Mon–Fri", () => {
+    const ms: Milestone[] = [
+      mk({ id: "S", plannedStartAt: d("2026-05-30"), plannedAt: d("2026-05-30"), status: "completed" }), // Sat, done
+      mk({ id: "W1", plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-05"), dependsOn: ["S"] }),
+      mk({ id: "W2", plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-12"), dependsOn: ["W1"] }),
+    ];
+    const r = computeCriticalPath(ms);
+    expect(r.calendar).toBe("mon-fri");
+    expect([...r.ids].sort()).toEqual(["W1", "W2"]);
+    expect(r.floatDays.get("W1")).toBe(0);
+    expect(pathCalendarLabel(r.calendar)).toBe("working days Mon–Fri");
+    expect(pathCalendarLabel("seven-day")).toBe("every day, weekends included");
+  });
+
   it("empty-safe", () => {
     const r = computeCriticalPath([]);
     expect(r.ids.size).toBe(0);
     expect(r.finish).toBeNull();
+    expect(r.calendar).toBe("mon-fri");
   });
 });
 
