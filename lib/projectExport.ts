@@ -8,9 +8,12 @@
 // goal here is "send it to someone in 10 seconds."
 //
 // PM-10: every cell goes through lib/csvSafe (a formula-leading value is
-// written as inert text). PERF-2: the org-wide export reads its rows in a
-// handful of bulk queries per batch of projects — never one serial round
-// trip per project — reports progress, and can be cancelled.
+// written as inert text) — the org export's per-project header line too.
+// PERF-2: the org-wide export reads its rows in a handful of bulk queries
+// per batch of projects — never one serial round trip per project — reports
+// progress, and can be cancelled. Every read pages to exhaustion under
+// PostgREST's max-rows cap, so a busy batch is never cut to its first
+// thousand rows.
 
 import { supabase } from "@/lib/supabase";
 import { csvLine } from "@/lib/csvSafe";
@@ -29,6 +32,10 @@ interface ProjectExportRow {
 export const EXPORT_PROJECT_BATCH = 100;
 /** Document ids per `.in()` read — keeps the request URL bounded. */
 const EXPORT_DOC_BATCH = 200;
+/** PostgREST returns at most this many rows per request (max-rows). Every
+ *  export read pages in windows of this size, ordered so the windows are
+ *  stable, until a short page (the lib/companies.ts gather's rule). */
+export const EXPORT_PAGE_ROWS = 1000;
 
 export interface ExportProgress {
   /** Projects whose rows have been read. */
@@ -59,12 +66,29 @@ function rowsOf(label: string, res: { data: unknown; error: { message: string } 
   return (res.data ?? []) as Array<Record<string, unknown>>;
 }
 
+type PageRead = (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+
+/** Read to exhaustion, one EXPORT_PAGE_ROWS window at a time: a read that
+ *  hits the row cap is followed by the next window, never taken as the
+ *  whole set — a short read is how silent gaps reach an auditor. */
+async function readAll(label: string, page: PageRead, signal?: AbortSignal): Promise<Array<Record<string, unknown>>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let from = 0; ; from += EXPORT_PAGE_ROWS) {
+    if (signal?.aborted) throw new ExportCancelledError();
+    const batch = rowsOf(label, await page(from, from + EXPORT_PAGE_ROWS - 1));
+    rows.push(...batch);
+    if (batch.length < EXPORT_PAGE_ROWS) return rows;
+  }
+}
+
 /**
  * Pull every project's documents + checkouts in bulk: per batch of
  * EXPORT_PROJECT_BATCH projects, one checkout_sessions read and one
- * project_documents read (in parallel), then the referenced documents in
- * chunks. The round-trip count grows with ceil(projects / 100), not with
- * the project count. Used by both the single-project and org exports.
+ * project_documents read (in parallel, each paged to exhaustion), then the
+ * referenced documents in chunks. The round-trip count grows with
+ * ceil(projects / 100) — plus one more page per 1000 rows a batch
+ * carries — not with the project count. Used by both the single-project
+ * and org exports.
  */
 async function loadProjectBundles(
   projects: Array<Record<string, unknown>>,
@@ -76,12 +100,10 @@ async function loadProjectBundles(
   for (const batch of chunks(projects, EXPORT_PROJECT_BATCH)) {
     if (opts.signal?.aborted) throw new ExportCancelledError();
     const ids = batch.map((p) => String(p.id));
-    const [ckRes, pdRes] = await Promise.all([
-      supabase.from("checkout_sessions").select("*").in("project_id", ids),
-      supabase.from("project_documents").select("*").in("project_id", ids),
+    const [checkouts, pdocs] = await Promise.all([
+      readAll("checkouts", (f, t) => supabase.from("checkout_sessions").select("*").in("project_id", ids).order("id").range(f, t), opts.signal),
+      readAll("project documents", (f, t) => supabase.from("project_documents").select("*").in("project_id", ids).order("id").range(f, t), opts.signal),
     ]);
-    const checkouts = rowsOf("checkouts", ckRes);
-    const pdocs = rowsOf("project documents", pdRes);
 
     const docIds = Array.from(new Set([
       ...checkouts.map((c) => c.document_id as string).filter(Boolean),
@@ -179,17 +201,22 @@ export async function exportProjectToCsv(projectId: string, orgId: string): Prom
 /** The org-wide CSV body (exported for tests): one projects read, then the
  *  bulk bundle reads, then the sections in name order. */
 export async function buildAllProjectsCsv(orgId: string, opts: ExportOptions = {}): Promise<string> {
-  const res = await supabase
+  const projects = await readAll("projects", (f, t) => supabase
     .from("projects").select("*")
     .eq("org_id", orgId)
-    .order("name");
-  const projects = rowsOf("projects", res);
+    .order("name").order("id")
+    .range(f, t), opts.signal);
   if (projects.length === 0) throw new Error("No projects to export");
   const bundles = await loadProjectBundles(projects, opts);
   if (opts.signal?.aborted) throw new ExportCancelledError();
   const sections: string[] = [];
   for (const bundle of bundles) {
-    sections.push(`#### ${String(bundle.project.name ?? "")} ####`);
+    // The section header is a cell like any other (PM-10): a name carrying
+    // a line break or a comma must not start a new line or cell that a
+    // spreadsheet evaluates. Line breaks fold to a space so the header stays
+    // one line; csvLine quotes and neutralises the rest.
+    const name = String(bundle.project.name ?? "").replace(/[\r\n]+/g, " ");
+    sections.push(csvLine([`#### ${name} ####`]));
     sections.push(bundleToCsv(bundle));
     sections.push("");
   }

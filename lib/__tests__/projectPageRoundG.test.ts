@@ -124,6 +124,7 @@ describe("REL-5 — one tab crashing leaves the page usable", () => {
 describe("UX-11 / SAF-17 / DEC-40 — the Documents card", () => {
   const register = {
     hiddenByPermissions: 2,
+    hiddenDocIds: ["d-h1", "d-h2"],
     rows: [
       { linkId: "l1", docId: "d1", label: "ISO-100", rev: "C", status: "Issued", libraryId: "lib", source: "checkout", lastSeenAt: null, isCurrent: true },
       { linkId: "l2", docId: "d2", label: "ISO-101", rev: "B", status: "Superseded", libraryId: "lib", source: "manual", lastSeenAt: null, isCurrent: false },
@@ -162,7 +163,8 @@ describe("UX-11 / SAF-17 / DEC-40 — the Documents card", () => {
 
   it("a refused feed row after a successful detach is shown, not swallowed", async () => {
     reg.listProjectDocuments.mockResolvedValue(register);
-    reg.writeActivity.mockRejectedValueOnce(new Error("The project activity row was not written: denied"));
+    // writeActivity returns a refusal as text (it never throws — PM-9's exported contract)
+    reg.writeActivity.mockResolvedValueOnce("The project activity row was not written: denied");
     await act(async () => root.render(React.createElement(ProjectDocumentsCard, { orgId: "o1", projectId: "p1", canManage: true, uid: "own" })));
     dlg.appConfirm.mockResolvedValueOnce(true);
     await act(async () => { (host.querySelector("button[aria-label='Remove ISO-101 from the project']") as HTMLButtonElement).click(); });

@@ -10,7 +10,9 @@
 //   · SEC-2 — every permissive SELECT / ALL policy on the nine controls and
 //     cost tables either goes through project_visible_to_me or is a write
 //     policy gated on the controller / the active owner; none grants a bare
-//     org-membership read (the private-project leak);
+//     org-membership read (the private-project leak); company_events (the
+//     company profile's event log) gates an event logged against a project
+//     on the same visibility;
 //   · SEC-17 / PM-8 — project_documents has no FOR ALL policy (the
 //     member_all one is DROPPED, not supplemented), SELECT is
 //     visibility-gated, writes need the owner or a controller in the
@@ -98,7 +100,7 @@ type Policy = { file: string; cmd: string; permissive: boolean; body: string };
 const TABLES = [
   "change_orders", "project_checklists", "checklist_items", "turnover_items", "punch_items",
   "project_parties", "cost_accounts", "cost_documents", "cost_entries",
-  "project_documents", "projects", "project_activity",
+  "project_documents", "projects", "project_activity", "company_events",
 ];
 
 function replay(): Map<string, Map<string, Policy>> {
@@ -169,6 +171,34 @@ describe("SEC-2 — private projects are private for money and quality data", ()
     }
     expect(final.get("checklist_items")!.get("checklist_items_member_read")!.body)
       .toMatch(/FROM project_checklists c\s+WHERE c\.id = checklist_items\.checklist_id AND project_visible_to_me\(c\.project_id\)/);
+  });
+});
+
+describe("SEC-2 dw2 — the company profile shows no private-project event to a non-member", () => {
+  it("before 20261102 company_events_member_read was a bare org-membership read (the /companies/[id] leak)", () => {
+    const saved = files.splice(0);
+    files.push(...saved.filter((f) => !/\/\d{8}/.test(f) || f.split("/").pop()! < "20261102"));
+    const before = replay();
+    files.splice(0, files.length, ...saved);
+    const p = before.get("company_events")!.get("company_events_member_read")!;
+    expect(p.file).toBe("supabase/migrations/20261013_project_controls_program.sql");
+    expect(p.body).toMatch(/FROM org_members m WHERE m\.org_id = company_events\.org_id/);
+    expect(p.body).not.toMatch(/project_visible_to_me/);
+  });
+
+  it("after it, every permissive read of company_events gates a project-tied event on project_visible_to_me — or is the controllers' policy", () => {
+    const leaks: string[] = [];
+    for (const [name, p] of pol("company_events")) {
+      if (!p.permissive || (p.cmd !== "SELECT" && p.cmd !== "ALL")) continue;
+      const gated = /project_id IS NULL OR project_visible_to_me\(company_events\.project_id\)/.test(p.body);
+      const controllerOnly = p.cmd === "ALL" && !/org_members/.test(p.body) && /is_org_controller\(/.test(p.body);
+      if (!gated && !controllerOnly) leaks.push(`${name} (${p.file})`);
+    }
+    expect(leaks).toEqual([]);
+    const read = final.get("company_events")!.get("company_events_member_read")!;
+    expect(read.file).toBe("supabase/migrations/20261102_prj_roundG_project_rails.sql");
+    // an event with no project is still an org record — readable by every active member
+    expect(read.body).toMatch(/FROM org_members m WHERE m\.org_id = company_events\.org_id AND m\.uid = auth\.uid\(\) AND m\.status = 'active'\)\s+AND \(company_events\.project_id IS NULL OR/);
   });
 });
 

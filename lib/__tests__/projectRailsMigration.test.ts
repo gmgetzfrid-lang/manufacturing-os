@@ -17,6 +17,7 @@ const m02 = read("20261102_prj_roundG_project_rails.sql");
 const m03 = read("20261103_prj_roundG_project_closeout_rails.sql");
 const m0906 = read("20260906_projects_hardening.sql");
 const m0609 = read("20260609_phase1_normalization.sql");
+const m1013 = read("20261013_project_controls_program.sql");
 
 const stripComments = (sql: string) => sql.replace(/--[^\n]*/g, "");
 const between = (s: string, a: string, b: string) => {
@@ -80,6 +81,23 @@ describe("20261102 — SEC-2: the nine read policies", () => {
     expect(tx).toMatch(/CREATE POLICY checklist_items_member_read ON checklist_items FOR SELECT\s+USING \(EXISTS \(SELECT 1 FROM project_checklists c\s+WHERE c\.id = checklist_items\.checklist_id AND project_visible_to_me\(c\.project_id\)\)\);/);
     expect(stripComments(tx)).not.toMatch(/_write ON|_owner_write ON/);
   });
+
+  it("company_events_member_read (the company profile's event read) is 20261013's line, closed one parenthesis early, plus ONE line gating a project-tied event on project_visible_to_me", () => {
+    // Whole statements, up to (not including) their terminating ";".
+    const live = between(m1013, "CREATE POLICY company_events_member_read ON company_events FOR SELECT", ";");
+    const next = between(m02, "CREATE POLICY company_events_member_read ON company_events FOR SELECT", ";");
+    const { onlyInA, onlyInB } = lineDiff(live, next);
+    const ORG_READ = "    USING (EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = company_events.org_id AND m.uid = auth.uid() AND m.status = 'active')";
+    // The live line closes the USING on itself; ours drops that one ")" and closes it on the added line.
+    expect(onlyInA).toEqual([`${ORG_READ})`]);
+    expect(onlyInB).toEqual([ORG_READ, "      AND (company_events.project_id IS NULL OR project_visible_to_me(company_events.project_id)))"]);
+    const tx = m02.slice(m02.indexOf("\nBEGIN;"), m02.indexOf("COMMIT;"));
+    expect(tx).toContain("DROP POLICY IF EXISTS company_events_member_read ON company_events;\nCREATE POLICY company_events_member_read ON company_events FOR SELECT");
+    // The controller write policy (FOR ALL, is_org_controller) is untouched.
+    expect(stripComments(tx)).not.toMatch(/company_events_controller_write/);
+    expect(finalSelect(m02)).toContain("'SEC-2: company events logged against a project read through project_visible_to_me (the company profile)'");
+    expect(m02.slice(0, m02.indexOf("\nBEGIN;"))).toContain("company events logged against a private project, readable org-wide today");
+  });
 });
 
 describe("20261102 — SEC-9: projects UPDATE / DELETE are byte-faithful to 20260906 plus one active-membership line", () => {
@@ -134,7 +152,7 @@ describe("20261102 — PM-8 / SEC-17: the register", () => {
     expect(stripComments(tx)).not.toMatch(/CREATE POLICY "?project_documents_member_all/);
     for (const v of ["select", "insert", "update", "delete"]) expect(tx).toContain(`CREATE POLICY project_documents_${v} ON project_documents`);
   });
-  it("checkouts_resync_project_documents is 20260609's body, now SECURITY DEFINER, plus the org-consistency guard", () => {
+  it("checkouts_resync_project_documents is 20260609's body, now SECURITY DEFINER, plus the org-consistency guard and the caller guard", () => {
     const live = between(m0609, "CREATE OR REPLACE FUNCTION checkouts_resync_project_documents()", "END$$;");
     const next = between(m02, "CREATE OR REPLACE FUNCTION checkouts_resync_project_documents()", "END$$;");
     const { onlyInA, onlyInB } = lineDiff(live, next);
@@ -142,9 +160,19 @@ describe("20261102 — PM-8 / SEC-17: the register", () => {
     expect(onlyInB).toEqual([
       "RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
       "  IF project_org(NEW.project_id) IS DISTINCT FROM NEW.org_id THEN",
+      "  IF auth.uid() IS NOT NULL",
+      "     AND (NEW.user_id IS DISTINCT FROM auth.uid() OR NOT project_visible_to_me(NEW.project_id)) THEN",
     ]);
-    // the two added lines close with the file's existing `RETURN NEW; END IF;` lines
-    expect(next).toMatch(/IF project_org\(NEW\.project_id\) IS DISTINCT FROM NEW\.org_id THEN\n    RETURN NEW;\n  END IF;\n  INSERT INTO project_documents/);
+    // each added guard closes with the file's existing `RETURN NEW; END IF;` lines, BEFORE the insert
+    expect(next).toMatch(/IF project_org\(NEW\.project_id\) IS DISTINCT FROM NEW\.org_id THEN\n    RETURN NEW;\n  END IF;\n  IF auth\.uid\(\) IS NOT NULL\n     AND \(NEW\.user_id IS DISTINCT FROM auth\.uid\(\) OR NOT project_visible_to_me\(NEW\.project_id\)\) THEN\n    RETURN NEW;\n  END IF;\n  INSERT INTO project_documents/);
+  });
+  it("SEC-17: a signed-in caller cannot plant a register row through the definer — the guard is probed by the paste-back", () => {
+    const tail = finalSelect(m02);
+    expect(tail).toContain("'SEC-17 / PM-8: a signed-in caller''s checkout links only their own session, into a project they can see'");
+    expect(tail).toContain("prosrc LIKE '%NEW.user_id IS DISTINCT FROM auth.uid() OR NOT project_visible_to_me(NEW.project_id)%'");
+    // the probe's pattern is a verbatim substring of the function source (prosrc is not deparsed)
+    const fn = between(m02, "CREATE OR REPLACE FUNCTION checkouts_resync_project_documents()", "END$$;");
+    expect(fn).toContain("NEW.user_id IS DISTINCT FROM auth.uid() OR NOT project_visible_to_me(NEW.project_id)");
   });
 });
 

@@ -324,7 +324,7 @@ summarizers then start working with no further change.
 - The Activity badge count matches what the tab renders — ✓.
 - A test asserts a project-scoped audit row reaches `getProjectTimeline` — ✓.
 
-**Scope / residual.** Intake-link events written with `resource_type = 'project_intake_link'` (link created / revoked / assignment changed) and intake rows keyed on an unlinked document are not pulled — the intake door is projects-and-cost PC-1 / J1's; a `project_intake_link` query can join the map when that package fixes the rows' resource type. `audit_logs` itself is org-readable (`SEC-19`).
+**Scope / residual.** Intake-link events written with `resource_type = 'project_intake_link'` (link created / revoked / assignment changed) and intake rows keyed on an unlinked document are not pulled — the intake door is projects-and-cost PC-1 / J1's; a `project_intake_link` query can join the map when that package fixes the rows' resource type. `audit_logs` itself is org-readable (`SEC-20`).
 
 ---
 
@@ -634,15 +634,15 @@ in the report's closeout section rather than recomputing from current state.
 - The override audit row contains the full gate snapshot.
 - The printed report shows what was open at closeout, not what is open now.
 
-**Resolution (2026-09-30, projects Round G).** Reproduced: the completion's audit row carried `details: { reason }` only; the gate lines lived in the dialog. `lib/projects.ts` `closeoutGateLines(snapshot)` builds the four gate lines once (punch, turnover, checklists, change orders — each `{ key, ok, text, openCount }`; a gate whose read failed or is not migrated is `ok: null`, "could not be read", never "clear"); `transitionProjectStatus` records them in the `PROJECT_COMPLETED` audit row as `details.gates` with `overridden` (any gate not clear) — from the snapshot the actor was SHOWN (the page passes `gateSnapshot`) or, when none was loaded, gathered at that moment; a failed gather is recorded as `gateSnapshotError`. The dialog renders the same `closeoutGateLines` and says the state is recorded. The report half (reading `details.gates` from the newest `PROJECT_COMPLETED` row) landed with J7 (`lib/projectReport.ts` `parseGateSnapshot`); it now prints the recorded lines.
+**Resolution (2026-09-30, projects Round G).** Reproduced: the completion's audit row carried `details: { reason }` only; the gate lines lived in the dialog. `lib/projects.ts` `closeoutGateLines(snapshot)` builds the four gate lines once (punch, turnover, checklists, change orders — each `{ key, ok, text, openCount }`; a gate whose read failed or is not migrated is `ok: null`, "could not be read", never "clear"); `transitionProjectStatus` records them in the `PROJECT_COMPLETED` audit row as `details.gates` with `overridden` (any gate not clear) — from the snapshot the actor was SHOWN (the page passes `gateSnapshot`) or, when none was loaded, gathered at that moment; a failed gather is recorded as `gateSnapshotError` with `gates: null` AND `overridden: null` (unknown — never "not overridden"). The dialog renders the same `closeoutGateLines` and says the state is recorded. The report half (reading `details.gates` from the newest `PROJECT_COMPLETED` row) landed with J7 (`lib/projectReport.ts` `parseGateSnapshot`); it now prints the recorded lines.
 - Commits: `7ca202f`, `9363ebb`
-- Tests: `projects.test.ts` "SAF-14 — the completion's audit row records what was open at the override" (the four lines as recorded, and `parseGateSnapshot` reads back exactly those lines), "a gate whose read failed is recorded as UNKNOWN"; `projectPageRoundG.test.ts` "renders the recorded gate lines, passes them to the transition…".
+- Tests: `projects.test.ts` "SAF-14 — the completion's audit row records what was open at the override" (the four lines as recorded, and `parseGateSnapshot` reads back exactly those lines), "a gate whose read failed is recorded as UNKNOWN", "a snapshot that could not be gathered records overridden: null beside gates: null"; `projectPageRoundG.test.ts` "renders the recorded gate lines, passes them to the transition…".
 
 **Done-when.**
 - The override audit row contains the full gate snapshot — ✓.
 - The printed report shows what was open at closeout, not what is open now — ✓ (J7's reader over this writer).
 
-**Scope / residual.** Waived-counted-as-accepted in `lib/turnover.ts:225` (cited in the mechanism) is the quality package's (`QUAL-*`) semantics, not this record; unchanged.
+**Scope / residual.** Waived-counted-as-accepted in `lib/turnover.ts:225` (cited in the mechanism) is the quality package's (`QUAL-*`) semantics, not this record; unchanged. *Fix pass (2026-09-30):* the first cut computed `overridden` as `(gates ?? []).some(…)`, so a completion whose snapshot could not be gathered was recorded `{ gates: null, overridden: false }` — an unknown gate state written as a clean closeout. It is now `overridden: gates === null ? null : …`.
 
 ---
 

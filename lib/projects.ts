@@ -138,7 +138,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
   // PM-9: the project exists — a refused feed row must not read as a failed
   // create (a retry would make a second project), and must not vanish:
   // it is written into the PROJECT_CREATED audit row.
-  const activityError = await writeActivityAfterCommit({
+  const activityError = await writeActivity({
     projectId: data.id,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -174,9 +174,20 @@ type WriteActivityInput = {
 };
 
 /**
- * Write one project_activity row. The write is CHECKED (PM-9): a refusal
- * (the 20261102 insert policy — identity, visibility, observers may not
- * comment) throws, it is never reported as success.
+ * Write one project_activity row — the feed row for a change that has
+ * ALREADY committed. The write is checked (PM-9), and its refusal (the
+ * 20261102 insert policy — identity, visibility, observers may not comment)
+ * comes back as TEXT for the caller to carry (a result field, an audit
+ * detail, a message); null means the row was written.
+ *
+ * It never throws. That is the exported contract its callers in other
+ * packages were written against (components/documents/CheckoutFlowModal —
+ * after the session insert and the lock claim, before the CHECK_OUT audit;
+ * lib/markupRequests — after the request write, before the MARKUP_* audit):
+ * a refused feed row must not abort the rest of a flow whose main write
+ * saved, skip its audit row, or tell the user an action failed that
+ * succeeded. Where the feed row IS the action (a comment),
+ * writeActivityChecked throws instead.
  *
  * Identity is the session's (PM-7): the database stamps user_id, user_name
  * and created_at from the signed-in caller (trg_project_activity_stamp), so
@@ -188,32 +199,30 @@ type WriteActivityInput = {
  * AFTER INSERT trigger on project_activity (20261102) advances it for
  * every author.
  */
-export async function writeActivity(input: WriteActivityInput): Promise<void> {
+export async function writeActivity(input: WriteActivityInput): Promise<string | null> {
   const now = new Date().toISOString();
-  const { error } = await supabase.from("project_activity").insert({
-    project_id: input.projectId,
-    org_id: input.orgId,
-    user_id: input.userId || null,
-    user_name: input.userName || null,
-    type: input.type,
-    body: input.body || null,
-    metadata: input.metadata || null,
-    created_at: now,
-  });
-  if (error) throw new Error(`The project activity row was not written: ${error.message}`);
+  try {
+    const { error } = await supabase.from("project_activity").insert({
+      project_id: input.projectId,
+      org_id: input.orgId,
+      user_id: input.userId || null,
+      user_name: input.userName || null,
+      type: input.type,
+      body: input.body || null,
+      metadata: input.metadata || null,
+      created_at: now,
+    });
+    return error ? `The project activity row was not written: ${error.message}` : null;
+  } catch (e) {
+    return `The project activity row was not written: ${(e as Error).message}`;
+  }
 }
 
-/** A feed row written AFTER the change it describes has committed: the
- *  refusal comes back as text for the caller to carry (a result field, an
- *  audit detail, a message) — never thrown as if the change had failed,
- *  never dropped. */
-async function writeActivityAfterCommit(input: WriteActivityInput): Promise<string | null> {
-  try {
-    await writeActivity(input);
-    return null;
-  } catch (e) {
-    return (e as Error).message;
-  }
+/** A feed row that IS the action (a comment): its refusal means nothing
+ *  happened, so it throws. */
+export async function writeActivityChecked(input: WriteActivityInput): Promise<void> {
+  const refused = await writeActivity(input);
+  if (refused) throw new Error(refused);
 }
 
 /** PM-9: the change landed; its feed row did not. Said, not swallowed —
@@ -474,7 +483,7 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) throw new Error(error.message);
 
-  const activityError = await writeActivityAfterCommit({
+  const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -497,7 +506,9 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
       fromStatus: current.status ?? null,
       ...(closing ? { revokedIntakeLinks } : {}),
       ...(input.toStatus === "completed"
-        ? { gates, overridden: (gates ?? []).some((g) => g.ok !== true), ...(gateSnapshotError ? { gateSnapshotError } : {}) }
+        // SAF-14: a snapshot that could not be gathered is UNKNOWN, never
+        // "not overridden" — overridden is null beside gates: null.
+        ? { gates, overridden: gates === null ? null : gates.some((g) => g.ok !== true), ...(gateSnapshotError ? { gateSnapshotError } : {}) }
         : {}),
       ...(activityError ? { activityError } : {}),
     },
@@ -801,6 +812,9 @@ export interface ProjectDocumentRegister {
   /** Linked documents the viewer's permissions hide — disclosed as a count,
    *  never silently dropped. */
   hiddenByPermissions: number;
+  /** Their ids (distinct), so the tab badge can count a hidden document
+   *  that is ALSO checked out under the project once, not twice. */
+  hiddenDocIds: string[];
 }
 
 /**
@@ -856,26 +870,29 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
   });
 
   const rows: ProjectDocumentRow[] = [];
-  let hiddenByPermissions = 0;
+  const hidden = new Set<string>();
   for (const l of links) {
     const d = byId.get(String(l.document_id));
-    if (!d) { hiddenByPermissions += 1; continue; }
+    if (!d) { hidden.add(String(l.document_id)); continue; }
     rows.push(toRow(d, l));
   }
   const inRegister = new Set(rows.map((r) => r.docId));
   for (const d of ((intakeRes.data ?? []) as DocRow[])) {
     if (!inRegister.has(String(d.id)) && !linkedIds.includes(String(d.id))) rows.push(toRow(d, null));
   }
-  return { rows, hiddenByPermissions };
+  return { rows, hiddenByPermissions: hidden.size, hiddenDocIds: [...hidden] };
 }
 
 /** UX-11: the Documents tab badge — DISTINCT documents the tab shows (the
  *  register, approved intake, and anything checked out under the project),
- *  plus the ones hidden by permissions it discloses. Never a session count. Pure. */
+ *  plus the ones hidden by permissions it discloses — all in ONE set, so a
+ *  restricted document that is also checked out under the project counts
+ *  once. Never a session count. Pure. */
 export function documentsTabCount(register: ProjectDocumentRegister | null, checkoutDocIds: readonly string[]): number {
   const ids = new Set<string>(checkoutDocIds.filter(Boolean));
   for (const r of register?.rows ?? []) ids.add(r.docId);
-  return ids.size + (register?.hiddenByPermissions ?? 0);
+  for (const id of register?.hiddenDocIds ?? []) ids.add(id);
+  return ids.size;
 }
 
 // ─── COMMENTS / ACTIVITY READ ────────────────────────────────────────────
@@ -902,7 +919,7 @@ export async function postComment(input: {
   // The comment IS the activity row: a refusal (20261102 — an observer, or a
   // project the caller cannot see) means nothing was posted, and says so.
   try {
-    await writeActivity({
+    await writeActivityChecked({
       projectId: input.projectId,
       orgId: input.orgId,
       userId: input.actorUserId,
@@ -938,7 +955,7 @@ export async function attachCheckoutToProject(input: {
     .update({ project_id: input.projectId })
     .eq("id", input.checkoutSessionId);
   if (error) throw new Error(error.message);
-  const activityError = await writeActivityAfterCommit({
+  const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -973,7 +990,7 @@ export async function addMember(input: {
     responsibility: input.responsibility?.trim() || null,
   }, { onConflict: "project_id,user_id" });
   if (error) throw new Error(error.message);
-  const activityError = await writeActivityAfterCommit({
+  const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -1023,7 +1040,7 @@ export async function removeMember(input: {
     .eq("project_id", input.projectId)
     .eq("user_id", input.userId);
   if (error) throw new Error(error.message);
-  const activityError = await writeActivityAfterCommit({
+  const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
     userId: input.actorUserId,
@@ -1204,8 +1221,9 @@ export async function deleteProject(input: {
 /** Before 20261103: only a project with NO cost or quality record may be
  *  deleted (every count read, all zero) — anything else is refused and
  *  archived instead (fail closed). The projects row is deleted FIRST (its
- *  roster, feed and links cascade), then the schedule rows it named, so a
- *  refused delete strips nothing. Audited with the counts. */
+ *  roster, feed and links cascade) and must come back from the DELETE,
+ *  then the schedule rows it named, so a refused or filtered delete strips
+ *  nothing and audits nothing. Audited with the counts. */
 async function legacyDeleteRecordlessProject(
   p: ManagedProject,
   input: { projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string },
@@ -1218,9 +1236,15 @@ async function legacyDeleteRecordlessProject(
   const { data: ms, error: msErr } = await supabase.from("milestones").select("id").eq("project_id", input.projectId);
   if (msErr) throw new Error(`The project's schedule could not be read, so nothing was deleted: ${msErr.message}`);
   const milestoneIds = ((ms ?? []) as Array<{ id: string }>).map((r) => r.id);
-  await revokeProjectIntakeLinks(input.projectId, new Date().toISOString());
-  const { error } = await supabase.from("projects").delete().eq("id", input.projectId);
+  const revokedLinks = await revokeProjectIntakeLinks(input.projectId, new Date().toISOString());
+  // RETURNING: a DELETE the policy filters out matches zero rows with no
+  // error — the project is still there, so its schedule is NOT deleted and
+  // PROJECT_DELETED is NOT written.
+  const { data: gone, error } = await supabase.from("projects").delete().eq("id", input.projectId).select("id");
   if (error) throw new Error(error.message);
+  if (((gone ?? []) as unknown[]).length === 0) {
+    throw new Error(`Nothing was deleted: the database did not remove the project (you may no longer be allowed to delete it).${revokedLinks > 0 ? ` Its ${revokedLinks} contractor intake link(s) were revoked first — mint new ones if the project stays in use.` : ""}`);
+  }
   // milestones.project_id is ON DELETE SET NULL — the schedule goes with the project.
   let scheduleError: string | null = null;
   if (milestoneIds.length > 0) {
@@ -1297,7 +1321,7 @@ async function legacyTransferOwnership(
       .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
     if (dErr) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${dErr.message}`);
   }
-  const activityError = await writeActivityAfterCommit({
+  const activityError = await writeActivity({
     projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
     type: "ownership_transferred",
     body: `Ownership transferred to ${input.newOwnerName || input.newOwnerEmail || input.newOwnerUserId}`,
@@ -1399,7 +1423,7 @@ export async function updateProjectMeta(input: {
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) throw new Error(error.message);
 
-  const activityError = await writeActivityAfterCommit({
+  const activityError = await writeActivity({
     projectId: input.projectId, orgId: proj.orgId,
     userId: input.actorUserId, userName: input.actorEmail,
     type: "comment",
@@ -1658,7 +1682,7 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
   //    document's own activity thread.
   let activityError: string | null = null;
   if (project) {
-    activityError = await writeActivityAfterCommit({
+    activityError = await writeActivity({
       projectId: project.id!,
       orgId: input.orgId,
       userId: input.actorUserId,
@@ -1766,34 +1790,96 @@ export async function autoReleaseExpiredAdHoc(
   return released;
 }
 
+/** Project ids per `.in()` read in the stranded sweep — keeps the request
+ *  line bounded however many projects carry active checkouts. */
+const SWEEP_PROJECT_CHUNK = 100;
+/** PostgREST's max-rows: the sweep's reads page in windows of this size
+ *  until a short page, never taking a capped read as the whole set. */
+const SWEEP_PAGE_ROWS = 1000;
+
+type SweepPage = (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+async function readSweepPages(label: string, page: SweepPage): Promise<Array<Record<string, unknown>>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let from = 0; ; from += SWEEP_PAGE_ROWS) {
+    const { data, error } = await page(from, from + SWEEP_PAGE_ROWS - 1);
+    if (error) throw new Error(`${label}: ${error.message}`);
+    const batch = (data ?? []) as Array<Record<string, unknown>>;
+    rows.push(...batch);
+    if (batch.length < SWEEP_PAGE_ROWS) return rows;
+  }
+}
+
+/** When a closed project closed: its FIRST closure stamp (completed_at /
+ *  cancelled_at — an archive after a completion does not restart the
+ *  clock); for a project archived with neither stamp, the newest closing
+ *  status_changed feed row; failing both, updated_at — which is never
+ *  EARLIER than the closure, so the sweep may wait longer, never release
+ *  early. updated_at alone moved on every later edit (a transfer, a
+ *  description change) and restarted the window. */
+function closedAtMs(p: { completed_at?: string | null; cancelled_at?: string | null; updated_at?: string | null }, feedClosedAt: string | undefined): number | null {
+  const stamps = [p.completed_at, p.cancelled_at].filter((v): v is string => !!v).map((v) => Date.parse(v)).filter(Number.isFinite);
+  if (stamps.length > 0) return Math.min(...stamps);
+  const fallback = feedClosedAt ?? p.updated_at ?? null;
+  const ms = fallback ? Date.parse(fallback) : NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** PM-4 dw4: active checkouts tied to a project that has been closed for
- *  longer than CLOSED_PROJECT_SWEEP_MS. Two bounded reads: the active
- *  project-tied sessions (scoped like the ad-hoc selection), then the
- *  status of the projects they name. */
+ *  longer than CLOSED_PROJECT_SWEEP_MS. Bounded reads: the active
+ *  project-tied sessions (scoped like the ad-hoc selection, paged), then
+ *  the status and closure stamps of the projects they name (chunked), and
+ *  for an archived project without a stamp, its closing feed row. */
 async function strandedClosedProjectSessions(
   db: SupabaseLike,
   scope: { orgId: string | null; userId: string | null; nowMs: number },
 ): Promise<string[]> {
-  let q = db
-    .from("checkout_sessions")
-    .select("id, project_id")
-    .eq("status", "active")
-    .not("project_id", "is", null);
-  if (scope.orgId) q = q.eq("org_id", scope.orgId);
-  if (scope.userId) q = q.eq("user_id", scope.userId);
-  const { data, error } = await q;
-  if (error) throw new Error(`Project checkouts could not be read: ${error.message}`);
-  const rows = ((data ?? []) as Array<{ id: string; project_id: string | null }>).filter((r) => !!r.project_id);
+  const sessions = await readSweepPages("Project checkouts could not be read", (from, to) => {
+    let q = db
+      .from("checkout_sessions")
+      .select("id, project_id")
+      .eq("status", "active")
+      .not("project_id", "is", null);
+    if (scope.orgId) q = q.eq("org_id", scope.orgId);
+    if (scope.userId) q = q.eq("user_id", scope.userId);
+    return q.order("id").range(from, to);
+  });
+  const rows = (sessions as Array<{ id: string; project_id: string | null }>).filter((r) => !!r.project_id);
   if (rows.length === 0) return [];
   const projectIds = Array.from(new Set(rows.map((r) => r.project_id as string)));
-  const { data: projects, error: pErr } = await db
-    .from("projects")
-    .select("id, status, updated_at")
-    .in("id", projectIds);
-  if (pErr) throw new Error(`Project status could not be read for the checkout sweep: ${pErr.message}`);
+
+  type ClosedRow = { id: string; status: ProjectStatus; completed_at: string | null; cancelled_at: string | null; updated_at: string | null };
+  const projects: ClosedRow[] = [];
+  for (let i = 0; i < projectIds.length; i += SWEEP_PROJECT_CHUNK) {
+    const part = projectIds.slice(i, i + SWEEP_PROJECT_CHUNK);
+    projects.push(...(await readSweepPages("Project status could not be read for the checkout sweep", (from, to) => db
+      .from("projects")
+      .select("id, status, completed_at, cancelled_at, updated_at")
+      .in("id", part)
+      .order("id").range(from, to))) as ClosedRow[]);
+  }
+  const closedProjects = projects.filter((p) => CLOSED_PROJECT_STATUSES.has(p.status));
+
+  // An archived project carries neither stamp: its closing feed row says when.
+  const unstamped = closedProjects.filter((p) => !p.completed_at && !p.cancelled_at).map((p) => p.id);
+  const feedClosedAt = new Map<string, string>();
+  for (let i = 0; i < unstamped.length; i += SWEEP_PROJECT_CHUNK) {
+    const part = unstamped.slice(i, i + SWEEP_PROJECT_CHUNK);
+    const feed = await readSweepPages("Project closure times could not be read for the checkout sweep", (from, to) => db
+      .from("project_activity")
+      .select("id, project_id, created_at, metadata")
+      .in("project_id", part)
+      .eq("type", "status_changed")
+      .order("id").range(from, to));
+    for (const f of feed as Array<{ project_id: string; created_at: string | null; metadata: { toStatus?: string } | null }>) {
+      if (!f.created_at || !CLOSED_PROJECT_STATUSES.has(f.metadata?.toStatus as ProjectStatus)) continue;
+      const prev = feedClosedAt.get(f.project_id);
+      if (!prev || Date.parse(f.created_at) > Date.parse(prev)) feedClosedAt.set(f.project_id, f.created_at);
+    }
+  }
+
   const cutoff = scope.nowMs - CLOSED_PROJECT_SWEEP_MS;
-  const closed = new Set(((projects ?? []) as Array<{ id: string; status: ProjectStatus; updated_at: string | null }>)
-    .filter((p) => CLOSED_PROJECT_STATUSES.has(p.status) && p.updated_at != null && Date.parse(p.updated_at) < cutoff)
+  const closed = new Set(closedProjects
+    .filter((p) => { const at = closedAtMs(p, feedClosedAt.get(p.id)); return at !== null && at < cutoff; })
     .map((p) => p.id));
   return rows.filter((r) => closed.has(r.project_id as string)).map((r) => r.id);
 }

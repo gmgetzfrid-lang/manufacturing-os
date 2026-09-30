@@ -11,7 +11,10 @@
 //   SAF-14 the completion's audit row carries the gate snapshot
 //   PM-6 / QUAL-3 / SEC-9  delete goes through delete_project_record; without
 //          it only a record-less project is deleted, project row first
-//   PM-7 / PM-9  writeActivity is checked and no longer touches projects
+//   PM-7 / PM-9  writeActivity is checked (the refusal comes back as text —
+//          it never throws, the contract its callers in other packages rely
+//          on); writeActivityChecked throws for a comment; neither touches
+//          projects
 //   PM-11  'owner' is never set by updateMember / addMember
 //   PM-5   the controller tier is the role collection (isControllerPrincipal)
 //   SEC-15 ownership moves through transfer_project_ownership
@@ -128,7 +131,7 @@ vi.mock("@/lib/checkoutEpisodes", () => ({
 
 import {
   releaseAllCheckoutsForProject, transitionProjectStatus, reopenProject, deleteProject,
-  writeActivity, postComment, addMember, updateMember, assertCanManageProject, transferOwnership,
+  writeActivity, writeActivityChecked, postComment, addMember, updateMember, assertCanManageProject, transferOwnership,
   listProjectDocuments, documentsTabCount, closeoutGateLines, describeReleaseOutcome,
   countProjectRecords, describeProjectRecords, regulatedRecordTotal, autoReleaseExpiredAdHoc,
   CLOSED_PROJECT_STATUSES, CLOSED_PROJECT_SWEEP_MS, type ProjectRecordCounts,
@@ -223,8 +226,8 @@ describe("PM-4 dw4 — the sweep releases checkouts stranded on a closed project
       { data: [{ id: "s1", project_id: "p-old" }, { id: "s2", project_id: "p-new" }, { id: "s3", project_id: "p-live" }] },
     ];
     state.rows.projects = [
-      { id: "p-old", status: "cancelled", updated_at: longAgo },
-      { id: "p-new", status: "completed", updated_at: justNow },               // inside the window: not yet
+      { id: "p-old", status: "cancelled", cancelled_at: longAgo, updated_at: longAgo },
+      { id: "p-new", status: "completed", completed_at: justNow, updated_at: justNow }, // inside the window: not yet
       { id: "p-live", status: "active", updated_at: longAgo },
     ];
     state.queue["checkout_sessions.update"] = [{ data: [{ id: "s1", document_id: "d1", org_id: "o1", user_id: "ann", library_id: "l1" }] }];
@@ -235,6 +238,50 @@ describe("PM-4 dw4 — the sweep releases checkouts stranded on a closed project
     expect(sweep.payload).toMatchObject({ released_reason: "Auto-released: the project was closed", outcome: "auto_released" });
     const notes = writesTo("notifications", "insert")[0].payload as Row[];
     expect(notes[0]).toMatchObject({ user_id: "ann", title: "Your project checkout was released" });
+  });
+
+  it("the window runs from the CLOSURE, not updated_at: a later edit to a closed project does not restart it; an archive reads its closing feed row", async () => {
+    const { supabase } = await import("@/lib/supabase");
+    const longAgo = new Date(Date.now() - CLOSED_PROJECT_SWEEP_MS - 60_000).toISOString();
+    const justNow = new Date().toISOString();
+    state.queue["checkout_sessions.select"] = [
+      { data: [] },
+      { data: [{ id: "s1", project_id: "p-edited" }, { id: "s2", project_id: "p-archived" }, { id: "s3", project_id: "p-archived-new" }] },
+    ];
+    state.rows.projects = [
+      // completed a day+ ago, description edited just now — before the fix, updated_at kept it locked another 24h
+      { id: "p-edited", status: "completed", completed_at: longAgo, updated_at: justNow },
+      // archived with no stamp: its closing status_changed feed row says when
+      { id: "p-archived", status: "archived", completed_at: null, cancelled_at: null, updated_at: justNow },
+      { id: "p-archived-new", status: "archived", completed_at: null, cancelled_at: null, updated_at: longAgo },
+    ];
+    state.rows.project_activity = [
+      { id: "a1", project_id: "p-archived", type: "status_changed", created_at: longAgo, metadata: { toStatus: "archived" } },
+      { id: "a2", project_id: "p-archived", type: "status_changed", created_at: justNow, metadata: { toStatus: "paused" } }, // not a closure
+      { id: "a3", project_id: "p-archived-new", type: "status_changed", created_at: justNow, metadata: { toStatus: "archived" } },
+    ];
+    state.queue["checkout_sessions.update"] = [{ data: [
+      { id: "s1", document_id: "d1", org_id: "o1", user_id: "ann", library_id: "l1" },
+      { id: "s2", document_id: "d2", org_id: "o1", user_id: "bob", library_id: "l1" },
+    ] }];
+    await autoReleaseExpiredAdHoc(null, { client: supabase as never });
+    expect(writesTo("checkout_sessions", "update")[0].filters).toContainEqual(["in:id", ["s1", "s2"]]);
+    // the project read asks for the closure stamps
+    const projSelect = state.calls.find((c) => c.table === "projects" && c.method === "select")!;
+    expect(String(projSelect.args[0])).toMatch(/completed_at, cancelled_at/);
+  });
+
+  it("the sweep's reads are bounded: sessions page past PostgREST's 1000-row cap, project ids go 100 per request", async () => {
+    const { supabase } = await import("@/lib/supabase");
+    const page1 = Array.from({ length: 1000 }, (_, i) => ({ id: `s${i}`, project_id: `p${i % 250}` }));
+    const page2 = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, project_id: `p${i}` }));
+    state.queue["checkout_sessions.select"] = [{ data: [] }, { data: page1 }, { data: page2 }];
+    state.rows.projects = [];
+    await autoReleaseExpiredAdHoc(null, { client: supabase as never });
+    const ranges = state.calls.filter((c) => c.table === "checkout_sessions" && c.method === "range").map((c) => c.args);
+    expect(ranges).toEqual([[0, 999], [1000, 1999]]);
+    const inCalls = state.calls.filter((c) => c.table === "projects" && c.method === "in").map((c) => (c.args[1] as string[]).length);
+    expect(inCalls).toEqual([100, 100, 50]);
   });
 });
 
@@ -324,6 +371,22 @@ describe("SAF-14 — the completion's audit row records what was open at the ove
     ]);
   });
 
+  it("a snapshot that could not be gathered records overridden: null beside gates: null — unknown, never 'not overridden'", async () => {
+    state.rows.projects = [PROJECT];
+    state.rows.org_members = [OWNER];
+    state.queue["checkout_sessions.select"] = [{ data: [] }];
+    vi.doMock("@/lib/projectSnapshot", () => ({ gatherProjectSnapshotUncached: async () => { throw new Error("snapshot read failed"); } }));
+    try {
+      await transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "completed", reason: "handed over", actorUserId: "own" });
+    } finally {
+      vi.doUnmock("@/lib/projectSnapshot");
+    }
+    const details = state.audits.find((a) => a.action === "PROJECT_COMPLETED")!.details as Record<string, unknown>;
+    expect(details.gates).toBeNull();
+    expect(details.overridden).toBeNull();
+    expect(details.gateSnapshotError).toBe("snapshot read failed");
+  });
+
   it("a gate whose read failed is recorded as UNKNOWN, never as clear", () => {
     const lines = closeoutGateLines(snapshot({ readFailures: ["punch items", "checklist items"] }));
     expect(lines.find((l) => l.key === "punch")).toEqual({ key: "punch", ok: null, text: "Punch list — could not be read", openCount: null });
@@ -371,6 +434,21 @@ describe("PM-6 / QUAL-3 — deleting a project counts, audits and refuses", () =
     expect((audit.details as { counts: ProjectRecordCounts }).counts).toMatchObject({ milestones: 2, documentLinks: 1, turnoverItems: 0 });
   });
 
+  it("without 20261103 a DELETE the policy filters to zero rows deletes no schedule and audits no PROJECT_DELETED", async () => {
+    state.rows.projects = [PROJECT];
+    state.rows.org_members = [OWNER];
+    state.rows.milestones = [{ id: "m1", project_id: "p1" }];
+    state.rows.project_intake_links = [{ id: "k1", project_id: "p1", revoked_at: null }];
+    state.rpcResults.delete_project_record = { data: null, error: MISSING_FN };
+    state.counts = { cost_accounts: 0, cost_entries: 0, cost_documents: 0, change_orders: 0, project_parties: 0, project_checklists: 0, turnover_items: 0, punch_items: 0, project_documents: 0, milestones: 1 };
+    state.queue["projects.delete"] = [{ data: [] }]; // RLS filtered: no error, no row
+    await expect(deleteProject({ projectId: "p1", actorUserId: "own" })).rejects.toThrow(/^Nothing was deleted: the database did not remove the project.*1 contractor intake link\(s\) were revoked first/);
+    const deleteCall = state.calls.find((c) => c.table === "projects" && c.op === "delete" && c.method === "select");
+    expect(deleteCall?.args[0]).toBe("id"); // RETURNING
+    expect(writesTo("milestones", "delete")).toHaveLength(0);
+    expect(state.audits.find((a) => a.action === "PROJECT_DELETED")).toBeUndefined();
+  });
+
   it("the confirm's lines come from live counts; an unreadable count is unknown, never zero", async () => {
     state.counts = { cost_accounts: 3, cost_entries: 14, cost_documents: 0, change_orders: 4, project_parties: 2, project_checklists: 1, turnover_items: { error: { message: "denied" } }, punch_items: 40, project_documents: 0, milestones: 0 };
     state.rows.project_checklists = [{ id: "c1", project_id: "p1" }];
@@ -389,11 +467,34 @@ describe("PM-6 / QUAL-3 — deleting a project counts, audits and refuses", () =
 // ── PM-7 / PM-9 ──────────────────────────────────────────────────────────────
 
 describe("PM-7 / PM-9 — the feed write is checked and no longer touches projects", () => {
-  it("a refused insert throws; the client never UPDATEs projects.last_activity_at", async () => {
-    state.queue["project_activity.insert"] = [{ error: { message: "new row violates row-level security policy for table \"project_activity\"" } }];
-    await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).rejects.toThrow(/^The project activity row was not written: new row violates/);
-    await writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" });
+  it("a refused insert comes back as text (never a throw); writeActivityChecked throws it; the client never UPDATEs projects.last_activity_at", async () => {
+    const RLS = { message: "new row violates row-level security policy for table \"project_activity\"" };
+    state.queue["project_activity.insert"] = [{ error: RLS }, { error: RLS }];
+    await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toMatch(/^The project activity row was not written: new row violates/);
+    await expect(writeActivityChecked({ projectId: "p1", orgId: "o1", userId: "u1", type: "comment", body: "x" })).rejects.toThrow(/^The project activity row was not written: new row violates/);
+    await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toBeNull();
     expect(writesTo("projects")).toHaveLength(0);
+  });
+
+  it("the exported writeActivity never rejects — its callers in other packages await it bare after their main write has committed", async () => {
+    const { supabase } = await import("@/lib/supabase");
+    const from = supabase.from;
+    (supabase as { from: unknown }).from = () => { throw new Error("fetch failed"); };
+    try {
+      await expect(writeActivity({ projectId: "p1", orgId: "o1", type: "checkout_added" })).resolves.toBe("The project activity row was not written: fetch failed");
+    } finally {
+      (supabase as { from: unknown }).from = from;
+    }
+    // Those callers (checkout, markup requests) await it bare between their committed write and
+    // their audit row: a rejection there would skip CHECK_OUT / MARKUP_* and report a saved
+    // action as failed. The contract they rely on is "resolves".
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const modal = readFileSync(join(process.cwd(), "components/documents/CheckoutFlowModal.tsx"), "utf8");
+    const markups = readFileSync(join(process.cwd(), "lib/markupRequests.ts"), "utf8");
+    expect(modal).toMatch(/await writeActivity\(\{/);
+    expect(modal.indexOf("await writeActivity({")).toBeLessThan(modal.indexOf("logCheckoutEvent", modal.indexOf("await writeActivity({")));
+    expect((markups.match(/await writeActivity\(\{/g) ?? []).length).toBe(2);
   });
 
   it("an observer's refused comment is 'not posted', and nobody is notified of it", async () => {
@@ -498,6 +599,21 @@ describe("UX-11 — the register the Documents tab shows, and its badge", () => 
     // Badge: distinct documents — ten checkout sessions of one drawing count once.
     expect(documentsTabCount(reg, ["d1", "d1", "d1", "d1", "d1", "d1", "d1", "d1", "d1", "d1"])).toBe(4);
     expect(documentsTabCount(null, ["d1", "d1", "d7"])).toBe(2);
+  });
+
+  it("a restricted document that is ALSO checked out under the project counts once — the badge matches the tab", async () => {
+    state.rows.project_documents = [
+      { id: "l1", project_id: "p1", document_id: "d1", source: "checkout", last_seen_at: "2026-09-02" },
+      // the checkout auto-linked it; the viewer's ACL hides it
+      { id: "l2", project_id: "p1", document_id: "d-secret", source: "checkout", last_seen_at: "2026-09-01" },
+    ];
+    state.rows.projects = [{ id: "p1", org_id: "o1", intake_collection_id: null }];
+    state.queue["documents.select"] = [{ data: [{ id: "d1", document_number: "ISO-100", rev: "C", status: "Issued", library_id: "lib" }] }];
+    const reg = await listProjectDocuments("p1");
+    expect(reg.hiddenByPermissions).toBe(1);
+    expect(reg.hiddenDocIds).toEqual(["d-secret"]);
+    // checkout_sessions (org-readable) still supplies the hidden document's id: one visible row + one hidden notice = 2, not 3
+    expect(documentsTabCount(reg, ["d1", "d-secret"])).toBe(2);
   });
 });
 

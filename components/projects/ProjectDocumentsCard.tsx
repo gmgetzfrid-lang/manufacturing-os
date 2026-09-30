@@ -92,18 +92,12 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
     }, 250);
   };
 
-  /** The feed row for an attach / detach — checked (a refusal is shown),
-   *  and its author stamped by the database from the session (PM-8). The
-   *  documentId in metadata is what keeps a detached document's history on
-   *  the project timeline (SAF-17). */
-  const activity = async (type: "doc_added" | "doc_removed", body: string, docId: string): Promise<string | null> => {
-    try {
-      await writeActivity({ projectId, orgId, userId: uid, userName: userEmail ?? undefined, type, body, metadata: { documentId: docId } });
-      return null;
-    } catch (e) {
-      return (e as Error).message;
-    }
-  };
+  /** The feed row for an attach / detach — checked (writeActivity returns
+   *  the refusal as text, which is shown), and its author stamped by the
+   *  database from the session (PM-8). The documentId in metadata is what
+   *  keeps a detached document's history on the project timeline (SAF-17). */
+  const activity = (type: "doc_added" | "doc_removed", body: string, docId: string): Promise<string | null> =>
+    writeActivity({ projectId, orgId, userId: uid, userName: userEmail ?? undefined, type, body, metadata: { documentId: docId } });
 
   const attach = async (doc: { id: string; label: string }) => {
     setBusy(doc.id); setErr(null);

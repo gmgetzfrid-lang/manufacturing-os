@@ -2396,15 +2396,25 @@ project that carries cost or quality records is archived, not deleted.**
    manage it (20261047) or post to its feed. `owner` is set only by the
    ownership transfer. The document register is written by the project owner
    or a controller (not by collaborators — the findings' contract; a
-   collaborator's checkout still links through the definer trigger).
+   collaborator's OWN checkout, under a project they can see, still links
+   through the definer trigger — never someone else's session, never a
+   project the caller cannot see). Two writers in other packages are refused
+   by this and swallow the refusal: the split / merge register carry-over
+   (`lib/documentLifecycle/common.ts`, document-control) for a document
+   owner who does not own every project listing the document, and
+   `adoptDocument`'s register link (`lib/transitionIn.ts`, PC-1 / J1) for a
+   collaborator — their owners surface the refusal or route the write
+   through the register's authority.
 7. **The project timeline's vocabulary is one map** (`lib/timeline.ts`
    `PROJECT_EVENT_VOCABULARY`): awards, change-order proposals and
    decisions, checklist rulings, turnover reviews, punch closes and schedule
    hits / misses are shown; individual cost entries and checklist item edits
    are not; an unclassified action is shown.
 8. **Exports.** A formula-leading CSV cell is written as an
-   apostrophe-prefixed quoted cell (BOM and extension unchanged); the org-wide
-   project export reads in batches of 100 projects, with progress and cancel.
+   apostrophe-prefixed quoted cell (BOM and extension unchanged) — every
+   cell, the org export's per-project header line included; the org-wide
+   project export reads in batches of 100 projects, each read paged to
+   exhaustion under PostgREST's 1,000-row cap, with progress and cancel.
 
 **Rationale.** Each is the direction that fails safe for a PSM-regulated
 record: an open door on a cancelled project can publish a controlled
@@ -2435,3 +2445,5 @@ hole in the freeze.
 
 **Risk:** medium — the freeze makes closed projects read-only for signed-in
 users, by design.
+
+*Landed 2026-09-30 (projects Round G, J8 review fix pass): the register trigger links only the signed-in caller's own session into a project they can see (SEC-17 / PM-8); `company_events` rows logged against a private project follow its visibility (SEC-2 — the company profile); the export's reads page to exhaustion and its section header is a csvSafe cell (PERF-2 / PM-10); the stranded-checkout sweep measures from the closure stamp, not `updated_at`, with bounded reads (PM-4); `lib/projects.writeActivity` keeps its non-throwing exported contract and returns the refusal, `writeActivityChecked` throws for a comment (PM-9); the lifecycle and adoption writers item 6 refuses are handed to their owners.*

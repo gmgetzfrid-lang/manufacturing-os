@@ -13,7 +13,12 @@
 --      on project_visible_to_me(project_id) (20260913:40 — the one
 --      visibility rule; controllers stay unscoped, DEC-43). checklist_items
 --      has no project_id: it reads through its checklist. Write policies are
---      untouched.
+--      untouched. company_events (20261013 `company_events_member_read`)
+--      stays an ORG record — an event with no project is still readable by
+--      every active member — but an event logged AGAINST a project is now
+--      readable only where that project is: the company profile gather
+--      (lib/companies.ts reads company_events by company) no longer shows a
+--      private project's recordables / stop-work orders to a non-member.
 --   2. SEC-9: projects_update_owner / projects_delete_owner (20260906:60-68)
 --      admitted the owner by owner_user_id alone — an OFFBOARDED owner could
 --      still delete the project. Both now also require an ACTIVE membership
@@ -55,7 +60,13 @@
 --      SECURITY DEFINER with search_path pinned, so a COLLABORATOR's checkout
 --      under the project still links its document (it runs as the invoker
 --      today and would now be refused), and it links only when the session's
---      org is the project's org.
+--      org is the project's org — and, for a signed-in caller, only the
+--      caller's OWN session into a project the caller can see
+--      (project_visible_to_me): checkout_sessions is writable by any active
+--      member and its project_id is not guarded, so without that line one
+--      INSERT (or a PATCH of someone else's session) would plant a register
+--      row in a private project through the definer. The service role and
+--      the SQL editor (no auth.uid()) still link.
 --   5. SEC-15: transfer_project_ownership(project, new_owner, name) —
 --      SECURITY DEFINER; the caller must be the project's ACTIVE owner or an
 --      org controller; the recipient must be an ACTIVE member of the
@@ -70,7 +81,9 @@
 -- inventories (aggregate counts only, captured BEFORE the transaction) come
 -- back with the probes:
 --   * SEC-2 blast radius: private projects carrying cost / quality rows, and
---     those rows — readable org-wide until this applies;
+--     those rows — readable org-wide until this applies; company events
+--     logged against a private project (shown on /companies/[id] to every
+--     member until this applies);
 --   * SEC-9: projects whose owner is not an active member of their org;
 --   * PM-8: project_documents rows whose org is not their project's org;
 --     hand-attached ('manual') register rows (SEC-17 — informational: there
@@ -114,6 +127,10 @@ SELECT 'inventory (before): cost / quality rows on private projects, readable or
       + (SELECT COUNT(*) FROM cost_accounts x JOIN projects p ON p.id = x.project_id WHERE p.visibility = 'private')
       + (SELECT COUNT(*) FROM cost_documents x JOIN projects p ON p.id = x.project_id WHERE p.visibility = 'private')
       + (SELECT COUNT(*) FROM cost_entries x JOIN projects p ON p.id = x.project_id WHERE p.visibility = 'private'))::text
+UNION ALL
+SELECT 'inventory (before): company events logged against a private project, readable org-wide today (SEC-2 — the company profile)', COUNT(*)::text
+  FROM company_events e JOIN projects p ON p.id = e.project_id
+ WHERE p.visibility = 'private'
 UNION ALL
 SELECT 'inventory (before): projects whose owner is not an active member of their org (SEC-9)', COUNT(*)::text
   FROM projects p
@@ -181,6 +198,14 @@ CREATE POLICY cost_documents_select ON cost_documents FOR SELECT
 DROP POLICY IF EXISTS cost_entries_select ON cost_entries;
 CREATE POLICY cost_entries_select ON cost_entries FOR SELECT
   USING (project_visible_to_me(project_id));
+
+-- company_events is an org record (20261013:240-243): its member read keeps
+-- that line verbatim save its closing parenthesis, plus ONE added line — an
+-- event logged against a project is visible where the project is.
+DROP POLICY IF EXISTS company_events_member_read ON company_events;
+CREATE POLICY company_events_member_read ON company_events FOR SELECT
+    USING (EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = company_events.org_id AND m.uid = auth.uid() AND m.status = 'active')
+      AND (company_events.project_id IS NULL OR project_visible_to_me(company_events.project_id)));
 
 -- ── 2. SEC-9: an owner acts on the project only while an ACTIVE member ──────
 -- Each predicate is 20260906's line kept verbatim plus ONE added AND line;
@@ -287,7 +312,9 @@ CREATE POLICY project_documents_delete ON project_documents
   USING (is_org_controller(org_id) OR is_project_owner(project_id));
 
 -- The checkout trigger keeps linking a collaborator's checkout (definer), and
--- links only a session whose org is its project's org.
+-- links only a session whose org is its project's org. A signed-in caller
+-- links only their OWN session, and only into a project they can see — the
+-- definer is not a side door into a private project's register.
 CREATE OR REPLACE FUNCTION checkouts_resync_project_documents()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
@@ -295,6 +322,10 @@ BEGIN
     RETURN NEW;
   END IF;
   IF project_org(NEW.project_id) IS DISTINCT FROM NEW.org_id THEN
+    RETURN NEW;
+  END IF;
+  IF auth.uid() IS NOT NULL
+     AND (NEW.user_id IS DISTINCT FROM auth.uid() OR NOT project_visible_to_me(NEW.project_id)) THEN
     RETURN NEW;
   END IF;
   INSERT INTO project_documents (org_id, project_id, document_id, first_seen_at, last_seen_at, source)
@@ -393,6 +424,16 @@ UNION ALL SELECT 'SEC-2: no SELECT or ALL policy on those nine tables still gran
                       AND qual LIKE '%org_members%'
                       AND qual NOT LIKE '%project_visible_to_me(%'
                       AND permissive = 'PERMISSIVE'), NULL
+UNION ALL SELECT 'SEC-2: company events logged against a project read through project_visible_to_me (the company profile)',
+       (SELECT qual LIKE '%org_members%' AND qual LIKE '%project_visible_to_me(%' AND qual LIKE '%project_id IS NULL%'
+          FROM pg_policies WHERE schemaname = 'public' AND tablename = 'company_events' AND policyname = 'company_events_member_read'
+            AND cmd = 'SELECT'), NULL
+UNION ALL SELECT 'SEC-2: no other SELECT policy on company_events grants a bare org-membership read',
+       NOT EXISTS (SELECT 1 FROM pg_policies
+                    WHERE schemaname = 'public' AND tablename = 'company_events' AND cmd IN ('SELECT', 'ALL')
+                      AND qual LIKE '%org_members%'
+                      AND qual NOT LIKE '%project_visible_to_me(%'
+                      AND permissive = 'PERMISSIVE'), NULL
 UNION ALL SELECT 'SEC-9: projects UPDATE and DELETE owner branches require an active org membership',
        (SELECT COUNT(*) = 2 FROM pg_policies
          WHERE schemaname = 'public' AND tablename = 'projects'
@@ -435,6 +476,9 @@ UNION ALL SELECT 'SEC-2 / PM-8 / SEC-15: every function this file defines is SEC
            AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'), NULL
 UNION ALL SELECT 'PM-8: the checkout resync links only a session whose org is its project''s org',
        (SELECT prosrc LIKE '%project_org(NEW.project_id) IS DISTINCT FROM NEW.org_id%'
+          FROM pg_proc WHERE proname = 'checkouts_resync_project_documents' AND pronamespace = 'public'::regnamespace), NULL
+UNION ALL SELECT 'SEC-17 / PM-8: a signed-in caller''s checkout links only their own session, into a project they can see',
+       (SELECT prosrc LIKE '%NEW.user_id IS DISTINCT FROM auth.uid() OR NOT project_visible_to_me(NEW.project_id)%'
           FROM pg_proc WHERE proname = 'checkouts_resync_project_documents' AND pronamespace = 'public'::regnamespace), NULL
 UNION ALL SELECT 'SEC-15: transfer_project_ownership is callable by a signed-in member, not by anon',
        has_function_privilege('authenticated', 'public.transfer_project_ownership(uuid, uuid, text)', 'EXECUTE')
