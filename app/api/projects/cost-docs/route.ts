@@ -85,9 +85,11 @@ export async function POST(req: NextRequest) {
   const doc = docRow as {
     id: string; kind: string; status: string;
     file_url: string | null; file_name: string | null; mime_type: string | null;
-    vendor_name: string | null;
+    vendor_name: string | null; total_amount?: number | null;
   } | null;
   if (!doc) return bad("Cost document not found.", 404);
+  // The total this read starts from — the final write requires it unchanged.
+  const startedTotal = doc.total_amount ?? null;
   if (!doc.file_url) return bad("This row has no stored file to read.", 404);
   // Only live documents are readable: awarded/posted are locked (money
   // moved), and a declined or voided document stays dead — re-reading must
@@ -169,9 +171,15 @@ export async function POST(req: NextRequest) {
   // invoice posted as an actual). The write carries the same status
   // predicate as the check above, so a late read never reopens a decided
   // document or rewrites its total — zero rows is a refusal, and nothing
-  // is audited (MON-3 / COST-13).
-  const save = () => supabaseAdmin.from("cost_documents").update(patch)
-    .eq("id", costDocId).eq("org_id", orgId).in("status", ["draft", "parsed"]).select("id");
+  // is audited (MON-3 / COST-13). It also requires the total the read
+  // started from: a total a person typed during the read (setManualTotal
+  // / "correct total" write `total_amount` and nothing that marks it, and
+  // leave the document open) is never overwritten by the model's figure.
+  const save = () => {
+    const q = supabaseAdmin.from("cost_documents").update(patch)
+      .eq("id", costDocId).eq("org_id", orgId).in("status", ["draft", "parsed"]);
+    return (startedTotal == null ? q.is("total_amount", null) : q.eq("total_amount", startedTotal)).select("id");
+  };
   let { data: saved, error: updErr } = await save();
   if (updErr && (updErr.code === "PGRST204" || updErr.code === "42703")) {
     // Pre-migration tolerance: pages_total / pages_read land in 20261096.
@@ -182,7 +190,7 @@ export async function POST(req: NextRequest) {
   }
   if (updErr) return bad(`The read succeeded but saving it failed: ${updErr.message}`, 500);
   if (!saved || (saved as unknown[]).length === 0) {
-    return bad("This document was decided while it was being read — nothing was changed. Refresh to see the latest.", 409);
+    return bad("This document was decided, or its total typed by hand, while it was being read — nothing was changed. Refresh to see the latest.", 409);
   }
 
   await supabaseAdmin.from("audit_logs").insert({

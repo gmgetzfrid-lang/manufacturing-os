@@ -19,7 +19,7 @@ function chain(table: string) {
   const filters: Array<[string, unknown]> = [];
   const inFilters: Array<[string, unknown[]]> = [];
   let isUpdate = false;
-  const rows = () => (state.rows[table] ?? []).filter((r) => filters.every(([k, v]) => r[k] === v) && inFilters.every(([k, vs]) => vs.includes(r[k])));
+  const rows = () => (state.rows[table] ?? []).filter((r) => filters.every(([k, v]) => (r[k] ?? null) === v) && inFilters.every(([k, vs]) => vs.includes(r[k])));
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
@@ -30,7 +30,7 @@ function chain(table: string) {
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
         if (prop === "update") isUpdate = true;
-        if (prop === "eq") filters.push([String(args[0]), args[1]]);
+        if (prop === "eq" || prop === "is") filters.push([String(args[0]), args[1]]);
         if (prop === "in") inFilters.push([String(args[0]), args[1] as unknown[]]);
         if (prop === "maybeSingle" || prop === "single") return Promise.resolve({ data: rows()[0] ?? null, error: null });
         return new Proxy(c, h);
@@ -135,14 +135,38 @@ describe("POST /api/projects/cost-docs — a read that finishes after a decision
     expect(chain).toContainEqual(["eq", "id", "d1"]);
     expect(chain).toContainEqual(["eq", "org_id", "o1"]);
     expect(chain).toContainEqual(["in", "status", ["draft", "parsed"]]);
+    // …and the total it started from (none yet on a fresh draft).
+    expect(chain).toContainEqual(["is", "total_amount", null]);
     expect(chain).toContainEqual(["select", "id"]);
+  });
+
+  it("a total typed by hand while the model read the document is kept: 409, nothing overwritten, nothing audited", async () => {
+    // "type total" on the still-open draft: total_amount is written and the document moves to parsed — still open.
+    ai.duringCall = () => { Object.assign(state.rows.cost_documents[0], { total_amount: 162_000, status: "parsed" }); };
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/or its total typed by hand, while it was being read — nothing was changed/);
+    expect(updateChain()).toContainEqual(["is", "total_amount", null]);
+    expect(state.rows.cost_documents[0].total_amount).toBe(162_000);
+    expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
+  });
+
+  it("an open document whose total nobody touched during the read still saves — the predicate is the total the read started from", async () => {
+    Object.assign(state.rows.cost_documents[0], { status: "parsed", total_amount: 150_000 });
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(200);
+    expect(updateChain()).toContainEqual(["eq", "total_amount", 150_000]);
+    // A corrected total that changes DURING that re-read is kept, as on a draft.
+    state.calls = [];
+    ai.duringCall = () => { state.rows.cost_documents[0].total_amount = 162_000; };
+    expect((await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" })).status).toBe(409);
   });
 
   it("the quote was typed, awarded and posted while the model read it: 409, the row is not reopened, nothing is audited", async () => {
     ai.duringCall = () => { state.rows.cost_documents[0].status = "awarded"; };
     const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/decided while it was being read — nothing was changed/);
+    expect((await res.json()).error).toMatch(/decided, or its total typed by hand, while it was being read — nothing was changed/);
     expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
   });
 

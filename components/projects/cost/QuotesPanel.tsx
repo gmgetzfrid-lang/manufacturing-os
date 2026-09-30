@@ -48,7 +48,7 @@ import {
   parsedQuoteFrom, quoteGroups,
 } from "@/lib/costDocs";
 import {
-  computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_PLAUSIBLE_BID_HOURS, HOURS_PLAUSIBILITY_RATIO,
+  computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling,
   companyCandidatesByName, barredCompanyFor,
   quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount,
@@ -512,9 +512,15 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
   const unread = groupDocs.filter((d) => d.status === "draft");
   const weights = effectiveWeights();
   const scoredCount = [...scores.values()].filter((s) => s.score != null).length;
+  // Manpower is scored for every bid or for none (COST-5): only once at
+  // least three bids in the field state plausible hours.
+  const manpowerScored = [...scores.values()].some((s) => s.parts.manpower != null);
   // What stating plausible hours is worth over silence, in composite points
   // (DEC-50): the 5-point cap binds hours against hours only.
   const silenceGap = Math.round(weights.manpower * 1000) / 10;
+  const notCorroborated = currency.mixed
+    ? "this field mixes currencies, so no bid is scored"
+    : `fewer than ${MIN_CORROBORATING_STATEMENTS} bids in this field state hours in line with one another, so nobody's manpower is scored and every bid compares on price`;
   // Award waits for the registry AND the explicit-link read: an empty or
   // failed list would silently drop the do-not-use flag (MON-12).
   const registryGate: LoadState = companiesState === "failed" || extrasState === "failed" ? "failed"
@@ -708,7 +714,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                     <th className="px-3 py-2 text-right" title="Total price ÷ labor hours — lower buys more hands">Price / hr</th>
                     <th className="px-3 py-2 text-right" title="Largest crew size stated">Peak crew</th>
                     <th className="px-3 py-2" title="Quote validity date as printed">Valid until</th>
-                    <th className="px-3 py-2 text-right" title={`Value score = ${Math.round(weights.price * 100)}% price + ${Math.round(weights.manpower * 100)}% manpower (between bids that state hours, at most ${MANPOWER_MAX_COMPOSITE_SWING} points apart on manpower; a bid stating none scores 0 there). Scope coverage is not scored — exclusions and check prompts are shown for your judgement.`}>Value score</th>
+                    <th className="px-3 py-2 text-right" title={`${manpowerScored
+                      ? `Value score = ${Math.round(weights.price * 100)}% price + ${Math.round(weights.manpower * 100)}% manpower (between bids that state plausible hours, at most ${MANPOWER_MAX_COMPOSITE_SWING} points apart on manpower; a bid stating none scores 0 there).`
+                      : currency.mixed ? "Not ranked — this field mixes currencies." : `Value score = price alone here — ${notCorroborated}.`} Scope coverage is not scored — exclusions and check prompts are shown for your judgement.`}>Value score</th>
                     {canManage && !awarded && <th className="px-3 py-2" />}
                   </tr>
                 </thead>
@@ -766,7 +774,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             )}
                             {s?.best && !awarded && (
                               <span className="ml-1.5 text-[9px] font-black uppercase text-[var(--color-accent)]"
-                                title={`Highest value score on price and manpower — not automatically the winner; you decide.${e.exclusionCount > 0 ? ` This bid EXCLUDES ${e.exclusionCount} item${e.exclusionCount === 1 ? "" : "s"} — scope you must buy elsewhere is not priced into the score.` : ""}`}>best value</span>
+                                title={`Highest value score on ${manpowerScored ? "price and manpower" : "price alone (manpower isn't scored in this field)"} — not automatically the winner; you decide.${e.exclusionCount > 0 ? ` This bid EXCLUDES ${e.exclusionCount} item${e.exclusionCount === 1 ? "" : "s"} — scope you must buy elsewhere is not priced into the score.` : ""}`}>best value</span>
                             )}
                             {s?.tied && !awarded && (
                               <span className="ml-1.5 text-[9px] font-black uppercase text-[var(--color-text-muted)]" title="Shares the top value score — no bid is badged; you decide.">tied</span>
@@ -792,17 +800,19 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                           <td className="px-3 py-2 text-right tabular-nums">
                             {e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span>
                               : e.laborHours > 0 ? (
-                                <span title="Vendor-stated, AI-extracted">
+                                <span title={manpowerScored ? "Vendor-stated, AI-extracted" : `Vendor-stated, AI-extracted — shown, not scored: ${notCorroborated}.`}>
                                   {e.laborHours.toLocaleString()}
                                   {e.implausibleHours && (
                                     <span className="block text-[9px] font-bold text-amber-700 dark:text-amber-300"
-                                      title={`${e.implausibleHours}. Scored as not stated (manpower 0) — check the hours against the PDF.`}>
+                                      title={`${e.implausibleHours}. ${manpowerScored ? "Scored as not stated (manpower 0)" : "Not scored"} — check the hours against the PDF.`}>
                                       implausible hours — check
                                     </span>
                                   )}
                                 </span>
                               )
-                              : <span className="text-[var(--color-text-faint)]" title={`This bid doesn't state labor hours — its manpower part is 0 (the RFQ asks for hours), so a bid that states plausible hours can score up to ${silenceGap} points higher on that alone.`}>not stated</span>}
+                              : <span className="text-[var(--color-text-faint)]" title={manpowerScored
+                                ? `This bid doesn't state labor hours — its manpower part is 0 (the RFQ asks for hours), so a bid that states plausible hours can score up to ${silenceGap} points higher on that alone.`
+                                : `This bid doesn't state labor hours. Manpower isn't scored in this field — ${notCorroborated}.`}>not stated</span>}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span> : e.dollarsPerHour != null ? fmtMoney(e.dollarsPerHour, cur) : "—"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">—</span> : e.peakHeadcount ?? "—"}</td>
@@ -813,7 +823,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                           </td>
                           <td className="px-3 py-2 text-right">
                             {s && s.score != null && (
-                              <span className="font-black tabular-nums text-[var(--color-text)]" title={`Price ${s.parts.price} · Manpower ${s.parts.manpower} (each 0–100 vs the field) · Coverage not scored`}>
+                              <span className="font-black tabular-nums text-[var(--color-text)]" title={s.parts.manpower != null
+                                ? `Price ${s.parts.price} · Manpower ${s.parts.manpower} (each 0–100 vs the field) · Coverage not scored`
+                                : `Price ${s.parts.price} (0–100 vs the field) · Manpower not scored — ${notCorroborated} · Coverage not scored`}>
                                 {s.score}
                               </span>
                             )}
@@ -882,9 +894,15 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
           )}
           {econ.length > 0 && (
             <div className="text-[10px] text-[var(--color-text-muted)]">
-              Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state them, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. Stated hours that are implausible (under {MIN_PLAUSIBLE_BID_HOURS} for the whole bid, or a price per hour more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median) score as not stated.
-              Scope coverage is not scored: declared exclusions never lower a score (as the RFQ letter promises) and &quot;check&quot; prompts are for you to verify against the PDF.
-              {scoredCount < 2 ? " With fewer than two scored bids there is no field to rank, so no bid is badged." : " The cheapest bid doesn't automatically win — exclusions are why. You make the call."}
+              {currency.mixed ? (
+                <>This field mixes currencies, so no bid is scored or ranked — each price is shown in its own currency.</>
+              ) : manpowerScored ? (
+                <>Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state plausible hours, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. A bid whose price per stated hour is more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median is flagged and scored as not stated.</>
+              ) : (
+                <>Value score = price alone: labor hours are vendor-stated and AI-extracted, and are scored only once at least {MIN_CORROBORATING_STATEMENTS} bids in the field state hours in line with one another — here fewer do, so the hours are shown and nobody&apos;s manpower is scored.</>
+              )}
+              {" "}Scope coverage is not scored: declared exclusions never lower a score (as the RFQ letter promises) and &quot;check&quot; prompts are for you to verify against the PDF.
+              {scoredCount < 2 ? " With fewer than two scored bids there is no field to rank, so no bid is badged." : manpowerScored ? " The cheapest bid doesn't automatically win — manpower counts too, and the exclusions are yours to weigh. You make the call." : " On price alone the cheapest bid ranks first — its exclusions and check prompts are yours to weigh. You make the call."}
             </div>
           )}
         </div>

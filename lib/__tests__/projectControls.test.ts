@@ -3,7 +3,7 @@ import {
   computeBidEconomics, scoreBids, validateParsedQuote, DEFAULT_WEIGHTS,
   normalizeCompanyName, matchCompanyByName, isoCurrency, fieldCurrency, effectiveWeights,
   MANPOWER_MAX_COMPOSITE_SWING, bidCurrency, parseTypedAmount, withHumanTotal,
-  companyCandidatesByName, barredCompanyFor, MIN_PLAUSIBLE_BID_HOURS, HOURS_PLAUSIBILITY_RATIO,
+  companyCandidatesByName, barredCompanyFor, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   type ParsedQuote,
 } from "@/lib/bidTab";
 import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/costSeries";
@@ -65,7 +65,7 @@ describe("bidTab economics", () => {
     expect(bEcon.exclusionCount).toBe(1);
   });
 
-  it("weighted best value: cheapest does not automatically win when coverage/manpower lag", () => {
+  it("weighted best value: cheapest does not automatically win when manpower lags — once the field can corroborate hours", () => {
     const cheapButThin = quote({ id: "thin", total: 80_000, exclusions: ["NDE", "hydrotest", "insulation"], lineItems: [
       { description: "Repipe circuits scope", total: 80_000, hours: null },
     ]});
@@ -75,11 +75,20 @@ describe("bidTab economics", () => {
       { description: "Hydrotest and reinstate", total: 10_000, hours: 150 },
       { description: "Insulation reinstatement", total: 5_000, hours: 100 },
     ]});
-    const econ = computeBidEconomics([cheapButThin, fullAndStaffed]);
-    const scores = scoreBids(econ, DEFAULT_WEIGHTS);
+    // Re-decided by the verification of 2026-09-30 (COST-5, DEC-50): in the original two-bid field
+    // the staffed bid is the ONLY one stating hours — nothing can corroborate its figure — so manpower
+    // is scored for neither and price decides. The thin bid's exclusions are shown as facts, not scored.
+    const pair = scoreBids(computeBidEconomics([cheapButThin, fullAndStaffed]), DEFAULT_WEIGHTS);
+    expect(pair.find((s) => s.best)!.quoteId).toBe("thin");
+    expect(pair.every((s) => s.parts.manpower === null)).toBe(true);
+    expect(computeBidEconomics([cheapButThin, fullAndStaffed]).find((e) => e.quoteId === "thin")!.exclusionCount).toBe(3);
+    // With two more bids stating hours in line with it, the field corroborates the figures and manpower counts.
+    const mid = quote({ id: "mid", total: 100_000, lineItems: [{ description: "Repipe circuits scope", total: 100_000, hours: 1200 }] });
+    const high = quote({ id: "high", total: 105_000, lineItems: [{ description: "Repipe circuits scope", total: 105_000, hours: 1250 }] });
+    const scores = scoreBids(computeBidEconomics([cheapButThin, fullAndStaffed, mid, high]), DEFAULT_WEIGHTS);
     const winner = scores.find((s) => s.best)!;
     expect(winner.quoteId).toBe("full");
-    // The math is visible: the thin bid won price but lost manpower + coverage.
+    // The math is visible: the thin bid won price but lost manpower.
     const thin = scores.find((s) => s.quoteId === "thin")!;
     expect(thin.parts.price).toBe(100);
     expect(thin.parts.manpower).toBe(0);
@@ -154,16 +163,22 @@ describe("bidTab honesty (Round G, DEC-50)", () => {
   it("COST-5: padded hours cannot buy best value against a slightly cheaper honest bid (swing capped)", () => {
     const honest = quote({ id: "honest", total: 188_000, lineItems: [line("Repipe unit 300 exchanger circuits", 188_000, 2000)] });
     const padded = quote({ id: "padded", total: 200_000, lineItems: [line("Repipe unit 300 exchanger circuits", 200_000, 4000)] });
-    const scores = scoreBids(computeBidEconomics([honest, padded]));
+    const steady = quote({ id: "steady", total: 195_000, lineItems: [line("Repipe unit 300 exchanger circuits", 195_000, 2050)] });
+    // Amended (verification of 2026-09-30): manpower is scored only in a field of three statements.
+    const scores = scoreBids(computeBidEconomics([honest, padded, steady]));
+    expect(scores.every((s) => s.parts.manpower != null)).toBe(true);
     expect(scores.find((s) => s.best)!.quoteId).toBe("honest");
-    // Between two bids that state hours, the manpower part moves the composite by at most the cap.
+    // Between bids that state hours, the manpower part moves the composite by at most the cap.
     const w = effectiveWeights();
     const h = scores.find((s) => s.quoteId === "honest")!, p = scores.find((s) => s.quoteId === "padded")!;
+    expect(p.parts.manpower!).toBeGreaterThan(h.parts.manpower!);
     expect((p.parts.manpower! - h.parts.manpower!) * w.manpower).toBeLessThanOrEqual(MANPOWER_MAX_COMPOSITE_SWING + 1e-9);
     // Not stating hours at all scores 0 on manpower — below every stated figure; undisclosed never beats disclosed.
     const silent = quote({ id: "silent", total: 188_000, lineItems: [line("Repipe unit 300 exchanger circuits", 188_000, null)] });
-    const s2 = scoreBids(computeBidEconomics([silent, padded]));
+    const s2 = scoreBids(computeBidEconomics([silent, padded, honest, steady]));
     expect(s2.find((s) => s.quoteId === "silent")!.parts.manpower).toBe(0);
+    // With only the padder stating hours, nobody's manpower is scored.
+    expect(scoreBids(computeBidEconomics([silent, padded])).every((s) => s.parts.manpower === null)).toBe(true);
   });
 
   it("BID-6: a single bid shows a score with no best-value badge; a tie is a tie", () => {
@@ -234,11 +249,17 @@ describe("bidTab honesty (Round G, DEC-50)", () => {
     expect(barredCompanyFor("Apex Co.", null, [sibling, { id: "a2", name: "Apex LLC", status: "inactive" }])).toBeNull();
   });
 
-  it("COST-5 / DEC-50 (recorded for ratification): silence on hours scores 0, so stating PLAUSIBLE hours is worth up to 100 × the manpower share; the 5-point cap binds hours against hours only", () => {
+  it("COST-5 / DEC-50 (recorded for ratification): once three bids state plausible hours, silence scores 0, so stating them is worth up to 100 × the manpower share; the 5-point cap binds hours against hours only", () => {
     const w = effectiveWeights();
     const silent = quote({ id: "silent", total: 100_000, lineItems: [line("Repipe unit 300 exchanger circuits", 100_000, null)] });
     const stated = quote({ id: "stated", total: 150_000, lineItems: [line("Repipe unit 300 exchanger circuits", 150_000, 1500)] });
-    const scores = scoreBids(computeBidEconomics([silent, stated]));
+    const s2 = quote({ id: "s2", total: 155_000, lineItems: [line("Repipe unit 300 exchanger circuits", 155_000, 1500)] });
+    const s3 = quote({ id: "s3", total: 160_000, lineItems: [line("Repipe unit 300 exchanger circuits", 160_000, 1600)] });
+    // The lone statement alone is not corroborated: manpower is scored for neither and the cheaper silent bid leads on price.
+    const alone = scoreBids(computeBidEconomics([silent, stated]));
+    expect(alone.every((s) => s.parts.manpower === null)).toBe(true);
+    expect(alone.find((s) => s.best)!.quoteId).toBe("silent");
+    const scores = scoreBids(computeBidEconomics([silent, stated, s2, s3]));
     const si = scores.find((s) => s.quoteId === "silent")!, st = scores.find((s) => s.quoteId === "stated")!;
     expect(si.parts.manpower).toBe(0);
     expect(st.parts.manpower).toBe(100);
@@ -251,55 +272,104 @@ describe("bidTab honesty (Round G, DEC-50)", () => {
     expect(scores.find((s) => s.best)!.quoteId).toBe("stated");
   });
 
-  it("COST-5 dw3: stated hours must be PLAUSIBLE — one hour cannot buy best value over a cheaper silent bid", () => {
-    const silent = quote({ id: "silent", total: 100_000, lineItems: [line("Repipe unit 300 exchanger circuits", 100_000, null)] });
-    for (const hours of [1, MIN_PLAUSIBLE_BID_HOURS - 1]) {
-      const gamed = quote({ id: "gamed", total: 150_000, lineItems: [line("Repipe unit 300 exchanger circuits", 150_000, hours)] });
-      const econ = computeBidEconomics([silent, gamed]);
-      expect(econ.find((e) => e.quoteId === "gamed")!.implausibleHours).toMatch(/less than a person-day/);
+  // ── Verification of 2026-09-30 (COST-5): stated hours count only where the field can corroborate them ──
+  const stating = (id: string, total: number, hours: number | null, currency: string | null = "USD") =>
+    quote({ id, total, currency, lineItems: [line("Repipe unit 300 exchanger circuits", total, hours)] });
+  const scoreOf = (scores: ReturnType<typeof scoreBids>, id: string) => scores.find((s) => s.quoteId === id)!.score;
+
+  it("COST-5 (b): with fewer than three bids stating hours, manpower is shown per row but scored for no one — a lone figure cannot buy the badge", () => {
+    expect(MIN_CORROBORATING_STATEMENTS).toBe(3);
+    const silent = stating("silent", 100_000, null);
+    // The verification's example: $150k stating 8 h ($18,750/h) scored 79.2 and took the badge from a silent $100k bid at 62.5.
+    for (const hours of [1, 8, 1500]) {
+      const lone = stating("lone", 150_000, hours);
+      const econ = computeBidEconomics([silent, lone]);
+      const e = econ.find((x) => x.quoteId === "lone")!;
+      expect(e.laborHours).toBe(hours);                 // shown per row…
+      expect(e.dollarsPerHour).toBe(150_000 / hours);
+      expect(e.implausibleHours).toBeNull();            // …with no field to judge it against
       const scores = scoreBids(econ);
-      const g = scores.find((s) => s.quoteId === "gamed")!;
-      expect(g.parts.manpower).toBe(0);            // scored as not stated
-      expect(g.best).toBe(false);
+      expect(scores.every((s) => s.parts.manpower === null)).toBe(true);   // …and scored for no one
+      expect(scoreOf(scores, "silent")).toBe(100);
+      expect(scoreOf(scores, "lone")).toBe(66.7);
       expect(scores.find((s) => s.best)!.quoteId).toBe("silent");
     }
-    // A person-day or more is a statement the floor accepts.
-    const day = computeBidEconomics([silent, quote({ id: "d", total: 150_000, lineItems: [line("Repipe", 150_000, MIN_PLAUSIBLE_BID_HOURS)] })]);
-    expect(day.find((e) => e.quoteId === "d")!.implausibleHours).toBeNull();
+    // Two statements are still not a field: every bid compares on price.
+    const two = scoreBids(computeBidEconomics([silent, stating("a", 150_000, 1500), stating("b", 140_000, 1400)]));
+    expect(two.every((s) => s.parts.manpower === null)).toBe(true);
+    expect(two.find((s) => s.best)!.quoteId).toBe("silent");
   });
 
-  it("COST-5 dw3: with three or more bids stating hours, a price per hour more than 4× off the field's median scores as not stated", () => {
-    const honest = (id: string, total: number, hours: number) => quote({ id, total, lineItems: [line("Repipe unit 300 exchanger circuits", total, hours)] });
+  it("COST-5 (a): one misread statement never flags, or lowers the score of, an honest bid — the verification's two-statement field", () => {
+    const honest = stating("honest", 100_000, 1200);
+    const misread = stating("misread", 150_000, 80);   // $1,875/h against $83/h
+    const silent = stating("silent", 95_000, null);
+    const econ = computeBidEconomics([honest, misread, silent]);
+    expect(econ.every((e) => e.implausibleHours == null)).toBe(true);    // the honest row is NOT marked "implausible"
+    const withIt = scoreBids(econ);
+    const without = scoreBids(computeBidEconomics([honest, silent]));
+    expect(scoreOf(withIt, "honest")).toBe(scoreOf(without, "honest"));
+    expect(withIt.every((s) => s.parts.manpower === null)).toBe(true);   // every bid on the same basis: price
+    expect(withIt.find((s) => s.best)!.quoteId).toBe("silent");
+  });
+
+  it("COST-5 (a): an absurd statement added to a field changes no other bid's score, whether it makes the third statement or the fourth", () => {
+    const silent = stating("silent", 95_000, null);
+    const a = stating("a", 100_000, 1000), b = stating("b", 110_000, 1150), c = stating("c", 105_000, 1000);
+    for (const base of [[silent, a, b], [silent, a, b, c]]) {
+      for (const absurd of [stating("z", 120_000, 12), stating("z", 120_000, 1_000_000)]) {
+        const before = scoreBids(computeBidEconomics(base));
+        const econ = computeBidEconomics([...base, absurd]);
+        expect(econ.filter((e) => e.implausibleHours != null).map((e) => e.quoteId)).toEqual(["z"]);
+        const after = scoreBids(econ);
+        for (const q of base) expect(scoreOf(after, q.id)).toBe(scoreOf(before, q.id));
+      }
+    }
+    // Two corroborating statements plus the absurd one: the absurd one is flagged, and it does not switch manpower on.
+    expect(scoreBids(computeBidEconomics([silent, a, b, stating("z", 120_000, 12)])).every((s) => s.parts.manpower === null)).toBe(true);
+  });
+
+  it("COST-5 (c): with three or more bids stating hours, a bid whose price per hour is more than 4× off the field's median scores as not stated — only that bid is flagged", () => {
     const econ = computeBidEconomics([
-      honest("a", 180_000, 1800),          // $100/h
-      honest("b", 190_000, 2000),          // $95/h
-      honest("c", 170_000, 60),            // $2,833/h — 28× the median: too few hours for the price
-      honest("d", 200_000, 40_000),        // $5/h — 1/19 of the median: too many hours for the price
+      stating("a", 180_000, 1800),          // $100/h
+      stating("b", 190_000, 2000),          // $95/h
+      stating("e", 185_000, 1900),          // $97/h
+      stating("c", 170_000, 60),            // $2,833/h — 29× the median: too few hours for the price
+      stating("d", 200_000, 40_000),        // $5/h — 1/19 of the median: too many hours for the price
     ]);
     const by = (id: string) => econ.find((e) => e.quoteId === id)!;
-    expect(by("a").implausibleHours).toBeNull();
-    expect(by("b").implausibleHours).toBeNull();
-    expect(by("c").implausibleHours).toMatch(/too few hours for the price/);
-    expect(by("d").implausibleHours).toMatch(/too many hours for the price/);
+    expect(econ.filter((e) => e.implausibleHours != null).map((e) => e.quoteId)).toEqual(["c", "d"]);
+    expect(by("c").implausibleHours).toMatch(/29× the field's median — too few hours for the price/);
+    expect(by("d").implausibleHours).toMatch(/1\/19 of the field's median — too many hours for the price/);
     const scores = scoreBids(econ);
     expect(scores.find((s) => s.quoteId === "c")!.parts.manpower).toBe(0);
     expect(scores.find((s) => s.quoteId === "d")!.parts.manpower).toBe(0);
-    // The implausible padder never sets the field's best $/hr: the honest bids keep the full band between them.
+    // The implausible figures never set the field's best $/hr: the plausible bids keep the full band between them.
     expect(scores.find((s) => s.quoteId === "b")!.parts.manpower).toBe(100);
     expect(HOURS_PLAUSIBILITY_RATIO).toBe(4);
+    // Three statements with one flagged leave two plausible ones — not a field: nobody's manpower is scored.
+    const thin = computeBidEconomics([stating("a", 180_000, 1800), stating("b", 190_000, 2000), stating("c", 170_000, 60)]);
+    expect(thin.filter((e) => e.implausibleHours != null).map((e) => e.quoteId)).toEqual(["c"]);
+    expect(scoreBids(thin).every((s) => s.parts.manpower === null)).toBe(true);
   });
 
-  it("COST-5 dw3: two bids stating hours are only flagged when more than 4² apart — and then BOTH (neither can vouch for the other)", () => {
-    const q = (id: string, total: number, hours: number) => quote({ id, total, lineItems: [line("Repipe unit 300 exchanger circuits", total, hours)] });
-    // The padded-hours pin's pair (1.9× apart) stays scored — the 5-point swing handles it.
-    const near = computeBidEconomics([q("honest", 188_000, 2000), q("padded", 200_000, 4000)]);
-    expect(near.every((e) => e.implausibleHours == null)).toBe(true);
-    // 150× apart: neither statement is scored until checked; price decides.
-    const far = computeBidEconomics([q("honest", 160_000, 1600), q("gamed", 150_000, 10)]);
-    expect(far.every((e) => e.implausibleHours != null)).toBe(true);
-    const scores = scoreBids(far);
-    expect(scores.every((s) => s.parts.manpower === 0)).toBe(true);
-    expect(scores.find((s) => s.best)!.quoteId).toBe("gamed");   // cheaper on price alone — its hours bought nothing
+  it("COST-5 (d): the plausibility median is taken within one currency — a mixed-currency field flags no row; an unprinted currency is the field's", () => {
+    // Pooled, the yen figures (¥10,000/h) would put the dollar bid at 1/100 of the median.
+    const mixed = computeBidEconomics([
+      stating("j1", 15_000_000, 1500, "JPY"), stating("j2", 15_500_000, 1500, "JPY"), stating("j3", 16_000_000, 1600, "JPY"),
+      stating("us", 100_000, 1000, "USD"),
+    ]);
+    expect(mixed.every((e) => e.implausibleHours == null)).toBe(true);
+    expect(scoreBids(mixed).every((s) => s.score === null && s.unscored === "mixed-currency")).toBe(true);
+    // A bid that prints no currency is judged — and scored — in the field's single currency.
+    const eur = computeBidEconomics([
+      stating("a", 150_000, 1500, "EUR"), stating("b", 160_000, 1600, "EUR"), stating("n", 155_000, 1550, null),
+      stating("z", 150_000, 10, "EUR"),
+    ]);
+    expect(eur.filter((e) => e.implausibleHours != null).map((e) => e.quoteId)).toEqual(["z"]);
+    const scores = scoreBids(eur);
+    expect(scores.find((s) => s.quoteId === "n")!.parts.manpower).toBe(100);
+    expect(scores.find((s) => s.quoteId === "z")!.parts.manpower).toBe(0);
   });
 
   it("BID-5 limb: a one-word declared exclusion covers the longer scope line built on it — never 'excludes: NDE' beside 'check: NDE (RT 10%)'", () => {
@@ -637,7 +707,10 @@ describe("review regressions", () => {
       id: "r", vendorName: "Real Co", total: 100_000, exclusions: [],
       lineItems: [{ description: "Demo and repipe the exchanger circuits", hours: 1000, total: 100_000 }],
     };
-    const scores = scoreBids(computeBidEconomics([zero, real]));
+    // Amended (verification of 2026-09-30): two more real bids, so manpower is scored and the pin still exercises it.
+    const real2: ParsedQuote = { ...real, id: "r2", total: 104_000, lineItems: [{ description: "Demo and repipe the exchanger circuits", hours: 1040, total: 104_000 }] };
+    const real3: ParsedQuote = { ...real, id: "r3", total: 108_000, lineItems: [{ description: "Demo and repipe the exchanger circuits", hours: 1100, total: 108_000 }] };
+    const scores = scoreBids(computeBidEconomics([zero, real, real2, real3]));
     for (const s of scores) {
       expect(Number.isFinite(s.score)).toBe(true);
       expect(Number.isFinite(s.parts.manpower)).toBe(true);

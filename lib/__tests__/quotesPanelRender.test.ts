@@ -375,12 +375,34 @@ describe("BID-7 — a field where no bid prints a currency", () => {
 });
 
 describe("COST-5 dw3 / BID-9 — what the row says, and what a typed total may be", () => {
-  it("implausible hours are marked on the row", async () => {
+  const hoursDoc = (id: string, vendorName: string, total: number, hours: number, currency: string | null) => doc({
+    id, vendorName, currency, totalAmount: total,
+    parsed: { vendorName, total, currency, lineItems: [{ description: "Repipe exchanger circuits", total, hours }], exclusions: [] },
+  });
+
+  it("implausible hours are marked on the row — only the out-of-line bid's, once three bids state hours", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    // Amended (verification of 2026-09-30): two statements are no longer judged — this field has three in line and one far out.
+    await render([...docs, hoursDoc("coastal", "Coastal", 160_000, 1600, "EUR"), hoursDoc("delta", "Delta", 145_000, 2, "EUR")]);
+    expect(rowOf(/Delta/).textContent).toMatch(/implausible hours — check/);
+    for (const v of [/Apex/, /Bayline/, /Coastal/]) expect(rowOf(v).textContent).not.toMatch(/implausible/);
+    expect(host.textContent).toMatch(/flagged and scored as not stated/);
+  });
+
+  it("two bids stating hours: neither row is marked, and the value score says it is price alone", async () => {
     reg.listCompanies.mockResolvedValue([]);
     const oneHour = [docs[0], { ...docs[1], parsed: { ...(docs[1].parsed as Record<string, unknown>), lineItems: [{ description: "Repipe exchanger circuits", total: 140_000, hours: 1 }] } }];
     await render(oneHour);
-    expect(rowOf(/Bayline/).textContent).toMatch(/implausible hours — check/);
-    expect(rowOf(/Apex/).textContent).not.toMatch(/implausible/);
+    expect(host.textContent).not.toMatch(/implausible/);
+    expect(host.textContent).toMatch(/Value score = price alone/);
+    expect(host.textContent).toMatch(/nobody's manpower is scored/);
+  });
+
+  it("a mixed-currency field marks no row, however far one currency's figures sit from another's", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    await render([docs[0], hoursDoc("bay", "Bayline", 140_000, 1500, "USD"), hoursDoc("coastal", "Coastal", 160_000, 1600, "USD"), hoursDoc("delta", "Delta", 145_000, 2, "USD")]);
+    expect(host.textContent).not.toMatch(/implausible/);
+    expect(host.textContent).toMatch(/This field mixes currencies, so no bid is scored or ranked/);
   });
 
   it("a figure that could be read two ways is refused — nothing is written", async () => {

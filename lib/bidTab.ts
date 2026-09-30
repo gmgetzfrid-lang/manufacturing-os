@@ -22,18 +22,22 @@
 //   * With neither in the score, the coverage part is NOT SCORED (null)
 //     until a per-RFQ scope checklist exists; the composite is price +
 //     manpower with the weights renormalised.
-//   * Labour hours are vendor-stated and AI-extracted. Among bids that
-//     state them they move the composite by at most
-//     MANPOWER_MAX_COMPOSITE_SWING points. A bid that states NONE scores a
-//     manpower part of 0 (the letter asks for hours — silence is
-//     non-compliance), so stating hours at all is worth up to
-//     100 × the manpower share of the composite over silence (37.5
-//     points at the default weights) — the cap bounds hours against
-//     hours, not hours against silence (DEC-50, recorded for ratification).
-//     Stated hours must also be PLAUSIBLE to count (COST-5 dw3): fewer than
-//     a person-day for the whole bid, or a whole-price $/hr more than
-//     HOURS_PLAUSIBILITY_RATIO× off the field's median, is scored as not
-//     stated and shown as "implausible hours — check".
+//   * Labour hours are vendor-stated and AI-extracted, so they count only
+//     where the field can corroborate them (COST-5, DEC-50). Manpower is
+//     scored for every bid or for none: only when at least
+//     MIN_CORROBORATING_STATEMENTS bids in the field (one currency) state
+//     PLAUSIBLE hours. With fewer, the hours are shown per row and every
+//     bid compares on price alone — a figure no other bid's figures can
+//     check never buys score. With three or more statements, a bid whose
+//     whole-price $/hr is more than HOURS_PLAUSIBILITY_RATIO× off the
+//     field's log-scale median is flagged "implausible hours — check" and
+//     scored as not stated; that judgement touches no other bid.
+//     When manpower is scored it moves the composite by at most
+//     MANPOWER_MAX_COMPOSITE_SWING points between bids that state plausible
+//     hours; a bid that states none (or implausible ones) scores 0 there —
+//     the letter asks for hours, silence is non-compliance — so a plausible
+//     statement is worth up to 100 × the manpower share over silence (37.5
+//     points at the default weights; DEC-50, recorded for ratification).
 //   * A best-value badge needs at least two scored bids and a unique top;
 //     a tie is a tie. A mixed-currency field is not scored at all.
 //   * A human-typed total (price-only bid) enters the price normalisation
@@ -100,9 +104,11 @@ export interface BidEconomics {
   /** $ per labor hour across the WHOLE price — the manpower-to-cost number.
    *  Lower = more labor for the money. Null when hours unknown. */
   dollarsPerHour: number | null;
-  /** Why the stated hours are not plausible enough to score (COST-5 dw3),
-   *  or null. An implausible statement scores like silence — manpower 0 —
-   *  and the row says "implausible hours — check". */
+  /** Why the stated hours are out of line with the field (COST-5), or
+   *  null. Set only in a single-currency field where at least
+   *  MIN_CORROBORATING_STATEMENTS bids state hours. An implausible
+   *  statement scores like silence and the row says "implausible hours —
+   *  check". */
   implausibleHours: string | null;
 }
 
@@ -118,18 +124,21 @@ export const DEFAULT_WEIGHTS: BestValueWeights = { price: 0.5, manpower: 0.3, co
  *  part may move the composite by at most this many points (COST-5). */
 export const MANPOWER_MAX_COMPOSITE_SWING = 5;
 
-/** Fewer stated labour hours than one person-day is not a plausible
- *  labour statement for a whole tabulated scope (COST-5 dw3). Currency-
- *  independent, so it holds when a bid is the only one stating hours. */
-export const MIN_PLAUSIBLE_BID_HOURS = 8;
+/** Stated hours are judged, and manpower is scored, only when at least
+ *  this many bids in one currency state them (COST-5): one or two figures
+ *  cannot corroborate each other, so with fewer the hours are shown and
+ *  nobody's manpower is scored. Counted twice — the plausibility median
+ *  needs this many statements, and scoring needs this many to SURVIVE it. */
+export const MIN_CORROBORATING_STATEMENTS = 3;
 
 /** A bid's whole-price $/hr more than this many times the field's median
  *  (or less than 1/this of it) is out of line with the field's own
  *  statements. The median is taken on a log scale — the geometric mean of
- *  the middle two when the count is even — so with two bids stating hours
- *  both are flagged only when they are more than this SQUARED apart
- *  (neither can be the reference for the other), and with one there is no
- *  field to compare against (the person-day floor still applies). */
+ *  the middle two when the count is even — over at least
+ *  MIN_CORROBORATING_STATEMENTS statements, so it always lies within the
+ *  range of any other statements but one: a single statement, however
+ *  absurd, cannot flag bids whose figures agree with one another within
+ *  this ratio. */
 export const HOURS_PLAUSIBILITY_RATIO = 4;
 
 export interface BidScore {
@@ -209,6 +218,10 @@ function mentions(quote: ParsedQuote, item: string): boolean {
   return quote.lineItems.some((l) => covers(l.description, false)) || quote.exclusions.some((x) => covers(x, true));
 }
 
+/** A bid that states labour hours with a positive price behind them. */
+const isHoursStatement = (e: BidEconomics) =>
+  !e.priceOnly && e.laborHours > 0 && e.dollarsPerHour != null && e.dollarsPerHour > 0;
+
 /** Economics per bid, computed against the whole field (for missing-scope). */
 export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
   // The union of substantive scope lines across all bids — the yardstick a
@@ -260,21 +273,19 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
     };
   });
 
-  // Plausibility of the stated hours (COST-5 dw3). First the currency-
-  // independent floor; then, among the statements that clear it, the
-  // field's own median on a log scale.
-  const stating = rows.filter((e) => !e.priceOnly && e.laborHours > 0 && e.dollarsPerHour != null && e.dollarsPerHour > 0);
-  for (const e of stating) {
-    if (e.laborHours < MIN_PLAUSIBLE_BID_HOURS) {
-      e.implausibleHours = `${e.laborHours.toLocaleString()} labour hour${e.laborHours === 1 ? "" : "s"} for the whole bid — less than a person-day`;
-    }
-  }
-  const field = stating.filter((e) => e.implausibleHours == null).map((e) => e.dollarsPerHour!).sort((a, b) => a - b);
-  if (field.length >= 2) {
+  // Plausibility of the stated hours (COST-5). The median is taken within
+  // ONE currency: a mixed-currency field is not scored at all, so nothing
+  // in it is flagged; a bid that prints no currency is in the field's (as
+  // it is displayed and scored — BID-7). Below MIN_CORROBORATING_STATEMENTS
+  // statements there is no field to judge against: nothing is flagged, and
+  // scoreBids scores manpower for no one. Each bid is judged on its own
+  // $/hr against the median, and only that bid is flagged.
+  const stating = rows.filter(isHoursStatement);
+  if (!fieldCurrency(rows).mixed && stating.length >= MIN_CORROBORATING_STATEMENTS) {
+    const field = stating.map((e) => e.dollarsPerHour!).sort((a, b) => a - b);
     const mid = Math.floor(field.length / 2);
     const median = field.length % 2 ? field[mid] : Math.sqrt(field[mid - 1] * field[mid]);
     for (const e of stating) {
-      if (e.implausibleHours != null) continue;
       const ratio = e.dollarsPerHour! / median;
       if (ratio > HOURS_PLAUSIBILITY_RATIO) e.implausibleHours = `price per stated hour is ${Math.round(ratio)}× the field's median — too few hours for the price`;
       else if (ratio < 1 / HOURS_PLAUSIBILITY_RATIO) e.implausibleHours = `price per stated hour is 1/${Math.round(1 / ratio)} of the field's median — too many hours for the price`;
@@ -285,11 +296,13 @@ export function computeBidEconomics(quotes: ParsedQuote[]): BidEconomics[] {
 
 /**
  * Weighted best value, math shown. Price and manpower each score 0..100
- * relative to the field (best bid = 100). A bid with unknown labor hours
- * scores a manpower part of 0 — undisclosed manpower never beats disclosed
- * manpower — and so does a bid whose stated hours are implausible
- * (`implausibleHours`). Among bids that state plausible hours the
- * (vendor-stated) number moves the composite by at most
+ * relative to the field (best bid = 100). Manpower is scored for every bid
+ * or for none: only when at least MIN_CORROBORATING_STATEMENTS bids state
+ * plausible hours. Otherwise every `parts.manpower` is null ("not scored")
+ * and the score is the price part alone — every bid on the same basis.
+ * When it is scored, a bid with unknown or implausible (`implausibleHours`)
+ * hours scores a manpower part of 0; among bids that state plausible hours
+ * the (vendor-stated) number moves the composite by at most
  * MANPOWER_MAX_COMPOSITE_SWING points; against a bid that states none,
  * stating plausible hours is worth up to 100 × the manpower share (DEC-50
  * — the cap is hours-vs-hours, not hours-vs-silence). Coverage is not
@@ -314,13 +327,12 @@ export function scoreBids(
   // Every bid — typed totals included — enters the price normalisation.
   const positive = econ.map((e) => e.total).filter((t) => t > 0);
   const minTotal = positive.length ? Math.min(...positive) : 0;
-  // Only plausible statements count as stated hours.
-  const statedDph = (e: BidEconomics) => (e.implausibleHours ? null : e.dollarsPerHour);
-  const knownDph = econ
-    .filter((e) => !e.priceOnly)
-    .map(statedDph)
-    .filter((d): d is number => d != null && d > 0);
-  const minDph = knownDph.length ? Math.min(...knownDph) : null;
+  // Only plausible statements count as stated hours, and manpower enters
+  // the score only when enough of them corroborate one another.
+  const statedDph = (e: BidEconomics) => (isHoursStatement(e) && !e.implausibleHours ? e.dollarsPerHour : null);
+  const knownDph = econ.map(statedDph).filter((d): d is number => d != null);
+  const manpowerScored = knownDph.length >= MIN_CORROBORATING_STATEMENTS;
+  const minDph = manpowerScored ? Math.min(...knownDph) : null;
 
   const scored: BidScore[] = econ.map((e) => {
     // The > 0 guard matters: a zero-dollar "bid" would otherwise divide to
@@ -333,15 +345,23 @@ export function scoreBids(
         best: false, tied: false, unscored: "price-only",
       };
     }
+    // Too few corroborating statements: nobody's manpower is scored and the
+    // score is price alone — a lone figure never buys the gap over silence.
+    if (minDph == null) {
+      return {
+        quoteId: e.quoteId, score: Math.round(price * 10) / 10,
+        parts: { price: Math.round(price), manpower: null, coverage: null },
+        best: false, tied: false, unscored: null,
+      };
+    }
     // Stated hours land in [floor, 100] (the 5-point swing among bids that
     // state them). Undisclosed — or implausible — hours score 0, BELOW that
-    // band, by design and pinned ("cheapest does not automatically win"):
-    // silence is non-compliance with the letter, and the gap to a plausible
+    // band, by design and pinned ("cheapest does not automatically win",
+    // in a field of three statements): silence is non-compliance with the
+    // letter, and the gap to a plausible
     // stated figure is up to 100 × manpowerShare composite points (DEC-50).
     const dph = statedDph(e);
-    const manpower = dph != null && dph > 0 && minDph != null
-      ? floor + (minDph / dph) * (100 - floor)
-      : 0;
+    const manpower = dph != null ? floor + (minDph / dph) * (100 - floor) : 0;
     const score = (price * weights.price + manpower * weights.manpower) / wSum;
     return {
       quoteId: e.quoteId,

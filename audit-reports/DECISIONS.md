@@ -77,7 +77,7 @@ about the system.
 | [DEC-40](#dec-40) | Projects link by **reference**, never by copy | medium | `GAP-114`, `PROJ-*` |
 | [DEC-42](#dec-42) | Supabase identity linking is **required**; the unique index is the backstop, not the mechanism | medium | `IDENT-1`, `IDENT-2`, `IDENT-3` |
 | [DEC-43](#dec-43) | Controllers are **unscoped by design**; a bypass-decided read of a restricted node is audited at the bytes egress | low | `DOCACL-3`, `DEC-2` |
-| [DEC-50](#dec-50) | Bids are scored on **price and plausible stated hours only** — declared exclusions never lower a score, coverage is unscored until a per-RFQ scope list exists; a bidder **binds** to a registry row only by exact/normalised name or a human link, but the **do-not-use gate** fires on any row the name could be | low | `BID-3`, `BID-4`, `BID-6`, `BID-7`, `BID-12`, `COST-5`, `COST-7`, `MON-12` |
+| [DEC-50](#dec-50) | Bids are scored on **price, and on stated hours only where three bids corroborate them** — declared exclusions never lower a score, coverage is unscored until a per-RFQ scope list exists; a bidder **binds** to a registry row only by exact/normalised name or a human link, but the **do-not-use gate** fires on any row the name could be | medium | `BID-3`, `BID-4`, `BID-6`, `BID-7`, `BID-12`, `COST-5`, `COST-7`, `MON-12` |
 
 ---
 
@@ -1712,17 +1712,20 @@ matching on free text and cannot tell a rewording from an omission, so it
 is a PROMPT ("check: …") and never enters the score. (3) With neither in
 the score, the coverage part is NOT SCORED until a per-RFQ scope checklist
 exists; the composite is price + manpower with the weights renormalised.
-(4) Labour hours are vendor-stated and AI-extracted: among bids that state
-them the manpower part moves the composite by at most 5 points; a bid that
-states NONE scores a manpower part of 0 — so against a silent bid, stating
-plausible hours is worth up to 100 × the manpower share (37.5 composite
-points at the default weights). Stated hours count only when PLAUSIBLE:
-fewer than a person-day (8 hours) for the whole bid, or — once two or more
-bids state hours — a whole-price $/hr more than 4× off the field's median
-(log-scale median, so two statements are flagged only when more than 16×
-apart, and then both), scores exactly like silence and the row says
-"implausible hours — check". (5) A best-value badge needs two scored
-bids and a unique top; a tie is a tie; a mixed-currency field is not
+(4) Labour hours are vendor-stated and AI-extracted, so they count only
+where the field can corroborate them: manpower is scored for every bid or
+for none — only when at least THREE bids in the field (one currency) state
+plausible hours; with fewer, the hours are shown per row and every bid
+compares on price alone. Once three or more bids state hours, a bid whose
+whole-price $/hr is more than 4× off the field's log-scale median is
+flagged "implausible hours — check" and scored as not stated — that bid
+only. The median is taken within one currency: a mixed-currency field is
+not scored and no row in it is flagged. When manpower is scored it moves
+the composite by at most 5 points between bids that state plausible hours,
+and a bid that states NONE (or implausible ones) scores 0 there — so
+against a silent bid, stating plausible hours is worth up to 100 × the
+manpower share (37.5 composite points at the default weights). (5) A
+best-value badge needs two scored bids and a unique top; a tie is a tie; a mixed-currency field is not
 ranked, and a bid with no printed currency is shown in the field's
 currency, marked as assumed — or, when no bid prints one, shown as USD and
 said so, and never awarded into a line kept in another currency without a
@@ -1746,21 +1749,39 @@ the org's full list of barred rows.**
 > leaves 49 onward for the J2 / J4 / J6a branches. This package takes
 > DEC-50, leaving DEC-49 to J2, which merges ahead of it in the fleet's
 > order; the integrator renumbers again on any later collision. **For the
-> user to ratify — two departures from a binding default:** (a) the joint
+> user to ratify — three departures from binding defaults:** (a) the joint
 > fleet's ownership rule makes the projects-and-cost brief binding for
 > `lib/bidTab.ts`, and its COST-5 default — "100 − 15 per silent gap − 5
 > per declared exclusion" — was NOT taken: it contradicts the RFQ letter
 > this product sends ("declared exclusions do not lower your score") and
 > `BID-4`'s finding that the matcher cannot carry a score; (b) item (4)'s
-> silence-scores-0 keeps the pinned "cheapest does not automatically win"
-> example (the brief keeps the five pre-existing bid-tab pins green), at
-> the cost that a plausible statement of hours outscores silence by up to
-> 37.5 points. The first landing described silence as taking "the floor";
-> the code never did. The first fix pass then let ANY stated figure buy
-> that gap (a $150k bid stating one hour scored 79.2 and took the badge
-> from a silent $100k bid); the brief's other option — a plausibility
-> check — now stands between the two, and the pinned example is unchanged
-> (its lone stating bid, 1,150 hours at about $83/hr, is plausible).
+> silence-scores-0, at the cost that — once three bids state plausible
+> hours — a plausible statement of hours outscores silence by up to 37.5
+> points. The first landing described silence as taking "the floor"; the
+> code never did. The first fix pass then let ANY stated figure buy that
+> gap (a $150k bid stating one hour scored 79.2 and took the badge from a
+> silent $100k bid). The second fix pass added a plausibility check (a
+> person-day floor, and a 4× band around the median of two or more
+> statements) that still let a lone 8-hour statement buy the gap ($150k
+> at $18,750/h scored 79.2 over a silent $100k bid at 62.5) and, with two
+> statements, flagged BOTH once they were 16× apart — one misread figure
+> wiped out an honest bid's manpower score; (c) the three-statement rule
+> that replaced it (verification of 2026-09-30) re-decides the pinned
+> "cheapest does not automatically win" example, which the J4 brief kept
+> green: in its original two-bid form the staffed bid is the only one
+> stating hours, so manpower is scored for neither and the cheaper,
+> thinner bid is badged on price with its three exclusions shown beside
+> it; the example holds — and is pinned — once two more bids state hours
+> in line with the staffed one.
+>
+> **Verification fix (2026-09-30, projects Round G).** Item (4)'s hours
+> rule is the three-statement rule above (`MIN_CORROBORATING_STATEMENTS`;
+> the person-day floor `MIN_PLAUSIBLE_BID_HOURS` is gone — a lone
+> statement is no longer scored at all). The rationale's claim that "one
+> padder cannot drag an honest bid out of line" was not true of the
+> second fix pass and is replaced below by what now holds. The risk line
+> said "low — pure scoring logic"; this decision also governs the award
+> gate, and the line is corrected.
 
 **Rationale.** The scorer punished the disclosure the RFQ letter promised
 to reward (a single honest exclusion cost twenty points; hiding it cost
@@ -1774,11 +1795,22 @@ Bounding manpower to five points between bids that state hours keeps
 "price alone is never the verdict" without letting a padded figure outbid
 an honest one; it does NOT stop a bid that states a plausible figure from
 outscoring one that states none — the letter asks for hours, and silence
-is treated as non-compliance. The plausibility check keeps an absurd
-statement (one hour for a whole scope) from buying that gap; the
-person-day floor is currency-independent, so it holds when a bid is the
-only one stating hours, and the field comparison is taken on a log-scale
-median so one padder cannot drag an honest bid out of line. One
+is treated as non-compliance. Hours count only where the field
+corroborates them: one or two figures cannot be checked against anything,
+so they buy nothing and no row is judged — every bid compares on price.
+With three or more statements the field's median is the reference, and no
+single statement can move it outside the range of the others' values, so
+one absurd or misread figure is flagged on its own and cannot flag bids
+whose figures agree with one another within 4×; a flagged figure is left
+out of the band's best $/hr and out of the three-statement count, so in
+such a field its hours change no other bid's score (its price competes
+like any price). What a statement CAN still do to another bid's score,
+by design: a plausible one may set the band's
+best $/hr (at most 5 composite points on the others) or be the third
+plausible statement that switches manpower on (silent bids then score 0 —
+item (4)). And where the other statements already disagree with one
+another by more than 4×, one more statement can move the median enough to
+flag one of them — recorded as `COST-5`'s residual, closer below. One
 commendation graded "Excellent" is a rating, not evidence; three points
 is the floor. Binding and gating differ on purpose: binding on an
 ambiguous name would put the wrong company's record beside the price;
@@ -1786,26 +1818,35 @@ clearing the do-not-use flag on the same ambiguity would let a barred
 company through because a duplicate registry row exists.
 
 **Implementation.** `lib/bidTab.ts` (`scoreBids`, `effectiveWeights`,
-`MANPOWER_MAX_COMPOSITE_SWING`, `MIN_PLAUSIBLE_BID_HOURS`,
+`MANPOWER_MAX_COMPOSITE_SWING`, `MIN_CORROBORATING_STATEMENTS`,
 `HOURS_PLAUSIBILITY_RATIO`, `BidEconomics.implausibleHours`,
 `scopeSimilarity`, `matchCompanyByName`, `companyCandidatesByName`,
 `barredCompanyFor`, `fieldCurrency`, `bidCurrency`), `lib/companies.ts`
-(`listBarredCompanies`), `lib/rfqDocx.ts` (the letter: "Price and
-manpower are scored; scope coverage and any undeclared gaps are reviewed
-by our evaluators"), `lib/companyScore.ts` (`MIN_EVIDENCE_FOR_BAND`,
+(`listBarredCompanies`), `lib/rfqDocx.ts` (the letter, quoted below),
+`lib/companyScore.ts` (`MIN_EVIDENCE_FOR_BAND`,
 `scoreBand(score, evidenceCount)`), `lib/companies.ts`
 (`CONTRACTOR_CO_REASONS` / `OWNER_CO_REASONS`),
 `components/projects/cost/QuotesPanel.tsx` (the footer and the hours
 tooltip state the effective weights, the 5-point cap and what silence
-costs; coverage is not scored).
+costs — or, where fewer than three bids state hours in line, that the
+score is price alone and why; coverage is not scored). The letter reads
+"Price is scored, and so is manpower once at least three bids state labor
+hours in line with one another; scope coverage and any undeclared gaps are
+reviewed by our evaluators".
 
 **Acceptance.** The same bid scores identically with and without its
 declared exclusion; realistic rewordings of identical scope never change a
-score; two bids stating hours differ by at most five composite points on
-manpower; a bid stating no hours scores 0 on manpower (pinned, with the
-37.5-point consequence); a bid stating one hour scores 0 on manpower and
-does not take the badge from a cheaper silent bid; a single bid or a tie
-carries no badge; a mixed-currency field has no scores; a registry row
+score; with fewer than three bids stating hours no bid's manpower is
+scored and no row is flagged (a lone 1-, 8- or 1,500-hour statement does
+not take the badge from a cheaper silent bid); once three bids state
+plausible hours, any two of them differ by at most five composite points on
+manpower and a bid stating none scores 0 there (pinned, with the
+37.5-point consequence); a bid more than 4× off the median of three or
+more statements is flagged and scored as not stated, and no other row is;
+adding an absurd statement of hours to a field whose other statements
+agree changes no other bid's score (pinned with the absurd bid priced
+above the field's lowest); a mixed-currency field flags no row; a single
+bid or a tie carries no badge; a mixed-currency field has no scores; a registry row
 with one commendation reads "Provisional"; a barred registry row beside a
 same-normalised sibling still flags the bid and prompts for the override.
 
@@ -1817,9 +1858,23 @@ prefers the projects-and-cost weighting, the −15 / −5 coverage part is a
 `scoreBids` change plus the letter. If the silence gap is unacceptable,
 give an hours-silent bid the swing floor (`100 − 5 / manpowerShare`)
 instead of 0 and re-decide the pinned "cheapest does not automatically
-win" example in the same change. The plausibility thresholds (8 hours,
-4×) are constants in `lib/bidTab.ts`. `field_condition` attribution and
+win" example in the same change. The thresholds (three statements, 4×)
+are constants in `lib/bidTab.ts` (`MIN_CORROBORATING_STATEMENTS`,
+`HOURS_PLAUSIBILITY_RATIO`). If one statement must never move another
+bid's standing even where the rest of the field disagrees with itself
+(`COST-5`'s residual), replace the median test with an absolute
+corroboration rule — a statement counts only when two others sit within
+4× of it — which is monotone: no added statement can un-corroborate
+another. `field_condition` attribution and
 the five-point cap are org-level tunables once an org states a different
 reading of the reason-code contract.
 
-**Risk:** low — pure scoring logic, every branch pinned by tests.
+**Risk:** medium (corrected 2026-09-30; first recorded as "low — pure
+scoring logic"). The scoring half is pure and every branch is pinned by
+tests, but this decision also governs the award gate: the do-not-use flag
+fires on any registry row a bidder's name could be (a wrong call lets a
+barred company through without the recorded override), and a bid whose
+currency cannot be vouched for is not awarded into a budget line kept in
+another currency without a restatement (a wrong call posts a commitment
+in the wrong currency). Both gate limbs are pinned by rendered tests
+(`quotesPanelRender.test.ts`).
