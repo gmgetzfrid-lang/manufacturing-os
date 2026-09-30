@@ -57,9 +57,10 @@ const arityOf = (args: string) => {
 
 // ── the two families ────────────────────────────────────────────────────────
 // A bare `role` token (not `roles`, not `v_role`/`p_role`/`author_role`, not
-// the JSON key 'role') is a read of the headline column. The collection is
-// `roles`, or a call into one of the funnels that read it.
-const HEADLINE = /(?<![\w'])role(?![\w'])/;
+// the JSON key 'role', not `auth.role()` — the request's JWT role, e.g. the
+// service-role test in a write guard) is a read of the headline column. The
+// collection is `roles`, or a call into one of the funnels that read it.
+const HEADLINE = /(?<![\w'])(?<!auth\.)role(?![\w'])/;
 const COLLECTION_FUNNELS = [
   "is_org_controller", "caller_holds_any_role", "is_org_admin", "is_org_admin_or_manager",
   "org_capability_allows", "org_capability_allows_for", "acl_index_denies",

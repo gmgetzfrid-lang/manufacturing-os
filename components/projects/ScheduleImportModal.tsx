@@ -491,16 +491,21 @@ export default function ScheduleImportModal({
                       {plan.notInFile} task{plan.notInFile === 1 ? " is" : "s are"} on the board but not in this file ({plan.notInFileNames.slice(0, 5).join(", ")}{plan.notInFile > 5 ? ", …" : ""}). They are left as they are — an import never deletes.
                     </div>
                   )}
+                  {plan.structure.rows > 0 && (
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                      Structure changes on {plan.structure.rows} task{plan.structure.rows === 1 ? "" : "s"}: {structureSummary(plan.structure)}. The file&apos;s parents and finish-to-start links replace the board&apos;s for the tasks it carries — including links added here.
+                    </div>
+                  )}
                   {plan.localProgressAtRisk.length > 0 && (
                     <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[11px] text-amber-900 space-y-1.5">
-                      <div className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> {plan.localProgressAtRisk.length} task{plan.localProgressAtRisk.length === 1 ? " has" : "s have"} progress recorded here that this file would {overwriteProgress ? "overwrite" : "reset — kept as recorded"}</div>
+                      <div className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> {plan.localProgressAtRisk.length} task{plan.localProgressAtRisk.length === 1 ? " has" : "s have"} progress on the board that differs from this file — {overwriteProgress ? "the file's value will replace it" : "kept as it is on the board"}</div>
                       <ul className="ml-5 list-disc">
-                        {plan.localProgressAtRisk.slice(0, 5).map((r) => <li key={r.id}>{r.name}: {r.localPercent}% ({r.localStatus.replace("_", " ")}) here vs {r.filePercent ?? 0}% in the file</li>)}
+                        {plan.localProgressAtRisk.slice(0, 5).map((r) => <li key={r.id}>{r.name}: {progressChangeLabel(r.localPercent, r.filePercent ?? 0)} ({r.localStatus.replace("_", " ")} on the board)</li>)}
                         {plan.localProgressAtRisk.length > 5 && <li className="italic">+{plan.localProgressAtRisk.length - 5} more…</li>}
                       </ul>
                       <label className="inline-flex items-center gap-1.5 cursor-pointer font-bold">
                         <input type="checkbox" checked={overwriteProgress} onChange={(e) => { setOverwriteProgress(e.target.checked); setPlan(null); }} className="accent-amber-600" />
-                        Overwrite the progress recorded here with the file&apos;s values
+                        Take the file&apos;s progress for these tasks
                       </label>
                     </div>
                   )}
@@ -628,13 +633,33 @@ export default function ScheduleImportModal({
               className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
             >
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              Import {plan.added + plan.changed} change{plan.added + plan.changed === 1 ? "" : "s"}
+              Import {planChangeCount(plan)} change{planChangeCount(plan) === 1 ? "" : "s"}
             </button>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+/** Rows the import will write: added, changed, and rows whose only change is
+ *  structure (parent / links) — the button never reads "0 changes" when the
+ *  structure pass will rewrite links. */
+export function planChangeCount(plan: ImportPlan): number {
+  return plan.added + plan.changed + plan.structure.onlyStructure;
+}
+
+/** "60% → 80%" / "60% → 0%" — the direction the file would move progress. */
+export function progressChangeLabel(board: number, file: number): string {
+  return `${board}% on the board → ${file}% in the file (${file > board ? "higher" : file < board ? "lower" : "same %, different status"})`;
+}
+
+export function structureSummary(s: ImportPlan["structure"]): string {
+  const parts: string[] = [];
+  if (s.parents > 0) parts.push(`${s.parents} parent${s.parents === 1 ? "" : "s"} changed`);
+  if (s.linksAdded > 0) parts.push(`${s.linksAdded} link${s.linksAdded === 1 ? "" : "s"} added`);
+  if (s.linksRemoved > 0) parts.push(`${s.linksRemoved} link${s.linksRemoved === 1 ? "" : "s"} removed`);
+  return parts.join(", ");
 }
 
 function FormatBadge({ label, hint }: { label: string; hint: string }) {

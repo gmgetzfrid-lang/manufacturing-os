@@ -20,7 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
-import { shiftForStart } from "@/lib/scheduleFilter";
+import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
 import { SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
@@ -247,19 +247,23 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   if ("name" in input.patch && input.patch.name) update.name = input.patch.name.trim();
 
   // Snapshot the prior finish so we can log a human reschedule note, and the
-  // stored shift so a date move can recompute it.
+  // stored shift + start so a date move can re-label it.
   let priorFinish: string | null = null;
   let priorShift: string | null = null;
+  let priorStart: string | null = null;
   if ("plannedAt" in input.patch || "plannedStartAt" in input.patch) {
-    const { data: before } = await supabase.from("milestones").select("planned_at, shift").eq("id", input.id).maybeSingle();
+    const { data: before } = await supabase.from("milestones").select("planned_at, planned_start_at, shift").eq("id", input.id).maybeSingle();
     priorFinish = (before as { planned_at: string } | null)?.planned_at ?? null;
+    priorStart = (before as { planned_start_at: string | null } | null)?.planned_start_at ?? null;
     priorShift = (before as { shift: string | null } | null)?.shift ?? null;
   }
-  // Shift follows the task (PC SCHED-9): a start that crosses 06:00 / 18:00
-  // re-labels day / night. An explicit shift in the same patch wins, and a
-  // hand-set "swing" (never derivable from a start) is left alone.
-  if ("plannedStartAt" in input.patch && !("shift" in input.patch) && typeof update.planned_start_at === "string" && priorShift !== "swing") {
-    update.shift = shiftForStart(update.planned_start_at);
+  // Shift follows the task (PC SCHED-9): a day / night label whose start
+  // moves into the other band is re-labelled — the RPC's rule, one helper.
+  // An explicit shift in the same patch wins; an unlabelled row, a hand-set
+  // "swing" and a move within the band keep what is stored.
+  if ("plannedStartAt" in input.patch && !("shift" in input.patch) && typeof update.planned_start_at === "string") {
+    const next = shiftAfterMove(priorShift, priorStart, update.planned_start_at);
+    if (next !== priorShift) update.shift = next;
   }
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
@@ -339,12 +343,21 @@ export async function applyMilestoneMoves(input: {
   // for any move whose caller did not supply one.
   type BeforeRow = { id: string; planned_at: string; planned_start_at: string | null; updated_at: string | null; status: MilestoneStatus };
   const before = new Map<string, BeforeRow>();
-  for (let i = 0; i < ids.length; i += 200) {
-    const { data } = await supabase
+  let readError: string | null = null;
+  for (let i = 0; i < ids.length && !readError; i += 200) {
+    const { data, error: readErr } = await supabase
       .from("milestones")
       .select("id, planned_at, planned_start_at, updated_at, status")
       .in("id", ids.slice(i, i + 200));
+    if (readErr) { readError = readErr.message; break; }
     for (const r of (data ?? []) as BeforeRow[]) before.set(r.id, r);
+  }
+  // Fail closed: without the read, a move whose caller supplied no expected
+  // updated_at would go out with the lock OFF. Refuse the batch (nothing is
+  // moved). When every move carries the caller's own lock value the read only
+  // fed the trail, so the move proceeds and the missing trail is reported.
+  if (readError && input.moves.some((m) => m.expectedUpdatedAt === undefined)) {
+    throw new Error(`Could not read the tasks before moving them (${readError}) — nothing was moved. Try again.`);
   }
 
   const { data, error } = await supabase.rpc("apply_milestone_moves", {
@@ -382,6 +395,7 @@ export async function applyMilestoneMoves(input: {
 
   const result: MoveBatchResult = { matched, unmatched, count, via: "rpc" };
   const errs: string[] = [];
+  if (readError) errs.push(`breadcrumbs: the tasks could not be read before the move (${readError}), so no before-dates were recorded`);
 
   // Per-row breadcrumbs: the task's own trail shows the move, not just
   // status flips. Same shape as updateMilestone's reschedule note.
@@ -1020,9 +1034,15 @@ export interface ImportPlan {
   /** Rows already in the project (same source) that this file does not carry. */
   notInFile: number;
   notInFileNames: string[];
-  /** Existing rows whose locally recorded progress differs from the file's. */
+  /** Existing rows whose progress on the board (recorded in the app or set
+   *  by an earlier import) differs from the file's. */
   localProgressAtRisk: Array<{ id: string; name: string; localPercent: number; localStatus: MilestoneStatus; filePercent: number | null }>;
-  /** Which column keys the match, as the parser reported it. */
+  /** Existing rows whose parent or predecessor links this file changes (PT
+   *  SCH-16 sets structure to exactly what the file says — a link added in
+   *  the app to an imported row is removed if the file does not carry it).
+   *  `onlyStructure` counts rows whose plan fields are otherwise unchanged. */
+  structure: { rows: number; onlyStructure: number; parents: number; linksAdded: number; linksRemoved: number };
+  /** The per-file row cap the importer enforces. */
   rowCap: number;
 }
 
@@ -1059,12 +1079,26 @@ function looksLikeUnknownColumn(msg: string | undefined): boolean {
   return /column .* does not exist|unknown column|could not find the/i.test(msg);
 }
 
-/** Rows of `milestones` the importer reads to plan a merge. */
+/** Rows of `milestones` the importer reads to plan a merge: every column a
+ *  plan field writes (so "unchanged" means unchanged), plus actuals and
+ *  structure. */
 interface ExistingImportRow {
   id: string;
   external_ref: string | null;
   name: string;
   description: string | null;
+  weight: number | null;
+  outline_level: number | null;
+  wbs: string | null;
+  is_summary: boolean | null;
+  shift: string | null;
+  work_order_ref: string | null;
+  responsible_party: string | null;
+  responsible_kind: string | null;
+  responsible_org: string | null;
+  location: string | null;
+  duration_hours: number | null;
+  attributes: Record<string, unknown> | null;
   status: MilestoneStatus;
   percent_complete: number | null;
   actual_at: string | null;
@@ -1099,6 +1133,48 @@ function sameDeps(a: string[] | null | undefined, b: string[]): boolean {
   return b.every((v) => set.has(v));
 }
 
+/** Every plan column the importer writes (import_batch_id aside), compared
+ *  against the stored row so an identical re-import writes nothing. */
+const PLAN_COMPARE_COLUMNS = [
+  "name", "description", "weight", "planned_at", "planned_start_at",
+  "outline_level", "wbs", "is_summary", "shift",
+  "work_order_ref", "responsible_party", "responsible_kind", "responsible_org",
+  "location", "duration_hours", "attributes",
+] as const;
+const INSTANT_COLUMNS = new Set<string>(["planned_at", "planned_start_at"]);
+const NUMBER_COLUMNS = new Set<string>(["weight", "outline_level", "duration_hours"]);
+
+/** JSON with object keys sorted, so key order never reads as a change. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v as Record<string, unknown>).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson((v as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
+/** Stored value vs. the value the importer would write, per column type:
+ *  timestamps as instants (PostgREST returns `…+00:00`, the parser `…Z`),
+ *  numerics as numbers, attributes as canonical JSON, text with "" = null. */
+function samePlanValue(column: string, stored: unknown, next: unknown): boolean {
+  if (INSTANT_COLUMNS.has(column)) {
+    const a = stored == null || stored === "" ? null : String(stored);
+    const b = next == null || next === "" ? null : String(next);
+    if (a === null || b === null) return a === b;
+    const ta = Date.parse(a), tb = Date.parse(b);
+    return Number.isFinite(ta) && Number.isFinite(tb) ? ta === tb : a === b;
+  }
+  if (NUMBER_COLUMNS.has(column)) {
+    if (stored == null || next == null) return (stored == null) === (next == null);
+    return Number(stored) === Number(next);
+  }
+  if (column === "is_summary") return !!stored === !!next;
+  if (column === "attributes") return canonicalJson(stored ?? {}) === canonicalJson(next ?? {});
+  const a = stored == null || stored === "" ? null : stored;
+  const b = next == null || next === "" ? null : next;
+  return a === b;
+}
+
 /** Every existing row of this source in the import scope, in one query per
  *  page (PostgREST caps a page at 1,000 rows; the row cap is 5,000). */
 async function fetchExistingImportRows(input: ImportParsedInput): Promise<{ rows: ExistingImportRow[]; error?: string }> {
@@ -1107,7 +1183,7 @@ async function fetchExistingImportRows(input: ImportParsedInput): Promise<{ rows
   for (let from = 0; ; from += PAGE) {
     let q = supabase
       .from("milestones")
-      .select("id, external_ref, name, description, status, percent_complete, actual_at, actual_start_at, planned_at, planned_start_at, parent_id, depends_on, created_by, created_by_name")
+      .select("id, external_ref, name, description, weight, outline_level, wbs, is_summary, shift, work_order_ref, responsible_party, responsible_kind, responsible_org, location, duration_hours, attributes, status, percent_complete, actual_at, actual_start_at, planned_at, planned_start_at, parent_id, depends_on, created_by, created_by_name")
       .eq("org_id", input.orgId)
       .eq("source", input.source)
       .not("external_ref", "is", null);
@@ -1221,13 +1297,22 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     if (!p.row.externalRef) continue;
     fileRefs.add(p.row.externalRef);
     const e = existingByRef.get(p.row.externalRef);
-    if (e) { p.existing = e; p.id = e.id; refToId.set(p.row.externalRef, e.id); }
+    if (e) {
+      p.existing = e; p.id = e.id; refToId.set(p.row.externalRef, e.id);
+      // An existing row's shift follows the same rule as a drag (PC SCHED-9):
+      // re-labelled only when its start moves into the other band; a
+      // hand-set label, swing or an unlabelled row is not recomputed.
+      p.planFields.shift = shiftAfterMove(e.shift ?? null, e.planned_start_at, p.plannedStartIso);
+    }
   }
 
   // ── The plan ──────────────────────────────────────────────────────
-  const plan: ImportPlan = { added: 0, changed: 0, unchanged: 0, notInFile: 0, notInFileNames: [], localProgressAtRisk: [], rowCap };
+  const plan: ImportPlan = {
+    added: 0, changed: 0, unchanged: 0, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
+    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rowCap,
+  };
   const planChanged = (p: Prepared, e: ExistingImportRow): boolean =>
-    e.name !== p.name || e.planned_at !== p.plannedIso || (e.planned_start_at ?? null) !== p.plannedStartIso || (e.description ?? null) !== (p.row.description ?? null);
+    PLAN_COMPARE_COLUMNS.some((c) => !samePlanValue(c, (e as unknown as Record<string, unknown>)[c], p.planFields[c]));
   const progressWouldChange = (p: Prepared, e: ExistingImportRow): boolean =>
     !!p.actualFields && (Number(e.percent_complete ?? 0) !== (p.filePercent ?? 0) || e.status !== p.actualFields.status);
   const writeActuals = (p: Prepared): boolean => {
@@ -1244,6 +1329,25 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     const changed = planChanged(p, p.existing) || (writeActuals(p) && progressWouldChange(p, p.existing));
     if (changed) plan.changed++; else plan.unchanged++;
     toWrite.push({ p, changed });
+    // Structure the file would set on this row (a ref the file adds resolves
+    // once inserted — counted as a change here, since it cannot equal a
+    // stored id).
+    const planRef = (ref: string): string | null => refToId.get(ref) ?? (fileRefs.has(ref) ? `new:${ref}` : null);
+    const e = p.existing;
+    const wantParentRaw = p.row.parentExternalRef ? planRef(p.row.parentExternalRef) : null;
+    const wantParent = wantParentRaw && wantParentRaw !== e.id ? wantParentRaw : null;
+    const wantDeps = Array.from(new Set((p.row.dependsOnExternalRefs ?? []).map(planRef).filter((x): x is string => !!x && x !== e.id)));
+    const haveDeps = Array.isArray(e.depends_on) ? e.depends_on : [];
+    const parentMoves = (e.parent_id ?? null) !== wantParent;
+    const added = wantDeps.filter((d) => !haveDeps.includes(d)).length;
+    const removed = haveDeps.filter((d) => !wantDeps.includes(d)).length;
+    if (parentMoves || added > 0 || removed > 0) {
+      plan.structure.rows++;
+      if (!changed) plan.structure.onlyStructure++;
+      if (parentMoves) plan.structure.parents++;
+      plan.structure.linksAdded += added;
+      plan.structure.linksRemoved += removed;
+    }
   }
   for (const e of existingRows) {
     if (e.external_ref && !fileRefs.has(e.external_ref)) {
@@ -1329,8 +1433,18 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
 
   const inserts = toWrite.filter((w) => w.changed && !w.p.existing).map((w) => w.p);
   const upserts = toWrite.filter((w) => w.changed && !!w.p.existing).map((w) => w.p);
+  // A bulk write sends the UNION of its rows' keys and fills a missing key
+  // with NULL, so rows that carry status / percent_complete / actual_* and
+  // rows that do not must never share a request (status is NOT NULL, and an
+  // upsert would null a protected row's progress). One key set per request.
+  const byKeySet = (list: Prepared[], carriesActuals: (p: Prepared) => boolean): Prepared[][] =>
+    [list.filter(carriesActuals), list.filter((p) => !carriesActuals(p))].filter((g) => g.length > 0);
+  const groups: Array<readonly ["insert" | "upsert", Prepared[]]> = [
+    ...byKeySet(inserts, (p) => !!p.actualFields).map((g) => ["insert", g] as const),
+    ...byKeySet(upserts, writeActuals).map((g) => ["upsert", g] as const),
+  ];
   report("rows");
-  for (const [mode, list] of [["insert", inserts], ["upsert", upserts]] as const) {
+  for (const [mode, list] of groups) {
     for (let i = 0; i < list.length; i += IMPORT_CHUNK) {
       if (cancelled()) { result.cancelled = true; result.errors.push(`Import cancelled after ${done} of ${total} rows. Rows written so far are tagged with batch ${batchId}.`); return result; }
       const chunk = list.slice(i, i + IMPORT_CHUNK);

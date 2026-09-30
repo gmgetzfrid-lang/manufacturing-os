@@ -271,6 +271,80 @@ describe("SCH-1 · day/month is decided once from the whole file, never per row"
   });
 });
 
+describe("SCH-1 · weekday-prefixed dates and the evidence the file decides from", () => {
+  const inZone = <T,>(zone: string, fn: () => T): T => {
+    const tz = process.env.TZ;
+    try { process.env.TZ = zone; return fn(); } finally { process.env.TZ = tz; }
+  };
+
+  it("'Mon 6/1/26' (MS Project's default display) is read per the convention, never by Date() in the browser's zone", () => {
+    inZone("America/Los_Angeles", () => {
+      expect(coerceIso("Mon 6/1/26", "dmy")).toBe("2026-01-06T00:00:00Z");
+      expect(coerceIso("Mon 6/1/26", "mdy")).toBe("2026-06-01T00:00:00Z");
+      expect(coerceIso("Tue. 15/08/2026 5:30 PM", "dmy")).toBe("2026-08-15T17:30:00Z");
+      expect(coerceIso("Wednesday, 8/15/2026", "mdy")).toBe("2026-08-15T00:00:00Z");
+      // impossible under the convention → "" (counted), not a Date() guess
+      expect(coerceIso("Mon 13/1/26", "mdy")).toBe("");
+      // a triple with trailing text is unreadable, never handed to Date()
+      expect(coerceIso("6/1/26 approx", "dmy")).toBe("");
+      // a written-out month still reaches the Date() fallback (the day-name strip never eats it)
+      expect(coerceIso("June 1, 2026", "dmy")).not.toBe("");
+    });
+  });
+
+  it("a CSV of weekday-prefixed ambiguous dates asks once; the day/month answer is what the rows get", () => {
+    const csv = ["Task Name,Start,Finish", "A,Mon 6/1/26,Tue 7/1/26", "B,Wed 8/1/26,Thu 9/1/26"].join("\n");
+    inZone("America/Los_Angeles", () => {
+      const asked = parseScheduleFile("plan.csv", csv);
+      expect(asked.needsDateConvention).toBe(true);
+      const dmy = parseScheduleFile("plan.csv", csv, { dateConvention: "dmy" });
+      expect(dmy.dates).toEqual({ convention: "dmy", decidedBy: "user", sample: "6/1/26" });
+      expect(dmy.rows.map((r) => [r.name, r.plannedStartAt, r.plannedAt])).toEqual([
+        ["A", "2026-01-06T00:00:00Z", "2026-01-07T00:00:00Z"],
+        ["B", "2026-01-08T00:00:00Z", "2026-01-09T00:00:00Z"],
+      ]);
+      const mdy = parseScheduleFile("plan.csv", csv, { dateConvention: "mdy" });
+      expect(mdy.rows.map((r) => r.plannedAt)).toEqual(["2026-07-01T00:00:00Z", "2026-09-01T00:00:00Z"]);
+    });
+  });
+
+  it("a day/month file with 'Mon 13/1/26' decides D/M/Y and reads EVERY row that way — the ≤ 12 rows are not swapped", () => {
+    const csv = ["Task Name,Start,Finish", "A,Mon 5/1/26,Tue 13/1/26", "B,Wed 7/1/26,Thu 8/1/26"].join("\n");
+    const res = parseScheduleFile("plan.csv", csv);
+    expect(res.dates).toEqual({ convention: "dmy", decidedBy: "file", sample: "13/1/26" });
+    expect(res.rows.map((r) => [r.name, r.plannedStartAt, r.plannedAt])).toEqual([
+      ["A", "2026-01-05T00:00:00Z", "2026-01-13T00:00:00Z"],
+      ["B", "2026-01-07T00:00:00Z", "2026-01-08T00:00:00Z"],
+    ]);
+  });
+
+  it("only the date columns are evidence: a dash-separated code never fixes the order, a date in a note never forces the question", () => {
+    const coded = ["Task Name,Code,Start,Finish", "A,1-13-100,05/08/2026,06/08/2026"].join("\n");
+    const asked = parseScheduleFile("plan.csv", coded);
+    expect(asked.needsDateConvention).toBe(true);
+    expect(asked.dates?.decidedBy).toBe("none");
+    const noted = ["Task Name,Notes,Finish", "A,see memo 13/4/2026,2026-06-01"].join("\n");
+    const res = parseScheduleFile("plan.csv", noted);
+    expect(res.needsDateConvention).toBeUndefined();
+    expect(res.dates).toEqual({ convention: null, decidedBy: "none", sample: null });
+    expect(res.rows[0].plannedAt).toBe("2026-06-01T00:00:00Z");
+  });
+
+  it("an XER is never asked about dates, even when a task name carries a slash date", () => {
+    const xer = [
+      "ERMHDR\t19.12\t2026-01-01\tProject\tadmin",
+      "%T\tTASK",
+      "%F\ttask_id\tproj_id\twbs_id\ttask_code\ttask_name\ttarget_start_date\ttarget_end_date",
+      "%R\t10\t100\t2\tA1010\tDig trench per memo 3/4/2026\t2026-03-01 08:00\t2026-03-03 17:00",
+      "%E",
+    ].join("\n");
+    const res = parseScheduleFile("schedule.xer", xer);
+    expect(res.needsDateConvention).toBeUndefined();
+    expect(res.rows).toHaveLength(1);
+    expect(res.rows[0].plannedAt).toBe("2026-03-03T17:00:00Z");
+  });
+});
+
 describe("SCHED-9 · offset-less datetimes are read as wall-clock-as-UTC", () => {
   it("attaches Z to a bare ISO datetime and keeps an explicit offset", () => {
     expect(coerceIso("2026-06-01T19:00:00")).toBe("2026-06-01T19:00:00Z");
@@ -348,7 +422,7 @@ describe("SCHED-8 · predecessors resolve through the ID column when both Unique
     expect(res.rows.find((r) => r.name === "Build")!.dependsOnExternalRefs).toEqual(["msp:101"]);
     expect(res.rows.find((r) => r.name === "Test")!.dependsOnExternalRefs).toEqual(["msp:205"]);
     expect(res.rows.find((r) => r.name === "Ship")!.dependsOnExternalRefs).toBeUndefined();
-    expect(res.links).toEqual({ fs: 2, notEnforced: 0, withLag: 0, unresolved: 2 });
+    expect(res.links).toEqual({ fs: 2, notEnforced: 0, withLag: 0, unresolved: 2, lagUnread: 0 });
     expect(res.warnings.some((w) => /2 predecessor references pointed at a row that is not in this file/.test(w))).toBe(true);
   });
 
@@ -379,9 +453,34 @@ describe("SCH-8 · relationship type + lag are captured; only FS becomes an edge
       { predecessorExternalRef: "msp:1", type: "FF", lagHours: 0 },
     ]);
     expect(c.attributes?.source_links).toBe("FS msp:2 +2h; FF msp:1");
-    expect(res.links).toEqual({ fs: 1, notEnforced: 2, withLag: 1, unresolved: 0 });
+    expect(res.links).toEqual({ fs: 1, notEnforced: 2, withLag: 1, unresolved: 0, lagUnread: 0 });
     expect(res.warnings.some((w) => /2 start-to-start \/ finish-to-finish \/ start-to-finish links captured but not enforced/.test(w))).toBe(true);
     expect(res.warnings.some((w) => /1 finish-to-start link carries lag/.test(w))).toBe(true);
+  });
+
+  it("a lag whose unit cannot be read keeps the link (FS stays an edge), records the raw text, and is counted apart from unresolved rows", () => {
+    const csv = [
+      "ID,Task Name,Finish,Predecessors",
+      "1,A,2026-01-05,",
+      "2,B,2026-01-10,1FS+2 weeks",
+      "3,C,2026-01-12,1FS+3 mons",
+      "4,D,2026-01-14,\"1SS+50%,9\"",
+    ].join("\n");
+    const res = parseScheduleFile("plan.csv", csv);
+    const b = res.rows.find((r) => r.name === "B")!;
+    expect(b.dependsOnExternalRefs).toEqual(["msp:1"]);
+    expect(b.links).toEqual([{ predecessorExternalRef: "msp:1", type: "FS", lagHours: 80 }]);
+    const c = res.rows.find((r) => r.name === "C")!;
+    expect(c.dependsOnExternalRefs).toEqual(["msp:1"]);
+    expect(c.links).toEqual([{ predecessorExternalRef: "msp:1", type: "FS", lagHours: 0, lagRaw: "+3 mons" }]);
+    expect(c.attributes?.source_links).toBe("FS msp:1 +3 mons (lag not understood)");
+    const d = res.rows.find((r) => r.name === "D")!;
+    expect(d.dependsOnExternalRefs).toBeUndefined();
+    expect(d.attributes?.source_links).toBe("SS msp:1 +50% (lag not understood)");
+    // "9" names no row in this file: that alone is unresolved
+    expect(res.links).toEqual({ fs: 2, notEnforced: 1, withLag: 1, unresolved: 1, lagUnread: 2 });
+    expect(res.warnings.some((w) => /2 predecessor links carry a lag whose unit could not be read/.test(w))).toBe(true);
+    expect(res.warnings.some((w) => /1 predecessor reference pointed at a row that is not in this file/.test(w))).toBe(true);
   });
 
   it("XER TASKPRED: pred_type + lag_hr_cnt survive; an SS + FF pair does not become a cycle", () => {

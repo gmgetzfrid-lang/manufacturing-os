@@ -242,3 +242,17 @@ describe("P6 XML · SCHED-6 project choice and SCH-8 relationship types", () => 
     expect(isolate.plannedStartAt).toBe("2026-06-01T07:00:00Z");
   });
 });
+
+describe("SCH-1 · XML dates are ISO, so a slash date in a note never withholds the file", () => {
+  it("an MS Project XML whose <Notes> holds '3/4/2026' imports without the date question", () => {
+    const xml = `<?xml version="1.0"?><Project xmlns="http://schemas.microsoft.com/project"><SaveDate>2026-01-01T00:00:00</SaveDate><Tasks>
+      <Task><UID>1</UID><Name>A</Name><Start>2026-06-01T08:00:00</Start><Finish>2026-06-02T17:00:00</Finish><OutlineLevel>1</OutlineLevel><Notes>see memo 3/4/2026</Notes></Task>
+    </Tasks></Project>`;
+    const res = parseScheduleFile("plan.xml", xml);
+    expect(res.format).toBe("msproject-xml");
+    expect(res.needsDateConvention).toBeUndefined();
+    expect(res.dates).toEqual({ convention: null, decidedBy: "none", sample: null });
+    expect(res.rows).toHaveLength(1);
+    expect(res.rows[0].plannedStartAt).toBe("2026-06-01T08:00:00Z");
+  });
+});

@@ -12,12 +12,15 @@
 --     re-baseline or a clear overwrites it (SAF-7's "irreversible").
 --   * Audit: SCHEDULE_BASELINED / SCHEDULE_BASELINE_CLEARED are written by the
 --     RPCs themselves with the row count and the history id.
---   * The rail: a BEFORE UPDATE trigger on milestones refuses a direct write
---     to any baseline_* column outside those RPCs (milestones_member_all is a
---     permissive FOR ALL, so a second policy would be decorative — DRLS-1).
+--   * The rail: a BEFORE INSERT OR UPDATE trigger on milestones refuses a
+--     direct write to any baseline_* column outside those RPCs — an UPDATE
+--     that changes one, or an INSERT that carries one (the service-role
+--     restore excepted) — because milestones_member_all is a permissive
+--     FOR ALL, so a second policy would be decorative (DRLS-1).
 --
 -- NOT widening: nobody gains a write they did not have; every active member
--- LOSES the direct baseline write. Apply after 20261098.
+-- LOSES the direct baseline write (on UPDATE and on INSERT). Apply after
+-- 20261098.
 
 -- ── DEC-30 inventory, captured BEFORE the transaction ─────────────────────
 CREATE TEMP TABLE prj_roundg_baseline_inventory AS
@@ -68,6 +71,18 @@ CREATE POLICY milestone_baseline_history_member_read ON milestone_baseline_histo
 CREATE OR REPLACE FUNCTION milestones_baseline_write_guard()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = public AS $$
 BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- A new row starts with no approved plan. Only the RPCs (flag) and trusted
+    -- server code (the service-role restore) may insert one that carries it.
+    IF (NEW.baseline_start_at IS NOT NULL OR NEW.baseline_finish_at IS NOT NULL
+        OR NEW.baseline_set_at IS NOT NULL OR NEW.baseline_set_by IS NOT NULL)
+       AND COALESCE(current_setting('app.baseline_rpc', true), '') <> '1'
+       AND auth.role() IS DISTINCT FROM 'service_role' THEN
+      RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline / clear_project_baseline only.'
+        USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+  END IF;
   IF NEW.baseline_start_at  IS DISTINCT FROM OLD.baseline_start_at
   OR NEW.baseline_finish_at IS DISTINCT FROM OLD.baseline_finish_at
   OR NEW.baseline_set_at    IS DISTINCT FROM OLD.baseline_set_at
@@ -84,7 +99,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_milestones_baseline_write_guard ON milestones;
 CREATE TRIGGER trg_milestones_baseline_write_guard
-  BEFORE UPDATE ON milestones
+  BEFORE INSERT OR UPDATE ON milestones
   FOR EACH ROW EXECUTE FUNCTION milestones_baseline_write_guard();
 
 -- ── 3. set_project_baseline ──────────────────────────────────────────────
@@ -217,15 +232,18 @@ SELECT 'history: members read, nobody writes through PostgREST (no INSERT/UPDATE
                   AND cmd IN ('INSERT', 'UPDATE', 'DELETE', 'ALL')),
        NULL
 UNION ALL
-SELECT 'trg_milestones_baseline_write_guard is a BEFORE UPDATE row trigger on milestones',
+SELECT 'trg_milestones_baseline_write_guard is a BEFORE INSERT OR UPDATE row trigger on milestones',
        EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
-                WHERE c.relname = 'milestones' AND t.tgname = 'trg_milestones_baseline_write_guard' AND NOT t.tgisinternal),
+                WHERE c.relname = 'milestones' AND t.tgname = 'trg_milestones_baseline_write_guard' AND NOT t.tgisinternal
+                  -- tgtype bits: 1 ROW, 2 BEFORE, 4 INSERT, 16 UPDATE
+                  AND (t.tgtype & 23) = 23),
        NULL
 UNION ALL
-SELECT 'the guard refuses a direct write unless the RPC flag is set',
+SELECT 'the guard refuses a direct write (UPDATE, or an INSERT carrying a baseline) unless the RPC flag is set',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'milestones_baseline_write_guard'
-                  AND p.prosrc LIKE '%current_setting(''app.baseline_rpc'', true)%'),
+                  AND p.prosrc LIKE '%current_setting(''app.baseline_rpc'', true)%'
+                  AND p.prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%'),
        NULL
 UNION ALL
 SELECT 'set_project_baseline: one UPDATE, sets the RPC flag, writes history + audit, enforces can_edit_project_schedule',
@@ -262,4 +280,4 @@ SELECT 'authenticated CAN execute the baseline RPCs',
        AND has_function_privilege('authenticated', 'public.clear_project_baseline(uuid,uuid)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT check, NULL::boolean, n FROM prj_roundg_baseline_inventory;
+SELECT "check", NULL::boolean, n FROM prj_roundg_baseline_inventory;

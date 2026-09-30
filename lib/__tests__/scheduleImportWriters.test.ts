@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+//
 // projects Round G — the schedule writers (J6a SCHEDULE-IMPORT):
 //
 //   PT SCH-2 / SCH-3 / SCH-14 / SCH-16 (GAP-403's engine half) — the importer
@@ -11,7 +13,11 @@
 //   PC SCHED-3  — setBaseline / clearBaseline are one RPC call each, with the
 //     legacy path only when the RPC is absent (and audited even then).
 //
-// Driven against an in-memory PostgREST chain mock (vi.hoisted state + Proxy).
+// Driven against an in-memory PostgREST chain mock (vi.hoisted state + Proxy)
+// that behaves like the real thing where it matters: timestamptz columns come
+// back as `…+00:00` (to_json of a timestamptz), a bulk insert / upsert sends
+// the UNION of its rows' keys with NULL for a missing key, and NOT NULL
+// columns refuse a NULL. jsdom supplies DOMParser for the XML-driven test.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -23,8 +29,29 @@ const db = vi.hoisted(() => ({
   rpcImpl: null as null | ((fn: string, args: Record<string, unknown>) => { data: unknown; error: unknown }),
   failInsert: null as null | ((table: string, row: Row) => string | null),
   failUpdate: null as null | ((table: string, payload: Row) => string | null),
+  failSelect: null as null | ((table: string) => string | null),
   nextId: 1,
 }));
+
+/** PostgREST's rendering of a timestamptz (to_json, UTC session): "…+00:00". */
+const TS_COLUMNS = new Set(["planned_at", "planned_start_at", "actual_at", "actual_start_at", "updated_at", "baseline_start_at", "baseline_finish_at", "baseline_set_at"]);
+function pgTimestamptz(v: unknown): unknown {
+  if (typeof v !== "string") return v;
+  const t = Date.parse(v);
+  if (!Number.isFinite(t)) return v;
+  const iso = new Date(t).toISOString(); // 2026-06-02T00:00:00.000Z
+  const [whole, frac] = iso.slice(0, -1).split(".");
+  const f = (frac ?? "").replace(/0+$/, "");
+  return `${whole}${f ? `.${f}` : ""}+00:00`;
+}
+function asStored(table: string, r: Row): Row {
+  if (table !== "milestones") return r;
+  const out: Row = {};
+  for (const [k, v] of Object.entries(r)) out[k] = TS_COLUMNS.has(k) ? pgTimestamptz(v) : v;
+  return out;
+}
+/** NOT NULL columns of milestones a write can present as NULL. */
+const MILESTONE_NOT_NULL = ["org_id", "name", "weight", "planned_at", "status", "source", "created_by", "percent_complete", "is_summary", "depends_on", "attributes"];
 
 function builder(table: string) {
   const state = { op: "select" as "select" | "insert" | "upsert" | "update", payload: null as unknown, filters: [] as Array<[string, string, unknown]>, range: null as null | [number, number], single: false, upsertOpts: null as unknown };
@@ -40,14 +67,24 @@ function builder(table: string) {
   const exec = () => {
     const t = (db.tables[table] ??= []);
     if (state.op === "select") {
+      const selErr = db.failSelect?.(table);
+      if (selErr) return { data: null, error: { message: selErr } };
       let out = t.filter(match);
       if (state.range) out = out.slice(state.range[0], state.range[1] + 1);
       return { data: state.single ? (out[0] ?? null) : out, error: null };
     }
     if (state.op === "insert" || state.op === "upsert") {
-      const list = (Array.isArray(state.payload) ? state.payload : [state.payload]) as Row[];
-      db.writes.push({ table, method: state.op, payload: list, filters: [] });
-      for (const r of list) { const err = db.failInsert?.(table, r); if (err) return { data: null, error: { message: err } }; }
+      const sent = (Array.isArray(state.payload) ? state.payload : [state.payload]) as Row[];
+      db.writes.push({ table, method: state.op, payload: sent, filters: [] });
+      for (const r of sent) { const err = db.failInsert?.(table, r); if (err) return { data: null, error: { message: err } }; }
+      // A bulk (array) write: the union of every row's keys, NULL where a row lacks one.
+      const keys = Array.isArray(state.payload) ? Array.from(new Set(sent.flatMap((r) => Object.keys(r)))) : null;
+      const list = sent.map((r) => asStored(table, keys ? Object.fromEntries(keys.map((k) => [k, k in r ? r[k] : null])) : r));
+      if (table === "milestones") {
+        for (const r of list) for (const c of MILESTONE_NOT_NULL) {
+          if (c in r && r[c] === null) return { data: null, error: { code: "23502", message: `null value in column "${c}" of relation "milestones" violates not-null constraint` } };
+        }
+      }
       const out: Row[] = [];
       for (const r of list) {
         const existing = state.op === "upsert" && r.id ? t.find((x) => x.id === r.id) : undefined;
@@ -62,7 +99,7 @@ function builder(table: string) {
     const err = db.failUpdate?.(table, state.payload as Row);
     if (err) return { data: null, error: { message: err } };
     const target = t.filter(match);
-    for (const r of target) Object.assign(r, state.payload as Row);
+    for (const r of target) Object.assign(r, asStored(table, state.payload as Row));
     return { data: state.single ? (target[0] ?? null) : target, error: null };
   };
   const proxy: unknown = new Proxy({}, {
@@ -103,10 +140,13 @@ vi.mock("@/lib/audit", () => ({
   logMilestoneEvent: vi.fn(async () => {}),
 }));
 
-import { importMilestonesFromParsed, applyMilestoneMoves, updateMilestone, setBaseline, clearBaseline } from "@/lib/milestones";
+import { importMilestonesFromParsed, applyMilestoneMoves, updateMilestone, setBaseline, clearBaseline, type ImportPlan as ImportPlanT } from "@/lib/milestones";
 import { parseScheduleFile } from "@/lib/scheduleParsers";
-import { shiftForStart, filterMilestones, EMPTY_FILTER } from "@/lib/scheduleFilter";
+import { shiftForStart, shiftAfterMove, filterMilestones, EMPTY_FILTER } from "@/lib/scheduleFilter";
 import type { Milestone } from "@/types/schema";
+import { countPastBaseline } from "@/components/projects/MovePreviewSheet";
+import { planChangeCount, progressChangeLabel, structureSummary } from "@/components/projects/ScheduleImportModal";
+import { isImmutableTable, isSkippedTable } from "@/lib/dataRestore";
 
 const ORG = "org-1", PROJECT = "proj-1", USER = "user-1";
 const scope = { orgId: ORG, projectId: PROJECT, source: "csv" as const, createdBy: USER };
@@ -114,7 +154,7 @@ const milestones = () => db.tables.milestones ?? [];
 const byName = (n: string) => milestones().find((r) => r.name === n)!;
 
 beforeEach(() => {
-  db.tables = {}; db.writes = []; db.rpcCalls = []; db.rpcImpl = null; db.failInsert = null; db.failUpdate = null; db.nextId = 1;
+  db.tables = {}; db.writes = []; db.rpcCalls = []; db.rpcImpl = null; db.failInsert = null; db.failUpdate = null; db.failSelect = null; db.nextId = 1;
   audited.length = 0;
 });
 
@@ -169,6 +209,94 @@ describe("SCH-2 · re-import preserves locally recorded progress by default", ()
     expect(res.inserted).toBe(0);
     expect(milestones()).toEqual([]);
     expect(db.writes).toEqual([]);
+  });
+});
+
+describe("SCH-2 · the plan compares what PostgREST really returns, over every plan column", () => {
+  // Keyed rows with real start / finish times, a work column and an extra column.
+  const keyed = (n: number, over: (i: number) => Partial<Record<"start" | "finish" | "pct" | "work" | "area", string>> = () => ({})) => [
+    "ID,Name,Start,Finish,% Complete,Work,Area",
+    ...Array.from({ length: n }, (_, i) => {
+      const o = over(i);
+      return `${i + 1},Task ${i + 1},${o.start ?? "2026-06-01T08:00:00"},${o.finish ?? "2026-06-01T17:00:00"},${o.pct ?? "0"},${o.work ?? "8 hrs"},${o.area ?? "Unit 1"}`;
+    }),
+  ].join("\n");
+
+  it("an identical 400-row re-import is Unchanged 400 and issues NO write, although the stored timestamps read back as +00:00", async () => {
+    const first = await importMilestonesFromParsed({ ...scope, rows: rowsOf(keyed(400)) });
+    expect(first.inserted).toBe(400);
+    expect(byName("Task 1").planned_at).toBe("2026-06-01T17:00:00+00:00"); // the mock renders timestamptz like PostgREST
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, rows: rowsOf(keyed(400)) });
+    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 400, notInFile: 0 });
+    expect(again.plan!.structure).toEqual({ rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 });
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+  });
+
+  it("a change in ANY plan column is a change: work hours, an extra column (attributes), the start instant", async () => {
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(keyed(4)) });
+    const res = await importMilestonesFromParsed({
+      ...scope,
+      rows: rowsOf(keyed(4, (i) => (i === 0 ? { work: "16 hrs" } : i === 1 ? { area: "Unit 2" } : i === 2 ? { start: "2026-06-01T09:00:00" } : {}))),
+    });
+    expect(res.plan).toMatchObject({ changed: 3, unchanged: 1 });
+    expect(byName("Task 1").duration_hours).toBe(16);
+    expect((byName("Task 2").attributes as Row).area).toBe("Unit 2");
+    expect(byName("Task 3").planned_start_at).toBe("2026-06-01T09:00:00+00:00");
+  });
+
+  it("an existing row's hand-set shift is not re-derived on re-import; a start that moves into the other band re-labels it", async () => {
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(keyed(2)) });
+    expect(byName("Task 1").shift).toBe("day");
+    byName("Task 1").shift = "swing";                   // corrected by hand in the app
+    db.writes = [];
+    const same = await importMilestonesFromParsed({ ...scope, rows: rowsOf(keyed(2)) });
+    expect(same.plan).toMatchObject({ changed: 0, unchanged: 2 });
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+    expect(byName("Task 1").shift).toBe("swing");
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(keyed(2, (i) => (i === 1 ? { start: "2026-06-01T19:00:00", finish: "2026-06-02T05:00:00" } : {}))) });
+    expect(byName("Task 2").shift).toBe("night");
+    expect(byName("Task 1").shift).toBe("swing");
+  });
+
+  it("a mid-job re-import mixing protected rows and rows that take the file's progress stays CHUNKED — one request per key set, never per-row", async () => {
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(keyed(400)) });
+    // The crew recorded progress on the first 150 rows.
+    milestones().slice(0, 150).forEach((r) => Object.assign(r, { percent_complete: 60, status: "in_progress" }));
+    db.writes = [];
+    const next = keyed(400, () => ({ finish: "2026-06-02T17:00:00", pct: "10" })); // every finish moved, the file says 10 %
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(next) });
+    expect(res.errors).toEqual([]);
+    expect(res.updated).toBe(400);
+    const w = db.writes.filter((x) => x.table === "milestones");
+    expect(w.every((x) => x.method === "upsert")).toBe(true);           // no per-row update fallback
+    expect(w.map((x) => (x.payload as Row[]).length)).toEqual([200, 50, 150]); // 250 taking the file's progress, 150 protected
+    for (const x of w) {
+      const keySets = new Set((x.payload as Row[]).map((r) => Object.keys(r).sort().join(",")));
+      expect(keySets.size).toBe(1);                                    // one key set per request
+    }
+    expect(byName("Task 1")).toMatchObject({ percent_complete: 60, status: "in_progress", planned_at: "2026-06-02T17:00:00+00:00" });
+    expect(byName("Task 400")).toMatchObject({ percent_complete: 10, status: "in_progress" });
+  });
+
+  it("new rows with and without a % value are inserted in separate requests (a blank cell never sends status NULL)", async () => {
+    const csv = ["ID,Name,Finish,% Complete", "1,A,2026-06-01,50", "2,B,2026-06-02,", "3,C,2026-06-03,0"].join("\n");
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(csv) });
+    expect(res.errors).toEqual([]);
+    expect(res.inserted).toBe(3);
+    expect(db.writes.filter((w) => w.table === "milestones").map((w) => [w.method, (w.payload as Row[]).length])).toEqual([["insert", 2], ["insert", 1]]);
+    expect(byName("A")).toMatchObject({ percent_complete: 50, status: "in_progress" });
+    expect("status" in byName("B")).toBe(false); // the column default applies
+  });
+
+  it("the plan counts structure changes — a predecessor the file drops, including one added in the app — and the button count includes structure-only rows", async () => {
+    const linked = ["ID,Task Name,Start,Finish,Predecessors", "1,Design,2026-01-01,2026-01-05,", "2,Build,2026-01-06,2026-01-10,1", "3,Test,2026-01-11,2026-01-12,"].join("\n");
+    await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(linked, "plan.csv") });
+    byName("Test").depends_on = [byName("Build").id];     // a link a planner added in the app
+    const unlinked = ["ID,Task Name,Start,Finish,Predecessors", "1,Design,2026-01-01,2026-01-05,", "2,Build,2026-01-06,2026-01-10,", "3,Test,2026-01-11,2026-01-12,"].join("\n");
+    const res = await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(unlinked, "plan.csv"), dryRun: true });
+    expect(res.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3 });
+    expect(res.plan!.structure).toEqual({ rows: 2, onlyStructure: 2, parents: 0, linksAdded: 0, linksRemoved: 2 });
   });
 });
 
@@ -258,27 +386,31 @@ describe("SCH-14 · caps, chunks, progress and cancel", () => {
     const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
     expect(res.inserted).toBe(3);
     expect(hits).toBe(1);
-    expect(byName("Scaffold")).toMatchObject({ planned_start_at: "2026-01-03T00:00:00Z", shift: "night" });
+    expect(byName("Scaffold")).toMatchObject({ planned_start_at: "2026-01-03T00:00:00+00:00", shift: "night" });
     expect("import_batch_id" in byName("Scaffold")).toBe(false);
   });
 });
 
-describe("SCHED-9 · shift is one UTC reading, recomputed when a start moves", () => {
-  it("the importer labels 08:00 day and 19:00 night regardless of the importer's zone", async () => {
-    const xmlRows = [
-      { name: "Day job", plannedAt: "2026-06-01T17:00:00Z", plannedStartAt: "2026-06-01T08:00:00Z", externalRef: "msp-uid:1" },
-      { name: "Night job", plannedAt: "2026-06-02T05:00:00Z", plannedStartAt: "2026-06-01T19:00:00Z", externalRef: "msp-uid:2" },
-    ];
+describe("SCHED-9 · shift is one UTC reading, and follows a start only when it moves into the other band", () => {
+  it("offset-less MS Project XML imported from a UTC+5:30 browser: 08:00 → day, 19:00 → night (parse AND import under the zone)", async () => {
+    const xml = `<?xml version="1.0"?><Project xmlns="http://schemas.microsoft.com/project"><SaveDate>2026-01-01T00:00:00</SaveDate><Tasks>
+      <Task><UID>1</UID><Name>Day job</Name><Start>2026-06-01T08:00:00</Start><Finish>2026-06-01T17:00:00</Finish><OutlineLevel>1</OutlineLevel></Task>
+      <Task><UID>2</UID><Name>Night job</Name><Start>2026-06-01T19:00:00</Start><Finish>2026-06-02T05:00:00</Finish><OutlineLevel>1</OutlineLevel></Task>
+    </Tasks></Project>`;
     const tz = process.env.TZ;
     try {
       process.env.TZ = "Asia/Kolkata";
-      await importMilestonesFromParsed({ ...scope, source: "msproject", rows: xmlRows });
+      // Read as browser-local, 19:00 would be 13:30Z here — a "day" label.
+      expect(new Date("2026-06-01T19:00:00").getUTCHours()).toBe(13);
+      const parsed = parseScheduleFile("plan.xml", xml);
+      expect(parsed.rows.map((r) => r.plannedStartAt)).toEqual(["2026-06-01T08:00:00Z", "2026-06-01T19:00:00Z"]);
+      await importMilestonesFromParsed({ ...scope, source: "msproject", rows: parsed.rows });
     } finally { process.env.TZ = tz; }
     expect(byName("Day job").shift).toBe("day");
     expect(byName("Night job").shift).toBe("night");
   });
 
-  it("updateMilestone re-labels a start that crosses 18:00, keeps a hand-set swing, and defers to an explicit shift", async () => {
+  it("updateMilestone re-labels a day / night row whose start moves into the other band, keeps swing, defers to an explicit shift", async () => {
     db.tables.milestones = [
       { id: "a", org_id: ORG, project_id: PROJECT, name: "A", planned_at: "2026-06-01T17:00:00Z", planned_start_at: "2026-06-01T08:00:00Z", shift: "day", status: "planned", weight: 1, source: "manual", created_by: USER },
       { id: "b", org_id: ORG, project_id: PROJECT, name: "B", planned_at: "2026-06-01T17:00:00Z", planned_start_at: "2026-06-01T08:00:00Z", shift: "swing", status: "planned", weight: 1, source: "manual", created_by: USER },
@@ -291,10 +423,38 @@ describe("SCHED-9 · shift is one UTC reading, recomputed when a start moves", (
     expect(milestones()[0].shift).toBe("night");
   });
 
-  it("the filter classifies an unlabelled row from its start", () => {
+  it("an unlabelled manual row dragged a day stays unlabelled; a hand-set 'day' at 05:00 moved by whole days stays 'day'", async () => {
+    db.tables.milestones = [
+      // createMilestone stores a date-only task at 00:00Z, no shift
+      { id: "m", org_id: ORG, project_id: PROJECT, name: "Manual", planned_at: "2026-06-02T00:00:00+00:00", planned_start_at: "2026-06-01T00:00:00+00:00", shift: null, status: "planned", weight: 1, source: "manual", created_by: USER },
+      { id: "h", org_id: ORG, project_id: PROJECT, name: "Hand-set", planned_at: "2026-06-01T15:00:00+00:00", planned_start_at: "2026-06-01T05:00:00+00:00", shift: "day", status: "planned", weight: 1, source: "manual", created_by: USER },
+    ];
+    await updateMilestone({ id: "m", patch: { plannedStartAt: "2026-06-02T00:00:00Z", plannedAt: "2026-06-03T00:00:00Z" }, updatedBy: USER });
+    await updateMilestone({ id: "h", patch: { plannedStartAt: "2026-06-03T05:00:00Z", plannedAt: "2026-06-03T15:00:00Z" }, updatedBy: USER });
+    expect(milestones()[0].shift).toBeNull();
+    expect(milestones()[1].shift).toBe("day");
+    const updates = db.writes.filter((w) => w.method === "update").map((w) => w.payload as Row);
+    expect(updates.every((u) => !("shift" in u))).toBe(true); // nothing to re-label, so the column is not written
+  });
+
+  it("shiftAfterMove is the one rule (the RPC's CASE mirrors it)", () => {
+    expect(shiftAfterMove(null, "2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z")).toBeNull();
+    expect(shiftAfterMove("swing", "2026-06-01T08:00:00Z", "2026-06-01T19:00:00Z")).toBe("swing");
+    expect(shiftAfterMove("day", "2026-06-01T05:00:00Z", "2026-06-02T05:00:00Z")).toBe("day");
+    expect(shiftAfterMove("day", "2026-06-01T08:00:00Z", "2026-06-01T19:00:00Z")).toBe("night");
+    expect(shiftAfterMove("night", "2026-06-01T19:00:00+00:00", "2026-06-02T09:00:00Z")).toBe("day");
+    expect(shiftAfterMove("day", null, "2026-06-01T19:00:00Z")).toBe("day"); // no prior start: not recomputed
+  });
+
+  it("the filter reads the stored label only — an unlabelled date-only row is not night work", () => {
     const mk = (over: Partial<Milestone>): Milestone => ({ orgId: ORG, name: "m", weight: 1, plannedAt: "2026-06-02T05:00:00Z", status: "planned", source: "manual", createdBy: USER, ...over });
-    const rows = [mk({ id: "n", plannedStartAt: "2026-06-01T19:00:00Z", shift: null }), mk({ id: "d", plannedStartAt: "2026-06-01T08:00:00Z", shift: null }), mk({ id: "s", plannedStartAt: "2026-06-01T08:00:00Z", shift: "swing" })];
+    const rows = [
+      mk({ id: "n", plannedStartAt: "2026-06-01T19:00:00Z", shift: "night" }),
+      mk({ id: "u", plannedStartAt: "2026-06-01T00:00:00Z", shift: null }),
+      mk({ id: "s", plannedStartAt: "2026-06-01T08:00:00Z", shift: "swing" }),
+    ];
     expect([...filterMilestones(rows, { ...EMPTY_FILTER, shifts: ["night"] })]).toEqual(["n"]);
+    expect([...filterMilestones(rows, { ...EMPTY_FILTER, shifts: ["day"] })]).toEqual([]);
     expect([...filterMilestones(rows, { ...EMPTY_FILTER, shifts: ["swing"] })]).toEqual(["s"]);
     expect(shiftForStart("2026-06-01T17:59:00Z")).toBe("day");
     expect(shiftForStart("2026-06-01T18:00:00Z")).toBe("night");
@@ -366,8 +526,21 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
     db.rpcImpl = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.apply_milestone_moves" } });
     const fallback = await applyMilestoneMoves({ ...actor, moves });
     expect(fallback).toMatchObject({ matched: ["a", "b"], via: "rows" });
-    expect(milestones()[0].planned_at).toBe("2026-06-05T17:00:00Z");
-    expect(milestones()[0].shift).toBe("day"); // updateMilestone recomputed it from 08:00
+    expect(milestones()[0].planned_at).toBe("2026-06-05T17:00:00+00:00");
+    expect(milestones()[0].shift).toBeUndefined(); // an unlabelled row stays unlabelled (SCHED-9)
+  });
+
+  it("the pre-read failing never turns the lock off: without the caller's lock values nothing moves; with them the move goes ahead and the missing trail is reported", async () => {
+    seed();
+    db.failSelect = (t) => (t === "milestones" ? "permission denied for table milestones" : null);
+    db.rpcImpl = () => ({ data: { count: 2, matched: ["a", "b"], unmatched: [] }, error: null });
+    await expect(applyMilestoneMoves({ ...actor, moves })).rejects.toThrow(/Could not read the tasks before moving them \(permission denied for table milestones\) — nothing was moved/);
+    expect(db.rpcCalls).toEqual([]);
+
+    const locked = moves.map((m) => ({ ...m, expectedUpdatedAt: "2026-05-01T00:00:00+00:00" }));
+    const res = await applyMilestoneMoves({ ...actor, moves: locked });
+    expect((db.rpcCalls[0].args.p_moves as Row[]).map((m) => m.expected_updated_at)).toEqual(["2026-05-01T00:00:00+00:00", "2026-05-01T00:00:00+00:00"]);
+    expect(res.auditError).toMatch(/^breadcrumbs: the tasks could not be read before the move \(permission denied for table milestones\)/);
   });
 });
 
@@ -411,5 +584,40 @@ describe("SCHED-3 · baseline is one RPC call each; the legacy path only when th
     expect(legacy).toEqual({ ok: true, count: 1, via: "legacy" });
     expect(milestones()[0].baseline_finish_at).toBeNull();
     expect(audited.at(-1)).toMatchObject({ action: "SCHEDULE_BASELINE_CLEARED", details: { count: 1 } });
+  });
+});
+
+describe("SCH-2 / SCH-16 · the review panel's numbers", () => {
+  const plan = (over: Partial<ImportPlanT> = {}): ImportPlanT => ({
+    added: 0, changed: 0, unchanged: 3, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
+    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rowCap: 5000, ...over,
+  });
+  it("a file that only removes a predecessor does not read 'Import 0 changes'", () => {
+    expect(planChangeCount(plan())).toBe(0);
+    expect(planChangeCount(plan({ added: 1, changed: 2, structure: { rows: 3, onlyStructure: 2, parents: 1, linksAdded: 0, linksRemoved: 2 } }))).toBe(5);
+    expect(structureSummary({ rows: 3, onlyStructure: 2, parents: 1, linksAdded: 0, linksRemoved: 2 })).toBe("1 parent changed, 2 links removed");
+  });
+  it("progress at risk is worded by direction, never as a 'reset' when the file is higher", () => {
+    expect(progressChangeLabel(60, 80)).toBe("60% on the board → 80% in the file (higher)");
+    expect(progressChangeLabel(60, 0)).toBe("60% on the board → 0% in the file (lower)");
+  });
+});
+
+describe("SCHED-3 · the move sheet's baseline line reads the change set it is handed", () => {
+  it("counts every row in the set that would finish past its baseline — a cascaded dependent counts even when the dragged task has none", () => {
+    const rows = [
+      { plannedAt: "2026-06-10T17:00:00Z", baselineFinishAt: null },                       // the dragged task: no baseline
+      { plannedAt: "2026-06-12T17:00:00Z", baselineFinishAt: "2026-06-11T17:00:00+00:00" }, // its FS dependent, pushed past
+      { plannedAt: "2026-06-12T17:00:00Z", baselineFinishAt: "2026-06-12T17:00:00+00:00" }, // exactly on it: not past
+    ];
+    expect(countPastBaseline(rows)).toBe(1);
+    expect(countPastBaseline([])).toBe(0);
+  });
+});
+
+describe("SURF-8 · baseline history is RPC-written, so restore never blind-imports it", () => {
+  it("milestone_baseline_history is immutable and skipped (kept in the backup for review)", () => {
+    expect(isImmutableTable("milestone_baseline_history")).toBe(true);
+    expect(isSkippedTable("milestone_baseline_history")).toBe(true);
   });
 });

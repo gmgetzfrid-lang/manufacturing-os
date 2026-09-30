@@ -55,4 +55,4 @@ SELECT 'milestones_external_ref_per_project_uniq still present (the identity rai
        EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'milestones_external_ref_per_project_uniq'),
        NULL
 UNION ALL
-SELECT check, NULL::boolean, n FROM prj_roundg_import_inventory;
+SELECT "check", NULL::boolean, n FROM prj_roundg_import_inventory;

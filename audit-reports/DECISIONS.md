@@ -1708,9 +1708,10 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Decision. The importer decides nothing it cannot read from the file, shows
 what it would do before it writes, and never erases what the crew recorded.
-Concretely: (1) day-first vs month-first is decided once from the whole file —
-a file that cannot decide it asks the user once, and the answer applies to
-every row; (2) a row the file does not carry is reported as "not in this
+Concretely: (1) day-first vs month-first is decided once from the file's
+date values (a CSV's start and finish columns; XML / XER dates are ISO) — a
+file that cannot decide it asks the user once, and the answer applies to
+every row, weekday-prefixed dates included; (2) a row the file does not carry is reported as "not in this
 file" and left alone — removal is a separate explicit action; (3) progress,
 status and actual dates recorded in the app survive a re-import unless the
 user opts in per import; (4) identity is the source system's id where one
@@ -1721,10 +1722,13 @@ the task and reported as "not enforced" until the reflow has its own test;
 (6) a file that holds several projects asks which one and never merges; (7)
 MS Project's Predecessors resolve through the ID column, and an unresolvable
 token is counted, not guessed; (8) a level-0 summary row is the root parent,
-not a sibling leaf; (9) shift is recomputed by every date-writing path and
-existing rows are recomputed only on request; (10) the approved baseline is
-set and cleared only through RPCs that enforce the schedule-editing
-predicate, keep every prior snapshot, and audit themselves; (11) a batch move
+not a sibling leaf; (9) a day / night shift label follows its task when the
+start moves into the other band (every date-writing path, one rule) — an
+unlabelled row stays unlabelled, a hand-set swing is kept, and existing rows
+are recomputed in bulk only on request; (10) the approved baseline is set and
+cleared only through RPCs that enforce the schedule-editing predicate, keep
+every prior snapshot, and audit themselves — a guard refuses a direct
+baseline write on UPDATE and on INSERT; (11) a batch move
 leaves a per-row reschedule breadcrumb, the same one a single edit leaves;
 (12) an import is capped at 5 MB / 5,000 rows, shows progress, can be
 cancelled, and tags every row it touched with its batch id.**
@@ -1745,13 +1749,15 @@ defect in the audit.
 `contentKey`, `ParsedLink`, `ParseOptions`, `SCHEDULE_IMPORT_LIMITS`),
 `lib/milestones.ts` (`importMilestonesFromParsed` with `dryRun` /
 `overwriteProgress` / `signal` / `onProgress`, `applyMilestoneMoves`,
-`setBaseline` / `clearBaseline`), `lib/scheduleFilter.ts` (`shiftForStart`),
+`setBaseline` / `clearBaseline`), `lib/scheduleFilter.ts` (`shiftForStart`,
+`shiftAfterMove`),
 `components/projects/ScheduleImportModal.tsx`, migrations `20261097`,
 `20261098`, `20261099`.
 
 **Acceptance.** Inserting a row at the top of a source file leaves every
 other row's identity and progress intact; a genuinely ambiguous date file
-imports nothing until asked; a re-import with no changes issues no write; an
+imports nothing until asked; a re-import with no changes issues no write
+(against PostgREST's `+00:00` timestamp rendering); an
 SS + FF ladder creates no cycle; the anon key cannot call the batch-move or
 baseline RPCs.
 

@@ -65,6 +65,9 @@ export interface ParsedLink {
   type: RelationshipType;
   /** Lag in hours (negative = lead). 0 when the source carried none. */
   lagHours: number;
+  /** The source's lag text when its unit could not be read ("+3 mons",
+   *  "+50%"): the link is kept, lagHours is 0 and this text is recorded. */
+  lagRaw?: string;
 }
 
 /** Day-first or month-first reading of slash dates such as 05/08/2026. */
@@ -98,7 +101,7 @@ export interface ParseResult {
   needsProjectChoice?: boolean;
   /** Relationship census: what the engine will honour vs. what is only
    *  recorded (PT SCH-8) and predecessor tokens that resolved to nothing. */
-  links?: { fs: number; notEnforced: number; withLag: number; unresolved: number };
+  links?: { fs: number; notEnforced: number; withLag: number; unresolved: number; lagUnread?: number };
 }
 
 /** Import limits (PT SCH-14): refused with the limit named, never truncated. */
@@ -117,10 +120,18 @@ export function contentKey(name: string, plannedIso: string, plannedStartIso: st
   return h.toString(16).padStart(8, "0");
 }
 
-/** Scan the WHOLE file for slash dates and decide day-first vs month-first
- *  once: any first part > 12 proves D/M/Y, any second part > 12 proves
- *  M/D/Y. Neither → genuinely ambiguous (the caller asks the user). Both →
- *  the file contradicts itself (also asked, and reported). Never per row. */
+/** A leading day name ("Mon ", "Tue. ", "Wednesday, ") — MS Project's default
+ *  date display. Dropped before a date is read. */
+const LEADING_DAY_NAME = /^[A-Za-z]{2,9}\.?,?\s+(?=\d)/;
+/** A d/m/y (or m/d/y) triple anywhere in a value. */
+const SLASH_TRIPLE = /(?<!\d)\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}(?!\d)/;
+
+/** Scan the file's DATE VALUES for slash dates and decide day-first vs
+ *  month-first once: any first part > 12 proves D/M/Y, any second part > 12
+ *  proves M/D/Y. Neither → genuinely ambiguous (the caller asks the user).
+ *  Both → the file contradicts itself (also asked, and reported). Never per
+ *  row. The caller passes the date columns' values only (see dateEvidence),
+ *  so a dash-separated code or a date inside a note is never evidence. */
 export function detectDateConvention(text: string): { convention: DateConvention | null; ambiguous: boolean; conflict: boolean; sample: string | null } {
   const re = /(?<![\d\/\-])(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?![\d\/\-])/g;
   let dmy: string | null = null;
@@ -185,25 +196,30 @@ function mspLinkType(raw: string | null | undefined): RelationshipType {
 /** Split every link into what the engine honours (FS → dependsOn) and what
  *  is only recorded; serialise the recorded part onto attributes so it is
  *  stored with the task and visible, never silently dropped. */
-function splitLinks(links: ParsedLink[], attributes: Record<string, string>): { dependsOn: string[] | undefined; notEnforced: number; withLag: number } {
+function splitLinks(links: ParsedLink[], attributes: Record<string, string>): { dependsOn: string[] | undefined; notEnforced: number; withLag: number; lagUnread: number } {
   const dependsOn: string[] = [];
-  let notEnforced = 0, withLag = 0;
+  let notEnforced = 0, withLag = 0, lagUnread = 0;
   const recorded: string[] = [];
   for (const l of links) {
+    const unread = l.lagRaw ? ` ${l.lagRaw} (lag not understood)` : null;
+    if (unread) lagUnread++;
     if (l.type === "FS") {
       if (!dependsOn.includes(l.predecessorExternalRef)) dependsOn.push(l.predecessorExternalRef);
-      if (l.lagHours !== 0) { withLag++; recorded.push(`FS ${l.predecessorExternalRef} ${l.lagHours > 0 ? "+" : ""}${l.lagHours}h`); }
+      if (unread) recorded.push(`FS ${l.predecessorExternalRef}${unread}`);
+      else if (l.lagHours !== 0) { withLag++; recorded.push(`FS ${l.predecessorExternalRef} ${l.lagHours > 0 ? "+" : ""}${l.lagHours}h`); }
     } else {
       notEnforced++;
-      recorded.push(`${l.type} ${l.predecessorExternalRef}${l.lagHours !== 0 ? ` ${l.lagHours > 0 ? "+" : ""}${l.lagHours}h` : ""}`);
+      recorded.push(`${l.type} ${l.predecessorExternalRef}${unread ?? (l.lagHours !== 0 ? ` ${l.lagHours > 0 ? "+" : ""}${l.lagHours}h` : "")}`);
     }
   }
   if (recorded.length) attributes.source_links = recorded.join("; ");
-  return { dependsOn: dependsOn.length ? dependsOn : undefined, notEnforced, withLag };
+  return { dependsOn: dependsOn.length ? dependsOn : undefined, notEnforced, withLag, lagUnread };
 }
-function linkWarnings(census: { fs: number; notEnforced: number; withLag: number; unresolved: number }, warnings: string[]): void {
+function linkWarnings(census: { fs: number; notEnforced: number; withLag: number; unresolved: number; lagUnread?: number }, warnings: string[]): void {
   if (census.notEnforced > 0) warnings.push(`${census.notEnforced} start-to-start / finish-to-finish / start-to-finish link${census.notEnforced === 1 ? "" : "s"} captured but not enforced — the schedule engine honours finish-to-start only. They are kept on each task as "source_links".`);
   if (census.withLag > 0) warnings.push(`${census.withLag} finish-to-start link${census.withLag === 1 ? "" : "s"} carr${census.withLag === 1 ? "ies" : "y"} lag; the lag is recorded on the task but not applied by the reflow.`);
+  const lagUnread = census.lagUnread ?? 0;
+  if (lagUnread > 0) warnings.push(`${lagUnread} predecessor link${lagUnread === 1 ? "" : "s"} carr${lagUnread === 1 ? "ies" : "y"} a lag whose unit could not be read (for example months or a percentage). The link${lagUnread === 1 ? " is" : "s are"} kept and the lag text is recorded on the task as "source_links", but no lag is applied.`);
   if (census.unresolved > 0) warnings.push(`${census.unresolved} predecessor reference${census.unresolved === 1 ? "" : "s"} pointed at a row that is not in this file and ${census.unresolved === 1 ? "was" : "were"} not linked.`);
 }
 
@@ -307,9 +323,11 @@ function runParser(format: ScheduleFormat, filename: string, text: string, opts?
     return { format: "unknown", rows: [], warnings: [`Couldn't identify file type for "${filename}". Drop a .xml, .xer, or .csv exported from your PM tool.`] };
   }
   // Day-first vs month-first is a property of the FILE, decided once from
-  // every slash date in it (PT SCH-1). A file that cannot decide it withholds
-  // its rows until the user answers; the answer is applied to every row.
-  const detected = detectDateConvention(text);
+  // every slash date in its DATE COLUMNS (PT SCH-1) — a code such as
+  // 1-13-100 or a date typed into a note is not evidence, and XML / XER carry
+  // ISO dates so they never reach the question. A file that cannot decide it
+  // withholds its rows until the user answers; the answer applies to every row.
+  const detected = detectDateConvention(dateEvidence(format, text));
   let dates: NonNullable<ParseResult["dates"]>;
   if (detected.convention) dates = { convention: detected.convention, decidedBy: "file", sample: detected.sample };
   else if (opts?.dateConvention && detected.ambiguous) dates = { convention: opts.dateConvention, decidedBy: "user", sample: detected.sample };
@@ -886,43 +904,76 @@ function parseP6Xer(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
 // We accept comma OR tab delimited (MS Project Save As often uses
 // tabs depending on the locale).
 
+const MSP_CSV_SPEC: SynonymSpec = {
+  name:     ["task name", "name"],
+  planned:  ["finish", "finish date", "end", "due date", "due", "planned_at"],
+  start:    ["start", "start date", "planned_start", "planned start"],
+  // Unique ID is the stable key; ID is the outline position, which MS
+  // Project renumbers on every insert (PT SCH-3) — but ID is the numbering
+  // the Predecessors column uses (PC SCHED-8), so links resolve through it.
+  id:       ["unique id", "uid"],
+  seq:      ["id", "task id"],
+  predVia:  "seq",
+  pct:      ["% complete", "percent complete", "complete"],
+  desc:     ["notes", "description"],
+  outline:  ["outline level", "outline_level", "level"],
+  wbs:      ["wbs"],
+  pred:     ["predecessors", "predecessor", "preds"],
+  work:     ["work", "work hours", "duration", "hours"],
+};
+
 function parseMsProjectCsv(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
-  return parseCsvLikeWithSynonyms(text, {
-    name:     ["task name", "name"],
-    planned:  ["finish", "finish date", "end", "due date", "due", "planned_at"],
-    start:    ["start", "start date", "planned_start", "planned start"],
-    // Unique ID is the stable key; ID is the outline position, which MS
-    // Project renumbers on every insert (PT SCH-3) — but ID is the numbering
-    // the Predecessors column uses (PC SCHED-8), so links resolve through it.
-    id:       ["unique id", "uid"],
-    seq:      ["id", "task id"],
-    predVia:  "seq",
-    pct:      ["% complete", "percent complete", "complete"],
-    desc:     ["notes", "description"],
-    outline:  ["outline level", "outline_level", "level"],
-    wbs:      ["wbs"],
-    pred:     ["predecessors", "predecessor", "preds"],
-    work:     ["work", "work hours", "duration", "hours"],
-  }, "msp", ctx);
+  return parseCsvLikeWithSynonyms(text, MSP_CSV_SPEC, "msp", ctx);
 }
 
 // ─── Generic CSV (our own convention, still backward-compatible) ─
 
+const GENERIC_CSV_SPEC: SynonymSpec = {
+  name:     ["name", "task name", "milestone", "title"],
+  planned:  ["planned_at", "due", "due date", "finish", "finish date", "end", "date"],
+  start:    ["planned_start_at", "planned_start", "start", "start date"],
+  id:       ["external_ref", "id", "ref"],
+  predVia:  "key",
+  pct:      ["% complete", "percent complete", "complete"],
+  desc:     ["description", "notes"],
+  weight:   ["weight"],
+  outline:  ["outline level", "outline_level", "level"],
+  wbs:      ["wbs"],
+  pred:     ["predecessors", "predecessor", "preds", "depends_on", "depends on"],
+  work:     ["work", "work hours", "duration_hours", "hours", "duration"],
+};
+
 function parseGenericCsv(text: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
-  return parseCsvLikeWithSynonyms(text, {
-    name:     ["name", "task name", "milestone", "title"],
-    planned:  ["planned_at", "due", "due date", "finish", "finish date", "end", "date"],
-    start:    ["planned_start_at", "planned_start", "start", "start date"],
-    id:       ["external_ref", "id", "ref"],
-    predVia:  "key",
-    pct:      ["% complete", "percent complete", "complete"],
-    desc:     ["description", "notes"],
-    weight:   ["weight"],
-    outline:  ["outline level", "outline_level", "level"],
-    wbs:      ["wbs"],
-    pred:     ["predecessors", "predecessor", "preds", "depends_on", "depends on"],
-    work:     ["work", "work hours", "duration_hours", "hours", "duration"],
-  }, "csv", ctx);
+  return parseCsvLikeWithSynonyms(text, GENERIC_CSV_SPEC, "csv", ctx);
+}
+
+/** Non-blank lines, delimiter (tab beats comma) and header of a CSV-like file. */
+function csvLayout(text: string): { lines: string[]; delim: string; rawHeader: string[]; header: string[] } {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const sampleLine = lines[0] ?? "";
+  const delim = sampleLine.includes("\t") ? "\t" : ",";
+  const rawHeader = csvSplit(sampleLine, delim).map((h) => h.trim().replace(/^"|"$/g, ""));
+  return { lines, delim, rawHeader, header: rawHeader.map((h) => h.toLowerCase()) };
+}
+
+function findColumn(header: string[], cands: string[]): number {
+  for (const c of cands) { const i = header.indexOf(c); if (i >= 0) return i; }
+  return -1;
+}
+
+/** The text detectDateConvention reads: the values of the start and finish
+ *  columns for a CSV, nothing for XML / XER (their dates are ISO). */
+function dateEvidence(format: ScheduleFormat, text: string): string {
+  const syn = format === "msproject-csv" ? MSP_CSV_SPEC : format === "generic-csv" ? GENERIC_CSV_SPEC : null;
+  if (!syn) return "";
+  const { lines, delim, header } = csvLayout(text);
+  const cols = [syn.start ? findColumn(header, syn.start) : -1, findColumn(header, syn.planned)].filter((i) => i >= 0);
+  const values: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = csvSplit(lines[i], delim);
+    for (const c of cols) { const v = cells[c]?.trim().replace(/^"|"$/g, ""); if (v) values.push(v); }
+  }
+  return values.join("\n");
 }
 
 interface SynonymSpec {
@@ -944,30 +995,31 @@ interface SynonymSpec {
   work?: string[];
 }
 
-/** "2FS+1d" / "3SS-2h" / "4" → predecessor token, type and lag hours. */
-function parsePredToken(tok: string): { id: string; type: RelationshipType; lagHours: number } | null {
-  const m = tok.trim().match(/^(\d+)\s*(FS|SS|FF|SF)?\s*(?:([+-])\s*(\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?)?|h(?:rs?)?|m(?:ins?)?)?)?$/i);
+/** "2FS+1d" / "3SS-2h" / "4" → predecessor token, type and lag hours. When
+ *  the id / type prefix reads but the lag's unit does not ("2FS+3 mons",
+ *  "2FS+50%"), the link is kept with lagHours 0 and the raw lag text in
+ *  lagRaw — the relationship is real even when its lag is not (PT SCH-8). */
+function parsePredToken(tok: string): { id: string; type: RelationshipType; lagHours: number; lagRaw?: string } | null {
+  const m = tok.trim().match(/^(\d+)\s*(FS|SS|FF|SF)?\s*(.*)$/i);
   if (!m) return null;
-  const lag = m[4] ? (durationTextToHours(`${m[4]}${m[5] ?? "h"}`) ?? 0) * (m[3] === "-" ? -1 : 1) : 0;
-  return { id: m[1], type: relationshipType(m[2]), lagHours: lag };
+  const type = relationshipType(m[2]);
+  const rest = m[3].trim();
+  if (!rest) return { id: m[1], type, lagHours: 0 };
+  if (!/^[+-]/.test(rest)) return null; // not a lag at all — the token is unreadable
+  const lag = rest.match(/^([+-])\s*(\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?|eeks?)?|h(?:rs?|ours?)?|m(?:ins?|inutes?)?)?\.?$/i);
+  const hours = lag ? (Number(lag[2]) === 0 ? 0 : durationTextToHours(`${lag[2]}${lag[3] ?? "h"}`)) : null;
+  if (!lag || hours === null) return { id: m[1], type, lagHours: 0, lagRaw: rest };
+  return { id: m[1], type, lagHours: hours * (lag[1] === "-" ? -1 : 1) };
 }
 
 function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string, ctx: ParseCtx): Omit<ParseResult, "format"> {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  // Auto-detect delimiter — tab beats comma if both appear.
+  const { lines, delim, rawHeader, header } = csvLayout(text);
   if (lines.length < 2) { warnings.push("File needs a header row plus at least one data row."); return { rows, warnings }; }
 
-  // Auto-detect delimiter — tab beats comma if both appear.
-  const sampleLine = lines[0];
-  const delim = sampleLine.includes("\t") ? "\t" : ",";
-  const rawHeader = csvSplit(sampleLine, delim).map((h) => h.trim().replace(/^"|"$/g, ""));
-  const header = rawHeader.map((h) => h.toLowerCase());
-
-  const findCol = (cands: string[]): number => {
-    for (const c of cands) { const i = header.indexOf(c); if (i >= 0) return i; }
-    return -1;
-  };
+  const findCol = (cands: string[]): number => findColumn(header, cands);
 
   const iName    = findCol(syn.name);
   const iPlanned = findCol(syn.planned);
@@ -1085,18 +1137,20 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
   // Predecessors → links. Values look like "2", "2,3", or "2FS,3SS+1d". A
   // token that names no row in this file is counted and reported, never
   // guessed; only FS links become depends_on edges (PT SCH-8).
-  const census = { fs: 0, notEnforced: 0, withLag: 0, unresolved: 0 };
+  const census = { fs: 0, notEnforced: 0, withLag: 0, unresolved: 0, lagUnread: 0 };
   for (const p of pendingPreds) {
     const links: ParsedLink[] = [];
     for (const tok of p.tokens) {
       const parsed = parsePredToken(tok);
       const ref = parsed ? refByPredId.get(parsed.id) : undefined;
       if (!parsed || !ref || ref === p.row.externalRef) { census.unresolved++; continue; }
-      if (!links.some((l) => l.predecessorExternalRef === ref && l.type === parsed.type)) links.push({ predecessorExternalRef: ref, type: parsed.type, lagHours: parsed.lagHours });
+      if (!links.some((l) => l.predecessorExternalRef === ref && l.type === parsed.type)) {
+        links.push({ predecessorExternalRef: ref, type: parsed.type, lagHours: parsed.lagHours, ...(parsed.lagRaw ? { lagRaw: parsed.lagRaw } : {}) });
+      }
     }
     if (links.length === 0) continue;
     const split = splitLinks(links, p.attributes);
-    census.fs += split.dependsOn?.length ?? 0; census.notEnforced += split.notEnforced; census.withLag += split.withLag;
+    census.fs += split.dependsOn?.length ?? 0; census.notEnforced += split.notEnforced; census.withLag += split.withLag; census.lagUnread += split.lagUnread;
     p.row.dependsOnExternalRefs = split.dependsOn;
     p.row.links = links;
     if (Object.keys(p.attributes).length > 0) p.row.attributes = p.attributes;
@@ -1293,10 +1347,17 @@ function childText(parent: Element, tag: string): string {
 //   2026-08-15 00:00
 //   8/15/2026 / 15/08/2026       (day-first vs month-first is decided once for the
 //                                 whole file by detectDateConvention — never per row)
+//   Mon 6/1/26 / Tue. 15/08/2026 (MS Project's default display: the day name is
+//                                 dropped, the rest read per the file's convention)
 // Returns "" when the value cannot be a date under the file's convention, so
 // the caller can count and report it instead of handing Postgres a month 15.
+// A value holding a d/m/y triple is NEVER handed to `new Date()`, which always
+// reads month-first in the browser's zone whatever the file decided (PT SCH-1).
 export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
-  const trimmed = s.trim();
+  const raw = s.trim();
+  // The day name is dropped for the numeric forms only; the Date() fallback
+  // below sees the raw value (so "June 1, 2026" keeps its month name).
+  const trimmed = raw.replace(LEADING_DAY_NAME, "");
   if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
     // Schedule dates are stored wall-clock-as-UTC. MS Project / P6 XML write
     // local wall-clock times with NO offset; JS would read those as browser-
@@ -1323,10 +1384,13 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${y.toString().padStart(4, "0")}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:${pad(ss)}Z`;
   }
-  // Last resort — let Date try.
-  const d = new Date(trimmed);
+  // A d/m/y triple that did not match above (trailing text, a stray token):
+  // unreadable under the file's convention — counted, never guessed.
+  if (SLASH_TRIPLE.test(raw)) return "";
+  // Last resort — let Date try (written-out months such as "June 1, 2026").
+  const d = new Date(raw);
   if (!isNaN(d.getTime())) return d.toISOString();
-  return trimmed; // hand it to the importer; if invalid, Supabase will reject.
+  return raw; // hand it to the importer; if invalid, Supabase will reject.
 }
 
 // Same minimal CSV split as before, but parameterizable by delim.

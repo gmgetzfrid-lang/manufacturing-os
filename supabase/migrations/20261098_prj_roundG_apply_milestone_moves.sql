@@ -16,9 +16,11 @@
 --     returned in `unmatched`. The count is ROW_COUNT, not the request size.
 --     The return type changes (INT → JSONB), so the old signature is dropped
 --     first; the client accepts both shapes.
---   * SCHED-9: shift follows the moved start (06:00–17:59 UTC = day); a
---     hand-set 'swing' is left alone. Existing imported rows are NOT
---     recomputed here (they may have been hand-corrected) — inventoried.
+--   * SCHED-9: shift follows the moved start — a day / night row whose start
+--     moves into the other band (06:00–17:59 UTC = day) is re-labelled; an
+--     unlabelled row, a hand-set 'swing' and a move within the band keep the
+--     stored value. Existing imported rows are NOT recomputed here (they may
+--     have been hand-corrected) — inventoried.
 --
 -- Apply after 20261097.
 
@@ -90,10 +92,15 @@ BEGIN
     UPDATE milestones
     SET planned_start_at = (v_move->>'start')::timestamptz,
         planned_at = (v_move->>'finish')::timestamptz,
-        -- Shift follows the task (PC SCHED-9): a start that crosses 06:00 /
-        -- 18:00 (wall-clock-as-UTC) re-labels day / night; 'swing' is kept.
+        -- Shift follows the task (PC SCHED-9): a labelled day / night row
+        -- whose start moves into the other band (06:00–17:59 wall-clock-as-
+        -- UTC = day) is re-labelled. An unlabelled row, a hand-set 'swing',
+        -- a row with no prior start and a move that stays in its band keep
+        -- the stored value (planned_start_at here is the row BEFORE the SET).
         shift = CASE
-          WHEN (v_move->>'start') IS NULL OR shift = 'swing' THEN shift
+          WHEN (v_move->>'start') IS NULL OR planned_start_at IS NULL OR shift IS NULL OR shift = 'swing' THEN shift
+          WHEN (EXTRACT(HOUR FROM (planned_start_at AT TIME ZONE 'UTC')) BETWEEN 6 AND 17)
+             = (EXTRACT(HOUR FROM ((v_move->>'start')::timestamptz AT TIME ZONE 'UTC')) BETWEEN 6 AND 17) THEN shift
           WHEN EXTRACT(HOUR FROM ((v_move->>'start')::timestamptz AT TIME ZONE 'UTC')) BETWEEN 6 AND 17 THEN 'day'
           ELSE 'night'
         END,
@@ -174,4 +181,4 @@ SELECT 'service_role CAN execute apply_milestone_moves',
        has_function_privilege('service_role', 'public.apply_milestone_moves(uuid,uuid,jsonb)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT check, NULL::boolean, n FROM prj_roundg_moves_inventory;
+SELECT "check", NULL::boolean, n FROM prj_roundg_moves_inventory;

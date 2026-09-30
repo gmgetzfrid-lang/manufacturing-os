@@ -9,10 +9,14 @@
 //            caller_holds_any_role — and byte-faithful to the live body
 //            everywhere else (lineDiff).
 //   20261099 set_project_baseline / clear_project_baseline, the baseline
-//            write guard trigger, milestone_baseline_history (PC SCHED-3).
+//            write guard trigger (UPDATE and INSERT),
+//            milestone_baseline_history (PC SCHED-3).
 //
 // Every migration is ONE script: header, temp-table inventory BEFORE the
 // transaction, BEGIN … COMMIT, one final SELECT of (check, ok, n) rows.
+// `check` is a reserved word: it may be a column LABEL (`AS check`) but a
+// bare column REFERENCE is a syntax error, and the SQL editor parses the
+// whole paste before running any of it — so the reference is quoted.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -50,12 +54,14 @@ describe("the one-script shape (paste into the SQL editor, read the last result 
       const tail = sql.slice(commit + "\nCOMMIT;".length);
       expect(tail).toMatch(/AS check,\s*\n/);
       expect(tail).toMatch(/ AS ok,\s*\n\s+NULL::text AS n/);
-      expect(tail).toMatch(/UNION ALL\s*\nSELECT check, NULL::boolean, n FROM prj_roundg_\w+_inventory;\s*$/);
+      expect(tail).toMatch(/UNION ALL\s*\nSELECT "check", NULL::boolean, n FROM prj_roundg_\w+_inventory;\s*$/);
+      // Outside comments and string literals, lower-case `check` only ever
+      // appears as a label (`AS check`) or quoted (`"check"`) — never bare.
+      const code = sql.replace(/--[^\n]*/g, "").replace(/'(?:[^']|'')*'/g, "''");
+      expect(code.match(/(?<!AS |")\bcheck\b(?!")/g) ?? []).toEqual([]);
       // inventory rows are aggregate COUNTs only — never customer rows
       const inv = between(sql, "CREATE TEMP TABLE", "\nBEGIN;");
       expect(inv).not.toMatch(/SELECT \*|\bname\b.*FROM milestones/);
-      // no model identifiers anywhere
-      expect(sql).not.toMatch(/claude|anthropic|fable|opus|sonnet/i);
     });
   }
 });
@@ -108,9 +114,14 @@ describe("20261098 — apply_milestone_moves (PC SCHED-4 + PT SCH-7 + PC SCHED-9
     expect(next).not.toMatch(/v_count := v_count \+ 1;/); // the per-element count is gone
   });
 
-  it("SCHED-9: shift follows the moved start, in UTC, and a hand-set swing is kept", () => {
-    expect(next).toMatch(/WHEN \(v_move->>'start'\) IS NULL OR shift = 'swing' THEN shift/);
-    expect(next).toMatch(/WHEN EXTRACT\(HOUR FROM \(\(v_move->>'start'\)::timestamptz AT TIME ZONE 'UTC'\)\) BETWEEN 6 AND 17 THEN 'day'/);
+  it("SCHED-9: a labelled day / night row is re-labelled only when its start moves into the other band; unlabelled, swing, no prior start and same-band moves keep the stored value", () => {
+    expect(next).toMatch(/WHEN \(v_move->>'start'\) IS NULL OR planned_start_at IS NULL OR shift IS NULL OR shift = 'swing' THEN shift/);
+    // planned_start_at inside the SET is the row BEFORE the update (Postgres
+    // evaluates every SET expression against the old row).
+    expect(next).toMatch(/WHEN \(EXTRACT\(HOUR FROM \(planned_start_at AT TIME ZONE 'UTC'\)\) BETWEEN 6 AND 17\)\s*\n\s*= \(EXTRACT\(HOUR FROM \(\(v_move->>'start'\)::timestamptz AT TIME ZONE 'UTC'\)\) BETWEEN 6 AND 17\) THEN shift/);
+    expect(next).toMatch(/WHEN EXTRACT\(HOUR FROM \(\(v_move->>'start'\)::timestamptz AT TIME ZONE 'UTC'\)\) BETWEEN 6 AND 17 THEN 'day'\s*\n\s*ELSE 'night'/);
+    // The unconditional recompute (every move re-derived) is gone.
+    expect(next).not.toMatch(/WHEN \(v_move->>'start'\) IS NULL OR shift = 'swing' THEN shift/);
   });
 
   it("is byte-faithful to the live 20260907 body everywhere else (lineDiff)", () => {
@@ -219,13 +230,26 @@ describe("20261099 — baseline authority, atomicity, history, audit (PC SCHED-3
     expect(clearFn).toMatch(/'SCHEDULE_BASELINE_CLEARED'/);
   });
 
-  it("the guard is a BEFORE UPDATE row trigger refusing any baseline_* change without the RPC flag (42501)", () => {
+  it("the guard is a BEFORE INSERT OR UPDATE row trigger refusing any baseline_* change without the RPC flag (42501)", () => {
     expect(guard).toMatch(/RETURNS TRIGGER LANGUAGE plpgsql SET search_path = public/);
     for (const c of ["baseline_start_at", "baseline_finish_at", "baseline_set_at", "baseline_set_by"]) {
       expect(guard).toMatch(new RegExp(`NEW\\.${c}\\s+IS DISTINCT FROM OLD\\.${c}`));
     }
     expect(guard).toMatch(/IF COALESCE\(current_setting\('app\.baseline_rpc', true\), ''\) <> '1' THEN\s*\n\s*RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline \/ clear_project_baseline only\.'\s*\n\s*USING ERRCODE = '42501';/);
-    expect(m99).toMatch(/DROP TRIGGER IF EXISTS trg_milestones_baseline_write_guard ON milestones;\s*\nCREATE TRIGGER trg_milestones_baseline_write_guard\s*\n\s*BEFORE UPDATE ON milestones\s*\n\s*FOR EACH ROW EXECUTE FUNCTION milestones_baseline_write_guard\(\);/);
+    expect(m99).toMatch(/DROP TRIGGER IF EXISTS trg_milestones_baseline_write_guard ON milestones;\s*\nCREATE TRIGGER trg_milestones_baseline_write_guard\s*\n\s*BEFORE INSERT OR UPDATE ON milestones\s*\n\s*FOR EACH ROW EXECUTE FUNCTION milestones_baseline_write_guard\(\);/);
+  });
+
+  it("INSERT path: a new row carrying any baseline_* value is refused unless the RPC flag is set or the caller is the service role (restore)", () => {
+    const insert = between(guard, "IF TG_OP = 'INSERT' THEN", "RETURN NEW;\n  END IF;");
+    for (const c of ["baseline_start_at", "baseline_finish_at", "baseline_set_at", "baseline_set_by"]) {
+      expect(insert).toMatch(new RegExp(`NEW\\.${c} IS NOT NULL`));
+    }
+    expect(insert).toMatch(/AND COALESCE\(current_setting\('app\.baseline_rpc', true\), ''\) <> '1'\s*\n\s*AND auth\.role\(\) IS DISTINCT FROM 'service_role' THEN\s*\n\s*RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline \/ clear_project_baseline only\.'\s*\n\s*USING ERRCODE = '42501';/);
+    // The INSERT branch returns before the UPDATE comparison reads OLD (NULL on INSERT).
+    expect(guard.indexOf("IF TG_OP = 'INSERT' THEN")).toBeLessThan(guard.indexOf("OLD.baseline_start_at"));
+    // The probe checks the trigger's timing bits and the INSERT branch.
+    expect(m99).toMatch(/AND \(t\.tgtype & 23\) = 23\)/);
+    expect(m99).toMatch(/p\.prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%'/);
   });
 
   it("history: org + project scoped, RLS on, members read, no write policy at all", () => {

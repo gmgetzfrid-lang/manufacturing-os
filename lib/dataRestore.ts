@@ -110,6 +110,7 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   distribution_acks: "distribution acknowledgments are the recipient's own act",
   document_review_signoffs: "review sign-offs are bound to the reviewer's e-signature",
   org_configurations: "the capability policy changes only through the audited, controller-gated editor",
+  milestone_baseline_history: "prior approved-plan snapshots are written only by set_project_baseline / clear_project_baseline (projects Round G, PC SCHED-3)",
 };
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */
@@ -361,7 +362,6 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "curated_collection_items", "library_views", "plot_plans",
   "project_documents", "project_activity",
   "milestones", "milestone_notes",
-  "milestone_baseline_history", // projects Round G / SCHED-3: after projects (FK); taken_by is remapped like any user column
   "ticket_number_counters", "tickets", "ticket_comments",
   "checkout_sessions", "checkout_episodes", "checkout_messages",
   "markup_requests",
