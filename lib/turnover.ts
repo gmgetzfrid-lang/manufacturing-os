@@ -29,7 +29,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { checkedWrite, describeWriteError, isMissingSchemaError } from "@/lib/checkedWrite";
-import { reasonProblem } from "@/lib/checklistEngine";
+import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
 
 export type TurnoverStatus = "open" | "received" | "accepted" | "rejected" | "waived";
 
@@ -287,7 +287,7 @@ export async function reviewTurnoverItem(input: {
   if (input.status === "rejected" || input.status === "waived") {
     const problem = reasonProblem(note);
     if (problem) return { ok: false, error: problem };
-    if (note === item.reviewNote) return { ok: false, error: OWN_REASON };
+    if (reasonKey(note) === reasonKey(item.reviewNote)) return { ok: false, error: OWN_REASON };
   }
   const row: Record<string, unknown> = { status: input.status };
   if (input.documentId !== undefined) row.document_id = input.documentId;
@@ -325,7 +325,7 @@ export async function reopenTurnoverItem(input: {
   const reason = input.reason.trim();
   const problem = reasonProblem(reason);
   if (problem) return { ok: false, error: problem };
-  if (reason === item.reviewNote) return { ok: false, error: OWN_REASON };
+  if (reasonKey(reason) === reasonKey(item.reviewNote)) return { ok: false, error: OWN_REASON };
   const w = await checkedWrite(supabase.from("turnover_items").update({
     status: "received",
     reviewed_at: new Date().toISOString(), reviewed_by: input.actor.uid,
@@ -410,7 +410,7 @@ export async function setPunchStatus(input: {
   if (input.status === "void") {
     const problem = reasonProblem(note);
     if (problem) return { ok: false, error: problem };
-    if (note === input.item.closureNote) return { ok: false, error: OWN_REASON };
+    if (reasonKey(note) === reasonKey(input.item.closureNote)) return { ok: false, error: OWN_REASON };
   }
   const row: Record<string, unknown> = { status: input.status };
   if (input.status === "done" || input.status === "void") {

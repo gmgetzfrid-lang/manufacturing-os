@@ -22,9 +22,11 @@
 // row always says whether a person or the machine set its status (QUAL-6).
 // The reason bar, the completion gate and the completion basis are checked
 // here AND enforced by the database (20261091): a write that bypasses this
-// file meets the same rules there — a machine-stamped write is validated
-// (sentinel name, never on a person's item, no note, no person chip), a
-// person's write is stamped with the caller, a decision needs its own reason,
+// file meets the same rules there — a machine-stamped write is held to what
+// that machine writes (a sentinel name, never on a person's item, its own
+// columns only, a sweep green's citation resolving to its row), a person's
+// write is stamped with the caller, a decision needs its own reason, an item
+// is never deleted on its own, item writes serialise with the completion,
 // and a completed checklist's items are frozen until it is reopened.
 
 import { supabase } from "@/lib/supabase";
@@ -38,9 +40,11 @@ import {
   isHumanTerritory,
   MACHINE_ACTOR_ASSESSMENT,
   MACHINE_ACTOR_SWEEP,
+  reasonKey,
   reasonProblem,
   staleAutoGreens,
   type ChecklistItemState,
+  type EvidenceChip,
   type EvidenceDocument,
   type ProjectEvidenceState,
   type SegmentedItem,
@@ -77,7 +81,7 @@ export interface ChecklistItem {
   text: string;
   applicability: "applies" | "na" | "unknown";
   status: "open" | "needs_evidence" | "satisfied" | "na";
-  evidence: Array<{ label: string; documentId?: string; href?: string; source: "auto" | "manual" }>;
+  evidence: EvidenceChip[];
   aiRationale: string | null;
   manualNote: string | null;
   updatedAt: string | null;
@@ -347,7 +351,7 @@ export async function updateChecklistItem(input: {
     const problem = reasonProblem(input.patch.manualNote);
     if (problem) return { ok: false, error: problem };
   }
-  if (decides && (input.patch.manualNote?.trim() || null) === input.item.manualNote) {
+  if (decides && reasonKey(input.patch.manualNote) === reasonKey(input.item.manualNote)) {
     return { ok: false, error: "Give this decision its own reason — the note on the item is the earlier decision's." };
   }
   const row: Record<string, unknown> = {
@@ -448,10 +452,10 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
   };
 
   const [turnover, checklists, project] = await Promise.all([
-    safe(supabase.from("turnover_items").select("name, status, document_id").eq("project_id", projectId).limit(300)
-      .then((r) => (r.data ?? []) as Array<{ name: string; status: string; document_id: string | null }>), []),
-    safe(supabase.from("project_checklists").select("kind, status, completed_basis").eq("project_id", projectId).limit(50)
-      .then((r) => (r.data ?? []) as Array<{ kind: string; status: string; completed_basis: string | null }>), []),
+    safe(supabase.from("turnover_items").select("id, name, status, document_id").eq("project_id", projectId).limit(300)
+      .then((r) => (r.data ?? []) as Array<{ id: string; name: string; status: string; document_id: string | null }>), []),
+    safe(supabase.from("project_checklists").select("id, kind, status, completed_basis").eq("project_id", projectId).limit(50)
+      .then((r) => (r.data ?? []) as Array<{ id: string; kind: string; status: string; completed_basis: string | null }>), []),
     safe(supabase.from("projects").select("intake_collection_id, sow_document_id").eq("id", projectId).maybeSingle()
       .then((r) => r.data as { intake_collection_id?: string | null; sow_document_id?: string | null } | null), null),
   ]);
@@ -520,8 +524,12 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
 
   return {
     turnoverAcceptedNames: turnover.filter((t) => t.status === "accepted").map((t) => t.name),
+    // The rows behind the two state rules, so a sweep citation names its row
+    // (the database resolves it before it accepts a machine green).
+    turnoverAccepted: turnover.filter((t) => t.status === "accepted" && t.id).map((t) => ({ id: String(t.id), name: t.name })),
     // QUAL-2: only a checklist completed on human sign-off is citable.
     miChecklistComplete: checklists.some((c) => c.kind === "mi" && c.status === "complete" && c.completed_basis === "human"),
+    miChecklistId: checklists.find((c) => c.kind === "mi" && c.status === "complete" && c.completed_basis === "human" && c.id)?.id ?? null,
     documentTitles: [...new Set(documents.map((d) => d.label))],
     equipmentTags: tags,
     documents,
@@ -557,7 +565,7 @@ export async function runAutoEvidence(input: {
   const results = applyAutoEvidence(items.map(toState), state);
 
   const writes: ItemWrite[] = [];
-  const changes: Array<{ itemId: string; from: string; to: string; retracted?: true; citation?: string; documentId?: string }> = [];
+  const changes: Array<{ itemId: string; from: string; to: string; retracted?: true; citation?: string; documentId?: string; turnoverItemId?: string; checklistId?: string }> = [];
   for (const r of results) {
     const item = byId.get(r.id);
     if (!item) continue;
@@ -575,7 +583,11 @@ export async function runAutoEvidence(input: {
     changes.push({
       itemId: r.id, from: item.status, to: r.status,
       ...(r.retracted ? { retracted: true as const } : {}),
-      ...(r.addedEvidence[0] ? { citation: r.addedEvidence[0].label, documentId: r.addedEvidence[0].documentId } : {}),
+      ...(r.addedEvidence[0] ? {
+        citation: r.addedEvidence[0].label, documentId: r.addedEvidence[0].documentId,
+        ...(r.addedEvidence[0].turnoverItemId ? { turnoverItemId: r.addedEvidence[0].turnoverItemId } : {}),
+        ...(r.addedEvidence[0].checklistId ? { checklistId: r.addedEvidence[0].checklistId } : {}),
+      } : {}),
     });
   }
   if (writes.length === 0) return { satisfied: 0, needsEvidence: 0, retracted: 0, refused: 0, failed: 0 };

@@ -13,25 +13,35 @@
 --    the whole script on one legacy row whose org is mismatched, and the
 --    completion-basis rail (§5) would keep a NULL basis.
 --    0h. quality_reason_ok(text) is THE reason bar — it mirrors
---        reasonProblem() (lib/checklistEngine.ts): at least 10 non-whitespace
---        characters, none of the canned strings. quality_actor_name(uid) is
---        the name a signed-in writer's decision records: read from the users
---        profile (the email's local part — what the lib shows as the actor —
---        else the display name), never taken from the client.
+--        reasonProblem() (lib/checklistEngine.ts): at least 10 characters
+--        once whitespace (Unicode's included — a no-break space is not a
+--        reason) and zero-width characters are stripped, and none of the
+--        canned strings; quality_reason_key(text) is the same normalised form
+--        (zero-width characters dropped, whitespace runs collapsed, trimmed,
+--        lower-cased), which is how "a NEW note" is judged — the old note
+--        plus a trailing space is not new. Both character classes are pinned
+--        to the lib's REASON_SPACE_CLASS / REASON_INVISIBLE_CLASS.
+--        quality_actor_name(uid) is the name a signed-in writer's decision
+--        records: the local part of the SIGN-IN email in auth.users (what the
+--        lib shows as the actor), which the user cannot edit from the app —
+--        never the client's value, and never public.users.email (self-editable
+--        under users_own). quality_try_uuid(text) is a cast that yields NULL
+--        on junk instead of aborting.
 --    0a. QUAL-2 — project_checklists.completed_basis ('human' | 'auto'): what
 --        a completion rested on; only 'human' is citable as evidence by
 --        another checklist (lib/checklists.ts gatherProjectEvidenceState).
 --        checklist_completion_basis(id) is THE rule — the same one
 --        completionBasis() applies in lib/checklistEngine.ts: 'auto' when an
 --        applicable item is neither green nor N/A (a legacy completion; §5
---        refuses a new one), when a green rests on the evidence sweep alone
---        (no note that meets the bar, no person-attached chip), when an N/A
---        carries no reason that meets the bar (the assessment's, or a legacy
---        one), or when no green was decided by a person (an all-N/A
---        checklist proves nothing); otherwise 'human'. A note counts as a
---        person's reason ONLY when quality_reason_ok() holds — 'x' is not
---        one. The backfill calls it for every completed checklist (a NULL
---        or stale basis is rewritten; a re-run changes nothing further).
+--        refuses a new one), when a green carries no person's reason (no
+--        note that meets the bar — a person-attached chip alone is not a
+--        reason), when an N/A carries no reason that meets the bar (the
+--        assessment's, or a legacy one), or when no green was decided by a
+--        person (an all-N/A checklist proves nothing); otherwise 'human'. A
+--        note counts as a person's reason ONLY when quality_reason_ok()
+--        holds — 'x' is not one. The backfill calls it for every completed
+--        checklist (a NULL or stale basis is rewritten; a re-run changes
+--        nothing further).
 --    0b. QUAL-7 — punch_items gains closed_by_name, description, location and
 --        closure_note (nullable text): a closure names its closer and what
 --        closed it, and done is distinguishable from void on the row.
@@ -70,44 +80,64 @@
 -- 3. QUAL-11 — turnover_items_record_review_event() (AFTER INSERT OR UPDATE
 --    OF status): every status change of a turnover item appends its history
 --    row, atomically with the change. The reviewer is auth.uid() and the
---    reviewer's NAME comes from the users profile (quality_actor_name), never
---    from the client. The note is NEW's whenever this write set it (a note
---    that changed, or a fresh reviewed_at) — a note merely carried over from
---    an earlier decision belongs to that decision's row, not this one. A
---    restore (the service pass) that inserts a decided item gets ONE row from
---    the item's own stamps, as the backfill does, and only when the item has
---    no history yet: the history table itself is never imported
---    (lib/dataRestore.ts IMMUTABLE_TABLES, SURF-8).
+--    reviewer's NAME is quality_actor_name(auth.uid()), never the client's.
+--    The note is NEW's only when this write CHANGED it (by
+--    quality_reason_key) — a note carried over from an earlier decision
+--    belongs to that decision's row, not this one, even when the write
+--    stamps a fresh reviewed_at. A restore (the service pass) that inserts a
+--    decided item gets ONE row from the item's own stamps, as the backfill
+--    does, and only when the item has no history yet: the history table
+--    itself is never imported (lib/dataRestore.ts IMMUTABLE_TABLES, SURF-8).
 -- 4. SAF-4 / GAP-405 — the reason rails. A decision needs its OWN reason: a
 --    turnover item moving to waived / rejected or out of accepted / waived
 --    (a reopen), a punch item moving to void, and a person's status or
 --    applicability change on a checklist item each need a note that CHANGED
---    (NEW IS DISTINCT FROM OLD — the note already on the row belongs to the
+--    (by quality_reason_key — the note already on the row belongs to the
 --    earlier decision) and meets the bar. While a decision stands its record
---    stands: a waived / rejected / accepted turnover item keeps its note and
---    reviewer, and a void punch item its reason, until the next decision
---    (the history row carries them); a person's note on a checklist item is
---    replaced only by one that meets the bar, never cleared. The reviewer /
---    closer a signed-in write records is the caller — uid and profile name —
---    never a client-supplied one.
+--    stands: a waived / rejected / accepted turnover item keeps its note,
+--    reviewer, date and reviewed document (only a document delete may null
+--    the reference — an ON DELETE SET NULL, one trigger level down), and a
+--    closed punch item its closer and date — a void its reason too — until
+--    the next decision; a person's note on a checklist item is replaced only
+--    by one that meets the bar, never cleared. The reviewer / closer (and
+--    the date) a signed-in decision records is the caller's and the
+--    server's — never client-supplied.
 --    checklist_items_decision_rail() draws the line between the machine and
 --    a person. updated_by NULL is the MACHINE actor's mark (DEC-35), and the
 --    evidence sweep and the AI assessment run in the browser under the
 --    user's own token (lib/checklists.ts runAutoEvidence / applyAssessment),
 --    so the database cannot tell them from a direct PATCH by who sent them.
---    It validates what a machine-stamped write may DO instead: its
---    updated_by_name is one of the two sentinels (MACHINE_ACTOR_SWEEP /
---    MACHINE_ACTOR_ASSESSMENT, pinned to the lib), it never writes on an item
---    a person decided (any note, or a person-attached chip), it writes no
---    note, it leaves every non-auto chip as it was, and a green it sets
---    carries an auto citation. All it can produce — a note-less N/A, a cited
---    sweep green — is 'auto' by the basis rule, never citable. A row born
---    with no actor (createChecklist) must be born undecided. Every other
---    signed-in write is a PERSON's: updated_by / updated_by_name are stamped
---    with the caller. And a completed checklist is frozen: a signed-in write
---    may not insert, change or delete its items until it is reopened (which
---    clears the basis) — the tab offers no item control on a completed
---    checklist, and the stored basis can never go stale behind it.
+--    It bounds what a machine-stamped write may DO instead, to exactly what
+--    each machine writes: updated_by_name is one of the two sentinels
+--    (MACHINE_ACTOR_SWEEP / MACHINE_ACTOR_ASSESSMENT, pinned to the lib);
+--    never on an item a person decided (any visible note — an empty or
+--    blank one is none — or a person-attached chip); the note and every
+--    non-auto chip left as they were. The sweep
+--    changes only status (to satisfied / needs evidence) and evidence, on an
+--    in-scope item, and a green it sets carries a citation that RESOLVES
+--    (checklist_auto_citation_ok: an admitted document of this workspace —
+--    Issued / Locked, a current version, not an unapproved external
+--    submission — an accepted turnover item of this project, or a completed
+--    'human' MI checklist of this project). The assessment changes only
+--    applicability, ai_rationale and status (to N/A with applicability N/A,
+--    or N/A back to open with applicability applies), and never N/As an
+--    item that is satisfied or carries evidence (QUAL-5). Neither touches
+--    text, section, seq or anything else. All a machine-stamped write can
+--    produce — a note-less N/A, a cited sweep green — is 'auto' by the basis
+--    rule, never citable. A row born with no actor (createChecklist) must be
+--    born undecided. Every other signed-in write is a PERSON's: stamped with
+--    the caller's uid and name, and it leaves the machine's auto chips as
+--    they were. An item leaves only with its checklist — a signed-in
+--    single-item DELETE is refused (a cascade from deleting the checklist,
+--    project or org runs one trigger level down and passes) — and never
+--    moves to another checklist. Every item write first takes a SHARE lock
+--    on its checklist's row, so it serialises with a completion (whose
+--    UPDATE holds that row's lock) instead of racing it; and a completed
+--    checklist is frozen — a signed-in write may not insert or change its
+--    items until it is reopened (which clears the basis). The tab offers no
+--    item control on a completed checklist. For signed-in writes the stored
+--    basis therefore cannot go stale behind a completion; the service pass
+--    (below) is not held to that.
 --    The service pass (auth.uid() IS NULL — restores, server routes, the SQL
 --    editor) passes, as in 20261056 / 20261062. NARROWS.
 -- 5. QUAL-2 — project_checklists_completion_basis_rail(): the completion
@@ -117,7 +147,9 @@
 --    Then the DATABASE records completed_basis — computed by
 --    checklist_completion_basis() when the status moves to complete, kept
 --    while it stays complete (its items are frozen, §4), NULL otherwise; a
---    client-supplied value is ignored. NARROWS.
+--    client-supplied value is ignored. While complete, its kind and its
+--    project are frozen too (a QA/QC completion never becomes a citable MI
+--    one). NARROWS.
 -- 6. The CHECK constraints REL-4's quality half asks for already exist in
 --    20261013 (project_checklists.status, checklist_items.status /
 --    applicability, turnover_items.status, punch_items.status) — probed, not
@@ -138,7 +170,9 @@
 --     re-checks them too.
 --   * completed checklists that backfill to 'auto', by reason; checklist
 --     items whose note is under the bar (legacy: they keep the automated
---     passes out, and count as no person's reason).
+--     passes out, and count as no person's reason); sweep citations that
+--     name no row (legacy chips — the next sweep re-cites them with the row
+--     they rest on).
 --   * decided turnover items (their history is backfilled), those with no
 --     reviewer uid on record, and those skipped because their org is
 --     mismatched; waived / rejected items whose note is under the bar.
@@ -154,8 +188,8 @@ CREATE OR REPLACE FUNCTION pg_temp.prj_roundg_reason_ok(p_reason text)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE
 AS $$
-  SELECT length(regexp_replace(COALESCE(p_reason, ''), '\s', '', 'g')) >= 10
-     AND lower(regexp_replace(COALESCE(p_reason, ''), '^\s+|\s+$', '', 'g'))
+  SELECT length(regexp_replace(COALESCE(p_reason, ''), '[\s\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u00ad\u180e\u200b-\u200d\u2060-\u2064]', '', 'g')) >= 10
+     AND COALESCE(lower(btrim(regexp_replace(regexp_replace(COALESCE(p_reason, ''), '[\u00ad\u180e\u200b-\u200d\u2060-\u2064]', '', 'g'), '[\s\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+', ' ', 'g'))), '')
          NOT IN ('decided by reviewer', 'n/a', 'na', 'not applicable', 'reason', 'none', 'ok');
 $$;
 
@@ -198,16 +232,14 @@ SELECT 'inventory: completed checklists with an applicable item neither green no
               WHERE i.checklist_id = c.id
                 AND i.applicability <> 'na' AND i.status NOT IN ('satisfied', 'na')))::text
 UNION ALL
-SELECT 'inventory: completed checklists with a green item resting on the sweep alone (QUAL-2 — no note that meets the bar, no person chip; backfills to auto; not citable until verified and re-completed)',
+SELECT 'inventory: completed checklists with a green item no person gave a reason for (QUAL-2 — the sweep''s, a legacy one, or a person chip with no note that meets the bar; backfills to auto; not citable until verified and re-completed)',
        (SELECT COUNT(*) FROM project_checklists c
          WHERE c.status = 'complete'
            AND EXISTS (
              SELECT 1 FROM checklist_items i
               WHERE i.checklist_id = c.id
                 AND i.status = 'satisfied' AND i.applicability <> 'na'
-                AND NOT pg_temp.prj_roundg_reason_ok(i.manual_note)
-                AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.evidence) = 'array' THEN i.evidence ELSE '[]'::jsonb END) e
-                                 WHERE e->>'source' = 'manual')))::text
+                AND NOT pg_temp.prj_roundg_reason_ok(i.manual_note)))::text
 UNION ALL
 SELECT 'inventory: completed checklists with an N/A carrying no reason that meets the bar (QUAL-2 — the assessment''s, a legacy or a short one; backfills to auto)',
        (SELECT COUNT(*) FROM project_checklists c
@@ -225,9 +257,7 @@ SELECT 'inventory: completed checklists with no green item a person decided (QUA
              SELECT 1 FROM checklist_items i
               WHERE i.checklist_id = c.id
                 AND i.status = 'satisfied' AND i.applicability <> 'na'
-                AND (pg_temp.prj_roundg_reason_ok(i.manual_note)
-                     OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.evidence) = 'array' THEN i.evidence ELSE '[]'::jsonb END) e
-                                 WHERE e->>'source' = 'manual'))))::text
+                AND pg_temp.prj_roundg_reason_ok(i.manual_note)))::text
 UNION ALL
 SELECT 'inventory: completed checklists (all)',
        (SELECT COUNT(*) FROM project_checklists WHERE status = 'complete')::text
@@ -235,6 +265,15 @@ UNION ALL
 SELECT 'inventory: checklist_items whose note is under the bar (legacy — kept, never rewritten; they keep the sweep and the assessment out and count as no person''s reason; a person replaces one with a reason, never clears it)',
        (SELECT COUNT(*) FROM checklist_items i
          WHERE i.manual_note IS NOT NULL AND NOT pg_temp.prj_roundg_reason_ok(i.manual_note))::text
+UNION ALL
+SELECT 'inventory: satisfied items citing the sweep with no row behind the citation (legacy auto chips with no documentId / turnoverItemId / checklistId — the next sweep re-cites them with the row they rest on; never this script)',
+       (SELECT COUNT(*) FROM checklist_items i
+         WHERE i.status = 'satisfied'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.evidence) = 'array' THEN i.evidence ELSE '[]'::jsonb END) e
+                        WHERE e->>'source' = 'auto')
+           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.evidence) = 'array' THEN i.evidence ELSE '[]'::jsonb END) e
+                            WHERE e->>'source' = 'auto'
+                              AND (e ? 'documentId' OR e ? 'turnoverItemId' OR e ? 'checklistId')))::text
 UNION ALL
 SELECT 'inventory: turnover_items with a decision (accepted / waived / rejected) — each whose org matches its project gets one backfilled history row (QUAL-11)',
        (SELECT COUNT(*) FROM turnover_items WHERE status IN ('accepted', 'waived', 'rejected'))::text
@@ -266,31 +305,53 @@ RETURNS boolean
 LANGUAGE sql IMMUTABLE
 SET search_path = public
 AS $$
-  SELECT length(regexp_replace(COALESCE(p_reason, ''), '\s', '', 'g')) >= 10
-     AND lower(regexp_replace(COALESCE(p_reason, ''), '^\s+|\s+$', '', 'g'))
+  SELECT length(regexp_replace(COALESCE(p_reason, ''), '[\s\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u00ad\u180e\u200b-\u200d\u2060-\u2064]', '', 'g')) >= 10
+     AND COALESCE(lower(btrim(regexp_replace(regexp_replace(COALESCE(p_reason, ''), '[\u00ad\u180e\u200b-\u200d\u2060-\u2064]', '', 'g'), '[\s\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+', ' ', 'g'))), '')
          NOT IN ('decided by reviewer', 'n/a', 'na', 'not applicable', 'reason', 'none', 'ok');
 $$;
 
 COMMENT ON FUNCTION quality_reason_ok(text) IS
-  'SAF-4 / GAP-405: a reason that meets the record''s bar — at least 10 non-whitespace characters and not a canned string (reasonProblem in lib/checklistEngine.ts).';
+  'SAF-4 / GAP-405: a reason that meets the record''s bar — at least 10 characters once whitespace (Unicode''s included) and zero-width characters are stripped, and not a canned string (reasonProblem in lib/checklistEngine.ts).';
+
+-- The normalised form a note is compared in: "a NEW note" is one whose key
+-- differs (zero-width characters dropped, whitespace runs collapsed, trimmed,
+-- lower-cased — the old note plus a trailing space is not new). The same
+-- expression as quality_reason_ok's canned check; reasonKey() in the lib.
+CREATE OR REPLACE FUNCTION quality_reason_key(p_reason text)
+RETURNS text
+LANGUAGE sql IMMUTABLE
+SET search_path = public
+AS $$
+  SELECT NULLIF(lower(btrim(regexp_replace(regexp_replace(COALESCE(p_reason, ''), '[\u00ad\u180e\u200b-\u200d\u2060-\u2064]', '', 'g'), '[\s\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+', ' ', 'g'))), '');
+$$;
+
+-- A uuid from text, or NULL for anything else (a citation id is client JSON).
+CREATE OR REPLACE FUNCTION quality_try_uuid(p_text text)
+RETURNS uuid
+LANGUAGE sql IMMUTABLE
+SET search_path = public
+AS $$
+  SELECT CASE WHEN p_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN p_text::uuid END;
+$$;
 
 CREATE OR REPLACE FUNCTION quality_actor_name(p_uid uuid)
 RETURNS text
 LANGUAGE sql STABLE
 SET search_path = public
 AS $$
-  SELECT COALESCE(NULLIF(split_part(u.email, '@', 1), ''), NULLIF(btrim(u.display_name), ''))
-    FROM users u WHERE u.id = p_uid;
+  SELECT NULLIF(split_part(u.email, '@', 1), '') FROM auth.users u WHERE u.id = p_uid;
 $$;
 
 COMMENT ON FUNCTION quality_actor_name(uuid) IS
-  'QUAL-11 / QUAL-6: the name a signed-in writer''s quality decision records — the users profile''s email local part (the lib''s actor name), else its display name. The rails stamp it; a client-supplied name is never trusted.';
+  'QUAL-11 / QUAL-6: the name a signed-in writer''s quality decision records — the local part of the sign-in email in auth.users (the lib''s actor name), which the user cannot edit from the app; never public.users.email (self-editable under users_own). The rails stamp it; a client-supplied name is never trusted.';
+-- Read by the SECURITY DEFINER rails only: no client looks a uid up by it.
+REVOKE EXECUTE ON FUNCTION quality_actor_name(uuid) FROM PUBLIC, anon, authenticated;
 
 -- ── 0a. QUAL-2: what a completion rested on — the rule, then the backfill ────
 ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS completed_basis TEXT
   CHECK (completed_basis IS NULL OR completed_basis IN ('human','auto'));
 COMMENT ON COLUMN project_checklists.completed_basis IS
-  'QUAL-2: human = every applicable item green or N/A, no green rests on the sweep alone, every N/A carries a reason that meets the bar, and at least one green was decided by a person; auto = otherwise. Only human is citable as evidence elsewhere. Recorded by the database (checklist_completion_basis), never by the client.';
+  'QUAL-2: human = every applicable item green or N/A, every green and every N/A carries a person''s reason that meets the bar (a chip alone is not one), and at least one green was decided by a person; auto = otherwise. Only human is citable as evidence elsewhere. Recorded by the database (checklist_completion_basis), never by the client.';
 
 CREATE OR REPLACE FUNCTION checklist_completion_basis(p_checklist_id uuid)
 RETURNS text
@@ -304,14 +365,12 @@ AS $$
        WHERE i.checklist_id = p_checklist_id
          AND i.applicability <> 'na' AND i.status NOT IN ('satisfied', 'na'))
       THEN 'auto'
-    -- a green resting on the evidence sweep alone: no note that meets the bar, no person-attached chip
+    -- a green no person gave a reason for: no note that meets the bar (a person-attached chip alone is not a reason)
     WHEN EXISTS (
       SELECT 1 FROM checklist_items i
        WHERE i.checklist_id = p_checklist_id
          AND i.status = 'satisfied' AND i.applicability <> 'na'
-         AND NOT quality_reason_ok(i.manual_note)
-         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.evidence) = 'array' THEN i.evidence ELSE '[]'::jsonb END) e
-                          WHERE e->>'source' = 'manual'))
+         AND NOT quality_reason_ok(i.manual_note))
       THEN 'auto'
     -- an N/A with no reason that meets the bar (the assessment's, a legacy or a short one)
     WHEN EXISTS (
@@ -325,9 +384,7 @@ AS $$
       SELECT 1 FROM checklist_items i
        WHERE i.checklist_id = p_checklist_id
          AND i.status = 'satisfied' AND i.applicability <> 'na'
-         AND (quality_reason_ok(i.manual_note)
-              OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.evidence) = 'array' THEN i.evidence ELSE '[]'::jsonb END) e
-                          WHERE e->>'source' = 'manual')))
+         AND quality_reason_ok(i.manual_note))
       THEN 'auto'
     ELSE 'human'
   END;
@@ -552,10 +609,9 @@ BEGIN
   ELSE
     IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NULL; END IF;
     v_from := OLD.status;
-    -- The note is NEW's whenever this write set it (a note that changed, or a
-    -- fresh stamp); a note carried over belongs to the earlier decision's row.
-    v_note := CASE WHEN NEW.review_note IS DISTINCT FROM OLD.review_note
-                     OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at
+    -- The note is NEW's only when this write CHANGED it; a note carried over
+    -- (a fresh reviewed_at or not) belongs to the earlier decision's row.
+    v_note := CASE WHEN quality_reason_key(NEW.review_note) IS DISTINCT FROM quality_reason_key(OLD.review_note)
                    THEN NEW.review_note END;
   END IF;
   INSERT INTO turnover_review_events (org_id, project_id, item_id, from_status, to_status, kind, reviewer, reviewer_name, note, document_id, created_at)
@@ -575,7 +631,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION turnover_items_record_review_event() IS
-  'QUAL-11: appends one turnover_review_events row for every status change of a turnover item, in the same statement (a rejection as a nonconformance, a move out of accepted / waived as a reopen) — the reviewer and their profile name from the session, the note this write set; a restored decided item gets one row from its own stamps.';
+  'QUAL-11: appends one turnover_review_events row for every status change of a turnover item, in the same statement (a rejection as a nonconformance, a move out of accepted / waived as a reopen) — the reviewer and their sign-in name from the session, the note only when this write changed it; a restored decided item gets one row from its own stamps.';
 
 DROP TRIGGER IF EXISTS trg_turnover_items_review_event ON turnover_items;
 CREATE TRIGGER trg_turnover_items_review_event
@@ -594,34 +650,40 @@ BEGIN
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;   -- service pass: restores, server routes, the SQL editor
   v_moved := TG_OP = 'INSERT' OR NEW.status IS DISTINCT FROM OLD.status;
   IF NOT v_moved THEN
-    -- A standing decision keeps its record — the note, the reviewer and the
-    -- date — until the next decision (its history row carries them).
+    -- A standing decision keeps its record — the note, the reviewer, the
+    -- date and the reviewed document — until the next decision (its history
+    -- row carries them). Only a document delete may null the reference: an
+    -- ON DELETE SET NULL runs one trigger level down.
     IF OLD.status IN ('accepted', 'waived', 'rejected')
        AND (NEW.review_note IS DISTINCT FROM OLD.review_note
             OR NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by
             OR NEW.reviewed_by_name IS DISTINCT FROM OLD.reviewed_by_name
-            OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at) THEN
-      RAISE EXCEPTION 'A standing decision keeps its reason and its reviewer — reopen the item or make a new decision; nothing was changed.'
+            OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at
+            OR (NEW.document_id IS DISTINCT FROM OLD.document_id
+                AND NOT (NEW.document_id IS NULL AND pg_trigger_depth() > 1))) THEN
+      RAISE EXCEPTION 'A standing decision keeps its reason, its reviewer and its reviewed document — reopen the item or make a new decision; nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
   ELSIF NEW.status IN ('waived', 'rejected')
      OR (TG_OP = 'UPDATE' AND OLD.status IN ('accepted', 'waived') AND NEW.status NOT IN ('accepted', 'waived')) THEN
     -- A waiver, a rejection or a reopen needs its OWN reason: the note on
-    -- the row belongs to the earlier decision.
-    IF (TG_OP = 'UPDATE' AND NEW.review_note IS NOT DISTINCT FROM OLD.review_note)
+    -- the row belongs to the earlier decision (compared normalised).
+    IF (TG_OP = 'UPDATE' AND quality_reason_key(NEW.review_note) IS NOT DISTINCT FROM quality_reason_key(OLD.review_note))
        OR NOT quality_reason_ok(NEW.review_note) THEN
       RAISE EXCEPTION 'A waiver, a rejection or a reopen needs its own reason of at least 10 characters in the review note — nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
   END IF;
-  -- The reviewer on the row is the caller, named from their profile: stamped
-  -- on every decision and reopen, and on any write that names a reviewer.
+  -- The reviewer on the row is the caller, named from the sign-in email, and
+  -- the date is the server's: stamped on every decision and reopen, and on
+  -- any write that names a reviewer.
   IF (v_moved AND (NEW.status IN ('accepted', 'waived', 'rejected')
                    OR (TG_OP = 'UPDATE' AND OLD.status IN ('accepted', 'waived'))))
      OR (NEW.reviewed_by IS NOT NULL AND (TG_OP = 'INSERT' OR NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by))
      OR (NEW.reviewed_by_name IS NOT NULL AND (TG_OP = 'INSERT' OR NEW.reviewed_by_name IS DISTINCT FROM OLD.reviewed_by_name)) THEN
     NEW.reviewed_by := auth.uid();
     NEW.reviewed_by_name := quality_actor_name(auth.uid());
+    NEW.reviewed_at := NOW();
   END IF;
   RETURN NEW;
 END;
@@ -629,7 +691,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_turnover_items_decision_rail ON turnover_items;
 CREATE TRIGGER trg_turnover_items_decision_rail
-  BEFORE INSERT OR UPDATE OF status, review_note, reviewed_by, reviewed_by_name, reviewed_at ON turnover_items
+  BEFORE INSERT OR UPDATE OF status, review_note, reviewed_by, reviewed_by_name, reviewed_at, document_id ON turnover_items
   FOR EACH ROW EXECUTE FUNCTION turnover_items_decision_rail();
 
 CREATE OR REPLACE FUNCTION punch_items_void_rail()
@@ -637,25 +699,41 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public
 AS $$
+DECLARE
+  v_moved boolean;
 BEGIN
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;   -- service pass: restores, server routes, the SQL editor
-  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
-    -- A standing void keeps its reason until the item is reopened.
+  v_moved := TG_OP = 'INSERT' OR NEW.status IS DISTINCT FROM OLD.status;
+  IF NOT v_moved THEN
+    -- A standing closure keeps its closer and date, and a standing void its
+    -- reason, until the item is reopened.
+    IF NEW.status IN ('done', 'void')
+       AND (NEW.closed_by IS DISTINCT FROM OLD.closed_by
+            OR NEW.closed_by_name IS DISTINCT FROM OLD.closed_by_name
+            OR NEW.closed_at IS DISTINCT FROM OLD.closed_at) THEN
+      RAISE EXCEPTION 'A closed punch item keeps its closer and its date — reopen the item to change them; nothing was changed.'
+        USING ERRCODE = 'check_violation';
+    END IF;
     IF NEW.status = 'void' AND NEW.closure_note IS DISTINCT FROM OLD.closure_note THEN
       RAISE EXCEPTION 'A void keeps its reason — reopen the item to change it; nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
   ELSIF NEW.status = 'void'
-     AND ((TG_OP = 'UPDATE' AND NEW.closure_note IS NOT DISTINCT FROM OLD.closure_note)
+     AND ((TG_OP = 'UPDATE' AND quality_reason_key(NEW.closure_note) IS NOT DISTINCT FROM quality_reason_key(OLD.closure_note))
           OR NOT quality_reason_ok(NEW.closure_note)) THEN
     RAISE EXCEPTION 'Voiding a punch item needs its own reason of at least 10 characters in the closure note — nothing was changed.'
       USING ERRCODE = 'check_violation';
   END IF;
-  -- The closer on the row is the caller, named from their profile.
-  IF (NEW.closed_by IS NOT NULL OR NEW.closed_by_name IS NOT NULL)
-     AND (TG_OP = 'INSERT' OR NEW.closed_by IS DISTINCT FROM OLD.closed_by OR NEW.closed_by_name IS DISTINCT FROM OLD.closed_by_name) THEN
+  -- The closer on the row is the caller, named from the sign-in email, and a
+  -- closure's date is the server's.
+  IF (v_moved AND NEW.status IN ('done', 'void'))
+     OR ((NEW.closed_by IS NOT NULL OR NEW.closed_by_name IS NOT NULL)
+         AND (TG_OP = 'INSERT' OR NEW.closed_by IS DISTINCT FROM OLD.closed_by OR NEW.closed_by_name IS DISTINCT FROM OLD.closed_by_name)) THEN
     NEW.closed_by := auth.uid();
     NEW.closed_by_name := quality_actor_name(auth.uid());
+  END IF;
+  IF v_moved AND NEW.status IN ('done', 'void') THEN
+    NEW.closed_at := NOW();
   END IF;
   RETURN NEW;
 END;
@@ -663,19 +741,52 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_punch_items_void_rail ON punch_items;
 CREATE TRIGGER trg_punch_items_void_rail
-  BEFORE INSERT OR UPDATE OF status, closure_note, closed_by, closed_by_name ON punch_items
+  BEFORE INSERT OR UPDATE OF status, closure_note, closed_by, closed_by_name, closed_at ON punch_items
   FOR EACH ROW EXECUTE FUNCTION punch_items_void_rail();
 
--- The chips no machine write may add, drop or reorder: every evidence
--- element whose source is not 'auto' (a person's), in order.
-CREATE OR REPLACE FUNCTION checklist_non_auto_chips(p_evidence jsonb)
+-- The chips of one kind, in order: p_auto = true gives the machine's
+-- (source 'auto'), false every other element (a person's). No machine write
+-- may change the person's, and no person's write the machine's.
+CREATE OR REPLACE FUNCTION checklist_chips(p_evidence jsonb, p_auto boolean)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE
 SET search_path = public
 AS $$
   SELECT COALESCE(jsonb_agg(e.value ORDER BY e.ordinality), '[]'::jsonb)
     FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_evidence) = 'array' THEN p_evidence ELSE '[]'::jsonb END) WITH ORDINALITY AS e(value, ordinality)
-   WHERE e.value->>'source' IS DISTINCT FROM 'auto';
+   WHERE (e.value->>'source' IS NOT DISTINCT FROM 'auto') = p_auto;
+$$;
+-- An earlier draft's single-purpose helper.
+DROP FUNCTION IF EXISTS checklist_non_auto_chips(jsonb);
+
+-- A machine green's citation must RESOLVE to the row it rests on — the
+-- register the sweep reads (lib/checklists.ts gatherProjectEvidenceState):
+-- an admitted document of this workspace (Issued / Locked, a current
+-- version, not an unapproved external submission — EVIDENCE_DOCUMENT_STATUSES),
+-- an accepted turnover item of this project, or another checklist of this
+-- project completed as a 'human' MI checklist. A label alone proves nothing.
+CREATE OR REPLACE FUNCTION checklist_auto_citation_ok(p_checklist_id uuid, p_org_id uuid, p_evidence jsonb)
+RETURNS boolean
+LANGUAGE sql STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_evidence) = 'array' THEN p_evidence ELSE '[]'::jsonb END) e
+      JOIN project_checklists c ON c.id = p_checklist_id
+     WHERE e->>'source' = 'auto'
+       AND (EXISTS (SELECT 1 FROM documents d
+                      JOIN document_versions v ON v.id = d.current_version_id
+                     WHERE d.id = quality_try_uuid(e->>'documentId') AND d.org_id = p_org_id
+                       AND d.status IN ('Issued', 'Locked')
+                       AND NOT (v.provenance = 'external' AND v.review_state IS DISTINCT FROM 'approved'))
+         OR EXISTS (SELECT 1 FROM turnover_items t
+                     WHERE t.id = quality_try_uuid(e->>'turnoverItemId')
+                       AND t.project_id = c.project_id AND t.status = 'accepted')
+         OR EXISTS (SELECT 1 FROM project_checklists m
+                     WHERE m.id = quality_try_uuid(e->>'checklistId')
+                       AND m.project_id = c.project_id AND m.id <> c.id
+                       AND m.kind = 'mi' AND m.status = 'complete' AND m.completed_basis = 'human')));
 $$;
 
 -- The earlier draft's N/A-only rail is replaced by the decision rail below.
@@ -691,32 +802,45 @@ DECLARE
   v_frozen boolean;
   v_decides boolean;
   v_note_changed boolean;
+  v_changed text[];
 BEGIN
   IF auth.uid() IS NULL THEN                         -- service pass: restores, server routes, the SQL editor
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
   END IF;
 
-  -- (a) A completed checklist is frozen: reopen it (which clears its basis)
-  --     before its items change. A cascade from deleting the checklist
-  --     itself is not an item edit.
-  SELECT bool_or(c.status = 'complete') INTO v_frozen
-    FROM project_checklists c
-   WHERE (TG_OP <> 'INSERT' AND c.id = OLD.checklist_id)
-      OR (TG_OP <> 'DELETE' AND c.id = NEW.checklist_id);
-  IF COALESCE(v_frozen, false) AND pg_trigger_depth() = 1 THEN
+  -- (a) An item leaves only with its checklist. The app never deletes one
+  --     item (an unmet line deleted, the completion lands); a cascade from
+  --     deleting the checklist, the project or the org runs one trigger
+  --     level down and passes. Nor does an item move between checklists.
+  IF TG_OP = 'DELETE' THEN
+    IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'A checklist item is never deleted on its own — reopen, void or delete the checklist instead; nothing was changed.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.checklist_id IS DISTINCT FROM OLD.checklist_id THEN
+    RAISE EXCEPTION 'A checklist item never moves to another checklist; nothing was changed.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- (b) Serialise with the completion: take a SHARE lock on the checklist's
+  --     row (it conflicts with the lock a completing UPDATE holds, not with
+  --     other item writes), then read its status. A completed checklist is
+  --     frozen until it is reopened (which clears its basis).
+  PERFORM 1 FROM project_checklists c WHERE c.id = NEW.checklist_id FOR SHARE;
+  SELECT c.status = 'complete' INTO v_frozen FROM project_checklists c WHERE c.id = NEW.checklist_id;
+  IF COALESCE(v_frozen, false) THEN
     RAISE EXCEPTION 'This checklist is complete — reopen it before changing its items; nothing was changed.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
 
-  -- (b) updated_by NULL is the MACHINE actor's mark (DEC-35).
+  -- (c) updated_by NULL is the MACHINE actor's mark (DEC-35).
   IF NEW.updated_by IS NULL THEN
     IF TG_OP = 'INSERT' THEN
       -- A row born with no actor (createChecklist) is born undecided.
       IF NEW.status <> 'open' OR NEW.applicability = 'na' OR NEW.manual_note IS NOT NULL
-         OR checklist_non_auto_chips(NEW.evidence) <> '[]'::jsonb
-         OR COALESCE(NEW.evidence, '[]'::jsonb) @> '[{"source": "auto"}]'::jsonb
+         OR checklist_chips(NEW.evidence, false) <> '[]'::jsonb
+         OR checklist_chips(NEW.evidence, true) <> '[]'::jsonb
          OR (NEW.updated_by_name IS NOT NULL AND NEW.updated_by_name NOT IN ('evidence sweep', 'AI assessment')) THEN
         RAISE EXCEPTION 'A new checklist item with no actor is born open, with no note and no evidence — a decision carries the uid of the person who made it; nothing was changed.'
           USING ERRCODE = 'check_violation';
@@ -727,29 +851,63 @@ BEGIN
       RAISE EXCEPTION 'updated_by NULL is the machine actor''s mark (the evidence sweep or the AI assessment) — a person''s write carries their uid; nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
-    IF OLD.manual_note IS NOT NULL OR COALESCE(OLD.evidence, '[]'::jsonb) @> '[{"source": "manual"}]'::jsonb THEN
+    IF quality_reason_key(OLD.manual_note) IS NOT NULL OR COALESCE(OLD.evidence, '[]'::jsonb) @> '[{"source": "manual"}]'::jsonb THEN
       RAISE EXCEPTION 'A person decided this item (a note or an attached chip) — the evidence sweep and the assessment never change it; nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
-    IF NEW.manual_note IS NOT NULL
-       OR checklist_non_auto_chips(NEW.evidence) IS DISTINCT FROM checklist_non_auto_chips(OLD.evidence) THEN
+    IF NEW.manual_note IS DISTINCT FROM OLD.manual_note
+       OR checklist_chips(NEW.evidence, false) IS DISTINCT FROM checklist_chips(OLD.evidence, false) THEN
       RAISE EXCEPTION 'The machine actor writes no note and attaches no person''s chip — nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
-    IF NEW.status = 'satisfied'
-       AND (OLD.status IS DISTINCT FROM 'satisfied' OR NEW.evidence IS DISTINCT FROM OLD.evidence)
-       AND NOT COALESCE(NEW.evidence, '[]'::jsonb) @> '[{"source": "auto"}]'::jsonb THEN
-      RAISE EXCEPTION 'A machine green carries the citation that proves it — nothing was changed.'
-        USING ERRCODE = 'check_violation';
+    -- Each machine writes its own columns and nothing else.
+    SELECT COALESCE(array_agg(n.key), '{}') INTO v_changed
+      FROM jsonb_each(to_jsonb(NEW)) n
+     WHERE n.value IS DISTINCT FROM (to_jsonb(OLD) -> n.key);
+    IF NEW.updated_by_name = 'evidence sweep' THEN
+      -- runAutoEvidence: status (satisfied / needs evidence) and its own
+      -- citations, on an in-scope item.
+      IF NOT v_changed <@ ARRAY['status', 'evidence', 'updated_at', 'updated_by', 'updated_by_name']
+         OR OLD.applicability = 'na' OR OLD.status = 'na'
+         OR (NEW.status IS DISTINCT FROM OLD.status AND NEW.status NOT IN ('satisfied', 'needs_evidence')) THEN
+        RAISE EXCEPTION 'The evidence sweep changes only an in-scope item''s status (satisfied / needs evidence) and its own citations — nothing was changed.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      IF NEW.status = 'satisfied'
+         AND (OLD.status IS DISTINCT FROM 'satisfied' OR NEW.evidence IS DISTINCT FROM OLD.evidence)
+         AND NOT checklist_auto_citation_ok(NEW.checklist_id, NEW.org_id, NEW.evidence) THEN
+        RAISE EXCEPTION 'A machine green carries a citation that resolves — an admitted document of this workspace, an accepted turnover item or a human-completed MI checklist of this project; nothing was changed.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+    ELSE
+      -- applyAssessment: applicability, its rationale, and the status that
+      -- follows (N/A with applicability N/A; N/A back to open with applies);
+      -- never an N/A on an item that is satisfied or carries evidence (QUAL-5).
+      IF NOT v_changed <@ ARRAY['applicability', 'ai_rationale', 'status', 'updated_at', 'updated_by', 'updated_by_name']
+         OR (NEW.status IS DISTINCT FROM OLD.status
+             AND NOT ((NEW.status = 'na' AND NEW.applicability = 'na')
+                      OR (OLD.status = 'na' AND NEW.status = 'open' AND NEW.applicability = 'applies')))
+         OR (NEW.applicability = 'na'
+             AND (OLD.status = 'satisfied'
+                  OR jsonb_array_length(CASE WHEN jsonb_typeof(OLD.evidence) = 'array' THEN OLD.evidence ELSE '[]'::jsonb END) > 0)) THEN
+        RAISE EXCEPTION 'The AI assessment changes only an item''s applicability, its rationale and the status that follows — never an N/A on a satisfied or evidence-bearing item; nothing was changed.'
+          USING ERRCODE = 'check_violation';
+      END IF;
     END IF;
     RETURN NEW;
   END IF;
 
-  -- (c) Every other signed-in write is a PERSON's: the row names the caller.
+  -- (d) Every other signed-in write is a PERSON's: the row names the caller,
+  --     and the machine's citations stay the machine's.
   NEW.updated_by := auth.uid();
   NEW.updated_by_name := quality_actor_name(auth.uid());
-  v_note_changed := CASE WHEN TG_OP = 'INSERT' THEN NEW.manual_note IS NOT NULL
-                         ELSE NEW.manual_note IS DISTINCT FROM OLD.manual_note END;
+  IF checklist_chips(NEW.evidence, true)
+     IS DISTINCT FROM checklist_chips(CASE WHEN TG_OP = 'UPDATE' THEN OLD.evidence END, true) THEN
+    RAISE EXCEPTION 'A person''s write leaves the evidence sweep''s citations as they are — attach your own evidence instead; nothing was changed.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  v_note_changed := CASE WHEN TG_OP = 'INSERT' THEN quality_reason_key(NEW.manual_note) IS NOT NULL
+                         ELSE quality_reason_key(NEW.manual_note) IS DISTINCT FROM quality_reason_key(OLD.manual_note) END;
   v_decides := CASE WHEN TG_OP = 'INSERT' THEN NEW.status <> 'open' OR NEW.applicability = 'na'
                     ELSE NEW.status IS DISTINCT FROM OLD.status OR NEW.applicability IS DISTINCT FROM OLD.applicability END;
   -- A decision (satisfied, N/A, reopen) needs its OWN reason — the note on
@@ -769,7 +927,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION checklist_items_decision_rail() IS
-  'SAF-4 / QUAL-2 / QUAL-6: a completed checklist''s items are frozen; updated_by NULL is the machine actor (sentinel name, never on a person''s item, no note, no person chip, a green carries its auto citation); every other signed-in write is stamped with the caller, and a decision needs its own reason that meets quality_reason_ok.';
+  'SAF-4 / QUAL-2 / QUAL-6: no single-item delete or move; every item write SHARE-locks its checklist row; a completed checklist''s items are frozen; updated_by NULL is the machine actor, bounded to the sweep''s or the assessment''s own columns and transitions (a sweep green''s citation must resolve); every other signed-in write is stamped with the caller, leaves the machine''s citations alone, and a decision needs its own reason that meets quality_reason_ok.';
 
 DROP TRIGGER IF EXISTS trg_checklist_items_decision_rail ON checklist_items;
 CREATE TRIGGER trg_checklist_items_decision_rail
@@ -788,6 +946,12 @@ BEGIN
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;   -- service pass: restores, server routes, the SQL editor
   IF NEW.status = 'complete' THEN
     IF TG_OP = 'UPDATE' AND OLD.status = 'complete' THEN
+      -- A completion keeps what it is: its kind (a QA/QC completion never
+      -- becomes a citable MI one) and its project.
+      IF NEW.kind IS DISTINCT FROM OLD.kind OR NEW.project_id IS DISTINCT FROM OLD.project_id THEN
+        RAISE EXCEPTION 'A completed checklist keeps its kind and its project — reopen it first; nothing was changed.'
+          USING ERRCODE = 'check_violation';
+      END IF;
       NEW.completed_basis := OLD.completed_basis;   -- a completion's basis is never rewritten in place (its items are frozen)
     ELSE
       -- The gate setChecklistStatus applies: items exist, and every
@@ -813,7 +977,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION project_checklists_completion_basis_rail() IS
-  'QUAL-2: refuses a move to complete while the checklist has no items or an applicable item is neither satisfied nor N/A; completed_basis is computed by checklist_completion_basis() when a checklist moves to complete, kept while it stays complete, NULL otherwise — a client-supplied value is ignored.';
+  'QUAL-2: refuses a move to complete while the checklist has no items or an applicable item is neither satisfied nor N/A, and a change of kind or project while complete; completed_basis is computed by checklist_completion_basis() when a checklist moves to complete, kept while it stays complete, NULL otherwise — a client-supplied value is ignored.';
 
 DROP TRIGGER IF EXISTS trg_project_checklists_completion_basis ON project_checklists;
 CREATE TRIGGER trg_project_checklists_completion_basis
@@ -932,13 +1096,21 @@ SELECT 'turnover_review_events.item_id carries no foreign key — the history ou
            AND k.confrelid = 'public.turnover_items'::regclass),
        NULL
 UNION ALL
-SELECT 'the history writer fires AFTER INSERT OR UPDATE OF status on turnover_items, records the note this write set and the reviewer''s profile name',
+SELECT 'the history writer fires AFTER INSERT OR UPDATE OF status on turnover_items, records the note only when this write changed it, and the reviewer''s sign-in name',
        (SELECT COUNT(*) = 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
           JOIN pg_proc f ON f.oid = t.tgfoid
          WHERE c.relname = 'turnover_items' AND t.tgname = 'trg_turnover_items_review_event' AND NOT t.tgisinternal
            AND pg_get_triggerdef(t.oid) LIKE '%AFTER INSERT OR UPDATE OF status ON %turnover_items%'
-           AND f.prosrc LIKE '%NEW.review_note IS DISTINCT FROM OLD.review_note%'
+           AND f.prosrc LIKE '%quality_reason_key(NEW.review_note) IS DISTINCT FROM quality_reason_key(OLD.review_note)%'
+           AND f.prosrc NOT LIKE '%NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at%'
            AND f.prosrc LIKE '%quality_actor_name(auth.uid())%'),
+       NULL
+UNION ALL
+SELECT 'quality_actor_name reads the sign-in email in auth.users (not the self-editable users profile), and no client may call it',
+       (SELECT p.prosrc LIKE '%FROM auth.users u WHERE u.id = p_uid%' AND p.prosrc NOT LIKE '%FROM users u%'
+           AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')
+           AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
+          FROM pg_proc p WHERE p.proname = 'quality_actor_name'),
        NULL
 UNION ALL
 SELECT 'every decided turnover item whose org matches its project has at least one history row (backfill)',
@@ -955,16 +1127,20 @@ SELECT 'quality_reason_ok mirrors the reason bar: a real reason passes, and blan
            AND NOT quality_reason_ok('too short')
            AND NOT quality_reason_ok('x')
            AND NOT quality_reason_ok('   ')
-           AND NOT quality_reason_ok(NULL)),
+           AND NOT quality_reason_ok(NULL)
+           AND NOT quality_reason_ok(repeat(chr(160), 10))
+           AND NOT quality_reason_ok(repeat(chr(8203), 12))
+           AND NOT quality_reason_ok('decided' || chr(160) || 'by reviewer')
+           AND quality_reason_key('  Reviewed page by page ') = quality_reason_key('reviewed page by page')),
        NULL
 UNION ALL
-SELECT 'the reason rails are live: turnover_items (waive / reject / reopen, a standing decision), punch_items (void), checklist_items (every write, and delete)',
+SELECT 'the reason rails are live: turnover_items (waive / reject / reopen, a standing decision and its document), punch_items (void, a standing closure), checklist_items (every write, and delete)',
        (SELECT COUNT(*) = 3 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
          WHERE NOT t.tgisinternal
            AND ((c.relname = 'turnover_items' AND t.tgname = 'trg_turnover_items_decision_rail'
-                 AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF status, review_note, reviewed_by, reviewed_by_name, reviewed_at ON %')
+                 AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF status, review_note, reviewed_by, reviewed_by_name, reviewed_at, document_id ON %')
              OR (c.relname = 'punch_items' AND t.tgname = 'trg_punch_items_void_rail'
-                 AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF status, closure_note, closed_by, closed_by_name ON %')
+                 AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF status, closure_note, closed_by, closed_by_name, closed_at ON %')
              OR (c.relname = 'checklist_items' AND t.tgname = 'trg_checklist_items_decision_rail'
                  AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR DELETE OR UPDATE ON %'))),
        NULL
@@ -973,19 +1149,38 @@ SELECT 'each reason rail demands its OWN reason (the note must change) that pass
        (SELECT COUNT(*) = 3 FROM pg_proc p
          WHERE p.prosrc LIKE '%IF auth.uid() IS NULL THEN%'
            AND ((p.proname = 'turnover_items_decision_rail' AND p.prosrc LIKE '%quality_reason_ok(NEW.review_note)%'
-                 AND p.prosrc LIKE '%NEW.review_note IS NOT DISTINCT FROM OLD.review_note%')
+                 AND p.prosrc LIKE '%quality_reason_key(NEW.review_note) IS NOT DISTINCT FROM quality_reason_key(OLD.review_note)%')
              OR (p.proname = 'punch_items_void_rail' AND p.prosrc LIKE '%quality_reason_ok(NEW.closure_note)%'
-                 AND p.prosrc LIKE '%NEW.closure_note IS NOT DISTINCT FROM OLD.closure_note%')
+                 AND p.prosrc LIKE '%quality_reason_key(NEW.closure_note) IS NOT DISTINCT FROM quality_reason_key(OLD.closure_note)%')
              OR (p.proname = 'checklist_items_decision_rail' AND p.prosrc LIKE '%quality_reason_ok(NEW.manual_note)%'
                  AND p.prosrc LIKE '%IF v_decides AND NOT v_note_changed THEN%'))),
        NULL
 UNION ALL
-SELECT 'the machine actor (updated_by NULL) is validated: a sentinel name, never a person''s item, no note, no person chip — and a person''s write is stamped with the caller',
+SELECT 'the machine actor (updated_by NULL) is bounded: a sentinel name, never a person''s item, no note, no person chip, each machine''s own columns only, a sweep green''s citation resolves — and a person''s write is stamped with the caller and leaves the machine''s citations alone',
        (SELECT p.prosrc LIKE '%NEW.updated_by_name NOT IN (''evidence sweep'', ''AI assessment'')%'
-           AND p.prosrc LIKE '%OLD.manual_note IS NOT NULL OR COALESCE(OLD.evidence%'
-           AND p.prosrc LIKE '%checklist_non_auto_chips(NEW.evidence) IS DISTINCT FROM checklist_non_auto_chips(OLD.evidence)%'
+           AND p.prosrc LIKE '%quality_reason_key(OLD.manual_note) IS NOT NULL OR COALESCE(OLD.evidence%'
+           AND p.prosrc LIKE '%checklist_chips(NEW.evidence, false) IS DISTINCT FROM checklist_chips(OLD.evidence, false)%'
+           AND p.prosrc LIKE '%v_changed <@ ARRAY[''status'', ''evidence'', ''updated_at'', ''updated_by'', ''updated_by_name'']%'
+           AND p.prosrc LIKE '%v_changed <@ ARRAY[''applicability'', ''ai_rationale'', ''status'', ''updated_at'', ''updated_by'', ''updated_by_name'']%'
+           AND p.prosrc LIKE '%NOT checklist_auto_citation_ok(NEW.checklist_id, NEW.org_id, NEW.evidence)%'
            AND p.prosrc LIKE '%NEW.updated_by := auth.uid()%'
+           AND p.prosrc LIKE '%checklist_chips(NEW.evidence, true)%'
           FROM pg_proc p WHERE p.proname = 'checklist_items_decision_rail'),
+       NULL
+UNION ALL
+SELECT 'an item write SHARE-locks its checklist row before reading its status (it serialises with a completion), and a signed-in single-item DELETE or move is refused, a cascade passes',
+       (SELECT p.prosrc LIKE '%PERFORM 1 FROM project_checklists c WHERE c.id = NEW.checklist_id FOR SHARE%'
+           AND position('FOR SHARE' IN p.prosrc) < position('INTO v_frozen' IN p.prosrc)
+           AND p.prosrc LIKE '%IF pg_trigger_depth() > 1 THEN RETURN OLD%'
+           AND p.prosrc LIKE '%NEW.checklist_id IS DISTINCT FROM OLD.checklist_id%'
+          FROM pg_proc p WHERE p.proname = 'checklist_items_decision_rail'),
+       NULL
+UNION ALL
+SELECT 'checklist_auto_citation_ok resolves a sweep citation to an admitted document of the workspace, an accepted turnover item or a human MI completion of the project',
+       (SELECT p.prosrc LIKE '%d.status IN (''Issued'', ''Locked'')%'
+           AND p.prosrc LIKE '%t.status = ''accepted''%'
+           AND p.prosrc LIKE '%m.completed_basis = ''human''%'
+          FROM pg_proc p WHERE p.proname = 'checklist_auto_citation_ok'),
        NULL
 UNION ALL
 SELECT 'the checklist_items_na_rail of an earlier draft is gone (replaced by the decision rail)',
@@ -1015,13 +1210,14 @@ SELECT 'every completed checklist carries a completed_basis after the backfill',
        (SELECT COUNT(*) = 0 FROM project_checklists WHERE status = 'complete' AND completed_basis IS NULL),
        NULL
 UNION ALL
-SELECT 'checklist_completion_basis: a checklist with no green a person decided is auto (probed on an id with no items), and a note counts only when it meets the bar',
+SELECT 'checklist_completion_basis: a checklist with no green a person decided is auto (probed on an id with no items), and only a note that meets the bar counts — a person chip alone does not',
        (SELECT checklist_completion_basis(gen_random_uuid()) = 'auto'
            AND (SELECT p.prosrc LIKE '%AND NOT quality_reason_ok(i.manual_note)%' AND p.prosrc LIKE '%i.status NOT IN (''satisfied'', ''na'')%'
+                       AND p.prosrc NOT LIKE '%''manual''%'
                   FROM pg_proc p WHERE p.proname = 'checklist_completion_basis')),
        NULL
 UNION ALL
-SELECT 'the completion rail is live on project_checklists (BEFORE INSERT OR UPDATE): it refuses an empty or unfinished checklist and ignores a client basis',
+SELECT 'the completion rail is live on project_checklists (BEFORE INSERT OR UPDATE): it refuses an empty or unfinished checklist, keeps a completion''s kind and project, and ignores a client basis',
        (SELECT COUNT(*) = 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
           JOIN pg_proc f ON f.oid = t.tgfoid
          WHERE c.relname = 'project_checklists' AND t.tgname = 'trg_project_checklists_completion_basis' AND NOT t.tgisinternal
@@ -1029,7 +1225,8 @@ SELECT 'the completion rail is live on project_checklists (BEFORE INSERT OR UPDA
            AND f.prosrc LIKE '%NEW.completed_basis := OLD.completed_basis%'
            AND f.prosrc LIKE '%NEW.completed_basis := NULL%'
            AND f.prosrc LIKE '%IF v_blocking > 0 THEN%'
-           AND f.prosrc LIKE '%IF NOT EXISTS (SELECT 1 FROM checklist_items i WHERE i.checklist_id = NEW.id) THEN%'),
+           AND f.prosrc LIKE '%IF NOT EXISTS (SELECT 1 FROM checklist_items i WHERE i.checklist_id = NEW.id) THEN%'
+           AND f.prosrc LIKE '%NEW.kind IS DISTINCT FROM OLD.kind OR NEW.project_id IS DISTINCT FROM OLD.project_id%'),
        NULL
 UNION ALL
 SELECT 'REL-4 quality half: status / applicability CHECK constraints present on all four quality tables (20261013)',

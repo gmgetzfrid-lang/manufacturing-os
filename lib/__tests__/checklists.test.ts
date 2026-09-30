@@ -556,6 +556,21 @@ describe("gatherProjectEvidenceState — the evidence contract", () => {
     state.tables.project_checklists = [{ project_id: "p1", kind: "mi", status: "complete" }]; // pre-migration row shape
     expect((await gatherProjectEvidenceState("o1", "p1")).miChecklistComplete).toBe(false);
   });
+
+  it("verification fix 2: the gather names the rows behind the two state rules, so a sweep citation can carry them (the database resolves it)", async () => {
+    state.tables.documents = [];
+    state.tables.project_checklists = [
+      { id: "cl-qa", project_id: "p1", kind: "qaqc", status: "complete", completed_basis: "human" },
+      { id: "cl-mi", project_id: "p1", kind: "mi", status: "complete", completed_basis: "human" },
+    ];
+    state.tables.turnover_items = [
+      { id: "t1", project_id: "p1", name: "Weld map & weld log", status: "accepted", document_id: null },
+      { id: "t2", project_id: "p1", name: "NDE reports", status: "received", document_id: null },
+    ];
+    const s = await gatherProjectEvidenceState("o1", "p1");
+    expect(s.turnoverAccepted).toEqual([{ id: "t1", name: "Weld map & weld log" }]);
+    expect(s.miChecklistId).toBe("cl-mi");
+  });
 });
 
 // ── runAutoEvidence (QUAL-1 / QUAL-6 / SAF-3 / PERF-7) ───────────────────

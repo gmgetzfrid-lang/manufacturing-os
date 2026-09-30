@@ -62,7 +62,18 @@ export interface ProjectEvidenceState {
   documentTitles: string[];          // project register titles+numbers (admitted documents only)
   equipmentTags: string[];           // tags known on the project's drawings
   documents?: EvidenceDocument[];    // the same register with ids, so a chip can name its row
+  /** The accepted turnover items behind turnoverAcceptedNames, so a turnover citation names its row. */
+  turnoverAccepted?: Array<{ id: string; name: string }>;
+  /** The human-completed MI checklist behind miChecklistComplete, so an MI citation names its row. */
+  miChecklistId?: string | null;
 }
+
+/** What a sweep citation rests on — the row the database resolves before it
+ *  accepts a machine green (20261091 checklist_auto_citation_ok): an admitted
+ *  document, an accepted turnover item, or a human-completed MI checklist. */
+export interface CitationRef { documentId?: string; turnoverItemId?: string; checklistId?: string }
+
+export type EvidenceChip = { label: string; href?: string; source: "auto" | "manual" } & CitationRef;
 
 export interface ChecklistItemState {
   id: string;
@@ -70,13 +81,13 @@ export interface ChecklistItemState {
   applicability: "applies" | "na" | "unknown";
   status: "open" | "needs_evidence" | "satisfied" | "na";
   manualNote: string | null;         // human touched it — auto keeps out
-  evidence: Array<{ label: string; documentId?: string; href?: string; source: "auto" | "manual" }>;
+  evidence: EvidenceChip[];
 }
 
 export interface AutoEvidenceResult {
   id: string;
   status: "needs_evidence" | "satisfied";
-  addedEvidence: Array<{ label: string; documentId?: string; source: "auto" }>;
+  addedEvidence: Array<{ label: string; source: "auto" } & CitationRef>;
   /** Drop every existing source:'auto' chip before appending (stale
    *  citation, or the proof is gone). Human chips are never in scope. */
   removeAutoEvidence?: true;
@@ -94,7 +105,9 @@ export interface AutoEvidenceResult {
 // write may DO: one of these names (the SQL list is pinned to these two),
 // never on an item a person decided (isHumanTerritory), no note, no person
 // chip, and a green it sets carries an auto citation. Every other signed-in
-// write is stamped there with the caller's uid and profile name.
+// write is stamped there with the caller's uid and sign-in name. The sweep's
+// citations name the row they rest on (CitationRef), which the database
+// resolves before it accepts a machine green.
 export const MACHINE_ACTOR_SWEEP = "evidence sweep";
 export const MACHINE_ACTOR_ASSESSMENT = "AI assessment";
 export const isMachineActorName = (name: string | null | undefined): boolean =>
@@ -109,17 +122,36 @@ export const isMachineActorName = (name: string | null | undefined): boolean =>
 // the database — quality_reason_ok() and the 20261091 rails refuse a write
 // that bypasses the lib (GAP-405: not a client-side check). The prompt
 // mirrors it (required + minLength). The SQL carries the same canned list
-// (lib/__tests__/qualityRailsMigration.test.ts pins the two together).
+// and the same two character classes, verbatim
+// (lib/__tests__/qualityRailsMigration.test.ts pins them together).
 export const REASON_MIN_LENGTH = 10;
 export const CANNED_REASONS: ReadonlySet<string> = new Set(["decided by reviewer", "n/a", "na", "not applicable", "reason", "none", "ok"]);
 
-/** null when the reason meets the bar, otherwise the refusal to show. */
+/** Whitespace, Unicode's included (a no-break space is not a reason). The
+ *  text of a regex character class, shared with quality_reason_ok(). */
+export const REASON_SPACE_CLASS = "\\s\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff";
+/** Zero-width and other invisible characters — dropped before measuring. */
+export const REASON_INVISIBLE_CLASS = "\\u00ad\\u180e\\u200b-\\u200d\\u2060-\\u2064";
+const SPACE_RUN = new RegExp(`[${REASON_SPACE_CLASS}]+`, "g");
+const INVISIBLE = new RegExp(`[${REASON_INVISIBLE_CLASS}]`, "g");
+
+/** The normalised form a reason is compared in — invisible characters
+ *  dropped, whitespace runs collapsed, trimmed, lower-cased; null when
+ *  nothing visible is left. "A NEW note" is one whose key differs: the old
+ *  note plus a trailing space is not new (quality_reason_key in SQL). */
+export function reasonKey(reason: string | null | undefined): string | null {
+  const key = (reason ?? "").replace(INVISIBLE, "").replace(SPACE_RUN, " ").trim().toLowerCase();
+  return key || null;
+}
+
+/** null when the reason meets the bar, otherwise the refusal to show. The
+ *  length is counted in characters (code points, as the database counts),
+ *  once whitespace and invisible characters are stripped. */
 export function reasonProblem(reason: string | null | undefined): string | null {
-  const text = (reason ?? "").trim();
-  const dense = text.replace(/\s+/g, "");
+  const dense = Array.from((reason ?? "").replace(INVISIBLE, "").replace(SPACE_RUN, ""));
   if (dense.length === 0) return "A reason is required — this decision goes on the record.";
   if (dense.length < REASON_MIN_LENGTH) return `Say why in at least ${REASON_MIN_LENGTH} characters — the reason is the record.`;
-  if (CANNED_REASONS.has(text.toLowerCase())) return "That isn't a reason — say what was decided and why.";
+  if (CANNED_REASONS.has(reasonKey(reason) ?? "")) return "That isn't a reason — say what was decided and why.";
   return null;
 }
 
@@ -128,26 +160,29 @@ export function reasonProblem(reason: string | null | undefined): string | null 
 const hasPersonChip = (it: Pick<ChecklistItemState, "evidence">): boolean =>
   it.evidence.some((e) => e.source === "manual");
 
-/** Human territory: an item carrying any note (a legacy short one included)
- *  or a person-attached chip. The sweep and the assessment never write on it
- *  — the database refuses a machine-stamped write there too. */
+/** Human territory: an item carrying any visible note (a legacy short one
+ *  included; an empty or blank one is no note) or a person-attached chip.
+ *  The sweep and the assessment never write on it — the database refuses a
+ *  machine-stamped write there too. */
 export const isHumanTerritory = (it: Pick<ChecklistItemState, "manualNote" | "evidence">): boolean =>
-  Boolean(it.manualNote) || hasPersonChip(it);
+  reasonKey(it.manualNote) !== null || hasPersonChip(it);
 
 /** A person decided this item: a note that meets the reason bar (every human
- *  control writes one — `'x'` or a canned string is not a person's reason)
- *  or a person-attached evidence chip. checklist_completion_basis() counts a
- *  note only when quality_reason_ok() holds — the same bar. */
-export const isHumanDecided = (it: Pick<ChecklistItemState, "manualNote" | "evidence">): boolean =>
-  reasonProblem(it.manualNote) === null || hasPersonChip(it);
+ *  control writes one — `'x'` or a canned string is not a person's reason).
+ *  A person-attached chip is evidence, not a reason: alone it decides
+ *  nothing (attaching one asks for no reason). checklist_completion_basis()
+ *  counts a note only when quality_reason_ok() holds — the same bar. */
+export const isHumanDecided = (it: Pick<ChecklistItemState, "manualNote">): boolean =>
+  reasonProblem(it.manualNote) === null;
 
 /** An applicable item that is neither green nor N/A — what keeps a checklist
  *  from completing (setChecklistStatus, and the database's completion rail). */
 export const isBlockingItem = (it: Pick<ChecklistItemState, "status" | "applicability">): boolean =>
   it.applicability !== "na" && it.status !== "satisfied" && it.status !== "na";
 
-/** A green the evidence sweep set that no person has verified yet — what a
- *  reviewer confirms ("Verify") before the completion can be citable. */
+/** A green no person gave a reason for — the sweep's, a legacy one, or one
+ *  carrying only a person's chip: what a reviewer confirms ("Verify") before
+ *  the completion can be citable. */
 export const isAutoOnlyGreen = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote" | "evidence">): boolean =>
   it.status === "satisfied" && it.applicability !== "na" && !isHumanDecided(it);
 
@@ -163,14 +198,14 @@ const isNa = (it: Pick<ChecklistItemState, "status" | "applicability">): boolean
 export const isUnreasonedNa = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote">): boolean =>
   isNa(it) && reasonProblem(it.manualNote) !== null;
 
-/** A green a person decided (a note, or a person-attached chip). */
+/** A green a person decided (a note that meets the bar). */
 export const isHumanGreen = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote" | "evidence">): boolean =>
   it.status === "satisfied" && it.applicability !== "na" && isHumanDecided(it);
 
 /** 'human' only when a person stands behind the whole checklist: every
- *  applicable item is green or N/A, no green rests on the evidence sweep
- *  alone, no N/A lacks a person's reason, and at least one green was decided
- *  by a person. Otherwise 'auto'. An N/A proves nothing, so a checklist the
+ *  applicable item is green or N/A, every green and every N/A carries a
+ *  person's reason (a chip alone is not one), and at least one green was
+ *  decided by a person. Otherwise 'auto'. An N/A proves nothing, so a checklist the
  *  assessment N/A'd end to end — or one with no human green at all — is never
  *  citable proof (QUAL-2). Only a 'human' completion is citable by another
  *  checklist. The database computes the stored value with the SAME rule
@@ -183,6 +218,11 @@ export function completionBasis(items: ChecklistItemState[]): "human" | "auto" {
   if (!items.some(isHumanGreen)) return "auto";
   return "human";
 }
+
+/** The citation labels of the two rules that probe the platform's own
+ *  quality state rather than a document title. */
+const MI_PROOF = "Mechanical-integrity checklist complete";
+const turnoverProof = (name: string) => `Turnover item accepted: "${name}"`;
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 
@@ -201,7 +241,7 @@ const EVIDENCE_RULES: Array<{
   },
   {
     match: /mechanical integrity|MI review|integrity (group|manager)/i,
-    probe: (s) => (s.miChecklistComplete ? "Mechanical-integrity checklist complete" : null),
+    probe: (s) => (s.miChecklistComplete ? MI_PROOF : null),
   },
   {
     match: /weld map|weld log/i,
@@ -234,6 +274,7 @@ const EVIDENCE_RULES: Array<{
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+
 /** Whole-word title matching — substring matching would cite "Rapid
  *  Response Plan" as a P&ID ("pid") or "Extended Warranty" as NDE
  *  evidence. A false citation on a satisfied safety item is worse than no
@@ -256,6 +297,21 @@ function documentForProof(s: ProjectEvidenceState, proof: string): EvidenceDocum
   return s.documents.find((d) => `Document on file: "${d.label}"` === proof) ?? null;
 }
 
+/** The row a proof rests on — the document, the accepted turnover item or
+ *  the human MI completion — so the chip names it and the database can
+ *  resolve it (a label alone proves nothing). */
+function citationFor(s: ProjectEvidenceState, proof: string): CitationRef {
+  const doc = documentForProof(s, proof);
+  if (doc) return { documentId: doc.id };
+  const accepted = (s.turnoverAccepted ?? []).find((t) => turnoverProof(t.name) === proof);
+  if (accepted) return { turnoverItemId: accepted.id };
+  if (proof === MI_PROOF && s.miChecklistId) return { checklistId: s.miChecklistId };
+  return {};
+}
+
+const sameCitation = (a: CitationRef & { label: string }, b: CitationRef & { label: string }): boolean =>
+  a.label === b.label && a.documentId === b.documentId && a.turnoverItemId === b.turnoverItemId && a.checklistId === b.checklistId;
+
 // Words too generic to tie a checklist line to a turnover item: a shared
 // "records" or "package" proves nothing about the subject.
 const GENERIC_WORDS = new Set([
@@ -275,7 +331,7 @@ function acceptedTurnoverMatch(s: ProjectEvidenceState, text: string): string | 
   for (const name of s.turnoverAcceptedNames) {
     const nameWords = subjectWords(name);
     for (const w of nameWords) {
-      if (words.has(w)) return `Turnover item accepted: "${name}"`;
+      if (words.has(w)) return turnoverProof(name);
     }
   }
   return null;
@@ -307,10 +363,12 @@ export function applyAutoEvidence(
     const proof = rule.probe(state, item.text);
     const autoChips = item.evidence.filter((e) => e.source === "auto");
     if (proof) {
-      const already = item.evidence.some((e) => e.label === proof);
-      const stale = autoChips.some((e) => e.label !== proof);
-      const doc = documentForProof(state, proof);
-      const chip = { label: proof, ...(doc ? { documentId: doc.id } : {}), source: "auto" as const };
+      // The chip names the row it rests on; an auto chip citing anything
+      // else (another label, or the same label with another row or none —
+      // a legacy chip) is stale and replaced.
+      const chip = { label: proof, ...citationFor(state, proof), source: "auto" as const };
+      const already = autoChips.some((e) => sameCitation(e, chip));
+      const stale = autoChips.some((e) => !sameCitation(e, chip));
       out.push({
         id: item.id,
         status: "satisfied",

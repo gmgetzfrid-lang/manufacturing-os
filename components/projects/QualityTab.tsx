@@ -392,8 +392,9 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
 
   const progress = useMemo(() => (items ? computeChecklistProgress(items) : null), [items]);
   const blocking = progress ? progress.applicable - progress.satisfied : 0;
-  /** Greens the sweep set that no person has verified — each one makes the
-   *  completion 'auto' (not citable) until a person verifies it (QUAL-2). */
+  /** Greens no person gave a reason for (the sweep's, or a chip with no
+   *  note) — each one makes the completion 'auto' (not citable) until a
+   *  person verifies it (QUAL-2). */
   const autoGreens = useMemo(() => (items ?? []).filter(isAutoOnlyGreen).length, [items]);
   /** N/As no person gave a reason for (the assessment's) — each keeps the
    *  completion 'auto' until a person confirms it (QUAL-2). */
@@ -489,7 +490,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
 
   const completeBlocked = progress != null && (progress.total === 0 || blocking > 0 || staleGreens > 0);
   const autoReasons = [
-    autoGreens > 0 ? `${autoGreens} green${autoGreens === 1 ? " rests" : "s rest"} on the evidence sweep alone (✓ Verify)` : null,
+    autoGreens > 0 ? `${autoGreens} green${autoGreens === 1 ? " carries" : "s carry"} no person's reason — the sweep's alone, or a chip with no note (✓ Verify)` : null,
     unreasonedNa > 0 ? `${unreasonedNa} N/A${unreasonedNa === 1 ? " carries" : "s carry"} no person's reason (✓ Confirm N/A)` : null,
     humanGreens === 0 ? "no green item was decided by a person" : null,
   ].filter((x): x is string => Boolean(x));
@@ -508,7 +509,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
         <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"
-            title={checklist.completedBasis === "human" ? "Completed on human sign-off — a person stands behind every green and every N/A" : checklist.completedBasis === "auto" ? "Completed while a green rested on the evidence sweep alone, an N/A carried no person's reason, or no green was a person's decision — not citable as proof by another checklist" : "Completed"}>
+            title={checklist.completedBasis === "human" ? "Completed on human sign-off — a person stands behind every green and every N/A" : checklist.completedBasis === "auto" ? "Completed while a green or an N/A carried no person's reason, or no green was a person's decision — not citable as proof by another checklist" : "Completed"}>
             <ShieldCheck className="w-3 h-3" /> complete{checklist.completedBasis === "auto" ? " (auto)" : ""}
           </span>
         )}

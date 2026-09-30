@@ -23,16 +23,21 @@
 //            outlives a deleted item. A restore never imports the table
 //            (IMMUTABLE_TABLES); a restored decided item gets one row.
 //   SAF-4    the reason bar at the database: quality_reason_ok() mirrors
-//            reasonProblem() (length and canned list pinned to the lib); each
-//            rail demands the decision's OWN reason (the note must change),
+//            reasonProblem() (length, canned list and the Unicode whitespace
+//            / zero-width classes pinned to the lib); each rail demands the
+//            decision's OWN reason (the note's normalised key must change),
 //            a standing decision keeps its reason, and the reviewer / closer
-//            is the caller. checklist_items_decision_rail validates the
-//            machine actor (sentinel names pinned to the lib) and stamps a
-//            person's write with the caller.
+//            is the caller, named from auth.users.
+//            checklist_items_decision_rail bounds the machine actor to each
+//            machine's own columns (sentinel names pinned to the lib; a sweep
+//            green's citation must resolve to its row), stamps a person's
+//            write with the caller, refuses a single-item delete or move, and
+//            SHARE-locks the checklist row before reading its status.
 //   QUAL-7   punch_items gains the four nullable text columns.
 //   QUAL-2   project_checklists.completed_basis: checklist_completion_basis()
-//            is completionBasis()'s rule clause for clause (a note counts
-//            only when it meets the bar); the backfill calls it; the rail
+//            is completionBasis()'s rule clause for clause (only a note that
+//            meets the bar counts — a person chip is not a reason); the
+//            backfill calls it; the rail
 //            refuses an empty or unfinished completion (setChecklistStatus's
 //            gate), records the basis for every end-user write and ignores a
 //            client value; a completed checklist's items are frozen.
@@ -45,7 +50,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { CANNED_REASONS, MACHINE_ACTOR_ASSESSMENT, MACHINE_ACTOR_SWEEP, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
+import {
+  CANNED_REASONS, MACHINE_ACTOR_ASSESSMENT, MACHINE_ACTOR_SWEEP, REASON_INVISIBLE_CLASS, REASON_MIN_LENGTH, REASON_SPACE_CLASS,
+} from "@/lib/checklistEngine";
 import { IMMUTABLE_TABLES, isImmutableTable, planRestore, RESTORE_TABLE_ORDER } from "@/lib/dataRestore";
 
 const read = (f: string) => readFileSync(join(process.cwd(), "supabase", "migrations", f), "utf8");
@@ -89,7 +96,12 @@ describe("20261091 — script shape (DEC-30 / the one-result-set protocol)", () 
     expect(invBlock).toMatch(/AND i\.applicability <> 'na' AND i\.status NOT IN \('satisfied', 'na'\)/);
     expect(invBlock).toMatch(/i\.status = 'satisfied' AND i\.applicability <> 'na'\s*\n\s*AND NOT pg_temp\.prj_roundg_reason_ok\(i\.manual_note\)/);
     expect(invBlock).toMatch(/\(i\.status = 'na' OR i\.applicability = 'na'\)\s*\n\s*AND NOT pg_temp\.prj_roundg_reason_ok\(i\.manual_note\)/);
-    expect(invBlock).toMatch(/AND NOT EXISTS \(\s*\n\s*SELECT 1 FROM checklist_items i[\s\S]*?AND \(pg_temp\.prj_roundg_reason_ok\(i\.manual_note\)\s*\n\s*OR EXISTS/);
+    expect(invBlock).toMatch(/AND NOT EXISTS \(\s*\n\s*SELECT 1 FROM checklist_items i[\s\S]*?AND pg_temp\.prj_roundg_reason_ok\(i\.manual_note\)\)\)::text/);
+    // a person chip is not a reason: the basis rows never read one
+    const basisRows = invBlock.slice(invBlock.indexOf("inventory: completed checklists with a green item"), invBlock.indexOf("inventory: completed checklists (all)"));
+    expect(basisRows).not.toMatch(/'manual'/);
+    // legacy sweep citations that name no row
+    expect(invBlock).toMatch(/AND \(e \? 'documentId' OR e \? 'turnoverItemId' OR e \? 'checklistId'\)/);
     expect(invBlock).not.toMatch(/COALESCE\(i\.manual_note, ''\) (<>|=) ''/);   // "any note" is not a reason
     expect(invBlock).toMatch(/i\.manual_note IS NOT NULL AND NOT pg_temp\.prj_roundg_reason_ok\(i\.manual_note\)/);
     // QUAL-11: the decided items the backfill covers, and the two it cannot fully
@@ -359,28 +371,43 @@ describe("20261091 — QUAL-11: turnover_review_events is append-only and writte
     // the reviewer is the real caller, NAMED from the users profile (never the client's name)
     expect(fn).toMatch(/COALESCE\(auth\.uid\(\), NEW\.reviewed_by\)/);
     expect(fn).toMatch(/CASE WHEN auth\.uid\(\) IS NOT NULL THEN quality_actor_name\(auth\.uid\(\)\) ELSE NEW\.reviewed_by_name END/);
-    // the note is NEW's whenever this write set it — a changed note or a fresh
-    // stamp — not only when reviewed_at moved; a carried-over note is not re-attributed
-    expect(fn).toMatch(/v_note := CASE WHEN NEW\.review_note IS DISTINCT FROM OLD\.review_note\s*\n\s*OR NEW\.reviewed_at IS DISTINCT FROM OLD\.reviewed_at\s*\n\s*THEN NEW\.review_note END;/);
+    // the note is NEW's only when this write CHANGED it (normalised) — a fresh
+    // reviewed_at over a carried-over note does not re-attribute it
+    expect(fn).toMatch(/v_note := CASE WHEN quality_reason_key\(NEW\.review_note\) IS DISTINCT FROM quality_reason_key\(OLD\.review_note\)\s*\n\s*THEN NEW\.review_note END;/);
+    expect(fn).not.toMatch(/reviewed_at IS DISTINCT FROM/);
     expect(fn).not.toMatch(/v_stamped/);
     expect(m91).toMatch(/CREATE TRIGGER trg_turnover_items_review_event\s*\n\s*AFTER INSERT OR UPDATE OF status ON turnover_items\s*\n\s*FOR EACH ROW EXECUTE FUNCTION turnover_items_record_review_event\(\);/);
   });
-  it("quality_actor_name reads the users profile — the email's local part (the lib's actor name), else the display name", () => {
+  it("quality_actor_name reads the SIGN-IN email in auth.users (the lib's actor name) — never the self-editable users profile — and no client may call it", () => {
     const fn = between(m91, "CREATE OR REPLACE FUNCTION quality_actor_name(p_uid uuid)", "$$;");
     expect(fn).toMatch(/LANGUAGE sql STABLE\s*\n\s*SET search_path = public/);
-    expect(fn).toContain("SELECT COALESCE(NULLIF(split_part(u.email, '@', 1), ''), NULLIF(btrim(u.display_name), ''))");
-    expect(fn).toContain("FROM users u WHERE u.id = p_uid;");
+    expect(fn).toContain("SELECT NULLIF(split_part(u.email, '@', 1), '') FROM auth.users u WHERE u.id = p_uid;");
+    expect(fn).not.toMatch(/FROM users u|display_name/);
+    expect(m91).toContain("REVOKE EXECUTE ON FUNCTION quality_actor_name(uuid) FROM PUBLIC, anon, authenticated;");
   });
 });
 
 describe("20261091 — SAF-4 / GAP-405: the reason bar at the database", () => {
   const reasonFn = between(m91, "CREATE OR REPLACE FUNCTION quality_reason_ok(p_reason text)", "COMMENT ON FUNCTION quality_reason_ok(text)");
-  it("quality_reason_ok mirrors reasonProblem(): the same minimum and the same canned list", () => {
+  it("quality_reason_ok mirrors reasonProblem(): the same minimum, the same canned list, and the same two character classes (Unicode whitespace, zero-width)", () => {
     expect(reasonFn).toMatch(/LANGUAGE sql IMMUTABLE\s*\n\s*SET search_path = public/);
-    expect(reasonFn).toContain(`length(regexp_replace(COALESCE(p_reason, ''), '\\s', '', 'g')) >= ${REASON_MIN_LENGTH}`);
+    expect(reasonFn).toContain(`length(regexp_replace(COALESCE(p_reason, ''), '[${REASON_SPACE_CLASS}${REASON_INVISIBLE_CLASS}]', '', 'g')) >= ${REASON_MIN_LENGTH}`);
     const list = /NOT IN \(([^)]*)\)/.exec(reasonFn)![1].split(",").map((x) => x.trim().replace(/^'|'$/g, ""));
     expect(list).toEqual([...CANNED_REASONS]);
-    expect(reasonFn).toMatch(/lower\(regexp_replace\(COALESCE\(p_reason, ''\), '\^\\s\+\|\\s\+\$', '', 'g'\)\)/);
+    // the canned check compares the normalised key — the same expression as quality_reason_key
+    const keyExpr = `lower(btrim(regexp_replace(regexp_replace(COALESCE(p_reason, ''), '[${REASON_INVISIBLE_CLASS}]', '', 'g'), '[${REASON_SPACE_CLASS}]+', ' ', 'g')))`;
+    expect(reasonFn).toContain(`COALESCE(${keyExpr}, '')`);
+    const keyFn = between(m91, "CREATE OR REPLACE FUNCTION quality_reason_key(p_reason text)", "$$;");
+    expect(keyFn).toMatch(/LANGUAGE sql IMMUTABLE\s*\n\s*SET search_path = public/);
+    expect(keyFn).toContain(`SELECT NULLIF(${keyExpr}, '');`);
+    // the classes, as the lib builds them, strip what the verifier fed the bar
+    const sp = new RegExp(`[${REASON_SPACE_CLASS}${REASON_INVISIBLE_CLASS}]`, "g");
+    expect("\u00a0".repeat(10).replace(sp, "")).toBe("");
+    expect("\u200b".repeat(10).replace(sp, "")).toBe("");
+    // the final SELECT probes it functionally with a no-break space and a zero-width space
+    const tail = m91.slice(m91.indexOf("\nCOMMIT;"));
+    expect(tail).toContain("AND NOT quality_reason_ok(repeat(chr(160), 10))");
+    expect(tail).toContain("AND NOT quality_reason_ok(repeat(chr(8203), 12))");
   });
   const rail = (name: string) => between(m91, `CREATE OR REPLACE FUNCTION ${name}()`, "$$;");
   it("turnover_items: waive, reject and any move out of accepted / waived (a reopen) need their OWN reason — a note that changed and meets the bar", () => {
@@ -390,27 +417,29 @@ describe("20261091 — SAF-4 / GAP-405: the reason bar at the database", () => {
     expect(fn).toMatch(/v_moved := TG_OP = 'INSERT' OR NEW\.status IS DISTINCT FROM OLD\.status;/);
     expect(fn).toMatch(/ELSIF NEW\.status IN \('waived', 'rejected'\)\s*\n\s*OR \(TG_OP = 'UPDATE' AND OLD\.status IN \('accepted', 'waived'\) AND NEW\.status NOT IN \('accepted', 'waived'\)\) THEN/);
     // the note on the row is the earlier decision's: it must CHANGE, and meet the bar
-    expect(fn).toMatch(/IF \(TG_OP = 'UPDATE' AND NEW\.review_note IS NOT DISTINCT FROM OLD\.review_note\)\s*\n\s*OR NOT quality_reason_ok\(NEW\.review_note\) THEN\s*\n\s*RAISE EXCEPTION/);
-    // trigger timing covers a note-only or reviewer-only write, not just a status change
-    expect(m91).toMatch(/CREATE TRIGGER trg_turnover_items_decision_rail\s*\n\s*BEFORE INSERT OR UPDATE OF status, review_note, reviewed_by, reviewed_by_name, reviewed_at ON turnover_items/);
+    expect(fn).toMatch(/IF \(TG_OP = 'UPDATE' AND quality_reason_key\(NEW\.review_note\) IS NOT DISTINCT FROM quality_reason_key\(OLD\.review_note\)\)\s*\n\s*OR NOT quality_reason_ok\(NEW\.review_note\) THEN\s*\n\s*RAISE EXCEPTION/);
+    // trigger timing covers a note-, reviewer- or document-only write, not just a status change
+    expect(m91).toMatch(/CREATE TRIGGER trg_turnover_items_decision_rail\s*\n\s*BEFORE INSERT OR UPDATE OF status, review_note, reviewed_by, reviewed_by_name, reviewed_at, document_id ON turnover_items/);
   });
-  it("turnover_items: a standing decision keeps its note, reviewer and date — a note can be neither cleared nor cut below the bar (nor swapped) while it stands", () => {
+  it("turnover_items: a standing decision keeps its note, reviewer, date and reviewed document — only a document delete (ON DELETE SET NULL, one trigger level down) may null the reference", () => {
     const fn = rail("turnover_items_decision_rail");
-    expect(fn).toMatch(/IF NOT v_moved THEN[\s\S]*?IF OLD\.status IN \('accepted', 'waived', 'rejected'\)\s*\n\s*AND \(NEW\.review_note IS DISTINCT FROM OLD\.review_note\s*\n\s*OR NEW\.reviewed_by IS DISTINCT FROM OLD\.reviewed_by\s*\n\s*OR NEW\.reviewed_by_name IS DISTINCT FROM OLD\.reviewed_by_name\s*\n\s*OR NEW\.reviewed_at IS DISTINCT FROM OLD\.reviewed_at\) THEN\s*\n\s*RAISE EXCEPTION/);
+    expect(fn).toMatch(/IF NOT v_moved THEN[\s\S]*?IF OLD\.status IN \('accepted', 'waived', 'rejected'\)\s*\n\s*AND \(NEW\.review_note IS DISTINCT FROM OLD\.review_note\s*\n\s*OR NEW\.reviewed_by IS DISTINCT FROM OLD\.reviewed_by\s*\n\s*OR NEW\.reviewed_by_name IS DISTINCT FROM OLD\.reviewed_by_name\s*\n\s*OR NEW\.reviewed_at IS DISTINCT FROM OLD\.reviewed_at\s*\n\s*OR \(NEW\.document_id IS DISTINCT FROM OLD\.document_id\s*\n\s*AND NOT \(NEW\.document_id IS NULL AND pg_trigger_depth\(\) > 1\)\)\) THEN\s*\n\s*RAISE EXCEPTION/);
   });
   it("turnover_items: the reviewer on the row is the caller — uid and profile name stamped on every decision / reopen and on any write that names a reviewer", () => {
     const fn = rail("turnover_items_decision_rail");
     expect(fn).toMatch(/IF \(v_moved AND \(NEW\.status IN \('accepted', 'waived', 'rejected'\)\s*\n\s*OR \(TG_OP = 'UPDATE' AND OLD\.status IN \('accepted', 'waived'\)\)\)\)/);
-    expect(fn).toMatch(/NEW\.reviewed_by := auth\.uid\(\);\s*\n\s*NEW\.reviewed_by_name := quality_actor_name\(auth\.uid\(\)\);/);
+    expect(fn).toMatch(/NEW\.reviewed_by := auth\.uid\(\);\s*\n\s*NEW\.reviewed_by_name := quality_actor_name\(auth\.uid\(\)\);\s*\n\s*NEW\.reviewed_at := NOW\(\);/);
   });
-  it("punch_items: void needs its OWN reason in closure_note; a standing void keeps it; the closer is the caller", () => {
+  it("punch_items: void needs its OWN reason in closure_note; a standing closure keeps its closer and date (a void its reason too); the closer is the caller, the date the server's", () => {
     const fn = rail("punch_items_void_rail");
     expect(fn).toMatch(/SECURITY DEFINER SET search_path = public/);
     expect(fn).toMatch(/IF auth\.uid\(\) IS NULL THEN RETURN NEW; END IF;/);
+    expect(fn).toMatch(/IF NEW\.status IN \('done', 'void'\)\s*\n\s*AND \(NEW\.closed_by IS DISTINCT FROM OLD\.closed_by\s*\n\s*OR NEW\.closed_by_name IS DISTINCT FROM OLD\.closed_by_name\s*\n\s*OR NEW\.closed_at IS DISTINCT FROM OLD\.closed_at\) THEN\s*\n\s*RAISE EXCEPTION/);
     expect(fn).toMatch(/IF NEW\.status = 'void' AND NEW\.closure_note IS DISTINCT FROM OLD\.closure_note THEN\s*\n\s*RAISE EXCEPTION 'A void keeps its reason/);
-    expect(fn).toMatch(/ELSIF NEW\.status = 'void'\s*\n\s*AND \(\(TG_OP = 'UPDATE' AND NEW\.closure_note IS NOT DISTINCT FROM OLD\.closure_note\)\s*\n\s*OR NOT quality_reason_ok\(NEW\.closure_note\)\) THEN/);
+    expect(fn).toMatch(/ELSIF NEW\.status = 'void'\s*\n\s*AND \(\(TG_OP = 'UPDATE' AND quality_reason_key\(NEW\.closure_note\) IS NOT DISTINCT FROM quality_reason_key\(OLD\.closure_note\)\)\s*\n\s*OR NOT quality_reason_ok\(NEW\.closure_note\)\) THEN/);
     expect(fn).toMatch(/NEW\.closed_by := auth\.uid\(\);\s*\n\s*NEW\.closed_by_name := quality_actor_name\(auth\.uid\(\)\);/);
-    expect(m91).toMatch(/CREATE TRIGGER trg_punch_items_void_rail\s*\n\s*BEFORE INSERT OR UPDATE OF status, closure_note, closed_by, closed_by_name ON punch_items/);
+    expect(fn).toMatch(/IF v_moved AND NEW\.status IN \('done', 'void'\) THEN\s*\n\s*NEW\.closed_at := NOW\(\);/);
+    expect(m91).toMatch(/CREATE TRIGGER trg_punch_items_void_rail\s*\n\s*BEFORE INSERT OR UPDATE OF status, closure_note, closed_by, closed_by_name, closed_at ON punch_items/);
   });
   describe("checklist_items_decision_rail — the machine actor, the person, and the frozen completion", () => {
     const fn = () => rail("checklist_items_decision_rail");
@@ -422,38 +451,78 @@ describe("20261091 — SAF-4 / GAP-405: the reason bar at the database", () => {
       expect(m91).toContain("DROP FUNCTION IF EXISTS checklist_items_na_rail();");
       expect(m91).not.toMatch(/CREATE OR REPLACE FUNCTION checklist_items_na_rail/);
     });
-    it("a completed checklist is frozen: a signed-in insert, change or delete of its items is refused (a cascade from deleting the checklist is not an item edit)", () => {
-      expect(fn()).toMatch(/SELECT bool_or\(c\.status = 'complete'\) INTO v_frozen\s*\n\s*FROM project_checklists c\s*\n\s*WHERE \(TG_OP <> 'INSERT' AND c\.id = OLD\.checklist_id\)\s*\n\s*OR \(TG_OP <> 'DELETE' AND c\.id = NEW\.checklist_id\);/);
-      expect(fn()).toMatch(/IF COALESCE\(v_frozen, false\) AND pg_trigger_depth\(\) = 1 THEN\s*\n\s*RAISE EXCEPTION 'This checklist is complete/);
-      // the freeze is checked before anything else a signed-in write may do
-      expect(fn().indexOf("v_frozen")).toBeLessThan(fn().indexOf("IF NEW.updated_by IS NULL THEN"));
+    it("an item leaves only with its checklist: a signed-in single-item DELETE is refused (a cascade from the checklist, project or org runs one trigger level down and passes), and an item never moves", () => {
+      const f = fn();
+      expect(f).toMatch(/IF TG_OP = 'DELETE' THEN\s*\n\s*IF pg_trigger_depth\(\) > 1 THEN RETURN OLD; END IF;\s*\n\s*RAISE EXCEPTION 'A checklist item is never deleted on its own/);
+      expect(f).toMatch(/IF TG_OP = 'UPDATE' AND NEW\.checklist_id IS DISTINCT FROM OLD\.checklist_id THEN\s*\n\s*RAISE EXCEPTION/);
     });
-    it("updated_by NULL is the machine actor: the two sentinel names (pinned to the lib), never on a person's item, no note, no person chip, a green carries its auto citation", () => {
+    it("every item write SHARE-locks its checklist row BEFORE reading its status — it serialises with a completion — and a completed checklist is frozen (probed)", () => {
+      const f = fn();
+      expect(f).toContain("PERFORM 1 FROM project_checklists c WHERE c.id = NEW.checklist_id FOR SHARE;");
+      expect(f).toMatch(/SELECT c\.status = 'complete' INTO v_frozen FROM project_checklists c WHERE c\.id = NEW\.checklist_id;\s*\n\s*IF COALESCE\(v_frozen, false\) THEN\s*\n\s*RAISE EXCEPTION 'This checklist is complete/);
+      expect(f.indexOf("FOR SHARE;")).toBeLessThan(f.indexOf("INTO v_frozen"));
+      expect(f.indexOf("INTO v_frozen")).toBeLessThan(f.indexOf("IF NEW.updated_by IS NULL THEN"));
+      const tail = m91.slice(m91.indexOf("\nCOMMIT;"));
+      expect(tail).toContain("p.prosrc LIKE '%PERFORM 1 FROM project_checklists c WHERE c.id = NEW.checklist_id FOR SHARE%'");
+    });
+    it("updated_by NULL is the machine actor, bounded to exactly what each machine writes: the two sentinel names (pinned to the lib), never a person's item, no note, no person chip; the sweep's and the assessment's own columns and transitions", () => {
       const f = fn();
       const lists = [...f.matchAll(/NEW\.updated_by_name NOT IN \(([^)]*)\)/g)].map((m) => m[1].split(",").map((x) => x.trim().replace(/^'|'$/g, "")));
       expect(lists).toHaveLength(2);
       for (const l of lists) expect(l).toEqual([MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT]);
       expect(f).toMatch(/IF NEW\.updated_by_name IS NULL OR NEW\.updated_by_name NOT IN/);
-      expect(f).toMatch(/IF OLD\.manual_note IS NOT NULL OR COALESCE\(OLD\.evidence, '\[\]'::jsonb\) @> '\[\{"source": "manual"\}\]'::jsonb THEN/);
-      expect(f).toMatch(/IF NEW\.manual_note IS NOT NULL\s*\n\s*OR checklist_non_auto_chips\(NEW\.evidence\) IS DISTINCT FROM checklist_non_auto_chips\(OLD\.evidence\) THEN/);
-      expect(f).toMatch(/IF NEW\.status = 'satisfied'\s*\n\s*AND \(OLD\.status IS DISTINCT FROM 'satisfied' OR NEW\.evidence IS DISTINCT FROM OLD\.evidence\)\s*\n\s*AND NOT COALESCE\(NEW\.evidence, '\[\]'::jsonb\) @> '\[\{"source": "auto"\}\]'::jsonb THEN/);
+      // human territory, as isHumanTerritory reads it: any VISIBLE note (an empty or blank one is none) or a person chip
+      expect(f).toMatch(/IF quality_reason_key\(OLD\.manual_note\) IS NOT NULL OR COALESCE\(OLD\.evidence, '\[\]'::jsonb\) @> '\[\{"source": "manual"\}\]'::jsonb THEN/);
+      expect(f).toMatch(/IF NEW\.manual_note IS DISTINCT FROM OLD\.manual_note\s*\n\s*OR checklist_chips\(NEW\.evidence, false\) IS DISTINCT FROM checklist_chips\(OLD\.evidence, false\) THEN/);
+      // the columns that changed, and each machine's allow-list (what runAutoEvidence / applyAssessment send)
+      expect(f).toMatch(/FROM jsonb_each\(to_jsonb\(NEW\)\) n\s*\n\s*WHERE n\.value IS DISTINCT FROM \(to_jsonb\(OLD\) -> n\.key\);/);
+      expect(f).toContain("IF NOT v_changed <@ ARRAY['status', 'evidence', 'updated_at', 'updated_by', 'updated_by_name']");
+      expect(f).toMatch(/OR OLD\.applicability = 'na' OR OLD\.status = 'na'\s*\n\s*OR \(NEW\.status IS DISTINCT FROM OLD\.status AND NEW\.status NOT IN \('satisfied', 'needs_evidence'\)\) THEN/);
+      expect(f).toContain("IF NOT v_changed <@ ARRAY['applicability', 'ai_rationale', 'status', 'updated_at', 'updated_by', 'updated_by_name']");
+      expect(f).toMatch(/AND NOT \(\(NEW\.status = 'na' AND NEW\.applicability = 'na'\)\s*\n\s*OR \(OLD\.status = 'na' AND NEW\.status = 'open' AND NEW\.applicability = 'applies'\)\)\)/);
+      // QUAL-5 at the database: never an N/A on a satisfied or evidence-bearing item
+      expect(f).toMatch(/OR \(NEW\.applicability = 'na'\s*\n\s*AND \(OLD\.status = 'satisfied'\s*\n\s*OR jsonb_array_length\(CASE WHEN jsonb_typeof\(OLD\.evidence\) = 'array' THEN OLD\.evidence ELSE '\[\]'::jsonb END\) > 0\)\) THEN/);
+      // text, section, seq … are in neither list
+      for (const col of ["text", "section", "seq", "manual_note", "checklist_id", "org_id"]) {
+        expect(f).not.toMatch(new RegExp(`ARRAY\\[[^\\]]*'${col}'`));
+      }
       // a row born with no actor (createChecklist) is born undecided
       expect(f).toMatch(/IF NEW\.status <> 'open' OR NEW\.applicability = 'na' OR NEW\.manual_note IS NOT NULL/);
-      const chips = between(m91, "CREATE OR REPLACE FUNCTION checklist_non_auto_chips(p_evidence jsonb)", "$$;");
+      const chips = between(m91, "CREATE OR REPLACE FUNCTION checklist_chips(p_evidence jsonb, p_auto boolean)", "$$;");
       expect(chips).toMatch(/LANGUAGE sql IMMUTABLE\s*\n\s*SET search_path = public/);
-      expect(chips).toMatch(/WHERE e\.value->>'source' IS DISTINCT FROM 'auto';/);
+      expect(chips).toMatch(/WHERE \(e\.value->>'source' IS NOT DISTINCT FROM 'auto'\) = p_auto;/);
       expect(chips).toMatch(/jsonb_agg\(e\.value ORDER BY e\.ordinality\)/);
+      expect(m91).toContain("DROP FUNCTION IF EXISTS checklist_non_auto_chips(jsonb);");
     });
-    it("every other signed-in write is a person's: stamped with the caller, a decision needs a note that CHANGED, and a note meets the bar and is never cleared", () => {
+    it("a sweep green's citation must RESOLVE to its row — an admitted document of the workspace, an accepted turnover item or a human MI completion of the project; a label alone proves nothing", () => {
+      const f = fn();
+      expect(f).toMatch(/IF NEW\.status = 'satisfied'\s*\n\s*AND \(OLD\.status IS DISTINCT FROM 'satisfied' OR NEW\.evidence IS DISTINCT FROM OLD\.evidence\)\s*\n\s*AND NOT checklist_auto_citation_ok\(NEW\.checklist_id, NEW\.org_id, NEW\.evidence\) THEN/);
+      const cite = between(m91, "CREATE OR REPLACE FUNCTION checklist_auto_citation_ok(p_checklist_id uuid, p_org_id uuid, p_evidence jsonb)", "$$;");
+      expect(cite).toMatch(/LANGUAGE sql STABLE\s*\n\s*SET search_path = public/);
+      expect(cite).not.toMatch(/SECURITY DEFINER/);
+      expect(cite).toMatch(/WHERE e->>'source' = 'auto'/);
+      // the register's rule, as the lib's gather admits a document (EVIDENCE_DOCUMENT_STATUSES)
+      const libStatuses = /EVIDENCE_DOCUMENT_STATUSES: ReadonlyArray<string> = \[([^\]]*)\]/.exec(readFileSync(join(process.cwd(), "lib", "checklists.ts"), "utf8"))![1];
+      expect(cite).toContain(`d.status IN (${libStatuses.replace(/"/g, "'")})`);
+      expect(cite).toMatch(/WHERE d\.id = quality_try_uuid\(e->>'documentId'\) AND d\.org_id = p_org_id/);
+      expect(cite).toMatch(/JOIN document_versions v ON v\.id = d\.current_version_id/);
+      expect(cite).toMatch(/AND NOT \(v\.provenance = 'external' AND v\.review_state IS DISTINCT FROM 'approved'\)/);
+      expect(cite).toMatch(/WHERE t\.id = quality_try_uuid\(e->>'turnoverItemId'\)\s*\n\s*AND t\.project_id = c\.project_id AND t\.status = 'accepted'/);
+      expect(cite).toMatch(/WHERE m\.id = quality_try_uuid\(e->>'checklistId'\)\s*\n\s*AND m\.project_id = c\.project_id AND m\.id <> c\.id\s*\n\s*AND m\.kind = 'mi' AND m\.status = 'complete' AND m\.completed_basis = 'human'/);
+      const uuidFn = between(m91, "CREATE OR REPLACE FUNCTION quality_try_uuid(p_text text)", "$$;");
+      expect(uuidFn).toMatch(/CASE WHEN p_text ~\* '\^\[0-9a-f\]\{8\}-/);
+    });
+    it("every other signed-in write is a person's: stamped with the caller, the machine's citations left alone, a decision needs a note that CHANGED (normalised), and a note meets the bar and is never cleared", () => {
       const f = fn();
       expect(f).toMatch(/NEW\.updated_by := auth\.uid\(\);\s*\n\s*NEW\.updated_by_name := quality_actor_name\(auth\.uid\(\)\);/);
-      expect(f).toMatch(/v_note_changed := CASE WHEN TG_OP = 'INSERT' THEN NEW\.manual_note IS NOT NULL\s*\n\s*ELSE NEW\.manual_note IS DISTINCT FROM OLD\.manual_note END;/);
+      expect(f).toMatch(/IF checklist_chips\(NEW\.evidence, true\)\s*\n\s*IS DISTINCT FROM checklist_chips\(CASE WHEN TG_OP = 'UPDATE' THEN OLD\.evidence END, true\) THEN/);
+      expect(f).toMatch(/v_note_changed := CASE WHEN TG_OP = 'INSERT' THEN quality_reason_key\(NEW\.manual_note\) IS NOT NULL\s*\n\s*ELSE quality_reason_key\(NEW\.manual_note\) IS DISTINCT FROM quality_reason_key\(OLD\.manual_note\) END;/);
       expect(f).toMatch(/v_decides := CASE WHEN TG_OP = 'INSERT' THEN NEW\.status <> 'open' OR NEW\.applicability = 'na'\s*\n\s*ELSE NEW\.status IS DISTINCT FROM OLD\.status OR NEW\.applicability IS DISTINCT FROM OLD\.applicability END;/);
       expect(f).toMatch(/IF v_decides AND NOT v_note_changed THEN\s*\n\s*RAISE EXCEPTION/);
       expect(f).toMatch(/IF v_note_changed AND NOT quality_reason_ok\(NEW\.manual_note\) THEN\s*\n\s*RAISE EXCEPTION/);
       // the person branch comes after the machine branch returned
       expect(f.indexOf("NEW.updated_by := auth.uid();")).toBeGreaterThan(f.indexOf("IF NEW.updated_by IS NULL THEN"));
-    });
+  });
   });
   it("the final SELECT probes the rails functionally and by shape", () => {
     const tail = m91.slice(m91.indexOf("\nCOMMIT;"));
@@ -471,7 +540,7 @@ describe("20261091 — QUAL-7 / QUAL-2 columns and backfill", () => {
       expect(m91).toMatch(new RegExp(`ALTER TABLE punch_items ADD COLUMN IF NOT EXISTS ${c} TEXT;`));
     }
   });
-  it("checklist_completion_basis() is completionBasis()'s rule: an unfinished item, a green on the sweep alone, an N/A with no reason that meets the bar, or no human green at all → auto; else human", () => {
+  it("checklist_completion_basis() is completionBasis()'s rule: an unfinished item, a green with no person's reason (a chip alone is not one), an N/A with no reason that meets the bar, or no human green at all → auto; else human", () => {
     expect(m91).toMatch(/ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS completed_basis TEXT\s*\n\s*CHECK \(completed_basis IS NULL OR completed_basis IN \('human','auto'\)\);/);
     const fn = between(m91, "CREATE OR REPLACE FUNCTION checklist_completion_basis(p_checklist_id uuid)", "COMMENT ON FUNCTION checklist_completion_basis(uuid)");
     expect(fn).toMatch(/LANGUAGE sql STABLE\s*\n\s*SET search_path = public/);
@@ -481,15 +550,17 @@ describe("20261091 — QUAL-7 / QUAL-2 columns and backfill", () => {
     // 1. an applicable item neither green nor N/A (isBlockingItem)
     expect(whens[0]).toMatch(/AND i\.applicability <> 'na' AND i\.status NOT IN \('satisfied', 'na'\)\)/);
     expect(whens[0]).toMatch(/THEN 'auto'/);
-    // 2. a green resting on the sweep alone (no note that meets the bar, no person chip)
-    expect(whens[1]).toMatch(/i\.status = 'satisfied' AND i\.applicability <> 'na'\s*\n\s*AND NOT quality_reason_ok\(i\.manual_note\)\s*\n\s*AND NOT EXISTS \(SELECT 1 FROM jsonb_array_elements/);
+    // 2. a green with no person's reason (no note that meets the bar — a person chip alone is not a reason)
+    expect(whens[1]).toMatch(/i\.status = 'satisfied' AND i\.applicability <> 'na'\s*\n\s*AND NOT quality_reason_ok\(i\.manual_note\)\)/);
     expect(whens[1]).toMatch(/THEN 'auto'/);
     // 3. an N/A with no reason that meets the bar
     expect(whens[2]).toMatch(/AND \(i\.status = 'na' OR i\.applicability = 'na'\)\s*\n\s*AND NOT quality_reason_ok\(i\.manual_note\)\)/);
     expect(whens[2]).toMatch(/THEN 'auto'/);
-    // 4. no green a person decided (a note that meets the bar, or a person-attached chip)
+    // 4. no green a person decided (a note that meets the bar)
     expect(fn).toMatch(/WHEN NOT EXISTS \(/);
-    expect(whens[3]).toMatch(/i\.status = 'satisfied' AND i\.applicability <> 'na'\s*\n\s*AND \(quality_reason_ok\(i\.manual_note\)\s*\n\s*OR EXISTS \(SELECT 1 FROM jsonb_array_elements/);
+    expect(whens[3]).toMatch(/i\.status = 'satisfied' AND i\.applicability <> 'na'\s*\n\s*AND quality_reason_ok\(i\.manual_note\)\)/);
+    // a person-attached chip is read nowhere in the rule (the verifier's chip laundering)
+    expect(fn).not.toMatch(/'manual'|jsonb_array_elements/);
     expect(whens[3]).toMatch(/THEN 'auto'\s*\n\s*ELSE 'human'/);
     // "any note" is never a person's reason (the laundering the verifier reproduced with 'x')
     expect(fn).not.toMatch(/COALESCE\(i\.manual_note, ''\)/);
@@ -506,7 +577,10 @@ describe("20261091 — QUAL-7 / QUAL-2 columns and backfill", () => {
     const fn = between(m91, "CREATE OR REPLACE FUNCTION project_checklists_completion_basis_rail()", "COMMENT ON FUNCTION project_checklists_completion_basis_rail()");
     expect(fn).toMatch(/SECURITY DEFINER SET search_path = public/);
     expect(fn).toMatch(/IF auth\.uid\(\) IS NULL THEN RETURN NEW; END IF;/);
-    expect(fn).toMatch(/IF NEW\.status = 'complete' THEN\s*\n\s*IF TG_OP = 'UPDATE' AND OLD\.status = 'complete' THEN\s*\n\s*NEW\.completed_basis := OLD\.completed_basis;/);
+    expect(fn).toMatch(/IF NEW\.status = 'complete' THEN\s*\n\s*IF TG_OP = 'UPDATE' AND OLD\.status = 'complete' THEN/);
+    // a completion keeps its kind (a QA/QC completion never becomes a citable MI one) and its project
+    expect(fn).toMatch(/IF NEW\.kind IS DISTINCT FROM OLD\.kind OR NEW\.project_id IS DISTINCT FROM OLD\.project_id THEN\s*\n\s*RAISE EXCEPTION 'A completed checklist keeps its kind and its project/);
+    expect(fn).toMatch(/END IF;\s*\n\s*NEW\.completed_basis := OLD\.completed_basis;/);
     // setChecklistStatus's gate, mirrored exactly: items exist, and none is blocking (isBlockingItem)
     expect(fn).toMatch(/IF NOT EXISTS \(SELECT 1 FROM checklist_items i WHERE i\.checklist_id = NEW\.id\) THEN\s*\n\s*RAISE EXCEPTION 'This checklist has no items/);
     expect(fn).toMatch(/AND i\.applicability <> 'na' AND i\.status NOT IN \('satisfied', 'na'\);\s*\n\s*IF v_blocking > 0 THEN\s*\n\s*RAISE EXCEPTION/);
@@ -517,7 +591,7 @@ describe("20261091 — QUAL-7 / QUAL-2 columns and backfill", () => {
   });
   it("jsonb_array_elements never meets a non-array (an object or a JSON null in evidence would abort the script)", () => {
     const calls = [...m91.matchAll(/jsonb_array_elements\(([^)]*\)?[^)]*)\)/g)];
-    expect(calls.length).toBeGreaterThan(5);
+    expect(calls.length).toBeGreaterThanOrEqual(5);
     for (const m of calls) {
       expect(m[0], m[0]).toMatch(/CASE WHEN jsonb_typeof\((i\.evidence|p_evidence)\) = 'array' THEN \1 ELSE '\[\]'::jsonb END/);
     }
