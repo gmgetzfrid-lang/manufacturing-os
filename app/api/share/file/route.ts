@@ -23,10 +23,14 @@
 // checked and FAILS CLOSED: a controlled copy does not leave the building
 // unrecorded (DIST-7 / EGR-3 / SHR-5 / PHYS-8).
 //
-// ⚠ DEPLOY GATE: the record needs 20261068's columns (share_id, source,
-// nullable user_id). Until 20261068 is applied every share download is
-// refused 503 "unrecorded" — apply 20261068 → 20261080 → 20261081 BEFORE
-// this route deploys. A missing column is logged as exactly that.
+// Deploy order: the record's share-attributed shape needs 20261068's
+// columns (share_id, source, nullable user_id); apply 20261068 → 20261080 →
+// 20261081 before this route deploys. If it deploys first anyway, a refusal
+// that IS the missing migration is logged as exactly that and the record is
+// retried ONCE in the pre-20261068 shape (the real columns only, attributed
+// to the sharer as the table required then) — the copy is recorded and
+// served, never refused wholesale. Only when that retry also fails, or the
+// first refusal is anything else, is the download refused 503 "unrecorded".
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -108,25 +112,35 @@ export async function GET(req: NextRequest) {
   // (DEC-44 §1): user_id NULL, share_id set, the channel in `source`. A
   // checked write — a refusal (column drift, a missing migration, RLS) is
   // logged loudly and the copy does NOT go out unrecorded.
-  const { error: auditError } = await sb.from("download_audits").insert({
+  const base = {
     org_id: share.org_id,
     document_id: doc.id,
     version_id: version.id,
-    user_id: null,
     user_email: null,
     created_at: new Date().toISOString(),
     expires_at: share.expires_at ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
     watermark_policy_id: null,
+  };
+  let { error: auditError } = await sb.from("download_audits").insert({
+    ...base,
+    user_id: null,
     source: stamped ? "share_link" : "share_link_unstamped",
     share_id: share.id,
   });
+  if (auditError && missingRecordColumn(auditError)) {
+    // 20261068 is not applied yet: the table has no share_id / source and
+    // user_id is NOT NULL. Record the copy in the shape the table has — the
+    // pre-DEC-44 attribution to the sharer — rather than lock every outside
+    // recipient out until the paste lands.
+    console.error("[share/file] DEPLOY ORDER: download_audits lacks the 20261068 columns (share_id / source) — apply 20261068 → 20261080 → 20261081; recording this share download in the pre-20261068 shape (attributed to the sharer)", {
+      share: share.id, document: doc.id, version: version.id, stamped, message: auditError.message,
+    });
+    ({ error: auditError } = await sb.from("download_audits").insert({ ...base, user_id: share.created_by }));
+  }
   if (auditError) {
     console.error("[share/file] download_audits insert failed — share download refused, nothing left the building", {
       share: share.id, document: doc.id, version: version.id, message: auditError.message,
     });
-    if (missingRecordColumn(auditError)) {
-      console.error("[share/file] DEPLOY ORDER: download_audits lacks the 20261068 columns (share_id / source) — apply 20261068 → 20261080 → 20261081; every share download is refused until then");
-    }
     await recordShareAccess(sb, { share, documentId: doc.id, versionId: version.id, kind: "refused", reason: "unrecorded", ...meta });
     return NextResponse.json({ error: "unrecorded" }, { status: 503 });
   }
@@ -147,7 +161,8 @@ export async function GET(req: NextRequest) {
 /** A refused record write that is the unapplied 20261068, not a transient:
  *  PostgREST's unknown-column (PGRST204) / Postgres' undefined_column (42703),
  *  a message naming one of the columns 20261068 adds, or the pre-20261068
- *  NOT NULL on user_id refusing a share's (user-less) row. */
+ *  NOT NULL on user_id refusing a share's (user-less) row. Only this earns
+ *  the one pre-20261068-shape retry; anything else refuses the download. */
 function missingRecordColumn(e: { code?: string; message?: string }): boolean {
   const msg = e.message ?? "";
   return e.code === "PGRST204" || e.code === "42703" || /\b(share_id|source)\b/.test(msg)

@@ -15,7 +15,9 @@
 //     lib/holdGate, fail-closed). The database refuses the same set
 //     (document_share_refusal, 20261080).
 //   * HOW LONG: never-expires is gone; 90 days is the ceiling (lib/shareRules).
-//   * RECORD: creating and revoking a share writes an audit_logs row.
+//   * RECORD: creating and revoking a share writes an audit_logs row — a
+//     checked write: if it is refused the link change still stands, and the
+//     caller is handed `auditWarning` to say so (never a silent success).
 // A share always serves the CURRENT issued revision — there is no pinning.
 
 import { supabase } from "@/lib/supabase";
@@ -115,26 +117,43 @@ export async function canMintShare(input: {
 export const SHARE_MINT_REFUSED =
   "This link was not created. Only Document Control / Admin or a granted publisher of this library can share a document outside the organisation, and only an issued document that is not on hold.";
 
-/** Why this document cannot be shared right now, or null. Reads the
- *  document's status / archive flag and its active holds (fail-closed: an
- *  unreadable hold set is a refusal). */
-export async function describeShareRefusal(documentId: string): Promise<string | null> {
+/** Why this document cannot be shared right now, or null — and whether
+ *  that is CONFIRMED (the document's status / archive flag / an open hold,
+ *  the same set the public routes refuse) or only UNCONFIRMED (this
+ *  browser's read of the document or of its holds failed: minting is still
+ *  refused — fail-closed — but the service-role routes may well be serving
+ *  its existing links, so nothing may say they are not). */
+export type ShareRefusalState = { reason: string; confirmed: boolean };
+
+export async function shareRefusalState(documentId: string): Promise<ShareRefusalState | null> {
   const { data, error } = await supabase
     .from("documents")
     .select("status, archived_at")
     .eq("id", documentId)
     .maybeSingle();
-  if (error) return `Couldn't confirm the document's status (${error.message}); it is treated as unshareable.`;
-  if (!data) return "Document not found.";
+  if (error) return { reason: `Couldn't confirm the document's status (${error.message}); it is treated as unshareable.`, confirmed: false };
+  if (!data) return { reason: "Document not found.", confirmed: false };
   const byStatus = shareStatusRefusal({ status: data.status as string | null, archived_at: data.archived_at as string | null });
-  if (byStatus) return byStatus;
+  if (byStatus) return { reason: byStatus, confirmed: true };
   try {
     await assertNotOnHold(documentId, { action: "sharing it outside the organisation" });
   } catch (e) {
-    if (isHoldBlockedError(e)) return e.message;
+    if (isHoldBlockedError(e)) return { reason: e.message, confirmed: !e.unreadable };
     throw e;
   }
   return null;
+}
+
+/** Why this document cannot be shared right now, or null (fail-closed: an
+ *  unreadable document or hold set is a refusal). */
+export async function describeShareRefusal(documentId: string): Promise<string | null> {
+  return (await shareRefusalState(documentId))?.reason ?? null;
+}
+
+/** The sentence a caller shows when the link change stood but its
+ *  audit_logs row was refused. */
+export function shareAuditUnwritten(what: "created" | "revoked", detail: string): string {
+  return `The link was ${what}, but its audit record could not be written (${detail}). Tell Document Control so the record can be completed.`;
 }
 
 const isPolicyRefusal = (e: { code?: string; message?: string }) =>
@@ -154,7 +173,7 @@ export async function createShareLink(input: {
   note?: string;
   createdBy: string;
   createdByName?: string;
-}): Promise<DocumentShare> {
+}): Promise<DocumentShare & { auditWarning: string | null }> {
   const expiry = shareExpiryFor(input.expiresInDays);
   if (!expiry.ok) throw new Error(expiry.reason);
   const refusal = await describeShareRefusal(input.documentId);
@@ -176,7 +195,7 @@ export async function createShareLink(input: {
     );
   }
   const share = rowToShare(data as Record<string, unknown>);
-  await logAuditAction({
+  const { error: auditError } = await logAuditAction({
     action: "SHARE_LINK_CREATED",
     resourceId: input.documentId,
     resourceType: "document",
@@ -184,7 +203,7 @@ export async function createShareLink(input: {
     userId: input.createdBy,
     details: { shareId: share.id, expiresAt: share.expiresAt, note: share.note },
   });
-  return share;
+  return { ...share, auditWarning: auditError ? shareAuditUnwritten("created", auditError) : null };
 }
 
 export interface ShareLinkListing {
@@ -211,7 +230,7 @@ export async function listShareLinks(documentId: string): Promise<ShareLinkListi
   return { readable: out.readable === true, shares: (out.shares ?? []).map(rowToShare) };
 }
 
-export async function revokeShareLink(id: string, actorUserId: string): Promise<void> {
+export async function revokeShareLink(id: string, actorUserId: string): Promise<{ auditWarning: string | null }> {
   // .select() back the touched row: under the per-verb policies (20261022)
   // only the creator or an org controller matches the UPDATE, and RLS turns a
   // non-match into a 0-row success — error === null while the public token
@@ -233,11 +252,11 @@ export async function revokeShareLink(id: string, actorUserId: string): Promise<
       .select("id, revoked_at")
       .eq("id", id)
       .maybeSingle();
-    if (!readError && (current as { revoked_at?: string | null } | null)?.revoked_at) return;
+    if (!readError && (current as { revoked_at?: string | null } | null)?.revoked_at) return { auditWarning: null };
     throw new Error("This link was not revoked — only its creator or a Document Control/Admin can revoke it.");
   }
   const row = data[0] as { org_id?: string; document_id?: string };
-  await logAuditAction({
+  const { error: auditError } = await logAuditAction({
     action: "SHARE_LINK_REVOKED",
     resourceId: row.document_id ?? id,
     resourceType: "document",
@@ -245,6 +264,7 @@ export async function revokeShareLink(id: string, actorUserId: string): Promise<
     userId: actorUserId,
     details: { shareId: id },
   });
+  return { auditWarning: auditError ? shareAuditUnwritten("revoked", auditError) : null };
 }
 
 function rowToShare(r: Record<string, unknown>): DocumentShare {

@@ -10,9 +10,13 @@
 // Draft / Superseded / Void / Archived or held document is refused with the
 // reason before anything is inserted (and by the database if not). A share
 // always serves the CURRENT revision — stated here and on the landing page;
-// every link row says which revision it resolves to today, resolved by the
+// every link row says which revision the DOCUMENT resolves to today, by the
 // same rule the public routes run (lib/shareRules resolveServedVersion), or
-// that it is not serving and why.
+// that the document is not serving and why. What the modal cannot see per
+// row — whether that link's creator still holds the authority it serves on
+// — is stated under the list rather than guessed; and a refusal this
+// browser could not confirm (a failed read) says "couldn't confirm", never
+// "not serving".
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -21,7 +25,7 @@ import {
 } from "lucide-react";
 import {
   createShareLink, listShareLinks, revokeShareLink, loadShareDocumentContext, canMintShare,
-  describeShareRefusal, SHARE_MAX_DAYS, type DocumentShare, type ShareServedState,
+  shareRefusalState, SHARE_MAX_DAYS, type DocumentShare, type ShareServedState,
 } from "@/lib/documentShares";
 import { useRole } from "@/components/providers/RoleContext";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -61,6 +65,9 @@ export default function ShareLinkModal({
   // cannot be shared right now (status / archive / hold) — null = shareable.
   const [canMint, setCanMint] = useState<boolean | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
+  // false when the refusal is only "couldn't read it from here" — minting is
+  // still refused, but the routes (service role) may be serving the links.
+  const [refusalConfirmed, setRefusalConfirmed] = useState(true);
   const [currentRev, setCurrentRev] = useState<string | null>(null);
   const [docStatus, setDocStatus] = useState<string | null>(null);
   // What a link serves right now, by the routes' own rule (SHR-7).
@@ -71,6 +78,8 @@ export default function ShareLinkModal({
   // The listing's own failure, kept apart from the document context: a list
   // error says nothing about who may mint.
   const [listError, setListError] = useState<string | null>(null);
+  // A link change that stood but whose audit row was refused (non-fatal).
+  const [auditNotice, setAuditNotice] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [days, setDays] = useState<number>(30);
   const [copied, setCopied] = useState<string | null>(null);
@@ -90,7 +99,7 @@ export default function ShareLinkModal({
         // EGRESS-8: the caller cannot read the document, so the documents
         // read would come back empty ("Document not found") — there is no
         // context to load and nothing to mint. The amber notice says so.
-        setCanMint(null); setRefusal(null); setCurrentRev(null); setDocStatus(null); setServed(null);
+        setCanMint(null); setRefusal(null); setRefusalConfirmed(true); setCurrentRev(null); setDocStatus(null); setServed(null);
         return;
       }
       try {
@@ -100,10 +109,11 @@ export default function ShareLinkModal({
         setServed(ctx.served);
         const [allowed, why] = await Promise.all([
           canMintShare({ orgId, uid: createdBy, libraryId: ctx.libraryId, isController }),
-          describeShareRefusal(documentId),
+          shareRefusalState(documentId),
         ]);
         setCanMint(allowed);
-        setRefusal(why);
+        setRefusal(why?.reason ?? null);
+        setRefusalConfirmed(why?.confirmed ?? true);
       } catch (e) {
         // Unknown document state: neither "you may not mint" nor a Create box.
         setError((e as Error).message); setCanMint(null); setServed(null);
@@ -116,22 +126,28 @@ export default function ShareLinkModal({
   if (!isOpen) return null;
 
   const create = async () => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setAuditNotice(null);
     try {
-      await createShareLink({
+      const made = await createShareLink({
         orgId, documentId, expiresInDays: days,
         note: note.trim() || undefined,
         createdBy, createdByName,
       });
       setNote("");
       await refresh();
+      setAuditNotice(made.auditWarning);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
 
   const revoke = async (id: string) => {
     if (!(await appConfirm({ title: "Revoke share link", message: "Revoke this share link? Anyone using it loses access immediately.", tone: "danger" }))) return;
-    try { await revokeShareLink(id, createdBy); await refresh(); }
+    setAuditNotice(null);
+    try {
+      const done = await revokeShareLink(id, createdBy);
+      await refresh();
+      setAuditNotice(done.auditWarning);
+    }
     catch (e) { setError((e as Error).message); }
   };
 
@@ -142,11 +158,15 @@ export default function ShareLinkModal({
   const origin = publicOrigin();
   const baseUrl = origin ? `${origin}/share/` : "/share/";
   const showCreate = readable && canMint === true && refusal === null;
-  // What every live link resolves to today — the same answer for every row
-  // (a share always serves the current revision), stated the way the public
+  // What the DOCUMENT resolves to today — the same answer for every row (a
+  // share always serves the current revision), stated the way the public
   // routes would decide it: refused with the reason, no published file, or
-  // the served revision's own label.
+  // the served revision's own label. An UNCONFIRMED refusal (this browser's
+  // read failed) is said as exactly that. A per-link lapse (its creator
+  // left, lost read access or the sharing tier) is the server's to decide
+  // and is stated under the list.
   const resolvesTo: string | null = !readable || served === null ? null
+    : refusal && !refusalConfirmed ? "couldn't confirm whether it is serving"
     : refusal ? "not serving now — see above"
     : served.kind === "served" ? `resolves to Rev ${served.rev || "0"}`
     : served.kind === "none" ? "no published file to serve"
@@ -174,6 +194,12 @@ export default function ShareLinkModal({
           {error && (
             <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+            </div>
+          )}
+
+          {auditNotice && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {auditNotice}
             </div>
           )}
 
@@ -206,7 +232,9 @@ export default function ShareLinkModal({
           {readable && !loading && refusal && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>No new link can be created, and existing links are not serving: {refusal}</span>
+              {refusalConfirmed
+                ? <span>No new link can be created, and existing links are not serving: {refusal}</span>
+                : <span>No new link can be created: {refusal} Whether existing links are serving couldn&rsquo;t be confirmed from here &mdash; the server decides at each open and download.</span>}
             </div>
           )}
 
@@ -242,7 +270,7 @@ export default function ShareLinkModal({
             <div className="text-[10px] text-[var(--color-text-muted)]">
               Anyone with the resulting URL can download a stamped, uncontrolled copy until the link expires (at most {SHARE_MAX_DAYS} days) or you revoke it.
               A share always serves the <b>current</b> revision &mdash; today {served?.kind === "served" ? <>Rev {served.rev || "0"}</> : served?.kind === "none" ? <>no published file</> : <>unconfirmed</>}; if the document is revved, the same link serves the new revision.
-              It does not serve while the document is on hold, voided or archived (and serves again if that is undone); superseding the document revokes it. Every download is recorded on the distribution record.
+              A link stops serving while the document is held, withdrawn or archived, and may be revoked when it is superseded, split, merged or archived. Every download is recorded on the distribution record.
             </div>
           </div>}
 
@@ -336,6 +364,11 @@ export default function ShareLinkModal({
                   );
                 })}
               </ul>
+            )}
+            {!loading && shares.length > 0 && (
+              <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                A link serves on its creator&rsquo;s current authority: it also stops serving if they leave the organisation, can no longer read this document, or no longer hold Document Control / Admin or a publish grant on this library.
+              </div>
             )}
           </div>
         </div>

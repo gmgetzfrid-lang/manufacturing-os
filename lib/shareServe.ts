@@ -12,7 +12,12 @@
 //
 //   1. token shape → share row → revoked / expired (410)
 //   2. the document, org-joined (EGRESS-1) — a cross-org share is a 404
-//   3. the CREATOR's current authority (EGRESS-1 dw4) — lapsed is a 410
+//   3. the CREATOR's current authority (EGRESS-1 dw4) — lapsed is a 410:
+//      they can still read the document (shareStillAuthorized) AND still
+//      hold the minting tier (DEC-46 §1 — a controller by the role
+//      collection, or a granted publisher of the document's library:
+//      creatorMayShare). A link minted before the tier existed, or by a
+//      publisher whose grant was since withdrawn, stops serving.
 //   4. the document's control status: a Draft, a Superseded / Void /
 //      Archived document (NOT_CURRENT_STATUSES — the shared set, never an
 //      inline list) or one with archived_at set is REFUSED with the reason
@@ -35,18 +40,24 @@
 //
 // Every refusal AFTER the share row is known leaves one access row (kind
 // "refused" + the reason, SHR-10) when the route passes the request's
-// meta — bounded to one per share per minute by 20261081's unique index.
+// meta — bounded to one per share per minute by 20261081's unique index
+// (and a served open to one per share per client IP per minute).
 //
 // Pure of Next: it takes any client with `.from()` and returns a
 // discriminated result the routes turn into responses.
 
-import { assertNotOnHold, isHoldBlockedError, type HoldBlockedError, type HoldGateClient } from "@/lib/holdGate";
+import type { supabase } from "@/lib/supabase";
+import { assertNotOnHold, isHoldBlockedError, type HoldBlockedError } from "@/lib/holdGate";
 import { publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK } from "@/lib/holds";
+import { memberHoldsAny } from "@/lib/roleHeld";
 import { shareStillAuthorized } from "@/lib/shareAuthorization";
 import { resolveServedVersion, shareStatusRefusal, versionServable, type ServableVersion } from "@/lib/shareRules";
 
-/** A service-role client (createClient(...) in the route) — anything with `.from()`. */
-export type ShareServeClient = HoldGateClient;
+/** A service-role client (createClient(...) in the route) — `.from()` and `.rpc()`. */
+export type ShareServeClient = Pick<typeof supabase, "from" | "rpc">;
+
+/** The controller tier by the role COLLECTION (is_org_controller's set). */
+const SHARE_CONTROLLER_ROLES = ["Admin", "DocCtrl"] as const;
 
 export const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
@@ -68,6 +79,7 @@ export interface ShareDocument {
   status: string | null;
   archived_at: string | null;
   current_version_id: string | null;
+  library_id: string | null;
 }
 
 export type { ServableVersion };
@@ -127,7 +139,7 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
   // document and 404s before any byte is fetched.
   const { data: doc } = await sb
     .from("documents")
-    .select("id, document_number, title, name, rev, status, archived_at, current_version_id")
+    .select("id, document_number, title, name, rev, status, archived_at, current_version_id, library_id")
     .eq("id", s.document_id)
     .eq("org_id", s.org_id)
     .maybeSingle();
@@ -137,6 +149,10 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
   // Serve only on the creator's CURRENT authority (EGRESS-1 dw4): if they
   // left the org or lost read access to this document, the link is dead.
   if (!(await shareStillAuthorized(s.org_id, s.created_by, d.id))) return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
+  // ... and on their CURRENT sharing authority (DEC-46 §1): the tier that
+  // lets a copy out is checked when the copy leaves, not only when the link
+  // was minted.
+  if (!(await creatorMayShare(sb, s, d))) return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
 
   const withdrawn = shareStatusRefusal(d);
   if (withdrawn) return refuseKnown(410, { error: "withdrawn", reason: withdrawn, documentStatus: d.status ?? undefined }, "withdrawn");
@@ -158,6 +174,39 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
   if (versionError) console.error("[share] document_versions read failed — nothing served", { share: s.id, document: d.id, message: versionError });
 
   return { ok: true, share: s, doc: d, version };
+}
+
+/** May the share's creator STILL let this document out? The minting tier
+ *  (DEC-46 §1, 20261080's INSERT arm) re-asked at serve time: an active
+ *  member holding Admin / DocCtrl in the role COLLECTION (memberHoldsAny —
+ *  never the headline alone), else a publisher granted on the document's
+ *  library, asked of the database's own evaluator
+ *  (user_can_publish_on_library, which applies the library's publish
+ *  denies). Fails CLOSED on any read error. */
+export async function creatorMayShare(sb: ShareServeClient, s: ShareRow, d: ShareDocument): Promise<boolean> {
+  if (!s.created_by) return false;
+  const { data: member, error } = await sb
+    .from("org_members")
+    .select("role, roles")
+    .eq("org_id", s.org_id)
+    .eq("uid", s.created_by)
+    .eq("status", "active")
+    .maybeSingle();
+  if (error) {
+    console.error("[share] creator membership unreadable — share refused", { share: s.id, message: error.message });
+    return false;
+  }
+  if (!member) return false;
+  if (memberHoldsAny(member as { role?: unknown; roles?: unknown }, SHARE_CONTROLLER_ROLES)) return true;
+  if (!d.library_id) return false;
+  const { data: canPublish, error: rpcError } = await sb.rpc("user_can_publish_on_library", {
+    p_library: d.library_id, p_uid: s.created_by, p_org: s.org_id,
+  });
+  if (rpcError) {
+    console.error("[share] publish grant unreadable — share refused", { share: s.id, message: rpcError.message });
+    return false;
+  }
+  return canPublish === true;
 }
 
 /** The document label and the revision label of the copy being served —
@@ -194,9 +243,14 @@ export function requestMeta(req: { headers: { get(name: string): string | null }
  *  — including a REFUSED attempt, with its reason. Checked write; a failure
  *  is logged loudly and reported to the caller — the download route treats
  *  the download_audits row as the record that must land, this row as the
- *  access trail. Refused rows carry the minute they fell in: 20261081's
- *  unique (share_id, refused_minute) keeps them to one per share per
- *  minute, and that unique violation is the bound working, not a failure. */
+ *  access trail. BOUNDED, because anyone holding a token (live or dead) can
+ *  call the routes in a loop: refused rows carry the minute they fell in
+ *  (20261081's unique (share_id, refused_minute) — one per share per
+ *  minute), served opens carry theirs too (unique (share_id, ip,
+ *  resolve_minute) — one per share per client IP per minute), and that
+ *  unique violation is the bound working, not a failure. A download row is
+ *  NOT bounded: each one is a copy that left, paired with its
+ *  download_audits row. */
 export async function recordShareAccess(
   sb: ShareServeClient,
   input: {
@@ -216,13 +270,15 @@ export async function recordShareAccess(
     user_agent: input.userAgent,
     created_at: at.toISOString(),
   };
+  const minute = new Date(Math.floor(at.getTime() / 60_000) * 60_000).toISOString();
   if (input.kind === "refused") {
     row.reason = input.reason || "refused";
-    row.refused_minute = new Date(Math.floor(at.getTime() / 60_000) * 60_000).toISOString();
+    row.refused_minute = minute;
   }
+  if (input.kind === "resolve") row.resolve_minute = minute;
   const { error } = await sb.from("document_share_accesses").insert(row);
   if (error) {
-    if (input.kind === "refused" && error.code === "23505") return { error: null, bounded: true };
+    if (input.kind !== "download" && error.code === "23505") return { error: null, bounded: true };
     console.error("[share] document_share_accesses insert failed", { kind: input.kind, share: input.share.id, message: error.message });
     return { error: error.message || "access row not written" };
   }

@@ -24,8 +24,10 @@
 --                   public routes then served it. document_share_refusal()
 --                   names why a document cannot be shared (draft / withdrawn /
 --                   archived / on_hold) and the INSERT policy requires NULL.
---                   It answers only for the caller's own orgs (anything else
---                   reads 'not_found'), so it is no cross-tenant oracle.
+--                   It answers only for the caller's own orgs AND a document
+--                   the caller can read (node_visible — anything else reads
+--                   'not_found'), so it is no oracle across tenants or
+--                   across a private / hidden document inside one.
 --                   The routes refuse the same set at serve time
 --                   (lib/shareServe.ts) — this is the rail behind the mint.
 --   DRLS-7 / SHR-13 Revocation was not durable: the creator (or any
@@ -96,7 +98,7 @@ SELECT 'BEFORE: live rows on a document under an active hold (refused at serve t
  WHERE s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > now())
    AND EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = s.document_id AND h.released_at IS NULL)
 UNION ALL
-SELECT 'BEFORE: live rows whose creator could not mint after apply (not a controller, no publish grant on the library) - they keep serving until expiry or revocation', COUNT(*)::text
+SELECT 'BEFORE: live rows whose creator could not mint after apply (not a controller, no publish grant on the library) - the wave-2 routes refuse them at serve time (authority lapsed)', COUNT(*)::text
   FROM document_shares s JOIN documents d ON d.id = s.document_id
  WHERE s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > now())
    AND NOT EXISTS (SELECT 1 FROM org_members m
@@ -112,11 +114,13 @@ BEGIN;
 -- ── 1. Why a document cannot be shared: one answer for the rail and the app ─
 -- SECURITY DEFINER so the policy's answer does not depend on the caller's
 -- own read access to document_holds; STABLE, search_path pinned. It answers
--- only for an org the caller is an active member of (the policy always
--- passes the row's own org, which the INSERT policy already requires the
--- caller to belong to); any other org reads 'not_found', so a signed-in
--- member of org A learns nothing about org B's documents by calling it.
--- The service role (auth.uid() IS NULL) is not org-scoped.
+-- only for an org the caller is an active member of, and only for a
+-- document the caller can READ (node_visible, the read decision the INSERT
+-- policy already requires — so no legitimate mint changes); anything else
+-- reads 'not_found', so a signed-in member learns nothing about another
+-- org's documents, nor the status / hold of a private or hidden document
+-- in their own org, by calling it. The service role (auth.uid() IS NULL)
+-- is not scoped.
 -- Returns NULL when shareable, else: not_found | draft | withdrawn:<status>
 -- | archived | on_hold. The status set is the app's NOT_CURRENT_STATUSES
 -- (Superseded, Void, Archived) plus Draft — lib/shareRules.ts states the
@@ -133,7 +137,9 @@ RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   END
   FROM (SELECT 1) AS one
   LEFT JOIN documents d ON d.id = p_doc AND d.org_id = p_org
-                       AND (auth.uid() IS NULL OR p_org IN (SELECT my_org_ids()));
+                       AND (auth.uid() IS NULL OR p_org IN (SELECT my_org_ids()))
+                       AND (auth.uid() IS NULL OR node_visible(d.visibility, d.acl_index, d.org_id,
+                                                                d.owner_user_id, d.collection_id, d.library_id));
 $$;
 REVOKE ALL ON FUNCTION document_share_refusal(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION document_share_refusal(uuid, uuid) FROM anon;
@@ -270,6 +276,12 @@ SELECT 'document_share_refusal names the four refusals (draft / withdrawn / arch
 UNION ALL
 SELECT 'document_share_refusal answers only for the caller''s own orgs (service role excepted)',
        (SELECT prosrc LIKE '%auth.uid() IS NULL OR p_org IN (SELECT my_org_ids())%'
+          FROM pg_proc WHERE proname = 'document_share_refusal'),
+       NULL
+UNION ALL
+SELECT 'document_share_refusal answers only for a document the caller can read (node_visible; unreadable reads not_found)',
+       (SELECT prosrc LIKE '%auth.uid() IS NULL OR node_visible(d.visibility, d.acl_index, d.org_id,%'
+           AND prosrc LIKE '%d.owner_user_id, d.collection_id, d.library_id));%'
           FROM pg_proc WHERE proname = 'document_share_refusal'),
        NULL
 UNION ALL

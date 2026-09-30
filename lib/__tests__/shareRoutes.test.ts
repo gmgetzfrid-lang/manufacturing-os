@@ -32,6 +32,15 @@
 // to" runs the routes' own version rule; revoke is idempotent on a revoked
 // row; document_share_refusal answers only for the caller's orgs; the
 // download_audits payload's columns exist in the replayed schema.
+//
+// Second fix pass: the accessor's IP is kept only on the controller-read
+// trail (bump_share_access keeps its arity and writes no IP); a share
+// download ahead of 20261068 is recorded once in the pre-20261068 shape
+// instead of refused; served opens are bounded per share per client IP per
+// minute; the minting tier is re-asked at serve time (creatorMayShare);
+// document_share_refusal answers only for a document the caller can read;
+// the audit writes on mint / revoke are checked (auditWarning); the modal
+// says "couldn't confirm" for a refusal it could not read.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -67,6 +76,13 @@ const state = vi.hoisted(() => ({
   latest: [] as Row[],
   inserts: [] as Array<{ table: string; payload: Row }>,
   insertError: {} as Record<string, { message: string; code?: string } | undefined>,
+  // per-call outcomes, consumed in order before insertError applies (null = the call succeeds)
+  insertErrorQueue: {} as Record<string, Array<{ message: string; code?: string } | null>>,
+  docError: null as null | { message: string },
+  // the share creator's org_members row (the serve-time tier check)
+  creatorMember: { role: "DocCtrl", roles: ["DocCtrl"] } as Row | null,
+  creatorMemberError: null as null | { message: string },
+  auditError: null as null | string,
   updateRows: [] as Row[],
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   rpcCalls: [] as Array<{ fn: string; args: Row }>,
@@ -89,7 +105,8 @@ function makeClient() {
       if (op === "insert") {
         state.inserts.push({ table, payload });
         state.seq.push(`insert:${table}`);
-        const err = state.insertError[table];
+        const queue = state.insertErrorQueue[table];
+        const err = queue && queue.length ? (queue.shift() ?? undefined) : state.insertError[table];
         return { data: err ? null : [payload], error: err ?? null };
       }
       if (op === "update") return { data: state.updateRows, error: null };
@@ -112,7 +129,8 @@ function makeClient() {
               return Promise.resolve({ data: err ? null : { id: "new-share", ...payload }, error: err ?? null });
             }
             if (table === "document_shares") return Promise.resolve({ data: state.share, error: null });
-            if (table === "documents") return Promise.resolve({ data: state.doc, error: null });
+            if (table === "documents") return Promise.resolve(state.docError ? { data: null, error: state.docError } : { data: state.doc, error: null });
+            if (table === "org_members") return Promise.resolve({ data: state.creatorMemberError ? null : state.creatorMember, error: state.creatorMemberError });
             if (table === "orgs") return Promise.resolve({ data: { name: "Org A" }, error: null });
             if (table === "document_versions") {
               if (state.versionError) return Promise.resolve({ data: null, error: state.versionError });
@@ -138,7 +156,7 @@ vi.mock("@supabase/supabase-js", () => ({ createClient: () => makeClient() }));
 vi.mock("@/lib/supabase", () => ({ supabase: makeClient() }));
 vi.mock("@/lib/shareAuthorization", () => ({ shareStillAuthorized: vi.fn(async () => state.authorized) }));
 vi.mock("@/lib/publicOrigin", () => ({ publicOrigin: () => state.origin }));
-vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async (e: Row) => { state.audits.push(e); return { error: null }; }) }));
+vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async (e: Row) => { state.audits.push(e); return { error: state.auditError }; }) }));
 vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class { constructor(public input: unknown) {} } }));
 const r2 = vi.hoisted(() => ({ send: vi.fn(async () => { state.seq.push("r2"); return { Body: { transformToByteArray: async () => new Uint8Array([9, 9, 9]) } }; }) }));
 vi.mock("@/lib/r2", () => ({ r2, R2_BUCKET: "bucket" }));
@@ -150,7 +168,7 @@ const TOKEN = "t".repeat(32);
 const liveShare = (): Row => ({ id: "s1", org_id: "orgA", document_id: "docA", created_by: "u1", expires_at: null, revoked_at: null });
 const issuedDoc = (over: Row = {}): Row => ({
   id: "docA", document_number: "P-101", title: "Relief P&ID", name: null, rev: "A", status: "Issued", archived_at: null,
-  current_version_id: "v-cur", ...over,
+  current_version_id: "v-cur", library_id: "lib1", ...over,
 });
 const publishedVersion = (over: Row = {}): Row => ({
   id: "v-cur", file_url: "org/docA/v-cur.pdf", revision_label: "B", review_state: "approved", is_branch: false, superseded_at: null, ...over,
@@ -164,6 +182,11 @@ beforeEach(() => {
   state.latest = [];
   state.inserts = [];
   state.insertError = {};
+  state.insertErrorQueue = {};
+  state.docError = null;
+  state.creatorMember = { role: "DocCtrl", roles: ["DocCtrl"] };
+  state.creatorMemberError = null;
+  state.auditError = null;
   state.updateRows = [];
   state.calls = [];
   state.rpcCalls = [];
@@ -349,20 +372,63 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect(String(stamp.calls[0].footerNotice)).not.toMatch(/QR/);
     expect(String(stamp.calls[0].footerNotice)).toMatch(/Verify the current revision/);
   });
-  it("a refused download_audits write REFUSES the download (503 unrecorded) — a copy never leaves unrecorded", async () => {
+  it("ahead of 20261068 (the missing-column refusal) the record is retried ONCE in the pre-20261068 shape — recorded, attributed to the sharer, and served; never a wholesale lockout", async () => {
+    for (const missing of [
+      { message: "Could not find the 'share_id' column of 'download_audits' in the schema cache", code: "PGRST204" },
+      { message: "column \"source\" of relation \"download_audits\" does not exist", code: "42703" },
+      { message: "null value in column \"user_id\" of relation \"download_audits\" violates not-null constraint", code: "23502" },
+    ]) {
+      state.inserts = []; state.seq = [];
+      state.insertErrorQueue["download_audits"] = [missing, null];
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      const res = await fileGet({ "x-forwarded-for": "198.51.100.7" });
+      expect(res.status, missing.code).toBe(200);
+      expect(res.headers.get("content-type")).toBe("application/pdf");
+      const [first, retry] = inserted("download_audits");
+      expect(first).toMatchObject({ share_id: "s1", source: "share_link", user_id: null });
+      // the retry names ONLY the pre-20261068 columns, attributed to the sharer as the table then required
+      expect(retry).toEqual({
+        org_id: "orgA", document_id: "docA", version_id: "v-cur", user_id: "u1", user_email: null,
+        created_at: expect.any(String), expires_at: expect.any(String), watermark_policy_id: null,
+      });
+      expect(inserted("download_audits")).toHaveLength(2);
+      // the deploy order is named as exactly that, and the copy still went out recorded
+      expect(err).toHaveBeenCalledWith(expect.stringMatching(/DEPLOY ORDER: download_audits lacks the 20261068 columns/), expect.objectContaining({ share: "s1", message: missing.message }));
+      expect(err).not.toHaveBeenCalledWith(expect.stringMatching(/share download refused/), expect.anything());
+      expect(state.seq).toEqual(["r2", "stamp", "insert:download_audits", "insert:download_audits", "insert:document_share_accesses"]);
+      expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "download", ip: "198.51.100.7" })]);
+      err.mockRestore();
+    }
+  });
+  it("a download_audits write refused in BOTH shapes refuses the download (503 unrecorded) — a copy never leaves unrecorded", async () => {
     state.insertError["download_audits"] = { message: "column \"share_id\" does not exist", code: "PGRST204" };
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await fileGet();
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "unrecorded" });
     expect(res.headers.get("content-type")).not.toBe("application/pdf");
+    expect(inserted("download_audits")).toHaveLength(2); // the share shape, then the one pre-20261068 retry
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/DEPLOY ORDER: download_audits lacks the 20261068 columns/), expect.anything());
     expect(err).toHaveBeenCalledWith(expect.stringMatching(/download_audits insert failed/), expect.objectContaining({ share: "s1", message: expect.stringMatching(/share_id/) }));
-    // an unapplied 20261068 is named as exactly that — the deploy gate, not a transient
-    expect(err).toHaveBeenCalledWith(expect.stringMatching(/DEPLOY ORDER: download_audits lacks the 20261068 columns/));
     // the refused download is still an attempt on the trail; no download row
     expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "unrecorded", version_id: "v-cur" })]);
     expect(stamp.calls).toHaveLength(1); // the copy was prepared, and still did not leave
     err.mockRestore();
+  });
+  it("a refusal that is NOT the missing migration (a timeout, RLS, a CHECK) is not retried: 503 unrecorded after one attempt", async () => {
+    for (const other of [
+      { message: "canceling statement due to statement timeout", code: "57014" },
+      { message: "new row for relation \"download_audits\" violates check constraint \"download_audits_attributed\"", code: "23514" },
+    ]) {
+      state.inserts = [];
+      state.insertError["download_audits"] = other;
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      const res = await fileGet();
+      expect(res.status, other.code).toBe(503);
+      expect(inserted("download_audits"), other.code).toHaveLength(1);
+      expect(err).not.toHaveBeenCalledWith(expect.stringMatching(/DEPLOY ORDER/), expect.anything());
+      err.mockRestore();
+    }
   });
   it("an unstamped delivery (not a stampable PDF) records source share_link_unstamped", async () => {
     const { PDFDocument } = await import("pdf-lib");
@@ -384,6 +450,50 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     const res = await fileGet();
     expect(res.status).toBe(410);
     expect((await res.json()).error).toBe("revoked");
+  });
+  it("the minting tier is re-asked at SERVE time (DEC-46 §1): a link whose creator is no longer a controller or a granted publisher of the library stops serving (410, authority_lapsed); fail-closed", async () => {
+    const tierCalls = () => state.rpcCalls.filter((c) => c.fn === "user_can_publish_on_library");
+    // a controller by the role COLLECTION (headline Viewer, additive DocCtrl) serves without asking the library
+    state.creatorMember = { role: "Viewer", roles: ["Viewer", "DocCtrl"] };
+    expect((await fileGet()).status).toBe(200);
+    expect(tierCalls()).toHaveLength(0);
+    expect(state.calls).toContainEqual({ table: "org_members", method: "eq", args: ["uid", "u1"] });
+    expect(state.calls).toContainEqual({ table: "org_members", method: "eq", args: ["status", "active"] });
+    // not a controller: the library's publish evaluator decides, asked for the CREATOR on the document's library
+    state.creatorMember = { role: "Engineer", roles: ["Engineer"] };
+    state.rpcResult = { data: true, error: null };
+    state.inserts = [];
+    expect((await fileGet()).status).toBe(200);
+    expect(tierCalls().at(-1)).toEqual({ fn: "user_can_publish_on_library", args: { p_library: "lib1", p_uid: "u1", p_org: "orgA" } });
+    // a Viewer-minted link from before the tier existed, or a publisher whose grant was withdrawn
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const [label, setup] of [
+      ["no publish grant", () => { state.creatorMember = { role: "Viewer", roles: ["Viewer"] }; state.rpcResult = { data: false, error: null }; }],
+      ["the evaluator errored", () => { state.creatorMember = { role: "Engineer", roles: ["Engineer"] }; state.rpcResult = { data: null, error: { message: "timeout" } }; }],
+      ["no longer an active member", () => { state.creatorMember = null; state.rpcResult = { data: true, error: null }; }],
+      ["membership unreadable", () => { state.creatorMemberError = { message: "down" }; state.rpcResult = { data: true, error: null }; }],
+      ["no library to hold a grant on", () => { state.creatorMember = { role: "Engineer", roles: ["Engineer"] }; state.doc = issuedDoc({ library_id: null }); state.rpcResult = { data: true, error: null }; }],
+    ] as Array<[string, () => void]>) {
+      state.creatorMemberError = null; state.doc = issuedDoc(); state.inserts = [];
+      setup();
+      r2.send.mockClear();
+      const res = await fileGet();
+      expect(res.status, label).toBe(410);
+      expect(await res.json(), label).toEqual({ error: "revoked" });
+      expect(r2.send, label).not.toHaveBeenCalled();
+      expect(inserted("document_share_accesses"), label).toEqual([expect.objectContaining({ kind: "refused", reason: "authority_lapsed" })]);
+      expect((await resolveGet()).status, label).toBe(410);
+    }
+    err.mockRestore();
+    // the documents read carries the library the grant is asked on
+    const sel = state.calls.find((c) => c.table === "documents" && c.method === "select");
+    expect(String(sel?.args[0])).toMatch(/\blibrary_id\b/);
+    // the check runs AFTER the read decision and BEFORE the status / hold / version steps
+    const serve = src("lib/shareServe.ts");
+    const body = serve.slice(serve.indexOf("export async function resolveShareForServing"));
+    expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeGreaterThan(body.indexOf("await shareStillAuthorized("));
+    expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeLessThan(body.indexOf("shareStatusRefusal(d)"));
+    expect(serve).toMatch(/memberHoldsAny\(member as \{ role\?: unknown; roles\?: unknown \}, SHARE_CONTROLLER_ROLES\)/);
   });
   it("a refused attempt on a KNOWN share leaves one 'refused' access row with the reason, IP and UA (SHR-10); an unknown token leaves none", async () => {
     const cases: Array<[Row, Row | null, boolean, string, number]> = [
@@ -416,7 +526,7 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect((await resolveGet()).status).toBe(404);
     expect(state.inserts).toHaveLength(0);
   });
-  it("refused rows are BOUNDED to one per share per minute: the unique violation is the bound working, not an error", async () => {
+  it("refused rows are BOUNDED to one per share per minute and served opens to one per share per client IP per minute: the unique violation is the bound working, not an error; a download row is never bounded", async () => {
     const { recordShareAccess } = await import("@/lib/shareServe");
     const sb = makeClient() as unknown as Parameters<typeof recordShareAccess>[0];
     const share = liveShare() as unknown as Parameters<typeof recordShareAccess>[1]["share"];
@@ -429,14 +539,23 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     await recordShareAccess(sb, { ...base, kind: "resolve", now: new Date("2026-09-30T12:00:05Z") });
     expect(inserted("document_share_accesses")[2]).not.toHaveProperty("refused_minute");
     expect(inserted("document_share_accesses")[2]).not.toHaveProperty("reason");
+    // a served open carries ITS minute (the key of the per-IP bound); a download carries neither
+    expect(inserted("document_share_accesses")[2]).toMatchObject({ kind: "resolve", resolve_minute: "2026-09-30T12:00:00.000Z" });
+    await recordShareAccess(sb, { ...base, kind: "download", now: new Date("2026-09-30T12:00:05Z") });
+    expect(inserted("document_share_accesses")[3]).not.toHaveProperty("resolve_minute");
+    expect(inserted("document_share_accesses")[3]).not.toHaveProperty("refused_minute");
     // the database refusing the second row of a minute (23505) is silent and not an error
     state.insertError["document_share_accesses"] = { message: "duplicate key value violates unique constraint \"document_share_accesses_refused_bound\"", code: "23505" };
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await recordShareAccess(sb, { ...base, kind: "refused", reason: "revoked" })).toEqual({ error: null, bounded: true });
     state.share = { ...liveShare(), revoked_at: "2026-01-01" };
     expect((await resolveGet()).status).toBe(410);
+    // a scripted loop on a LIVE token: the open's row is bounded, the page still answers
+    expect(await recordShareAccess(sb, { ...base, kind: "resolve" })).toEqual({ error: null, bounded: true });
+    state.share = liveShare();
+    expect((await resolveGet()).status).toBe(200);
     expect(err).not.toHaveBeenCalled();
-    // a 23505 on a served row is NOT swallowed
+    // a 23505 on a download row is NOT swallowed
     expect((await recordShareAccess(sb, { ...base, kind: "download" })).error).toMatch(/duplicate key/);
     expect(err).toHaveBeenCalled();
     err.mockRestore();
@@ -457,12 +576,24 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect(columns).toContain("share_id"); // the 20261068 columns really were found
     expect(columns).toContain("source");
     for (const k of Object.keys(payload)) expect(columns.has(k), `download_audits has no column ${k}`).toBe(true);
+    // the pre-20261068 retry names ONLY the columns schema.sql itself creates (nothing a later migration adds)
+    const base = new Set(
+      create.split("\n").slice(1).map((l) => l.trim().match(/^([a-z_][a-z0-9_]*)\s/)?.[1]).filter((c): c is string => !!c),
+    );
+    state.inserts = [];
+    state.insertErrorQueue["download_audits"] = [{ message: "Could not find the 'source' column", code: "PGRST204" }, null];
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await fileGet()).status).toBe(200);
+    err.mockRestore();
+    const retry = inserted("download_audits")[1];
+    expect(retry).toBeTruthy();
+    for (const k of Object.keys(retry)) expect(base.has(k), `the pre-20261068 table has no column ${k}`).toBe(true);
   });
 });
 
 // ── 3. /api/share/resolve ────────────────────────────────────────────────────
 describe("GET /api/share/resolve — the page says what the server decided", () => {
-  it("returns the served version's rev label, the control status and the expiry; records the open; bumps the counter with the IP", async () => {
+  it("returns the served version's rev label, the control status and the expiry; records the open (IP on the controller-only trail); bumps the counter WITHOUT the IP", async () => {
     state.share = { ...liveShare(), expires_at: "2027-01-01T00:00:00Z" };
     const res = await resolveGet({ "x-forwarded-for": "203.0.113.9", "user-agent": "Phone/1" });
     expect(res.status).toBe(200);
@@ -470,9 +601,11 @@ describe("GET /api/share/resolve — the page says what the server decided", () 
       documentId: "docA", versionId: "v-cur", documentNumber: "P-101", title: "Relief P&ID", rev: "B", status: "Issued",
       orgName: "Org A", expiresAt: "2027-01-01T00:00:00Z", fileUrl: `/api/share/file?token=${TOKEN}`,
     });
-    expect(inserted("document_share_accesses")[0]).toMatchObject({ kind: "resolve", ip: "203.0.113.9", user_agent: "Phone/1", version_id: "v-cur" });
+    expect(inserted("document_share_accesses")[0]).toMatchObject({ kind: "resolve", ip: "203.0.113.9", user_agent: "Phone/1", version_id: "v-cur", resolve_minute: expect.stringMatching(/T\d\d:\d\d:00\.000Z$/) });
     expect(inserted("download_audits")).toHaveLength(0); // resolve is not a download
-    expect(state.rpcCalls).toEqual([{ fn: "bump_share_access", args: { p_share: "s1", p_ip: "203.0.113.9" } }]);
+    // document_shares is readable by every member who can read the document: the counter carries no IP
+    expect(state.rpcCalls).toEqual([{ fn: "bump_share_access", args: { p_share: "s1" } }]);
+    expect(src("app/api/share/resolve/route.ts")).not.toMatch(/p_ip/);
   });
   it("a refused counter RPC is logged, never swallowed, and does not fail the resolve (SHR-12)", async () => {
     state.rpcResult = { data: null, error: { message: "PGRST202 function not found" } };
@@ -532,6 +665,20 @@ describe("lib/documentShares — who may mint, what, for how long; audit rows", 
     expect(state.inserts).toHaveLength(0);
     expect(state.audits).toHaveLength(0);
   });
+  it("shareRefusalState says whether a refusal is CONFIRMED (status / archive / an open hold — what the routes refuse) or only UNCONFIRMED (this browser's read failed: minting refused, but the links may be serving)", async () => {
+    const { shareRefusalState } = await import("@/lib/documentShares");
+    expect(await shareRefusalState("docA")).toBeNull();
+    state.doc = issuedDoc({ status: "Void" });
+    expect(await shareRefusalState("docA")).toEqual({ reason: expect.stringMatching(/withdrawn \(void\)/), confirmed: true });
+    state.doc = issuedDoc();
+    state.holds = { data: [{ id: "h1", reason: "Client Review", opened_at: null, opened_by_name: null }], error: null };
+    expect(await shareRefusalState("docA")).toEqual({ reason: expect.stringMatching(/Client Review/), confirmed: true });
+    state.holds = { data: [], error: { message: "permission denied" } };
+    expect(await shareRefusalState("docA")).toEqual({ reason: expect.stringMatching(/treated as held/), confirmed: false });
+    state.holds = { data: [], error: null };
+    state.docError = { message: "timeout" };
+    expect(await shareRefusalState("docA")).toEqual({ reason: expect.stringMatching(/Couldn't confirm the document's status \(timeout\)/), confirmed: false });
+  });
   it("mints with the computed expiry, writes SHARE_LINK_CREATED; maps a policy refusal to the sentence", async () => {
     const { createShareLink, SHARE_MINT_REFUSED } = await import("@/lib/documentShares");
     const share = await createShareLink({ ...input, expiresInDays: 7, note: "for John" });
@@ -542,6 +689,7 @@ describe("lib/documentShares — who may mint, what, for how long; audit rows", 
     expect(new Date(payload.expires_at as string).getTime()).toBeGreaterThan(Date.now() + 6 * 86_400_000);
     expect(String(payload.token)).toHaveLength(32);
     expect(share.id).toBe("new-share");
+    expect(share.auditWarning).toBeNull();
     expect(state.audits).toEqual([expect.objectContaining({ action: "SHARE_LINK_CREATED", resourceId: "docA", resourceType: "document", orgId: "orgA", userId: "u1" })]);
     state.inserts = []; state.audits = [];
     state.insertError["document_shares"] = { message: "new row violates row-level security policy for table \"document_shares\"", code: "42501" };
@@ -554,7 +702,7 @@ describe("lib/documentShares — who may mint, what, for how long; audit rows", 
     await expect(revokeShareLink("s1", "u1")).rejects.toThrow(/was not revoked/);
     expect(state.audits).toHaveLength(0);
     state.updateRows = [{ id: "s1", org_id: "orgA", document_id: "docA" }];
-    await revokeShareLink("s1", "u1");
+    expect(await revokeShareLink("s1", "u1")).toEqual({ auditWarning: null });
     expect(state.calls).toContainEqual({ table: "document_shares", method: "is", args: ["revoked_at", null] });
     expect(state.calls).toContainEqual({ table: "document_shares", method: "select", args: ["id, org_id, document_id"] });
     expect(state.audits).toEqual([expect.objectContaining({ action: "SHARE_LINK_REVOKED", resourceId: "docA", orgId: "orgA", userId: "u1", details: { shareId: "s1" } })]);
@@ -563,9 +711,25 @@ describe("lib/documentShares — who may mint, what, for how long; audit rows", 
     const { revokeShareLink } = await import("@/lib/documentShares");
     state.updateRows = []; // the .is("revoked_at", null) filter matched nothing
     state.share = { ...liveShare(), revoked_at: "2026-09-30T10:00:00Z" };
-    await expect(revokeShareLink("s1", "u2")).resolves.toBeUndefined();
+    await expect(revokeShareLink("s1", "u2")).resolves.toEqual({ auditWarning: null });
     expect(state.calls).toContainEqual({ table: "document_shares", method: "select", args: ["id, revoked_at"] });
     expect(state.audits).toHaveLength(0);
+  });
+  it("the SHARE_LINK_CREATED / SHARE_LINK_REVOKED audit writes are CHECKED: a refused audit row leaves the link change standing and hands the caller a warning, never a silent success", async () => {
+    const { createShareLink, revokeShareLink } = await import("@/lib/documentShares");
+    state.auditError = "new row violates row-level security policy for table \"audit_logs\"";
+    const made = await createShareLink(input);
+    expect(made.id).toBe("new-share"); // the link exists
+    expect(made.auditWarning).toMatch(/^The link was created, but its audit record could not be written \(new row violates row-level security/);
+    state.updateRows = [{ id: "s1", org_id: "orgA", document_id: "docA" }];
+    const done = await revokeShareLink("s1", "u1");
+    expect(done.auditWarning).toMatch(/^The link was revoked, but its audit record could not be written/);
+    expect(state.audits.map((a) => a.action)).toEqual(["SHARE_LINK_CREATED", "SHARE_LINK_REVOKED"]);
+    // the modal shows it (non-fatal: the change stood)
+    const m = src("components/documents/ShareLinkModal.tsx");
+    expect(m).toContain("setAuditNotice(made.auditWarning);");
+    expect(m).toContain("setAuditNotice(done.auditWarning);");
+    expect(m).toMatch(/\{auditNotice && \(/);
   });
   it("a browser clock AHEAD of the database's: the 90-day pick overshoots the server ceiling by the skew, which 20261080 clamps (up to 1 hour) rather than refuses; a refusal past that reads as a sentence", async () => {
     const { createShareLink, SHARE_EXPIRY_REFUSED } = await import("@/lib/documentShares");
@@ -651,8 +815,14 @@ describe("20261080 — minting tier, refusal rail, durable revocation, 90-day ce
     expect(fn).toMatch(/WHEN d\.archived_at IS NOT NULL THEN 'archived'/);
     expect(fn).toMatch(/document_holds h WHERE h\.document_id = d\.id AND h\.released_at IS NULL\) THEN 'on_hold'/);
     expect(fn).toMatch(/LEFT JOIN documents d ON d\.id = p_doc AND d\.org_id = p_org/);
-    // no cross-tenant oracle: another org's document reads 'not_found' (the service role is unscoped)
-    expect(fn).toMatch(/LEFT JOIN documents d ON d\.id = p_doc AND d\.org_id = p_org\s*\n\s*AND \(auth\.uid\(\) IS NULL OR p_org IN \(SELECT my_org_ids\(\)\)\);/);
+    // no cross-tenant oracle: another org's document reads 'not_found' (the service role is unscoped) ...
+    expect(fn).toMatch(/LEFT JOIN documents d ON d\.id = p_doc AND d\.org_id = p_org\s*\n\s*AND \(auth\.uid\(\) IS NULL OR p_org IN \(SELECT my_org_ids\(\)\)\)\s*\n/);
+    // ... and no in-org oracle: a private / hidden document the caller cannot read reads 'not_found' too —
+    // the same node_visible call the INSERT policy already requires, so no legitimate mint changes
+    expect(fn).toMatch(/AND \(auth\.uid\(\) IS NULL OR node_visible\(d\.visibility, d\.acl_index, d\.org_id,\s*\n\s*d\.owner_user_id, d\.collection_id, d\.library_id\)\);\s*\n\$\$;/);
+    const tail = m.slice(m.indexOf("\nCOMMIT;"));
+    expect(tail).toMatch(/answers only for a document the caller can read/);
+    expect(tail).toContain("prosrc LIKE '%auth.uid() IS NULL OR node_visible(d.visibility, d.acl_index, d.org_id,%'");
     expect(code).toMatch(/REVOKE ALL ON FUNCTION document_share_refusal\(uuid, uuid\) FROM PUBLIC;/);
     expect(code).toMatch(/GRANT EXECUTE ON FUNCTION document_share_refusal\(uuid, uuid\) TO authenticated, service_role;/);
   });
@@ -734,11 +904,15 @@ describe("20261081 — the per-access record and the pinned counter", () => {
     expect(tbl).toMatch(/kind\s+TEXT NOT NULL CHECK \(kind IN \('resolve', 'download', 'refused'\)\)/);
     expect(tbl).toMatch(/\breason\s+TEXT,/);
     expect(tbl).toMatch(/refused_minute TIMESTAMPTZ,/);
+    expect(tbl).toMatch(/resolve_minute TIMESTAMPTZ,/);
     expect(tbl).toMatch(/CHECK \(\(kind = 'refused'\) = \(reason IS NOT NULL AND refused_minute IS NOT NULL\)\)/);
+    expect(tbl).toMatch(/CONSTRAINT document_share_accesses_resolve_shape\s*\n\s*CHECK \(\(kind = 'resolve'\) = \(resolve_minute IS NOT NULL\)\)/);
     expect(tbl).toMatch(/\bip\s+TEXT,/);
     expect(tbl).toMatch(/user_agent\s+TEXT,/);
     // the bound on refused attempts: one per share per minute
     expect(code).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS document_share_accesses_refused_bound\s*\n\s*ON document_share_accesses\(share_id, refused_minute\) WHERE kind = 'refused';/);
+    // ... and on served opens: one per share per client IP per minute (a NULL IP is one bucket, not unbounded)
+    expect(code).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS document_share_accesses_resolve_bound\s*\n\s*ON document_share_accesses\(share_id, \(COALESCE\(ip, ''\)\), resolve_minute\) WHERE kind = 'resolve';/);
     expect(m).toMatch(/document_share_accesses_refused_bound/);
     expect(code).toMatch(/ALTER TABLE document_share_accesses ENABLE ROW LEVEL SECURITY;/);
     const policies = [...code.matchAll(/CREATE POLICY (\w+) ON document_share_accesses FOR (\w+)/g)].map((x) => [x[1], x[2]]);
@@ -746,29 +920,28 @@ describe("20261081 — the per-access record and the pinned counter", () => {
     expect(between(code, "CREATE POLICY document_share_accesses_controller_select", ";")).toMatch(/USING \(is_org_controller\(org_id\)\)/);
   });
 
-  it("bump_share_access: old arity dropped; new (uuid, text) is the 20260818 body plus the access_last_ip line, pinned, service_role only", () => {
-    expect(code).toMatch(/DROP FUNCTION IF EXISTS bump_share_access\(uuid\);/);
+  it("bump_share_access keeps its arity (a deployed route's call resolves across the apply): the 20260818 body byte-carried, only the CREATE-time pin added, no IP, service_role only", () => {
+    // no arity change: the one-argument function is NOT dropped (the route already deployed calls it by
+    // { p_share } through the apply); a two-argument twin from an earlier draft is dropped if present
+    expect(code).not.toMatch(/DROP FUNCTION IF EXISTS bump_share_access\(uuid\);/);
+    expect(code).toMatch(/DROP FUNCTION IF EXISTS bump_share_access\(uuid, text\);/);
     const live = between(m18, "CREATE OR REPLACE FUNCTION bump_share_access(p_share uuid)", "$$;");
-    const next = between(m, "CREATE OR REPLACE FUNCTION bump_share_access(p_share uuid, p_ip text)", "$$;");
+    const next = between(m, "CREATE OR REPLACE FUNCTION bump_share_access(p_share uuid)", "$$;");
     const { onlyInA, onlyInB } = lineDiff(live, next);
-    expect(onlyInA).toEqual([
-      "CREATE OR REPLACE FUNCTION bump_share_access(p_share uuid)",
-      "RETURNS void LANGUAGE sql SECURITY DEFINER AS $$",
-      "         access_last_at = now()",
-    ]);
-    expect(onlyInB).toEqual([
-      "CREATE OR REPLACE FUNCTION bump_share_access(p_share uuid, p_ip text)",
-      "RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$",
-      "         access_last_at = now(),",
-      "         access_last_ip = p_ip",
-    ]);
-    expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid, text\) FROM PUBLIC;/);
-    expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid, text\) FROM anon;/);
-    expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid, text\) FROM authenticated;/);
-    expect(code).toMatch(/GRANT EXECUTE ON FUNCTION bump_share_access\(uuid, text\) TO service_role;/);
+    expect(onlyInA).toEqual(["RETURNS void LANGUAGE sql SECURITY DEFINER AS $$"]);
+    expect(onlyInB).toEqual(["RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$"]);
+    // the accessor IP never lands on document_shares (readable by every member who can read the document)
+    expect(code).not.toMatch(/access_last_ip\s*=/);
+    expect(code).toMatch(/COMMENT ON COLUMN document_shares\.access_last_ip IS\s*\n\s*'Unused by design/);
+    expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid\) FROM PUBLIC;/);
+    expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid\) FROM anon;/);
+    expect(code).toMatch(/REVOKE ALL ON FUNCTION bump_share_access\(uuid\) FROM authenticated;/);
+    expect(code).toMatch(/GRANT EXECUTE ON FUNCTION bump_share_access\(uuid\) TO service_role;/);
     const tail = m.slice(m.indexOf("\nCOMMIT;"));
     for (const like of tail.matchAll(/LIKE\s+'([^']*)'/g)) expect(like[1], like[0]).not.toMatch(/::/);
-    expect(tail).toMatch(/to_regprocedure\('bump_share_access\(uuid\)'\) IS NULL/);
+    expect(tail).toMatch(/to_regprocedure\('bump_share_access\(uuid, text\)'\) IS NULL/);
+    expect(tail).toMatch(/prosrc NOT LIKE '%access_last_ip%'/);
+    expect(tail).toMatch(/indexname = 'document_share_accesses_resolve_bound'/);
   });
 
   it("the numbered sequence's LAST definition of each share object is this package's", () => {
@@ -800,9 +973,20 @@ describe("ShareLinkModal / the landing page — the stated model", () => {
     expect(m).toContain('served.kind === "served" ? `resolves to Rev ${served.rev || "0"}`');
     expect(m).toContain("{!dead && resolvesTo && <span");
     expect(m).not.toMatch(/resolves to Rev \{currentRev/);
-    // the copy promises no permanence archiving does not deliver (unarchive exists; supersede revokes)
+    // the copy promises nothing the lifecycle does not deliver: split / merge do not revoke, reverse restores
+    // Issued, and archive-time revocation is another package's — so it says "stops serving … may be revoked"
     expect(m).not.toMatch(/permanently once/);
-    expect(m).toMatch(/superseding the document revokes it/);
+    expect(m).not.toMatch(/superseding the document revokes it/);
+    expect(m).not.toMatch(/serves again if that is undone/);
+    expect(m).toContain("A link stops serving while the document is held, withdrawn or archived, and may be revoked when it is superseded, split, merged or archived.");
+    // a refusal this browser could not CONFIRM (a failed read) never reads as "not serving"
+    expect(m).toContain("shareRefusalState(documentId),");
+    expect(m).toContain("setRefusalConfirmed(why?.confirmed ?? true);");
+    expect(m).toContain(`: refusal && !refusalConfirmed ? "couldn't confirm whether it is serving"`);
+    expect(m.indexOf("refusal && !refusalConfirmed ?")).toBeLessThan(m.indexOf(': refusal ? "not serving now'));
+    expect(m).toMatch(/\{refusalConfirmed\s*\n\s*\? <span>No new link can be created, and existing links are not serving: \{refusal\}<\/span>\s*\n\s*: <span>No new link can be created: \{refusal\} Whether existing links are serving couldn&rsquo;t be confirmed/);
+    // what a row cannot know (its creator's current authority) is stated, not guessed
+    expect(m).toMatch(/A link serves on its creator&rsquo;s current authority: it also stops serving if they leave the organisation, can no longer read this document, or no longer hold Document Control \/ Admin or a publish grant on this library\./);
     // EGRESS-8 path: an unreadable document loads no context (no "Document not found" banner), and a list
     // failure never marks the caller as a non-minter
     const refresh = between(m, "const refresh = useCallback(async () => {", "}, [documentId, orgId, createdBy, isController]);");

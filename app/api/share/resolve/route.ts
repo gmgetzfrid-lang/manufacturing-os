@@ -15,10 +15,13 @@
 // or held document is refused with the reason (DRLS-5 / EGR-5 / REV-10).
 //
 // Every resolve records one access row (IP + user agent, no recipient
-// identification — SHR-10) and bumps the share's counter; a refused attempt
-// on a known share records a "refused" row with the reason (bounded, one per
-// share per minute). The download_audits row is written by /api/share/file
-// (an actual download).
+// identification — SHR-10; bounded to one per share per client IP per
+// minute) and bumps the share's counter; a refused attempt on a known share
+// records a "refused" row with the reason (bounded, one per share per
+// minute). The IP lives ONLY on that controller-read trail — never on
+// document_shares, which every member who can read the document can read.
+// The download_audits row is written by /api/share/file (an actual
+// download).
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -50,8 +53,10 @@ export async function GET(req: NextRequest) {
   await recordShareAccess(sb, { share, documentId: doc.id, versionId: version?.id ?? null, kind: "resolve", ...meta });
 
   // The counter is a convenience the modal shows; a missing function or a
-  // refused call must be VISIBLE, not an unreachable catch (SHR-12).
-  const { error: bumpError } = await sb.rpc("bump_share_access", { p_share: share.id, p_ip: meta.ip });
+  // refused call must be VISIBLE, not an unreachable catch (SHR-12). It
+  // carries no IP: document_shares is readable by every member who can read
+  // the document, the accessor's IP is controller-only (DEC-46 §5).
+  const { error: bumpError } = await sb.rpc("bump_share_access", { p_share: share.id });
   if (bumpError) console.error("[share/resolve] bump_share_access failed", { share: share.id, message: bumpError.message });
 
   const { rev } = servedLabels(doc, version);
