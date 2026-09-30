@@ -1739,12 +1739,18 @@ path, never a silent success.**
    remaining, overBudget, the forecast and the S-curve's planned line use the
    revised figure; the health score's "change control" part keeps scoring
    growth against the baseline and says so (`COST-4`). No stored
-   `budget_revised` column — derived from the ledger. Every consumer passes
-   `approvedChangesByAccount(changeOrders, entries)`: today only the Costs
-   tab does; `lib/projectSnapshot.ts` and `lib/projectReport.ts` (J7, merged
-   without it) call `computeCostRollup` without the map, so health and the
-   lessons-learned draft agree with the tab only while no change order is
-   approved (`MON-4` dw3, `COST-4` dw2 — a follow-on).
+   `budget_revised` column — derived from the ledger. The linked entry's
+   status is read BY ID (`listChangeOrders` → `postedEntryStatus`), never
+   looked up in a loaded page of entries, and one rule
+   (`changeOrderOnLedger`) serves the revised budget and the change-order
+   summary (`summarizeChangeOrders` — the CO panel's and the report's
+   "approved" figure) alike *(verification fix, 2026-09-30)*. Every
+   consumer passes `approvedChangesByAccount(await listChangeOrders(projectId))`:
+   today only the Costs tab does; `lib/projectSnapshot.ts` and
+   `lib/projectReport.ts` (J7, merged without it) call `computeCostRollup`
+   without the map, so health and the lessons-learned draft agree with the
+   tab only while no change order is approved (`MON-4` dw3, `COST-4` dw2 —
+   a follow-on).
 3. **CPI scope.** The CPI-based EAC applies to the milestone-pinned subset;
    the unpinned remainder, having no earned-value evidence, is carried at its
    BUDGET — a spend pace (when the schedule gives one) may raise it above
@@ -1762,7 +1768,20 @@ path, never a silent success.**
    error). At the database the decider is the SIGNED-IN caller — never a
    client-written `decided_by` / `created_by`: a session records itself as
    the decider, the proposer is pinned at insert and never rewritten, and
-   `decided_by` changes only by the decision or its revert (`COST-6`).
+   `decided_by` changes only by the decision or its revert (`COST-6`). A
+   signed-in caller may make exactly the app's writes and no others
+   *(verification fix, 2026-09-30)*: the decision out of proposed
+   (approved / rejected / void, recording the caller; void runs neither
+   rule — it moves no money), the entry link, the unwind and the repair
+   reverse (approved → void), the failed-post revert (approved → proposed,
+   only by the approver while no money of the CO is on the ledger) and the
+   unwind's put-back (void → approved, only while its linked entry is still
+   posted). Rejected and void are otherwise TERMINAL; approved → rejected
+   does not exist; org, project and number never change; amount and budget
+   line freeze once decided; `posted_entry_id` links only the CO's own
+   posted commitment (same project and line, its number, no source
+   document, no other CO linked) and is never repointed away from a posted
+   entry. The service role keeps its pass on the transitions and the link.
 5. **No FX.** A document in another currency than its budget line is refused
    at posting; no conversion is built. A stored "$" / "US$" is USD, a
    non-code is unstated, an account with no currency is USD (as rendered),
@@ -1787,6 +1806,13 @@ path, never a silent success.**
    correction) or when an UNLINKED entry of its award/invoice shape stands
    for it (pre-Round-G money carries no link; re-posting it would double it).
    The line renders only once `20261093` (its view and backfill) has run.
+   *(Verification fix, 2026-09-30.)* A document whose linked entry was
+   voided by hand is refused BOTH repairs — the void was the correction, and
+   reopening the paper would let its money post a second time. The unwind of
+   a change order whose entry is already void applies the repair reverse's
+   look-alike refusal. A truly stuck document hidden by an ambiguous legacy
+   entry of its shape is a hand (SQL) repair, recorded as `MON-1`'s
+   residual — no link UI.
 8. **Declined rivals.** A grouped award declines every still-open quote in
    its RFQ group, the group compared by key (case-folded, whitespace
    collapsed — the bid tab's key). An ungrouped award declines NOTHING
@@ -1806,12 +1832,18 @@ path, never a silent success.**
    party's link, then a single exact name, and fails CLOSED on any failed
    lookup. Callers pass `overrideReason`; they do not write their own
    override row.
-10. **Truncated reads.** A total that came from the AI read posts only with
-    the total typed back (`confirmedTotal`, whole units) when the read was
+10. **Truncated reads.** When the AI read a document and the read was
     truncated — or, once the extent columns exist (J4's `20261096`), of
-    unknown extent. A human-typed total needs none. Before the columns exist
-    there is nothing to read and the check is a no-op (`COST-13` posting
-    limb).
+    unknown extent — its total posts only with the figure typed back from
+    the paper (`confirmedTotal`, equal to the row's total in whole units),
+    whether that total is the extraction or a hand correction: the
+    confirmation is EXPLICIT, never inferred from whether the total differs
+    from the AI's reading *(verification fix, 2026-09-30 — the earlier "a
+    human-typed total needs none" is withdrawn for totals of a read
+    document)*. A total nobody read (no extraction) needs none; a
+    `confirmedTotal` that disagrees with the row is always refused. Before
+    the columns exist there is nothing to read and the check is a no-op
+    (`COST-13` posting limb).
 11. **One number.** The money paths post `total_amount ?? extraction`.
     `parsedQuoteFrom` returns the extraction unmodified (the bid tab shows
     "corrected by hand from the AI's X" from it); the display overlay is the
