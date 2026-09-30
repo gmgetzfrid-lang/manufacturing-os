@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeTreeMove, previewMove, defaultMoveMode, computeEdgeResize, computeSummaryResize,
-  startForDuration, addUtcDays, type ReflowNode,
+  startForDuration, addUtcDays, toWallClock, fromWallClock, type ReflowNode,
 } from "@/lib/scheduleReflow";
 
 const iso = (d: string) => `${d}T00:00:00.000Z`;
@@ -239,6 +239,13 @@ describe("SCH-12 · duration arithmetic in UTC, across DST, in a negative-offset
         expect(startForDuration("2026-03-10T00:00:00.000Z", 3)).toBe("2026-03-08T00:00:00.000Z");
         expect(startForDuration("2026-11-02T17:00:00.000Z", 1)).toBe("2026-11-02T17:00:00.000Z");
         expect(addUtcDays("2026-11-01T08:00:00.000Z", 1)).toBe("2026-11-02T08:00:00.000Z");
+        // the wall-clock pair the editors use (PT SCH-10) round-trips in every zone
+        expect(toWallClock("2026-11-02T17:30:00.000Z")).toEqual({ date: "2026-11-02", time: "17:30" });
+        expect(fromWallClock("2026-11-02", "17:30")).toBe("2026-11-02T17:30:00.000Z");
+        expect(fromWallClock("2026-11-02", "17:30:15")).toBe("2026-11-02T17:30:15.000Z");
+        expect(fromWallClock("2026-11-02", null)).toBe("2026-11-02T00:00:00.000Z");
+        expect(fromWallClock("2026-11-02", "5pm")).toBeNull();
+        expect(fromWallClock("2026-02-30", "08:00")).toBeNull();
       });
     });
   }

@@ -150,13 +150,14 @@ export function toWallClock(iso: string | null | undefined): { date: string; tim
   return { date: s.slice(0, 10), time: s.slice(11, 16) };
 }
 
-/** A wall-clock date (YYYY-MM-DD) + time (HH:MM, default 00:00) as the stored
- *  instant — built as a UTC string, never parsed in the viewer's zone. Null
- *  when the date is not a real date. */
+/** A wall-clock date (YYYY-MM-DD) + time (HH:MM or HH:MM:SS; none = 00:00) as
+ *  the stored instant — built as a UTC string, never parsed in the viewer's
+ *  zone. Null when the date is not a real date or the time does not read. */
 export function fromWallClock(date: string, time?: string | null): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const hm = time && /^\d{2}:\d{2}$/.test(time) ? time : "00:00";
-  const t = Date.parse(`${date}T${hm}:00.000Z`);
+  if (time && !/^\d{2}:\d{2}(:\d{2})?$/.test(time)) return null;
+  const hms = !time ? "00:00:00" : time.length === 5 ? `${time}:00` : time;
+  const t = Date.parse(`${date}T${hms}.000Z`);
   if (!Number.isFinite(t)) return null;
   const iso = new Date(t).toISOString();
   return iso.slice(0, 10) === date ? iso : null; // 2026-02-30 is not a date
