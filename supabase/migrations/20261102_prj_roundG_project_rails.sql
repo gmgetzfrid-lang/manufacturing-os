@@ -19,6 +19,18 @@
 --      readable only where that project is: the company profile gather
 --      (lib/companies.ts reads company_events by company) no longer shows a
 --      private project's recordables / stop-work orders to a non-member.
+--      Deleting the project must not undo that: company_events.project_id
+--      is ON DELETE SET NULL (20261013:98), and an event with no project is
+--      an org record. trg_projects_private_company_events (BEFORE DELETE on
+--      projects, SECURITY DEFINER) marks a PRIVATE project's events
+--      deleted_private_project = true before the FK unlinks them, on every
+--      delete path (delete_project_record, a raw DELETE under
+--      projects_delete_owner, the pre-20261103 app path, the service role);
+--      the member read admits an unlinked event only while that mark is
+--      false. The events are KEPT — a contractor's recordable is its
+--      permanent record — and stay readable to the org's controllers
+--      (company_events_controller_write, FOR ALL), who could read them
+--      while the project existed.
 --      turnover_review_events (the turnover review history projects Round G
 --      J2 adds in 20261091 — status changes, reviewer notes,
 --      nonconformances) was created with an ORG-membership read; where that
@@ -41,8 +53,8 @@
 --        is_org_controller or can_manage_project (20261047: owner /
 --        Admin / Manager / roster owner-or-collaborator — an OBSERVER may
 --        read the feed but not post to it, PM-11 dw1); a 'doc_added' /
---        'doc_removed' row needs the register's own authority (controller or
---        active owner — section 4), so nobody can plant a detach record that
+--        'doc_removed' row needs the register card's authority (controller or
+--        active owner — the detach rule, section 4), so nobody can plant a detach record that
 --        pulls a document's history into a project's timeline (SAF-17).
 --        (The service role bypasses RLS; no branch is needed for it.)
 --      · trg_project_activity_stamp (BEFORE INSERT, SECURITY DEFINER) stamps
@@ -58,18 +70,24 @@
 --   4. PM-8 = SEC-17 = drafting-flow PROJ-3 — project_documents: the one
 --      FOR ALL policy (20260609:192-197, any active org member, USING = WITH
 --      CHECK) is DROPPED, not supplemented (cluster 3 / DRLS-1). SELECT is
---      project_visible_to_me(project_id); INSERT needs
+--      project_visible_to_me(project_id); INSERT and UPDATE need
 --      is_org_controller(org_id) OR can_manage_project(project_id) (the
 --      fleet plan's predicate: owner / Admin / Manager / roster owner or
 --      collaborator, 20261047 — so a collaborator's adoption and a
---      manager's split / merge carry-over still land a row); UPDATE and
---      DELETE need is_org_controller(org_id) OR is_project_owner(project_id)
---      — a detach, or an UPDATE that moves a link (a detach by another
---      name), drops a document's history from the timeline (SAF-17), so it
---      stays with the register card's `canManage` (owner or Admin/DocCtrl).
---      The card offers Attach to the same owner-or-controller set: it never
---      offers a write the database refuses. Every written row must carry its
---      project's org (org_id = project_org(project_id)).
+--      manager's split / merge carry-over land a row, and an upsert that
+--      meets an existing row takes its DO UPDATE path under the same rule),
+--      and the written row must be in a project the caller can SEE
+--      (project_visible_to_me — an org Manager off a private project's
+--      roster passes can_manage_project but writes nothing into it). A
+--      link never MOVES: trg_project_documents_link_fixed refuses an UPDATE
+--      that changes project_id or document_id for a signed-in caller — an
+--      UPDATE that moved a link would be a detach by another name, dropping
+--      a document's history from the timeline (SAF-17). DELETE (the detach)
+--      needs is_org_controller(org_id) OR is_project_owner(project_id), the
+--      register card's `canManage` (owner or Admin/DocCtrl). The card
+--      offers Attach to that same owner-or-controller set, narrower than the
+--      database: it never offers a write the database refuses. Every written
+--      row must carry its project's org (org_id = project_org(project_id)).
 --      checkouts_resync_project_documents (20260609:151) is re-created
 --      SECURITY DEFINER with search_path pinned, so a COLLABORATOR's checkout
 --      under the project still links its document (it runs as the invoker
@@ -97,7 +115,9 @@
 --   * SEC-2 blast radius: private projects carrying cost / quality rows, and
 --     those rows — readable org-wide until this applies; company events
 --     logged against a private project (shown on /companies/[id] to every
---     member until this applies);
+--     member until this applies); company events with no project (org
+--     records — one a private project's delete unlinked before this file
+--     cannot be told apart);
 --   * SEC-9: projects whose owner is not an active member of their org;
 --   * PM-8: project_documents rows whose org is not their project's org;
 --     hand-attached ('manual') register rows (SEC-17 — informational: there
@@ -145,6 +165,9 @@ UNION ALL
 SELECT 'inventory (before): company events logged against a private project, readable org-wide today (SEC-2 — the company profile)', COUNT(*)::text
   FROM company_events e JOIN projects p ON p.id = e.project_id
  WHERE p.visibility = 'private'
+UNION ALL
+SELECT 'inventory (before): company events with no project — org records, readable by every member (any a private project''s delete unlinked before this file cannot be told apart and stay so)', COUNT(*)::text
+  FROM company_events WHERE project_id IS NULL
 UNION ALL
 SELECT 'inventory (before): projects whose owner is not an active member of their org (SEC-9)', COUNT(*)::text
   FROM projects p
@@ -228,13 +251,37 @@ DROP POLICY IF EXISTS cost_entries_select ON cost_entries;
 CREATE POLICY cost_entries_select ON cost_entries FOR SELECT
   USING (project_visible_to_me(project_id));
 
+-- A private project's events stay private once the project is gone: the
+-- mark is set before the FK's ON DELETE SET NULL unlinks them.
+ALTER TABLE company_events ADD COLUMN IF NOT EXISTS deleted_private_project BOOLEAN NOT NULL DEFAULT false;
+COMMENT ON COLUMN company_events.deleted_private_project IS
+  'SEC-2 (20261102): true when the event was logged against a PRIVATE project that has since been deleted (project_id is then NULL). Such an event is read by the org''s controllers only, never by every member.';
+
+CREATE OR REPLACE FUNCTION keep_private_project_company_events_private()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF OLD.visibility = 'private' THEN
+    UPDATE company_events SET deleted_private_project = true
+     WHERE project_id = OLD.id AND NOT deleted_private_project;
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_projects_private_company_events ON projects;
+CREATE TRIGGER trg_projects_private_company_events
+  BEFORE DELETE ON projects
+  FOR EACH ROW
+  EXECUTE FUNCTION keep_private_project_company_events_private();
+
 -- company_events is an org record (20261013:240-243): its member read keeps
 -- that line verbatim save its closing parenthesis, plus ONE added line — an
--- event logged against a project is visible where the project is.
+-- event logged against a project is visible where the project is, and an
+-- unlinked event only if it did not come from a deleted private project.
 DROP POLICY IF EXISTS company_events_member_read ON company_events;
 CREATE POLICY company_events_member_read ON company_events FOR SELECT
     USING (EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = company_events.org_id AND m.uid = auth.uid() AND m.status = 'active')
-      AND (company_events.project_id IS NULL OR project_visible_to_me(company_events.project_id)));
+      AND ((company_events.project_id IS NULL AND NOT company_events.deleted_private_project) OR project_visible_to_me(company_events.project_id)));
 
 -- turnover_review_events (20261091, QUAL-11) is the quality record's review
 -- history — the same private data as turnover_items. Where the table exists
@@ -339,14 +386,36 @@ DROP POLICY IF EXISTS project_documents_insert ON project_documents;
 CREATE POLICY project_documents_insert ON project_documents
   FOR INSERT TO authenticated
   WITH CHECK ((is_org_controller(org_id) OR can_manage_project(project_id))
-              AND org_id = project_org(project_id));
+              AND org_id = project_org(project_id)
+              AND project_visible_to_me(project_id));
 
 DROP POLICY IF EXISTS project_documents_update ON project_documents;
 CREATE POLICY project_documents_update ON project_documents
   FOR UPDATE TO authenticated
-  USING (is_org_controller(org_id) OR is_project_owner(project_id))
-  WITH CHECK ((is_org_controller(org_id) OR is_project_owner(project_id))
-              AND org_id = project_org(project_id));
+  USING (is_org_controller(org_id) OR can_manage_project(project_id))
+  WITH CHECK ((is_org_controller(org_id) OR can_manage_project(project_id))
+              AND org_id = project_org(project_id)
+              AND project_visible_to_me(project_id));
+
+-- A link never moves (SAF-17): an UPDATE keeps its project and its document.
+-- The service role (restores, maintenance) keeps its pass.
+CREATE OR REPLACE FUNCTION enforce_project_document_link_fixed()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NOT NULL
+     AND (NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.document_id IS DISTINCT FROM OLD.document_id) THEN
+    RAISE EXCEPTION 'A project''s document link never moves: detach it (the project owner or Admin / Document Control) and attach the document where it belongs. (SAF-17, 20261102)'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_project_documents_link_fixed ON project_documents;
+CREATE TRIGGER trg_project_documents_link_fixed
+  BEFORE UPDATE ON project_documents
+  FOR EACH ROW
+  EXECUTE FUNCTION enforce_project_document_link_fixed();
 
 DROP POLICY IF EXISTS project_documents_delete ON project_documents;
 CREATE POLICY project_documents_delete ON project_documents
@@ -470,6 +539,21 @@ UNION ALL SELECT 'SEC-2: company events logged against a project read through pr
        (SELECT qual LIKE '%org_members%' AND qual LIKE '%project_visible_to_me(%' AND qual LIKE '%project_id IS NULL%'
           FROM pg_policies WHERE schemaname = 'public' AND tablename = 'company_events' AND policyname = 'company_events_member_read'
             AND cmd = 'SELECT'), NULL
+UNION ALL SELECT 'SEC-2: deleting a private project keeps its company events private — marked before the FK unlinks them, and the member read honours the mark',
+       EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'company_events' AND column_name = 'deleted_private_project'
+                  AND is_nullable = 'NO' AND column_default = 'false')
+       AND EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid
+                    WHERE t.tgrelid = 'public.projects'::regclass AND NOT t.tgisinternal
+                      AND t.tgname = 'trg_projects_private_company_events'
+                      AND f.proname = 'keep_private_project_company_events_private')
+       AND (SELECT prosrc LIKE '%IF OLD.visibility = ''private'' THEN%'
+                   AND prosrc LIKE '%UPDATE company_events SET deleted_private_project = true%'
+                   AND prosrc LIKE '%WHERE project_id = OLD.id%'
+              FROM pg_proc WHERE proname = 'keep_private_project_company_events_private' AND pronamespace = 'public'::regnamespace)
+       AND (SELECT qual LIKE '%deleted_private_project%'
+              FROM pg_policies WHERE schemaname = 'public' AND tablename = 'company_events' AND policyname = 'company_events_member_read'
+                AND cmd = 'SELECT'), NULL
 UNION ALL SELECT 'SEC-2: no other SELECT policy on company_events grants a bare org-membership read',
        NOT EXISTS (SELECT 1 FROM pg_policies
                     WHERE schemaname = 'public' AND tablename = 'company_events' AND cmd IN ('SELECT', 'ALL')
@@ -516,20 +600,26 @@ UNION ALL SELECT 'PM-8: project_documents has exactly its four per-verb policies
        (SELECT COUNT(*) = 4 FROM pg_policies
          WHERE schemaname = 'public' AND tablename = 'project_documents'
            AND policyname IN ('project_documents_select', 'project_documents_insert', 'project_documents_update', 'project_documents_delete')), NULL
-UNION ALL SELECT 'PM-8: an attach needs a project manager or a controller, in the project''s own org',
-       (SELECT with_check LIKE '%can_manage_project(%' AND with_check LIKE '%is_org_controller(%' AND with_check LIKE '%project_org(%'
-          FROM pg_policies WHERE schemaname = 'public' AND tablename = 'project_documents' AND policyname = 'project_documents_insert'), NULL
-UNION ALL SELECT 'SAF-17 / PM-8: a detach or a moved link needs the owner or a controller (UPDATE in the project''s own org)',
-       (SELECT qual LIKE '%is_project_owner(%' AND qual LIKE '%is_org_controller(%'
-               AND with_check LIKE '%is_project_owner(%' AND with_check LIKE '%project_org(%'
-          FROM pg_policies WHERE schemaname = 'public' AND tablename = 'project_documents' AND policyname = 'project_documents_update')
+UNION ALL SELECT 'PM-8: an attach, and an upsert''s update, need a project manager or a controller, in the project''s own org and a project the caller can see',
+       (SELECT COUNT(*) = 2 FROM pg_policies
+         WHERE schemaname = 'public' AND tablename = 'project_documents'
+           AND policyname IN ('project_documents_insert', 'project_documents_update')
+           AND with_check LIKE '%can_manage_project(%' AND with_check LIKE '%is_org_controller(%'
+           AND with_check LIKE '%project_org(%' AND with_check LIKE '%project_visible_to_me(%'), NULL
+UNION ALL SELECT 'SAF-17 / PM-8: a link never moves (BEFORE UPDATE trigger), and a detach needs the owner or a controller',
+       EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid
+                WHERE t.tgrelid = 'public.project_documents'::regclass AND NOT t.tgisinternal
+                  AND t.tgname = 'trg_project_documents_link_fixed' AND f.proname = 'enforce_project_document_link_fixed')
+       AND (SELECT prosrc LIKE '%NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.document_id IS DISTINCT FROM OLD.document_id%'
+              FROM pg_proc WHERE proname = 'enforce_project_document_link_fixed' AND pronamespace = 'public'::regnamespace)
        AND (SELECT qual LIKE '%is_project_owner(%' AND qual LIKE '%is_org_controller(%' AND qual NOT LIKE '%can_manage_project(%'
               FROM pg_policies WHERE schemaname = 'public' AND tablename = 'project_documents' AND policyname = 'project_documents_delete'), NULL
 UNION ALL SELECT 'SEC-2 / PM-8 / SEC-15: every function this file defines is SECURITY DEFINER with search_path pinned',
-       (SELECT COUNT(*) = 4 FROM pg_proc
+       (SELECT COUNT(*) = 6 FROM pg_proc
          WHERE pronamespace = 'public'::regnamespace
            AND proname IN ('stamp_project_activity_author', 'touch_project_last_activity',
-                           'checkouts_resync_project_documents', 'transfer_project_ownership')
+                           'checkouts_resync_project_documents', 'transfer_project_ownership',
+                           'keep_private_project_company_events_private', 'enforce_project_document_link_fixed')
            AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'), NULL
 UNION ALL SELECT 'PM-8: the checkout resync links only a session whose org is its project''s org',
        (SELECT prosrc LIKE '%project_org(NEW.project_id) IS DISTINCT FROM NEW.org_id%'

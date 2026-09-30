@@ -11,8 +11,21 @@
 --      turnover_items, punch_items, milestones. For a signed-in caller a
 --      write is refused while the row's project is completed / cancelled /
 --      archived. The service role (auth.uid() IS NULL — the cron, the intake
---      door) keeps its pass, as every guard in this house does; the intake
---      door's own closed-project refusal is projects-and-cost PC-1 / J1.
+--      door, and every server route that writes through the admin client)
+--      keeps its pass, as every guard in this house does; the intake door's
+--      own closed-project refusal is projects-and-cost PC-1 / J1, and the
+--      one other user-initiated service-role writer of a regulated row —
+--      /api/projects/cost-docs, which saves a read onto a DRAFT quote — is
+--      named in PM-1's residual (its route owner adds the status check).
+--      Deleting what a frozen row CITES is not a write to the record: an FK
+--      ON DELETE SET NULL (a drawing a milestone or turnover item cites, a
+--      checklist's source document, a party, a company, an intake link, a
+--      budget line) nulls the reference with an UPDATE one trigger level
+--      down, and that UPDATE passes when every column it changes is a
+--      reference whose foreign key is ON DELETE SET NULL (read from
+--      pg_constraint, so a reference a later migration adds is covered),
+--      set to NULL — the exemption J2's rails make (20261091). A direct
+--      UPDATE that nulls the same column is still refused.
 --   2. PM-1 dw3 — reopen_project(project, reason): SECURITY DEFINER,
 --      CONTROLLER-only (a project owner cannot reopen their own closed
 --      project), reason required; sets status 'active', CLEARS
@@ -40,7 +53,10 @@
 --        controller; refuses a held project; a project carrying cost /
 --        quality rows is deleted only by a CONTROLLER with a REASON (the
 --        default is Archive); counts every table, snapshots the cost and
---        quality rows, records the cost documents' storage keys for the
+--        quality rows (and the company events the project's delete will
+--        unlink — kept, not deleted: 20261102 keeps a PRIVATE project's
+--        events controller-only once unlinked), records the cost documents'
+--        storage keys for the
 --        orphan sweep (PM-6 dw5 — the collector is admin-and-org BKP-2 /
 --        intelligence ILIFE-1; this only records the keys), revokes the
 --        project's contractor intake links (PM-2's inline limb — PC-1 / J1
@@ -152,6 +168,21 @@ DECLARE
 BEGIN
   IF TG_OP <> 'INSERT' THEN v_old := to_jsonb(OLD); END IF;
   IF TG_OP <> 'DELETE' THEN v_new := to_jsonb(NEW); END IF;
+  -- Deleting a row this one cites: the FK's ON DELETE SET NULL is an UPDATE,
+  -- one trigger level down. It passes when every column it changes is an
+  -- ON DELETE SET NULL reference now NULL — a frozen milestone never blocks
+  -- the delete of the drawing it cites. Anything else is judged below.
+  IF TG_OP = 'UPDATE' AND pg_trigger_depth() > 1
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_each(v_new) n
+        WHERE n.value IS DISTINCT FROM (v_old -> n.key)
+          AND (n.value <> 'null'::jsonb
+               OR NOT EXISTS (SELECT 1 FROM pg_constraint k
+                                JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = ANY (k.conkey)
+                               WHERE k.conrelid = TG_RELID AND k.contype = 'f' AND k.confdeltype = 'n'
+                                 AND a.attname = n.key))) THEN
+    RETURN NEW;
+  END IF;
   -- The project a row belongs to; a checklist item through its checklist.
   IF TG_TABLE_NAME = 'checklist_items' THEN
     IF v_old IS NOT NULL THEN
@@ -191,7 +222,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION enforce_project_record_guard() IS
-  'PM-1 / QUAL-3 (20261103): a signed-in caller cannot write a regulated row of a completed / cancelled / archived project; nobody deletes one under a project legal hold. The purge GUC (app.record_purge = project:<id>) and an FK cascade from the project''s own delete pass.';
+  'PM-1 / QUAL-3 (20261103): a signed-in caller cannot write a regulated row of a completed / cancelled / archived project; nobody deletes one under a project legal hold. The purge GUC (app.record_purge = project:<id>), an FK cascade from the project''s own delete, and an FK ON DELETE SET NULL (an UPDATE one trigger level down that only nulls ON DELETE SET NULL references) pass.';
 
 DO $$
 DECLARE t text;
@@ -321,7 +352,8 @@ BEGIN
     'documentLinks',  (SELECT COUNT(*) FROM project_documents WHERE project_id = p_project),
     'milestones',     (SELECT COUNT(*) FROM milestones WHERE project_id = p_project),
     'members',        (SELECT COUNT(*) FROM project_members WHERE project_id = p_project),
-    'activity',       (SELECT COUNT(*) FROM project_activity WHERE project_id = p_project));
+    'activity',       (SELECT COUNT(*) FROM project_activity WHERE project_id = p_project),
+    'companyEvents',  (SELECT COUNT(*) FROM company_events WHERE project_id = p_project));
 
   -- What was destroyed, recoverable from the audit row.
   v_snapshot := jsonb_build_object(
@@ -334,7 +366,10 @@ BEGIN
     'costAccounts',   COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM cost_accounts x WHERE x.project_id = p_project), '[]'::jsonb),
     'costEntries',    COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM cost_entries x WHERE x.project_id = p_project), '[]'::jsonb),
     'costDocuments',  COALESCE((SELECT jsonb_agg(to_jsonb(x) - 'parsed') FROM cost_documents x WHERE x.project_id = p_project), '[]'::jsonb),
-    'parties',        COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM project_parties x WHERE x.project_id = p_project), '[]'::jsonb));
+    'parties',        COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM project_parties x WHERE x.project_id = p_project), '[]'::jsonb),
+    -- Kept, but unlinked by the FK: the snapshot is where their project is
+    -- remembered (20261102 keeps a private project's events controller-only).
+    'companyEvents',  COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM company_events x WHERE x.project_id = p_project), '[]'::jsonb));
 
   -- PM-6 dw5: the storage keys the deleted cost documents leave behind, for
   -- the orphan sweep (recorded here; collected elsewhere).
@@ -365,8 +400,10 @@ BEGIN
 
   -- The purge: children first, in an order that fires no ON DELETE SET NULL
   -- update on a guarded row, then the schedule, then the project (its roster,
-  -- feed and register cascade; checkouts, markups, notes and transmittals are
-  -- kept, unlinked). A checklist's items are not deleted here: they leave
+  -- feed and register cascade; checkouts, markups, notes, transmittals and
+  -- company events are kept, unlinked — a private project's company events
+  -- are marked controller-only first, trg_projects_private_company_events,
+  -- 20261102). A checklist's items are not deleted here: they leave
   -- with their checklist (checklist_items.checklist_id ON DELETE CASCADE),
   -- one trigger level down — the only delete of an item the quality rail
   -- admits for a signed-in caller (checklist_items_decision_rail, 20261091).
@@ -461,6 +498,17 @@ UNION ALL SELECT 'PM-1: the record guard refuses a signed-in write on a closed p
        (SELECT prosrc LIKE '%(''completed'', ''cancelled'', ''archived'')%' AND prosrc LIKE '%auth.uid() IS NOT NULL%'
                AND prosrc LIKE '%app.record_purge%' AND prosrc LIKE '%legal_hold%'
           FROM pg_proc WHERE proname = 'enforce_project_record_guard' AND pronamespace = 'public'::regnamespace), NULL
+UNION ALL SELECT 'PM-1: deleting what a frozen row cites still works — an FK ON DELETE SET NULL (one trigger level down, only SET NULL references nulled) passes the freeze',
+       (SELECT prosrc LIKE '%TG_OP = ''UPDATE'' AND pg_trigger_depth() > 1%'
+               AND prosrc LIKE '%k.confdeltype = ''n''%' AND prosrc LIKE '%n.value <> ''null''::jsonb%'
+               AND strpos(prosrc, 'pg_trigger_depth() > 1') < strpos(prosrc, 'FOREACH v_pid IN ARRAY')
+          FROM pg_proc WHERE proname = 'enforce_project_record_guard' AND pronamespace = 'public'::regnamespace)
+       AND (SELECT COUNT(*) = 3 FROM pg_constraint k
+              JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = ANY (k.conkey)
+             WHERE k.contype = 'f' AND k.confdeltype = 'n'
+               AND ((k.conrelid = 'public.milestones'::regclass AND a.attname = 'document_id')
+                 OR (k.conrelid = 'public.turnover_items'::regclass AND a.attname = 'document_id')
+                 OR (k.conrelid = 'public.project_checklists'::regclass AND a.attname = 'source_document_id'))), NULL
 UNION ALL SELECT 'PM-1: a closed project leaves its closed status only through reopen_project',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_projects_lifecycle_guard' AND tgrelid = 'public.projects'::regclass AND NOT tgisinternal)
        AND (SELECT prosrc LIKE '%app.project_reopen%' FROM pg_proc WHERE proname = 'enforce_project_lifecycle_guard' AND pronamespace = 'public'::regnamespace)
@@ -489,6 +537,13 @@ UNION ALL SELECT 'SEC-2 / PM-6: the snapshot rides only in PURGE_PROJECT_SNAPSHO
                     WHERE schemaname = 'public' AND tablename = 'audit_logs' AND policyname = 'audit_logs_admin_trail'
                       AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT'
                       AND qual LIKE '%admin.audit_view%' AND qual LIKE '%PURGE_%'), NULL
+UNION ALL SELECT 'SEC-2 / PM-6: the deleted project''s company events are counted and snapshotted, never deleted — and 20261102 keeps a private project''s events controller-only once unlinked',
+       (SELECT prosrc LIKE '%''companyEvents'',  (SELECT COUNT(*) FROM company_events WHERE project_id = p_project)%'
+               AND prosrc LIKE '%''companyEvents'',  COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM company_events x%'
+               AND prosrc NOT LIKE '%DELETE FROM company_events%'
+          FROM pg_proc WHERE proname = 'delete_project_record' AND pronamespace = 'public'::regnamespace)
+       AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_projects_private_company_events'
+                      AND tgrelid = 'public.projects'::regclass AND NOT tgisinternal), NULL
 UNION ALL SELECT 'PM-6 / QUAL-3: the purge never deletes checklist items directly — they cascade with their checklist (the 20261091 quality rail admits only that)',
        (SELECT prosrc NOT LIKE '%DELETE FROM checklist_items%' AND prosrc LIKE '%DELETE FROM project_checklists WHERE project_id = p_project%'
           FROM pg_proc WHERE proname = 'delete_project_record' AND pronamespace = 'public'::regnamespace)

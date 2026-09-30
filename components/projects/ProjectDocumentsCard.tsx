@@ -13,8 +13,9 @@
 // refused feed row is reported, not swallowed.
 //
 // Who may attach / detach: the project owner or an org controller — the
-// same predicate as the 20261102 project_documents write policy, so the
-// `canManage` gate and the database agree (SEC-17). Detaching removes the
+// 20261102 detach policy exactly, and narrower than its attach policy (which
+// also admits the project's managers), so the `canManage` gate never offers
+// a write the database refuses (SEC-17). Detaching removes the
 // link from the register; the document's history up to that moment stays
 // on the project's Activity tab (SAF-17) and the confirm says so.
 

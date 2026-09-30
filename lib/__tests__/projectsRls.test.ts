@@ -12,14 +12,17 @@
 //     policy gated on the controller / the active owner; none grants a bare
 //     org-membership read (the private-project leak); company_events (the
 //     company profile's event log) gates an event logged against a project
-//     on the same visibility; turnover_review_events (projects Round G J2's
+//     on the same visibility, and an unlinked event only while it is not
+//     marked as a deleted private project's (the delete keeps it private);
+//     turnover_review_events (projects Round G J2's
 //     20261091 review history, merged beside this package) reads through
 //     it too — replayed here with J2's statement as a fixture;
 //   · SEC-17 / PM-8 — project_documents has no FOR ALL policy (the
 //     member_all one is DROPPED, not supplemented), SELECT is
-//     visibility-gated, an attach needs a project manager
-//     (can_manage_project) or a controller, a detach or a moved link the
-//     owner or a controller, every write in the project's own org;
+//     visibility-gated, an attach or an upsert's update needs a project
+//     manager (can_manage_project) or a controller, in a project the caller
+//     can see, a detach the owner or a controller, every write in the
+//     project's own org (a link never moves — a trigger, not a policy);
 //   · SEC-9 — the projects UPDATE / DELETE owner branches need an ACTIVE
 //     membership;
 //   · PM-7 — project_activity's insert binds the author, the org and the
@@ -203,15 +206,43 @@ describe("SEC-2 dw2 — the company profile shows no private-project event to a 
     const leaks: string[] = [];
     for (const [name, p] of pol("company_events")) {
       if (!p.permissive || (p.cmd !== "SELECT" && p.cmd !== "ALL")) continue;
-      const gated = /project_id IS NULL OR project_visible_to_me\(company_events\.project_id\)/.test(p.body);
+      const gated = /\(company_events\.project_id IS NULL AND NOT company_events\.deleted_private_project\) OR project_visible_to_me\(company_events\.project_id\)/.test(p.body);
       const controllerOnly = p.cmd === "ALL" && !/org_members/.test(p.body) && /is_org_controller\(/.test(p.body);
       if (!gated && !controllerOnly) leaks.push(`${name} (${p.file})`);
     }
     expect(leaks).toEqual([]);
     const read = final.get("company_events")!.get("company_events_member_read")!;
     expect(read.file).toBe("supabase/migrations/20261102_prj_roundG_project_rails.sql");
-    // an event with no project is still an org record — readable by every active member
-    expect(read.body).toMatch(/FROM org_members m WHERE m\.org_id = company_events\.org_id AND m\.uid = auth\.uid\(\) AND m\.status = 'active'\)\s+AND \(company_events\.project_id IS NULL OR/);
+    // an event with no project is still an org record — readable by every
+    // active member — unless it came from a PRIVATE project since deleted
+    expect(read.body).toMatch(/FROM org_members m WHERE m\.org_id = company_events\.org_id AND m\.uid = auth\.uid\(\) AND m\.status = 'active'\)\s+AND \(\(company_events\.project_id IS NULL AND NOT company_events\.deleted_private_project\) OR/);
+  });
+
+  it("deleting a private project does not make its events org-readable: they are marked before the FK's ON DELETE SET NULL unlinks them, on every delete path", () => {
+    // company_events.project_id is ON DELETE SET NULL (20261013) and no later
+    // migration changes that — so an unlinked event is what a delete leaves.
+    const m1013 = readFileSync(join(migDir, "20261013_project_controls_program.sql"), "utf8");
+    expect(m1013).toMatch(/CREATE TABLE IF NOT EXISTS company_events \([\s\S]*?project_id UUID REFERENCES projects\(id\) ON DELETE SET NULL,/);
+    const m02 = stripComments(readFileSync(join(migDir, "20261102_prj_roundG_project_rails.sql"), "utf8"));
+    expect(m02).toContain("ALTER TABLE company_events ADD COLUMN IF NOT EXISTS deleted_private_project BOOLEAN NOT NULL DEFAULT false;");
+    // The mark is set by a BEFORE DELETE trigger on projects (not in the RPC
+    // alone): a raw DELETE under projects_delete_owner, the pre-20261103 app
+    // path and the service role all pass through it.
+    expect(m02).toMatch(/CREATE TRIGGER trg_projects_private_company_events\s+BEFORE DELETE ON projects\s+FOR EACH ROW\s+EXECUTE FUNCTION keep_private_project_company_events_private\(\);/);
+    expect(m02).toMatch(/IF OLD\.visibility = 'private' THEN\s+UPDATE company_events SET deleted_private_project = true\s+WHERE project_id = OLD\.id AND NOT deleted_private_project;/);
+    // The events are KEPT (a contractor's safety record); the controllers'
+    // FOR ALL policy still reads them.
+    const m03 = stripComments(readFileSync(join(migDir, "20261103_prj_roundG_project_closeout_rails.sql"), "utf8"));
+    const purge = m03.slice(m03.indexOf("CREATE OR REPLACE FUNCTION delete_project_record("), m03.indexOf("REVOKE ALL ON FUNCTION delete_project_record"));
+    expect(purge).toContain("'companyEvents',  COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM company_events x WHERE x.project_id = p_project), '[]'::jsonb)");
+    expect(purge).not.toMatch(/DELETE FROM company_events/);
+    expect(final.get("company_events")!.get("company_events_controller_write")!.body).toMatch(/USING \(is_org_controller\(org_id\)\)/);
+    // No later migration drops the mark or its trigger.
+    for (const f of readdirSync(migDir).filter((x) => /^\d{8}.*\.sql$/.test(x) && x.slice(0, 8) > "20261102")) {
+      const body = stripComments(readFileSync(join(migDir, f), "utf8"));
+      expect(body, f).not.toMatch(/DROP TRIGGER[^;]*trg_projects_private_company_events/);
+      expect(body, f).not.toMatch(/DROP COLUMN[^;]*deleted_private_project/);
+    }
   });
 });
 
@@ -255,18 +286,26 @@ describe("SEC-2 after merge — projects Round G J2's turnover review history (2
 });
 
 describe("SEC-17 / PM-8 — project_documents", () => {
-  it("has no FOR ALL policy; SELECT is visibility-gated; an attach needs a project manager or a controller; a detach or a moved link the owner or a controller", () => {
+  it("has no FOR ALL policy; SELECT is visibility-gated; an attach or an upsert's update needs a project manager or a controller in a project the caller can see; a detach the owner or a controller", () => {
     const ps = final.get("project_documents")!;
     expect([...ps.values()].filter((p) => p.cmd === "ALL")).toEqual([]);
     expect([...ps.keys()].sort()).toEqual(["project_documents_delete", "project_documents_insert", "project_documents_select", "project_documents_update"]);
     expect(ps.get("project_documents_select")!.body).toMatch(/USING \(project_visible_to_me\(project_id\)\)/);
-    expect(ps.get("project_documents_insert")!.body).toMatch(/is_org_controller\(org_id\) OR can_manage_project\(project_id\)/);
-    for (const w of ["project_documents_update", "project_documents_delete"]) {
-      expect(ps.get(w)!.body, w).toMatch(/is_org_controller\(org_id\) OR is_project_owner\(project_id\)/);
-      expect(ps.get(w)!.body, w).not.toMatch(/can_manage_project/);
-    }
     for (const w of ["project_documents_insert", "project_documents_update"]) {
-      expect(ps.get(w)!.body, w).toMatch(/AND org_id = project_org\(project_id\)/);
+      expect(ps.get(w)!.body, w).toMatch(/is_org_controller\(org_id\) OR can_manage_project\(project_id\)/);
+      expect(ps.get(w)!.body, w).toMatch(/AND org_id = project_org\(project_id\)\s+AND project_visible_to_me\(project_id\)\)/);
+      expect(ps.get(w)!.body, w).not.toMatch(/is_project_owner/);
+    }
+    const del = ps.get("project_documents_delete")!.body;
+    expect(del).toMatch(/is_org_controller\(org_id\) OR is_project_owner\(project_id\)/);
+    expect(del).not.toMatch(/can_manage_project/);
+    // The UPDATE policy can be the plan's because a link cannot move: a
+    // BEFORE UPDATE trigger refuses a changed project_id / document_id.
+    const m02 = stripComments(readFileSync(join(migDir, "20261102_prj_roundG_project_rails.sql"), "utf8"));
+    expect(m02).toMatch(/CREATE TRIGGER trg_project_documents_link_fixed\s+BEFORE UPDATE ON project_documents\s+FOR EACH ROW\s+EXECUTE FUNCTION enforce_project_document_link_fixed\(\);/);
+    expect(m02).toMatch(/IF auth\.uid\(\) IS NOT NULL\s+AND \(NEW\.project_id IS DISTINCT FROM OLD\.project_id OR NEW\.document_id IS DISTINCT FROM OLD\.document_id\) THEN\s+RAISE EXCEPTION/);
+    for (const f of readdirSync(migDir).filter((x) => /^\d{8}.*\.sql$/.test(x) && x.slice(0, 8) > "20261102")) {
+      expect(stripComments(readFileSync(join(migDir, f), "utf8")), f).not.toMatch(/DROP TRIGGER[^;]*trg_project_documents_link_fixed/);
     }
   });
 

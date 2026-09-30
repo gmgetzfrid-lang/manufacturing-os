@@ -12,6 +12,10 @@
 //   SAF-6 / PERF-8  every id list is read TIMELINE_ID_CHUNK ids per request —
 //           a project with hundreds of quotes or drawings never sends one
 //           oversized filter — and one failed chunk fails the read
+//   SAF-6 / SAF-17  the id lists themselves (the project's cost documents,
+//           its register, its doc_removed rows) are read whole, paged by id
+//           under PostgREST's 1,000-row cap — an award on the oldest of 600
+//           quotes and the detach cutoff past row 1,000 still count
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -26,9 +30,12 @@ const state = vi.hoisted(() => ({
 
 /** A filtering chain: eq / in / not-in / the PostgREST .or() over review_state
  *  are applied to static rows so the queries are exercised, not just called. */
+/** PostgREST's max-rows: a read with no range returns at most this many. */
+const MAX_ROWS = 1000;
 function chain(table: string) {
   const preds: Array<(r: Record<string, unknown>) => boolean> = [];
   let limit: number | null = null;
+  let range: [number, number] | null = null;
   let order: [string, boolean] | null = null;
   let failed = false;
   const result = () => {
@@ -37,7 +44,8 @@ function chain(table: string) {
       const [col, asc] = order;
       out = [...out].sort((a, b) => (String(a[col]) < String(b[col]) ? (asc ? -1 : 1) : String(a[col]) > String(b[col]) ? (asc ? 1 : -1) : 0));
     }
-    return limit === null ? out : out.slice(0, limit);
+    if (range) return out.slice(range[0], Math.min(range[1] + 1, range[0] + MAX_ROWS));
+    return out.slice(0, Math.min(limit ?? MAX_ROWS, MAX_ROWS));
   };
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
@@ -58,6 +66,7 @@ function chain(table: string) {
         }
         if (prop === "order") order = [col, (a1 as { ascending?: boolean } | undefined)?.ascending !== false];
         if (prop === "limit") limit = Number(col);
+        if (prop === "range") range = [Number(col), Number(a1)];
         if (prop === "maybeSingle") return Promise.resolve({ data: result()[0] ?? null, error: null });
         return new Proxy(c, h);
       };
@@ -214,6 +223,58 @@ describe("SAF-6 / PERF-8 — a busy project's id lists are read in chunks", () =
     // The merged feed is still newest-first and capped at the limit.
     const capped = await getProjectTimeline({ projectId: "p1", limit: 2 });
     expect(capped.map((e) => e.id)).toEqual(["version:v1", "audit:22"]);
+  });
+
+  it("600 quotes: an award on the OLDEST one still reaches the feed — the cost-document read is paged by id, never capped", async () => {
+    state.rows.project_activity = [];
+    state.rows.project_documents = [];
+    // q000 is the oldest by created_at; the old read took the newest 500.
+    state.rows.cost_documents = Array.from({ length: 600 }, (_, i) => ({
+      id: `q${String(i).padStart(3, "0")}`, project_id: "p1", created_at: `2026-${String(1 + Math.floor(i / 60)).padStart(2, "0")}-01T00:00:${String(i % 60).padStart(2, "0")}Z`,
+    }));
+    state.rows.audit_logs = [
+      audit("24", "COST_DOC_AWARDED", { resource_type: "cost", resource_id: "q000", details: { vendor: "Oldest Bidder", total: 1000 } }),
+    ];
+    const events = await getProjectTimeline({ projectId: "p1" });
+    expect(events.map((e) => e.summary)).toContain("Quote awarded — Oldest Bidder (1,000)");
+    // Every cost document id was asked for (600 ids, 100 per request), and
+    // the cost-document read itself went by range, ordered by id.
+    expect(inSizes("audit_logs", "resource_id")).toEqual([100, 100, 100, 100, 100, 100]);
+    const costReads = state.calls.filter((c) => c.table === "cost_documents");
+    expect(costReads.some((c) => c.method === "range")).toBe(true);
+    expect(costReads.some((c) => c.method === "limit")).toBe(false);
+    expect(costReads.filter((c) => c.method === "order").map((c) => c.args[0])).toEqual(["id"]);
+  });
+
+  it("1,200 doc_removed rows and 1,100 links: the detach cutoff past row 1,000 and the link past row 1,000 both hold", async () => {
+    state.rows.cost_documents = [];
+    // 1,199 detaches of other documents, then the one that matters (id sorts last).
+    state.rows.project_activity = [
+      ...Array.from({ length: 1199 }, (_, i) => ({
+        id: `act-${String(i).padStart(4, "0")}`, project_id: "p1", org_id: "o1", user_id: "own", user_name: "own", type: "doc_removed",
+        body: "removed", metadata: { documentId: `old${i}` }, created_at: "2026-01-01T00:00:00Z",
+      })),
+      {
+        id: "act-9999", project_id: "p1", org_id: "o1", user_id: "own", user_name: "own", type: "doc_removed",
+        body: "ISO-100 removed from the project", metadata: { documentId: "dx" }, created_at: "2026-09-10T10:00:00Z",
+      },
+    ];
+    // 1,100 linked documents; the one with an event sorts last by id.
+    state.rows.project_documents = Array.from({ length: 1100 }, (_, i) => ({ id: `pd-${String(i).padStart(4, "0")}`, project_id: "p1", document_id: `ln${i}` }));
+    state.rows.audit_logs = [
+      audit("1", "CHECK_OUT", { resource_type: "document", resource_id: "dx", timestamp: "2026-09-05T10:00:00Z" }),
+      audit("2", "REV_UP", { resource_type: "document", resource_id: "dx", timestamp: "2026-09-12T10:00:00Z" }),
+      audit("3", "REV_UP", { resource_type: "document", resource_id: "ln1099", timestamp: "2026-09-13T10:00:00Z" }),
+    ];
+    state.rows.document_versions = [];
+    state.rows.document_holds = [];
+    const ids = (await getProjectTimeline({ projectId: "p1", limit: 500 })).map((e) => e.id);
+    expect(ids).toContain("audit:1");      // before the detach: the project's
+    expect(ids).not.toContain("audit:2");  // after it: not the project's
+    expect(ids).toContain("audit:3");      // the 1,100th link's history
+    const ranges = (table: string) => state.calls.filter((c) => c.table === table && c.method === "range").map((c) => c.args[0]);
+    expect(ranges("project_documents")).toEqual([0, 1000]);
+    expect(ranges("project_activity")).toEqual([0, 1000]);
   });
 
   it("one refused chunk fails the read — a partial feed is never shown as the whole one", async () => {

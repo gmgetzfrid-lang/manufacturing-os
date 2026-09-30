@@ -206,6 +206,28 @@ async function lookupExistingHoldIds(ids: string[], alreadyOnPage: ReadonlySet<s
  *  refused request failed the whole Activity tab. */
 export const TIMELINE_ID_CHUNK = 100;
 
+/** PostgREST's max-rows: a read with no range returns at most this many
+ *  rows and says nothing about the rest. */
+const TIMELINE_PAGE_ROWS = 1000;
+
+/** Every row of one read, in windows of TIMELINE_PAGE_ROWS until a short
+ *  page; the caller orders by a unique key so the windows neither skip nor
+ *  repeat a row. Any failed window fails the read — a capped read is never
+ *  taken as the whole set (SAF-6: an award on an older quote; SAF-17: the
+ *  detach cutoffs of a long-lived register). */
+async function readAllRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += TIMELINE_PAGE_ROWS) {
+    const { data, error } = await page(from, from + TIMELINE_PAGE_ROWS - 1);
+    if (error) throw new Error(error.message);
+    const batch = ((data as T[] | null) ?? []);
+    out.push(...batch);
+    if (batch.length < TIMELINE_PAGE_ROWS) return out;
+  }
+}
+
 /** One read per chunk of ids (in parallel), concatenated; any failed chunk
  *  fails the read — a partial feed is never presented as the whole one.
  *  Callers that cap each read at `limit` still get the newest `limit`
@@ -666,17 +688,23 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
   // 3. SAF-6: the project-scoped controls audit rows, noise filtered in the query
   // 4. SAF-17: documents detached from the project (doc_removed rows) and when
   // 5. SAF-6: the project's cost documents — their awards are cost-scoped rows
-  const [activityResult, linkedDocsResult, projectAuditResult, detachedResult, costDocsResult] = await Promise.all([
+  // The three id lists (2, 4, 5) are read WHOLE — paged by id to exhaustion
+  // — so the badge and the tab never depend on which rows a capped read
+  // happened to return: an award on the project's oldest quote, or the
+  // detach cutoff of a register with more than 1,000 doc_removed rows.
+  const [activityResult, linkedDocRows, projectAuditResult, detachedRows, costDocRows] = await Promise.all([
     supabase
       .from("project_activity")
       .select("*")
       .eq("project_id", projectId)
       .order("created_at", { ascending: false })
       .limit(limit),
-    supabase
+    readAllRows<{ document_id: string }>((from, to) => supabase
       .from("project_documents")
-      .select("document_id")
-      .eq("project_id", projectId),
+      .select("id, document_id")
+      .eq("project_id", projectId)
+      .order("id")
+      .range(from, to)),
     supabase
       .from("audit_logs")
       .select("*")
@@ -685,23 +713,22 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
       .not("action", "in", hidden)
       .order("timestamp", { ascending: false })
       .limit(limit),
-    supabase
+    readAllRows<{ metadata: Record<string, unknown> | null; created_at: string }>((from, to) => supabase
       .from("project_activity")
-      .select("metadata, created_at")
+      .select("id, metadata, created_at")
       .eq("project_id", projectId)
-      .eq("type", "doc_removed"),
-    supabase
+      .eq("type", "doc_removed")
+      .order("id")
+      .range(from, to)),
+    readAllRows<{ id: string }>((from, to) => supabase
       .from("cost_documents")
       .select("id")
       .eq("project_id", projectId)
-      .order("created_at", { ascending: false })
-      .limit(500),
+      .order("id")
+      .range(from, to)),
   ]);
   if (activityResult.error) throw new Error(activityResult.error.message);
-  if (linkedDocsResult.error) throw new Error(linkedDocsResult.error.message);
   if (projectAuditResult.error) throw new Error(projectAuditResult.error.message);
-  if (detachedResult.error) throw new Error(detachedResult.error.message);
-  if (costDocsResult.error) throw new Error(costDocsResult.error.message);
 
   const events: TimelineEvent[] = ((activityResult.data as ProjectActivityRow[]) ?? []).map(projectActivityRowToEvent);
   // The query already left noise out; the map is re-applied so a row the
@@ -710,7 +737,7 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
     .filter((r) => isProjectFeedAction(r.action))
     .map(auditRowToEvent));
 
-  const costDocIds = ((costDocsResult.data as Array<{ id: string }>) ?? []).map((r) => r.id);
+  const costDocIds = costDocRows.map((r) => r.id);
   if (costDocIds.length > 0) {
     const costAudit = await readByIdChunks<AuditRow>(costDocIds, (part) => supabase
       .from("audit_logs")
@@ -725,13 +752,10 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
       .map(auditRowToEvent));
   }
 
-  const linkedDocIds = ((linkedDocsResult.data as Array<{ document_id: string }>) ?? []).map((r) => r.document_id);
+  const linkedDocIds = linkedDocRows.map((r) => r.document_id);
   // SAF-17: a document no longer linked keeps its history up to its latest
   // detach — events after that are not the project's.
-  const detachedAt = detachCutoffs(
-    ((detachedResult.data as Array<{ metadata: Record<string, unknown> | null; created_at: string }>) ?? []),
-    new Set(linkedDocIds),
-  );
+  const detachedAt = detachCutoffs(detachedRows, new Set(linkedDocIds));
   const docIds = [...linkedDocIds, ...detachedAt.keys()];
   if (docIds.length > 0) {
     // 6. Audit + version + hold events for the linked (and detached) documents.

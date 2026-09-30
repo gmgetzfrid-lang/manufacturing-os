@@ -91,13 +91,32 @@ describe("20261102 — SEC-2: the nine read policies", () => {
     const ORG_READ = "    USING (EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = company_events.org_id AND m.uid = auth.uid() AND m.status = 'active')";
     // The live line closes the USING on itself; ours drops that one ")" and closes it on the added line.
     expect(onlyInA).toEqual([`${ORG_READ})`]);
-    expect(onlyInB).toEqual([ORG_READ, "      AND (company_events.project_id IS NULL OR project_visible_to_me(company_events.project_id)))"]);
+    expect(onlyInB).toEqual([ORG_READ, "      AND ((company_events.project_id IS NULL AND NOT company_events.deleted_private_project) OR project_visible_to_me(company_events.project_id)))"]);
     const tx = m02.slice(m02.indexOf("\nBEGIN;"), m02.indexOf("COMMIT;"));
     expect(tx).toContain("DROP POLICY IF EXISTS company_events_member_read ON company_events;\nCREATE POLICY company_events_member_read ON company_events FOR SELECT");
     // The controller write policy (FOR ALL, is_org_controller) is untouched.
     expect(stripComments(tx)).not.toMatch(/company_events_controller_write/);
     expect(finalSelect(m02)).toContain("'SEC-2: company events logged against a project read through project_visible_to_me (the company profile)'");
     expect(m02.slice(0, m02.indexOf("\nBEGIN;"))).toContain("company events logged against a private project, readable org-wide today");
+  });
+
+  it("deleting a private project keeps its company events private: a BEFORE DELETE trigger on projects marks them before the FK's ON DELETE SET NULL unlinks them", () => {
+    const tx = m02.slice(m02.indexOf("\nBEGIN;"), m02.indexOf("COMMIT;"));
+    const col = tx.indexOf("ALTER TABLE company_events ADD COLUMN IF NOT EXISTS deleted_private_project BOOLEAN NOT NULL DEFAULT false;");
+    expect(col).toBeGreaterThan(0);
+    // the column exists before the policy that reads it
+    expect(col).toBeLessThan(tx.indexOf("CREATE POLICY company_events_member_read"));
+    const f = between(m02, "CREATE OR REPLACE FUNCTION keep_private_project_company_events_private()", "$$;");
+    expect(f).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
+    expect(f).toContain("  IF OLD.visibility = 'private' THEN\n    UPDATE company_events SET deleted_private_project = true\n     WHERE project_id = OLD.id AND NOT deleted_private_project;\n  END IF;\n  RETURN OLD;");
+    expect(tx).toContain("DROP TRIGGER IF EXISTS trg_projects_private_company_events ON projects;\nCREATE TRIGGER trg_projects_private_company_events\n  BEFORE DELETE ON projects\n  FOR EACH ROW\n  EXECUTE FUNCTION keep_private_project_company_events_private();");
+    const tail = finalSelect(m02);
+    expect(tail).toContain("'SEC-2: deleting a private project keeps its company events private — marked before the FK unlinks them, and the member read honours the mark'");
+    // the probe's prosrc patterns are verbatim substrings of the function source
+    for (const pat of ["IF OLD.visibility = 'private' THEN", "UPDATE company_events SET deleted_private_project = true", "WHERE project_id = OLD.id"]) expect(f).toContain(pat);
+    expect(tail).toContain("prosrc LIKE '%IF OLD.visibility = ''private'' THEN%'");
+    expect(tail).toContain("'keep_private_project_company_events_private', 'enforce_project_document_link_fixed')");
+    expect(tail).toContain("(SELECT COUNT(*) = 6 FROM pg_proc");
   });
 });
 
@@ -187,18 +206,26 @@ describe("20261102 — PM-8 / SEC-17: the register", () => {
     expect(stripComments(tx)).not.toMatch(/CREATE POLICY "?project_documents_member_all/);
     for (const v of ["select", "insert", "update", "delete"]) expect(tx).toContain(`CREATE POLICY project_documents_${v} ON project_documents`);
   });
-  it("an attach follows the fleet plan (controller OR can_manage_project — so a collaborator's adoption and a manager's split / merge carry-over land); a detach or a moved link stays owner-or-controller (SAF-17)", () => {
+  it("an attach and an upsert's update follow the fleet plan (controller OR can_manage_project — so a collaborator's adoption and a manager's split / merge carry-over land, over an existing row too) in a project the caller can see; a link never moves; a detach stays owner-or-controller (SAF-17)", () => {
     const ins = between(m02, "CREATE POLICY project_documents_insert ON project_documents", ";");
-    expect(ins).toContain("WITH CHECK ((is_org_controller(org_id) OR can_manage_project(project_id))\n              AND org_id = project_org(project_id))");
+    expect(ins).toContain("WITH CHECK ((is_org_controller(org_id) OR can_manage_project(project_id))\n              AND org_id = project_org(project_id)\n              AND project_visible_to_me(project_id))");
     const upd = between(m02, "CREATE POLICY project_documents_update ON project_documents", ";");
-    expect(upd).toContain("USING (is_org_controller(org_id) OR is_project_owner(project_id))");
-    expect(upd).toContain("WITH CHECK ((is_org_controller(org_id) OR is_project_owner(project_id))");
+    expect(upd).toContain("USING (is_org_controller(org_id) OR can_manage_project(project_id))");
+    expect(upd).toContain("WITH CHECK ((is_org_controller(org_id) OR can_manage_project(project_id))\n              AND org_id = project_org(project_id)\n              AND project_visible_to_me(project_id))");
+    expect(ins + upd).not.toContain("is_project_owner");
     const del = between(m02, "CREATE POLICY project_documents_delete ON project_documents", ";");
     expect(del).toContain("USING (is_org_controller(org_id) OR is_project_owner(project_id))");
-    expect(upd + del).not.toContain("can_manage_project");
+    expect(del).not.toContain("can_manage_project");
+    // SAF-17's "a moved link is a detach" is kept by a trigger, so UPDATE can be the plan's predicate.
+    const g = between(m02, "CREATE OR REPLACE FUNCTION enforce_project_document_link_fixed()", "$$;");
+    expect(g).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
+    expect(g).toContain("  IF auth.uid() IS NOT NULL\n     AND (NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.document_id IS DISTINCT FROM OLD.document_id) THEN\n    RAISE EXCEPTION");
+    const tx = m02.slice(m02.indexOf("\nBEGIN;"), m02.indexOf("COMMIT;"));
+    expect(tx).toContain("CREATE TRIGGER trg_project_documents_link_fixed\n  BEFORE UPDATE ON project_documents\n  FOR EACH ROW\n  EXECUTE FUNCTION enforce_project_document_link_fixed();");
     const tail = finalSelect(m02);
-    expect(tail).toContain("'PM-8: an attach needs a project manager or a controller, in the project''s own org'");
-    expect(tail).toContain("'SAF-17 / PM-8: a detach or a moved link needs the owner or a controller (UPDATE in the project''s own org)'");
+    expect(tail).toContain("'PM-8: an attach, and an upsert''s update, need a project manager or a controller, in the project''s own org and a project the caller can see'");
+    expect(tail).toContain("'SAF-17 / PM-8: a link never moves (BEFORE UPDATE trigger), and a detach needs the owner or a controller'");
+    expect(g).toContain("NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.document_id IS DISTINCT FROM OLD.document_id");
     // The feed's register rows keep the register card's authority (PM-7 / SAF-17).
     expect(m02).toContain("  AND (type NOT IN ('doc_added', 'doc_removed') OR is_org_controller(org_id) OR is_project_owner(project_id))");
   });
@@ -261,6 +288,46 @@ describe("20261103 — PM-1: the freeze and the reopen", () => {
     expect(g).toContain("CONTINUE WHEN NOT FOUND;");
     expect(g).toMatch(/IF TG_OP = 'DELETE' AND COALESCE\(v_hold, false\) THEN/);
   });
+  it("deleting what a frozen row cites still works: an FK ON DELETE SET NULL (an UPDATE one trigger level down that only nulls SET NULL references) passes the freeze; a direct UPDATE does not", () => {
+    const g = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_record_guard()", "$$;");
+    const pass = between(g, "  IF TG_OP = 'UPDATE' AND pg_trigger_depth() > 1", "    RETURN NEW;\n  END IF;");
+    // every changed column must be NULL now and an ON DELETE SET NULL
+    // reference of THIS table — read from the catalog, so a reference a
+    // later migration adds is covered without editing the guard
+    expect(pass).toContain("SELECT 1 FROM jsonb_each(v_new) n");
+    expect(pass).toContain("WHERE n.value IS DISTINCT FROM (v_old -> n.key)");
+    expect(pass).toContain("AND (n.value <> 'null'::jsonb");
+    expect(pass).toContain("WHERE k.conrelid = TG_RELID AND k.contype = 'f' AND k.confdeltype = 'n'");
+    expect(pass).toContain("AND a.attname = n.key)))");
+    // …and it is decided before any project is looked at, after OLD / NEW are read
+    expect(g.indexOf("pg_trigger_depth() > 1")).toBeGreaterThan(g.indexOf("IF TG_OP <> 'DELETE' THEN v_new := to_jsonb(NEW); END IF;"));
+    expect(g.indexOf("pg_trigger_depth() > 1")).toBeLessThan(g.indexOf("FOREACH v_pid IN ARRAY"));
+    // The references the review names are ON DELETE SET NULL in the sequence
+    // (so the catalog lookup finds them): a drawing a milestone or turnover
+    // item cites, a checklist's source document, a party, a company, an
+    // intake link, a budget line, a ticket, a parent milestone.
+    const all = numbered.map(read).join("\n");
+    for (const [table, col, target] of [
+      ["milestones", "document_id", "documents"], ["milestones", "linked_ticket_id", "tickets"], ["milestones", "parent_id", "milestones"],
+      ["turnover_items", "document_id", "documents"], ["turnover_items", "party_id", "project_parties"],
+      ["project_checklists", "source_document_id", "documents"], ["punch_items", "party_id", "project_parties"],
+      ["cost_documents", "party_id", "project_parties"], ["cost_documents", "intake_link_id", "project_intake_links"], ["cost_documents", "company_id", "companies"],
+      ["cost_accounts", "party_id", "project_parties"], ["cost_accounts", "wbs_milestone_id", "milestones"],
+      ["cost_entries", "party_id", "project_parties"], ["change_orders", "cost_account_id", "cost_accounts"], ["change_orders", "party_id", "project_parties"],
+    ] as const) {
+      expect(all, `${table}.${col}`).toMatch(new RegExp(`${col}\\s+(?:UUID|uuid)\\s+REFERENCES ${target}\\(id\\) ON DELETE SET NULL`));
+    }
+    expect(all).toMatch(/cost_entries ADD CONSTRAINT cost_entries_source_document_fk\s+FOREIGN KEY \(source_document_id\) REFERENCES cost_documents\(id\) ON DELETE SET NULL/);
+    // the freeze below still refuses a signed-in caller's own UPDATE (depth 1)
+    expect(g).toMatch(/IF v_status IN \('completed', 'cancelled', 'archived'\) AND auth\.uid\(\) IS NOT NULL THEN/);
+    const tail = finalSelect(m03);
+    expect(tail).toContain("'PM-1: deleting what a frozen row cites still works — an FK ON DELETE SET NULL (one trigger level down, only SET NULL references nulled) passes the freeze'");
+    // the probe's prosrc patterns are verbatim substrings of the function source
+    for (const pat of ["TG_OP = 'UPDATE' AND pg_trigger_depth() > 1", "k.confdeltype = 'n'", "n.value <> 'null'::jsonb", "FOREACH v_pid IN ARRAY"]) expect(g).toContain(pat);
+    expect(tail).toContain("prosrc LIKE '%TG_OP = ''UPDATE'' AND pg_trigger_depth() > 1%'");
+    expect(tail).toContain("prosrc LIKE '%k.confdeltype = ''n''%'");
+  });
+
   it("only reopen_project leaves a closed status; it is controller-only, needs a reason, and clears the closure fields", () => {
     const lg = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_lifecycle_guard()", "$$;");
     expect(lg).toContain("AND COALESCE(current_setting('app.project_reopen', true), '') <> 'project:' || OLD.id::text THEN");
@@ -298,6 +365,17 @@ describe("20261103 — PM-6 / QUAL-3: delete counts, audits, and only then delet
     expect(d.indexOf("UPDATE project_intake_links SET revoked_at = NOW()")).toBeLessThan(firstDelete);
     for (const k of ["'counts', v_counts", "'snapshot', v_snapshot", "'orphanedStorageKeys', v_keys", "'reason', v_reason", "'revokedIntakeLinks', v_links"]) expect(d).toContain(k);
     expect(d).toContain("jsonb_agg(to_jsonb(x) - 'parsed')");
+  });
+
+  it("SEC-2: the company events the delete unlinks are counted and snapshotted (audit viewers), never deleted", () => {
+    expect(d).toContain("'companyEvents',  (SELECT COUNT(*) FROM company_events WHERE project_id = p_project)");
+    expect(d).toContain("'companyEvents',  COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM company_events x WHERE x.project_id = p_project), '[]'::jsonb)");
+    // the events ride in the snapshot (the PURGE_ row), before any delete
+    expect(d.indexOf("FROM company_events x")).toBeLessThan(d.indexOf("VALUES ('PURGE_PROJECT_SNAPSHOT'"));
+    expect(stripComments(d)).not.toMatch(/DELETE FROM company_events/);
+    const tail = finalSelect(m03);
+    expect(tail).toContain("'SEC-2 / PM-6: the deleted project''s company events are counted and snapshotted, never deleted — and 20261102 keeps a private project''s events controller-only once unlinked'");
+    for (const pat of ["'companyEvents',  (SELECT COUNT(*) FROM company_events WHERE project_id = p_project)", "'companyEvents',  COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM company_events x"]) expect(d).toContain(pat);
   });
 
   it("SEC-2: the org-readable PROJECT_DELETED row carries no row content; the snapshot rides in a PURGE_ row the audit overlay limits to the org's audit viewers", () => {
