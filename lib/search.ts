@@ -29,7 +29,8 @@
 
 import { supabase } from "@/lib/supabase";
 import type { DocumentStatus, TicketStatus } from "@/types/schema";
-import { normalizeTag, type Asset } from "@/lib/assets";
+import type { Asset } from "@/lib/assets";
+import { tagKey } from "@/lib/codebook";
 import { expandQueryToTsquery } from "@/lib/searchSynonyms";
 
 /** Equipment-tag identity matching: people type "e22", "E22", "E-22", or
@@ -38,16 +39,18 @@ import { expandQueryToTsquery } from "@/lib/searchSynonyms";
  *  nobody should have to remember where the hyphen goes. Short queries only:
  *  a long sentence squashed to alphanumerics would match everything. */
 function tagLikeNorm(q: string): string | null {
-  const norm = normalizeTag(q);
+  const norm = tagKey(q);
   return norm.length >= 2 && norm.length <= 12 && !/\s/.test(q.trim()) ? norm : null;
 }
 
 /** Assets reachable by a taught nickname / old tag / vendor name. Exact on
  *  the normalized alias (a phrase match, not a substring sweep) so "north
  *  furnace" resolves but ordinary prose doesn't drag equipment in. Empty on
- *  any failure, including before the alias migration. */
+ *  any failure, including before the alias migration. GAP-310: the key is
+ *  the one grammar (tagKey) — the grammar addAssetAlias writes and
+ *  20261127 rewrote every existing row into. */
 async function assetIdsByAlias(orgId: string, q: string): Promise<string[]> {
-  const key = normalizeTag(q);
+  const key = tagKey(q);
   if (key.length < 3) return [];
   try {
     const { data, error } = await supabase

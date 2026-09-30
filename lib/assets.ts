@@ -9,6 +9,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type { WhiteboardState } from "@/types/schema";
+import { tagKey } from "@/lib/codebook";
 
 export interface AssetType {
   id: string;
@@ -73,10 +74,11 @@ export interface AssetPhoto {
 
 /** Normalize a tag for matching: lowercase, strip non-alphanumerics
  *  except keep digits adjacent. `FE-201` `FE201` `fe 201` all map
- *  to `fe201`. */
-export function normalizeTag(tag: string): string {
-  return (tag || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
+ *  to `fe201`. GAP-310: this is the codebook's `tagKey` — the one tag
+ *  grammar — re-exported under the registry's historical name, so
+ *  assets.tag_normalized, asset_aliases.alias_normalized and every lookup
+ *  against them are computed by the same function. */
+export const normalizeTag: (tag: string) => string = tagKey;
 
 // ─── Asset types ────────────────────────────────────────────────
 

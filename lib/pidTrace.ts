@@ -56,7 +56,12 @@ export interface TraceResult {
   reason?: string;
 }
 
-/** Punctuation-blind tag identity, matching the mention engine's rules. */
+/** Punctuation-blind tag identity, matching the mention engine's rules.
+ *  GAP-310 / CB-9: deliberately a DIFFERENT identity (uppercase) — the key of
+ *  the in-memory line-trace graph only. It must never compute or be compared
+ *  with assets.tag_normalized / asset_aliases.alias_normalized; those use
+ *  lib/codebook.ts `tagKey` (the one grammar). Agreement modulo case is
+ *  pinned in lib/__tests__/codebook.test.ts. */
 export function normalizeTag(tag: string): string {
   return tag.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }

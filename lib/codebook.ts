@@ -107,14 +107,36 @@ export interface ParsedDrawingNumber {
 
 // ─── PURE CODEC ─────────────────────────────────────────────────────────────
 
-/** Canonical tag form: uppercase, single dash between prefix and number,
- *  no internal whitespace. "e 22" / "E–22" / "E-22 " → "E-22". */
+/** Canonical tag SPELLING: uppercase, single dash between prefix and number,
+ *  no internal whitespace. "e 22" / "E–22" / "E-22 " → "E-22". This is how a
+ *  tag is displayed and what the codec parses (splitTag / typeForTag /
+ *  tagToCode). It is NOT an identity key — two spellings that differ only in
+ *  punctuation ("NORTH-FURNACE" vs "NORTHFURNACE") stay distinct here. Every
+ *  identity column (assets.tag_normalized, asset_aliases.alias_normalized)
+ *  and every identity lookup uses `tagKey` below. */
 export function normalizeTag(raw: string): string {
   return raw
     .toUpperCase()
     .replace(/[‐-―−]/g, "-") // unicode dashes → ascii
     .replace(/\s+/g, "")
     .replace(/^([A-Z]+)[-]?(\d)/, "$1-$2");
+}
+
+/** GAP-310 / CB-9 — THE one tag grammar: the identity key of a tag or an
+ *  alias. Lowercase, everything but [a-z0-9] removed: "E-22", "E22",
+ *  "e 22", "E–22" → "e22"; "the north furnace" / "North-Furnace" →
+ *  "thenorthfurnace". Punctuation- and case-blind by design, and exactly the
+ *  database's `normalize_tag()` (20260609) for ASCII input, so a key
+ *  computed here matches a key computed by a trigger.
+ *
+ *  It is the projection of the canonical spelling: tagKey(normalizeTag(x))
+ *  === tagKey(x), and splitTag(tagKey(x)) agrees with splitTag(x) whenever
+ *  the latter places the tag — so the key round-trips through the codec.
+ *  lib/assets.ts `normalizeTag` and lib/documentTags.ts `normalizeTag` are
+ *  re-exports of this function; lib/__tests__/codebook.test.ts pins every
+ *  call site to one table of awkward inputs. */
+export function tagKey(raw: string): string {
+  return (raw || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 /** Split a normalized tag into prefix / number / suffix.

@@ -2,11 +2,18 @@
 // every convention quirk that could silently mis-file an asset gets a case.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   normalizeTag, splitTag, typeForTag, tagToCode, codeToTag,
-  parseDrawingNumber, diffImport,
+  parseDrawingNumber, diffImport, tagKey,
   EMPTY_CODEBOOK, type Codebook, type CodebookEntry,
 } from "@/lib/codebook";
+import { normalizeTag as registryKey } from "@/lib/assets";
+import { normalizeTag as documentTagKey } from "@/lib/documentTags";
+import { normalizeTag as traceKey } from "@/lib/pidTrace";
+
+const repoSrc = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
 const entry = (kind: CodebookEntry["kind"], code: string, label: string, tagPrefixes?: string[]): CodebookEntry =>
   ({ id: `${kind}-${code}`, kind, code, label, meta: tagPrefixes ? { tagPrefixes } : {}, sort: 0, origin: "manual" });
@@ -188,5 +195,87 @@ describe("diffImport — AI proposals never steamroll manual work", () => {
     ]);
     expect(d.adds).toHaveLength(1);
     expect(d.adds[0].label).toBe("DHT");
+  });
+});
+
+// ─── GAP-310 / CB-9 — one tag grammar: every call site agrees ───────────────
+
+/** Awkward inputs every identity call site must agree on (GAP-310
+ *  acceptance 3): case, whitespace, unicode dashes, slashes, underscores,
+ *  dotted site codes, phrase aliases, leading zeros, empties. */
+const AWKWARD = [
+  "E-22", "e22", "E22", " E – 22 ", "E—22", "E‐22", "e 22", "E\t22",
+  "FE-201A", "fe201a", "FE 201 A", "FE-201-A", "P-101/102", "PSV_101", "10-HV-001",
+  "the north furnace", "North-Furnace", "NORTH FURNACE", "F.101", "F-101 (old tag)",
+  "2030.22", "V-0012", "EA-1002", "  ", "", "---",
+];
+
+/** The database's normalize_tag(), transcribed from its ONLY definition —
+ *  asserted below to still read exactly this, so the emulation cannot drift. */
+const SQL_NORMALIZE_TAG = "SELECT lower(regexp_replace(COALESCE(t,''), '[^a-zA-Z0-9]+', '', 'g'));";
+const sqlNormalizeTag = (t: string) => (t ?? "").replace(/[^a-zA-Z0-9]+/g, "").toLowerCase();
+
+describe("GAP-310 — the one tag grammar", () => {
+  it("tagKey is the registry key: lowercase, alphanumerics only", () => {
+    expect(tagKey("E-22")).toBe("e22");
+    expect(tagKey(" E – 22 ")).toBe("e22");
+    expect(tagKey("the north furnace")).toBe("thenorthfurnace");
+    expect(tagKey("North-Furnace")).toBe("northfurnace");
+    expect(tagKey("2030.22")).toBe("203022");
+    expect(tagKey("")).toBe("");
+  });
+
+  it("lib/assets.ts and lib/documentTags.ts re-export it (acceptance 1 — not copies)", () => {
+    expect(registryKey).toBe(tagKey);
+    expect(documentTagKey).toBe(tagKey);
+    expect(repoSrc("lib/assets.ts")).toMatch(/export const normalizeTag: \(tag: string\) => string = tagKey;/);
+    expect(repoSrc("lib/documentTags.ts")).toMatch(/export const normalizeTag: \(s: string\) => string = tagKey;/);
+  });
+
+  it("every call site agrees on the awkward-input table (acceptance 3)", () => {
+    const bridge = repoSrc("lib/equipmentBridgeServer.ts");
+    // The Bridge's local copy is I-11's file; until it imports tagKey its
+    // body must stay byte-identical to the grammar (it is transcribed here).
+    const bridgeImports = /import \{[^}]*\btagKey\b[^}]*\} from "@\/lib\/codebook"/.test(bridge);
+    if (!bridgeImports) {
+      expect(bridge).toContain('const assetNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");');
+    }
+    const bridgeNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    expect(repoSrc("supabase/migrations/20260609_phase1_normalization.sql")).toContain(SQL_NORMALIZE_TAG);
+    for (const x of AWKWARD) {
+      const k = tagKey(x);
+      expect(registryKey(x), x).toBe(k);
+      expect(documentTagKey(x), x).toBe(k);
+      expect(bridgeNorm(x), x).toBe(k);
+      expect(sqlNormalizeTag(x), x).toBe(k);
+      // the line-trace key is deliberately uppercase — same identity modulo case
+      expect(traceKey(x).toLowerCase(), x).toBe(k);
+    }
+  });
+
+  it("the key is the projection of the canonical spelling and round-trips through the codec", () => {
+    for (const x of AWKWARD) {
+      expect(tagKey(normalizeTag(x)), x).toBe(tagKey(x));
+      const parts = splitTag(x);
+      if (parts) expect(splitTag(tagKey(x)), x).toEqual(parts);
+      const code = tagToCode(x, "20", BOOK);
+      if (code) expect(tagToCode(tagKey(x), "20", BOOK), x).toBe(code);
+    }
+  });
+
+  it("the canonical spelling is NOT an identity key (why the alias column could never match)", () => {
+    expect(normalizeTag("the north furnace")).toBe("THENORTHFURNACE");
+    expect(normalizeTag("North-Furnace")).not.toBe(normalizeTag("North Furnace"));
+    expect(tagKey("North-Furnace")).toBe(tagKey("North Furnace"));
+  });
+
+  it("the alias writer, the alias resolver and search all import the one grammar", () => {
+    const aliases = repoSrc("lib/assetAliases.ts");
+    expect(aliases).toMatch(/import \{ tagKey \} from "@\/lib\/codebook";/);
+    expect(aliases).toMatch(/alias_normalized: key,/);
+    expect(aliases).not.toMatch(/normalizeTag/);
+    const search = repoSrc("lib/search.ts");
+    expect(search).toMatch(/import \{ tagKey \} from "@\/lib\/codebook";/);
+    expect(search).not.toMatch(/normalizeTag/);
   });
 });
