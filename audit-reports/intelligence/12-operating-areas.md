@@ -244,7 +244,9 @@ components/assets/AssetCsvImportModal.tsx:22-27 — the four-field CANONICAL_FIE
 2. ✓ UnassignedAssignPanel has a bulk assign-by-prefix path. It files row by row, so one refusal never stops the rest, and a taken derived code is dropped rather than failing the filing.
 3. ✓ A 3,000-row list with a unit column lands every asset in its operating area with no manual step. The planner test files 3,000 of 3,000, and planner tests with colliding codes still file every row. The commit path's retry without the code is proven on the data layer (`createAsset` / `updateAsset` with `codeOptional` against a unique-index stand-in). There is no browser test of the modal itself; its wiring is pinned by source tests.
 
-**Scope / residual.** None beyond applying 20261128. The Bridge's own writes land under the index too: `20261128`'s `assets_code_one_holder` drops a taken code from a service-role write, so a discovered tag is created and a backfill files its unit (see `CB-10`).
+**Scope / residual.** None beyond applying 20261128. The Bridge's own writes land under the index too. `20261128`'s `assets_code_one_holder` drops a taken code from a service-role INSERT. The Bridge (`lib/equipmentBridgeServer.ts`) re-sends without the code a discovery insert that the index refuses in a race, and a backfill that the trigger refuses. So a discovered tag is created and a backfill files its unit, and each tag left without its code is recorded as `codesLeftBlank` (see `CB-10`).
+
+**Verification fix (2026-09-30, intelligence Round G).** The residual above said the trigger drops a taken code from any service-role write. That was not true of two writes. A service-role UPDATE kept its old code, and that path is now refused with 23505 naming the holder. A parallel discovery insert the trigger cannot see was refused by the index, and the Bridge then lost the asset. The Bridge now re-sends both writes once without the code (`CB-10` has the detail and the tests).
 
 ---
 
