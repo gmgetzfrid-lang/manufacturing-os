@@ -559,7 +559,8 @@ const FileViewerModal = ({
     // If the stored value already looks like a fully-qualified URL (legacy
     // attachments uploaded before the path-only fix), pass it through.
     if (/^https?:\/\//i.test(file.url)) { setResolvedUrl(file.url); return; }
-    getSignedUrlForPath(file.url)
+    // SEC-7 / DEC-48: this viewer frames the PDF preview — a reviewed inline caller.
+    getSignedUrlForPath(file.url, undefined, { inline: true })
       .then((u) => { if (alive) setResolvedUrl(u); })
       .catch((e) => { if (alive) setResolveError((e as Error).message); });
     return () => { alive = false; };
