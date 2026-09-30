@@ -80,8 +80,10 @@ export interface ChecklistItem {
  *  Draft are out — a Draft title is a label, not evidence. */
 export const EVIDENCE_DOCUMENT_STATUSES: ReadonlyArray<string> = ["Issued", "Locked"];
 
-/** Writes to a checklist row run in parallel batches of this size — a
- *  300-item assessment is six round trips, not three hundred (PERF-7). */
+/** Item writes run at most this many at a time — each is its own checked,
+ *  updated_at-guarded single-row request, so a 300-item assessment is 300
+ *  requests in six concurrent waves (≈ the wall-clock of six round trips),
+ *  not 300 sequential ones (PERF-7). */
 export const WRITE_BATCH = 50;
 
 function mapChecklist(r: Record<string, unknown>): Checklist {
@@ -406,10 +408,10 @@ const toState = (i: ChecklistItem): ChecklistItemState => ({
  *  the tolerance fails CLOSED (an empty register proves nothing).
  *
  *  The evidence contract (SAF-1 / QUAL-13): the register admits only
- *  Issued/Locked documents with a current version, excludes an external
- *  (intake) submission whose version was never approved, and lists the
- *  documents attached to ACCEPTED turnover items first so they are the
- *  citation of choice over raw intake-folder titles. */
+ *  Issued/Locked documents with a current version, excludes a document
+ *  whose CURRENT version is an external (intake) submission that was never
+ *  approved, and lists the documents attached to ACCEPTED turnover items
+ *  first so they are the citation of choice over raw intake-folder titles. */
 export async function gatherProjectEvidenceState(orgId: string, projectId: string): Promise<ProjectEvidenceState> {
   const safe = async <T>(p: PromiseLike<T>, fallback: T): Promise<T> => {
     try { return await p; } catch { return fallback; }
@@ -433,12 +435,14 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
   const acceptedDocIds = [...new Set(turnover.filter((t) => t.status === "accepted" && t.document_id).map((t) => String(t.document_id)))];
   const documents: EvidenceDocument[] = [];
   const seen = new Set<string>();
+  const currentVersionOf = new Map<string, string>();   // document id → current_version_id
   const admit = (rows: DocRow[], viaTurnover: boolean) => {
     for (const d of rows) {
       if (!admitted(d) || seen.has(d.id)) continue;
       const l = label(d);
       if (!l) continue;
       seen.add(d.id);
+      currentVersionOf.set(String(d.id), String(d.current_version_id));
       documents.push({ id: String(d.id), label: l, status: d.status, rev: d.rev, viaTurnover });
     }
   };
@@ -457,18 +461,22 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
     admit(await fetchDocs(supabase.from("documents").select(DOC_COLS).in("id", [project.sow_document_id]).limit(1)), false);
   }
 
-  // An external (intake) submission counts only once its version was
-  // approved — an unreviewed upload is a label, not evidence.
+  // An external (intake) submission counts only once it was approved —
+  // an unreviewed upload is a label, not evidence. Judged on the document's
+  // CURRENT version only: an earlier rejected submission does not taint an
+  // approved (or internal) current revision. A failed read fails CLOSED —
+  // nothing whose current version could not be checked is admitted.
   if (documents.length > 0) {
-    const versionIds = documents.map((d) => d.id);
+    const currentVersionIds = [...new Set(documents.map((d) => currentVersionOf.get(d.id)!))];
     const versions = await safe(
-      supabase.from("document_versions").select("id, record_id, provenance, review_state")
-        .in("record_id", versionIds).eq("provenance", "external").limit(1000)
-        .then((r) => (r.data ?? []) as Array<{ id: string; record_id: string; provenance: string | null; review_state: string | null }>),
-      []);
-    const unapproved = new Set(versions.filter((v) => v.review_state !== "approved").map((v) => v.record_id));
+      supabase.from("document_versions").select("id, provenance, review_state")
+        .in("id", currentVersionIds).limit(1000)
+        .then((r) => (r.error ? null : (r.data ?? []) as Array<{ id: string; provenance: string | null; review_state: string | null }>)),
+      null);
+    const unapprovedExternal = new Set((versions ?? [])
+      .filter((v) => v.provenance === "external" && v.review_state !== "approved").map((v) => v.id));
     for (let i = documents.length - 1; i >= 0; i--) {
-      if (unapproved.has(documents[i].id)) documents.splice(i, 1);
+      if (versions === null || unapprovedExternal.has(currentVersionOf.get(documents[i].id)!)) documents.splice(i, 1);
     }
   }
 

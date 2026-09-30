@@ -16,7 +16,8 @@
 //   — and marks the rest needs_evidence, which feeds the coach.
 //   A human override always wins and is never touched again. Every
 //   decision needs a typed reason; a machine-verified item is labelled as
-//   such, separately from a human decision.
+//   such, separately from a human decision, and a person can Verify it —
+//   only a checklist whose every green carries a person is citable (QUAL-2).
 //
 //   Turnover: the quality-package contents this job requires, seeded by job
 //   size, each tracked open → received → accepted/rejected/waived with the
@@ -45,7 +46,7 @@ import {
   listTurnoverItems, listTurnoverReviewEvents, seedTurnoverItems, addTurnoverItem, reviewTurnoverItem, reopenTurnoverItem,
   listPunchItems, addPunchItem, setPunchStatus, computeTurnoverProgress,
 } from "@/lib/turnover";
-import { type SegmentedItem, isMachineActorName, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
+import { type SegmentedItem, isAutoOnlyGreen, isMachineActorName, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { appPrompt } from "@/components/providers/DialogProvider";
 
@@ -340,6 +341,8 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
   const [items, setItems] = useState<ChecklistItem[] | null>(null);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [docs, setDocs] = useState<Record<string, DocStanding>>({});
+  /** The cited-document lookup answered (an error leaves chips without a standing). */
+  const [docsChecked, setDocsChecked] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [review, setReview] = useState<{ proposals: ReviewProposal[]; ticked: Set<string> } | null>(null);
@@ -351,7 +354,10 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
       // The cited documents' CURRENT status, so a Void/Superseded citation is visible.
       const ids = [...new Set(rows.flatMap((r) => r.evidence.map((e) => e.documentId).filter((x): x is string => Boolean(x))))];
       if (ids.length > 0) {
-        const { data } = await supabase.from("documents").select("id, status, rev, document_number, title, name").in("id", ids).limit(200);
+        // Through the caller's RLS: a document the viewer may not read (an
+        // ACL-restricted one) comes back absent — the chip says so, never
+        // "not found" (SEC-10 keeps the service-role read out of here).
+        const { data, error } = await supabase.from("documents").select("id, status, rev, document_number, title, name").in("id", ids).limit(200);
         const map: Record<string, DocStanding> = {};
         for (const d of ((data ?? []) as Array<Record<string, unknown>>)) {
           map[String(d.id)] = {
@@ -359,9 +365,9 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
             label: String(d.document_number || d.title || d.name || ""),
           };
         }
-        setDocs(map);
+        setDocs(map); setDocsChecked(!error);
       } else {
-        setDocs({});
+        setDocs({}); setDocsChecked(true);
       }
     } catch (e) {
       setItems([]); setItemsError((e as Error).message);
@@ -371,6 +377,9 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
 
   const progress = useMemo(() => (items ? computeChecklistProgress(items) : null), [items]);
   const blocking = progress ? progress.applicable - progress.satisfied : 0;
+  /** Greens the sweep set that no person has verified — each one makes the
+   *  completion 'auto' (not citable) until a person verifies it (QUAL-2). */
+  const autoGreens = useMemo(() => (items ?? []).filter(isAutoOnlyGreen).length, [items]);
 
   const assess = async () => {
     setBusy("assess"); setNotice(null);
@@ -455,7 +464,8 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
   const completeTitle = progress == null ? "Loading items…"
     : progress.total === 0 ? "No items — nothing to verify, so this checklist cannot be completed."
     : blocking > 0 ? `${blocking} item${blocking === 1 ? " is" : "s are"} not satisfied yet — a checklist only completes when every applicable item is green or N/A.`
-    : "Every applicable item is green or N/A.";
+    : autoGreens > 0 ? `Every applicable item is green or N/A, but ${autoGreens} green${autoGreens === 1 ? " rests" : "s rest"} on the evidence sweep alone — completing now records this checklist as "auto", which no other checklist can cite. Verify ${autoGreens === 1 ? "it" : "them"} first to sign it off.`
+    : "Every applicable item is green or N/A, and every green carries a person's decision.";
 
   return (
     <div>
@@ -465,7 +475,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
         <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"
-            title={checklist.completedBasis === "human" ? "Completed on human sign-off" : checklist.completedBasis === "auto" ? "Completed on automated evidence alone — not citable as proof elsewhere" : "Completed"}>
+            title={checklist.completedBasis === "human" ? "Completed on human sign-off — every green item carries a person's decision" : checklist.completedBasis === "auto" ? "Completed while at least one green item rested on the evidence sweep alone — not citable as proof by another checklist" : "Completed"}>
             <ShieldCheck className="w-3 h-3" /> complete{checklist.completedBasis === "auto" ? " (auto)" : ""}
           </span>
         )}
@@ -498,6 +508,9 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
               </button>
               {completeBlocked && progress && (
                 <span className="basis-full text-[10px] text-[var(--color-text-muted)]">{completeTitle}</span>
+              )}
+              {!completeBlocked && progress && autoGreens > 0 && (
+                <span className="basis-full text-[10px] font-bold text-amber-700 dark:text-amber-300">{completeTitle}</span>
               )}
             </div>
           )}
@@ -533,7 +546,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
                   )}
                   <ul className="divide-y divide-[var(--color-border)]">
                     {secItems.map((it) => (
-                      <ChecklistItemRow key={it.id} orgId={orgId} projectId={projectId} item={it} docs={docs}
+                      <ChecklistItemRow key={it.id} orgId={orgId} projectId={projectId} item={it} docs={docs} docsChecked={docsChecked}
                         canManage={canManage && checklist.status === "open"} actor={actor}
                         onChanged={() => { void loadItems(); onChanged(); }} notify={setNotice} />
                     ))}
@@ -615,19 +628,26 @@ function AssessmentReview({ review, busy, onToggle, onTickAll, onClear, onApply,
   );
 }
 
-function ChecklistItemRow({ orgId, projectId, item, docs, canManage, actor, onChanged, notify }: {
-  orgId: string; projectId: string; item: ChecklistItem; docs: Record<string, DocStanding>;
+function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage, actor, onChanged, notify }: {
+  orgId: string; projectId: string; item: ChecklistItem; docs: Record<string, DocStanding>; docsChecked: boolean;
   canManage: boolean; actor: Actor;
   onChanged: () => void; notify: Notify;
 }) {
   const [busy, setBusy] = useState(false);
   const na = item.applicability === "na" || item.status === "na";
   const machine = item.status === "satisfied" && !item.manualNote && isMachineActorName(item.updatedByName);
+  // A green no person has verified (the sweep's, or a legacy one): a person
+  // can Verify it — the row gains their note, uid and name, the sweep's
+  // citation chip stays, and the sweep keeps its hands off from then on.
+  const unverifiedGreen = !na && isAutoOnlyGreen(item);
 
-  const override = async (patch: Parameters<typeof updateChecklistItem>[0]["patch"], promptNote: string) => {
+  const override = async (
+    patch: Parameters<typeof updateChecklistItem>[0]["patch"], promptNote: string,
+    message = "Your reason goes on the record and marks this item human-decided — automation keeps its hands off from then on.",
+  ) => {
     // SAF-4: a decision needs a typed reason — the prompt cannot settle
     // blank, and no placeholder is ever written. The server checks it too.
-    const v = await promptReason(promptNote, "Your reason goes on the record and marks this item human-decided — automation keeps its hands off from then on.");
+    const v = await promptReason(promptNote, message);
     if (v === null) return;
     setBusy(true);
     const res = await updateChecklistItem({ orgId, projectId, item, patch: { ...patch, manualNote: v.trim() }, actor });
@@ -653,12 +673,12 @@ function ChecklistItemRow({ orgId, projectId, item, docs, canManage, actor, onCh
           )}
           {machine && (
             <div className="mt-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300" title="Set by the deterministic evidence sweep from a document on file — no person has verified this line.">
-              Machine-verified ({item.updatedByName}){item.updatedAt ? ` · ${new Date(item.updatedAt).toLocaleDateString()}` : ""} — not a human sign-off
+              Machine-verified ({item.updatedByName}){item.updatedAt ? ` · ${new Date(item.updatedAt).toLocaleDateString()}` : ""} — not a human sign-off{canManage ? " · Verify to sign it off" : ""}
             </div>
           )}
           {item.evidence.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
-              {item.evidence.map((e, i) => <EvidenceChip key={i} chip={e} doc={e.documentId ? docs[e.documentId] : undefined} />)}
+              {item.evidence.map((e, i) => <EvidenceChip key={i} chip={e} doc={e.documentId ? docs[e.documentId] : undefined} checked={docsChecked} />)}
             </div>
           )}
         </div>
@@ -667,6 +687,12 @@ function ChecklistItemRow({ orgId, projectId, item, docs, canManage, actor, onCh
             {!na && item.status !== "satisfied" && (
               <button onClick={() => void override({ status: "satisfied" }, "Mark satisfied")}
                 className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10" title="Mark satisfied with your note on the record">✓ Satisfied</button>
+            )}
+            {unverifiedGreen && (
+              <button onClick={() => void override({ status: "satisfied" }, "Verify this item",
+                "Say what you checked. Your note goes on the record with your name and makes this green a human decision — the sweep's citation stays attached, and the sweep will not withdraw it from then on.")}
+                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                title="Confirm this machine green yourself — only a checklist whose every green carries a person can be cited as proof elsewhere">✓ Verify</button>
             )}
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
@@ -688,15 +714,19 @@ function ChecklistItemRow({ orgId, projectId, item, docs, canManage, actor, onCh
  *  chip is sky. A chip that names a document shows that document's CURRENT
  *  status and revision — a citation to a Void or Superseded document turns
  *  rose so nobody reads it as proof (SAF-1 / QUAL-1). */
-function EvidenceChip({ chip, doc }: { chip: ChecklistItem["evidence"][number]; doc?: DocStanding }) {
+function EvidenceChip({ chip, doc, checked }: { chip: ChecklistItem["evidence"][number]; doc?: DocStanding; checked: boolean }) {
   const stale = doc ? (NOT_CURRENT_STATUSES.has(doc.status ?? "") || doc.status === "Draft") : false;
+  // No row back from a lookup that ran: the viewer cannot read the cited
+  // document (access-restricted for them, or removed) — the citation itself
+  // is unchanged, so never call it "not found".
+  const hidden = !doc && Boolean(chip.documentId) && checked;
   const tone = stale
     ? "border-rose-500/50 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300"
     : chip.source === "auto"
       ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
       : "border-sky-500/40 bg-sky-500/[0.07] text-sky-700 dark:text-sky-300";
-  const standing = doc ? ` · ${doc.status ?? "status unknown"}${doc.rev ? ` rev ${doc.rev}` : ""}` : chip.documentId ? " · document not found" : "";
-  const title = `${chip.source === "auto" ? "Found by the evidence sweep" : "Attached by a person"}${doc ? ` — the cited document is currently ${doc.status ?? "of unknown status"}${doc.rev ? `, rev ${doc.rev}` : ""}` : ""}${stale ? ". This citation no longer proves anything." : ""}`;
+  const standing = doc ? ` · ${doc.status ?? "status unknown"}${doc.rev ? ` rev ${doc.rev}` : ""}` : hidden ? " · not visible to you" : "";
+  const title = `${chip.source === "auto" ? "Found by the evidence sweep" : "Attached by a person"}${doc ? ` — the cited document is currently ${doc.status ?? "of unknown status"}${doc.rev ? `, rev ${doc.rev}` : ""}` : ""}${hidden ? " — you can't open the cited document (it is access-restricted for you, or it was removed); ask someone who can to check its status" : ""}${stale ? ". This citation no longer proves anything." : ""}`;
   return (
     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${tone}`} title={title}>
       {chip.label}{standing}

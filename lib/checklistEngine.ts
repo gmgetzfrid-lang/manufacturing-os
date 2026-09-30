@@ -115,18 +115,26 @@ export function reasonProblem(reason: string | null | undefined): string | null 
 
 // ── Completion basis (QUAL-2) ────────────────────────────────────────────
 
-/** 'human' when every item that counted toward the gate — satisfied or N/A —
- *  carries a human decision (a note or a person-attached chip); 'auto' when
- *  any of them rests on the sweep or the assessment alone. Only a 'human'
- *  completion is citable as proof by another checklist. */
+/** A person decided this item: a note (every human control writes one, with
+ *  a reason that meets the bar) or a person-attached evidence chip. */
+export const isHumanDecided = (it: Pick<ChecklistItemState, "manualNote" | "evidence">): boolean =>
+  Boolean(it.manualNote) || it.evidence.some((e) => e.source === "manual");
+
+/** A green the evidence sweep set that no person has verified yet — what a
+ *  reviewer confirms ("Verify") before the completion can be citable. */
+export const isAutoOnlyGreen = (it: Pick<ChecklistItemState, "status" | "applicability" | "manualNote" | "evidence">): boolean =>
+  it.status === "satisfied" && it.applicability !== "na" && !isHumanDecided(it);
+
+/** 'human' when every GREEN item that counted toward the gate carries a
+ *  human decision; 'auto' when any green rests on the evidence sweep alone.
+ *  N/A items do not bear on the basis: every path to N/A is a person's (the
+ *  item's own control with a reason, or a proposal ticked one by one in the
+ *  assessment review — SAF-2), and an N/A proves nothing — the laundering
+ *  QUAL-2 closes is a machine green becoming citable proof. Only a 'human'
+ *  completion is citable as proof by another checklist. The migration's
+ *  backfill (20261091) applies the same rule. */
 export function completionBasis(items: ChecklistItemState[]): "human" | "auto" {
-  for (const it of items) {
-    const counted = it.status === "satisfied" || it.status === "na" || it.applicability === "na";
-    if (!counted) continue;
-    const human = Boolean(it.manualNote) || it.evidence.some((e) => e.source === "manual");
-    if (!human) return "auto";
-  }
-  return "human";
+  return items.some(isAutoOnlyGreen) ? "auto" : "human";
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();

@@ -7,7 +7,7 @@ import { buildCostSeries, computeForecast, plannedManpowerSeries } from "@/lib/c
 import { computeProjectHealth, buildCoachItems, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
-  validateRubricFindings, QUALITY_MANUAL_RUBRIC, completionBasis, reasonProblem,
+  validateRubricFindings, QUALITY_MANUAL_RUBRIC, completionBasis, reasonProblem, isAutoOnlyGreen, isHumanDecided,
   isMachineActorName, MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT, REASON_MIN_LENGTH,
   type ChecklistItemState, type ProjectEvidenceState,
 } from "@/lib/checklistEngine";
@@ -306,6 +306,18 @@ describe("checklistEngine", () => {
     ];
     expect(completionBasis(human)).toBe("human");
     expect(completionBasis([item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "walked down", source: "manual" }] })])).toBe("human");
+    // N/A does not bear on the basis: an assessment-confirmed N/A (ticked by a
+    // person in the per-item review, no note) never makes a completion 'auto' —
+    // only a green resting on the sweep alone does.
+    expect(completionBasis([
+      item({ id: "1", text: "Weld log", status: "satisfied", evidence: [{ label: "x", source: "auto" }], manualNote: "verified the log against the weld map" }),
+      item({ id: "2", text: "Ops trained", status: "na", applicability: "na" }),
+    ])).toBe("human");
+    expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "satisfied", evidence: [{ label: "x", source: "auto" }] }))).toBe(true);
+    expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "satisfied", applicability: "na" }))).toBe(false);
+    expect(isAutoOnlyGreen(item({ id: "1", text: "x", status: "needs_evidence" }))).toBe(false);
+    expect(isHumanDecided({ manualNote: null, evidence: [{ label: "walked down", source: "manual" }] })).toBe(true);
+    expect(isHumanDecided({ manualNote: null, evidence: [{ label: "x", source: "auto" }] })).toBe(false);
     const pssr = applyAutoEvidence(
       [item({ id: "a", text: "New equipment reviewed by the mechanical integrity group" })],
       state({ miChecklistComplete: false }),

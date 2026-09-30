@@ -116,6 +116,14 @@ describe("reviewTurnoverItem — the reason bar (SAF-4) and the history (QUAL-11
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/now accepted, but the review history row was not written/);
   });
+
+  it("before 20261091 the history insert meets PostgREST's schema-cache error — the decision reports the migration message, not raw text (UX-10)", async () => {
+    state.tableWriteError = { turnover_review_events: { message: "Could not find the table 'public.turnover_review_events' in the schema cache", code: "PGRST205" } };
+    const res = await reviewTurnoverItem({ item: item(), status: "accepted", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("The item is now accepted, but the review history row was not written: This needs the latest database migration applied — nothing was changed.");
+    expect(state.tables.turnover_items[0].status).toBe("accepted"); // the status write itself landed, as the message says
+  });
 });
 
 describe("reopenTurnoverItem (QUAL-11)", () => {
@@ -209,5 +217,12 @@ describe("setPunchStatus (SAF-4 / QUAL-7 / SAF-3)", () => {
     expect(res.ok).toBe(false);
     expect(audits()).toHaveLength(0);
     expect(state.tables.punch_items[0].status).toBe("open");
+  });
+
+  it("before 20261091 a close meets PostgREST's unknown-column error (PGRST204) — the migration message, not raw text, and nothing audited", async () => {
+    state.tableWriteError = { punch_items: { message: "Could not find the 'closed_by_name' column of 'punch_items' in the schema cache", code: "PGRST204" } };
+    const res = await setPunchStatus({ item: punch(), status: "done", note: "Insulation reinstalled, verified by ops", actor });
+    expect(res).toEqual({ ok: false, error: "This needs the latest database migration applied — nothing was changed." });
+    expect(audits()).toHaveLength(0);
   });
 });

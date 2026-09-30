@@ -20,6 +20,9 @@ export interface MemoryState {
   /** true = every write matches zero rows; a list = only those tables. */
   refuse: boolean | string[];
   writeError: { message: string; code?: string } | null;
+  /** A write error for one table only (e.g. a table or column a pending
+   *  migration has not created yet, while the rest of the schema is live). */
+  tableWriteError?: Record<string, { message: string; code?: string }>;
   readError: Record<string, { message: string; code?: string }>;
   /** Called after each read of `table` resolves — a hook for "someone else
    *  changed the row between the read and the write". */
@@ -32,7 +35,7 @@ export const freshState = (): MemoryState => ({
 });
 
 export function resetState(s: MemoryState) {
-  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.readError = {}; s.onRead = undefined; s.nextId = 1;
+  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.tableWriteError = undefined; s.readError = {}; s.onRead = undefined; s.nextId = 1;
 }
 
 type Filter = [string, unknown];
@@ -65,9 +68,10 @@ export function makeSupabase(state: MemoryState) {
     const applyWrite = () => {
       const w = pending!;
       pending = null;
-      if (state.writeError) {
+      const writeError = state.writeError ?? state.tableWriteError?.[table] ?? null;
+      if (writeError) {
         state.writes.push({ table, method: w.method, payload: w.payload, filters: [...filters], matched: 0 });
-        return { data: null, error: state.writeError };
+        return { data: null, error: writeError };
       }
       if (state.refuse === true || (Array.isArray(state.refuse) && state.refuse.includes(table))) {
         state.writes.push({ table, method: w.method, payload: w.payload, filters: [...filters], matched: 0 });

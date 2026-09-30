@@ -44,6 +44,24 @@ describe("checkedWrite", () => {
     expect(describeWriteError({ message: "violates row-level security policy" })).toMatch(/permission/);
     expect(describeWriteError({ message: "" })).toMatch(/write failed/);
   });
+  it("a pending migration in PostgREST's schema-cache shapes (PGRST204 / PGRST205) and raw 42703 reads as the migration message, never raw text", async () => {
+    // What setChecklistStatus (completed_basis), setPunchStatus (closed_by_name…)
+    // and the turnover_review_events insert actually meet before 20261091.
+    const column = { message: "Could not find the 'completed_basis' column of 'project_checklists' in the schema cache", code: "PGRST204" };
+    const table = { message: "Could not find the table 'public.turnover_review_events' in the schema cache", code: "PGRST205" };
+    const rawColumn = { message: 'column "closed_by_name" of relation "punch_items" does not exist', code: "42703" };
+    for (const e of [column, table, rawColumn]) {
+      expect(describeWriteError(e), e.code).toBe("This needs the latest database migration applied — nothing was changed.");
+      const r = await checkedWrite(Promise.resolve({ data: null, error: e }));
+      expect(r).toMatchObject({ ok: false, code: "db", pgCode: e.code });
+      expect((r as { error: string }).error).not.toMatch(/schema cache|does not exist/);
+    }
+    // …by message alone too (a proxy that strips the code)
+    expect(describeWriteError({ message: column.message })).toMatch(/latest database migration/);
+    expect(describeWriteError({ message: rawColumn.message })).toMatch(/latest database migration/);
+    // …and an unrelated PostgREST error still carries its own message
+    expect(describeWriteError({ message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" })).toBe("JSON object requested, multiple (or no) rows returned");
+  });
 });
 
 // ── the census ───────────────────────────────────────────────────────────
