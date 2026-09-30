@@ -6,8 +6,9 @@
 // the "No change orders" empty state, stays quiet only when the table is
 // absent (pre-migration), and names approved COs whose money is not on the
 // ledger beside the approved total (COST-4: the same rule as the budget).
-// Third verification pass: Approve hands decideChangeOrder the amount the
-// confirm showed (`shownAmount`), so the decision binds to it.
+// Third / fourth verification passes: Approve hands decideChangeOrder the
+// amount and the budget line the confirm showed (`shownAmount`,
+// `shownAccountId`), so the decision binds to both.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -97,7 +98,7 @@ describe("ChangeOrdersPanel — a failed read is said out loud (REL-2), never an
     expect(host.textContent).toMatch(/1 approved not on the ledger \(not in the budget\)/);
   });
 
-  it("Approve passes the amount the confirm showed as shownAmount (the decision binds to it)", async () => {
+  it("Approve passes the amount and the budget line the confirm showed (shownAmount, shownAccountId — the decision binds to both)", async () => {
     co.listChangeOrders.mockResolvedValue([coOf({ id: "c9", coNumber: "CO-120", amount: 900, status: "proposed", decidedBy: null, postedEntryId: null, postedEntryStatus: null })]);
     dlg.appConfirm.mockResolvedValue(true);
     co.decideChangeOrder.mockResolvedValue({ warning: null });
@@ -107,6 +108,6 @@ describe("ChangeOrdersPanel — a failed read is said out loud (REL-2), never an
     await act(async () => { await Promise.resolve(); });
     expect(dlg.appConfirm.mock.calls[0][0].message).toMatch(/Approve CO-120 for \$900/);
     expect(co.decideChangeOrder).toHaveBeenCalledTimes(1);
-    expect(co.decideChangeOrder.mock.calls[0][0]).toMatchObject({ decision: "approved", shownAmount: 900 });
+    expect(co.decideChangeOrder.mock.calls[0][0]).toMatchObject({ decision: "approved", shownAmount: 900, shownAccountId: "a1" });
   });
 });

@@ -30,7 +30,8 @@
 --      A SIGNED-IN caller's UPDATE (auth.uid() set) may make exactly the
 --      updates lib/changeOrders.ts makes, and no others. Each step names the
 --      columns it writes; EVERY other column of the row must stay as it was
---      (to_jsonb(NEW) minus those columns = to_jsonb(OLD) minus them):
+--      — every pinned business column (v_pinned; an updated_at / updated_by
+--      another trigger may stamp is not compared):
 --        · proposed → proposed — the budget-line pick before an approval
 --          (ChangeOrdersPanel): cost_account_id only. A proposed CO's
 --          amount, reason, title, party, number and decision fields never
@@ -48,7 +49,8 @@
 --        · approved → void — the unwind (unwindChangeOrder, which voids the
 --          CO's entry FIRST and then the CO) and the repair reverse
 --          (repairChangeOrder): status and decision_note only; the approver
---          stays decided_by.
+--          stays decided_by. Refused while the linked entry is still POSTED
+--          (neither app path voids a CO over posted money).
 --        · approved → proposed — ONLY revertDecision after a failed post: by
 --          the caller who approved (OLD.decided_by = auth.uid()), clearing
 --          every decision field, with no posted_entry_id and no unlinked
@@ -64,14 +66,18 @@
 --      change order's link (repairChangeOrder's link tie); it is never
 --      cleared, and repointed only away from a void or missing entry (the
 --      repair link path) — never away from a posted one.
---      lib/changeOrders.decideChangeOrder also binds the decision to the
---      amount the decider was shown (`shownAmount`, a compare-and-swap on
---      amount) — the same guarantee before this migration is applied, and
---      against a service-role write.
---      NOT pinned here: which budget line a proposed CO names (any
---      cost_account_id — the pick is the one column a proposed CO may
---      change, and the id is not tied to the CO's project); decided_at is
---      the caller's clock.
+--      lib/changeOrders.decideChangeOrder binds the decision to the amount
+--      AND the budget line the decider was shown (`shownAmount`,
+--      `shownAccountId`, a compare-and-swap on both).
+--      NOT pinned here: which budget line a proposed CO names — the pick is
+--      the one column a proposed CO may change, at any time until the
+--      decision, and the id is not tied to the CO's project; only the lib
+--      binds the decision to the line shown. decided_at is the caller's
+--      clock. A column another BEFORE UPDATE trigger writes is refused if
+--      it is pinned (the pre-apply inventory counts such triggers). An FK
+--      action is an UPDATE too: deleting a project_parties row that a CO
+--      references (ON DELETE SET NULL on party_id) is refused by this
+--      guard — no app path deletes a party.
 --      The service role / SQL editor (auth.uid() IS NULL) keeps its pass on
 --      the transitions and the link; it is held to the two pins above and,
 --      on proposed → approved/rejected, to the two rules below judged on the
@@ -102,9 +108,20 @@
 --      lib/changeOrders.decideChangeOrder applies the same two rules with a
 --      readable refusal BEFORE the write; this trigger is the rail behind it.
 --
--- NARROWS only (fewer writes admitted than before), so no pre-apply inventory
--- is required (DEC-30); the counts below are for the record.
+-- NARROWS only (fewer writes admitted than before), so no DEC-30 damage
+-- inventory is required; one row IS captured before the transaction — the
+-- other BEFORE UPDATE triggers on the two guarded tables, which run beside
+-- the guard — and the counts below are for the record.
 -- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TEMP TABLE prj_g_co_authority_inventory AS
+SELECT 'inventory (before): other BEFORE UPDATE row triggers on cost_entries / change_orders (they run beside the J3 guards; one that writes a column the guards pin would make them refuse the app write — updated_at / updated_by are not pinned)' AS check,
+       (SELECT COUNT(*) FROM pg_trigger t
+         WHERE NOT t.tgisinternal
+           AND t.tgrelid IN (SELECT c.oid FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                              WHERE ns.nspname = 'public' AND c.relname IN ('cost_entries', 'change_orders'))
+           AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16
+           AND t.tgname NOT IN ('trg_cost_entries_update_guard', 'trg_change_orders_decision_guard'))::text AS n;
 
 BEGIN;
 
@@ -139,6 +156,12 @@ DECLARE
   v_threshold numeric;
   v_decider_is_controller boolean := false;
   v_may text[];
+  -- The columns the guard pins: every business column of change_orders.
+  -- Anything else (an updated_at / updated_by that another trigger may
+  -- stamp) is not compared.
+  v_pinned CONSTANT text[] := ARRAY['id', 'org_id', 'project_id', 'cost_account_id', 'party_id', 'co_number',
+    'title', 'description', 'amount', 'reason_code', 'status', 'decided_at', 'decided_by', 'decided_by_name',
+    'decision_note', 'posted_entry_id', 'created_at', 'created_by', 'created_by_name'];
 BEGIN
   -- The proposer is part of the record: never rewritten.
   IF NEW.created_by IS DISTINCT FROM OLD.created_by THEN
@@ -183,8 +206,16 @@ BEGIN
       v_may := ARRAY['posted_entry_id'];
     ELSIF OLD.status = 'approved' AND NEW.status = 'void' THEN
       -- The unwind and the repair reverse: the reversal note only; the
-      -- approval record (decided_by, decided_at) stays.
+      -- approval record (decided_by, decided_at) stays. Both act only once
+      -- no linked money is posted — the unwind voids the entry FIRST, the
+      -- repair reverses only a missing / void / absent link — so a CO whose
+      -- linked entry is still posted is never voided over it.
       v_may := ARRAY['status', 'decision_note'];
+      IF OLD.posted_entry_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = 'posted') THEN
+        RAISE EXCEPTION 'A change order is reversed only once its linked cost entry is void (Reverse voids the entry first). COST-6, 20261094'
+          USING ERRCODE = 'check_violation';
+      END IF;
     ELSIF OLD.status = 'approved' AND NEW.status = 'proposed' THEN
       -- revertDecision, ONLY after a failed post: by the caller who approved,
       -- clearing the decision, while no entry is linked and no unlinked
@@ -215,8 +246,12 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
 
-    -- Every column that step does not write stays as it was.
-    IF (to_jsonb(NEW) - v_may) IS DISTINCT FROM (to_jsonb(OLD) - v_may) THEN
+    -- Every pinned column that step does not write stays as it was.
+    IF (SELECT jsonb_object_agg(j.key, j.value) FROM jsonb_each(to_jsonb(NEW)) j
+         WHERE j.key = ANY (v_pinned) AND NOT (j.key = ANY (v_may)))
+       IS DISTINCT FROM
+       (SELECT jsonb_object_agg(j.key, j.value) FROM jsonb_each(to_jsonb(OLD)) j
+         WHERE j.key = ANY (v_pinned) AND NOT (j.key = ANY (v_may))) THEN
       RAISE EXCEPTION 'This update changes a column the app does not write in the % -> % step: only % may change. COST-6, 20261094',
         OLD.status, NEW.status, array_to_string(v_may, ', ')
         USING ERRCODE = 'check_violation';
@@ -371,11 +406,19 @@ SELECT 'decision guard: posted_entry_id is set only on an approved change order,
        NULL
 UNION ALL
 SELECT 'decision guard: each app step names the columns it writes and every other column stays as it was (proposed to proposed: the budget line only; the decision: status and the decision fields; the link: posted_entry_id; the reverse: status and the note)',
-       (SELECT prosrc LIKE '%IF (to_jsonb(NEW) - v_may) IS DISTINCT FROM (to_jsonb(OLD) - v_may) THEN%'
+       (SELECT prosrc LIKE '%WHERE j.key = ANY (v_pinned) AND NOT (j.key = ANY (v_may))%'
+           AND prosrc LIKE '%v_pinned CONSTANT text[] := ARRAY[''id'', ''org_id'', ''project_id'', ''cost_account_id''%'
+           AND prosrc NOT LIKE '%''updated_at''%'
            AND prosrc LIKE '%v_may := ARRAY[''cost_account_id''];%'
            AND prosrc LIKE '%v_may := ARRAY[''status'', ''decided_at'', ''decided_by'', ''decided_by_name'', ''decision_note''];%'
            AND prosrc LIKE '%v_may := ARRAY[''posted_entry_id''];%'
            AND prosrc LIKE '%v_may := ARRAY[''status'', ''decision_note''];%'
+          FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
+       NULL
+UNION ALL
+SELECT 'decision guard: approved to void (the unwind, the repair reverse) only once the linked entry is not posted',
+       (SELECT prosrc LIKE '%IF OLD.posted_entry_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM cost_entries e WHERE e.id = OLD.posted_entry_id AND e.status = ''posted'') THEN%'
           FROM pg_proc WHERE proname = 'enforce_change_order_decision_guard' AND pronargs = 0),
        NULL
 UNION ALL
@@ -384,6 +427,8 @@ SELECT 'trg_change_orders_decision_guard is a BEFORE UPDATE row trigger',
          WHERE NOT t.tgisinternal AND t.tgname = 'trg_change_orders_decision_guard'
            AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16 AND (t.tgtype & 1) = 1),
        NULL
+UNION ALL
+SELECT "check", NULL::boolean, n FROM prj_g_co_authority_inventory
 UNION ALL
 SELECT 'inventory: change orders decided by their proposer (flagged in the UI, never rewritten)', NULL,
        (SELECT COUNT(*) FROM change_orders WHERE decided_by IS NOT NULL AND decided_by = created_by)::text

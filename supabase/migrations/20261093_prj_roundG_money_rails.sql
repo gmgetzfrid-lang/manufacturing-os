@@ -23,14 +23,19 @@
 --     a BEFORE UPDATE trigger on cost_entries that, for a signed-in caller
 --     (auth.uid() set), refuses any update that takes a void entry out of
 --     void, any other status change than posted → void, and any update
---     that changes a column other than status. The
+--     that changes a pinned column (every business column; updated_at /
+--     updated_by are not pinned, so a trigger stamping them passes). The
 --     app's only cost_entries update is lib/costs.voidEntry (posted → void,
 --     status only); nothing in the app un-voids or edits an entry.
 --     Un-voiding one brought a reversed change order's money back onto the
 --     ledger without a new decision; renaming the reference of a change
 --     order's commitment hid it from the look-alike test the failed-post
 --     revert relies on (20261094). The service role (auth.uid() IS NULL — a
---     restore, the backfill below in the SQL editor) keeps its pass.
+--     restore, the backfill below in the SQL editor) keeps its pass. An FK
+--     action is an UPDATE too: deleting a project_parties row that entries
+--     reference (ON DELETE SET NULL on party_id) is refused for a signed-in
+--     caller — no app path deletes a party. The pre-apply inventory counts
+--     other BEFORE UPDATE triggers on the guarded tables.
 --   PT MON-8 dw3 / REL-4: CHECK constraints on cost_documents.status and kind,
 --     NOT VALID so a live row outside the set never aborts the apply — new
 --     writes are bound immediately; the inventory below counts the old ones.
@@ -93,7 +98,15 @@ SELECT 'inventory (before): of those, matched to exactly ONE document by referen
                      OR (e.entry_type = 'actual' AND d.kind = 'invoice' AND d.status = 'posted'))) = 1)::text
 UNION ALL
 SELECT 'inventory (before): change orders decided by their proposer (COST-6 — informational, flagged in the UI, never rewritten)',
-       (SELECT COUNT(*) FROM change_orders WHERE decided_by IS NOT NULL AND decided_by = created_by)::text;
+       (SELECT COUNT(*) FROM change_orders WHERE decided_by IS NOT NULL AND decided_by = created_by)::text
+UNION ALL
+SELECT 'inventory (before): other BEFORE UPDATE row triggers on cost_entries / change_orders (they run beside the J3 guards; one that writes a column the guards pin would make them refuse the app write — updated_at / updated_by are not pinned)',
+       (SELECT COUNT(*) FROM pg_trigger t
+         WHERE NOT t.tgisinternal
+           AND t.tgrelid IN (SELECT c.oid FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                              WHERE ns.nspname = 'public' AND c.relname IN ('cost_entries', 'change_orders'))
+           AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16
+           AND t.tgname NOT IN ('trg_cost_entries_update_guard', 'trg_change_orders_decision_guard'))::text;
 
 BEGIN;
 
@@ -163,6 +176,13 @@ CREATE TRIGGER trg_cost_accounts_delete_guard
 -- ── 1b. entries are voided, never edited (signed-in callers) ──────────────
 CREATE OR REPLACE FUNCTION enforce_cost_entry_update_guard()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  -- The columns the guard pins (status is judged on its own). updated_at /
+  -- updated_by are NOT pinned, so a trigger that stamps them cannot break
+  -- lib/costs.voidEntry.
+  v_pinned CONSTANT text[] := ARRAY['id', 'org_id', 'project_id', 'cost_account_id', 'party_id', 'entry_type',
+    'amount', 'entry_date', 'description', 'reference', 'source_document_id', 'created_at', 'created_by',
+    'created_by_name'];
 BEGIN
   -- The service role (auth.uid() IS NULL) keeps its pass.
   IF auth.uid() IS NULL THEN
@@ -176,7 +196,9 @@ BEGIN
     RAISE EXCEPTION 'A cost entry changes status only from posted to void. (COST-10, 20261093)'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF (to_jsonb(NEW) - 'status') IS DISTINCT FROM (to_jsonb(OLD) - 'status') THEN
+  IF (SELECT jsonb_object_agg(j.key, j.value) FROM jsonb_each(to_jsonb(NEW)) j WHERE j.key = ANY (v_pinned))
+     IS DISTINCT FROM
+     (SELECT jsonb_object_agg(j.key, j.value) FROM jsonb_each(to_jsonb(OLD)) j WHERE j.key = ANY (v_pinned)) THEN
     RAISE EXCEPTION 'A cost entry is never edited: void it and post the corrected entry. (COST-10, 20261093)'
       USING ERRCODE = 'check_violation';
   END IF;
@@ -267,7 +289,9 @@ SELECT 'cost entries are voided, never edited, for a signed-in caller: SECURITY 
                AND prosrc LIKE '%IF auth.uid() IS NULL THEN%'
                AND prosrc LIKE '%IF OLD.status = ''void'' AND NEW.status IS DISTINCT FROM ''void'' THEN%'
                AND prosrc LIKE '%NOT (OLD.status = ''posted'' AND NEW.status = ''void'')%'
-               AND prosrc LIKE '%IF (to_jsonb(NEW) - ''status'') IS DISTINCT FROM (to_jsonb(OLD) - ''status'') THEN%'
+               AND prosrc LIKE '%FROM jsonb_each(to_jsonb(NEW)) j WHERE j.key = ANY (v_pinned))%'
+               AND prosrc LIKE '%v_pinned CONSTANT text[] := ARRAY[''id'', ''org_id'', ''project_id'', ''cost_account_id'', ''party_id'', ''entry_type'',%'
+               AND prosrc NOT LIKE '%''updated_at''%'
           FROM pg_proc WHERE proname = 'enforce_cost_entry_update_guard' AND pronargs = 0)
        AND (SELECT COUNT(*) = 1 FROM pg_trigger t
              WHERE NOT t.tgisinternal AND t.tgname = 'trg_cost_entries_update_guard'

@@ -299,18 +299,24 @@ export async function loadApprovalThreshold(orgId: string): Promise<number | nul
  * told the CO was already decided. If posting then fails, the claim is
  * reverted so a clean retry is possible.
  *
- * The decider decides what they were SHOWN: `shownAmount` is the amount on
- * the screen (the panel's confirm names it), and the claim carries
- * `.eq("amount", shownAmount)` — a proposed CO whose amount changed since
- * it was opened is refused with "the amount changed", never approved at
- * the new figure. (20261094 also freezes a proposed CO's amount for a
- * signed-in caller; this binds the decision itself.)
+ * The decider decides what they were SHOWN: `shownAmount` and
+ * `shownAccountId` are the amount and the budget line on the screen (the
+ * panel's confirm names both), and the claim carries
+ * `.eq("amount", shownAmount)` and the budget line as shown — a proposed CO
+ * whose amount or line changed since it was opened is refused, never
+ * decided on the new figure or posted to another line than the one named.
+ * (20261094 also freezes a proposed CO's amount for a signed-in caller, but
+ * the budget-line pick stays open while it is proposed; this binds the
+ * decision itself.)
  */
 export async function decideChangeOrder(input: {
   co: ChangeOrder;
   decision: "approved" | "rejected" | "void";
   /** The amount the decider was shown — the claim matches it exactly. */
   shownAmount: number;
+  /** The budget line the decider was shown (null when none was named) —
+   *  the claim matches it exactly. */
+  shownAccountId: string | null;
   note?: string | null;
   actorId: string;
   actorName?: string | null;
@@ -324,6 +330,8 @@ export async function decideChangeOrder(input: {
   const amountChanged = (now: number) =>
     `The amount of ${co.coNumber} changed since you opened it (you were shown ${input.shownAmount.toLocaleString()}, it is now ${now.toLocaleString()}) — nothing was decided. Refresh and review it again.`;
   if (!Number.isFinite(input.shownAmount) || co.amount !== input.shownAmount) throw new Error(amountChanged(co.amount));
+  const lineChanged = `The budget line of ${co.coNumber} changed since you opened it — nothing was decided. Refresh and review it again.`;
+  if ((co.costAccountId ?? null) !== (input.shownAccountId ?? null)) throw new Error(lineChanged);
   if (input.decision === "approved" && !co.costAccountId) {
     throw new Error("Pick which budget line this change order posts to before approving.");
   }
@@ -348,19 +356,23 @@ export async function decideChangeOrder(input: {
 
   // Claim the decision. Zero rows matched = someone else decided first —
   // PostgREST reports that as success, so the count is the real signal.
-  const { data: claimed, error } = await supabase.from("change_orders").update({
+  const claim = supabase.from("change_orders").update({
     status: input.decision,
     decided_at: new Date().toISOString(),
     decided_by: input.actorId,
     decided_by_name: input.actorName ?? null,
     decision_note: input.note?.trim() || null,
-  }).eq("id", co.id).eq("status", "proposed").eq("amount", input.shownAmount).select("id");
+  }).eq("id", co.id).eq("status", "proposed").eq("amount", input.shownAmount);
+  const { data: claimed, error } = await (input.shownAccountId
+    ? claim.eq("cost_account_id", input.shownAccountId)
+    : claim.is("cost_account_id", null)).select("id");
   if (error) throw new Error(error.message);
   if (!claimed || claimed.length === 0) {
-    // Zero rows: decided by someone else, or the amount moved under us.
-    const { data: now } = await supabase.from("change_orders").select("status, amount").eq("id", co.id).maybeSingle();
-    const cur = now as { status?: string; amount?: unknown } | null;
+    // Zero rows: decided by someone else, or the amount / line moved under us.
+    const { data: now } = await supabase.from("change_orders").select("status, amount, cost_account_id").eq("id", co.id).maybeSingle();
+    const cur = now as { status?: string; amount?: unknown; cost_account_id?: string | null } | null;
     if (cur?.status === "proposed" && Number(cur.amount) !== input.shownAmount) throw new Error(amountChanged(Number(cur.amount)));
+    if (cur?.status === "proposed" && (cur.cost_account_id ?? null) !== (input.shownAccountId ?? null)) throw new Error(lineChanged);
     throw new Error("Someone else just decided this change order — refresh to see the outcome.");
   }
 
