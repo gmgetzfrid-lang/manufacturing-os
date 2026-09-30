@@ -7,18 +7,50 @@
 // reasons), and planned-vs-actual performer. Print-friendly so it
 // doubles as an end-of-job report.
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   TrendingUp, TrendingDown, AlertTriangle, PauseCircle, Clock, CheckCircle2,
   CalendarDays, Users, Printer, Zap,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
-import { computeExecutionReport } from "@/lib/executionReport";
-import { computeCriticalPathLite } from "@/lib/criticalPath";
+import { computeExecutionReport, FORECAST_MIN_DONE_FRACTION } from "@/lib/executionReport";
+import { computeCriticalPath } from "@/lib/criticalPath";
+import { weightBasisLabel } from "@/lib/scheduleProgress";
+import { listBaselineCaptures, currentBaselineSummary, type BaselineCapture } from "@/lib/milestones";
 
-export default function ExecutionReportView({ milestones }: { milestones: Milestone[] }) {
-  const r = useMemo(() => computeExecutionReport(milestones), [milestones]);
-  const critical = useMemo(() => computeCriticalPathLite(milestones), [milestones]);
+export default function ExecutionReportView({ milestones, orgId, projectId }: { milestones: Milestone[]; orgId?: string; projectId?: string }) {
+  // Every approved-plan capture the project has had (PT SAF-7): the live one
+  // and each one a re-baseline or a clear replaced. Drift is measured against
+  // the newest by default; an older one can be picked.
+  const [history, setHistory] = useState<BaselineCapture[]>([]);
+  const [captureNote, setCaptureNote] = useState<string | null>(null);
+  const [captureId, setCaptureId] = useState<string>("current");
+  // The live capture comes from the rows on screen; the history is read once
+  // per project and again only when the live baseline itself changes.
+  const live = useMemo(() => currentBaselineSummary(milestones), [milestones]);
+  const liveKey = live ? `${live.setAt ?? ""}:${live.rowCount}` : "none";
+  useEffect(() => {
+    if (!orgId || !projectId) return;
+    let alive = true;
+    void listBaselineCaptures({ orgId, projectId, milestones: [] }).then((res) => {
+      if (!alive) return;
+      setHistory(res.captures);
+      setCaptureNote(res.error ? `Earlier baselines could not be read: ${res.error}` : res.historyUnavailable ? "Earlier baselines are kept once the baseline-history migration (20261099) is applied." : null);
+    });
+    return () => { alive = false; };
+  }, [orgId, projectId, liveKey]);
+  const captures = useMemo<BaselineCapture[]>(() => {
+    if (!live) return history;
+    const finishById = new Map<string, string>();
+    for (const m of milestones) if (m.id && m.baselineFinishAt) finishById.set(m.id, m.baselineFinishAt as string);
+    return [{ id: "current", setAt: live.setAt, retiredAt: null, retiredBy: null, rowCount: live.rowCount, finishById }, ...history];
+  }, [live, history, milestones]);
+  const chosen = captures.find((c) => c.id === captureId) ?? null;
+  const r = useMemo(
+    () => computeExecutionReport(milestones, chosen && chosen.id !== "current" ? { baselineFinishById: chosen.finishById } : undefined),
+    [milestones, chosen],
+  );
+  const critical = useMemo(() => computeCriticalPath(milestones), [milestones]);
   const criticalNames = useMemo(
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
     [milestones, critical],
@@ -47,6 +79,8 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
           <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{r.done} / {r.totalLeaves} tasks</div>
+          {/* The weighting basis, named (PC SCHED-14). */}
+          <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">{weightBasisLabel(r.weightBasis)}</div>
         </Card>
 
         <Card>
@@ -60,18 +94,39 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
 
         <Card>
           <Label>Work hours</Label>
-          <div className="flex items-baseline gap-1">
-            <span className="text-2xl font-black tracking-tight text-[var(--color-text)]">{r.pctHours}</span>
-            <span className="text-base text-[var(--color-text-faint)] font-bold">%</span>
-          </div>
-          <Bar pct={r.pctHours} />
-          <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
+          {r.pctHours === null ? (
+            // No leaf carries planned hours: say so — never "0 / 0 h" over a
+            // percentage that is really the task-weighted figure (PC SCHED-14 / SCHED-2).
+            <>
+              <div className="text-sm font-bold text-[var(--color-text-muted)]">Not supplied</div>
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-1">No task in this schedule carries planned work hours.</div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-black tracking-tight text-[var(--color-text)]">{r.pctHours}</span>
+                <span className="text-base text-[var(--color-text-faint)] font-bold">%</span>
+              </div>
+              <Bar pct={r.pctHours} />
+              <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
+              {r.leavesWithHours < r.totalLeaves && (
+                <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">hours on {r.leavesWithHours} of {r.totalLeaves} tasks</div>
+              )}
+            </>
+          )}
         </Card>
 
         <Card>
           <Label>Forecast finish</Label>
-          <div className="text-lg font-black tracking-tight text-[var(--color-text)]">{fmtDate(r.forecastFinish)}</div>
+          {/* An estimate, named as one (PC SCHED-12): the completion rate so
+              far carried forward — withheld until enough is done to mean anything. */}
+          <div className="text-lg font-black tracking-tight text-[var(--color-text)]">{r.forecastBasis === "too-early" ? "—" : fmtDate(r.forecastFinish)}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+            {r.forecastBasis === "rate" && r.forecastRatePerDay !== null
+              ? <>estimate at the current rate of {fmtRate(r.forecastRatePerDay)} tasks/day (task count, not effort or links) · </>
+              : r.forecastBasis === "too-early"
+                ? <>shown once {Math.round(FORECAST_MIN_DONE_FRACTION * 100)}% of tasks are done · </>
+                : <>all tasks done · </>}
             planned {fmtDate(r.finish)} · day {r.elapsedDays} of {r.totalDays}
           </div>
         </Card>
@@ -84,8 +139,13 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
             <Zap className="w-4 h-4 text-rose-600" />
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
-            {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
-            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">heuristic — based on schedule shape, not dependency links</span>
+            {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h still to do on the chain</span>}
+            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">
+              {critical.linked
+                ? `from the finish-to-start links · calendar days, no working calendar${critical.unlinked > 0 ? ` · ${critical.unlinked} task${critical.unlinked === 1 ? " has" : "s have"} no links` : ""}`
+                : "no dependency links yet — only the tasks that end at the finish are shown"}
+              {critical.cycle ? ` · ${critical.cycle.length} task${critical.cycle.length === 1 ? "" : "s"} in a loop of links left out` : ""}
+            </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {criticalNames.slice(0, 10).map((n, i) => (
@@ -96,11 +156,27 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
         </div>
       )}
 
+      {/* Which approved plan drift is measured against (PT SAF-7). */}
+      {captures.length > 1 && (
+        <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] print:hidden">
+          <label htmlFor="baseline-capture" className="font-bold uppercase tracking-widest text-[10px] text-[var(--color-text-faint)]">Compare with</label>
+          <select id="baseline-capture" value={captureId} onChange={(e) => setCaptureId(e.target.value)}
+            className="text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] text-[var(--color-text)]">
+            {captures.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.id === "current" ? "Current baseline" : "Earlier baseline"}{c.setAt ? ` · set ${fmtDate(c.setAt)}` : ""}{c.retiredAt ? ` · ${c.retiredBy === "clear" ? "cleared" : "replaced"} ${fmtDate(c.retiredAt)}` : ""} · {c.rowCount} tasks
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {captureNote && <div className="text-[10px] text-[var(--color-text-faint)] print:hidden">{captureNote}</div>}
+
       {/* Baseline drift — planned vs now */}
       {r.baseline && (
         <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 bg-emerald-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Vs. approved plan</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{chosen && chosen.id !== "current" ? `Vs. the baseline set ${fmtDate(chosen.setAt)}` : "Vs. approved plan"}</span>
             <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600" : r.baseline.finishDriftDays < 0 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>
@@ -244,6 +320,10 @@ function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "em
       <span className="text-[11px] text-[var(--color-text-muted)]">{label}</span>
     </span>
   );
+}
+
+function fmtRate(n: number): string {
+  return n >= 10 ? String(Math.round(n)) : n >= 1 ? n.toFixed(1) : n.toFixed(2);
 }
 
 function fmtDate(iso?: string | null): string {

@@ -16,6 +16,28 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarClock, X, ArrowRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { rebaseSchedule, type RebaseResult } from "@/lib/milestones";
+import { toWallClock, fromWallClock } from "@/lib/scheduleReflow";
+
+/** The prefill for the rebase form: today's date (the viewer's calendar
+ *  day — "use this schedule starting today") and the anchor's wall-clock
+ *  time. Planned dates are wall-clock-as-UTC, so the anchor's time is its
+ *  UTC time (PT SCH-10: reading its LOCAL hours turned a midnight-UTC anchor
+ *  into "17:00" in Los Angeles). Pure. */
+export function rebasePrefill(currentAnchorIso: string | null | undefined, now: Date = new Date()): { date: string; time: string } {
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return { date, time: toWallClock(currentAnchorIso)?.time ?? "08:00" };
+}
+
+/** The instant the schedule's first task starts after a rebase to
+ *  `date` + `time` — built as a wall-clock-as-UTC string, never parsed in the
+ *  viewer's zone (PT SCH-10: parsing "date T time" with new Date() read it
+ *  as local time, so every US user landed a day late). Null for an invalid date. */
+export function rebaseTargetIso(date: string, time: string): string | null {
+  return fromWallClock(date, time);
+}
+
+const fmtSchedule = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" });
 
 interface Props {
   orgId: string;
@@ -44,36 +66,32 @@ export default function RebaseScheduleModal({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RebaseResult | null>(null);
 
-  // Default target = today (or the current anchor's time-of-day).
+  // Default target = today, at the current anchor's schedule time-of-day.
   useEffect(() => {
-    const now = new Date();
-    setTarget(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
-    if (currentAnchorIso) {
-      try {
-        const d = new Date(currentAnchorIso);
-        setTargetTime(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
-      } catch { /* keep default */ }
-    }
+    const p = rebasePrefill(currentAnchorIso);
+    setTarget(p.date);
+    setTargetTime(p.time);
   }, [currentAnchorIso]);
 
-  // Preview: what's the day-delta?
+  // Preview: what's the day-delta? Both ends in schedule time (UTC), so the
+  // preview shows the same date the board will.
   const previewDelta = useMemo(() => {
     if (!target || !currentAnchorIso) return null;
-    try {
-      const oldA = new Date(currentAnchorIso);
-      const newA = new Date(`${target}T${targetTime}:00`);
-      const days = Math.round((newA.getTime() - oldA.getTime()) / 86400000);
-      return { days, oldA, newA };
-    } catch { return null; }
+    const newIso = rebaseTargetIso(target, targetTime);
+    const oldMs = Date.parse(currentAnchorIso);
+    if (!newIso || !Number.isFinite(oldMs)) return null;
+    const days = Math.round((Date.parse(newIso) - oldMs) / 86400000);
+    return { days, oldIso: currentAnchorIso, newIso };
   }, [target, targetTime, currentAnchorIso]);
 
   const submit = async () => {
-    if (!target) return;
+    const newStartIso = target ? rebaseTargetIso(target, targetTime) : null;
+    if (!newStartIso) return;
     setBusy(true);
     try {
       const res = await rebaseSchedule({
         orgId, projectId,
-        newStartIso: new Date(`${target}T${targetTime}:00`).toISOString(),
+        newStartIso,
         actorUserId, actorUserName, actorUserEmail, actorUserRole,
       });
       setResult(res);
@@ -121,7 +139,7 @@ export default function RebaseScheduleModal({
               />
             </div>
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Start time</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Start time (schedule time)</label>
               <input
                 type="time"
                 value={targetTime}
@@ -136,9 +154,9 @@ export default function RebaseScheduleModal({
             <div className="rounded-xl border border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/60 p-3 text-xs">
               <div className="font-black text-[var(--color-accent)] mb-1 uppercase tracking-widest text-[10px]">Preview</div>
               <div className="flex items-center gap-2 text-[var(--color-text)]">
-                <span className="font-mono">{new Date(currentAnchorIso).toLocaleString()}</span>
+                <span className="font-mono">{fmtSchedule(currentAnchorIso)}</span>
                 <ArrowRight className="w-3 h-3 text-[var(--color-accent)]" />
-                <span className="font-mono font-bold">{previewDelta?.newA?.toLocaleString() ?? "—"}</span>
+                <span className="font-mono font-bold">{previewDelta ? fmtSchedule(previewDelta.newIso) : "—"}</span>
               </div>
               {previewDelta && (
                 <div className={`mt-1 text-[11px] font-bold ${

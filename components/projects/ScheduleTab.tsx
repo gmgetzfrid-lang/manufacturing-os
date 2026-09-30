@@ -24,9 +24,9 @@ import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
-  applyMilestoneMoves, computeScheduleMetrics, setBaseline,
+  applyMilestoneMoves, computeScheduleMetrics, setBaseline, planMilestoneDelete, currentBaselineSummary,
 } from "@/lib/milestones";
-import { isImportedMilestone } from "@/lib/milestoneLiveness";
+import { isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
 import { supabase } from "@/lib/supabase";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -41,7 +41,7 @@ import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } f
 import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { ClipboardList, PlayCircle } from "lucide-react";
-import ExecutionView from "@/components/projects/ExecutionView";
+import ExecutionView, { type MoveOutcome } from "@/components/projects/ExecutionView";
 
 // Two modes only: Planning (build & manage the schedule as a list) and
 // Execution (run it — the timeline/calendar board). The old Gantt and
@@ -100,18 +100,37 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // Live multi-user sync: another planner's edits stream in (debounced) so
-  // two people can work the same schedule without silently overwriting each
-  // other's view. Previously the board only updated after YOUR own mutation.
+  // The rows as last loaded — each batch move sends their updated_at as its
+  // optimistic lock, so a row someone else changed since this view loaded is
+  // rejected instead of silently overwritten (PT SCH-7).
+  const milestonesRef = useRef<Milestone[]>(milestones);
+  useEffect(() => { milestonesRef.current = milestones; }, [milestones]);
+
+  // Live multi-user sync: another planner's edits stream in (debounced).
+  // Needs `milestones` in the supabase_realtime publication (migration
+  // 20261106 — until it is applied no event arrives and the lock above is
+  // what stops a silent overwrite). INSERT / UPDATE carry project_id, so they
+  // are filtered server-side; a DELETE event carries only the key under RLS,
+  // so it is matched against the rows on screen.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const later = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { void refresh(); }, 600);
+    };
     const channel = supabase
       .channel(`milestones-${projectId}`)
       .on("postgres_changes",
-        { event: "*", schema: "public", table: "milestones", filter: `project_id=eq.${projectId}` },
-        () => {
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(() => { void refresh(); }, 600);
+        { event: "INSERT", schema: "public", table: "milestones", filter: `project_id=eq.${projectId}` },
+        later)
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "milestones", filter: `project_id=eq.${projectId}` },
+        later)
+      .on("postgres_changes",
+        { event: "DELETE", schema: "public", table: "milestones" },
+        (payload: { old?: { id?: string } }) => {
+          const id = payload.old?.id;
+          if (id && milestonesRef.current.some((m) => m.id === id)) later();
         })
       .subscribe();
     return () => {
@@ -120,10 +139,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     };
   }, [projectId, refresh]);
 
-  // Filtered view (toggle for ghost rows). Metrics still computed
-  // over ALL milestones — ghost rows ARE commitments from the imported
-  // schedule (lib/milestoneLiveness is the one place that says so, and the
-  // health snapshot and the printed report read the same rule).
+  // Filtered view (toggle for ghost rows) — a DISPLAY filter only (PT SCH-6):
+  // every metric, rollup and leaf-ness is computed over ALL milestones —
+  // ghost rows ARE commitments from the imported schedule (lib/
+  // milestoneLiveness is the one place that says so, and the health snapshot
+  // and the printed report read the same rule). The Execution board gets the
+  // full list and hides the rows itself.
   const ghostFiltered = useMemo(() => showGhost ? milestones : milestones.filter((m) => !isImportedMilestone(m)), [milestones, showGhost]);
 
   // Search / filter for the Planning list (reuses the Execution engine).
@@ -139,11 +160,15 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     return ghostFiltered.filter((m) => !m.parentId || !byId.has(m.parentId));
   }, [ghostFiltered]);
   const planLeafStats = useMemo(() => {
-    const isLeaf = (m: Milestone) => !ghostFiltered.some((c) => c.parentId === m.id);
+    // Leaf-ness from the FULL list (PT SCH-6), one pass (PT PERF-5: this was
+    // an O(n²) `some` scan, run twice).
+    const parents = new Set<string>();
+    for (const m of milestones) if (m.parentId) parents.add(m.parentId);
+    const isLeaf = (m: Milestone) => !(m.id && parents.has(m.id));
     const total = ghostFiltered.filter(isLeaf).length;
     const shown = visible.filter(isLeaf).length;
     return { shown, total };
-  }, [ghostFiltered, visible]);
+  }, [milestones, ghostFiltered, visible]);
 
   // Flatten the visible milestones into WBS-tree order with a depth, so
   // the Planning list reads as the hierarchy (phases → tasks → steps)
@@ -176,8 +201,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   const metrics = useMemo(() => computeScheduleMetrics(milestones), [milestones]);
   // Per-task effective progress + derived status for the Planning list, so a
-  // phase shows a rolled-up status/% and can't be marked done directly.
-  const planProgress = useMemo(() => buildProgressIndex(ghostFiltered), [ghostFiltered]);
+  // phase shows a rolled-up status/% and can't be marked done directly. Over
+  // the FULL list (PT SCH-6): hiding imported children must never turn their
+  // manual parent into a "leaf" with a Done button.
+  const planProgress = useMemo(() => buildProgressIndex(milestones), [milestones]);
 
   const onSetStatus = async (id: string, status: MilestoneStatus) => {
     setBusy(true);
@@ -193,18 +220,32 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   };
 
   const onDelete = async (id: string) => {
-    if (!(await appConfirm({ message: "Delete this milestone? This action is audited.", tone: "danger" }))) return;
+    // Say what happens to the rest of the schedule (PT SCH-17).
+    const target = milestones.find((m) => m.id === id);
+    const plan = planMilestoneDelete(milestones, id);
+    const parentName = plan.newParentId ? milestones.find((m) => m.id === plan.newParentId)?.name ?? "its parent" : null;
+    const parts = [`Delete “${target?.name ?? "this milestone"}”? This action is audited.`];
+    if (plan.children.length > 0) parts.push(`Its ${plan.children.length} sub-task${plan.children.length === 1 ? "" : "s"}${plan.descendants > plan.children.length ? ` (${plan.descendants} tasks in all)` : ""} will move up to ${parentName ? `“${parentName}”` : "the top level"} — none is deleted.`);
+    if (plan.dependents.length > 0) parts.push(`${plan.dependents.length} task${plan.dependents.length === 1 ? "" : "s"} that depend${plan.dependents.length === 1 ? "s" : ""} on it will lose that link.`);
+    if (target && isImportedMilestone(target)) parts.push(`It came from ${target.source}: the next import of a file that still contains it adds it back.`);
+    if (!(await appConfirm({ message: parts.join(" "), tone: "danger" }))) return;
     setBusy(true);
     try { await deleteMilestone(id, userId); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError((e as Error).message); void refresh(); }
     finally { setBusy(false); }
   };
 
-  const hasBaseline = useMemo(() => milestones.some((m) => m.baselineFinishAt), [milestones]);
+  const baselineNow = useMemo(() => currentBaselineSummary(milestones), [milestones]);
+  const hasBaseline = !!baselineNow;
   const [baselineBusy, setBaselineBusy] = useState(false);
   const onSetBaseline = async () => {
-    const msg = hasBaseline
-      ? "Re-capture the current plan as the new baseline? Drift will be measured from now on against this snapshot."
+    // Name the baseline being replaced, and say it is kept (PT SAF-7 — the
+    // RPC writes it to milestone_baseline_history before overwriting).
+    const setOn = baselineNow?.setAt
+      ? new Date(baselineNow.setAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+      : null;
+    const msg = baselineNow
+      ? `Replace the baseline ${setOn ? `set on ${setOn} ` : ""}(${baselineNow.rowCount} task${baselineNow.rowCount === 1 ? "" : "s"}) with the current plan? The one you replace is kept — the Report can still measure drift against it — but from now on every "vs plan" figure is measured against the new snapshot.`
       : "Snapshot the current plan as the baseline? Every view will then show how far the schedule drifts from it.";
     if (!(await appConfirm(msg))) return;
     setBaselineBusy(true);
@@ -258,8 +299,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           <button
             onClick={() => setShowGhost((v) => !v)}
             title={showGhost
-              ? "Hide the read-only rows imported from your scheduling tool (they still count in the metrics)"
-              : "Show the read-only rows imported from your scheduling tool"}
+              ? "Hide the rows imported from your scheduling tool from the list and the board. Every number, rollup, the critical path and the cycle check still count them."
+              : "Show the rows imported from your scheduling tool (they are counted in every number either way)"}
             className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] transition-colors"
           >
             {showGhost ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Imported rows
@@ -286,7 +327,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   onClick={onSetBaseline}
                   disabled={baselineBusy}
                   title={hasBaseline
-                    ? "Re-capture the approved plan as the new baseline to measure drift against"
+                    ? "Capture the current plan as the new baseline — the one it replaces is kept, and the Report can still compare against it"
                     : "Snapshot the current plan as the baseline — every view then shows how far you've drifted from it"}
                   className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
                 >
@@ -316,7 +357,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Active view */}
       {!loading && milestones.length > 0 && view === "execution" && (
         <ExecutionView
-          milestones={visible}
+          milestones={milestones}
+          hideImported={!showGhost}
           canEdit={canEdit}
           orgId={orgId}
           projectId={projectId}
@@ -325,27 +367,49 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           userEmail={userEmail}
           userRole={userRole}
           onRefresh={refresh}
-          onMoveMany={async (changes) => {
-            if (changes.length === 0) return true;
+          onMoveMany={async (changes, opts): Promise<MoveOutcome> => {
+            if (changes.length === 0) return { ok: true };
+            // The lock: each row's updated_at as this view loaded it (an Undo
+            // passes the value its move reported) — PT SCH-7 / SCH-18.
+            const loaded = new Map(milestonesRef.current.map((m) => [m.id, m.updatedAt ?? null]));
+            const moves = changes.map((c) => ({
+              id: c.id, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt,
+              expectedUpdatedAt: opts?.expectedUpdatedAt?.[c.id] ?? (loaded.get(c.id) as string | null | undefined) ?? null,
+            }));
             // Optimistic: apply every reflowed date locally so the drag
-            // feels instant, then persist each row.
+            // feels instant, then persist the batch.
             const byId = new Map(changes.map((c) => [c.id, c]));
             setMilestones((arr) => arr.map((m) => {
               const c = m.id ? byId.get(m.id) : undefined;
               return c ? { ...m, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : m;
             }));
             try {
-              await applyMilestoneMoves({
-                orgId, projectId,
-                moves: changes.map((c) => ({ id: c.id, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt })),
+              const res = await applyMilestoneMoves({
+                orgId, projectId, moves,
                 actorUserId: userId, actorUserName: userName,
                 actorUserEmail: userEmail, actorUserRole: userRole,
+                onUnmatched: "return",
               });
-              return true;
+              if (res.unmatched.length > 0) {
+                // Rejected by the lock: name them, and reload so the board
+                // shows what is really saved.
+                const names = res.unmatched.map((id) => milestonesRef.current.find((m) => m.id === id)?.name ?? id.slice(0, 8));
+                setError(`${names.length} task${names.length === 1 ? " was" : "s were"} changed by someone else and ${names.length === 1 ? "was" : "were"} not moved: ${names.slice(0, 5).join(", ")}${names.length > 5 ? ", …" : ""}${res.matched.length > 0 ? ` (the other ${res.matched.length} moved)` : ""}. The schedule has been reloaded — check those dates and try again.`);
+                void refresh();
+                return { ok: false };
+              }
+              if (res.auditError) setError(`Moved, but ${res.auditError}.`);
+              // Our own write bumped updated_at: take the new values, or
+              // reload when they could not be read back.
+              if (res.updatedAt) {
+                const stamps = res.updatedAt;
+                setMilestones((arr) => arr.map((m) => (m.id && stamps[m.id] ? { ...m, updatedAt: stamps[m.id] } : m)));
+              } else void refresh();
+              return { ok: true, updatedAt: res.updatedAt };
             } catch (e) {
               setError((e as Error).message);
               void refresh();
-              return false;
+              return { ok: false };
             }
           }}
           onSetStatus={async (id, status) => {
@@ -396,7 +460,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{visible.length}</span>
             </div>
             <HelpTooltip>
-              <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. Toggle &ldquo;Imported rows&rdquo; up top to hide them from this list while keeping them in metrics.
+              <b>Imported rows</b> come from your scheduling tool (P6 / MS Project). Their dates, place in the outline, links and planned fields are set there and the next import writes them back, so they are locked here — change them in the tool and re-import. Their status, % complete and who did the work are recorded here and survive a re-import. Deleting one removes it until an import of a file that still contains it adds it back; Rebase shifts the whole schedule, imported rows included, until the next import. They count toward every metric either way; &ldquo;Imported rows&rdquo; up top only hides them from the list and the board.
             </HelpTooltip>
           </div>
 
@@ -517,7 +581,8 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
   const start = m.plannedStartAt ? new Date(m.plannedStartAt as string) : null;
   const planned = new Date(m.plannedAt as string);
   const actual = m.actualAt ? new Date(m.actualAt as string) : null;
-  const overdue = !actual && planned.getTime() < nowMs && effStatus !== "completed";
+  // The one overdue rule, by UTC day (PT SCH-5): due today is not overdue.
+  const overdue = isOverdueMilestone({ planned_at: m.plannedAt as string, status: effStatus }, nowMs);
   const slipDays = actual ? Math.round((actual.getTime() - planned.getTime()) / 86400_000) : 0;
   const blFinish = m.baselineFinishAt ? new Date(m.baselineFinishAt as string) : null;
   const driftDays = blFinish ? Math.round((planned.getTime() - blFinish.getTime()) / 86400_000) : 0;
@@ -526,15 +591,21 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
   // so it stays in the viewer's local time.)
   const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
+  // Low-alpha tints over the surface — the codebase's theme-safe recipe —
+  // so the row's text keeps its contrast in dark mode (PT A11Y-3: the
+  // light-mode -50 tints composited to a mid-grey slab under light text).
   const tone =
-    effStatus === "completed" ? "border-emerald-300 bg-emerald-50/50" :
-    effStatus === "missed"    ? "border-red-300 bg-red-50/50" :
-    effStatus === "blocked"   ? "border-amber-300 bg-amber-50/50" :
-    effStatus === "on_hold"   ? "border-amber-300 bg-amber-50/40" :
-    overdue                   ? "border-red-300 bg-red-50/40" :
+    effStatus === "completed" ? "border-emerald-500/50 bg-emerald-500/[0.08]" :
+    effStatus === "missed"    ? "border-rose-500/50 bg-rose-500/[0.08]" :
+    effStatus === "blocked"   ? "border-amber-500/50 bg-amber-500/[0.08]" :
+    effStatus === "on_hold"   ? "border-amber-500/50 bg-amber-500/[0.06]" :
+    overdue                   ? "border-rose-500/50 bg-rose-500/[0.06]" :
                                 "border-[var(--color-border)] bg-[var(--color-surface)]";
 
   const ghost = m.source !== "manual";
+  // Text that sits on the tint uses text-slate-600 (#475569; globals.css maps
+  // it to #cbd5e1 under .dark), not --color-text-muted: the muted token
+  // (#64748b) falls just under 4.5:1 on any light tint (PT A11Y-3).
 
   return (
     <div className={`py-3 pr-4 flex items-start gap-3 border-l-4 ${tone} ${ghost ? "opacity-90" : ""}`} style={{ paddingLeft: 16 + depth * 18 }}>
@@ -546,9 +617,9 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
           {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{m.wbs}</span>}
           <span className={`text-sm truncate ${m.isSummary ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text)]"}`}>{m.name}</span>
           <StatusChip status={effStatus} />
-          <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
+          <span className="text-[10px] font-black tabular-nums text-slate-600" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
           {driftDays !== 0 && blFinish && (
-            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`} title="Drift vs approved plan">
+            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-500/[0.08] text-rose-700 dark:text-rose-300 border-rose-500/50" : "bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300 border-emerald-500/50"}`} title="Drift vs approved plan">
               {driftDays > 0 ? `+${driftDays}d` : `${driftDays}d`} vs plan
             </span>
           )}
@@ -558,29 +629,29 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
             </span>
           )}
         </div>
-        <div className="mt-1 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
+        <div className="mt-1 text-[11px] text-slate-600 flex items-center gap-2 flex-wrap">
           <span className="inline-flex items-center gap-1">
             <Calendar className="w-3 h-3" /> {start && start.getTime() !== planned.getTime() ? `${fmt(start)} – ${fmt(planned)}` : fmt(planned)}
           </span>
           {typeof m.durationHours === "number" && m.durationHours > 0 && (
-            <span className="font-mono text-[var(--color-text-muted)]">· {m.durationHours}h</span>
+            <span className="font-mono text-slate-600">· {m.durationHours}h</span>
           )}
-          {m.workOrderRef && <span className="font-mono text-[var(--color-text-muted)]">· WO {m.workOrderRef}</span>}
+          {m.workOrderRef && <span className="font-mono text-slate-600">· WO {m.workOrderRef}</span>}
           {(m.responsibleParty || m.responsibleOrg) && (
-            <span className="text-[var(--color-text-muted)]">· {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" / ")}</span>
+            <span className="text-slate-600">· {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" / ")}</span>
           )}
-          {m.location && <span className="text-[var(--color-text-muted)]">· {m.location}</span>}
+          {m.location && <span className="text-slate-600">· {m.location}</span>}
           {actual && (
             <>
               <ArrowRight className="w-3 h-3 text-slate-300" />
-              <span className={slipDays > 0 ? "text-red-700" : "text-emerald-700"}>
+              <span className={slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>
                 actual {actual.toLocaleDateString()}{slipDays !== 0 && ` (${slipDays > 0 ? "+" : ""}${slipDays}d)`}
               </span>
             </>
           )}
-          {overdue && !actual && <span className="text-red-700 font-bold">overdue</span>}
+          {overdue && !actual && <span className="text-rose-700 dark:text-rose-300 font-bold">overdue</span>}
           {m.linkedRevisionLabel && (
-            <span className="text-[var(--color-text-muted)] font-mono">· {m.linkedRevisionLabel}</span>
+            <span className="text-slate-600 font-mono">· {m.linkedRevisionLabel}</span>
           )}
         </div>
         {m.description && <div className="mt-1 text-[11px] text-[var(--color-text)] whitespace-pre-wrap line-clamp-2">{m.description}</div>}
@@ -590,14 +661,14 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
         <div className="shrink-0 flex items-center gap-1">
           {/* A phase rolls up — its status isn't set directly; only leaves are. */}
           {isParent ? (
-            <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] px-1.5" title="Status rolls up from sub-tasks">rolls up</span>
+            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-600 px-1.5" title="Status rolls up from sub-tasks">rolls up</span>
           ) : (
             <>
               {effStatus !== "completed" && (
                 <button
                   onClick={() => onSetStatus(m.id!, "completed")}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-500/[0.08] hover:bg-emerald-500/[0.16] border border-emerald-500/50 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
                   title="Mark complete"
                 >
                   <Check className="w-3 h-3" /> Done
@@ -609,7 +680,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
           <button
             onClick={() => onDelete(m.id!)}
             disabled={busy}
-            className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 transition-colors"
+            className="p-1 rounded text-slate-600 hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/[0.08] transition-colors"
             title="Delete milestone"
           >
             <X className="w-3.5 h-3.5" />
@@ -622,10 +693,10 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
 
 function StatusChip({ status }: { status: MilestoneStatus }) {
   const tone =
-    status === "completed"   ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
-    status === "in_progress" ? "bg-blue-100    text-blue-800    border-blue-200" :
-    status === "missed"      ? "bg-red-100     text-red-800     border-red-200" :
-    status === "blocked"     ? "bg-amber-100   text-amber-800   border-amber-200" :
+    status === "completed"   ? "bg-emerald-500/[0.12] text-emerald-800 dark:text-emerald-300 border-emerald-500/50" :
+    status === "in_progress" ? "bg-blue-500/[0.12] text-blue-800 dark:text-blue-300 border-blue-500/50" :
+    status === "missed"      ? "bg-rose-500/[0.12] text-rose-800 dark:text-rose-300 border-rose-500/50" :
+    status === "blocked"     ? "bg-amber-500/[0.12] text-amber-800 dark:text-amber-300 border-amber-500/50" :
                                "bg-[var(--color-surface-2)]   text-[var(--color-text)]   border-[var(--color-border)]";
   return (
     <span className={`text-[9px] font-bold uppercase tracking-widest border px-1.5 py-0.5 rounded ${tone}`}>

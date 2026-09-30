@@ -79,3 +79,11 @@ describe("filterMilestones", () => {
     expect(r.has("day")).toBe(false);
   });
 });
+
+describe("SCH-5 · overdueOnly uses the one overdue rule (by UTC day)", () => {
+  it("a task due today is not overdue at 16:00Z; it is at 00:00Z the next day", () => {
+    const rows: Milestone[] = [mk({ id: "t", name: "Due today", plannedAt: "2026-08-21T00:00:00Z", status: "in_progress" })];
+    expect(filterMilestones(rows, f({ overdueOnly: true }), { now: Date.parse("2026-08-21T16:00:00Z") }).has("t")).toBe(false);
+    expect(filterMilestones(rows, f({ overdueOnly: true }), { now: Date.parse("2026-08-22T00:00:00Z") }).has("t")).toBe(true);
+  });
+});

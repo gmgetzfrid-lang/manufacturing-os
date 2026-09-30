@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { ScheduleMetrics } from "@/lib/milestones";
+import { isOverdueMilestone, startOfDayUTCms } from "@/lib/milestoneLiveness";
 
 interface Props {
   milestones: Milestone[];
@@ -38,7 +39,11 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
 
 export default function ScheduleProgress({ milestones, metrics }: Props) {
   const total = milestones.length;
-  const today = new Date(); today.setHours(0,0,0,0);
+  // Days are UTC days — planned dates are stored wall-clock-as-UTC — so "today"
+  // and "overdue" agree with the board, the pulse and the report in every
+  // timezone (PT SCH-5: this card used LOCAL midnight, the pulse Date.now()).
+  const [nowMs] = React.useState<number>(() => Date.now());
+  const today = new Date(startOfDayUTCms(nowMs));
   const in14 = new Date(today.getTime() + 14 * 86400000);
   const upcoming = milestones
     .filter((m) => m.status !== "completed" && m.plannedAt)
@@ -46,11 +51,12 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
     .filter((x) => x.due >= today && x.due <= in14)
     .sort((a, b) => a.due.getTime() - b.due.getTime())
     .slice(0, 5);
-  const overdue = milestones.filter((m) => {
-    if (m.status === "completed") return false;
-    if (!m.plannedAt) return false;
-    return new Date(m.plannedAt as string).getTime() < today.getTime();
-  });
+  // Leaves only — the population the pulse, the summary strip and the status
+  // counts use — through the one overdue rule.
+  const parentIds = new Set<string>();
+  for (const m of milestones) if (m.parentId) parentIds.add(m.parentId);
+  const overdue = milestones.filter((m) => !(m.id && parentIds.has(m.id))
+    && isOverdueMilestone({ planned_at: m.plannedAt as string | null, status: m.status }, nowMs));
 
   const earnedPct = Math.round(metrics.percentEarned * 100);
   const planPct = Math.round(metrics.percentPlanned * 100);
@@ -68,7 +74,14 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
             <div className="text-3xl font-black text-[var(--color-text)] leading-none mt-1">
               {earnedPct}<span className="text-base text-[var(--color-text-muted)] font-bold">%</span>
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Earned weight · planned was {planPct}%</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+              {metrics.weightBasis === "hours" ? "Earned work hours" : "Earned task weight"} · planned was {planPct}%
+            </div>
+            {metrics.weightBasis === "weight" && (
+              <div className="text-[10px] text-[var(--color-text-faint)]" title="Work hours are used only when every task carries them; otherwise every task counts by its weight (1 unless set).">
+                not every task carries work hours, so tasks count by weight
+              </div>
+            )}
           </div>
           <div className="text-right">
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>

@@ -48,10 +48,13 @@ describe("computeExecutionReport", () => {
     expect(r.pctHours).toBe(50);
   });
 
-  it("flags overdue: incomplete tasks past their finish", () => {
-    const r = computeExecutionReport(tree, { now }); // now = Mar 2 noon
-    // 'b' (Mar 2 00:00, blocked) is past due; 'c' (Mar 3) is not.
-    expect(r.overdue).toBe(1);
+  it("flags overdue by UTC day (PT SCH-5): due TODAY is not overdue; due yesterday is", () => {
+    // now = Mar 2 noon. 'b' (due Mar 2, blocked) is due today — not overdue
+    // (the old `finish < now` rule marked it overdue from 00:01 on its own
+    // due date); 'c' (Mar 3) is not either.
+    expect(computeExecutionReport(tree, { now }).overdue).toBe(0);
+    // Mar 3 00:00 UTC: 'b' is a day late; 'c' is due today.
+    expect(computeExecutionReport(tree, { now: new Date("2026-03-03T00:00:00Z") }).overdue).toBe(1);
   });
 
   it("computes pace vs expected", () => {
@@ -99,6 +102,45 @@ describe("computeExecutionReport", () => {
     expect(r.blockers).toEqual([]);
   });
 
+  // PC SCHED-14 / SCHED-2 dw3: the basis is chosen once and reported; the
+  // Work-hours figure is null (not pctComplete in disguise) with no hours.
+  it("reports its weighting basis; pctHours is null when no leaf carries hours", () => {
+    expect(computeExecutionReport(tree, { now }).weightBasis).toBe("hours"); // every leaf has hours
+    const mixed = [
+      mk({ id: "x", name: "X", plannedAt: "2026-03-01T00:00:00Z", status: "completed", durationHours: 40 }),
+      mk({ id: "y", name: "Y", plannedAt: "2026-03-02T00:00:00Z", status: "planned" }),
+    ];
+    const r = computeExecutionReport(mixed, { now });
+    expect(r.weightBasis).toBe("weight");
+    expect(r.pctComplete).toBe(50);          // 1 of 2 on the uniform basis — the blend read 98
+    expect(r.leavesWithHours).toBe(1);
+    const none = computeExecutionReport([mk({ id: "z", name: "Z", status: "completed" })], { now });
+    expect(none.plannedHours).toBe(0);
+    expect(none.pctHours).toBeNull();
+  });
+
+  // PC SCHED-12 limb b: the forecast is the completion RATE carried forward —
+  // named, and withheld below 10% of tasks done (it used to print the
+  // planned finish as the "forecast" when nothing was done).
+  it("forecast: withheld below 10% done, otherwise at the current rate of N tasks/day", () => {
+    const many = (done: number) => Array.from({ length: 20 }, (_, i) => mk({
+      id: `t${i}`, name: `T${i}`, plannedStartAt: "2026-03-01T00:00:00Z", plannedAt: "2026-03-20T00:00:00Z",
+      status: i < done ? "completed" : "planned",
+    }));
+    const at = new Date("2026-03-11T00:00:00Z"); // 10 days in
+    const early = computeExecutionReport(many(1), { now: at }); // 5%
+    expect(early.forecastBasis).toBe("too-early");
+    expect(early.forecastFinish).toBeNull();
+    expect(early.forecastRatePerDay).toBeNull();
+    const going = computeExecutionReport(many(4), { now: at }); // 20%: 4 tasks / 10 days
+    expect(going.forecastBasis).toBe("rate");
+    expect(going.forecastRatePerDay).toBeCloseTo(0.4);
+    expect(going.forecastFinish).toBe("2026-04-20T00:00:00.000Z"); // 16 left / 0.4 a day = 40 days after Mar 11
+    const done = computeExecutionReport(many(20), { now: at });
+    expect(done.forecastBasis).toBe("complete");
+    expect(done.forecastFinish).toBe("2026-03-20T00:00:00.000Z");
+  });
+
   describe("baseline drift", () => {
     const now = new Date("2026-03-10T00:00:00Z");
     it("is null without a baseline", () => {
@@ -115,6 +157,17 @@ describe("computeExecutionReport", () => {
       expect(r.baseline!.slipped).toBe(1);          // A moved 3 days late
       expect(r.baseline!.finishDriftDays).toBe(1);  // env: max cur Mar5 vs max bl Mar4 = +1
       expect(r.baseline!.worstSlips[0]).toMatchObject({ name: "A", days: 3 });
+    });
+    // PT SAF-7: drift against ANY captured baseline, not only the live one.
+    it("measures against an older capture when one is chosen", () => {
+      const withBl: Milestone[] = [
+        mk({ id: "a", name: "A", plannedAt: "2026-03-05T00:00:00Z", baselineFinishAt: "2026-03-05T00:00:00Z", status: "planned" }),
+      ];
+      expect(computeExecutionReport(withBl, { now }).baseline!.finishDriftDays).toBe(0); // live: re-baselined, drift gone
+      const older = new Map([["a", "2026-01-04T00:00:00Z"]]);
+      const r = computeExecutionReport(withBl, { now, baselineFinishById: older });
+      expect(r.baseline!.finishDriftDays).toBe(60);                                         // the original plan: 60 days late
+      expect(r.baseline!.worstSlips[0]).toMatchObject({ name: "A", days: 60 });
     });
   });
 });

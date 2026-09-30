@@ -1,88 +1,211 @@
 // lib/criticalPath.ts
 //
-// Critical-path-LITE. A real CPM needs dependency links most field
-// schedules don't carry. Instead we surface what's *actually* driving
-// the finish date from the schedule's shape alone:
+// The critical path, from the schedule's own dependency links (PT SCH-15 /
+// PC SCHED-10). The date-walk heuristic that lived here ("critical-path
+// lite": walk backward by date contiguity inside a 1-day slack / 14-day
+// window) is RETIRED — it ignored the finish-to-start links the reschedule
+// engine honours, merged parallel chains into one seam, dropped any driver
+// more than 14 days back, and counted a 90%-done task's hours in full.
 //
-//   The "drivers" are the leaf tasks that END at (or near) the project
-//   finish AND aren't yet complete — i.e. the work standing between you
-//   and done. We then walk backward in time picking the chain of
-//   overlapping/contiguous unfinished work that leads up to that finish,
-//   so a supervisor sees "these are the tasks that, if they slip, slip
-//   the whole job."
+// What this computes: a backward pass over the SCHEDULED network. Each leaf
+// keeps its planned dates; the latest it could be ready without delaying the
+// project finish is
 //
-// This is intentionally a heuristic, labelled as such in the UI. It is
-// pure + tested.
+//     lateReady(n) = min over successors s of (lateStart(s) − lag(n→s)),
+//                    or the project finish when n has no successor
+//     lateStart(s) = lateReady(s) − occupied(s)
+//
+// and its TOTAL FLOAT is lateReady(n) − ready(n) (reported per leaf).
+// "Ready" is the instant a finish-to-start successor may start
+// (scheduleReflow.fsReadyMs: the end of the day for a date-only finish, the
+// instant for a timed one), and lag is the source schedule's own
+// (attributes.source_links, PT SCH-8).
+//
+// The PATH is the chain of DRIVING links traced back from the finish —
+// Primavera's "longest path": start from the unfinished leaves that are ready
+// within the tolerance of the project finish, and follow each predecessor
+// link whose successor starts within the tolerance of that predecessor being
+// ready (+ lag). Per-link, because with no working calendar the calendar-day
+// float of a chain of 08:00–17:00 tasks grows by an overnight gap at every
+// hand-off; a driving link is judged on its own gap (default tolerance: under
+// one calendar day, so the evening-finish / morning-start hand-off drives).
+//
+// Calendar days, no working calendar: a weekend gap between two linked tasks
+// is not driving. A leaf with no links only counts when it ends at the
+// finish. Summaries are envelopes: a link to or from a phase applies to
+// every leaf inside it. A loop in the links is reported and left out. Pure.
 
 import type { Milestone } from "@/types/schema";
+import { DAY_MS, fsReadyMs, reflowNodesFromMilestones } from "@/lib/scheduleReflow";
+import { leafPercent } from "@/lib/scheduleProgress";
 
 export interface CriticalPathResult {
-  /** Leaf milestone ids on the driving chain (what gates the finish). */
+  /** Unfinished leaf ids on the driving chain(s) back from the finish — what gates it. */
   ids: Set<string>;
-  /** The project finish (ISO) the chain leads to. */
+  /** The project finish (ISO): the latest leaf finish. */
   finish: string | null;
-  /** Total remaining work-hours on the chain, when hours are present. */
+  /** Hours still to do on the path: Σ planned hours × (100 − % complete) / 100. */
   remainingHours: number;
+  /** Total float per unfinished leaf, in days (leaves in a loop are absent). */
+  floatDays: Map<string, number>;
+  /** Whether any finish-to-start link connects two leaves at all. */
+  linked: boolean;
+  /** Unfinished leaves with no link in or out — they count only when they
+   *  end at the finish, so the screen can say "add links to see the chain". */
+  unlinked: number;
+  /** Leaf ids inside a loop of links (left out of the pass), or null. */
+  cycle: string[] | null;
 }
 
+const HOUR_MS = 3_600_000;
 const startMs = (m: Milestone) => Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string));
 const finishMs = (m: Milestone) => Date.parse(m.plannedAt as string);
 
-/**
- * Identify the finish-driving chain. `slackDays` lets a task that ends
- * within N days of the latest finish still count as "driving" (real
- * schedules rarely line up to the minute).
- */
-export function computeCriticalPathLite(
+export function computeCriticalPath(
   milestones: Milestone[],
-  opts?: { slackDays?: number },
+  opts?: { toleranceDays?: number },
 ): CriticalPathResult {
-  const slack = (opts?.slackDays ?? 1) * 86400000;
+  const tolerance = (opts?.toleranceDays ?? 1) * DAY_MS;
+  const empty: CriticalPathResult = { ids: new Set(), finish: null, remainingHours: 0, floatDays: new Map(), linked: false, unlinked: 0, cycle: null };
+
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
-  const isLeaf = (m: Milestone) => !milestones.some((c) => c.parentId === m.id);
+  const kids = new Map<string, string[]>();
+  for (const m of milestones) {
+    if (!m.id || !m.parentId || !byId.has(m.parentId) || m.parentId === m.id) continue;
+    const arr = kids.get(m.parentId) ?? []; arr.push(m.id); kids.set(m.parentId, arr);
+  }
+  const isLeaf = (id: string) => (kids.get(id)?.length ?? 0) === 0;
+  const leafIds = milestones.filter((m) => m.id && m.plannedAt && isLeaf(m.id) && Number.isFinite(finishMs(m))).map((m) => m.id!);
+  if (leafIds.length === 0) return empty;
 
-  const leaves = milestones.filter((m) => m.plannedAt && isLeaf(m));
-  if (leaves.length === 0) return { ids: new Set(), finish: null, remainingHours: 0 };
+  // A link to / from a phase applies to every leaf inside it.
+  const leavesUnder = new Map<string, string[]>();
+  const leavesOf = (id: string): string[] => {
+    const cached = leavesUnder.get(id);
+    if (cached) return cached;
+    const out: string[] = [];
+    const stack = [id]; const seen = new Set<string>();
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      const k = kids.get(cur) ?? [];
+      if (k.length === 0) { if (byId.get(cur)?.plannedAt) out.push(cur); } else stack.push(...k);
+    }
+    leavesUnder.set(id, out);
+    return out;
+  };
 
-  // Project finish = latest leaf finish.
-  const projFinish = Math.max(...leaves.map(finishMs));
-  if (!Number.isFinite(projFinish)) return { ids: new Set(), finish: null, remainingHours: 0 };
-
-  const incomplete = (m: Milestone) => m.status !== "completed";
-
-  // Seed: unfinished leaves ending at/near the project finish.
-  const chain = new Set<string>();
-  let frontier = leaves.filter((m) => incomplete(m) && finishMs(m) >= projFinish - slack);
-  for (const m of frontier) if (m.id) chain.add(m.id);
-
-  // Walk backward: from each chain task's start, pull in the unfinished
-  // leaf(s) that end just before it (contiguous predecessors by time),
-  // forming the path that feeds the finish. Bounded iteration.
-  let guard = 0;
-  while (frontier.length > 0 && guard++ < 1000) {
-    const earliestStart = Math.min(...frontier.map(startMs));
-    const preds = leaves.filter((m) =>
-      m.id && !chain.has(m.id) && incomplete(m) &&
-      // A real predecessor STARTS before this seam and ENDS at/around it
-      // — not a task running in parallel that merely starts together.
-      startMs(m) < earliestStart &&
-      finishMs(m) <= earliestStart + slack && finishMs(m) >= earliestStart - 14 * 86400000,
-    );
-    // Of the candidates, keep only the ones ending closest to the seam
-    // (the true hand-off), not everything in the 2-week window.
-    if (preds.length === 0) break;
-    const latestPredFinish = Math.max(...preds.map(finishMs));
-    const next = preds.filter((m) => finishMs(m) >= latestPredFinish - slack);
-    for (const m of next) if (m.id) chain.add(m.id);
-    frontier = next;
+  // Leaf-level successor edges with their lag (hours → ms).
+  const lagOf = new Map<string, Record<string, number> | null>();
+  for (const n of reflowNodesFromMilestones(milestones)) lagOf.set(n.id, n.lagHours ?? null);
+  const succ = new Map<string, Map<string, number>>(); // pred leaf → (succ leaf → lag ms)
+  const hasPred = new Set<string>();
+  let linked = false;
+  for (const m of milestones) {
+    if (!m.id) continue;
+    for (const pred of m.dependsOn ?? []) {
+      if (!byId.has(pred)) continue;
+      const lagMs = (lagOf.get(m.id)?.[pred] ?? 0) * HOUR_MS;
+      for (const p of leavesOf(pred)) for (const s of leavesOf(m.id)) {
+        if (p === s) continue;
+        const row = succ.get(p) ?? new Map<string, number>();
+        row.set(s, Math.max(row.get(s) ?? -Infinity, lagMs));
+        succ.set(p, row);
+        hasPred.add(s);
+        linked = true;
+      }
+    }
   }
 
+  const ready = new Map<string, number>();
+  const occupied = new Map<string, number>();
+  let projectReady = -Infinity, projectFinish = -Infinity;
+  for (const id of leafIds) {
+    const m = byId.get(id)!;
+    const f = finishMs(m);
+    const s = Number.isFinite(startMs(m)) ? startMs(m) : f;
+    const r = fsReadyMs(f);
+    ready.set(id, r);
+    occupied.set(id, Math.max(0, r - s));
+    projectReady = Math.max(projectReady, r);
+    projectFinish = Math.max(projectFinish, f);
+  }
+
+  // Reverse topological order (Kahn over the successor edges); a leaf left
+  // over is inside a loop of links and is reported, not guessed at.
+  const indeg = new Map<string, number>();
+  for (const id of leafIds) indeg.set(id, 0);
+  for (const [, row] of succ) for (const s of row.keys()) if (indeg.has(s)) indeg.set(s, indeg.get(s)! + 1);
+  const order: string[] = [];
+  const q = leafIds.filter((id) => indeg.get(id) === 0);
+  while (q.length) {
+    const cur = q.shift()!;
+    order.push(cur);
+    for (const s of succ.get(cur)?.keys() ?? []) {
+      if (!indeg.has(s)) continue;
+      const d = indeg.get(s)! - 1;
+      indeg.set(s, d);
+      if (d === 0) q.push(s);
+    }
+  }
+  const inOrder = new Set(order);
+  const cycle = leafIds.filter((id) => !inOrder.has(id));
+
+  const lateReady = new Map<string, number>();
+  for (let i = order.length - 1; i >= 0; i--) {
+    const id = order[i];
+    let lr = projectReady;
+    for (const [s, lag] of succ.get(id) ?? []) {
+      const sLate = lateReady.get(s);
+      if (sLate === undefined) continue; // a successor inside a loop does not constrain
+      lr = Math.min(lr, sLate - occupied.get(s)! - lag);
+    }
+    lateReady.set(id, lr);
+  }
+
+  const floatDays = new Map<string, number>();
+  let unlinked = 0;
+  const open = (id: string) => byId.get(id)!.status !== "completed" && inOrder.has(id);
+  for (const id of order) {
+    if (!open(id)) continue;
+    floatDays.set(id, Math.round(((lateReady.get(id)! - ready.get(id)!) / DAY_MS) * 10) / 10);
+    if (!hasPred.has(id) && !succ.has(id)) unlinked++;
+  }
+
+  // The driving chain(s), traced back from the finish through driving links.
+  const preds = new Map<string, Array<{ p: string; lag: number }>>();
+  for (const [p, row] of succ) for (const [sId, lag] of row) {
+    const arr = preds.get(sId) ?? []; arr.push({ p, lag }); preds.set(sId, arr);
+  }
+  const ids = new Set<string>();
+  const stack = leafIds.filter((id) => open(id) && projectReady - ready.get(id)! < tolerance);
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (ids.has(id)) continue;
+    ids.add(id);
+    const start = ready.get(id)! - occupied.get(id)!;
+    for (const { p, lag } of preds.get(id) ?? []) {
+      if (!open(p) || ids.has(p)) continue;
+      if (start - (ready.get(p)! + lag) < tolerance) stack.push(p);
+    }
+  }
   let remainingHours = 0;
-  for (const id of chain) {
-    const m = byId.get(id);
-    if (m && typeof m.durationHours === "number") remainingHours += m.durationHours;
+  for (const id of ids) {
+    const m = byId.get(id)!;
+    if (typeof m.durationHours === "number" && m.durationHours > 0) {
+      remainingHours += m.durationHours * (100 - leafPercent(m)) / 100;
+    }
   }
 
-  return { ids: chain, finish: new Date(projFinish).toISOString(), remainingHours };
+  return {
+    ids,
+    finish: Number.isFinite(projectFinish) ? new Date(projectFinish).toISOString() : null,
+    remainingHours,
+    floatDays,
+    linked,
+    unlinked,
+    cycle: cycle.length > 0 ? cycle : null,
+  };
 }

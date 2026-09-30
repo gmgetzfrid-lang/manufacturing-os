@@ -15,11 +15,12 @@ import {
   Link2, Target,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
-import { wouldCreateCycle, type ReflowNode } from "@/lib/scheduleReflow";
+import { dependentsClosure, reflowNodesFromMilestones, toWallClock, fromWallClock } from "@/lib/scheduleReflow";
+import { isImportedMilestone } from "@/lib/milestoneLiveness";
 import { listMembers } from "@/lib/projects";
 import {
   updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
-  listMilestoneNotes, addMilestoneNote, type MilestonePatch,
+  listMilestoneNotes, addMilestoneNote, planMilestoneDelete, type MilestonePatch,
 } from "@/lib/milestones";
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
@@ -29,7 +30,10 @@ import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 interface Props {
   milestone: Milestone;
   subtasks: Milestone[];                 // direct children
-  allTasks?: Milestone[];                // every task in the project (for dependency picking)
+  allTasks?: Milestone[];                // EVERY task in the project — never a filtered view (dependency picking, PT SCH-9)
+  /** Rows the board's display filter hides — a link to one reads "hidden
+   *  by filter", not "removed" (PT SCH-9). */
+  hiddenIds?: ReadonlySet<string>;
   childCount: (id: string) => number;    // grandchild counts for subtask rows
   /** Ancestor chain, nearest parent first up to the top-level unit.
    *  Drives the breadcrumb so a task is never shown context-free. */
@@ -50,7 +54,7 @@ interface Props {
 }
 
 export default function TaskDetailPanel({
-  milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
+  milestone, subtasks, allTasks, hiddenIds, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
   onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays,
 }: Props) {
   const [editing, setEditing] = useState(false);
@@ -61,6 +65,9 @@ export default function TaskDetailPanel({
 
   const m = milestone;
   const isLeaf = subtasks.length === 0;
+  // An imported row's dates, structure and planned fields belong to the
+  // scheduling tool (PT SCH-13) — shown here, set there.
+  const imported = isImportedMilestone(m);
 
   // Effective progress + status: a leaf carries its own; a summary rolls up its
   // leaf descendants, duration-weighted (computed from the full task list, so
@@ -125,13 +132,24 @@ export default function TaskDetailPanel({
     loadNotes();
   }, [m.id, m.orgId, m.status, noteDraft, userId, userName, loadNotes]);
 
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const onDelete = useCallback(async () => {
     if (!m.id) return;
-    if (!(await appConfirm({ message: `Delete "${m.name}"? This is audited and cannot be undone.`, tone: "danger" }))) return;
-    await deleteMilestone(m.id, userId);
+    // Say what the delete does to the rest of the schedule (PT SCH-17).
+    const plan = planMilestoneDelete(allTasks && allTasks.length ? allTasks : [m, ...subtasks], m.id);
+    const parentName = plan.newParentId ? (allTasks ?? []).find((t) => t.id === plan.newParentId)?.name ?? "its parent" : null;
+    const parts = [`Delete "${m.name}"? This is audited and cannot be undone.`];
+    if (plan.children.length > 0) parts.push(`Its ${plan.children.length} sub-task${plan.children.length === 1 ? "" : "s"}${plan.descendants > plan.children.length ? ` (${plan.descendants} tasks in all)` : ""} will move up to ${parentName ? `“${parentName}”` : "the top level"} — none is deleted.`);
+    if (plan.dependents.length > 0) parts.push(`${plan.dependents.length} task${plan.dependents.length === 1 ? "" : "s"} that depend${plan.dependents.length === 1 ? "s" : ""} on it will lose that link.`);
+    if (imported) parts.push(`It came from ${m.source}: the next import of a file that still contains it adds it back.`);
+    if (!(await appConfirm({ message: parts.join(" "), tone: "danger" }))) return;
+    setDeleteError(null);
+    try {
+      await deleteMilestone(m.id, userId);
+    } catch (e) { setDeleteError((e as Error).message); onChanged(); return; }
     onChanged();
     onClose();
-  }, [m.id, m.name, userId, onChanged, onClose]);
+  }, [m, subtasks, allTasks, imported, userId, onChanged, onClose]);
 
   return (
     <div className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
@@ -225,7 +243,12 @@ export default function TaskDetailPanel({
               )}
 
               {/* Move — reschedule the whole task without dragging. */}
-              {canEdit && onMoveDays && m.id && (
+              {canEdit && imported && (
+                <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)]">
+                  Imported from <b>{m.source}</b>: its dates, place in the outline and links are set in the scheduling tool and come back with the next import — change them there. Status, % complete and who did the work are recorded here and survive a re-import.
+                </div>
+              )}
+              {canEdit && onMoveDays && m.id && !imported && (
                 <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
                   <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Move</span>
                   <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] overflow-hidden">
@@ -296,7 +319,8 @@ export default function TaskDetailPanel({
               <DependencyEditor
                 milestone={m}
                 allTasks={allTasks ?? []}
-                canEdit={canEdit}
+                hiddenIds={hiddenIds}
+                canEdit={canEdit && !imported}
                 userId={userId}
                 onChanged={onChanged}
                 onSelectMilestone={onSelectMilestone}
@@ -413,10 +437,11 @@ export default function TaskDetailPanel({
 
         {/* Footer */}
         {canEdit && !editing && (
-          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center">
+          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2 flex-wrap">
             <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
               <Trash2 className="w-3.5 h-3.5" /> Delete task
             </button>
+            {deleteError && <span role="alert" className="text-[11px] text-rose-600">{deleteError}</span>}
           </div>
         )}
         {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-600" /></div>}
@@ -436,9 +461,15 @@ function EditForm({
   onDone: () => void; onCancel: () => void;
 }) {
   const m = milestone;
+  // Planned dates are wall-clock-as-UTC: the inputs show and take the UTC
+  // fields (PT SCH-10 — a local rendering read a day early west of UTC and
+  // saved a day late). Only a date the user actually changed is written.
+  const imported = isImportedMilestone(m);
+  const initialStart = toScheduleInput(m.plannedStartAt as string | null | undefined);
+  const initialFinish = toScheduleInput(m.plannedAt as string);
   const [name, setName] = useState(m.name);
-  const [start, setStart] = useState(toLocalInput(m.plannedStartAt as string | null | undefined));
-  const [finish, setFinish] = useState(toLocalInput(m.plannedAt as string));
+  const [start, setStart] = useState(initialStart);
+  const [finish, setFinish] = useState(initialFinish);
   const [durationHours, setDurationHours] = useState(m.durationHours != null ? String(m.durationHours) : "");
   const [workOrderRef, setWorkOrderRef] = useState(m.workOrderRef ?? "");
   const [responsibleParty, setResponsibleParty] = useState(m.responsibleParty ?? "");
@@ -458,8 +489,8 @@ function EditForm({
     const errors: Record<string, string> = {};
     const warnings: Record<string, string> = {};
     if (!name.trim()) errors.name = "Give the task a name.";
-    const startMs = start ? Date.parse(start) : NaN;
-    const finishMs = finish ? Date.parse(finish) : NaN;
+    const startMs = start ? Date.parse(fromScheduleInput(start) ?? "") : NaN;
+    const finishMs = finish ? Date.parse(fromScheduleInput(finish) ?? "") : NaN;
     if (!finish || Number.isNaN(finishMs)) errors.finish = "A finish date is required.";
     if (Number.isFinite(startMs) && Number.isFinite(finishMs) && finishMs < startMs) {
       errors.finish = "Finish can't be before the start.";
@@ -488,15 +519,20 @@ function EditForm({
     if (!m.id || v.hasErrors) return;
     setSaving(true); setError(null);
     try {
-      const patch: MilestonePatch = {
-        name: name.trim(),
-        plannedStartAt: start ? new Date(start).toISOString() : null,
-        plannedAt: finish ? new Date(finish).toISOString() : m.plannedAt,
-        durationHours: durationHours ? Number(durationHours) : null,
-        workOrderRef, responsibleParty, responsibleOrg, responsibleKind,
-        actualParty, actualOrg, actualKind, location, description,
-        shift: (shift || null) as MilestonePatch["shift"],
-      };
+      // An imported row sends only what is recorded here (PT SCH-13); the
+      // plan fields belong to the scheduling tool (and are refused below the
+      // UI if they differ).
+      const patch: MilestonePatch = imported
+        ? { actualParty, actualOrg, actualKind }
+        : {
+            name: name.trim(),
+            durationHours: durationHours ? Number(durationHours) : null,
+            workOrderRef, responsibleParty, responsibleOrg, responsibleKind,
+            actualParty, actualOrg, actualKind, location, description,
+            shift: (shift || null) as MilestonePatch["shift"],
+          };
+      if (!imported && start !== initialStart) patch.plannedStartAt = start ? fromScheduleInput(start) : null;
+      if (!imported && finish !== initialFinish) patch.plannedAt = (finish ? fromScheduleInput(finish) : null) ?? m.plannedAt;
       await updateMilestone({
         id: m.id, patch,
         updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
@@ -511,10 +547,16 @@ function EditForm({
 
   return (
     <div className="p-4 space-y-3">
+      {imported && (
+        <div className="text-[11px] text-[var(--color-text-muted)] rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2">
+          Imported from <b>{m.source}</b>: the name, dates, work hours and planned fields are set in the scheduling tool and come back with the next import, so they are read-only here. Who actually did the work is recorded here.
+        </div>
+      )}
+      <fieldset disabled={imported} className="space-y-3 disabled:opacity-60">
       <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Start"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
-        <L label="Finish"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
+        <L label="Start (schedule time)"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
+        <L label="Finish (schedule time)"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
@@ -526,12 +568,14 @@ function EditForm({
         <L label="Dept / company"><input value={responsibleOrg} onChange={(e) => setResponsibleOrg(e.target.value)} className={inp} /></L>
       </div>
       <L label="Type"><KindSelect value={responsibleKind} onChange={setResponsibleKind} /></L>
+      </fieldset>
       <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] pt-1">Actually performed by</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Person / crew"><input value={actualParty} onChange={(e) => setActualParty(e.target.value)} className={inp} /></L>
         <L label="Dept / company"><input value={actualOrg} onChange={(e) => setActualOrg(e.target.value)} className={inp} /></L>
       </div>
       <L label="Type"><KindSelect value={actualKind} onChange={setActualKind} /></L>
+      <fieldset disabled={imported} className="space-y-3 disabled:opacity-60">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Location"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} /></L>
         <L label="Shift">
@@ -544,6 +588,7 @@ function EditForm({
         </L>
       </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
+      </fieldset>
       {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
@@ -650,21 +695,25 @@ function fmtWhen(iso?: string | number | Date | null): string {
   catch { return ""; }
 }
 
-// datetime-local wants "YYYY-MM-DDTHH:mm" in LOCAL time.
-function toLocalInput(iso?: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// datetime-local wants "YYYY-MM-DDTHH:mm". Planned dates are wall-clock-as-
+// UTC, so the input carries the UTC fields — the same day and time the board
+// and the source file show, in every timezone (PT SCH-10).
+function toScheduleInput(iso?: string | null): string {
+  const w = toWallClock(iso);
+  return w ? `${w.date}T${w.time}` : "";
+}
+function fromScheduleInput(v: string): string | null {
+  const [date, time] = v.split("T");
+  return fromWallClock(date ?? "", time ?? null);
 }
 
 // ─── Dependency editor (finish-to-start links) ─────────────────
 function DependencyEditor({
-  milestone, allTasks, canEdit, userId, onChanged, onSelectMilestone,
+  milestone, allTasks, hiddenIds, canEdit, userId, onChanged, onSelectMilestone,
 }: {
   milestone: Milestone;
   allTasks: Milestone[];
+  hiddenIds?: ReadonlySet<string>;
   canEdit: boolean;
   userId: string;
   onChanged: () => void;
@@ -680,17 +729,21 @@ function DependencyEditor({
     return map;
   }, [allTasks]);
 
-  const reflowNodes = useMemo<ReflowNode[]>(() => allTasks.map((t) => ({
-    id: t.id!, parentId: t.parentId ?? null,
-    plannedStartAt: (t.plannedStartAt as string | undefined) ?? null,
-    plannedAt: t.plannedAt as string, dependsOn: t.dependsOn ?? null,
-  })), [allTasks]);
+  // The cycle check runs over EVERY task the project has (the caller hands
+  // the full list, never the filtered board — PT SCH-9), in one O(n + e)
+  // walk: the tasks that already (transitively) depend on this one can never
+  // be its predecessors (PT PERF-5: it was a DFS per candidate). The save is
+  // checked again below the UI against the database (updateMilestone).
+  const blocked = useMemo(
+    () => (milestone.id ? dependentsClosure(reflowNodesFromMilestones(allTasks), milestone.id) : new Set<string>()),
+    [allTasks, milestone.id],
+  );
 
   // Candidates: any other task that wouldn't create a cycle and isn't already a dep.
   const candidates = useMemo(() => allTasks
-    .filter((t) => t.id && t.id !== milestone.id && !deps.includes(t.id) && !wouldCreateCycle(reflowNodes, milestone.id!, t.id))
+    .filter((t) => t.id && t.id !== milestone.id && !deps.includes(t.id) && !blocked.has(t.id))
     .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
-    [allTasks, deps, reflowNodes, milestone.id]);
+    [allTasks, deps, blocked, milestone.id]);
 
   const save = async (next: string[]) => {
     if (!milestone.id) return;
@@ -719,8 +772,8 @@ function DependencyEditor({
             const t = byId.get(id);
             return (
               <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold pl-2 pr-1 py-0.5">
-                <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t?.name ?? id}>
-                  {t?.name ?? "(removed task)"}
+                <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t ? (hiddenIds?.has(id) ? `${t.name} — hidden by the imported-rows filter` : t.name) : "This task was deleted; the link points at nothing"}>
+                  {t ? (hiddenIds?.has(id) ? `${t.name} (hidden by filter)` : t.name) : "(deleted task)"}
                 </button>
                 {canEdit && (
                   <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800" title="Remove dependency">
@@ -741,7 +794,7 @@ function DependencyEditor({
         >
           <option value="">{candidates.length === 0 ? "No other tasks available" : "+ Add a predecessor…"}</option>
           {candidates.map((t) => (
-            <option key={t.id} value={t.id!}>{t.name}</option>
+            <option key={t.id} value={t.id!}>{t.name}{t.id && hiddenIds?.has(t.id) ? " (hidden by filter)" : ""}</option>
           ))}
         </select>
       )}
