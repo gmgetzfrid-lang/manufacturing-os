@@ -85,7 +85,7 @@ about the system.
 | [DEC-49](#dec-49) | A URL `/api/storage/download-url` signs is an **attachment** unless a viewer asks AND the type cannot be a page (PDF, raster image — type pinned); the viewer frames only a PDF and shows images as `<img>` | low | `SEC-7`, `SEC-1` |
 | [DEC-50](#dec-50) | The money ledger: the headline is what is still **uncommitted**; approved change orders revise the budget only while their money is on the ledger; CPI forecasts only what it measured; the ledger is never deleted; the decider decides the amount and line they were shown | medium | `MON-1`, `MON-4`, `COST-2`, `COST-4`, `COST-6`, `COST-9`, `COST-10`, `COST-11` |
 | [DEC-51](#dec-51) | A schedule re-import is a **reviewed merge, never a guess**: the importer plans before it writes, keeps local progress, keys rows on content, reads dates one way for the whole file, and adopts a legacy position row only by a name unique on both sides | low | `SCH-1`, `SCH-2`, `SCH-3`, `SCH-14`, `SCHED-3`, `SCHED-4`, `SCHED-9` |
-| [DEC-52](#dec-52) | The cost charts draw **only what the data holds and say what they are**: series identity is a validated categorical pair plus shape; one number is shown as a number; example data only on an empty project, every figure marked; the example shows only what the real view draws | low | `CHART-2`, `CHART-3`, `CHART-4`, `REL-10`, `REL-11` |
+| [DEC-55](#dec-55) | The cost charts draw **only what the data holds and say what they are**: series identity is a validated categorical pair plus shape; one number is shown as a number; example data only on an empty project, every figure marked; the example shows only what the real view draws | low | `CHART-2`, `CHART-3`, `CHART-4`, `REL-10`, `REL-11` |
 
 ---
 
@@ -2647,8 +2647,8 @@ repeats is added again rather than matched (its old row and progress kept
 and listed), and a unique-named one is matched by name even when the file
 moved it.
 
-<a id="dec-52"></a>
-## DEC-52 · The cost charts draw only what the data holds, and say what they are
+<a id="dec-55"></a>
+## DEC-55 · The cost charts draw only what the data holds, and say what they are
 
 **Decision. (1) Series identity is hue AND shape.** Two series on one chart take
 consecutive slots of the validated categorical scale, never the white-label
@@ -2680,14 +2680,9 @@ dark step, each ≥ 4.5:1 on its surfaces. The dial's band word wears a text tok
 > Made during projects Round G (2026-09-30) by the joint J5 CHARTS package,
 > taking the fleet brief's stated defaults for `CHART-3`, `REL-10` and
 > `REL-11`, and the dataviz palette rule the brief named for `CHART-2` /
-> `CHART-4`. *Minted as DEC-52, the next free number in this package's base,
-> where DEC-44 to DEC-51 were taken. On the integration branch DEC-52 (J2's
-> decision on who decided a PSSR / MI / QA-QC green) and DEC-53 (I-10's
-> equipment-registry decision) are already taken, so this decision is
-> renumbered at merge to the next free number there: DEC-54 if it merges
-> next. The renumber covers this section's anchor, heading and note, its index
-> row, and every reference to it in the records. Source and test code cite the
-> rule by its text ("draw only what the data holds"), never by number.*
+> `CHART-4`. *Numbered DEC-55 at merge (DEC-44 to DEC-54 were already taken on
+> the integration branch). Source and test code cite the rule by its text
+> ("draw only what the data holds"), never by number.*
 
 **Rationale.** Each default removes a confident, plausible picture that the
 data does not support. The removed pictures were a flat bar row presented as a
