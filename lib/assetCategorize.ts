@@ -197,6 +197,23 @@ export function planIdentityReview(assets: ReadonlyArray<IdentityFields>, book: 
   return out;
 }
 
+/** CB-10: site codes STORED on more than one asset of the org — what keeps
+ *  the unique index (assets_org_code_unique, 20261128) from being created,
+ *  and what a person resolves first. Blank codes are not identities. */
+export function sharedSiteCodes(
+  assets: ReadonlyArray<Pick<Asset, "id" | "tag" | "code">>,
+): Array<{ code: string; assets: Array<{ id: string; tag: string }> }> {
+  const byCode = new Map<string, Array<{ id: string; tag: string }>>();
+  for (const a of assets) {
+    const c = (a.code ?? "").trim() ? a.code! : null;
+    if (!c) continue;
+    byCode.set(c, [...(byCode.get(c) ?? []), { id: a.id, tag: a.tag }]);
+  }
+  return [...byCode.entries()].filter(([, list]) => list.length > 1)
+    .map(([code, list]) => ({ code, assets: list }))
+    .sort((x, y) => x.code.localeCompare(y.code, undefined, { numeric: true }));
+}
+
 /** CB-6 / CB-7: before a codebook edit is saved — how many assets carry a
  *  code the CURRENT rule derived that the EDITED rule would derive
  *  differently (or not at all). The edit never rewrites them; the count is

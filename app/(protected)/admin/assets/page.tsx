@@ -33,7 +33,7 @@ import {
 } from "@/lib/codebook";
 import { isControllerRole } from "@/lib/permissions";
 import {
-  codeUnitConflict, planIdentityReview, assetsMatchingTagPrefix, type IdentityReviewRow,
+  codeUnitConflict, planIdentityReview, assetsMatchingTagPrefix, sharedSiteCodes, type IdentityReviewRow,
 } from "@/lib/assetCategorize";
 import type { Role } from "@/types/schema";
 import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
@@ -176,6 +176,9 @@ function AssetsPageInner() {
   // AREA-11 / CB-6: every asset whose stored identity disagrees with the
   // codebook as it stands (the code names another unit; the code re-derives).
   const identityReview = useMemo(() => planIdentityReview(assets, book), [assets, book]);
+  // CB-10: one site code, one asset — codes already shared are listed first
+  // (the database's unique index waits until there are none).
+  const sharedCodes = useMemo(() => sharedSiteCodes(assets), [assets]);
 
   // Per-unit counts for the picker cards.
   const unitCounts = useMemo(() => {
@@ -458,8 +461,9 @@ function AssetsPageInner() {
 
         {/* AREA-11 / CB-6: stored identity that disagrees with the codebook —
             reviewed per asset, never rewritten silently. */}
-        {isAdmin && !loading && uid && identityReview.length > 0 && (
-          <IdentityReviewPanel rows={identityReview} book={book} userId={uid}
+        {isAdmin && !loading && uid && (identityReview.length > 0 || sharedCodes.length > 0) && (
+          <IdentityReviewPanel rows={identityReview} shared={sharedCodes} book={book} userId={uid}
+            onOpen={(id) => { const a = assets.find((x) => x.id === id); if (a) setSelectedAsset(a); }}
             onChanged={() => { invalidateAssetCache(); void refresh(); }} />
         )}
 
@@ -1159,8 +1163,10 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
 // Nothing is rewritten until a person accepts it, asset by asset (or the
 // shown batch) — the codebook never silently re-files the plant.
 
-function IdentityReviewPanel({ rows, book, userId, onChanged }: {
-  rows: IdentityReviewRow[]; book: Codebook; userId: string; onChanged: () => void;
+function IdentityReviewPanel({ rows, shared, book, userId, onOpen, onChanged }: {
+  rows: IdentityReviewRow[];
+  shared: Array<{ code: string; assets: Array<{ id: string; tag: string }> }>;
+  book: Codebook; userId: string; onOpen: (assetId: string) => void; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1191,6 +1197,8 @@ function IdentityReviewPanel({ rows, book, userId, onChanged }: {
           Identity review — {conflicts > 0 ? `${conflicts} site code${conflicts === 1 ? "" : "s"} naming a different unit than the filing` : ""}
           {conflicts > 0 && drift > 0 ? " · " : ""}
           {drift > 0 ? `${drift} code${drift === 1 ? "" : "s"} the codebook now derives differently` : ""}
+          {(conflicts > 0 || drift > 0) && shared.length > 0 ? " · " : ""}
+          {shared.length > 0 ? `${shared.length} site code${shared.length === 1 ? "" : "s"} carried by more than one asset` : ""}
         </span>
         <ChevronDown className={`w-4 h-4 text-rose-500 transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
@@ -1199,6 +1207,18 @@ function IdentityReviewPanel({ rows, book, userId, onChanged }: {
           <p className="text-[11px] text-[var(--color-text-muted)]">
             Codes are frozen when they are written; nothing here changes until you accept it.
           </p>
+          {shared.map((g) => (
+            <div key={`shared-${g.code}`} className="flex items-center gap-2 flex-wrap bg-[var(--color-surface)] border border-rose-300 rounded-lg px-2.5 py-1.5 text-[11px]">
+              <span className="font-mono font-black text-rose-800">{g.code}</span>
+              <span className="text-[var(--color-text-muted)]">one site code on {g.assets.length} assets — give each its own:</span>
+              {g.assets.map((a) => (
+                <button key={a.id} type="button" onClick={() => onOpen(a.id)}
+                  className="px-2 py-0.5 rounded border border-[var(--color-border-strong)] font-mono font-bold hover:bg-[var(--color-surface-2)]">
+                  {a.tag}
+                </button>
+              ))}
+            </div>
+          ))}
           {shown.map((r) => (
             <div key={r.assetId} className="flex items-center gap-2 flex-wrap bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 text-[11px]">
               <span className="font-mono font-black w-20 shrink-0">{r.tag}</span>

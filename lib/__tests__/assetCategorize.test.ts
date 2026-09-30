@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   planCategorization, planIdentityReview, codeUnitConflict, rederivationImpact, entryAssetReferences,
-  planAssetImport, resolveUnitCell, assetsMatchingTagPrefix, type ImportRowInput,
+  planAssetImport, resolveUnitCell, assetsMatchingTagPrefix, sharedSiteCodes, type ImportRowInput,
 } from "@/lib/assetCategorize";
 import { EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import type { Asset, AssetType } from "@/lib/assets";
@@ -233,5 +233,15 @@ describe("AREA-7 — bulk filing by tag prefix", () => {
     expect(assetsMatchingTagPrefix(list, "ea").map((a) => a.id)).toEqual(["2"]);
     expect(assetsMatchingTagPrefix(list, "E-1").map((a) => a.id)).toEqual(["3"]);
     expect(assetsMatchingTagPrefix(list, " ").map((a) => a.id)).toEqual([]);
+  });
+});
+
+describe("CB-10 — codes already shared are listed for a person to resolve (the unique index waits on them)", () => {
+  it("groups non-blank stored codes held by more than one asset", () => {
+    expect(sharedSiteCodes([
+      { id: "a", tag: "V-1", code: "2010.1" }, { id: "b", tag: "D-1", code: "2010.1" },
+      { id: "c", tag: "E-22", code: "2030.22" }, { id: "d", tag: "X-1", code: "" }, { id: "e", tag: "X-2", code: " " },
+      { id: "f", tag: "X-3", code: null },
+    ])).toEqual([{ code: "2010.1", assets: [{ id: "a", tag: "V-1" }, { id: "b", tag: "D-1" }] }]);
   });
 });
