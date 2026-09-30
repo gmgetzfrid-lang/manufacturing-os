@@ -1374,32 +1374,44 @@ function childText(parent: Element, tag: string): string {
 // on every machine (PC SCHED-9).
 export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
   const raw = s.trim();
-  // A value that names its zone by abbreviation ("June 1, 2026 8:00 AM EST",
-  // "6/1/2026 17:00 (CEST)"): the rest is read like any other value — as
-  // wall-clock-as-UTC, per the file's convention — and the abbreviation's
-  // FIXED offset is applied, so it names the same instant on every machine.
-  // A value that also carries a numeric offset keeps that one (below); a rest
-  // that cannot be read makes the value unreadable ("") — counted, not guessed.
-  if (!NAMES_NUMERIC_OFFSET.test(raw)) {
-    const abbr = Array.from(raw.matchAll(ZONE_ABBREVIATION));
-    if (abbr.length > 1) return "";
-    if (abbr.length === 1) {
-      const m = abbr[0];
-      const rest = `${raw.slice(0, m.index)} ${raw.slice(m.index! + m[0].length)}`.replace(/\s+/g, " ").trim();
-      const wall = rest ? Date.parse(coerceIso(rest, conv)) : NaN;
-      if (!Number.isFinite(wall)) return "";
-      return new Date(wall - ZONE_OFFSET_MINUTES[m[1].toUpperCase()] * 60_000).toISOString();
-    }
-  }
   // The day name is dropped for the numeric forms only; the Date() fallback
   // below sees the raw value (so "June 1, 2026" keeps its month name).
   const trimmed = raw.replace(LEADING_DAY_NAME, "");
-  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+  if (ISO_DATETIME.test(trimmed)) {
     // Schedule dates are stored wall-clock-as-UTC. MS Project / P6 XML write
     // local wall-clock times with NO offset; JS would read those as browser-
     // local and the importer's shift label would drift by the importer's UTC
-    // offset (PC SCHED-9). Attach Z so the reading matches the convention.
+    // offset (PC SCHED-9). Attach Z so the reading matches the convention; an
+    // offset the value carries is kept as written.
     return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed) ? trimmed : `${trimmed}Z`;
+  }
+  // A zone named RIGHT AFTER a time of day — an abbreviation in upper case
+  // ("8:00 AM EST", "17:00 (CEST)") or a numeric offset ("8:00 PM +02:00",
+  // "8:00AM -0500", "08:00 GMT+0200"): the rest is read like any other value
+  // (wall-clock-as-UTC, per the file's convention) and that FIXED offset is
+  // applied, so the value names the same instant on every machine. A second
+  // zone, an offset beyond ±14 h, or a rest that cannot be read makes the
+  // value unreadable ("") — counted, not guessed.
+  const z = raw.match(ZONE_AFTER_TIME);
+  if (z) {
+    const offsetMin = zoneTokenMinutes(z);
+    if (offsetMin === null) return "";
+    const rest = `${raw.slice(0, z.index)}${z[1]}${raw.slice(z.index! + z[0].length)}`.replace(/\s+/g, " ").trim();
+    if (ZONE_AFTER_TIME.test(rest) || ZONE_WORD.test(rest)) return "";
+    const wall = Date.parse(coerceIso(rest, conv));
+    if (!Number.isFinite(wall)) return "";
+    return new Date(wall - offsetMin * 60_000).toISOString();
+  }
+  // An upper-case abbreviation anywhere else: with a time of day in the value
+  // it is not attached to that time, so the value is unreadable; on a date
+  // alone ("6/1/2026 EST") there is no time to offset — it is dropped and the
+  // date stays a date-only 00:00Z value. Lower case ("est." = estimated) is
+  // not a zone.
+  if (ZONE_WORD.test(raw)) {
+    if (hasTimeOfDay(raw)) return "";
+    const rest = raw.replace(ZONE_WORD_ALL, " ").replace(/\s+/g, " ").trim();
+    const out = rest ? coerceIso(rest, conv) : "";
+    return Number.isFinite(Date.parse(out)) ? out : "";
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00Z`;
   // "2026-08-15 00:00" / "2026-08-15 00:00:00"
@@ -1450,25 +1462,45 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
   return raw; // hand it to the importer; if invalid, Supabase will reject.
 }
 
-/** Zone abbreviations a date value may end with, at FIXED offsets (minutes
- *  east of UTC). US zones (CST is US Central, not China), GMT / UTC, and
- *  the UK / central-European ones (BST is British Summer Time). */
+/** Zone abbreviations recognised after a time of day, at FIXED offsets
+ *  (minutes east of UTC). US zones (CST is US Central, not China), GMT / UTC,
+ *  and the UK / central-European ones (BST is British Summer Time). Upper
+ *  case only: "est." in a schedule means "estimated". */
 const ZONE_OFFSET_MINUTES: Record<string, number> = {
   EST: -300, EDT: -240, CST: -360, CDT: -300, MST: -420, MDT: -360, PST: -480, PDT: -420,
   GMT: 0, UTC: 0, BST: 60, CET: 60, CEST: 120,
 };
-/** One of those abbreviations as a word, optionally in parentheses, and
- *  not the "GMT" of a numeric offset ("GMT+0200"). */
-const ZONE_ABBREVIATION = /\(?\b(EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC|BST|CET|CEST)\b\)?(?!\s*[+-]\d)/gi;
-/** A value carrying a numeric offset: "08:00+02:00", "…T08:00Z", "GMT+0200". */
-const NAMES_NUMERIC_OFFSET = /\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:Z|[+-]\d{2}:?\d{2})\b|\b(?:GMT|UTC)\s*[+-]\d/i;
+const ZONE_ABBRS = "EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC|BST|CET|CEST";
+/** A time of day (with an optional AM / PM), then a zone: a numeric offset —
+ *  "+02:00", "-0500", "+2", optionally after GMT / UTC ("GMT+0200",
+ *  "UTC-5") — or an upper-case abbreviation, optionally in parentheses.
+ *  Group 1 is the time (kept); 2-4 sign / hours / minutes; 5 abbreviation. */
+const ZONE_AFTER_TIME = new RegExp(
+  String.raw`(?<![\d:])(\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s*[AaPp]\.?[Mm]\.?)?)\s*(?:(?:(?:GMT|UTC)\s*)?([+-])(\d{1,2})(?::?(\d{2}))?(?![\d/.:])|\(?(` + ZONE_ABBRS + String.raw`)\)?(?![A-Za-z]))`,
+);
+/** An upper-case zone abbreviation as a word, anywhere in the value. */
+const ZONE_WORD = new RegExp(String.raw`(?<![A-Za-z])\(?(?:` + ZONE_ABBRS + String.raw`)\)?(?![A-Za-z])`);
+const ZONE_WORD_ALL = new RegExp(ZONE_WORD.source, "g");
+/** The offset (minutes east of UTC) a ZONE_AFTER_TIME match names, or null
+ *  when it is not a real offset (beyond ±14 h, or minutes ≥ 60). */
+function zoneTokenMinutes(m: RegExpMatchArray): number | null {
+  if (m[5]) return ZONE_OFFSET_MINUTES[m[5]];
+  const h = Number(m[3]), min = m[4] ? Number(m[4]) : 0;
+  if (h > 14 || min >= 60 || h * 60 + min > 14 * 60) return null;
+  return (m[2] === "-" ? -1 : 1) * (h * 60 + min);
+}
+/** ISO 8601 date and time, with or without an offset ("2026-08-15T08:00:00",
+ *  "…T08:00:00.000Z", "…T08:00+02:00"). */
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i;
 
 /** Year / month / day with any of / . - and an optional time ("2026/06/01",
  *  "2026.6.1 8:00", "2026/06/01 5:30 PM"). */
 const YEAR_FIRST = /^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?$/;
-/** A date string that names its own zone: "… GMT", "… UTC", or a time
- *  followed by "Z" / "±hh:mm" ("08:00+02:00"). A bare "-2026" is a year. */
-const NAMES_ITS_ZONE = /\b(?:GMT|UTC)\b|\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:Z|[+-]\d{2}:?\d{2})\b/i;
+/** A date string that names its own zone: "… GMT", "… UTC", or a time —
+ *  an AM / PM between allowed — followed by "Z" / "±hh:mm" ("08:00+02:00").
+ *  A bare "-2026" is a year. (Zones right after a time are read above; this
+ *  guards the Date() fallback.) */
+const NAMES_ITS_ZONE = /\b(?:GMT|UTC)\b|\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*[AaPp]\.?[Mm]\.?)?\s*(?:Z|[+-]\d{1,2}(?::?\d{2})?)\b/i;
 
 /** True when a date cell carries a time of day ("8:00", "2026-06-01T08:00").
  *  A date-only start is stored at 00:00Z, which is not a shift reading. */

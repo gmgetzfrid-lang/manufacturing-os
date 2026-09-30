@@ -427,6 +427,43 @@ describe("SCHED-9 · offset-less datetimes are read as wall-clock-as-UTC", () =>
     }
   });
 
+  it("a numeric offset right after a 12-hour time is honoured (it was lost behind AM / PM): the same instant under Chicago, Kolkata and UTC", () => {
+    const readings = ["America/Chicago", "Asia/Kolkata", "UTC"].map((zone) => inZone(zone, () => [
+      coerceIso("June 1, 2026 8:00 AM -0500"),
+      coerceIso("June 1, 2026 8:00 PM +02:00"),
+      coerceIso("6/1/2026 8:00AM -05:00"),          // Date() refuses this spelling; the offset is applied here
+      coerceIso("15/06/2026 8:00 PM +0200", "dmy"),
+      coerceIso("June 1, 2026 08:00 GMT+0200"),
+      coerceIso("2026-06-01 08:00 UTC-5"),
+      coerceIso("June 1, 2026 8:00 AM +15:00"),     // no zone is 15 h from UTC: unreadable
+    ]));
+    expect(readings[0]).toEqual([
+      "2026-06-01T13:00:00.000Z", "2026-06-01T18:00:00.000Z", "2026-06-01T13:00:00.000Z", "2026-06-15T18:00:00.000Z",
+      "2026-06-01T06:00:00.000Z", "2026-06-01T13:00:00.000Z", "",
+    ]);
+    expect(readings[1]).toEqual(readings[0]);
+    expect(readings[2]).toEqual(readings[0]);
+    // ISO 8601 keeps the offset it is written with, as before.
+    expect(coerceIso("2026-06-01T19:00:00+05:30")).toBe("2026-06-01T19:00:00+05:30");
+  });
+
+  it("an abbreviation is a zone only in upper case and right after a time: 'est.' (estimated) is not a zone, and a date with no time stays a date-only 00:00Z value", () => {
+    for (const zone of ["America/Chicago", "Asia/Kolkata"]) {
+      inZone(zone, () => {
+        expect(coerceIso("June 1 2026 8:00 AM est.")).toBe("2026-06-01T08:00:00.000Z");
+        expect(coerceIso("June 1, 2026 8:00 am est")).toBe("2026-06-01T08:00:00.000Z");
+        expect(coerceIso("6/1/2026 EST")).toBe("2026-06-01T00:00:00Z");
+        expect(coerceIso("June 1, 2026 EST")).toBe("2026-06-01T00:00:00.000Z");
+        expect(coerceIso("EST 6/1/2026 8:00")).toBe("");            // a zone not attached to the time: unreadable
+        expect(coerceIso("June 1, 2026 8:00 AM EST")).toBe("2026-06-01T13:00:00.000Z");
+      });
+    }
+    expect(hasTimeOfDay("6/1/2026 EST")).toBe(false);
+    const csv = ["Task Name,Start,Finish", "Set,6/13/2026 EST,6/14/2026 EST"].join("\n");
+    const res = inZone("America/Chicago", () => parseScheduleFile("plan.csv", csv));
+    expect(res.rows.map((r) => [r.plannedStartAt, r.plannedAt, r.startHasTime])).toEqual([["2026-06-13T00:00:00Z", "2026-06-14T00:00:00Z", false]]);
+  });
+
   it("a written-out month is read AS UTC, so a local DST gap does not move it (Los Angeles skips 02:00–03:00 on 2026-03-08)", () => {
     for (const zone of ["America/Los_Angeles", "Europe/London", "UTC"]) {
       inZone(zone, () => expect(coerceIso("March 8, 2026 2:30 AM")).toBe("2026-03-08T02:30:00.000Z"));

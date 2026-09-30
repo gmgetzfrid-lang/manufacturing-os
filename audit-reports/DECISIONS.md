@@ -1716,11 +1716,16 @@ file" and left alone — removal is a separate explicit action; (3) progress,
 status and actual dates recorded in the app survive a re-import unless the
 user opts in per import; (4) identity is the source system's id where one
 exists, otherwise a hash of the row's own content — never its position and
-never its name alone; a row imported before content keys (keyed by its
-position) is adopted when its name and planned dates match — exactly, or,
-for a row the old parser read in the importer's zone, through one zone
-offset that pairs uniquely both ways — and otherwise its file row is added
-and the plan says so (never a guess); and a keyless row whose name or dates change becomes a new
+never its name alone; rows imported before content keys (keyed by their
+position) are read with ONE offset decided for the whole import from the
+tasks that fit only one reading — 0 when the earlier importer stored the
+wall clock, its browser's zone offset otherwise, with that zone's DST twin
+when an IANA zone explains the hour — and a position row is adopted only
+when its name and planned dates fit that reading one to one; when the
+evidence decides no reading, none is adopted, the file rows are added and
+the plan says why (an inference, stated as such; residual: a repeated
+same-named task moved by exactly its repetition interval pairs with its
+neighbour's row, as a content key would); and a keyless row whose name or dates change becomes a new
 row, the old one reported as "not in this file" — the fail-safe, said in
 words in the review panel; (5) relationship type and lag are captured on every
 link; the engine honours finish-to-start, and everything else is stored on
@@ -1729,8 +1734,11 @@ the task and reported as "not enforced" until the reflow has its own test;
 MS Project's Predecessors resolve through the ID column, and an unresolvable
 token is counted, not guessed; (8) a level-0 summary row is the root parent,
 not a sibling leaf; (9) every date form is read as wall-clock-as-UTC (never
-the importer's zone; a value naming its zone — a numeric offset, or a listed
-US / European abbreviation at its fixed offset — keeps that instant), and a day / night shift label follows its task when the
+the importer's zone); a value that names its zone right after its time — a
+numeric offset (after AM / PM too) or a listed US / European abbreviation in
+upper case, at its fixed offset — is read at that instant, an abbreviation
+on a date with no time is dropped (the date stays 00:00Z), and lower case
+("est." = estimated) is not a zone; and a day / night shift label follows its task when the
 start moves into the other band (every date-writing path, one rule) — an
 unlabelled row stays unlabelled, a hand-set swing is kept, a date-only start
 (stored at 00:00Z) earns no label, and existing rows are recomputed in bulk
@@ -1772,24 +1780,30 @@ position-row adoption, `applyMilestoneMoves` / `MoveConflictError`,
 other row's identity and progress intact; a genuinely ambiguous date file
 imports nothing until asked; a re-import with no changes issues no write
 (against PostgREST's `+00:00` timestamp rendering); the first re-import of
-an unchanged keyless file imported by position adds nothing for rows the old
-importer stored exactly or, from a browser in another zone, through one
-offset that pairs uniquely — a row that fits more than one earlier row, or
-whose start and finish straddle a DST change in that zone, is added and the
-plan counts it; an
+an unchanged keyless file imported by position adds nothing when its
+position rows decide one reading (stored exactly, or from a browser in one
+zone, DST included) — repeated same-named tasks keep their own rows — and
+when they decide none, it adopts none of them, adds the file rows and says
+why; an
 SS + FF ladder creates no cycle; the anon key cannot call the batch-move or
 baseline RPCs.
 
-**Verification fix (2026-09-30, projects Round G).** Items (4) and (9) and the acceptance restated to what the code
-does: position rows the old parser read in the importer's zone are adopted
-through one zone offset only when the pairing is unique (ambiguous ones are
-added, counted and named in the plan), and a zone abbreviation is read at its
-fixed offset (PT `SCH-3`, PC `SCHED-9`).
+**Verification fix (2026-09-30, projects Round G).** Items (4) and (9), the acceptance and the risk
+restated to what the code does after two verifier passes: position rows are
+read with one import-wide offset decided by evidence (with a DST twin only
+when a zone justifies it) and adopted one to one under it — nothing when
+undecided — and a zone named right after a time (a numeric offset, after
+AM / PM too, or an upper-case listed abbreviation) is read at its fixed
+offset (PT `SCH-3`, PC `SCHED-9`).
 
 **Reversal.** Per item, by a stated requirement: a facility that wants a
 locale default for dates changes the modal's radio default, not the parser;
 a facility that wants "missing = deleted" adds it as the separate explicit
 action this decision already reserves.
 
-**Risk:** low — every default fails toward asking or leaving data alone.
+**Risk:** low — every default fails toward asking or leaving data alone,
+with one inferred step: item (4)'s import-wide reading of position rows. It
+adopts only what that reading pairs one to one and nothing when the evidence
+does not decide it; its residual is a repeated same-named task moved by
+exactly its repetition interval, which pairs with its neighbour's row.
 
