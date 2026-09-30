@@ -31,7 +31,7 @@ Whether giving an area a drawing populates its equipment.
 ## AREA-1 · The equipment registry has no write authority at all — RLS is FOR ALL to every active member, while the Operating Areas page prints a role restriction that does not exist
 
 - **Severity:** HIGH
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:24-29`, `app/(protected)/admin/assets/page.tsx:56`, `app/(protected)/admin/assets/page.tsx:348-352`, `lib/assets.ts:172-220`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The claim is correct in every particular; the banner promises an authority boundary that the database does not hold. Severity is one notch high: the migration's own header states the design ("Role-based authorization ... is handled in application code, not RLS — RLS just prevents cross-tenant data access") and the identical FOR-ALL pattern is app-wide (schema.sql:1080 `tickets_org_access ON tickets FOR ALL`, document_assets, asset_photos, asset_types), so this is intra-tenant privilege escalation by an authenticated active member with no tenant-isolation break — HIGH, not CRITICAL.
@@ -53,7 +53,7 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:26-29 — `CREATE POLIC
 - [ ] A test in the style of the existing API-route authorization tests proves a Viewer JWT gets 42501 on assets INSERT/UPDATE/DELETE.
 - [ ] The page.tsx:349 banner text is verified against the new policy so the copy and the database say the same thing.
 
-**Resolution (2026-09-30, intelligence Round G).** Most of the database half was already live and is verified here, not rebuilt: R&P `DEC-17` (`20261045`, applied 2026-09-02) put RESTRICTIVE INSERT / UPDATE / DELETE overlays on `assets`, `asset_types`, `asset_photos`, `asset_files` for the writer tier by the role collection, plus `assets_guard_registry` confining a working member's UPDATE to the whiteboard columns. This round's `20261128_intel_roundG_registry_authority.sql` narrows DELETE on `assets`, `asset_types` and `asset_photos` to the controller tier (`is_org_controller`, re-created from 20261045's own format — photos follow the asset) and audits every person-initiated asset deletion (`trg_assets_audit_delete` → `ASSET_DELETED`). The page now says what the database enforces: "Only Admin / Doc Control / Manager / Supervisor can create, edit or archive equipment; deleting it is Admin / Doc Control only", the drawer offers Delete to controllers (`isControllerRole` from `lib/permissions.ts`, no new literal list — DEC-35) and Archive to the writer tier, the photo delete is controller-only, "New operating area" (a Site Codebook write) is controller-only, and every registry write in `lib/assets.ts` is checked (a refusal RLS answers with zero rows is thrown). Decision recorded as `DEC-48` (registry tiers).
+**Partial (2026-09-30, intelligence Round G).** Most of the database half was already live and is verified here, not rebuilt: R&P `DEC-17` (`20261045`, applied 2026-09-02) put RESTRICTIVE INSERT / UPDATE / DELETE overlays on `assets`, `asset_types`, `asset_photos`, `asset_files` for the writer tier by the role collection, plus `assets_guard_registry` confining a working member's UPDATE to the whiteboard columns. This round's `20261128_intel_roundG_registry_authority.sql` narrows DELETE on `assets`, `asset_types` and `asset_photos` to the controller tier (`is_org_controller`, re-created from 20261045's own format — photos follow the asset) and audits every person-initiated asset deletion (`trg_assets_audit_delete` → `ASSET_DELETED`). The page now says what the database enforces: "Only Admin / Doc Control / Manager / Supervisor can create, edit or archive equipment; deleting it is Admin / Doc Control only", the drawer offers Delete to controllers (`isControllerRole` from `lib/permissions.ts`, no new literal list — DEC-35) and Archive to the writer tier, the photo delete is controller-only, "New operating area" (a Site Codebook write) is controller-only, and every registry write in `lib/assets.ts` is checked (a refusal RLS answers with zero rows is thrown). Decision recorded as `DEC-50` (registry tiers).
 
 **Pending migration:** `supabase/migrations/20261128_intel_roundG_registry_authority.sql` (its inventory counts the Manager/Supervisor-only members who lose DELETE).
 
@@ -63,7 +63,7 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:26-29 — `CREATE POLIC
 3. Proved by static census; runtime test pending. The "registry policy census" in `lib/__tests__/intelRoundGRegistry.test.ts` replays the text of every numbered migration. It asserts that the final DELETE overlays carry 20261128's controller predicate, that the 20261045 INSERT/UPDATE predicates (Viewer and Auditor excluded) are untouched, and that nothing later re-opens them. The data-layer tests prove that a refused UPDATE or DELETE surfaces as an error. No database runs in the suite, so no test refuses a Viewer's JWT at runtime (42501 or zero rows). (Supplementary, not a repo test: in the review-fix pass `20261128` was applied to a scratch Postgres 16 with stubbed auth and role helpers; there a Viewer's and a Manager's asset DELETE affected 0 rows, an Admin's deleted the row and wrote `ASSET_DELETED`, and a Viewer's INSERT into `document_equipment_suggestions` was refused with 42501.)
 4. ✓ The banner text matches the policy (pinned by test).
 
-**Scope / residual.** Apply 20261128. A runtime refusal test waits for a database in the test suite.
+**Scope / residual.** Apply 20261128. The finding stays OPEN on one limb: done-when 3 asks for a test that refuses a Viewer's JWT at runtime, and a static census plus a scratch-database spot check is not that test. It closes when the suite gains a database (or an RLS harness) that runs the policies. Everything else is built.
 
 ---
 
@@ -244,7 +244,7 @@ components/assets/AssetCsvImportModal.tsx:22-27 — the four-field CANONICAL_FIE
 2. ✓ UnassignedAssignPanel has a bulk assign-by-prefix path. It files row by row, so one refusal never stops the rest, and a taken derived code is dropped rather than failing the filing.
 3. ✓ A 3,000-row list with a unit column lands every asset in its operating area with no manual step. The planner test files 3,000 of 3,000, and planner tests with colliding codes still file every row. The commit path's retry without the code is proven on the data layer (`createAsset` / `updateAsset` with `codeOptional` against a unique-index stand-in). There is no browser test of the modal itself; its wiring is pinned by source tests.
 
-**Scope / residual.** None beyond applying 20261128. The Bridge's own writes under the index are handed to I-11 (see `CB-10`).
+**Scope / residual.** None beyond applying 20261128. The Bridge's own writes land under the index too: `20261128`'s `assets_code_one_holder` drops a taken code from a service-role write, so a discovered tag is created and a backfill files its unit (see `CB-10`).
 
 ---
 
