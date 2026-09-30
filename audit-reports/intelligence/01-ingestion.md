@@ -62,18 +62,29 @@ knowledgeIngest.ts:102-103 `const obj = await r2.send(new GetObjectCommand({ Buc
 
 - **Compare-and-set at commit.** The final UPDATE is conditional on everything the batch read: `.eq("ingest_claimed_by", driver).eq("file_key", …).eq("source_version_id", …).eq("pages_indexed", from)`, with `.select("id")`. Zero rows means the row moved: re-pointed, deleted, or the claim was lost. The batch then deletes exactly the chunk and entity rows it inserted (by id), never touches the row, and returns `superseded: true`. The row keeps saying what it says (`stale`, `pages_indexed: 0`, the new `source_rev`) and stays queued for the correct re-index.
 - **One lease for both writers.** The rev-up refresh in `lib/knowledgeSourceSync.ts` now goes through `resetKnowledgeIndex` (ING-3), which takes the SAME claim. When a batch holds it, still writing the OLD revision, the refresh does not wait and does not defer (`supersedeBusy`): it re-points the row at once, with its own compare-and-set on the file and version the row named, and deletes the old index. That batch's commit then misses (the file, the version and `pages_indexed` all moved) and it withdraws what it wrote. So the superseded revision is never completed to `ready`, and it is not served until the library's next rotation turn. A same-file reset (the drawing rebuild, a library re-index) cannot be seen by the compare-and-set of a batch that started at page 0, so it still reports that document `busy` and waits its turn. The mirror-image variant the verifier added (the sync lands first, and the batch indexes pages 51+ of the new file as if 1–50 were done) is closed the same way: the commit compares `pages_indexed`.
+- **A rev-up resets only the revision it read.** Review fix pass 2. The sync passes the version it read into the reset (`resetKnowledgeIndex(…, { expect: () => ({ source_version_id }) })`). The reset checks it against the row before deleting anything, and the row's UPDATE compares it again on BOTH paths, claimed or superseding. Without it, a second sync that had read the mirror while it still named Rev 3 (the publish-triggered sync and the cron's, say) re-reset the row the first sync had already moved to Rev 4. Two cases were probed. Under Rev 4's own first batch, whose compare-and-set still matched (`pages_indexed` was 0 either way), the row ended `ready` with every chunk gone. Between Rev 4's batches, it re-reset a partly re-indexed revision and re-billed its vision pages. Now such a row is reported `busy`: the sync counts it `deferred` and leaves it exactly as it is.
+- **Every writer that records something about a batch compares against what the batch read.** Review fix pass 2. A rev-up may re-point a row under someone else's claim, so an UPDATE filtered on `id` alone can land on the new revision. Four writers did that. Each is now a compare-and-set:
+  - **A failed batch** throws `IngestBatchError`, carrying the file, version and resume point it read. The route's and the cron drain's one failure write, `markIngestFailed`, compares all three. A batch a rev-up superseded mid-flight therefore never stamps `error` on the re-pointed revision; before, the drain's and the route's `.eq('id')` writes did. The failed batch also withdraws the rows it inserted, so none of the old file's rows stay under the new revision.
+  - **The non-PDF refusal** (`refuseNonPdf`) compares its delete (an upload) or its `error` mark (a mirror) against the file the check looked at (`notPdfRead`). A row re-pointed since is not refused.
+  - **accept-partial** (`app/api/knowledge/ingest/route.ts`) compares its UPDATE on the row as claimed: `file_key`, `source_version_id` and `pages_indexed`. A rev-up that lands under it wins, and the answer is 409. Before, the acceptance of Rev 3's unread pages stamped Rev 4 `ready` with nothing indexed, which took it out of every queue.
+  - The pre-20261122 `vision_pages` top-up compares `file_key`.
 - **A refresh that did not land comes round first.** If a refresh fails before the row moves, or another sync re-pointed the row first, the library's `last_synced_at` is set to NULL (never synced), which the cron's rotation reaches first (ILIFE-13).
 
 Tests:
-- `lib/__tests__/ingestLock.test.ts`: "a rev-up that lands mid-batch: the batch withdraws its rows and the row keeps saying 'stale'"; "a rev-up that lands while a batch writes the OLD revision re-points the row at once; the batch's commit misses and withdraws" (the whole refresh runs just before the batch's commit); "a same-file reset … waits its turn"; "a deleted row mid-batch is superseded, not an error".
-- `lib/__tests__/sourceSync.test.ts`: "ING-1: a rev-up that finds a batch writing the old revision re-points the row at once — Rev 3 never reaches 'ready'"; "a purge that fails before the row moves leaves the old version, and the library comes round FIRST next run".
+- `lib/__tests__/ingestLock.test.ts`: "a rev-up that lands mid-batch: the batch withdraws its rows and the row keeps saying 'stale'"; "a rev-up that lands while a batch writes the OLD revision re-points the row at once; the batch's commit misses and withdraws" (the whole refresh runs just before the batch's commit); "a same-file reset … waits its turn"; "a deleted row mid-batch is superseded, not an error"; "the cron drain: a Rev 3 batch superseded mid-flight hits a real failure — the Rev 4 row stays queued, not 'error', with none of Rev 3's rows"; "a real failure on the row the batch read still marks that document 'error'…"; "a mirror re-pointed at a new revision after its file was checked is not refused…".
+- `lib/__tests__/sourceSync.test.ts`: "ING-1: a rev-up that finds a batch writing the old revision re-points the row at once — Rev 3 never reaches 'ready'"; "a purge that fails before the row moves leaves the old version, and the library comes round FIRST next run"; "ING-1: a second sync that read Rev 3 lands under Rev 4's first batch — it resets nothing, and the batch's pages stay"; "ING-1: the same stale sync after Rev 4 was re-indexed (no batch running) leaves it alone — nothing re-reset, nothing re-billed". Both reproduce the reviewer's probes: without `expect`, both fail.
+- `lib/__tests__/ingestRoute.test.ts`: "the route: a Rev 3 batch superseded mid-flight that then fails answers 502 — and the Rev 4 row is not marked 'error'"; "accept-partial: a rev-up that re-points the row under the acceptance wins — Rev 4 is never 'ready' with nothing indexed".
+
+Each new guard was mutation-checked: with the guard removed, its test fails.
 
 **Done-when.**
 - ✓ The batch's final UPDATE is conditional on the `file_key` and `source_version_id` it read, and on the claim and the starting `pages_indexed`. A zero-row result means "superseded, discard this batch".
 - ✓ Chunks, and the entity rows, inserted by a superseded batch are removed, by id. Another writer's rows are never touched.
-- ✓ The sync refresh and the ingest batch share the claim introduced for ING-2 (`claimIngestLease`, called by both `ingestKnowledgeDocBatch` and `resetKnowledgeIndex`). A rev-up that finds the claim held supersedes the batch rather than waiting behind it.
+- ✓ The sync refresh and the ingest batch share the claim introduced for ING-2 (`claimIngestLease`, called by both `ingestKnowledgeDocBatch` and `resetKnowledgeIndex`). A rev-up that finds the claim held supersedes the batch rather than waiting behind it. It does so only while the row still names the revision the sync read, and no writer that records a batch's outcome can land on a revision the rev-up moved to.
 
 **Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. Without it the batch runs unclaimed and its commit compares `file_key` and `source_version_id` only. That still catches this finding's rev-up case. The drawing rebuild in `app/api/knowledge/drawing/route.ts` is I-07's file. It still resets rows without the claim until I-07 moves it onto `resetKnowledgeIndex` (the plan says it will). Until then, a rebuild that lands under a first batch (`pages_indexed` 0 → 0, same file) is the one interleaving the compare-and-set cannot see. Decision: `DEC-54`.
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
@@ -123,6 +134,8 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("two drivers racing one document: exa
 - ✓ A 23505 during the chunk insert means someone else already wrote this range. The batch withdraws its own rows and reports `superseded`. It is no longer a fatal error.
 
 **Scope / residual.** Pending migration: `supabase/migrations/20261122_intel_roundG_ingest_integrity.sql` (the `ingest_claimed_by` / `ingest_claimed_at` columns). Until it is applied, the claim UPDATE's missing-column error selects the legacy, unclaimed path. Two drivers can then still both do the work, but neither errors the document (test "unclaimed (pre-20261122) drivers racing"). The per-tab `activeIngests` set in `lib/knowledge.ts` (I-02's file) is untouched. It is now redundant but harmless. Decision: `DEC-54`.
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
@@ -180,6 +193,8 @@ Tests:
 - ✓ A test covers "rev N has fewer sheets than rev N-1" and asserts no entity row survives past the new page count.
 
 **Scope / residual.** The code needs no migration. `20261122` §7 cleans residue already in the database (pending apply). If a reset is interrupted after the row is queued, the old rows it had not yet deleted stay until the re-index's first batch. The document is `stale`, so Ask does not retrieve it, but the entity readers do not filter on status. Some old-revision tags cannot be found in SQL: a re-ingest that completed before this landed may have left them on pages the new file still has, because entity rows carry no revision. The next rev-up or rebuild clears them, and the inventory counts the stale-mirror population. Rows the Bridge already derived from superseded tags (`documents.asset_tags`, `document_assets`) are I-11's GAP-309 delta, which consumes this reset. They are not purged here. Decision: `DEC-54`.
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
@@ -251,7 +266,7 @@ Tests:
 
 **Scope / residual.**
 - Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (the two `chunk_version` columns). Without it the action answers 424 naming the migration, and every library stays on chunker 1.
-- The "Re-index with table-aware chunking" button on the knowledge library page (`app/(protected)/knowledge/[id]/page.tsx`) is I-02's file. It is handed over with the API contract above: a dry run to show `visionPagesToReread`, then the run, repeated while `remaining` > 0 and the last run reset something. Until it lands, the action is reachable through the API only.
+- The "Re-index with table-aware chunking" button on the knowledge library page (`app/(protected)/knowledge/[id]/page.tsx`) is I-02's file. It is handed over with the API contract above: a dry run to show `visionPagesToReread`, then the run, repeated while `remaining` > 0 and the last run reset something. Until it lands, the action is reachable through the API only. The button's copy should also say what the dry run does not count. Every document it resets is `stale` with its chunks gone, so the library drops out of Ask until each one is re-indexed. For a vision library on the daily cron, that can take days.
 - OPEN until `20261122` is applied and the I-02 button ships.
 - The meaning index re-embeds the new chunks through its own pipeline. Re-arming it after ingestion is I-02's SEM-8.
 - The answer prompt's table-value "Check:" line (`app/api/knowledge/ask/route.ts`, I-03) is left as is, because chunker 1 libraries still need it.
@@ -327,9 +342,14 @@ knowledgeIngest.ts:195-196 `// Provider hiccup: leave the page textless rather t
   - **No AI key** (a keyless controller's tab, the cron without a sponsored key): stamped now. This is decided before anything is downloaded. It holds no driver back, but it files the document behind every document with real work in the cron's queue. The drain orders `vision_retry_after` NULLS FIRST, so waiting documents can never fill its 20-row head.
   - **Every retried page refused again** (a provider still rate-limiting): a back-off of `VISION_RETRY_BACKOFF_MS` (30 minutes). No driver, with a key or without, asks the provider again before then; each finds the back-off and does nothing.
 
-  The route answers these with 409 and the message, so a library-page loop stops with the real reason instead of "stalled". The drain moves on. A successful retry clears both `error` and `vision_retry_after`.
-- **The explicit exit.** `POST /api/knowledge/ingest { documentId, action: "accept-partial" }` is controller-only and audited as `KNOWLEDGE_DOC_PARTIAL_ACCEPTED` with the page list. It makes the document `ready` with the unread pages still listed. It takes the document's ingest claim, like every writer: while a retry batch holds the claim it answers 409, and the acceptance and the claim's release are one UPDATE. A batch commit never writes back a `vision_partial_accepted` it read (only a new generation clears it), so no batch in flight can undo an audited acceptance. The document's mentions are rebuilt on acceptance.
-- **The API contract is kept.** `pagesIndexed` stays the resume point, the field clients' stall detectors key on. The failure-adjusted count is the new `pagesReadable`.
+  The route answers a parked document with 409 and the message, so a library-page loop stops on a parked document with the real reason instead of "stalled". The drain moves on. A successful retry clears both `error` and `vision_retry_after`. The message offers only what a person can do from the app today: "…ask an admin to accept the partial index". There is no acceptance button yet (I-02's page), so the first wording ("Or accept the partial index") offered an action the UI lacked. Changed in review fix pass 2.
+- **The explicit exit.** `POST /api/knowledge/ingest { documentId, action: "accept-partial" }` is controller-only. It makes the document `ready` with the unread pages still listed. Review fix pass 2 tightened it in three ways:
+  - **The claim.** It takes the document's ingest claim, like every writer: while a retry batch holds the claim it answers 409, and the acceptance and the claim's release are one UPDATE. A batch commit never writes back a `vision_partial_accepted` it read (only a new generation clears it), so no batch in flight can undo an audited acceptance.
+  - **Audit first.** It is audited FIRST, as a checked write (`KNOWLEDGE_DOC_PARTIAL_ACCEPTED`, with the page list and the file and version it is about). An acceptance that cannot be recorded changes nothing.
+  - **Compare-and-set.** Its UPDATE compares the row's file, version and resume point, so a rev-up that re-points the row under it wins (409; ING-1).
+
+  An accepted document feeds the equipment Bridge and gets its mentions rebuilt, exactly as one the engine completed (`onDocumentReady`). Before, the Bridge was not fired, so an accepted drawing never reached the registry without a manual sweep.
+- **The API contract, and where it falls short.** `pagesIndexed` stays the resume point. The failure-adjusted count is the new `pagesReadable`. **Corrected in review fix pass 2.** The first record said this kept the clients' stall detectors whole, and it does not for a SUCCESSFUL retry. A retry batch re-reads failed pages without moving the resume point, so `pagesIndexed` answers the page count every time, while `visionFailedPages` falls by up to four a batch. The library page's loop (`ingestLoop` in `lib/knowledge.ts`, I-02's file) counts only a rise in `pagesIndexed` as progress, and gives up after three rounds without one. With more than about twelve failed pages, it throws "Indexing stalled at page N of N … Turn off 'Index every page with AI vision' … then rebuild" while the retries are succeeding. That advice is wrong, and a rebuild re-bills every vision page. **Handoff to I-02:** `ingestLoop` must count a fall in `visionFailedPages.length`, or a rise in `pagesReadable`, as progress. The cron drain had the same blind spot and is fixed here. It counts a retry batch's re-read pages as progress, and keeps going while its budget and deadline allow; before, it stopped after one batch, which meant four pages a day for a document waiting on forty.
 
 A transcript under 60 characters (the model saw nothing legible) is counted as a read, empty page (`empty_pages`, ING-11), not a failure, because re-reading it changes nothing.
 
@@ -340,11 +360,15 @@ Tests:
   - "a keyless driver (a controller's tab without a key) leaves the document 'indexing' and retrievable, with the reason on the row";
   - "the cron drain without a sponsored key does the same — never 'error', never billed";
   - "documents waiting on a vision retry can never hold the head of the cron's queue";
+  - "the cron drain keeps going while vision retries succeed: a retry batch's re-read pages are its progress" (20 failed pages, read back in one drain run; it fails if the drain counts only the resume point);
+  - "the parked message offers only what the app can do today";
   - "an accepted partial index is 'ready' with the unread pages still listed".
 - `lib/__tests__/ingestRoute.test.ts`:
   - "a keyless controller's POST on a document awaiting a vision retry: 409 with the reason; the document stays 'indexing' and searchable";
   - "accept-partial takes the claim: refused while a retry batch holds it…";
-  - "an accepted partial index is not undone by a batch that runs afterwards; its mentions are rebuilt";
+  - "an accepted partial index is not undone by a batch that runs afterwards; its mentions are rebuilt and it feeds the Bridge";
+  - "an acceptance that cannot be audited changes nothing";
+  - "accept-partial: a rev-up that re-points the row under the acceptance wins…" (ING-1);
   - "accept-partial: …", "accept-partial refuses…", "a member without a controller role…";
   - "the response says how many pages AI vision could not read".
 
@@ -353,7 +377,13 @@ Tests:
 - ✓ The pages are re-queued, not committed as read. The document does not reach `ready` while any remain, except by an explicit, audited acceptance. It is never pushed out of retrieval meanwhile: a retry that cannot run, or fails again, leaves it `indexing` with the reason on the row, never `error`.
 - ✗ Not done here. The DRAWING FACTS prompt block is in `app/api/knowledge/ask/route.ts` (I-03 is its sole owner). The count it needs is `knowledge_documents.vision_failed_pages`.
 
-**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (`vision_failed_pages`, `vision_retry_after`, `vision_partial_accepted`). Without it the unclaimed path cannot record a failure: the page is committed textless as before. The "accept the partial index" exit is reachable through the API only. Its button, and showing `error` on a document that is still `indexing`, are on `app/(protected)/knowledge/[id]/page.tsx`, I-02's file. That page shows `error` only for status `error` today. OPEN until I-03 states the unread count in DRAWING FACTS.
+**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (`vision_failed_pages`, `vision_retry_after`, `vision_partial_accepted`). Without it the unclaimed path cannot record a failure: the page is committed textless as before. OPEN until I-03 states the unread count in DRAWING FACTS.
+
+Handoffs, since none of these files is this package's:
+- **I-02, `app/(protected)/knowledge/[id]/page.tsx`.** The "accept the partial index" exit is reachable through the API only. Its button, and showing `error` on a document that is still `indexing`, belong on this page. It shows `error` only for status `error` today.
+- **I-02, `lib/knowledge.ts` `ingestLoop`.** The stall detector must count a successful vision retry as progress; see "The API contract" above. Until then, the library page's resume can throw a false "stalled" on a document with more than about twelve failed pages while the retries succeed.
+- **`components/providers/KnowledgeIndexIndicator.tsx`: owner named here as I-02**, the knowledge-UI package; it is in no package's file list. A parked document (failed pages that cannot be retried now, or are backing off) stays `indexing`. The app-shell indicator polls every `indexing` row every 120 s in every controller tab. It calls `setHidden(false)` and shows "Indexing <doc>", then "Knowledge indexing caught up — 0 documents indexed", over and over, even after the user dismisses it. Its queue should leave out rows with `vision_retry_after` set or `error` non-null, and it should re-show the card only when a batch made progress.
+- **I-07, `app/api/knowledge/drawing/route.ts`.** The drawing lens shows a parked document's sheets as "indexing" for as long as the document is parked. It should say which sheets wait on AI vision, and why, from `vision_failed_pages` and `error`.
 
 ---
 
@@ -449,17 +479,26 @@ lib/knowledgeIngest.ts:427 `if (error) break; // missing table — drawing featu
 - A genuinely missing table (42P01 / PGRST205) is the only cause that skips the tag layer.
 - A statement timeout halves the batch and retries.
 - A duplicate key or a vanished row is contention (ING-2).
-- Anything else throws `entity insert failed: …` BEFORE the commit, so `pages_indexed` does not move and the next batch re-runs the same range.
+- Anything else throws `entity insert failed: …` BEFORE the commit, so `pages_indexed` does not move. The batch withdraws the rows it had inserted (review fix pass 2), so nothing of a failed batch stays.
 
 The range clear before the insert is checked the same way (DWG-1).
 
-Tests: `lib/__tests__/ingestLock.test.ts` ("a statement timeout halves and retries; every tag lands and the batch commits", "any other failure throws: pages_indexed does not advance and the document is not 'ready'", "only a genuinely missing table skips the tag layer", "a failed range clear stops the batch before pages_indexed moves").
+**What happens to the document after the throw** (corrected in review fix pass 2; the first record overstated it). Both callers, the interactive route and the cron drain, record the failure with `markIngestFailed`: `status: 'error'` with the message. That write is a compare-and-set on the file, version and resume point the batch read, so it lands only on that row (ING-1). An `error` document leaves Ask, and it leaves every automatic queue: the drain and the app-shell indicator select `pending`, `stale` and `indexing` only. **Nothing retries it automatically.** It stays unsearchable until a person re-runs indexing. The route accepts an `error` row and resumes at `pages_indexed`, re-reading the same range. Keeping a failed batch `indexing` so the drivers retry it was considered and not built. The throw comes after the page loop, so an automatic retry of a persistent failure would re-read, and re-bill, the batch's vision pages on every attempt. The app-shell indicator (in no package's file list) would also retry it every two minutes from every open tab.
+
+Tests: `lib/__tests__/ingestLock.test.ts`:
+- "a statement timeout halves and retries; every tag lands and the batch commits";
+- "any other failure throws: pages_indexed does not advance and the document is not 'ready'";
+- "only a genuinely missing table skips the tag layer";
+- "a failed range clear stops the batch before pages_indexed moves";
+- "a real failure on the row the batch read still marks that document 'error', with the message" (its chunks withdrawn).
 
 **Done-when.**
-- ✓ Only a missing table (42P01 / "does not exist" / PostgREST's PGRST205) skips the tag layer. A timeout bisects and retries like `insertChunks`. A persistent failure throws, so the batch is retried rather than committed as complete.
+- ✓ Only a missing table (42P01 / "does not exist" / PostgREST's PGRST205) skips the tag layer. A timeout bisects and retries like `insertChunks`. A persistent failure throws, so the batch is never committed as complete. It is retried when a person re-runs indexing, not automatically: the document is marked `error` (see above).
 - ✓ A batch that could not write its entities does not advance `pages_indexed`: the throw comes before the commit.
 
-**Scope / residual.** No migration. As before, the route marks a thrown batch `error` with the message. Re-running indexing re-reads the same range, because the route accepts an `error` row.
+**Scope / residual.** No migration. A transient failure (a connection reset on the entity insert) makes a retrievable document `error`, and it needs a person to re-run indexing. That is the same outcome as before this finding, now stated rather than implied. An automatic retry needs a bound on re-billing first, and the indicator is I-02's to change (ING-6's handoff).
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
@@ -491,19 +530,37 @@ app/(protected)/knowledge/[id]/page.tsx:1520 `if (!/\.pdf$/i.test(file.name)) {`
 - [ ] A non-PDF upload does not leave an R2 object and an errored row behind
 - [ ] The error surfaced when a spreadsheet is uploaded names the right destination (the asset CSV importer) rather than a pdf.js internal message
 
-**Resolution (2026-09-30, intelligence Round G).** Confirmed first by reading, as the finding did: nothing on the server looked at the bytes before `getDocumentProxy`. What landed is in the engine, so it covers BOTH drivers that can meet the file first: the interactive route, and the cron drain for an upload whose tab closed before its first POST. On a document's first batch (`pages_indexed = 0`), `ingestKnowledgeDocBatch` reads the first KB of the stored object under the claim with a ranged GET (`sniffStoredFile`). It classifies the bytes with `sniffBytes` and returns `notPdf` before pdf.js sees them. The classes are `%PDF-` in the first 1,024 bytes; the ZIP container of .xlsx/.docx or the OLE container of .xls/.doc; PNG/JPEG/TIFF; text; unknown. This happens before pdf.js sees the file. The caller then applies the one refusal, `refuseNonPdf` (`lib/knowledgeIngest.ts`). The route calls it with the controller's id and the drain with none. When the file is not a PDF:
+**Resolution (2026-09-30, intelligence Round G).** Confirmed first by reading, as the finding did: nothing on the server looked at the bytes before `getDocumentProxy`. What landed is in the engine, so it covers BOTH drivers that can meet the file first: the interactive route, and the cron drain for an upload whose tab closed before its first POST. On a document's first batch (`pages_indexed = 0`), `ingestKnowledgeDocBatch` reads the first KB of the stored object under the claim with a ranged GET (`sniffStoredFile`). It classifies the bytes with `sniffBytes`. The classes are `%PDF-` in the first 1,024 bytes; the ZIP container of .xlsx/.docx or the OLE container of .xls/.doc; PNG/JPEG/TIFF; text; unknown.
 
-- **An upload** is a row with no source whose key is under `orgs/<org>/knowledge/`. Its row is deleted, its R2 object is deleted, `KNOWLEDGE_DOC_REJECTED` is audited, and the answer is 415 with a plain message (`notPdfMessage`), for example: *Only PDF files can be indexed — "equipment-list.pdf" is not a PDF (it looks like an Excel or Word file). To load an equipment list, open Operating areas and use Import CSV — it takes .xlsx, .xls and .csv.* The importer (`components/assets/AssetCsvImportModal.tsx`) now takes spreadsheets.
+- **Another format's signature** (office, image) returns `notPdf` before the file is downloaded or pdf.js sees it.
+- **No header in the first KB is not proof** (review fix pass 2). pdf.js opens a PDF whose header comes later: a scanner's or a mail gateway's preamble, which it tolerates. This was verified here: a PDF behind a 2,460-byte preamble opens and reads. Before, such a file, which had indexed, would have been classed `text` and deleted. Now a `text` or `unknown` head goes on to pdf.js. It is refused, with the same message, only if pdf.js cannot open it either. A damaged file that does carry the header is an indexing failure, not a refusal, and nothing is deleted.
+
+The caller then applies the one refusal, `refuseNonPdf` (`lib/knowledgeIngest.ts`). The route calls it with the controller's id and the drain with none. When the file is not a PDF:
+
+- **An upload** is a row with no source whose key is under `orgs/<org>/knowledge/`. `KNOWLEDGE_DOC_REJECTED` is audited FIRST, as a checked write naming the file (review fix pass 2). A refusal that cannot be recorded deletes nothing, and the upload is kept. Then its row is deleted, then its R2 object, and the answer is 415 with a plain message (`notPdfMessage`), for example: *Only PDF files can be indexed — "equipment-list.pdf" is not a PDF (it looks like an Excel or Word file). To load an equipment list, open Operating areas and use Import CSV — it takes .xlsx, .xls and .csv.* The importer (`components/assets/AssetCsvImportModal.tsx`) now takes spreadsheets.
 - **A mirrored controlled file** is marked `error` with the same message. Its object is never deleted, because it belongs to doc control.
+- Both writes compare against the file the check looked at (ING-1). A row re-pointed at a new revision since is not refused.
 
-Tests: `lib/__tests__/ingestRoute.test.ts` ING-9 block ("classifies by leading bytes", "a renamed spreadsheet upload is refused with the importer named, and leaves nothing behind", "a mirrored controlled file is marked with the message, never deleted", "a real PDF passes the sniff and indexes"), and `lib/__tests__/ingestLock.test.ts` ("ING-9 — the cron drain refuses a non-PDF exactly as the route does": the upload's row and object removed and audited with no user, the importer named; a mirror marked, never deleted).
+Tests: `lib/__tests__/ingestRoute.test.ts` ING-9 block:
+- "classifies by leading bytes";
+- "a renamed spreadsheet upload is refused with the importer named, and leaves nothing behind";
+- "a mirrored controlled file is marked with the message, never deleted";
+- "a real PDF passes the sniff and indexes";
+- "a PDF behind a long preamble (no header in its first KB) is still a PDF: pdf.js opens it, and it indexes";
+- "a CSV renamed .pdf (no header, and pdf.js cannot open it) is refused once pdf.js has tried — nothing left behind";
+- "a damaged file that does carry the PDF header is an indexing failure, not a refusal";
+- "a refusal that cannot be audited deletes nothing".
+
+Also `lib/__tests__/ingestLock.test.ts`: "ING-9 — the cron drain refuses a non-PDF exactly as the route does" (the upload's row and object removed and audited with no user, the importer named; a mirror marked, never deleted; a mirror re-pointed after its file was checked is not refused).
 
 **Done-when.**
-- ✓ The route checks the leading bytes for `%PDF` before downloading or parsing, and returns "Only PDF files can be indexed…" in plain language.
+- ✓ The leading bytes are checked before the file is downloaded or parsed, and the answer is "Only PDF files can be indexed…" in plain language. There is one divergence from the criterion's wording, because the code wins. A missing `%PDF` in the first KB is not treated as proof of a non-PDF, since pdf.js tolerates a late header. Such a file is refused only once pdf.js has also failed to open it. A positive non-PDF signature is refused before any download.
 - ✓ A non-PDF upload leaves neither an R2 object nor an errored row behind, whichever driver meets it first: the route or the cron drain. A mirror's object is doc control's and is not an upload.
 - ✓ The error for a spreadsheet names the right destination (Operating areas → Import CSV) instead of a pdf.js internal message.
 
 **Scope / residual.** No migration. The browser-side `.pdf` check on the knowledge page is unchanged; that file is I-02's.
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
@@ -581,6 +638,8 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("empty pages accumulate across batche
 - ✓ The criterion's second branch holds: the route header's promise is replaced by what is true (the row column plus `emptyPagesTotal` on every response).
 
 **Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. Documents indexed before it report 0 until their next re-index. Rendering "N of M pages had no extractable text" on the library's document list is `app/(protected)/knowledge/[id]/page.tsx`, I-02's file; the column is on every row that page already selects.
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
