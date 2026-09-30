@@ -46,7 +46,7 @@
 
   /* Semantic STATE colors — reserved for status, never decoration. So
      "held / overdue / locked / released" read as information, not theme. */
-  --state-held:     #d97706;  /* amber-600  — on hold / awaiting */
+  --state-held:     #b45309;  /* amber-700  — on hold / awaiting; 5.0:1 on white, so it reads as text too (the dark step is below) */
   --state-overdue:  #dc2626;  /* red-600    — overdue / blocked / missed */
   --state-locked:   #2563eb;  /* blue-600   — checked out / in progress */
   --state-released: #16a34a;  /* green-600  — released / done / cleared */
@@ -118,6 +118,7 @@
   --viz-cat-6: #0891b2;  /* cyan-600   */
   --viz-up:    #34d399;  /* emerald-400 — reads on dark, always with ▲ */
   --viz-down:  #fb7185;  /* rose-400 — always with ▼ */
+  --state-held: #d97706; /* amber-600 — 5.6:1 on the dark surface; never an automatic flip of the light step */
   --color-text: #f1f5f9;
   --color-text-muted: #94a3b8;
   --color-text-faint: #64748b;

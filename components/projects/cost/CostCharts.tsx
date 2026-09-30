@@ -18,6 +18,21 @@ import { buildExampleCostData } from "@/lib/exampleProject";
 import { computeBidEconomics } from "@/lib/bidTab";
 import { fmtMoney, type CostEntry, type ProjectCostRollup } from "@/lib/costs";
 
+// Axis labels: compact money ("$150K"), one formatter per currency.
+const compactFmts = new Map<string, Intl.NumberFormat>();
+export function compactMoney(n: number, currency: string): string {
+  let f = compactFmts.get(currency);
+  if (!f) {
+    try {
+      f = new Intl.NumberFormat(undefined, { style: "currency", currency, notation: "compact", minimumFractionDigits: 0, maximumFractionDigits: 1 });
+    } catch {
+      return fmtMoney(n, currency);
+    }
+    compactFmts.set(currency, f);
+  }
+  return f.format(n);
+}
+
 export function entriesToDated(entries: CostEntry[]): { commitments: DatedAmount[]; actuals: DatedAmount[] } {
   const commitments: DatedAmount[] = [];
   const actuals: DatedAmount[] = [];
@@ -40,6 +55,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
 }) {
   const cur = rollup.currencies[0] ?? "USD";
   const fmt = useMemo(() => (n: number) => fmtMoney(n, cur), [cur]);
+  const tickFmt = useMemo(() => (n: number) => compactMoney(n, cur), [cur]);
   const todayIso = new Date().toISOString().slice(0, 10);
 
   const hasRealData = rollup.budget > 0 || entries.some((e) => e.status !== "void");
@@ -83,7 +99,8 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
         <div className="space-y-4">
           <div>
             <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve — planned pace vs promised vs spent" />
-            <SCurveChart points={exSeries} fmt={(n) => fmtMoney(n, "USD")} todayIso={ex.today} />
+            <SCurveChart points={exSeries} fmt={(n) => fmtMoney(n, "USD")} tickFmt={(n) => compactMoney(n, "USD")}
+              todayIso={ex.today} budget={ex.budget} />
           </div>
           {exForecast?.sentence && <ForecastSentence sentence={exForecast.sentence} basis={exForecast.basis} />}
           <div className="grid md:grid-cols-2 gap-4">
@@ -113,7 +130,8 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
       {series.length >= 2 && (
         <div>
           <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve — planned pace vs promised vs spent" />
-          <SCurveChart points={series} fmt={fmt} todayIso={todayIso} />
+          <SCurveChart points={series} fmt={fmt} tickFmt={tickFmt} todayIso={todayIso}
+            budget={rollup.revisedBudget} budgetLabel={rollup.approvedChanges !== 0 ? "Revised budget" : "Budget"} />
           {!scheduleStart && (
             <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
               No schedule dates yet, so there&apos;s no planned-pace line — import or add milestones and it appears.
