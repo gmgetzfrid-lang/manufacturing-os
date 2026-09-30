@@ -30,7 +30,7 @@ The money. Where a number can be wrong, and where an authoritative figure is AI-
 ## COST-1 · CPI is measured over milestone-pinned accounts only but applied to the whole-project budget; the close-out report silently reports no CPI at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/costs.ts:303-332`, `lib/costSeries.ts:112-120`, `components/projects/cost/CostCharts.tsx:53-56`, `lib/projectReport.ts:53-66`, `lib/projectReport.ts:139`, `lib/__tests__/costs.test.ts:53-69`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves hold. With the shape pinned in lib/__tests__/costs.test.ts:53-69 (cpi 1.5, budget 1500, spent 900) computeForecast returns eac = 1000 — below money already spent. And the close-out report passes an EMPTY milestone map, so every earnedValue is null, cpi is null, and projectReport.ts:139's CPI row is omitted entirely while the forecast silently falls back to run-rate/none.
@@ -65,6 +65,17 @@ components/projects/cost/CostCharts.tsx:53-56 — `computeForecast({ budget: rol
 - [x] A test pins that one pinned + one unpinned account never reports an EAC below the already-spent total.
 
 **Scope / residual.** OPEN for J7's report half. Decision (DEC-50 rule 3): CPI to the pinned subset, the rest at budget (a pace may only raise it), labelled. **Pointer to J5 (CHARTS):** the three `CostCharts.tsx` edits above are this package's; J5's own limbs in that file (REL-10/11, A11Y-11, CHART-3) merge around them.
+
+**Verification fix (2026-09-30, projects Round G).** The report half is built. The id-keyed milestone index landed with projects-tab `MON-5` (2026-09-29), but the report still called `computeForecast` with the baseline budget and no pinned figures, so it took the legacy whole-budget division while the Costs tab took the scoped one. `lib/projectReport.ts` now passes the revised budget and `pinnedBudget` / `pinnedSpent` (`:197-203`, the inputs `CostCharts.tsx` passes), along with the approved change orders the revised budget needs (`:192`). It prints the forecast's `scopeNote` beside the sentence (`:283`). Test: `lib/__tests__/projectReport.test.ts` "the forecast takes the Costs tab's inputs — revised budget and the pinned subset — and prints its scope note (COST-1)": the sentence and the scope note equal the Costs tab's computation, "CPI applies to the 75% of budget pinned…", and it fails on `9b4c5f4`. Done-when 3 is ✓, so all four done-whens are now met. The Status line and `findings.json` still read OPEN; flipping them is the integrator's call at merge.
+
+
+**Integration (2026-09-30, projects Round G — the J7 integration fix merged).** Every Done-when item now holds:
+- The rollup exposes the pinned budget and spend, and the forecast's CPI branch covers only that subset (J3).
+- The Costs tab states the covered portion (J3).
+- The report selects milestone `id`, passes a real index (J7 `MON-5`), and calls `computeForecast` with the Costs tab's inputs, printing its scope note. It does this through `lib/projectReport.ts` in the integration fix, which applies the revised budget and `pinnedBudget` / `pinnedSpent`.
+- The EAC-never-below-spent test (J3).
+
+Pinned by `projectReport.test.ts` "an on-ledger approved CO: all three compute CPI 2.40…" and the forecast-inputs case.
 
 ---
 
@@ -154,7 +165,7 @@ components/projects/cost/QuotesPanel.tsx:275 — `const known = companies.find((
 ## COST-4 · An approved change order never revises the budget, so approved scope growth permanently reads as over-budget and collapses earned value and CPI
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/changeOrders.ts:163-189`, `lib/costs.ts:308`, `lib/costs.ts:316-317`, `lib/costs.ts:332`, `lib/projectHealth.ts:104-113`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — approved scope growth lands only on the committed side, so once the CO work completes the milestone drives EV = original budget while actuals include the CO, producing a permanent CPI < 1 and overBudget = true. The only mitigation is a controller manually editing the account budget via saveAccount (costs.ts:173-178), which is untracked against the CO; projectHealth.ts:104-113 separately penalizes CO growth, so the same money is charged twice against the score.
@@ -192,6 +203,11 @@ lib/changeOrders.ts:167-172 — the entire financial effect of approval is `entr
 - [x] A test pins the 200k / 100k-CO / 50% shape — CPI 1.0 at 150k of actuals, 0.75 (not 0.5) at the literal 200k.
 
 **Scope / residual.** OPEN for the health label and the two J7 callers above. No `budget_revised` column — the revision is derived from the CO ledger, so it cannot drift from it.
+
+**Verification fix (2026-09-30, projects Round G).** The two J7 callers and the health label are done. `lib/projectSnapshot.ts:246,277` and `lib/projectReport.ts:157,192` read the change orders through `listChangeOrders` and pass `approvedChangesByAccount(cos)` as the fourth argument, as the Costs tab does. The snapshot's `approvedCoAmount` counts by `changeOrderOnLedger` (`lib/projectSnapshot.ts:355`), which closes third-pass residual (a). The snapshot also carries `revisedBudget`, and the Cost part burns against it (`lib/projectHealth.ts:174-191`), so "N% of budget spent" is measured against the figure the Costs tab calls Budget. "Change control" measures growth against the baseline and says so: "N% growth over the baseline budget via approved change orders" (`:227`). The report's Budget row shows the revised figure with the baseline and the approved change orders beside it. The second-pass residual is closed as well: a refused change-orders read no longer silently drops the report's change-order line. The report's Money section says "Could not read change orders" instead of printing any figure, and the coach scores Cost unknown (see projects-tab `REL-2`). Tests: `lib/__tests__/projectReport.test.ts` "an on-ledger approved CO: all three compute CPI 2.40…", "a CO approved but whose entry was voided by hand is NOT on the ledger…" and "a refused change_orders read blanks the Money section too…"; `lib/__tests__/projectSnapshot.test.ts` "approvedCoAmount counts only an approved CO whose entry is POSTED…", "Cost burn is measured against the revised budget (the Costs tab's Budget); change-order growth against the baseline, labelled so" and "a refused change_orders read leaves Cost unknown (its budget is unknown) — a not-migrated one does not". All fail on `9b4c5f4`. Done-whens 2 and 3 are now ✓, so all four are met. Still open: third-pass residual (b), J4's `lib/companies.ts` counting approved change orders by status (closer: J4). The Status flip is the integrator's once that lands.
+
+
+**Integration (2026-09-30, projects Round G — the J7 integration fix merged).** Every Done-when item now holds. Every caller passes the approved on-ledger change orders: the Costs tab (J3), the close-out report and the health snapshot (the integration fix). The Change-control part is labelled "growth over the baseline budget via approved change orders" (`lib/projectHealth.ts`). The 200k / 100k-CO test pins the arithmetically consistent figures; J3's record explains why the literal "CPI 1.0 at 200k" is not. Residual, a different surface: J4's vendor profile in `lib/companies.ts` still counts approved change orders by status for `finalCostTotal` / `changeOrderCount`. That is recorded for the J10 surface sweep.
 
 ---
 

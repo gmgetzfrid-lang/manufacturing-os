@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const state = vi.hoisted(() => ({
   tables: {} as Record<string, Array<Record<string, unknown>>>,
   errors: {} as Record<string, string>,
+  errorCodes: {} as Record<string, string>,
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -27,7 +28,7 @@ vi.mock("@/lib/supabase", () => {
     let orderBy: string | null = null;
     let wantCount = false;
     const settle = () => {
-      if (state.errors[table]) return Promise.resolve({ data: null, error: { message: state.errors[table] }, count: null });
+      if (state.errors[table]) return Promise.resolve({ data: null, error: { message: state.errors[table], code: state.errorCodes[table] ?? null }, count: null });
       let rows = [...(state.tables[table] ?? [])];
       if (orderBy) {
         const k = orderBy;
@@ -59,7 +60,11 @@ vi.mock("@/lib/supabase", () => {
 });
 
 import { gatherReportData, renderReportHtml, parseGateSnapshot, draftLessonsLearned } from "@/lib/projectReport";
-import { listAccounts, listEntries, computeCostRollup, milestonePctIndex } from "@/lib/costs";
+import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMoney } from "@/lib/costs";
+import { listChangeOrders, approvedChangesByAccount } from "@/lib/changeOrders";
+import { computeForecast } from "@/lib/costSeries";
+import { gatherProjectSnapshot, resetProjectSnapshotMemo } from "@/lib/projectSnapshot";
+import { computeProjectHealth } from "@/lib/projectHealth";
 import { PROJECT_MILESTONE_READ_LIMIT } from "@/lib/milestoneLiveness";
 
 const DAY = 86_400_000;
@@ -68,6 +73,7 @@ const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toIS
 beforeEach(() => {
   state.tables = {};
   state.errors = {};
+  state.errorCodes = {};
   state.tables.projects = [{ id: "p1", name: "Unit 300 repipe", status: "active", owner_user_name: "Pat", goals: ["Zero recordables"] }];
 });
 
@@ -171,13 +177,15 @@ describe("the report reads the same schedule rows as the Costs tab (MON-5 at P6 
     expect(draft).toContain(`the first ${PROJECT_MILESTONE_READ_LIMIT} of ${PROJECT_MILESTONE_READ_LIMIT + 200} activities by planned date`);
   });
 
-  it("the report's bound is the snapshot's bound (source pin)", async () => {
+  it("the report's bound is the snapshot's bound — and the Costs tab's (source pin)", async () => {
+    // Verification fix (2026-09-30): the Costs tab read `order("planned_at")`
+    // only — no id tiebreak, no explicit bound — so "the same first rows"
+    // held only under the API's default cap with no tie at the cut.
     const fs = await import("node:fs");
-    for (const f of ["../projectReport.ts", "../projectSnapshot.ts"]) {
+    for (const f of ["../projectReport.ts", "../projectSnapshot.ts", "../../components/projects/CostsTab.tsx"]) {
       const src = fs.readFileSync(new URL(f, import.meta.url), "utf8");
       const ms = src.slice(src.indexOf('from("milestones")'), src.indexOf('from("milestones")') + 400);
-      expect(ms, f).toMatch(/\.order\("planned_at"\)/);
-      expect(ms, f).toContain(".limit(PROJECT_MILESTONE_READ_LIMIT)");
+      expect(ms, f).toMatch(/\.order\("planned_at"\)\.order\("id"\)\.limit\(PROJECT_MILESTONE_READ_LIMIT\)/);
     }
   });
 });
@@ -257,5 +265,202 @@ describe("the closeout snapshot (SAF-14 report half)", () => {
       { text: "Checklists clear", ok: null },
       { text: "Punch — 3", ok: false },
     ]);
+  });
+});
+
+// ── Verification fix (2026-09-30, projects Round G) ─────────────────────
+// J3 (money ledger) merged after J7: computeCostRollup takes the approved
+// change orders, `remaining` became budget − spent − open commitments, and
+// the cost list functions throw on a failed read (REL-2). The report and the
+// snapshot had to follow.
+
+/** The Costs tab's computation (CostsTab.tsx refresh + rollup memo): the
+ *  same four reads, the id-keyed index over the bounded milestone rows, and
+ *  approvedChangesByAccount(cos) as the fourth argument. */
+async function costsTabRollup(projectId: string) {
+  const [accounts, entries, cos] = await Promise.all([listAccounts("org1", projectId), listEntries("org1", projectId), listChangeOrders(projectId)]);
+  const rows = [...(state.tables.milestones ?? [])]
+    .sort((a, b) => String(a.planned_at).localeCompare(String(b.planned_at)))
+    .slice(0, PROJECT_MILESTONE_READ_LIMIT);
+  const idx = milestonePctIndex(rows.map((m) => ({ id: String(m.id), percentComplete: m.percent_complete as number | null, status: String(m.status) })));
+  return computeCostRollup(accounts, entries, idx, approvedChangesByAccount(cos));
+}
+
+/** $50k account pinned to a task 40% complete, $10k actual, and a +$10k
+ *  change order approved with its entry POSTED (on the ledger). */
+const onLedgerCoFixture = () => {
+  state.tables.milestones = [
+    { id: "m1", name: "Tie-in", planned_at: "2026-12-01T00:00:00Z", status: "in_progress", percent_complete: 40, source: "p6" },
+  ];
+  state.tables.cost_accounts = [
+    { id: "a1", project_id: "p1", name: "Tie-in welding", budget: 50_000, currency: "USD", wbs_milestone_id: "m1", status: "active" },
+  ];
+  state.tables.cost_entries = [
+    { id: "e1", cost_account_id: "a1", project_id: "p1", entry_type: "actual", amount: 10_000, status: "posted", entry_date: "2026-09-01" },
+    { id: "e2", cost_account_id: "a1", project_id: "p1", entry_type: "commitment", amount: 10_000, status: "posted", entry_date: "2026-09-02" },
+  ];
+  state.tables.change_orders = [
+    { id: "co1", project_id: "p1", cost_account_id: "a1", co_number: "CO-1", title: "Extra tie-in", amount: 10_000, reason_code: "field_condition", status: "approved", posted_entry_id: "e2" },
+  ];
+};
+
+describe("report, coach and Costs tab agree on CPI once a change order is approved (MON-5 / PM-12 / COST-4)", () => {
+  beforeEach(() => resetProjectSnapshotMemo());
+
+  it("an on-ledger approved CO: all three compute CPI 2.40 (the report and coach printed 2.00)", async () => {
+    onLedgerCoFixture();
+    const tab = await costsTabRollup("p1");
+    const d = await gatherReportData("org1", "p1");
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    // Revised budget 60k × 40% = 24k earned / 10k actual.
+    expect(tab.cpi).toBeCloseTo(2.4, 9);
+    expect(d.rollup.cpi).toBe(tab.cpi);
+    expect(snap.cpi).toBe(tab.cpi);
+    expect(d.rollup.revisedBudget).toBe(60_000);
+    expect(snap.revisedBudget).toBe(60_000);
+    expect(computeProjectHealth(snap).parts.find((p) => p.label === "Cost")!.detail).toContain("CPI 2.40");
+    const html = renderReportHtml(d);
+    expect(html).toMatch(/Cost performance \(CPI\)<\/td><td><span class="num">2\.40<\/span>/);
+    // The Budget row is the revised figure the Costs tab headlines, with the baseline beside it.
+    expect(html).toMatch(/Budget<\/td><td><span class="num">\$60,000<\/span> <span class="muted">— \$50,000 baseline \+ \$10,000 approved change orders/);
+  });
+
+  it("a CO approved but whose entry was voided by hand is NOT on the ledger — none of the three count it", async () => {
+    onLedgerCoFixture();
+    state.tables.cost_entries[1].status = "void";
+    const tab = await costsTabRollup("p1");
+    const d = await gatherReportData("org1", "p1");
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(tab.cpi).toBeCloseTo(2.0, 9);
+    expect(d.rollup.cpi).toBe(tab.cpi);
+    expect(snap.cpi).toBe(tab.cpi);
+    expect(snap.approvedCoAmount).toBe(0);
+  });
+
+  it("the forecast takes the Costs tab's inputs — revised budget and the pinned subset — and prints its scope note (COST-1)", async () => {
+    onLedgerCoFixture();
+    // A second, unpinned account: CPI covers only the pinned part.
+    state.tables.cost_accounts.push({ id: "a2", project_id: "p1", name: "Scaffold", budget: 20_000, currency: "USD", wbs_milestone_id: null, status: "active" });
+    state.tables.cost_entries.push({ id: "e3", cost_account_id: "a2", project_id: "p1", entry_type: "actual", amount: 5_000, status: "posted", entry_date: "2026-09-03" });
+    const tab = await costsTabRollup("p1");
+    // CostCharts.tsx's call, verbatim in its inputs (no schedule span: one milestone).
+    const tabForecast = computeForecast({
+      budget: tab.revisedBudget, spent: tab.spent, cpi: tab.cpi,
+      pinnedBudget: tab.pinnedBudget, pinnedSpent: tab.pinnedSpent,
+      scheduleStart: "2026-12-01", scheduleEnd: "2026-12-01", today: new Date().toISOString().slice(0, 10),
+      fmt: (n) => fmtMoney(n, "USD"),
+    });
+    const d = await gatherReportData("org1", "p1");
+    expect(d.forecastSentence).toBe(tabForecast.sentence);
+    expect(d.forecastScopeNote).toBe(tabForecast.scopeNote);
+    expect(d.forecastScopeNote).toMatch(/^CPI applies to the 75% of budget pinned/);
+    expect(renderReportHtml(d)).toContain(d.forecastScopeNote!);
+  });
+});
+
+describe("'Budget less spent' is budget less spent; Available is its own row (MON-4 report limb)", () => {
+  const committedFixture = () => {
+    state.tables.cost_accounts = [{ id: "a1", project_id: "p1", name: "Piping", budget: 50_000, currency: "USD", status: "active" }];
+    state.tables.cost_entries = [
+      { id: "e1", cost_account_id: "a1", project_id: "p1", entry_type: "commitment", amount: 30_000, status: "posted", party_id: "v1", entry_date: "2026-09-01" },
+      { id: "e2", cost_account_id: "a1", project_id: "p1", entry_type: "actual", amount: 10_000, status: "posted", party_id: "v1", entry_date: "2026-09-02" },
+    ];
+  };
+
+  it("$50k budget, $10k spent, $20k still committed: the row labelled 'open commitments are not deducted' prints $40,000 — not $20,000", async () => {
+    committedFixture();
+    const d = await gatherReportData("org1", "p1");
+    const html = renderReportHtml(d);
+    expect(html.match(/Budget less spent<\/td><td>(.*?)<\/td>/)?.[1]).toBe(
+      '<span class="num ok">$40,000</span> <span class="muted">— open commitments are not deducted</span>');
+    const available = html.match(/Available \(uncommitted\)<\/td><td>(.*?)<\/td>/)?.[1] ?? "";
+    expect(available).toContain("$20,000");
+    expect(available).toContain("less $20,000 of open commitments not yet invoiced");
+  });
+
+  it("the lessons-learned draft says finished $40,000 under on actual spend and names the $20,000 still open", async () => {
+    committedFixture();
+    const cost = (await draftLessonsLearned("org1", "p1")).split("\n")[0];
+    expect(cost).toBe("COST: Finished $40,000 under the $50,000 budget on actual spend. $20,000 of open commitments was not yet invoiced when this was drafted.");
+    expect(cost).not.toContain("$20,000 under");
+  });
+
+  it("with an approved change order the draft measures against the revised budget and says so", async () => {
+    onLedgerCoFixture();
+    const cost = (await draftLessonsLearned("org1", "p1")).split("\n")[0];
+    // e2 (the CO's commitment) is the same party key as the actual → drawn down to 0 open.
+    expect(cost).toBe("COST: Finished $50,000 under the $60,000 budget ($50,000 baseline + $10,000 approved change orders) on actual spend (CPI 2.40).");
+  });
+});
+
+describe("a refused read is said, never printed as zero (REL-2 consumer)", () => {
+  it("a refused cost_accounts read: no $0.00 Budget row — the Money section says it could not be read", async () => {
+    onLedgerCoFixture();
+    state.errors.cost_accounts = "permission denied for table cost_accounts";
+    const d = await gatherReportData("org1", "p1");
+    expect(d.readFailures).toEqual(["cost accounts"]);
+    const html = renderReportHtml(d);
+    expect(html).not.toMatch(/<td class="k">Budget<\/td>/);
+    expect(html).not.toContain("$0.00");
+    expect(html).toMatch(/Cost ledger<\/td><td><span class="flag">Could not read cost accounts<\/span> — the money figures are left out, not printed as zero\./);
+    expect(html).toContain("Not read this time: cost accounts");
+    const draft = await draftLessonsLearned("org1", "p1");
+    expect(draft.split("\n")[0]).toBe("COST: Could not read cost accounts when this draft was written — the cost outcome is left out; fill it in by hand.");
+    expect(draft).not.toMatch(/Clean job|budget held/);
+  });
+
+  it("a refused change_orders read blanks the Money section too — a budget without its approved changes would read like a real one", async () => {
+    onLedgerCoFixture();
+    state.errors.change_orders = "permission denied for table change_orders";
+    const d = await gatherReportData("org1", "p1");
+    expect(d.readFailures).toEqual(["change orders"]);
+    const html = renderReportHtml(d);
+    expect(html).toContain("Could not read change orders");
+    expect(html).not.toContain("Cost performance (CPI)");
+  });
+
+  it("a refused milestones read says so instead of 'No schedule loaded', and the pinned CPI is named as unread", async () => {
+    onLedgerCoFixture();
+    state.errors.milestones = "permission denied for table milestones";
+    const d = await gatherReportData("org1", "p1");
+    expect(d.readFailures).toEqual(["milestones"]);
+    const html = renderReportHtml(d);
+    expect(html).not.toContain("No schedule loaded");
+    expect(html).toContain("Could not read the milestones");
+    expect(html).toMatch(/Cost performance \(CPI\)<\/td><td><span class="muted">Could not read<\/span>/);
+    expect(await draftLessonsLearned("org1", "p1")).toContain("SCHEDULE: Could not read the milestones");
+  });
+
+  it("a refused punch read is not 'Clear', and the draft never writes 'Clean job' over it", async () => {
+    state.errors.punch_items = "permission denied for table punch_items";
+    const d = await gatherReportData("org1", "p1");
+    expect(d.readFailures).toEqual(["punch items"]);
+    expect(renderReportHtml(d)).toMatch(/Punch list<\/td><td><span class="muted">Could not read<\/span>/);
+    const draft = await draftLessonsLearned("org1", "p1");
+    expect(draft).toBe("NOT READ: punch items could not be read when this draft was written — check it by hand.");
+  });
+
+  it("a database migration 20261013 has not reached (no change_orders / punch_items table) is not a failed read — the money prints", async () => {
+    state.tables.cost_accounts = [{ id: "a1", project_id: "p1", name: "Piping", budget: 50_000, currency: "USD", status: "active" }];
+    state.tables.cost_entries = [{ id: "e1", cost_account_id: "a1", project_id: "p1", entry_type: "actual", amount: 10_000, status: "posted", entry_date: "2026-09-01" }];
+    for (const t of ["change_orders", "punch_items"]) {
+      state.errors[t] = `relation "public.${t}" does not exist`;
+      state.errorCodes[t] = "42P01";
+    }
+    const d = await gatherReportData("org1", "p1");
+    expect(d.readFailures).toEqual([]);
+    const html = renderReportHtml(d);
+    expect(html).toMatch(/Budget less spent<\/td><td><span class="num ok">\$40,000<\/span>/);
+    expect(html).not.toMatch(/Could not read|Not read this time/);
+    // A refused read of the same tables IS a failure.
+    state.errorCodes.change_orders = "42501";
+    expect((await gatherReportData("org1", "p1")).readFailures).toEqual(["change orders"]);
+  });
+
+  it("every read landing: no failure line anywhere", async () => {
+    onLedgerCoFixture();
+    const d = await gatherReportData("org1", "p1");
+    expect(d.readFailures).toEqual([]);
+    expect(renderReportHtml(d)).not.toMatch(/Could not read|Not read this time/);
   });
 });

@@ -21,7 +21,13 @@ export interface ProjectStateSnapshot {
   hasSow: boolean;
   jobKind: string | null;
   // Cost
+  /** The BASELINE budget (sum of cost_accounts.budget). Change-order growth
+   *  is measured against it. */
   budget: number;
+  /** COST-4: the baseline plus the approved change orders whose money is on
+   *  the ledger (`changeOrderOnLedger`) — the figure the Costs tab shows as
+   *  Budget, and the one burn is measured against. Absent → `budget`. */
+  revisedBudget?: number;
   committed: number;
   spent: number;
   cpi: number | null;
@@ -33,6 +39,9 @@ export interface ProjectStateSnapshot {
   pendingCostDocs: number;     // uploaded, parsed, awaiting confirmation
   // Change orders
   openChangeOrders: number;
+  /** Approved change orders whose money is on the ledger
+   *  (`changeOrderOnLedger`: approved AND the linked entry posted) — the
+   *  same rule as the revised budget and the CO panel's total. */
   approvedCoAmount: number;
   // Schedule
   milestoneCount: number;
@@ -58,9 +67,9 @@ export interface ProjectStateSnapshot {
   readFailures?: string[];
   /** What the database has not been migrated for (20261013): a SNAPSHOT_READS
    *  label for a table that does not exist yet, PROJECT_FIELDS_NOT_MIGRATED
-   *  for the projects columns, or "RFQ groups". A known state, named as
-   *  such, not a failed read — the parts and suggestions that need it are
-   *  left out the same way. */
+   *  for the projects columns, or RFQ_GROUPS_NOT_MIGRATED. A known state,
+   *  named as such, not a failed read — the parts and suggestions that need
+   *  it are left out the same way. */
   notMigrated?: string[];
 }
 
@@ -87,6 +96,12 @@ export const SNAPSHOT_READS = {
  *  added (purpose, goals, job_kind, sow_document_id) — before it, none of
  *  them can be read, so every suggestion about them is left out. */
 export const PROJECT_FIELDS_NOT_MIGRATED = "purpose, goals, job size and Summary of Work";
+
+/** The notMigrated entry for cost_documents.rfq_group (20261013). Before it
+ *  every quote tabulates alone ("Ungrouped — <vendor>"), so the count of
+ *  unawarded bid groups is a count of unawarded quotes — the award
+ *  suggestion is left out rather than raised from it. */
+export const RFQ_GROUPS_NOT_MIGRATED = "RFQ groups";
 
 const R = SNAPSHOT_READS;
 
@@ -146,9 +161,17 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
   // Each part first checks the reads it depends on: a refused read's zeros
   // are not scored (a refused checklist_items read is not "Checklists
   // clear"). Cost needs the milestones read too once an account is pinned —
-  // earned value comes from those tasks' progress.
+  // earned value comes from those tasks' progress. Approved change orders
+  // revise the budget that burn and earned value are measured against
+  // (COST-4), so a FAILED change-orders read leaves Cost unknown too; "not
+  // migrated" does not — before 20261013 no change order can exist.
   const costUnknown = unknownPart("Cost", s,
-    [R.costAccounts, R.costEntries, ...(s.accountsPinned > 0 ? [R.milestones] : [])]);
+    [R.costAccounts, R.costEntries, ...(s.accountsPinned > 0 ? [R.milestones] : [])])
+    ?? ((s.readFailures ?? []).includes(R.changeOrders)
+      ? { label: "Cost", score: null, detail: `Could not read ${R.changeOrders}` }
+      : null);
+  // The budget the Costs tab shows: baseline + on-ledger approved changes.
+  const budgetNow = s.revisedBudget ?? s.budget;
 
   // Cost health: CPI-centered when available, else budget-vs-spent sanity.
   if (costUnknown) {
@@ -158,14 +181,14 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
       label: "Cost", score: clamp(s.cpi * 100, 0, 120) > 100 ? 100 : clamp(s.cpi * 100),
       detail: s.cpi >= 1 ? `CPI ${s.cpi.toFixed(2)} — getting more done per dollar than planned` : `CPI ${s.cpi.toFixed(2)} — spending faster than earning`,
     });
-  } else if (s.budget > 0) {
-    const burned = s.spent / s.budget;
+  } else if (budgetNow > 0) {
+    const burned = s.spent / budgetNow;
     // Continuous across the 100% line: the under-budget curve bottoms out at
     // 60 as burn approaches 100%, and the over-budget curve continues DOWN
     // from there — going over must never score higher than staying under.
     parts.push({
       label: "Cost", score: burned <= 1 ? 100 - clamp((burned - 0.85) * 400, 0, 40) : clamp(60 - (burned - 1) * 200),
-      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " — over budget" : ""}${s.committed > 0 ? ` · ${Math.round((s.committed / s.budget) * 100)}% committed` : ""}`,
+      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " — over budget" : ""}${s.committed > 0 ? ` · ${Math.round((s.committed / budgetNow) * 100)}% committed` : ""}`,
     });
   } else {
     parts.push({ label: "Cost", score: null, detail: "No budget set yet" });
@@ -189,7 +212,10 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
     parts.push({ label: "Schedule", score: null, detail: "No schedule yet" });
   }
 
-  // Controls discipline: change orders relative to budget.
+  // Controls discipline: change-order growth over the BASELINE budget (the
+  // original figure, not the revised one the Cost part burns against —
+  // measuring growth against a budget the growth already raised would
+  // understate it; COST-4).
   const controlUnknown = unknownPart("Change control", s, [R.costAccounts, R.changeOrders]);
   if (controlUnknown) {
     parts.push(controlUnknown);
@@ -198,7 +224,7 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
     parts.push({
       label: "Change control",
       score: clamp(100 - growth * 400 - s.openChangeOrders * 5),
-      detail: `${Math.round(growth * 100)}% budget growth via change orders · ${s.openChangeOrders} open`,
+      detail: `${Math.round(growth * 100)}% growth over the baseline budget via approved change orders · ${s.openChangeOrders} open`,
     });
   } else {
     parts.push({ label: "Change control", score: s.budget > 0 ? 100 : null, detail: s.budget > 0 ? "No change orders" : "Needs a budget first" });
@@ -270,8 +296,10 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   const gap = new Set([...(s.readFailures ?? []), ...(s.notMigrated ?? [])]);
   const known = (...reads: string[]) => reads.every((r) => !gap.has(r));
   const projectKnown = known(R.project, PROJECT_FIELDS_NOT_MIGRATED);
+  // The budget the Costs tab shows (baseline + on-ledger approved changes).
+  const budgetNow = s.revisedBudget ?? s.budget;
 
-  if (known(R.costAccounts) && s.budget <= 0) add({
+  if (known(R.costAccounts) && budgetNow <= 0) add({
     id: "budget", kind: "cost", weight: 100,
     title: "Add a budget (2 min)",
     payoff: "Unlocks the burn bar, the S-curve, and the finish-cost forecast.",
@@ -289,13 +317,13 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
     payoff: "Read quotes are already in the bid comparison — award the winner; read invoices post as spend when you post them as actual.",
     href: `${base}?tab=costs`,
   });
-  if (s.quoteCount > 0 && s.unawardedRfqGroups > 0) add({
+  if (known(RFQ_GROUPS_NOT_MIGRATED) && s.quoteCount > 0 && s.unawardedRfqGroups > 0) add({
     id: "award", kind: "cost", weight: 88,
     title: "Pick a winner in the bid comparison",
     payoff: "The award posts the contract to your budget automatically.",
     href: `${base}?tab=costs`,
   });
-  if (known(R.costAccounts, R.milestones) && s.budget > 0 && s.accountCount > 0 && s.accountsPinned === 0 && s.milestoneCount > 0) add({
+  if (known(R.costAccounts, R.milestones) && budgetNow > 0 && s.accountCount > 0 && s.accountsPinned === 0 && s.milestoneCount > 0) add({
     id: "pin-ev", kind: "cost", weight: 80,
     title: "Pin budget lines to schedule tasks",
     payoff: "Unlocks Cost health (CPI) — earned value against real progress.",
@@ -337,7 +365,7 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
     payoff: CLOSEOUT_GATE_POLICY.summary,
     href: `${base}?tab=quality`,
   });
-  if (known(R.parties, R.costAccounts) && s.partyCount === 0 && s.budget > 0) add({
+  if (known(R.parties, R.costAccounts) && s.partyCount === 0 && budgetNow > 0) add({
     id: "parties", kind: "delegation", weight: 50,
     title: "Add the companies working this job",
     payoff: "Spending gets attributed, and their performance record starts building.",

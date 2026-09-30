@@ -62,12 +62,15 @@ export function isOverdueMilestone(m: MilestoneOverdueRow, nowMs: number = Date.
 }
 
 /**
- * How many milestone rows a project-level reader in this module's
- * consumers takes, ordered by `planned_at`: the health snapshot and the
- * printed report read the SAME first rows, which is also what the Costs
- * and Schedule tabs get from their unbounded `order("planned_at")` read
- * under the API's default 1,000-row response cap. So every surface
- * computes earned value, CPI and overdue over the same rows; the report
- * counts the total and says "first N of M" when a schedule is larger.
+ * How many milestone rows a project-level reader takes. The health
+ * snapshot, the printed report and the Costs tab all read
+ * `order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)` —
+ * the SAME first rows, with `id` breaking planned-date ties — so the three
+ * compute earned value and CPI (and the snapshot and report, overdue) over
+ * the same rows. The report counts the total and says "first N of M" when a
+ * schedule is larger; the Costs tab does not say so. The Schedule tab reads
+ * through `listMilestones` (lib/milestones.ts): ordered by `planned_at`
+ * with no `id` tiebreak and no explicit bound, it sees the same rows only
+ * for a schedule within the API's row cap.
  */
 export const PROJECT_MILESTONE_READ_LIMIT = 1000;

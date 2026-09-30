@@ -157,12 +157,14 @@ function reversalNote(actorName: string | null | undefined, note: string | null 
  *  a link, the linked entry's status is read BY ID (`.in`, in chunks of 100)
  *  and carried as `postedEntryStatus` — the input of `changeOrderOnLedger`.
  *  A failed read throws (REL-2): a budget that silently dropped its approved
- *  changes would read like a real one. */
+ *  changes would read like a real one. The change_orders read's error
+ *  carries its PostgREST `code`, so a caller can tell a table migration
+ *  20261013 has not created (42P01 / PGRST205) from a refused read. */
 export async function listChangeOrders(projectId: string): Promise<ChangeOrder[]> {
   const { data, error } = await supabase
     .from("change_orders").select("*").eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(500);
-  if (error) throw new Error(error.message);
+  if (error) throw Object.assign(new Error(error.message), { code: error.code ?? null });
   const cos = ((data as Record<string, unknown>[]) ?? []).map(rowToCo);
   const ids = [...new Set(cos.filter((c) => c.status === "approved" && c.postedEntryId).map((c) => c.postedEntryId as string))];
   const status = new Map<string, string | null>();

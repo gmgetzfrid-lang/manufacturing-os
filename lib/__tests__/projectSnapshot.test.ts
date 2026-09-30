@@ -217,16 +217,27 @@ describe("gatherProjectSnapshot — an honest gap, not a silent zero", () => {
     expect(ids).not.toContain("budget"); // the budget read DID land: 100 > 0
   });
 
-  it("refused cost accounts: no 'Add a budget' at the top, Cost and Change control unknown", async () => {
-    // lib/costs.ts listAccounts / listEntries still return [] on a refused
-    // read (projects-tab REL-2, P3's), so the gather names this failure
-    // only once they throw; the engine's side is pinned here directly.
-    const snap = { ...(await gatherProjectSnapshot("org1", "p1")), readFailures: ["cost accounts"] };
+  it("refused cost accounts: named in readFailures, no 'Add a budget' at the top, Cost and Change control unknown", async () => {
+    // lib/costs.ts listAccounts / listEntries THROW on a refused read
+    // (projects-tab REL-2, since J3), and the gather names the read — the
+    // failure is injected at the table, not into the snapshot.
+    state.errors.cost_accounts = "permission denied for table cost_accounts";
+    state.errorCodes.cost_accounts = "42501";
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.readFailures).toEqual(["cost accounts"]);
+    expect(snap.notMigrated).toEqual([]);
     const ids = buildCoachItems(snap, "p1").map((i) => i.id);
     expect(ids).not.toContain("budget");
     const parts = computeProjectHealth(snap).parts;
-    expect(parts.find((p) => p.label === "Cost")!.score).toBeNull();
+    expect(parts.find((p) => p.label === "Cost")).toEqual({ label: "Cost", score: null, detail: "Could not read cost accounts" });
     expect(parts.find((p) => p.label === "Change control")!.detail).toBe("Could not read cost accounts");
+  });
+
+  it("refused cost entries are named too", async () => {
+    state.errors.cost_entries = "permission denied for table cost_entries";
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.readFailures).toEqual(["cost entries"]);
+    expect(computeProjectHealth(snap).parts.find((p) => p.label === "Cost")!.detail).toBe("Could not read cost entries");
   });
 
   it("selects only the columns it reads — never select('*') on projects or cost_documents", async () => {
@@ -443,5 +454,109 @@ describe("gatherProjectSnapshot — never served from before a write", () => {
     expect(snapshotRekeyMayShare(0, 2, 2)).toBe(false);
     // A consumer mounted with no key at all never re-keys.
     expect(snapshotRekeyMayShare(undefined, undefined, undefined)).toBe(false);
+  });
+});
+
+// ── Verification fix (2026-09-30, projects Round G) ─────────────────────
+// After J3 (money ledger): the snapshot reads change orders through
+// listChangeOrders and passes approvedChangesByAccount(cos) exactly as the
+// Costs tab does; counts approved change orders only while their money is
+// on the ledger; burns against the revised budget; and leaves the award
+// suggestion out before migration 20261013 gives quotes their RFQ groups.
+
+describe("gatherProjectSnapshot — the Costs tab's money (MON-5 / COST-4)", () => {
+  const ledger = (entryStatus: "posted" | "void") => {
+    state.tables.cost_accounts = [{ id: "a1", project_id: "p1", name: "Piping", budget: 50_000, currency: "USD", wbs_milestone_id: null }];
+    state.tables.cost_entries = [
+      { id: "e1", cost_account_id: "a1", project_id: "p1", entry_type: "actual", amount: 30_000, status: "posted" },
+      { id: "e2", cost_account_id: "a1", project_id: "p1", entry_type: "commitment", amount: 10_000, status: entryStatus },
+    ];
+    state.tables.change_orders = [
+      { id: "co1", project_id: "p1", cost_account_id: "a1", co_number: "CO-1", title: "t", amount: 10_000, reason_code: "field_condition", status: "approved", posted_entry_id: "e2" },
+      { id: "co2", project_id: "p1", cost_account_id: "a1", co_number: "CO-2", title: "t", amount: 4_000, reason_code: "owner_request", status: "approved", posted_entry_id: null },
+      { id: "co3", project_id: "p1", cost_account_id: "a1", co_number: "CO-3", title: "t", amount: 2_000, reason_code: "owner_request", status: "proposed", posted_entry_id: null },
+    ];
+  };
+
+  it("change orders are read through listChangeOrders — the approved COs' linked entries by id", async () => {
+    ledger("posted");
+    await gatherProjectSnapshot("org1", "p1");
+    expect(state.selects).toContain("change_orders:*");
+    expect(state.selects).toContain("cost_entries:id, status");
+    const src = (await import("node:fs")).readFileSync(new URL("../projectSnapshot.ts", import.meta.url), "utf8");
+    expect(src).toContain("computeCostRollup(accounts, entries, pctIdx, approvedChangesByAccount(coRows))");
+  });
+
+  it("approvedCoAmount counts only an approved CO whose entry is POSTED — not a link-less or hand-voided one", async () => {
+    ledger("posted");
+    const on = await gatherProjectSnapshot("org1", "p1");
+    expect(on.approvedCoAmount).toBe(10_000); // co1 only: co2 has no entry, co3 is proposed
+    expect(on.openChangeOrders).toBe(1);
+    expect(on.budget).toBe(50_000); // baseline
+    expect(on.revisedBudget).toBe(60_000);
+    resetProjectSnapshotMemo();
+    ledger("void");
+    const off = await gatherProjectSnapshot("org1", "p1");
+    expect(off.approvedCoAmount).toBe(0);
+    expect(off.revisedBudget).toBe(50_000);
+  });
+
+  it("Cost burn is measured against the revised budget (the Costs tab's Budget); change-order growth against the baseline, labelled so", async () => {
+    ledger("posted");
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    const parts = computeProjectHealth(snap).parts;
+    // 30k spent and 10k committed of the 60k revised budget — against the
+    // base 50k these would read 60% and 20%.
+    expect(parts.find((p) => p.label === "Cost")!.detail).toBe("50% of budget spent · 17% committed");
+    expect(parts.find((p) => p.label === "Change control")!.detail).toBe("20% growth over the baseline budget via approved change orders · 1 open");
+  });
+
+  it("a refused change_orders read leaves Cost unknown (its budget is unknown) — a not-migrated one does not", async () => {
+    ledger("posted");
+    state.errors.change_orders = "permission denied for table change_orders";
+    state.errorCodes.change_orders = "42501";
+    const refused = await gatherProjectSnapshot("org1", "p1");
+    expect(refused.readFailures).toEqual(["change orders"]);
+    expect(computeProjectHealth(refused).parts.find((p) => p.label === "Cost")).toEqual({ label: "Cost", score: null, detail: "Could not read change orders" });
+
+    resetProjectSnapshotMemo();
+    state.errors.change_orders = 'relation "public.change_orders" does not exist';
+    state.errorCodes.change_orders = "42P01";
+    const pre = await gatherProjectSnapshot("org1", "p1");
+    expect(pre.readFailures).toEqual([]);
+    expect(pre.notMigrated).toEqual(["change orders"]);
+    expect(computeProjectHealth(pre).parts.find((p) => p.label === "Cost")!.score).not.toBeNull();
+  });
+
+  it("a refused read of the approved COs' linked entries is a change-orders read failure, not an empty list", async () => {
+    ledger("posted");
+    // listChangeOrders' second read is cost_entries by id; fail cost_entries entirely.
+    state.errors.cost_entries = "permission denied for table cost_entries";
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.readFailures).toEqual(expect.arrayContaining(["cost entries", "change orders"]));
+  });
+});
+
+describe("buildCoachItems — the award suggestion needs RFQ groups (migration 20261013)", () => {
+  const twoQuotesOneScope = (withGroup: boolean) => [
+    { kind: "quote", status: "parsed", vendor_name: "Acme", file_name: "q1.pdf", ...(withGroup ? { rfq_group: "Piping" } : {}) },
+    { kind: "quote", status: "parsed", vendor_name: "Bolt Co", file_name: "q2.pdf", ...(withGroup ? { rfq_group: "Piping" } : {}) },
+  ];
+
+  it("before 20261013 every quote tabulates alone, so the unawarded-group count is a quote count — the award item is left out", async () => {
+    state.missingColumns = ["rfq_group"];
+    state.tables.cost_documents = twoQuotesOneScope(false);
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.notMigrated).toEqual(["RFQ groups"]);
+    expect(snap.quoteCount).toBe(2);
+    expect(buildCoachItems(snap, "p1").map((i) => i.id)).not.toContain("award");
+  });
+
+  it("after it, one unawarded RFQ group raises the award item", async () => {
+    state.tables.cost_documents = twoQuotesOneScope(true);
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.notMigrated).toEqual([]);
+    expect(snap.unawardedRfqGroups).toBe(1);
+    expect(buildCoachItems(snap, "p1").map((i) => i.id)).toContain("award");
   });
 });
