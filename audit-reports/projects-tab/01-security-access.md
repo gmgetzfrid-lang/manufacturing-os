@@ -2,7 +2,7 @@
 
 Who can reach what, and what an outsider can put inside the perimeter.
 
-**17 findings** — 4 CRITICAL, 11 HIGH, 2 MEDIUM.
+**18 findings** — 4 CRITICAL, 11 HIGH, 3 MEDIUM (`SEC-18` opened by projects Round G, 2026-09-30).
 
 > Line numbers are from commit `6a14d7d` and drift with edits. **Match on the
 > quoted code, not the number.** See [`../README.md`](../README.md) for the
@@ -52,6 +52,16 @@ of the chain.
 - The viewer iframe carries a `sandbox` attribute with no `allow-same-origin`.
 - An upload declaring a false MIME type is stored with its sniffed type, not the declared one.
 - A test asserts the disposition header is present on the presigned URL.
+
+**Partial (2026-09-30, projects Round G — the egress limb; the ID closes in P1).** Built on document-control P2 EGRESS. (1) Every URL `/api/storage/download-url` signs is an ATTACHMENT unless an in-app viewer asks for inline and the key is a PDF or a raster image, whose Content-Type is then pinned (`SEC-7`, `lib/presignedDisposition.ts`, `DEC-48`): a stored `text/html` object is served `Content-Disposition: attachment` whatever the caller asks. (2) `components/viewers/SecureDocViewer.tsx` — the `:274` frame this finding cites; the identity `IS-P1` (`:58`) and drafting `EVID-5` (`:52-59`) regions are untouched — asks for inline and renders only what `viewerRenderKind` admits: a file that ARRIVED typed as a PDF or a raster image, re-typed to exactly that type (`new Blob([blob], { type: view.type })`, `:180-190`). An HTML, SVG, XML, text or untyped file is never framed on the app origin (a "Preview is available for PDFs and images only" panel instead); an image is framed with `sandbox=""` (`:343` — no tokens: no scripts, an opaque origin, no forms, no navigation); the old fallback that framed the bare URL unconditionally is gone (only the route's own inline grant, or a legacy absolute URL on another origin, may be framed directly), and the route's refusal shows as a refusal. Tests: `lib/__tests__/presignedDisposition.test.ts` — the real presigned URL's `response-content-disposition`, "a stored HTML upload is an attachment whatever the caller asks", `viewerRenderKind` never admitting HTML / SVG / XML / script / text / octet-stream / an empty type, and source pins on the viewer's gate, the re-typing, the sandboxed image frame and the absence of any `allow-*` sandbox token.
+
+**Done-when (this limb).**
+- A stored `text/html` object downloads rather than renders, in Chrome, Firefox and Safari — ✓ by construction and test: the signed URL carries `attachment` for it on every path (asserted on the real presigned URL) and the in-app viewer refuses to frame it. Not observed in the three browsers (no browser in this environment).
+- The viewer iframe carries a `sandbox` attribute with no `allow-same-origin` — **partly, by decision (`DEC-48`)**: the image frame carries `sandbox=""`; the PDF frame carries none, because Chromium blocks its PDF viewer in any sandboxed frame (the load is refused outright), which would blank every controlled drawing in the product's main preview. The PDF frame is protected by the type gate instead — only bytes that arrived typed `application/pdf`, re-typed to exactly that, ever reach it, so the browser's PDF viewer handles them and no HTML parser does. (Known Chromium behaviour, not re-observed here.)
+- An upload declaring a false MIME type is stored with its sniffed type, not the declared one — not this limb: P1 (`SEC-6`).
+- A test asserts the disposition header is present on the presigned URL — ✓.
+
+**Scope / residual.** P1 closes the ID: the sniff and allowlist at the door (`SEC-6`, GAP-401). GAP-401 acceptance 1 (an uploaded HTML / SVG / JS file cannot execute on the app's origin) is proven here for the egress half — the headers for an HTML / SVG key and the viewer's refusal to frame one — with P1's upload-side test as the first line. `/api/storage/resolve` is the remaining unsigned issuer: `SEC-18`.
 
 ---
 
@@ -273,7 +283,7 @@ before reading the body, and read the body once.
 ## SEC-7 · Presigned downloads are served inline rather than as attachments
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security
 - **Locations:**
@@ -302,6 +312,15 @@ inline case must be opted into explicitly by callers that genuinely need it
 - The presigned URL carries the attachment disposition by default.
 - Any caller that needs inline rendering opts in explicitly and is reviewed.
 - A test asserts the header on the default path.
+
+**Resolution (2026-09-30, projects Round G).** Built on document-control P2 EGRESS — the clamp, `no-store` and granted `expiresIn` in `app/api/storage/download-url/route.ts`, `lib/presignedLifetime.ts`, migration `20261068` — none of which is re-implemented or changed. New `lib/presignedDisposition.ts`: `presignedGetDisposition(key, inlineRequested)` returns the GET's response overrides — `ResponseContentDisposition: attachment; filename="…"; filename*=UTF-8''…` by default (the key's last segment through the existing `contentDispositionAttachment`, header-safe); `inline` only when the caller asked AND the key's extension is a PDF or a raster image (`INLINE_TYPES_BY_EXTENSION`: pdf, png, jpg / jpeg, gif, webp — no SVG, which runs script when opened as a page), and then `ResponseContentType` is pinned to that type, so the uploader's declared type is never what the browser renders. The route (`download-url/route.ts:215-220`) spreads the overrides into the `GetObjectCommand`, reads `?inline=` through `wantsInline` (only `1` / `true`) and answers `{ url, expiresIn, disposition, contentType }`. `lib/storage.ts`: `getSignedUrlForPath(path, expiresIn, { inline })` is an ATTACHMENT by default (right for `<img>`, CSS backgrounds, `fetch`, pdf.js and downloads, none of which honour the disposition) with an explicit opt-in; `resolveFileUrl` / `resolveFileUrlDetailed`, the viewers' resolvers, ask for inline; inline and attachment URLs are cached apart (`INLINE_KEY_PREFIX`, a NUL no storage key can contain). The reviewed inline callers: `SecureDocViewer` (`&inline=1`), `resolveFileUrl`'s three callers (`MultiDocViewer`, `CompareRevisionsModal`, `ReviewGateSection`'s draft preview), and the two framing viewers outside this package, each opted in with one argument so nothing that framed a PDF starts downloading it — the ticket file viewer's PDF preview frame (`app/(protected)/requests/[id]/page.tsx:563`) and the cited-page viewer's open-in-new-tab link (`components/knowledge/CitedPageViewer.tsx:123`). Every other caller — images, avatars, the logo, thumbnails, pdf.js loaders, the CAD source pull, downloads, the doc pack — gets an attachment. `app/api/transmittal/route.ts` already sent one and is not edited; the share routes are document-control P1's. Tests (`lib/__tests__/presignedDisposition.test.ts`) sign with the REAL presigner (an S3 client with inert credentials — presigning is local) and read `response-content-disposition` / `response-content-type` off the URL: "DEFAULT: attachment, named after the key — even for a PDF" (P2's 3600 s window and `no-store` asserted unchanged), "a stored HTML upload is an attachment whatever the caller asks", "inline=1 on a PDF: inline, and the Content-Type is pinned to application/pdf", "anything but an explicit opt-in is an attachment"; the pure rules (SVG / HTML / XML / JS / no extension / a double extension never inline; header folding); the client ("…the two are cached apart", "resolveFileUrl is the viewers' resolver: it asks for inline", "subscribeSignedUrl … asks for an attachment"); a census that every presigned-GET issuer under `app/api` signs a disposition; source pins on the reviewed callers. Reproduced first: against `3ae0b06` 11 of the 21 cases failed — the signed URL carried no `response-content-disposition`.
+
+**Done-when.**
+- The presigned URL carries the attachment disposition by default — ✓.
+- Any caller that needs inline rendering opts in explicitly and is reviewed — ✓ (the list above, `DEC-48`); the route grants inline only to a PDF or a raster image and pins its type, so even a reviewed caller cannot get an HTML page inline.
+- A test asserts the header on the default path — ✓ (on the real presigned URL).
+
+**Scope / residual.** `/api/storage/resolve` (the archive-aware opener) is a second presigned-GET issuer with no disposition, and `ArchiveAwareOpen` opens its URL in a new tab. That route belongs to the drafting-flow package that re-checks its ACL after document-control P2, so it is recorded as the new finding `SEC-18` below and named as the census's one known exception — any other new bare issuer fails the suite. Browser behaviour was not observed (no browser in this environment); `Content-Disposition: attachment` is what Chrome, Firefox and Safari honour for a top-level navigation or a frame.
 
 ---
 
@@ -374,7 +393,7 @@ cost entries should be deletable at all, versus archive-only.
 ## SEC-10 · The checklist route authorizes at member level but reads ACL-restricted documents with the service role
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-confidentiality
 - **Locations:**
@@ -401,6 +420,15 @@ resolve documents the same way.
 - A member without ACL read on a document receives 403 from the checklist route.
 - The check is applied to every route that resolves a document via `supabaseAdmin`.
 - An `apiRouteAuth.test.ts` case pins it.
+
+**Resolution (2026-09-30, projects Round G).** `lib/docFileServer.ts` `resolveDocumentFile(orgId, documentId, reader)` takes a required `DocumentReader` (`{ uid, email, channel, labelOnly? }`) — TypeScript refuses a call without one — and makes the CALLER's content decision before any service-role file lookup, exactly as the bytes egress `app/api/storage/download-url` makes it: `loadReaderPrincipal` (headline + additive roles, team ids, active members only; a lookup error is 503, never a guess), then `documentContentDecision` — `canServeContent` for a private / hidden node (a discover-only grant is not enough, roles-and-permissions `DOCACL-5`) and the explicit download deny in the chain-resolved `acl_index` (binds controllers too) — then the `user_is_effective_owner` cascade when content is refused (`GAP-15` / `DEC-7`). A refused reader gets 403 *"You don't have access to read that document."*; the version and file are looked up only after the decision, so a refusal never reveals whether a file exists. `DEC-43`: pages served ONLY because the reader is a controller write `CONTROLLER_RESTRICTED_READ` (`details.channel` names the route) unless ownership would have served them; a read the gate then refuses, and a `labelOnly` read, write none. Call sites: `app/api/projects/checklist/route.ts:96` (segment, `checklist_segment`), `:162` (assess — the SOW's label only when the caller may read it, `labelOnly`), `app/api/companies/quality-manual/route.ts:71` (`quality_manual`). The assess prompt's project-document titles, also a service-role read, go through `discoverableDocuments` (`canDiscover`, the SELECT bar a member's own client applies) at `checklist/route.ts:173`, so a hidden document's title never reaches the model or the rationale it returns. Tests: `lib/__tests__/apiRouteAuth.test.ts` "SEC-10: a member the ACL excludes from a private document gets 403 — nothing resolved, rendered or sent to the model", "SEC-10 / DOCACL-5: a discover-only grant does not yield the pages", "a read grant on the private document admits the member; so does the effective-owner cascade", "an explicit DOWNLOAD deny on a held role binds, even on a normal document and even for a controller", "DEC-43: a controller served a restricted document ONLY by the controller tier leaves a CONTROLLER_RESTRICTED_READ row", "DEC-43: no row when ownership or the ACL would have served the controller anyway", "a membership read that fails is 503", the assess pair ("a plain member's prompt carries neither the restricted SOW's label nor a hidden document's title"; the controller's carries both with no row) and the quality-manual pair; `lib/__tests__/docFileServer.test.ts` runs the REAL egress route and the real gate over 4 principals × 8 documents × owner / not-owner (64 cases) and asserts they serve, refuse and record alike. Reproduced first: against `3ae0b06` (the base route and `docFileServer`) the excluded member was served the private document's pages (200) and every SEC-10 case failed.
+
+**Done-when.**
+- A member without ACL read on a document receives 403 from the checklist route — ✓ (discover-only grantee too).
+- The check is applied to every route that resolves a document via `supabaseAdmin` — ✓: `resolveDocumentFile` is the only doc-control file resolver and all three call sites pass a reader (the argument is required); the checklist's title list goes through `discoverableDocuments`. `/api/projects/cost-docs` does not resolve doc-control documents — it reads its own `cost_documents` row, gated controller-or-owner and pinned under `REL-6`. `/api/flows/read` and `/api/knowledge/ask` read `knowledge_documents` through the intelligence area's `lib/knowledgeAccess.ts` seam, not this one.
+- An `apiRouteAuth.test.ts` case pins it — ✓.
+
+**Scope / residual.** The gate mirrors the egress route's decision on purpose, and the parity matrix fails if either drifts — including that neither honours an `orgs`-subject download deny and both evaluate the document's own `acl` for the allow (denies come from the chain-resolved `acl_index`). Intelligence `KACL-5` revisits the egress route; the matrix makes that change revisit this gate too. The title filter's ownership branch is the explicit document owner only (the cascade is asked for content), so a hidden title owned through a folder or library is left out of the prompt — failing closed. Cross-reference: roles-and-permissions `03-document-control-acl.md` (`DOCACL-5`) cites this finding as the shape of a service-role re-check that inherits the gap; for page reads the one shared helper is now `resolveDocumentFile`. `DEC-43` carries a landed line.
 
 ---
 
@@ -665,6 +693,45 @@ matching `project_members_write`. Keep SELECT at member level.
 
 ---
 
+## SEC-18 · The archive-aware opener signs presigned downloads with no disposition
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Blast radius:** security
+- **Locations:**
+  - `app/api/storage/resolve/route.ts:86` — `getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }), …)`, no `ResponseContentDisposition`
+  - `components/archive/ArchiveAwareOpen.tsx:35` — `window.open(body.url as string, "_blank", "noopener")`
+- **Related:** `SEC-7`, `SEC-1`
+- **Independently verified:** — (`author`: opened by projects Round G while resolving `SEC-7`, per `DEC-31`; not yet challenged)
+
+**Mechanism.** `SEC-7` put a disposition on every URL `/api/storage/download-url`
+signs — an attachment by default, inline only for a PDF or a raster image with
+its type pinned (`DEC-48`). `/api/storage/resolve` is the second presigned-GET
+issuer. It signs the bare `GetObjectCommand`, so the object is served with its
+stored type — for an intake upload, whatever the uploader declared — and
+`ArchiveAwareOpen` opens that URL in a new tab, where an HTML or SVG upload
+renders as a page.
+
+**Failure scenario.** The `SEC-7` scenario through the "open" link of an
+archive-aware file list: a stored `payload.html` opens as a page on the storage
+origin (phishing or malware delivery — the origin is R2's, not the app's, which
+is why this is MEDIUM, as `SEC-7` was).
+
+**Remediation.** Spread
+`presignedGetDisposition(path, wantsInline(req.nextUrl.searchParams.get("inline"))).overrides`
+into the route's `GetObjectCommand` (one line, as `download-url` does) and have
+`ArchiveAwareOpen` — a new-tab viewer — pass `inline=1`. Owned by the
+drafting-flow package that re-checks this route's ACL after document-control P2
+(the same file). Then remove it from `KNOWN_UNSIGNED` in
+`lib/__tests__/presignedDisposition.test.ts`.
+
+**Done when.**
+- The resolve route's URL carries the attachment disposition by default, and inline only for a PDF or a raster image with its type pinned.
+- The census in `presignedDisposition.test.ts` has no known exception.
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -675,10 +742,10 @@ matching `project_members_write`. Keep SELECT at member level.
 | SEC-4 | CRITICAL | OPEN |
 | SEC-5 | HIGH | OPEN |
 | SEC-6 | HIGH | OPEN |
-| SEC-7 | HIGH | OPEN |
+| SEC-7 | HIGH | RESOLVED |
 | SEC-8 | HIGH | OPEN |
 | SEC-9 | HIGH | OPEN |
-| SEC-10 | HIGH | OPEN |
+| SEC-10 | HIGH | RESOLVED |
 | SEC-11 | HIGH | OPEN |
 | SEC-12 | HIGH | OPEN |
 | SEC-13 | HIGH | OPEN |
@@ -686,3 +753,4 @@ matching `project_members_write`. Keep SELECT at member level.
 | SEC-15 | HIGH | OPEN |
 | SEC-16 | MEDIUM | OPEN |
 | SEC-17 | MEDIUM | OPEN |
+| SEC-18 | MEDIUM | OPEN |

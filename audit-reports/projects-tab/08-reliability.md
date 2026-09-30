@@ -252,12 +252,21 @@ zero tests above lib/, so a broken auth check on a route shipped green."*
 - The money paths have failure-mode tests.
 - `gatherProjectSnapshot`'s error case is distinguishable from empty, and tested.
 
+**Partial (2026-09-30, projects Round G).** The route limb — the finding's priority 1. `lib/__tests__/apiRouteAuth.test.ts` now covers the four project-controls routes in the existing harness (hoisted state and the Proxy chain over `supabaseAdmin`, plus per-call `.maybeSingle()` and RPC overrides and mocks for the page renderer, the governed model call and R2): `/api/projects/cost-docs` (controller or project owner — no token and a bad token 401, non-member 403, a foreign project 404, a Manager who is neither owner nor controller 403 before the cost row is read, the owner and an additively-held DocCtrl admitted); `/api/projects/checklist` (any active member — 401, a non-member and a suspended member 403, a foreign project 404, a plain member 200, and the `SEC-10` ACL cases); `/api/companies/quality-manual` (controllers only — 401, a non-member 403, a Manager 403, an additive DocCtrl admitted, the `SEC-10` / `DEC-43` cases); `/api/intake/upload` (the token is the credential — a malformed token 400 before any lookup, an unknown token 404, a revoked or expired link 410, a live link passing on to the payload check, and nothing stored on any refusal). The cost-docs and intake routes are not edited (P3's and P1's). Reproduced: at `3ae0b06` none of the four routes appeared in any test.
+
+**Done-when.**
+- All four routes have authorization tests — ✓.
+- The money paths have failure-mode tests — not done here: P3 MONEY-LEDGER's (`MON-1` award post-then-revert failure, `MON-3` void of an awarded document), not merged at this base.
+- `gatherProjectSnapshot`'s error case is distinguishable from empty, and tested — ✓ by pointer: package J7 (`PERF-3`, report 09) — `lib/__tests__/projectSnapshot.test.ts` "names the table it could not read instead of presenting zeros as the truth" and the read-failure cases after it.
+
+**Scope / residual.** Stays OPEN until P3's money-path failure tests land. Remediation items 4 (`gatherCompanyProfile` fixture) and 6-7 (checklist / turnover progress, `applyAssessment`) belong to the packages that own those libraries (P9, P2).
+
 ---
 
 ## REL-7 · The schema-health panel reports green when this feature's migration is missing
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** diagnosability
 - **Locations:**
@@ -286,6 +295,14 @@ test — the export-coverage test already diffs table lists against
 **Done when.**
 - Schema health reports red when `20261013` is unapplied.
 - A tripwire prevents the next migration from being forgotten.
+
+**Resolution (2026-09-30, projects Round G).** `lib/schemaExpectations.ts` `EXPECTED_TABLES` gains the seven tables `20261013_project_controls_program.sql` creates — `change_orders`, `checklist_items`, `companies`, `company_events`, `project_checklists`, `punch_items`, `turnover_items` — and `EXPECTED_COLUMNS` the five feature columns it adds to older tables — `cost_documents.rfq_group`, `cost_documents.intake_link_id`, `project_intake_links.purpose`, `project_intake_links.rfq_group`, `cost_entries.created_by_name` — each naming `20261013`, so `/api/admin/schema-health` lists it as the file to run. The file's header names the tripwire. Tests (`lib/__tests__/schemaExpectations.test.ts`): the rows exist and each column probe matches an `ADD COLUMN` really in `20261013`; against the real route, "unapplied: the seven tables and five columns are missing, healthy is false, and 20261013 is the file to run" and "applied: healthy"; the tripwire "no created table is missing from EXPECTED_TABLES" scans every `CREATE TABLE` in `supabase/migrations` (comments stripped, TEMP tables excluded; 97 tables). Reproduced first: against `3ae0b06` 4 of the 8 cases failed — the route reported the unapplied database healthy.
+
+**Done-when.**
+- Schema health reports red when `20261013` is unapplied — ✓ (pinned against the real route with the missing-relation / missing-column errors Postgres returns; not observed against a live database).
+- A tripwire prevents the next migration from being forgotten — ✓: a migration that creates a table with no row fails the suite and names the table and file.
+
+**Scope / residual.** Five tables were already unlisted when the tripwire landed — `answer_skills`, `document_markups`, `knowledge_line_traces`, `link_rules`, `process_flows` — and are grandfathered by name (each must be a real created table, so the exemption cannot hide a typo, and nothing may join it). Listing them is the regeneration owned by admin-and-org `BKP-14` / intelligence `ILIFE-12`. The silent-empty readers are `REL-2`'s.
 
 ---
 
@@ -478,7 +495,7 @@ condition to match `hasPlan`. Use the project currency in the example.
 | REL-4 | HIGH | OPEN |
 | REL-5 | HIGH | OPEN |
 | REL-6 | HIGH | OPEN |
-| REL-7 | HIGH | OPEN |
+| REL-7 | HIGH | RESOLVED |
 | REL-8 | MEDIUM | OPEN |
 | REL-9 | MEDIUM | OPEN |
 | REL-10 | MEDIUM | OPEN |
