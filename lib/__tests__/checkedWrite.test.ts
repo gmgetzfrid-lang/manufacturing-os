@@ -43,6 +43,8 @@ describe("checkedWrite", () => {
     expect(describeWriteError({ message: 'relation "public.x" does not exist' })).toMatch(/migration/);
     expect(describeWriteError({ message: "violates row-level security policy" })).toMatch(/permission/);
     expect(describeWriteError({ message: "" })).toMatch(/write failed/);
+    // 20261091: an item write gives way to a checklist delete after 500 ms instead of deadlocking
+    expect(describeWriteError({ message: "canceling statement due to lock timeout", code: "55P03" })).toBe("Someone is changing or deleting this checklist right now — nothing was changed. Try again.");
   });
   it("a pending migration in PostgREST's schema-cache shapes (PGRST204 / PGRST205) and raw 42703 reads as the migration message, never raw text", async () => {
     // What setPunchStatus (closed_by_name…), a punch add with a location or

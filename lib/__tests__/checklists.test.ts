@@ -583,6 +583,26 @@ describe("runAutoEvidence", () => {
     state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
   });
 
+  it("verification fix 3: a document whose current version carries NO provenance (the bulk upload's, every pre-20260823 version) is admitted and cited — the database admits it too", async () => {
+    state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: null, review_state: null }];
+    state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report" })];
+    state.tables.checklist_items = [row({ id: "a" })];
+    const out = await runAutoEvidence({ orgId: "o1", projectId: "p1", checklistId: "cl1", actor });
+    expect(out).toMatchObject({ satisfied: 1, failed: 0 });
+    expect(state.tables.checklist_items[0].evidence).toEqual([{ label: 'Document on file: "E-301 Hydrotest Report"', documentId: "d1", source: "auto" }]);
+  });
+
+  it("verification fix 3: a legacy person chip stored as ONE object is still a person's chip — the sweep keeps out and never erases it", async () => {
+    state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report" })];
+    const legacy = { source: "manual", label: "walkdown photo" };
+    state.tables.checklist_items = [row({ id: "a", evidence: legacy })];
+    expect((await readChecklistItems("cl1")).rows[0].evidence).toEqual([legacy]);
+    const out = await runAutoEvidence({ orgId: "o1", projectId: "p1", checklistId: "cl1", actor });
+    expect(out).toMatchObject({ satisfied: 0, needsEvidence: 0, failed: 0 });
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items[0].evidence).toEqual(legacy);
+  });
+
   it("satisfies on an Issued document with the documentId attached and the machine actor stamped; the audit row names the item and citation", async () => {
     state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report" })];
     state.tables.checklist_items = [row({ id: "a" })];

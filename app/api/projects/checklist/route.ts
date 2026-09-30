@@ -28,7 +28,7 @@ import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { resolveDocumentFile } from "@/lib/docFileServer";
-import { isHumanTerritory, validateSegmentedItems, type ChecklistItemState, type SegmentedItem } from "@/lib/checklistEngine";
+import { isHumanTerritory, normalizeEvidence, validateSegmentedItems, type SegmentedItem } from "@/lib/checklistEngine";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
   if (items.length === 0) return bad("This checklist has no items to assess.", 404);
   const humanTerritory = (it: (typeof items)[number]) => isHumanTerritory({
     manualNote: it.manual_note,
-    evidence: Array.isArray(it.evidence) ? (it.evidence as ChecklistItemState["evidence"]) : [],
+    evidence: normalizeEvidence(it.evidence),
   });
 
   // The project's REAL context — the assessment grounds on what the
@@ -201,7 +201,7 @@ export async function POST(req: NextRequest) {
     if (!item) continue;
     if (a.applicability !== "applies" && a.applicability !== "na" && a.applicability !== "unknown") continue;
     const status = String(item.status ?? "open");
-    const hasEvidence = Array.isArray(item.evidence) && item.evidence.length > 0;
+    const hasEvidence = normalizeEvidence(item.evidence).length > 0;
     proposals.push({
       itemId: item.id,
       applicability: a.applicability,

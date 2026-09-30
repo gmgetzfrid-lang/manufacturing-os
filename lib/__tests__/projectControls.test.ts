@@ -8,7 +8,7 @@ import { computeProjectHealth, buildCoachItems, type ProjectStateSnapshot } from
 import {
   validateSegmentedItems, applyAutoEvidence, rubricCoverageScore,
   validateRubricFindings, QUALITY_MANUAL_RUBRIC, completionBasis, reasonProblem, isAutoOnlyGreen, isHumanDecided,
-  isHumanGreen, isUnreasonedNa, staleAutoGreens, CANNED_REASONS, isBlockingItem, isHumanTerritory, reasonKey,
+  isHumanGreen, isUnreasonedNa, staleAutoGreens, CANNED_REASONS, isBlockingItem, isHumanTerritory, reasonKey, normalizeEvidence,
   isMachineActorName, MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT, REASON_MIN_LENGTH,
   type ChecklistItemState, type ProjectEvidenceState,
 } from "@/lib/checklistEngine";
@@ -334,6 +334,16 @@ describe("checklistEngine", () => {
     expect(reasonKey("  Reviewed\u00a0page by page \u200b")).toBe(reasonKey("reviewed page by page"));
     expect(reasonKey("   ")).toBeNull();
     expect(reasonKey(null)).toBeNull();
+  });
+
+  it("verification fix 3: evidence stored as ONE object reads as a single chip (checklist_evidence in SQL), so a legacy person chip in that shape is still human territory", () => {
+    const legacy = { source: "manual" as const, label: "walkdown photo" };
+    expect(normalizeEvidence(legacy)).toEqual([legacy]);
+    expect(normalizeEvidence([legacy])).toEqual([legacy]);
+    expect(normalizeEvidence("a string")).toEqual([]);
+    expect(normalizeEvidence(null)).toEqual([]);
+    expect(isHumanTerritory({ manualNote: null, evidence: normalizeEvidence(legacy) })).toBe(true);
+    expect(applyAutoEvidence([item({ id: "a", text: "Hydrotest complete", evidence: normalizeEvidence(legacy) })], state({ documentTitles: ["E-301 Hydrotest Report"] }))).toEqual([]);
   });
 
   it("verification fix 2 (QUAL-6): every sweep citation names the row it rests on — a document, an accepted turnover item, or a human MI completion; a legacy chip without it is replaced", () => {

@@ -67,6 +67,12 @@ export function describeWriteError(err: PgErrorLike): string {
   if (code === "42501" || /row-level security/i.test(msg)) {
     return "You don't have permission to do this — nothing was changed.";
   }
+  // 20261091: a checklist item write waits at most 500 ms for its checklist's
+  // row, so it gives way to a delete (or a long completion) instead of
+  // deadlocking — nothing landed, and a retry meets the settled state.
+  if (code === "55P03" || /lock timeout/i.test(msg)) {
+    return "Someone is changing or deleting this checklist right now — nothing was changed. Try again.";
+  }
   return msg || "The write failed — nothing was changed.";
 }
 

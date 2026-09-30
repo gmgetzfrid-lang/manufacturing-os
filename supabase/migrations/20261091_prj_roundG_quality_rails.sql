@@ -112,16 +112,19 @@
 --    (MACHINE_ACTOR_SWEEP / MACHINE_ACTOR_ASSESSMENT, pinned to the lib);
 --    never on an item a person decided (any visible note — an empty or
 --    blank one is none — or a person-attached chip); the note and every
---    non-auto chip left as they were. The sweep
---    changes only status (to satisfied / needs evidence) and evidence, on an
+--    non-auto chip left as they were. The sweep changes only status (to
+--    satisfied / needs evidence) and evidence (written as a list), on an
 --    in-scope item, and a green it sets carries a citation that RESOLVES
---    (checklist_auto_citation_ok: an admitted document of this workspace —
---    Issued / Locked, a current version, not an unapproved external
---    submission — an accepted turnover item of this project, or a completed
---    'human' MI checklist of this project). The assessment changes only
---    applicability, ai_rationale and status (to N/A with applicability N/A,
---    or N/A back to open with applicability applies), and never N/As an
---    item that is satisfied or carries evidence (QUAL-5). Neither touches
+--    (checklist_auto_citation_ok, every branch in the item's org: an admitted
+--    document of the workspace — Issued / Locked, a current version, not an
+--    unapproved external submission; no provenance at all is admitted — an
+--    accepted turnover item of this project, or a completed 'human' MI
+--    checklist of this project). A legacy evidence value stored as one
+--    object is read as a single chip (checklist_evidence), as the lib reads
+--    it. The assessment changes only applicability, ai_rationale and status
+--    (to N/A with applicability N/A, or N/A back to open with applicability
+--    applies), and never N/As an item that is satisfied or carries evidence
+--    (QUAL-5). Neither touches
 --    text, section, seq or anything else. All a machine-stamped write can
 --    produce — a note-less N/A, a cited sweep green — is 'auto' by the basis
 --    rule, never citable. A row born with no actor (createChecklist) must be
@@ -132,7 +135,9 @@
 --    project or org runs one trigger level down and passes) — and never
 --    moves to another checklist. Every item write first takes a SHARE lock
 --    on its checklist's row, so it serialises with a completion (whose
---    UPDATE holds that row's lock) instead of racing it; and a completed
+--    UPDATE holds that row's lock) instead of racing it — waiting at most
+--    500 ms, so against a delete that cascades into it the item write gives
+--    way instead of deadlocking; and a completed
 --    checklist is frozen — a signed-in write may not insert or change its
 --    items until it is reopened (which clears the basis). The tab offers no
 --    item control on a completed checklist. For signed-in writes the stored
@@ -744,6 +749,21 @@ CREATE TRIGGER trg_punch_items_void_rail
   BEFORE INSERT OR UPDATE OF status, closure_note, closed_by, closed_by_name, closed_at ON punch_items
   FOR EACH ROW EXECUTE FUNCTION punch_items_void_rail();
 
+-- The evidence as a list of chips: an array as it stands, a legacy value
+-- stored as one object as a single chip, anything else as none — the same
+-- reading as normalizeEvidence() in lib/checklistEngine.ts.
+CREATE OR REPLACE FUNCTION checklist_evidence(p_evidence jsonb)
+RETURNS jsonb
+LANGUAGE sql IMMUTABLE
+SET search_path = public
+AS $$
+  SELECT CASE jsonb_typeof(p_evidence)
+           WHEN 'array' THEN p_evidence
+           WHEN 'object' THEN jsonb_build_array(p_evidence)
+           ELSE '[]'::jsonb
+         END;
+$$;
+
 -- The chips of one kind, in order: p_auto = true gives the machine's
 -- (source 'auto'), false every other element (a person's). No machine write
 -- may change the person's, and no person's write the machine's.
@@ -753,7 +773,7 @@ LANGUAGE sql IMMUTABLE
 SET search_path = public
 AS $$
   SELECT COALESCE(jsonb_agg(e.value ORDER BY e.ordinality), '[]'::jsonb)
-    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_evidence) = 'array' THEN p_evidence ELSE '[]'::jsonb END) WITH ORDINALITY AS e(value, ordinality)
+    FROM jsonb_array_elements(checklist_evidence(p_evidence)) WITH ORDINALITY AS e(value, ordinality)
    WHERE (e.value->>'source' IS NOT DISTINCT FROM 'auto') = p_auto;
 $$;
 -- An earlier draft's single-purpose helper.
@@ -761,10 +781,14 @@ DROP FUNCTION IF EXISTS checklist_non_auto_chips(jsonb);
 
 -- A machine green's citation must RESOLVE to the row it rests on — the
 -- register the sweep reads (lib/checklists.ts gatherProjectEvidenceState):
--- an admitted document of this workspace (Issued / Locked, a current
--- version, not an unapproved external submission — EVIDENCE_DOCUMENT_STATUSES),
--- an accepted turnover item of this project, or another checklist of this
--- project completed as a 'human' MI checklist. A label alone proves nothing.
+-- an admitted document of the item's workspace (Issued / Locked, a current
+-- version, not an unapproved external submission — EVIDENCE_DOCUMENT_STATUSES;
+-- a version with no provenance, the bulk upload's and every version older
+-- than 20260823, is admitted, as the lib admits it), an accepted turnover
+-- item of this project and workspace, or another checklist of this project
+-- and workspace completed as a 'human' MI checklist. A label alone proves
+-- nothing. Every branch is tied to the item's org (a legacy row whose org
+-- differs from its project's never resolves).
 CREATE OR REPLACE FUNCTION checklist_auto_citation_ok(p_checklist_id uuid, p_org_id uuid, p_evidence jsonb)
 RETURNS boolean
 LANGUAGE sql STABLE
@@ -772,19 +796,19 @@ SET search_path = public
 AS $$
   SELECT EXISTS (
     SELECT 1
-      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_evidence) = 'array' THEN p_evidence ELSE '[]'::jsonb END) e
+      FROM jsonb_array_elements(checklist_evidence(p_evidence)) e
       JOIN project_checklists c ON c.id = p_checklist_id
      WHERE e->>'source' = 'auto'
        AND (EXISTS (SELECT 1 FROM documents d
                       JOIN document_versions v ON v.id = d.current_version_id
                      WHERE d.id = quality_try_uuid(e->>'documentId') AND d.org_id = p_org_id
                        AND d.status IN ('Issued', 'Locked')
-                       AND NOT (v.provenance = 'external' AND v.review_state IS DISTINCT FROM 'approved'))
+                       AND NOT (v.provenance IS NOT DISTINCT FROM 'external' AND v.review_state IS DISTINCT FROM 'approved'))
          OR EXISTS (SELECT 1 FROM turnover_items t
-                     WHERE t.id = quality_try_uuid(e->>'turnoverItemId')
+                     WHERE t.id = quality_try_uuid(e->>'turnoverItemId') AND t.org_id = p_org_id
                        AND t.project_id = c.project_id AND t.status = 'accepted')
          OR EXISTS (SELECT 1 FROM project_checklists m
-                     WHERE m.id = quality_try_uuid(e->>'checklistId')
+                     WHERE m.id = quality_try_uuid(e->>'checklistId') AND m.org_id = p_org_id
                        AND m.project_id = c.project_id AND m.id <> c.id
                        AND m.kind = 'mi' AND m.status = 'complete' AND m.completed_basis = 'human')));
 $$;
@@ -803,6 +827,7 @@ DECLARE
   v_decides boolean;
   v_note_changed boolean;
   v_changed text[];
+  v_lock_timeout text;
 BEGIN
   IF auth.uid() IS NULL THEN                         -- service pass: restores, server routes, the SQL editor
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
@@ -826,8 +851,16 @@ BEGIN
   -- (b) Serialise with the completion: take a SHARE lock on the checklist's
   --     row (it conflicts with the lock a completing UPDATE holds, not with
   --     other item writes), then read its status. A completed checklist is
-  --     frozen until it is reopened (which clears its basis).
+  --     frozen until it is reopened (which clears its basis). The wait is
+  --     capped at 500 ms — under deadlock_timeout — so against a checklist,
+  --     project or org delete (which holds the checklist row and cascades
+  --     into the item this write already holds) the item write gives way
+  --     with a lock timeout (55P03; the lib says "try again") instead of
+  --     deadlocking; a completion holds the row for milliseconds.
+  v_lock_timeout := current_setting('lock_timeout');
+  PERFORM set_config('lock_timeout', '500ms', true);
   PERFORM 1 FROM project_checklists c WHERE c.id = NEW.checklist_id FOR SHARE;
+  PERFORM set_config('lock_timeout', v_lock_timeout, true);
   SELECT c.status = 'complete' INTO v_frozen FROM project_checklists c WHERE c.id = NEW.checklist_id;
   IF COALESCE(v_frozen, false) THEN
     RAISE EXCEPTION 'This checklist is complete — reopen it before changing its items; nothing was changed.'
@@ -851,7 +884,7 @@ BEGIN
       RAISE EXCEPTION 'updated_by NULL is the machine actor''s mark (the evidence sweep or the AI assessment) — a person''s write carries their uid; nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
-    IF quality_reason_key(OLD.manual_note) IS NOT NULL OR COALESCE(OLD.evidence, '[]'::jsonb) @> '[{"source": "manual"}]'::jsonb THEN
+    IF quality_reason_key(OLD.manual_note) IS NOT NULL OR checklist_chips(OLD.evidence, false) @> '[{"source": "manual"}]'::jsonb THEN
       RAISE EXCEPTION 'A person decided this item (a note or an attached chip) — the evidence sweep and the assessment never change it; nothing was changed.'
         USING ERRCODE = 'check_violation';
     END IF;
@@ -869,7 +902,8 @@ BEGIN
       -- citations, on an in-scope item.
       IF NOT v_changed <@ ARRAY['status', 'evidence', 'updated_at', 'updated_by', 'updated_by_name']
          OR OLD.applicability = 'na' OR OLD.status = 'na'
-         OR (NEW.status IS DISTINCT FROM OLD.status AND NEW.status NOT IN ('satisfied', 'needs_evidence')) THEN
+         OR (NEW.status IS DISTINCT FROM OLD.status AND NEW.status NOT IN ('satisfied', 'needs_evidence'))
+         OR (NEW.evidence IS DISTINCT FROM OLD.evidence AND jsonb_typeof(NEW.evidence) IS DISTINCT FROM 'array') THEN
         RAISE EXCEPTION 'The evidence sweep changes only an in-scope item''s status (satisfied / needs evidence) and its own citations — nothing was changed.'
           USING ERRCODE = 'check_violation';
       END IF;
@@ -889,7 +923,7 @@ BEGIN
                       OR (OLD.status = 'na' AND NEW.status = 'open' AND NEW.applicability = 'applies')))
          OR (NEW.applicability = 'na'
              AND (OLD.status = 'satisfied'
-                  OR jsonb_array_length(CASE WHEN jsonb_typeof(OLD.evidence) = 'array' THEN OLD.evidence ELSE '[]'::jsonb END) > 0)) THEN
+                  OR jsonb_array_length(checklist_evidence(OLD.evidence)) > 0)) THEN
         RAISE EXCEPTION 'The AI assessment changes only an item''s applicability, its rationale and the status that follows — never an N/A on a satisfied or evidence-bearing item; nothing was changed.'
           USING ERRCODE = 'check_violation';
       END IF;
@@ -1158,7 +1192,7 @@ SELECT 'each reason rail demands its OWN reason (the note must change) that pass
 UNION ALL
 SELECT 'the machine actor (updated_by NULL) is bounded: a sentinel name, never a person''s item, no note, no person chip, each machine''s own columns only, a sweep green''s citation resolves — and a person''s write is stamped with the caller and leaves the machine''s citations alone',
        (SELECT p.prosrc LIKE '%NEW.updated_by_name NOT IN (''evidence sweep'', ''AI assessment'')%'
-           AND p.prosrc LIKE '%quality_reason_key(OLD.manual_note) IS NOT NULL OR COALESCE(OLD.evidence%'
+           AND p.prosrc LIKE '%quality_reason_key(OLD.manual_note) IS NOT NULL OR checklist_chips(OLD.evidence, false)%'
            AND p.prosrc LIKE '%checklist_chips(NEW.evidence, false) IS DISTINCT FROM checklist_chips(OLD.evidence, false)%'
            AND p.prosrc LIKE '%v_changed <@ ARRAY[''status'', ''evidence'', ''updated_at'', ''updated_by'', ''updated_by_name'']%'
            AND p.prosrc LIKE '%v_changed <@ ARRAY[''applicability'', ''ai_rationale'', ''status'', ''updated_at'', ''updated_by'', ''updated_by_name'']%'
@@ -1168,19 +1202,32 @@ SELECT 'the machine actor (updated_by NULL) is bounded: a sentinel name, never a
           FROM pg_proc p WHERE p.proname = 'checklist_items_decision_rail'),
        NULL
 UNION ALL
-SELECT 'an item write SHARE-locks its checklist row before reading its status (it serialises with a completion), and a signed-in single-item DELETE or move is refused, a cascade passes',
+SELECT 'an item write SHARE-locks its checklist row (waiting at most 500 ms) before reading its status, and a signed-in single-item DELETE or move is refused, a cascade passes',
        (SELECT p.prosrc LIKE '%PERFORM 1 FROM project_checklists c WHERE c.id = NEW.checklist_id FOR SHARE%'
+           AND position('set_config(''lock_timeout'', ''500ms'', true)' IN p.prosrc) BETWEEN 1 AND position('FOR SHARE' IN p.prosrc)
            AND position('FOR SHARE' IN p.prosrc) < position('INTO v_frozen' IN p.prosrc)
            AND p.prosrc LIKE '%IF pg_trigger_depth() > 1 THEN RETURN OLD%'
            AND p.prosrc LIKE '%NEW.checklist_id IS DISTINCT FROM OLD.checklist_id%'
           FROM pg_proc p WHERE p.proname = 'checklist_items_decision_rail'),
        NULL
 UNION ALL
-SELECT 'checklist_auto_citation_ok resolves a sweep citation to an admitted document of the workspace, an accepted turnover item or a human MI completion of the project',
+SELECT 'checklist_auto_citation_ok resolves a sweep citation to an admitted document (no provenance included), an accepted turnover item or a human MI completion — every branch in the item''s org',
        (SELECT p.prosrc LIKE '%d.status IN (''Issued'', ''Locked'')%'
+           AND p.prosrc LIKE '%v.provenance IS NOT DISTINCT FROM ''external''%'
+           AND p.prosrc NOT LIKE '%v.provenance = ''external''%'
+           AND p.prosrc LIKE '%d.org_id = p_org_id%'
+           AND p.prosrc LIKE '%t.org_id = p_org_id%'
+           AND p.prosrc LIKE '%m.org_id = p_org_id%'
            AND p.prosrc LIKE '%t.status = ''accepted''%'
            AND p.prosrc LIKE '%m.completed_basis = ''human''%'
           FROM pg_proc p WHERE p.proname = 'checklist_auto_citation_ok'),
+       NULL
+UNION ALL
+SELECT 'a legacy evidence value stored as one object reads as a single chip (checklist_evidence)',
+       (SELECT checklist_evidence('{"source": "manual", "label": "x"}'::jsonb) = '[{"source": "manual", "label": "x"}]'::jsonb
+           AND checklist_evidence('"a string"'::jsonb) = '[]'::jsonb
+           AND checklist_evidence(NULL) = '[]'::jsonb
+           AND checklist_chips('{"source": "manual", "label": "x"}'::jsonb, false) @> '[{"source": "manual"}]'::jsonb),
        NULL
 UNION ALL
 SELECT 'the checklist_items_na_rail of an earlier draft is gone (replaced by the decision rail)',

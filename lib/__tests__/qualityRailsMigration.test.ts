@@ -32,7 +32,11 @@
 //            machine's own columns (sentinel names pinned to the lib; a sweep
 //            green's citation must resolve to its row), stamps a person's
 //            write with the caller, refuses a single-item delete or move, and
-//            SHARE-locks the checklist row before reading its status.
+//            SHARE-locks the checklist row (waiting at most 500 ms, so a
+//            cascading delete wins instead of deadlocking) before reading its
+//            status. A citation's document may carry no provenance (NULL-safe
+//            predicate); every citation branch is in the item's org; a legacy
+//            evidence value stored as one object is one chip.
 //   QUAL-7   punch_items gains the four nullable text columns.
 //   QUAL-2   project_checklists.completed_basis: checklist_completion_basis()
 //            is completionBasis()'s rule clause for clause (only a note that
@@ -459,6 +463,9 @@ describe("20261091 — SAF-4 / GAP-405: the reason bar at the database", () => {
     it("every item write SHARE-locks its checklist row BEFORE reading its status — it serialises with a completion — and a completed checklist is frozen (probed)", () => {
       const f = fn();
       expect(f).toContain("PERFORM 1 FROM project_checklists c WHERE c.id = NEW.checklist_id FOR SHARE;");
+      // …waiting at most 500 ms (under deadlock_timeout): against a delete that cascades into the item
+      // this write holds, the item write gives way (55P03) instead of deadlocking; the setting is restored
+      expect(f).toMatch(/v_lock_timeout := current_setting\('lock_timeout'\);\s*\n\s*PERFORM set_config\('lock_timeout', '500ms', true\);\s*\n\s*PERFORM 1 FROM project_checklists c WHERE c\.id = NEW\.checklist_id FOR SHARE;\s*\n\s*PERFORM set_config\('lock_timeout', v_lock_timeout, true\);/);
       expect(f).toMatch(/SELECT c\.status = 'complete' INTO v_frozen FROM project_checklists c WHERE c\.id = NEW\.checklist_id;\s*\n\s*IF COALESCE\(v_frozen, false\) THEN\s*\n\s*RAISE EXCEPTION 'This checklist is complete/);
       expect(f.indexOf("FOR SHARE;")).toBeLessThan(f.indexOf("INTO v_frozen"));
       expect(f.indexOf("INTO v_frozen")).toBeLessThan(f.indexOf("IF NEW.updated_by IS NULL THEN"));
@@ -472,16 +479,17 @@ describe("20261091 — SAF-4 / GAP-405: the reason bar at the database", () => {
       for (const l of lists) expect(l).toEqual([MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT]);
       expect(f).toMatch(/IF NEW\.updated_by_name IS NULL OR NEW\.updated_by_name NOT IN/);
       // human territory, as isHumanTerritory reads it: any VISIBLE note (an empty or blank one is none) or a person chip
-      expect(f).toMatch(/IF quality_reason_key\(OLD\.manual_note\) IS NOT NULL OR COALESCE\(OLD\.evidence, '\[\]'::jsonb\) @> '\[\{"source": "manual"\}\]'::jsonb THEN/);
+      // (a legacy chip stored as one object counts: checklist_chips reads checklist_evidence)
+      expect(f).toMatch(/IF quality_reason_key\(OLD\.manual_note\) IS NOT NULL OR checklist_chips\(OLD\.evidence, false\) @> '\[\{"source": "manual"\}\]'::jsonb THEN/);
       expect(f).toMatch(/IF NEW\.manual_note IS DISTINCT FROM OLD\.manual_note\s*\n\s*OR checklist_chips\(NEW\.evidence, false\) IS DISTINCT FROM checklist_chips\(OLD\.evidence, false\) THEN/);
       // the columns that changed, and each machine's allow-list (what runAutoEvidence / applyAssessment send)
       expect(f).toMatch(/FROM jsonb_each\(to_jsonb\(NEW\)\) n\s*\n\s*WHERE n\.value IS DISTINCT FROM \(to_jsonb\(OLD\) -> n\.key\);/);
       expect(f).toContain("IF NOT v_changed <@ ARRAY['status', 'evidence', 'updated_at', 'updated_by', 'updated_by_name']");
-      expect(f).toMatch(/OR OLD\.applicability = 'na' OR OLD\.status = 'na'\s*\n\s*OR \(NEW\.status IS DISTINCT FROM OLD\.status AND NEW\.status NOT IN \('satisfied', 'needs_evidence'\)\) THEN/);
+      expect(f).toMatch(/OR OLD\.applicability = 'na' OR OLD\.status = 'na'\s*\n\s*OR \(NEW\.status IS DISTINCT FROM OLD\.status AND NEW\.status NOT IN \('satisfied', 'needs_evidence'\)\)\s*\n\s*OR \(NEW\.evidence IS DISTINCT FROM OLD\.evidence AND jsonb_typeof\(NEW\.evidence\) IS DISTINCT FROM 'array'\) THEN/);
       expect(f).toContain("IF NOT v_changed <@ ARRAY['applicability', 'ai_rationale', 'status', 'updated_at', 'updated_by', 'updated_by_name']");
       expect(f).toMatch(/AND NOT \(\(NEW\.status = 'na' AND NEW\.applicability = 'na'\)\s*\n\s*OR \(OLD\.status = 'na' AND NEW\.status = 'open' AND NEW\.applicability = 'applies'\)\)\)/);
       // QUAL-5 at the database: never an N/A on a satisfied or evidence-bearing item
-      expect(f).toMatch(/OR \(NEW\.applicability = 'na'\s*\n\s*AND \(OLD\.status = 'satisfied'\s*\n\s*OR jsonb_array_length\(CASE WHEN jsonb_typeof\(OLD\.evidence\) = 'array' THEN OLD\.evidence ELSE '\[\]'::jsonb END\) > 0\)\) THEN/);
+      expect(f).toMatch(/OR \(NEW\.applicability = 'na'\s*\n\s*AND \(OLD\.status = 'satisfied'\s*\n\s*OR jsonb_array_length\(checklist_evidence\(OLD\.evidence\)\) > 0\)\) THEN/);
       // text, section, seq … are in neither list
       for (const col of ["text", "section", "seq", "manual_note", "checklist_id", "org_id"]) {
         expect(f).not.toMatch(new RegExp(`ARRAY\\[[^\\]]*'${col}'`));
@@ -492,6 +500,11 @@ describe("20261091 — SAF-4 / GAP-405: the reason bar at the database", () => {
       expect(chips).toMatch(/LANGUAGE sql IMMUTABLE\s*\n\s*SET search_path = public/);
       expect(chips).toMatch(/WHERE \(e\.value->>'source' IS NOT DISTINCT FROM 'auto'\) = p_auto;/);
       expect(chips).toMatch(/jsonb_agg\(e\.value ORDER BY e\.ordinality\)/);
+      expect(chips).toMatch(/FROM jsonb_array_elements\(checklist_evidence\(p_evidence\)\) WITH ORDINALITY/);
+      // the evidence as a list of chips: an array as it stands, ONE object as a single chip (normalizeEvidence in the lib)
+      const ev = between(m91, "CREATE OR REPLACE FUNCTION checklist_evidence(p_evidence jsonb)", "$$;");
+      expect(ev).toMatch(/LANGUAGE sql IMMUTABLE\s*\n\s*SET search_path = public/);
+      expect(ev).toMatch(/WHEN 'array' THEN p_evidence\s*\n\s*WHEN 'object' THEN jsonb_build_array\(p_evidence\)\s*\n\s*ELSE '\[\]'::jsonb/);
       expect(m91).toContain("DROP FUNCTION IF EXISTS checklist_non_auto_chips(jsonb);");
     });
     it("a sweep green's citation must RESOLVE to its row — an admitted document of the workspace, an accepted turnover item or a human MI completion of the project; a label alone proves nothing", () => {
@@ -501,14 +514,21 @@ describe("20261091 — SAF-4 / GAP-405: the reason bar at the database", () => {
       expect(cite).toMatch(/LANGUAGE sql STABLE\s*\n\s*SET search_path = public/);
       expect(cite).not.toMatch(/SECURITY DEFINER/);
       expect(cite).toMatch(/WHERE e->>'source' = 'auto'/);
+      expect(cite).toMatch(/FROM jsonb_array_elements\(checklist_evidence\(p_evidence\)\) e/);
       // the register's rule, as the lib's gather admits a document (EVIDENCE_DOCUMENT_STATUSES)
       const libStatuses = /EVIDENCE_DOCUMENT_STATUSES: ReadonlyArray<string> = \[([^\]]*)\]/.exec(readFileSync(join(process.cwd(), "lib", "checklists.ts"), "utf8"))![1];
       expect(cite).toContain(`d.status IN (${libStatuses.replace(/"/g, "'")})`);
       expect(cite).toMatch(/WHERE d\.id = quality_try_uuid\(e->>'documentId'\) AND d\.org_id = p_org_id/);
       expect(cite).toMatch(/JOIN document_versions v ON v\.id = d\.current_version_id/);
-      expect(cite).toMatch(/AND NOT \(v\.provenance = 'external' AND v\.review_state IS DISTINCT FROM 'approved'\)/);
-      expect(cite).toMatch(/WHERE t\.id = quality_try_uuid\(e->>'turnoverItemId'\)\s*\n\s*AND t\.project_id = c\.project_id AND t\.status = 'accepted'/);
-      expect(cite).toMatch(/WHERE m\.id = quality_try_uuid\(e->>'checklistId'\)\s*\n\s*AND m\.project_id = c\.project_id AND m\.id <> c\.id\s*\n\s*AND m\.kind = 'mi' AND m\.status = 'complete' AND m\.completed_basis = 'human'/);
+      // a version with NO provenance (the bulk upload's, every version before 20260823) is admitted,
+      // as the lib admits it: `provenance = 'external'` would be NULL there and refuse the green
+      expect(cite).toMatch(/AND NOT \(v\.provenance IS NOT DISTINCT FROM 'external' AND v\.review_state IS DISTINCT FROM 'approved'\)/);
+      expect(cite).not.toMatch(/v\.provenance = 'external'/);
+      const libAdmit = readFileSync(join(process.cwd(), "lib", "checklists.ts"), "utf8");
+      expect(libAdmit).toContain(`.filter((v) => v.provenance === "external" && v.review_state !== "approved")`);
+      // every branch is tied to the item's org
+      expect(cite).toMatch(/WHERE t\.id = quality_try_uuid\(e->>'turnoverItemId'\) AND t\.org_id = p_org_id\s*\n\s*AND t\.project_id = c\.project_id AND t\.status = 'accepted'/);
+      expect(cite).toMatch(/WHERE m\.id = quality_try_uuid\(e->>'checklistId'\) AND m\.org_id = p_org_id\s*\n\s*AND m\.project_id = c\.project_id AND m\.id <> c\.id\s*\n\s*AND m\.kind = 'mi' AND m\.status = 'complete' AND m\.completed_basis = 'human'/);
       const uuidFn = between(m91, "CREATE OR REPLACE FUNCTION quality_try_uuid(p_text text)", "$$;");
       expect(uuidFn).toMatch(/CASE WHEN p_text ~\* '\^\[0-9a-f\]\{8\}-/);
     });
@@ -593,7 +613,8 @@ describe("20261091 — QUAL-7 / QUAL-2 columns and backfill", () => {
     const calls = [...m91.matchAll(/jsonb_array_elements\(([^)]*\)?[^)]*)\)/g)];
     expect(calls.length).toBeGreaterThanOrEqual(5);
     for (const m of calls) {
-      expect(m[0], m[0]).toMatch(/CASE WHEN jsonb_typeof\((i\.evidence|p_evidence)\) = 'array' THEN \1 ELSE '\[\]'::jsonb END/);
+      // the inventory's inline guard, or checklist_evidence() (array, one object as one chip, else none)
+      expect(m[0], m[0]).toMatch(/CASE WHEN jsonb_typeof\(i\.evidence\) = 'array' THEN i\.evidence ELSE '\[\]'::jsonb END|^jsonb_array_elements\(checklist_evidence\(p_evidence\)\)$/);
     }
   });
   it("the REL-4 quality-half CHECK constraints already exist in 20261013 and are probed, not re-created", () => {

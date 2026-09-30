@@ -75,6 +75,17 @@ export interface CitationRef { documentId?: string; turnoverItemId?: string; che
 
 export type EvidenceChip = { label: string; href?: string; source: "auto" | "manual" } & CitationRef;
 
+/** The stored evidence as a list of chips: an array as it stands, a legacy
+ *  value stored as ONE object as a single chip (a person's chip in that
+ *  shape is still a person's), anything else as none — the same reading as
+ *  checklist_evidence() in 20261091, so the sweep never erases a chip the
+ *  database counts. */
+export function normalizeEvidence(raw: unknown): EvidenceChip[] {
+  if (Array.isArray(raw)) return raw as EvidenceChip[];
+  if (raw && typeof raw === "object") return [raw as EvidenceChip];
+  return [];
+}
+
 export interface ChecklistItemState {
   id: string;
   text: string;
