@@ -53,6 +53,18 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:26-29 — `CREATE POLIC
 - [ ] A test in the style of the existing API-route authorization tests proves a Viewer JWT gets 42501 on assets INSERT/UPDATE/DELETE.
 - [ ] The page.tsx:349 banner text is verified against the new policy so the copy and the database say the same thing.
 
+**Partial (2026-09-30, intelligence Round G).** Most of the database half was already live and is verified here, not rebuilt: R&P `DEC-17` (`20261045`, applied 2026-09-02) put RESTRICTIVE INSERT / UPDATE / DELETE overlays on `assets`, `asset_types`, `asset_photos`, `asset_files` for the writer tier by the role collection, plus `assets_guard_registry` confining a working member's UPDATE to the whiteboard columns. This round's `20261128_intel_roundG_registry_authority.sql` narrows DELETE on `assets`, `asset_types` and `asset_photos` to the controller tier (`is_org_controller`, re-created from 20261045's own format — photos follow the asset) and audits every person-initiated asset deletion (`trg_assets_audit_delete` → `ASSET_DELETED`). The page now says what the database enforces: "Only Admin / Doc Control / Manager / Supervisor can create, edit or archive equipment; deleting it is Admin / Doc Control only", the drawer offers Delete to controllers (`isControllerRole` from `lib/permissions.ts`, no new literal list — DEC-35) and Archive to the writer tier, the photo delete is controller-only, "New operating area" (a Site Codebook write) is controller-only, and every registry write in `lib/assets.ts` is checked (a refusal RLS answers with zero rows is thrown). Decision recorded as `DEC-53` (registry tiers).
+
+**Pending migration:** `supabase/migrations/20261128_intel_roundG_registry_authority.sql` (its inventory counts the Manager/Supervisor-only members who lose DELETE).
+
+**Done-when.**
+1. ✓ assets: SELECT members (the permissive member policy), INSERT/UPDATE by the writer tier (20261045 overlays + guard), DELETE by the controller tier (20261128) — all by the role collection.
+2. ✓ asset_types and asset_photos carry the same split (20261045 + 20261128).
+3. Proved by static census; runtime test pending. The "registry policy census" in `lib/__tests__/intelRoundGRegistry.test.ts` replays the text of every numbered migration. It asserts that the final DELETE overlays carry 20261128's controller predicate, that the 20261045 INSERT/UPDATE predicates (Viewer and Auditor excluded) are untouched, and that nothing later re-opens them. The data-layer tests prove that a refused UPDATE or DELETE surfaces as an error. No database runs in the suite, so no test refuses a Viewer's JWT at runtime (42501 or zero rows). (Supplementary, not a repo test: in the review-fix pass `20261128` was applied to a scratch Postgres 16 with stubbed auth and role helpers; there a Viewer's and a Manager's asset DELETE affected 0 rows, an Admin's deleted the row and wrote `ASSET_DELETED`, and a Viewer's INSERT into `document_equipment_suggestions` was refused with 42501.)
+4. ✓ The banner text matches the policy (pinned by test).
+
+**Scope / residual.** Apply 20261128. The finding stays OPEN on one limb: done-when 3 asks for a test that refuses a Viewer's JWT at runtime, and a static census plus a scratch-database spot check is not that test. It closes when the suite gains a database (or an RLS harness) that runs the policies. Everything else is built.
+
 ---
 
 <a id="area-2"></a>
@@ -200,7 +212,7 @@ app/(protected)/graph/page.tsx:229-235 — `// Namespaced ids ("asset:…", "cbu
 ## AREA-7 · Owner question 6, answered: a master equipment list can never be filed into operating areas — the CSV importer has no unit or site-code column, and the codebook has no tag→unit decoder to recover one
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/assets/AssetCsvImportModal.tsx:22-27`, `components/assets/AssetCsvImportModal.tsx:124-134`, `lib/assetCategorize.ts:48-63`, `lib/codebook.ts:149-160`, `app/(protected)/admin/assets/page.tsx:969-1085`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every named mechanism checks out, but the headline — "a master equipment list can never be filed into operating areas" — is false. The same page the finding cites ships a dedicated bulk unit-assignment panel that files imported assets and back-fills the site code, with drawing-derived suggestions. The residual defect is throughput and discoverability (the panel shows `assets.slice(0, 50)` at a time, so 3,000 rows means ~60 passes) plus the missing CSV column, which is LOW.
@@ -222,6 +234,19 @@ components/assets/AssetCsvImportModal.tsx:22-27 — the four-field CANONICAL_FIE
 - [ ] CANONICAL_FIELDS gains `unit` (matched against codebook unit code OR label) and `code` (site code), and commit passes them to createAsset; when only `code` is given the importer decodes the unit via codeToTag at import time.
 - [ ] UnassignedAssignPanel gets a bulk path — assign-all-matching-prefix, or a paste-a-tag→unit mapping — instead of 50 dropdowns at a time.
 - [ ] Importing a 3,000-row list with a unit column lands every asset on its operating-area card with no manual step.
+
+**Resolution (2026-09-30, intelligence Round G).** Closed with BR-4 / BR-6. The importer (`components/assets/AssetCsvImportModal.tsx`, planned by `lib/assetCategorize.ts` `planAssetImport`) gains an operating-unit column matched against the codebook unit code OR name (`resolveUnitCell`, never a guess) and a site-code column decoded through `codeToTag` when no unit column is given; the unit files the row and derives its code. The unassigned panel gets a bulk path: "every tag starting with [E] goes to [unit] → Select N matching" (`assetsMatchingTagPrefix`, the one grammar; a letters-only prefix is a whole tag prefix, so E never takes EA) selects every unassigned asset, not just the 50 shown, and "Assign all N selected" files them with derived codes. The registry is read whole (AREA-9), so a 3,000-row list is counted and shown.
+
+*Review fix (2026-09-30).* With the site-code unique index (`20261128`), a derived code that another asset already carries used to cost the whole write. The bulk "Assign all" loop stopped at the first collision, leaving earlier rows written and the rest not, without refreshing the page, and the colliding asset was not filed. The importer's commit failed the row after a preview that said Create. Now every row is attempted on its own. The derived code is optional (`updateAsset` / `createAsset` with `codeOptional`), so the asset is filed without the code and the identity review lists it (`derived_code_taken`). Failures are reported, and the page refreshes in `finally`. The import plan drops a taken code up front (`planAssetImport` `codeHolders` plus the file's own earlier rows). Tests: `lib/__tests__/assetCategorize.test.ts`, `lib/__tests__/intelRoundGRegistry.test.ts` ("a DERIVED code is optional", "the bulk filer and the importer never lose a row").
+
+**Done-when.**
+1. ✓ CANONICAL_FIELDS gains unit (code or label) and code; commit passes them to createAsset; a code-only row is decoded to its unit at import.
+2. ✓ UnassignedAssignPanel has a bulk assign-by-prefix path. It files row by row, so one refusal never stops the rest, and a taken derived code is dropped rather than failing the filing.
+3. ✓ A 3,000-row list with a unit column lands every asset in its operating area with no manual step. The planner test files 3,000 of 3,000, and planner tests with colliding codes still file every row. The commit path's retry without the code is proven on the data layer (`createAsset` / `updateAsset` with `codeOptional` against a unique-index stand-in). There is no browser test of the modal itself; its wiring is pinned by source tests.
+
+**Scope / residual.** None beyond applying 20261128. The Bridge's own writes land under the index too. `20261128`'s `assets_code_one_holder` drops a taken code from a service-role INSERT. The Bridge (`lib/equipmentBridgeServer.ts`) re-sends without the code a discovery insert that the index refuses in a race, and a backfill that the trigger refuses. So a discovered tag is created and a backfill files its unit, and each tag left without its code is recorded as `codesLeftBlank` (see `CB-10`).
+
+**Verification fix (2026-09-30, intelligence Round G).** The residual above said the trigger drops a taken code from any service-role write. That was not true of two writes. A service-role UPDATE kept its old code, and that path is now refused with 23505 naming the holder. A parallel discovery insert the trigger cannot see was refused by the index, and the Bridge then lost the asset. The Bridge now re-sends both writes once without the code (`CB-10` has the detail and the tests).
 
 ---
 
@@ -258,7 +283,7 @@ components/assets/AreaKnowledgePanel.tsx:192-196 — `const drawingsDone = statu
 ## AREA-9 · The whole Operating Areas surface loads assets with an unbounded query and no pagination, so on a large plant every unit count, unit card, and area checklist silently describes a truncated registry
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/assets.ts:117-134`, `app/(protected)/admin/assets/page.tsx:114-118`, `app/(protected)/admin/assets/page.tsx:161-247`, `components/assets/AreaKnowledgePanel.tsx:116-131`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the internal corroboration that a 1,000-row PostgREST ceiling is real in this deployment: AreaKnowledgePanel.tsx:117-119 comments 'Chunked over EVERY asset (no 1,000-asset display cap)'. The contrast with the setup navigator is also real — setup/page.tsx:57-59 uses `.select("id", { count: "exact", head: true })`, which is unaffected by the row cap, so the two surfaces disagree. No pagination, no truncation flag, and no error anywhere.
@@ -278,6 +303,15 @@ lib/assets.ts:123-133 — `let q = supabase.from("assets").select("*").eq("org_i
 - [ ] listAssets pages in 1000-row windows the way the rest of the codebase does, or takes an explicit range and the page loads all pages before computing counts.
 - [ ] Unit cards and the unassigned card are proven correct against a >2,000-asset org, or the page states the truncation.
 - [ ] AreaKnowledgePanel.tsx:117's 'no 1,000-asset display cap' comment is true of its input, not just of its own loop.
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced against an in-memory PostgREST stand-in that caps responses at 1,000 rows: the single `select("*")` returned 1,000 of 2,500. `lib/assets.ts` `listAssets` now reads every page: a stable order (tag, then id), an exact row count on the first window, each next window starting where the returned rows end — complete whatever max-rows is configured to (tested with a 400-row cap too), and it refuses rather than truncates beyond 200,000 rows. `getPhotoCounts` chunks the ids (≤150 per request, no over-long URL) and pages the photos. `listAssetIdentities` (the codebook's impact counts) pages the same way. Tests: `lib/__tests__/intelRoundGRegistry.test.ts` ("AREA-9").
+
+**Done-when.**
+1. ✓ listAssets pages in 1,000-row windows until it has the exact count.
+2. ✓ Proven against a >2,000-asset org: 2,500 assets with a 1,000-row cap → all 2,499 live rows, unit counts exact (the page's unit cards, unassigned card and `unknownUnits` all derive from this array).
+3. ✓ AreaKnowledgePanel's `unitAssetIds` input (`areaAssetIds`, derived from the now-complete list) holds every asset of the area, so its "no 1,000-asset display cap" comment is true of its input.
+
+**Scope / residual.** None.
 
 ---
 
@@ -336,5 +370,14 @@ app/(protected)/admin/assets/page.tsx:1310 — `if (asset?.code) return; // exis
 - [ ] A pure helper decodes assets.code and compares its unit against assets.unit_code, and the Operating Areas page shows a banner listing conflicts with a one-click reconcile (keep the code, or keep the filing and re-derive the code).
 - [ ] The edit drawer, when the user changes unitCode on an asset whose existing code decodes to a different unit, says so before saving instead of silently keeping both.
 - [ ] The Facility Setup navigator's registry stage counts mismatches alongside `unitless`.
+
+**Partial (2026-09-30, intelligence Round G).** The contradiction is now visible and reconcilable in the registry itself. `lib/assetCategorize.ts` `codeUnitConflict(asset, book)` decodes the stored code and compares its unit with `unit_code` (no opinion when either is blank or the code does not decode); `planIdentityReview` lists every contradiction; the Operating Areas page shows them in the Identity review with a one-click reconcile each way — "Keep the code — file under 25" (`unit_code` ← the code's unit) or "Keep the filing — code 2030.22" (`code` ← re-derived) — and every asset card carries a "Code says 25 ≠ 20" badge. The edit drawer, when the unit and the code disagree, says so BEFORE saving with the same two ways out (re-derive the code / file under the code's unit). The importer flags a row whose code and unit column disagree (BR-4). Tests: `lib/__tests__/assetCategorize.test.ts` ("AREA-11", "CB-6").
+
+**Done-when.**
+1. ✓ Pure helper + a conflicts list on the Operating Areas page with one-click reconcile both ways.
+2. ✓ The drawer warns before saving.
+3. ✗ Not done here — the Facility Setup navigator (`app/(protected)/setup/page.tsx`) is I-05's file; the count it needs is `planIdentityReview(assets, book).filter((r) => r.kind === "code_names_other_unit").length` (exported, tested).
+
+**Scope / residual.** Limb 3 is handed to I-05 (setup navigator).
 
 ---

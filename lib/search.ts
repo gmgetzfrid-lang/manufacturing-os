@@ -29,7 +29,8 @@
 
 import { supabase } from "@/lib/supabase";
 import type { DocumentStatus, TicketStatus } from "@/types/schema";
-import { normalizeTag, type Asset } from "@/lib/assets";
+import type { Asset } from "@/lib/assets";
+import { tagKey } from "@/lib/codebook";
 import { expandQueryToTsquery } from "@/lib/searchSynonyms";
 
 /** Equipment-tag identity matching: people type "e22", "E22", "E-22", or
@@ -38,16 +39,18 @@ import { expandQueryToTsquery } from "@/lib/searchSynonyms";
  *  nobody should have to remember where the hyphen goes. Short queries only:
  *  a long sentence squashed to alphanumerics would match everything. */
 function tagLikeNorm(q: string): string | null {
-  const norm = normalizeTag(q);
+  const norm = tagKey(q);
   return norm.length >= 2 && norm.length <= 12 && !/\s/.test(q.trim()) ? norm : null;
 }
 
 /** Assets reachable by a taught nickname / old tag / vendor name. Exact on
  *  the normalized alias (a phrase match, not a substring sweep) so "north
  *  furnace" resolves but ordinary prose doesn't drag equipment in. Empty on
- *  any failure, including before the alias migration. */
+ *  any failure, including before the alias migration. GAP-310: the key is
+ *  the one grammar (tagKey) — the grammar addAssetAlias writes and
+ *  20261127 rewrote every existing row into. */
 async function assetIdsByAlias(orgId: string, q: string): Promise<string[]> {
-  const key = normalizeTag(q);
+  const key = tagKey(q);
   if (key.length < 3) return [];
   try {
     const { data, error } = await supabase
@@ -89,6 +92,88 @@ async function docIdsByEquipmentTag(orgId: string, q: string, cap = 200): Promis
       .in("asset_id", assetIds)
       .limit(cap);
     return [...new Set(((links ?? []) as Array<{ document_id: string }>).map((l) => l.document_id))];
+  } catch {
+    return [];
+  }
+}
+
+// ─── GAP-311: tag lookup ───────────────────────────────────────────────────
+
+export interface TagLookupHit {
+  asset: Pick<Asset, "id" | "tag" | "description" | "unit_code" | "code">;
+  /** How the query named the asset: its tag (any format), its site code, or
+   *  a taught alias. */
+  via: "tag" | "code" | "alias";
+  /** The operating area it is filed under, with the codebook's name. */
+  unit: { code: string; label: string | null } | null;
+  /** Documents the asset appears on (the document↔equipment relation). */
+  documents: Array<{ id: string; library_id: string; document_number: string | null; title: string | null }>;
+}
+
+/** GAP-311 — "FV-2201 is leaking": the asset, its unit and the drawings it
+ *  is on, from what someone typed, with NO AI call — indexed equality reads
+ *  only: the one tag grammar on assets.tag_normalized (every tag-format
+ *  variant), the exact site code, and the taught alias key. Archived
+ *  equipment is not a lookup answer. Empty on anything that is not
+ *  tag-shaped enough to be an identity (one character, a paragraph). */
+export async function lookupTag(orgId: string, query: string, opts: { documentsPerAsset?: number } = {}): Promise<TagLookupHit[]> {
+  const trimmed = query.trim();
+  const key = tagKey(trimmed);
+  if (key.length < 2 || trimmed.length > 80) return [];
+  const perAsset = opts.documentsPerAsset ?? 3;
+  const cols = "id, tag, description, unit_code, code, archived";
+  type Row = Pick<Asset, "id" | "tag" | "description" | "unit_code" | "code" | "archived">;
+  try {
+    const [byTag, byCode, aliasIds] = await Promise.all([
+      supabase.from("assets").select(cols).eq("org_id", orgId).eq("tag_normalized", key).limit(5),
+      /^[0-9][0-9.]*[A-Za-z]{0,2}$/.test(trimmed)
+        ? supabase.from("assets").select(cols).eq("org_id", orgId).eq("code", trimmed).limit(5)
+        : Promise.resolve({ data: [] as Row[], error: null }),
+      assetIdsByAlias(orgId, trimmed),
+    ]);
+    const found = new Map<string, { row: Row; via: TagLookupHit["via"] }>();
+    for (const r of ((byTag.data ?? []) as Row[])) if (!found.has(r.id)) found.set(r.id, { row: r, via: "tag" });
+    for (const r of ((byCode.data ?? []) as Row[])) if (!found.has(r.id)) found.set(r.id, { row: r, via: "code" });
+    const aliasOnly = aliasIds.filter((id) => !found.has(id));
+    if (aliasOnly.length > 0) {
+      const { data } = await supabase.from("assets").select(cols).eq("org_id", orgId).in("id", aliasOnly.slice(0, 10));
+      for (const r of ((data ?? []) as Row[])) if (!found.has(r.id)) found.set(r.id, { row: r, via: "alias" });
+    }
+    const live = [...found.values()].filter((f) => !f.row.archived).slice(0, 5);
+    if (live.length === 0) return [];
+
+    const unitCodes = [...new Set(live.map((f) => f.row.unit_code).filter((c): c is string => !!c))];
+    const labels = new Map<string, string>();
+    if (unitCodes.length > 0) {
+      const { data } = await supabase.from("codebook_entries").select("code, label")
+        .eq("org_id", orgId).eq("kind", "unit").in("code", unitCodes);
+      for (const u of ((data ?? []) as Array<{ code: string; label: string }>)) labels.set(u.code, u.label);
+    }
+
+    const ids = live.map((f) => f.row.id);
+    const { data: links } = await supabase.from("document_assets").select("asset_id, document_id")
+      .in("asset_id", ids).limit(perAsset * ids.length * 4);
+    const docIdsByAsset = new Map<string, string[]>();
+    for (const l of ((links ?? []) as Array<{ asset_id: string; document_id: string }>)) {
+      const list = docIdsByAsset.get(l.asset_id) ?? [];
+      if (!list.includes(l.document_id) && list.length < perAsset) list.push(l.document_id);
+      docIdsByAsset.set(l.asset_id, list);
+    }
+    const allDocIds = [...new Set([...docIdsByAsset.values()].flat())];
+    const docs = new Map<string, TagLookupHit["documents"][number]>();
+    if (allDocIds.length > 0) {
+      // RLS decides which of them this person may see — an unreadable drawing
+      // simply does not come back.
+      const { data } = await supabase.from("documents").select("id, library_id, document_number, title")
+        .eq("org_id", orgId).in("id", allDocIds);
+      for (const d of ((data ?? []) as Array<TagLookupHit["documents"][number]>)) docs.set(d.id, d);
+    }
+    return live.map(({ row, via }) => ({
+      asset: { id: row.id, tag: row.tag, description: row.description, unit_code: row.unit_code ?? null, code: row.code ?? null },
+      via,
+      unit: row.unit_code ? { code: row.unit_code, label: labels.get(row.unit_code) ?? null } : null,
+      documents: (docIdsByAsset.get(row.id) ?? []).map((id) => docs.get(id)).filter((d): d is TagLookupHit["documents"][number] => !!d),
+    }));
   } catch {
     return [];
   }

@@ -23,6 +23,21 @@ Load-bearing for the Bridge, the graph and the flows reader. A defect here propa
 | The governed AI leg on the codebook import route — caller's own key, provider allowlist, signed acceptable-use agreement, monthly spend cap, metering on both success and failure, bounded input, bounded output, hard timeout, and a last-line binary-content guard so a user's key is never spent on garbage. | `app/api/codebook/import/route.ts:67-163, 356-364` | This is the strongest governance contract in the codebase and the template every other AI route should match (app/api/flows/read/route.ts:110-135 already reimplements it inline, noting governedAiCall cannot carry images yet — that gap is worth closing centrally). |
 
 
+### Consumed by I-13: the codec and registry contract (2026-09-30, intelligence Round G)
+
+I-13 (GAP-305 unit identity, graph assembly) lands after this package and reads these exported names:
+- from `lib/codebook.ts`: `tagKey`, `normalizeTag`, `splitTag`, `typeForTag`, `typeCandidatesForTag`, `tagToCode`, `codeToTag` / `DecodedSiteCode`, `siteCodeCollisions`, `codeProblem` / `isValidCode`, `prefixClaimsElsewhere`, `codebookProblems`, `parseDrawingNumber`, `explainDrawingNumberMiss`, `loadCodebook` (`loadCodebookAdmin` in `lib/codebookServer.ts` is unchanged);
+- from `lib/assetCategorize.ts`: `planIdentityReview`, `codeUnitConflict`, `sharedSiteCodes`;
+- from `lib/assets.ts`: `listAssetIdentities`.
+
+Four contract changes a consumer must know about:
+1. `codeToTag` now returns `DecodedSiteCode`, `{ tag: string | null, unitCode, typeCode, candidates: string[], ambiguous: boolean }`. It used to return `{ tag: string, unitCode, typeCode }`. For a type registered with several prefixes (Vessels: V, D), `tag` is null and `ambiguous` is true (`CB-10`), while `unitCode` is certain either way. Read the unit from it; never treat `.tag` as a string.
+2. `typeForTag` returns null when two equipment types claim the tag's prefix. It used to return the first by sort order (`CB-8`). `typeCandidatesForTag` names the contenders. Such a tag is untyped, and `tagToCode` declines it too.
+3. `tagToCode` returns null for a letter unit or equipment-type code (`CB-3`), so a legacy letter-coded unit derives no site code.
+4. `normalizeTag` in `lib/assets.ts` (and in `lib/documentTags.ts`) is now `export const normalizeTag = tagKey`: a re-export of the one grammar instead of its own function declaration. The key it computes is unchanged, but the binding is a `const`, which is not hoisted. The `normalizeTag` in `lib/codebook.ts` is still the display spelling the codec parses, and it is not an identity key (`GAP-310`).
+
+**Verification fix (2026-09-30, intelligence Round G).** This note is new. Before it, no record named the exports I-13 consumes or these four changes.
+
 ---
 
 
@@ -89,6 +104,15 @@ supabase/migrations/20260928_site_codebook.sql:108-111 — `CREATE POLICY doc_eq
 - [ ] applyForDocument re-derives `code` from the tag + unit through the codebook rather than trusting the stored `suggested` payload
 - [ ] a test asserts a Viewer's direct write to document_equipment_suggestions is refused
 
+**Partial (2026-09-30, intelligence Round G).** The authority half is closed: `20261128_intel_roundG_registry_authority.sql` makes `document_equipment_suggestions` writable by the service role and controllers only (`is_org_controller`, same policy name and shape as 20260928, line-diffed in `lib/__tests__/intelRoundGRegistry.test.ts`) — a Viewer can no longer author the `suggested` payload a writer's Apply trusts. With that, the confused-deputy vector the verifier named is gone (only a controller or the service role writes the row). Pending migration: `supabase/migrations/20261128_intel_roundG_registry_authority.sql`.
+
+**Done-when.**
+1. ✓ Write restricted (controller tier by collection, plus the service role).
+2. ✗ Not done here — `applyForDocument` re-deriving `code` from tag + unit (`tagToCode(s.tag, s.unitCode, book)`) instead of trusting the stored payload is a change to `lib/equipmentBridgeServer.ts`, which I-11 owns (its CB-1 / BR-7 work re-derives the unit and the code on the same lines).
+3. Proved by static census; runtime test pending. The policy census in `lib/__tests__/intelRoundGRegistry.test.ts` shows the only write policy is controller-only and that nothing later re-opens it, but no database runs in the suite, so no test refuses a Viewer's JWT at runtime. (Supplementary, not a repo test: in the review-fix pass `20261128` was applied to a scratch Postgres 16 with stubbed auth and role helpers; there a Viewer's and a Manager's asset DELETE affected 0 rows, an Admin's deleted the row and wrote `ASSET_DELETED`, and a Viewer's INSERT into `document_equipment_suggestions` was refused with 42501.)
+
+**Scope / residual.** Limb 2 is handed to I-11 (`lib/equipmentBridgeServer.ts`). A runtime refusal test waits for a database in the test suite.
+
 ---
 
 <a id="cb-3"></a>
@@ -96,7 +120,7 @@ supabase/migrations/20260928_site_codebook.sql:108-111 — `CREATE POLICY doc_eq
 ## CB-3 · Codebook codes are unvalidated free text; a non-numeric code silently breaks the entire codec with no error anywhere
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/codebook/import/route.ts:143`, `lib/codebook.ts:348-358`, `app/(protected)/admin/codebook/page.tsx:193-201`, `app/(protected)/admin/assets/page.tsx:1712-1721`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right on every point. The asymmetry is decisive: lib/codebook.ts:159 `return `${unitCode}${type.code}.${padded}${parts.suffix}`` happily emits "CU30.22", but codeToTag at :166 requires `/^(\d+)\.(\d+)([A-Za-z]{0,2})$/` and parseDrawingNumber at :225 requires `^\d{width}$`, so a non-numeric code is write-only — derivable, never invertible, and nothing raises.
@@ -122,6 +146,24 @@ app/api/codebook/import/route.ts:143 — `.filter((r) => r.code.length > 0 && r.
 - [ ] the import review list visually flags proposed rows whose code fails the shape check and leaves them unchecked by default
 - [ ] the drawing-numbers live preview names the reason when a parse fails ("unit code 'CU' is not numeric") rather than only "Doesn't match the segments"
 
+**Resolution (2026-09-30, intelligence Round G).** Reproduced first: `tagToCode("E-22","CU")` minted `CU30.22`, which `codeToTag` cannot invert. One shared guard, `lib/codebook.ts` `codeProblem(kind, code)` / `isValidCode` — unit and equipment-type codes are 1–6 digits (leading zeros kept); drawing-type codes keep their free shape (the package decision, `DEC-53`) — at every door: the AI import route's cleaner tags a failing row with the reason (`app/api/codebook/import/route.ts`), `diffImport` puts it in a new `rejected` bucket, `upsertEntry` refuses before writing, the codebook page's `EntryTable.add` blocks it with the message, and the Operating Areas `AddUnitModal` / `AddCategoryModal` refuse it. The codec itself now declines to mint an undecodable identity (`tagToCode` returns null for a letter unit or type code). The database binds it (`20261128` §4) with the trigger `trg_codebook_entries_code_digits` (`codebook_entries_code_digits_guard`). It fires BEFORE INSERT OR UPDATE OF code, kind and raises 23514 only for a NEW letter code: an insert, or an edit that changes the code or kind. There is no CHECK: `20261128` always drops `codebook_entries_code_digits` if an earlier paste added one, NOT VALID or validated (`DROP CONSTRAINT IF EXISTS`, §4), and a probe confirms it is absent. The inventory counts the legacy letter codes, and nothing is rewritten.
+
+*Review fix (2026-09-30).* The first version added the CHECK NOT VALID and ran `codeProblem` on the code a row already had. Postgres checks a NOT VALID CHECK on every UPDATE of a violating row, so a legacy letter-coded unit such as `CU` froze. Pinning a library (`saveUnitLinks`), binding its knowledge library (the service-role UPDATE in `POST /api/area/knowledge-status`) and relabelling it were all refused. This was reproduced on a scratch Postgres 16. Now `upsertEntry` runs `codeProblem` only for a new row or when the code changes, and the database refuses only a new code, so those meta-only writes land. The knowledge-status route (another package's file) needs no 23514 mapping, because a meta-only UPDATE can no longer raise it. Tests: `lib/__tests__/codebook.test.ts` ("CB-3"), `lib/__tests__/intelRoundGRegistry.test.ts` ("a LEGACY letter-coded unit stays editable", "CB-3 binds a NEW code only").
+
+*Second review fix (2026-09-30).* The trigger raised on the service role too, and Postgres fires a BEFORE INSERT trigger ahead of the ON CONFLICT arbiter. The org restore's additive upsert (`ON CONFLICT (id) DO NOTHING`) of a legacy `CU` row therefore failed with 23514 even when the row already existed, and the restore stopped at `codebook_entries`, skipping every later table. The validated CHECK of the clean world refused the same restore of any backup taken before the org replaced its letter codes. Now `codebook_entries_code_digits_guard` passes the service role first (`IF auth.uid() IS NULL THEN RETURN NEW; END IF;`, the rule of the delete audit and the CB-5 guard), and there is no CHECK: `20261128` drops one an earlier paste added. Every code a person writes is still refused at the database (the app's writers are all browser-client; `upsertEntry` refuses before writing). Verified on a scratch Postgres 16: as the service role, the live `CU` row's `ON CONFLICT (id) DO NOTHING` re-insert and a fresh org's `CU` insert both pass; as a person, a new `CZ` and a `20`→`CY` change raise 23514, and a meta-only update of `CU` passes; a re-run over an earlier NOT VALID CHECK removes it. Tests: `lib/__tests__/intelRoundGRegistry.test.ts` ("CB-3 — an org restore holding a legacy letter-coded unit carries on", with the 23514 reproduction; "the service role passes the digit rule first thing"; "there is NO CHECK").
+
+**Pending migration:** `supabase/migrations/20261128_intel_roundG_registry_authority.sql` (inventory row: non-numeric unit / equipment-type codes; a probe confirms the CHECK is absent).
+
+**Verification fix (2026-09-30, intelligence Round G).** The Resolution above still described the first version's two worlds (a CHECK "added VALIDATED when no legacy row violates it" and "the inventory says which world you are in"). `20261128` has had no such branch since the second review fix: it always drops the CHECK, and there is no "after" inventory row for it. The Resolution sentence now says exactly that. No code changed for this finding.
+
+**Done-when.**
+1. ✓ The shared guard rejects non-digit codes at the import cleaner, upsertEntry, EntryTable.add, AddUnitModal and AddCategoryModal.
+2. ✓ in substance, by a trigger rather than the CHECK the limb names (`DEC-53` (3)): the database refuses every new letter code a person writes (INSERT and code changes, from the moment of apply). A CHECK was built and removed in review: NOT VALID it froze the legacy rows, and validated it made any backup holding a letter code unrestorable. The service role's writes (the org restore) pass.
+3. ✓ The import review list shows such rows flagged with the reason and they can never be checked or applied (stronger than "unchecked by default").
+4. ✓ The live preview names the reason ("Segment 1 (unit) expects 2 digits but found "CU"", plus "Unit code "CU" is not numeric…" when the codebook holds one) — `explainDrawingNumberMiss`.
+
+**Scope / residual.** Legacy letter codes (the inventory counts them) stay fully usable for everything except decoding: relabel, pinned libraries and knowledge binding all work. The codebook problems banner flags each one with the way out: add a digit code for the unit or type, refile its equipment there (the asset drawer, or the unassigned panel's bulk filer after clearing the unit), then remove the letter code. Removal is refused while anything still references it (CB-5). The code cannot be renamed in place: that needs the rename-with-cascade CB-5 leaves open. There is no CHECK to add once they are gone: the trigger is the rule.
+
 ---
 
 <a id="cb-4"></a>
@@ -129,7 +171,7 @@ app/api/codebook/import/route.ts:143 — `.filter((r) => r.code.length > 0 && r.
 ## CB-4 · Codebook write authority is headline-role-only while the rest of the intelligence stack is additive-role aware — a Manager who holds DocCtrl is locked out of the codebook but can still bind knowledge libraries
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260928_site_codebook.sql:66-73`, `app/(protected)/admin/codebook/page.tsx:35`, `app/(protected)/admin/codebook/page.tsx:49`, `lib/roleCapabilities.ts:74-84`, `lib/knowledgeAccess.ts:38-43`, `lib/codebook.ts:382-387`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The asymmetry is exactly as described and is even acknowledged by the code's own NOTE. Severity should drop to LOW: this fails CLOSED (a lockout, not an escalation), and there is no silent-no-op variant to worry about because every codebook write surface gates on the same headline value — admin/assets/page.tsx:251 `canEditLinks = activeRole === "Admin" || activeRole === "DocCtrl"` — so the UI hides the control rather than firing an update that affects zero rows.
@@ -151,6 +193,15 @@ lib/roleCapabilities.ts:74-84 — `Admin: 100, Manager: 90, Supervisor: 80, Draf
 - [ ] the codebook RLS write policies are additive-role aware, matching the `role IN (...) OR roles && ARRAY[...]` pattern already used in 20260817_org_members_escalation_and_config.sql
 - [ ] admin/codebook's canWrite uses the union (hasAnyRole) rather than activeRole, so UI and RLS agree
 - [ ] upsertEntry/deleteEntry/saveUnitLinks assert an affected-row count (`.select("id")` + length check, as /api/area/knowledge-status does at route.ts:312-314) so a refused write is a loud error, never a green no-op
+
+**Resolution (2026-09-30, intelligence Round G).** Two of three limbs were already live and are verified by pointer: the codebook RLS write policies read the role COLLECTION since R&P `ADD-4` (`20261046`: `codebook_entries_write` / `codebook_config_write` = `caller_holds_any_role(org_id, Admin + DocCtrl)`, identical to `is_org_controller`; no later migration redefines them — census in `lib/__tests__/intelRoundGRegistry.test.ts`), and the page's `canWrite` reads the collection since R&P `ADD-1`. This round closes the third: every codebook write in `lib/codebook.ts` asks for its row back — `upsertEntry` (edit and upsert), `deleteEntry`, `saveUnitLinks`, `saveConfig` — and a refusal (zero rows, no error) is thrown as "Not saved — only Admin or Document Control can edit the Site Codebook"; `applyImport` attempts every row and reports what did not land with the count that did. The stale NOTE about the headline-only policy is rewritten. Tests: `lib/__tests__/intelRoundGRegistry.test.ts` ("CB-4 / IRLS-10").
+
+**Done-when.**
+1. ✓ Additive-role aware (20261046, R&P ADD-4 — verified by pointer and census).
+2. ✓ `canWrite` uses the collection (R&P ADD-1 — verified in source).
+3. ✓ upsertEntry / deleteEntry / saveUnitLinks (and saveConfig) assert an affected-row count.
+
+**Scope / residual.** None.
 
 ---
 
@@ -181,6 +232,17 @@ lib/codebook.ts:360-363 — `export async function deleteEntry(id: string): Prom
 - [ ] the delete confirm names the exact counts it will orphan (assets with this unit_code, process_flows refs, pinned links, knowledge binding)
 - [ ] codes are editable in place with a cascade that rewrites the referencing rows, removing the need to delete-and-re-add
 - [ ] re-adding an existing code shows the same 'already exists' guard the assets-page modals use, instead of silently upserting over the label
+
+**Partial (2026-09-30, intelligence Round G).** Removal is now honest and guarded (the package decision, `DEC-53`: a unit or type still in use is refused with the counts). `EntryTable.remove` counts, before anything is deleted, the registry assets a unit files or codes (or a type types or codes) — `entryAssetReferences` over `listAssetIdentities` — and the process flows ending at a unit (`unitFlowReferenceCount`, both endpoints); any reference refuses the removal with the numbers ("… still in use: 312 assets filed under it or coded into it and 4 process flows ending at it. Refile them first"). An unreferenced entry's confirm names exactly what it loses (pinned libraries, the knowledge binding). Re-adding an existing code is refused with "already exists — edit its label in place" instead of silently upserting over the label.
+
+*Review fix (2026-09-30).* The refusal was enforced only in the codebook page's `remove()`, so any other caller of `deleteEntry`, or a controller's direct PostgREST DELETE, could still strand equipment. `20261128` §6 adds `trg_codebook_entries_guard_in_use` (`codebook_entries_guard_in_use`, SECURITY DEFINER, `search_path` pinned). It fires BEFORE DELETE OR UPDATE OF code, kind and refuses (23503) a person's removal or re-coding of a unit or equipment type that stored identity still references: assets filed under the unit, assets whose site code's head is `<unit><type>` for the entry, and process flows ending at the unit. The refusal carries the counts. The service role's cascades (org purge, restore) pass, and so does an org already gone. `lib/codebook.ts` `deleteEntry` translates the refusal ("Refused — unit 20 is still referenced by 312 asset(s) and 2 process flow(s)…"). The page's own pre-count stays because it is friendlier and also counts tags a type's prefixes classify. This was exercised on a scratch Postgres 16: a unit or type still in use was refused, an unused type was removed, and the service role and an org-level cascade passed. Tests: `lib/__tests__/assetCategorize.test.ts`, `lib/__tests__/intelRoundGRegistry.test.ts` ("CB-5", "20261128 §6").
+
+**Done-when.**
+1. ✓ The confirm (or the refusal) names exact counts: assets, process-flow refs, pinned links, knowledge binding.
+2. ✗ Not done — codes are still not editable in place, and there is no cascade rewriting `assets.unit_code`, the unit part of `assets.code` and `process_flows` refs. It is a multi-table rename that must be atomic (a SECURITY DEFINER function gated by `is_org_controller`, rewriting three tables in one transaction) and is larger than this package's brief; until it exists, the refusal above stops the delete-and-re-add path from stranding data.
+3. ✓ Re-adding an existing code shows the "already exists" guard.
+
+**Scope / residual.** Limb 2 (in-place code rename with a cascade) remains open for a later round. Until it lands, the database refuses a code change while the code is in use, so a rename can no longer strand equipment either. The guard's `20261128` must be applied.
 
 ---
 
@@ -215,6 +277,16 @@ Two differently-shaped searches for a recompute path both returned nothing: (1) 
 - [ ] the admin codebook page warns, before saving a padTo/code/prefix change, how many existing assets were derived under the old rule
 - [ ] deleting or editing a code shows the count of assets, process_flows rows, and unit bindings that reference it
 
+**Partial (2026-09-30, intelligence Round G).** A codebook edit now produces a re-decode plan and never a silent rewrite (the package decision, `DEC-53`). `lib/assetCategorize.ts` `planIdentityReview(assets, book)` lists every asset whose stored identity disagrees with the codebook as it stands — a code the codebook now derives differently after a padding / type-code / prefix edit (`code_rederives`) and a code naming a different unit than the filing (`code_names_other_unit`, AREA-11). The Operating Areas page shows it as an Identity review panel with the derived code beside the stored one, accepted per asset (or the shown batch) through the checked `updateAsset` under RLS (the writer tier). Before a padTo / mirroring (NumberingTab) or a prefix (EntryRow) edit is saved, `confirmRederivation` shows how many existing codes the edit would derive differently (`rederivationImpact`). Deleting a code shows its reference counts (CB-5). Tests: `lib/__tests__/assetCategorize.test.ts` ("CB-6").
+
+**Done-when.**
+1. Partly — the plan with a preview diff and per-asset acceptance exists ✓, but it runs in the browser under the user's RLS (the writer tier the database enforces), not as a server-side admin job.
+2. ✗ Not done — codebook_config / codebook_entries carry no version and assets record no derivation stamp. Drift is detected by re-derivation against the live codebook (which says WHAT differs); a stamp (which would say under WHICH version) needs a schema change outside this package's brief.
+3. ✓ The codebook page warns, before saving a padTo / mirroring / prefix change, how many existing assets were derived under the old rule.
+4. ✓ Deleting a code shows the counts of assets, process flows and unit bindings that reference it (codes are not editable in place — CB-5 limb 2).
+
+**Scope / residual.** Limbs 1 (server-side job) and 2 (version stamp) remain.
+
 ---
 
 <a id="cb-7"></a>
@@ -222,7 +294,7 @@ Two differently-shaped searches for a recompute path both returned nothing: (1) 
 ## CB-7 · Saving the drawing-number tab hardcodes mirrorsTag:true, silently resetting a non-mirroring org's rule — and there is no UI for it at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/(protected)/admin/codebook/page.tsx:344-347`, `lib/codebook.ts:155-156`, `lib/codebook.ts:337-340`, `supabase/migrations/20260928_site_codebook.sql:47`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves of the claim are true. The only way an org can hold mirrorsTag:false is an imported/restored codebook_config row, and the first Save on the Drawing numbers tab silently flips it back to true — after which tagToCode (codebook.ts:155-159) starts minting derived codes for a scheme that does not mirror the tag.
@@ -247,6 +319,15 @@ app/(protected)/admin/codebook/page.tsx:344-347 — `await saveConfig(orgId, { d
 - [ ] mirrorsTag is either exposed as a control with an explanation, or removed from the type if non-mirroring schemes are not actually supported
 - [ ] saving a padTo change warns how many existing assets carry codes derived under the previous padding
 
+**Resolution (2026-09-30, intelligence Round G).** The numbering tab (`app/(protected)/admin/codebook/page.tsx`) holds `mirrorsTag` in state from `book.iterableRule.mirrorsTag` and saves the org's value — the `mirrorsTag: true` literal is gone (pinned by test). A labelled control explains the rule ("Site codes mirror the tag number … Off: your code iterables are assigned per asset, so the app never derives a site code"). Before a padding or mirroring change is saved, `confirmRederivation` counts the existing assets whose code the current rule derived and the edited rule derives differently (or not at all) — `rederivationImpact` in `lib/assetCategorize.ts` — and says they are NOT rewritten and where to review them.
+
+**Done-when.**
+1. ✓ Preserves `book.iterableRule.mirrorsTag` on save.
+2. ✓ Exposed as a control with an explanation (non-mirroring schemes are supported by the codec already: `tagToCode` returns null).
+3. ✓ A padTo change warns with the count of assets carrying codes derived under the previous padding (with examples).
+
+**Scope / residual.** The warned-about codes are remedied in the Operating Areas identity review (CB-6).
+
 ---
 
 <a id="cb-8"></a>
@@ -254,7 +335,7 @@ app/(protected)/admin/codebook/page.tsx:344-347 — `await saveConfig(orgId, { d
 ## CB-8 · Two equipment types may register the same tag prefix; typeForTag silently picks whichever sorts first and the admin UI never warns
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/codebook.ts:137-143`, `app/(protected)/admin/assets/page.tsx:1786-1789`, `app/(protected)/admin/codebook/page.tsx:193-201`, `supabase/migrations/20260928_site_codebook.sql:31`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Accurate, including the detail that the winner is deterministic-by-sort rather than random. Both admin entry points validate the type CODE for collisions and neither looks at prefixes, so a second type claiming an in-use prefix is accepted in silence and every one of its tags is then typed and coded as the first type.
@@ -277,6 +358,15 @@ lib/codebook.ts:140 — `if (parts.prefix === up && up.length > bestLen) { best 
 - [ ] the equipment-types tab shows a duplicate-prefix warning inline
 - [ ] typeForTag returns an explicit ambiguity result rather than a silent first-wins pick when two types match
 
+**Resolution (2026-09-30, intelligence Round G).** Reproduced: with Exchangers[E] and Ejectors[E], `typeForTag("E-22")` returned Exchangers by sort order. Now: `typeCandidatesForTag` names every type claiming the tag's prefix and `typeForTag` answers null when there are two (no opinion — reordering rows can no longer re-type the plant; `tagToCode` declines too); `upsertEntry` re-reads the org's equipment types and refuses a prefix another type claims ("Prefix E- is already claimed by 30 Exchangers"), as do the codebook page's add/edit rows (`prefixClaimsElsewhere`) and the Operating Areas `AddCategoryModal`; `diffImport` rejects an AI proposal whose prefix is already held (by an existing type or an earlier row of the same proposal). The codebook page shows a problems banner and flags the affected rows (`codebookProblems`). Tests: `lib/__tests__/codebook.test.ts` ("CB-8"), `lib/__tests__/intelRoundGRegistry.test.ts`.
+
+**Done-when.**
+1. ✓ upsertEntry refuses a prefix already claimed by another equipment type (and the two direct-insert paths check first).
+2. ✓ The equipment-types tab shows the duplicate-prefix warning (banner + flagged rows) for data that already has one.
+3. ✓ typeForTag returns an explicit no-opinion result on a tie; typeCandidatesForTag exposes the contenders.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="cb-9"></a>
@@ -284,7 +374,7 @@ lib/codebook.ts:140 — `if (parts.prefix === up && up.length > bestLen) { best 
 ## CB-9 · asset_aliases are written with the codebook's normalizeTag and read with the registry's — the alias lookup and alias search can never match
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/assetAliases.ts:17`, `lib/assetAliases.ts:65`, `lib/assets.ts:77-79`, `lib/assets.ts:161-166`, `lib/search.ts:32`, `lib/search.ts:50-55`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by exhaustive grep on the column. Writes land uppercase ("THENORTHFURNACE"), so the two `.eq()` lookups in assets.ts and search.ts — both case-sensitive equality against a lowercase key — can never match any row. Only lib/assetAliases.ts:83 resolveAliasToAssetIds happens to use the codebook normalizer and therefore works; the other alias consumers (linkProposerServer.ts:261, mentionIndexer.ts:44, knowledge/ask/route.ts:373) sidestep the bug by reading the raw `alias` text.
@@ -310,6 +400,20 @@ lib/assetAliases.ts:17 and :65 — `import { normalizeTag } from "@/lib/codebook
 - [ ] a test asserts addAssetAlias → getAssetByTag and addAssetAlias → search round-trip for a phrase alias like "the north furnace"
 - [ ] the surviving duplicate normalizers (pidTrace, documentTags) carry a comment stating they are deliberately a different identity and must never touch tag_normalized/alias_normalized
 
+**Resolution (2026-09-30, intelligence Round G).** Closed with `GAP-310` in one commit (`2675323`): the alias column is written and read in THE one grammar, `lib/codebook.ts` `tagKey` (the registry key, identical to `normalize_tag()`), and `20261127_intel_roundG_one_tag_grammar.sql` rewrites every existing row (collision-safe) plus a BEFORE trigger for every future writer. Reproduced first: `lib/__tests__/intelRoundGGrammar.test.ts` fails 7/11 against the pre-fix `lib/assetAliases.ts` (the stored key was `THENORTHFURNACE`, the readers looked up `thenorthfurnace`) and passes after. `removeAssetAlias` is now a checked delete (a refusal is thrown; `components/assets/AliasPanel.tsx` shows it).
+
+*Review fixes (2026-09-30).* The trigger drops (RETURN NULL) an INSERT whose key another row of the asset already holds, so an org restore carrying two spellings of one alias carries on instead of raising 23505 at `asset_aliases`. In the second review the empty key joined that rule: an alias with no letter or digit re-keys to `''`, so two of them on one asset in a backup ("?" and "#", distinct under the old grammar) collided on the unique index and stopped the restore. The second is now dropped too (inert either way). Verified on a scratch Postgres 16; tests in `lib/__tests__/intelRoundGGrammar.test.ts` ("an org restore carries on past two spellings", "two aliases with no letter or digit", each with its 23505 reproduction).
+
+**Pending migration:** `supabase/migrations/20261127_intel_roundG_one_tag_grammar.sql`.
+
+**Done-when.**
+1. ✓ One normalizer is the source of truth for the identity columns: `lib/assetAliases.ts` imports `tagKey`, `lib/search.ts` imports `tagKey`, `lib/assets.ts` `normalizeTag` IS `tagKey`.
+2. ✓ The data migration re-normalizes existing `alias_normalized` values (20261127; pending paste).
+3. ✓ `addAssetAlias → getAssetByTag` and `addAssetAlias → searchDocuments` round-trip for "the north furnace" (and "F-101" in four spellings) — `lib/__tests__/intelRoundGGrammar.test.ts`.
+4. ✓ `lib/pidTrace.ts` carries the comment that its uppercase key is a different identity and never touches the identity columns; `lib/documentTags.ts`'s copy was not a different identity at all, so it became a re-export instead.
+
+**Scope / residual.** None beyond applying 20261127.
+
 ---
 
 <a id="cb-10"></a>
@@ -317,7 +421,7 @@ lib/assetAliases.ts:17 and :65 — `import { normalizeTag } from "@/lib/codebook
 ## CB-10 · tagToCode is not injective: two different pieces of equipment collide onto one site code, and assets.code has no unique index to catch it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/codebook.ts:149-160`, `lib/codebook.ts:165-183`, `supabase/migrations/20260928_site_codebook.sql:83`, `lib/__tests__/codebook.test.ts:105-110`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, and the collision is reachable with the exact codebook the project ships in its own tests. The asset rows stay distinct (they are keyed on tag_normalized), but their site identity — the thing the org navigates and prints by — is shared, and codeToTag inverts "2010.1" to V-1 unconditionally, so the drum is silently renamed to the vessel on every round trip.
@@ -342,5 +446,37 @@ lib/codebook.ts:159 — `return `${unitCode}${type.code}.${padded}${parts.suffix
 - [ ] codeToTag returns an ambiguity signal instead of silently picking tagPrefixes[0] when the type has more than one prefix
 - [ ] a unique partial index exists on assets (org_id, code) WHERE code IS NOT NULL, so a collision is refused rather than stored
 - [ ] the round-trip test at codebook.test.ts:105-110 includes a non-first prefix case such as ["D-1","20"] and passes
+
+**Resolution (2026-09-30, intelligence Round G).** Reproduced with the repo's own fixture: V-1 and D-1 (Vessels: V, D) both derive `2010.1` and the inverse renamed D-1 to V-1. Decision (`DEC-53`): a site code encodes the TYPE, so prefixes registered on one type share its number space by the site's own standard; the app neither encodes the prefix into the code nor forbids multi-prefix types (either would impose a numbering convention on the site — the DEC-35 spirit). Instead: (a) `codeToTag` returns an ambiguity signal — `{ tag: null, ambiguous: true, candidates: ["V-1","D-1"] }` — for a multi-prefix type and never silently picks the first prefix (the unit, which is all the categorizer reads, stays certain); (b) the registry refuses a second asset on one code: `20261128` creates a UNIQUE partial index `assets_org_code_unique` on `(org_id, code)` for non-blank codes when no org carries a duplicate (otherwise the plain index stays and the inventory counts them), and `lib/assets.ts` translates a collision into "Site code … is already carried by another asset"; (c) the codebook page's problems banner names every multi-prefix type ("V-1 and D-1 derive the same site code"), `siteCodeCollisions` names derived collisions, and the Operating Areas identity review lists codes already shared by two assets with a door into each (`sharedSiteCodes`).
+
+*Review fix (2026-09-30).* Two things the index made worse are fixed.
+- **A collision on a DERIVED code no longer loses the row.** `lib/assets.ts` `createAsset({ codeOptional })` and `updateAsset(id, patch, by, { codeOptional })` re-send a write that collides on `assets_org_code_unique` without the code, so the asset is still created or filed. `updateAsset` returns `codeDropped` and `isSiteCodeTaken` recognises the refusal.
+  - The master-list import plans against every code already carried: `planAssetImport` takes `codeHolders` from `listAssetIdentities` (archived rows included) and tracks the codes earlier rows of the file claim. A derived or given code that is already taken (V-1 / D-1, E-022 / E-22) is dropped from the row with a note, and the row still lands filed. The commit writes with the code optional and lists the rows that landed without it.
+  - The bulk filer (`UnassignedAssignPanel.assign`) now tries each row separately, writes the derived code as optional, reports what was filed without a code or not filed at all, and refreshes the page in `finally`. Before, the first collision stopped the loop partway and left the page stale.
+  - Such an asset appears in the identity review as `derived_code_taken`, naming the holder (`planIdentityReview(assets, book, codeHolders)`), with a door to set its own code.
+- **Archived assets are counted.** The shared-code list is computed over every identity, archived included, which is what the index and the inventory count. Archived holders are marked, and one opens from the registry (`getAsset`).
+
+Tests: `lib/__tests__/codebook.test.ts` ("CB-10"), `lib/__tests__/assetCategorize.test.ts` ("CB-10 — the identity review lists…", "CB-10 — the import plan drops…", "an ARCHIVED holder counts"), `lib/__tests__/intelRoundGRegistry.test.ts` ("a DERIVED code is optional", "the bulk filer and the importer never lose a row").
+
+*Second review fix (2026-09-30).* The first fix held "never the asset" only for this package's app writers. The service role's writes still lost the row: the Bridge's discovery insert failed on the index and its retry does not match the index name, so D-1 was never created beside V-1; its matched-asset backfill sends `{unit_code, code}` in one patch, so a code collision swallowed the filing; and an org restore stopped at `assets` for a backup row whose code another asset now carries. `20261128` adds `assets_code_one_holder` (BEFORE INSERT OR UPDATE OF code, `search_path` pinned): when the SERVICE ROLE writes a code another asset of the org already carries (a committed holder: the trigger cannot see a parallel insert), an INSERT lands without it. An UPDATE then kept the row's own code; the verification fix below makes that a refusal and has the Bridge re-send its backfill without the code. It excludes `NEW.id`, so a restore's `ON CONFLICT (id)` skip of a live row is unchanged. A person's write passes through to the index. The drawer's auto-derived code is now written as optional too (it saves without it and says so); only a code a person typed is refused, with the code named. Proven by driving the Bridge's own `applyForDocument` (I-11's file, not edited by this fix) against the in-memory stand-in: without the trigger D-1 is not created and E-022 stays unfiled; with the transcribed trigger D-1 lands filed without the code and E-022 is filed. The restore round trip covers a live id, a reused code and a pre-index duplicate pair. Verified on a scratch Postgres 16 (service-role insert and backfill, restore, a person's refusal). Tests: `lib/__tests__/intelRoundGRegistry.test.ts` ("CB-10 — the Bridge and the org restore meet a taken site code", "a code the service role INSERTS yields", "the drawer's auto-derived code is optional").
+
+**Verification fix (2026-09-30, intelligence Round G).** An independent verification of `8a19bfa` found three places where the second fix claimed more than the code did.
+- **A parallel insert of one code lost the asset.** `assets_code_one_holder` sees committed rows only. Two drawings ingested in parallel (V-7 and D-7 both derive `2010.7`) both passed it, the index refused the second with 23505 on `assets_org_code_unique`, the Bridge's only retry matched a missing column, and its lookup by tag found nothing, so D-7 was silently not created. Reproduced on a scratch Postgres 16 with two sessions. Now `lib/equipmentBridgeServer.ts` `applyForDocument` re-sends such an insert once with the code blank (the trigger's own policy for a taken code). The file is I-11's; the change is small and is declared under `filesOutsidePlan`. The Bridge records every tag it writes without its derived code as `codesLeftBlank`, both in the `EQUIPMENT_BRIDGE_APPLIED` audit row and in its result. That covers the retried race, an insert the trigger blanked (read back from the insert's returned code), and a backfill re-sent without its code. Any other service-role writer that races on one code (a restore beside a Bridge run, a SQL insert) still gets the 23505.
+- **A service-role UPDATE to a taken code changed nothing and still answered UPDATE 1.** The trigger kept `OLD.code` and raised only a NOTICE, so a SQL-editor cleanup done in the wrong order silently did nothing. The UPDATE path now raises 23505 with `CONSTRAINT assets_org_code_unique` and a message naming the holder ("assets_org_code_unique: site code 2010.1 is already carried by V-1 (asset …); E-22 keeps its code"). Only an INSERT is blanked: restores and the Bridge's discovery insert. The Bridge's matched-asset backfill sends `{unit_code, code}` in one patch, so on that refusal it re-sends `{unit_code}` alone and the filing lands. The message carries the index name, so `lib/assets.ts` and the Bridge recognise it as they recognise the index's own refusal. The probe now pins the RAISE and the absence of `NEW.code := OLD.code`.
+- **The restore claim was wider than the code.** `20261128` §5 said "the identity review lists the asset". The review lists one only when the asset is filed and the dropped code is the one the codebook derives for it (`derived_code_taken`). Any other code a restore drops, such as one a person typed, is recorded by the trigger's NOTICE alone. The comment and this record now say so. The review is not widened (the smaller honest change); the gap is a residual below.
+
+Verified on a scratch Postgres 16 (stub `auth.uid()`, the verifier's seed). A service-role INSERT of a taken code lands without it, with a NOTICE naming the holder. A service-role UPDATE raises 23505 naming the holder, both non-blank → taken and the backfill shape blank → taken, and the re-sent `{unit_code}` lands. The correct cleanup order (clear the holder, then move the code) works, and a person's write still meets the index. The restore chunk and its re-run behave as before. Two concurrent sessions reproduce the race, and a re-send with the code NULL lands. The migration re-runs with every probe true. Tests: `lib/__tests__/intelRoundGRegistry.test.ts` ("two drawings ingested in parallel …", "index only …: the Bridge re-sends once without the code", "E-022's backfill is REFUSED by the trigger … and re-sent without the code", "a service-role UPDATE to a taken code … is refused with 23505 naming the holder", and the shape test pinning the RAISE).
+
+**Pending migration:** `supabase/migrations/20261128_intel_roundG_registry_authority.sql` (inventory row: assets sharing a code; the after row says whether the unique index was created).
+
+**Done-when.**
+1. ✓ By decision (`DEC-53`): neither listed option — the code encodes the type by the site's standard; injectivity is enforced where it can be, at the registry (unique index) and in the UI warnings.
+2. ✓ codeToTag returns an ambiguity signal for a multi-prefix type.
+3. ✓ The unique partial index exists once the duplicate inventory is zero (two worlds; nothing is rewritten). The identity review lists the duplicates to resolve, archived holders included, since the index counts them too. The index refuses a duplicate code, and the writers that derive one keep the asset. A service-role INSERT (the org restore, the Bridge's discovery insert) yields the code at the database trigger. The Bridge re-sends, once and without the code, a discovery insert the index refuses in a race and a backfill the trigger refuses. The app writes a derived code as optional (the importer, the bulk filer, the drawer). A code a person typed is refused, with the code named, and a service-role UPDATE to a taken code is refused, naming the holder. Another service-role writer racing on one code (a restore beside a Bridge run) gets the index's 23505.
+4. ✓ The round-trip test includes the non-first prefix (`D-1`) and asserts it is a candidate of an ambiguous inverse.
+
+**Scope / residual.** If the inventory shows duplicates, a person resolves them in the identity review and 20261128 is re-run to create the index. `lib/equipmentBridgeServer.ts` is I-11's file. This package edited it once, for the two re-sends without the code (`filesOutsidePlan`), and I-11 may surface `codesLeftBlank` in its coverage report. Two remainders are not built here:
+- A code a restore drops that is not the asset's derived code (one a person typed) is recorded only by the trigger's NOTICE. The restore route does not surface notices, and the identity review lists such an asset only when the dropped code is its derived one. **Closer: admin-and-org P1** (the restore route): compare each restored asset's backup code with the stored one and list the dropped codes in the restore result.
+- `CategorizeBanner` (`components/assets/UnitOpsPanels.tsx:46`, I-09's file) still plans without identities: `planCategorization(assets, types, book)` proposes a code an archived asset holds. It writes the derived codes without saying so, and its result line shows neither `codesDerived` nor `codesTaken`. A taken code is caught at apply as `codesTaken` rather than as a failure, but it is not shown. The Operating Areas page's own "Fill site codes from codebook" path already plans against every identity and reports both. **Closer: I-09**: pass `listAssetIdentities` as the fourth argument and show both counts in the result line.
 
 ---

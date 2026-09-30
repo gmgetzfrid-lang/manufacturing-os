@@ -14,7 +14,7 @@
 // search, the drawing→equipment bridge, and the link proposer.
 
 import { supabase } from "@/lib/supabase";
-import { normalizeTag } from "@/lib/codebook";
+import { tagKey } from "@/lib/codebook";
 
 export type AliasOrigin = "human" | "extraction" | "vision";
 
@@ -58,11 +58,17 @@ export async function addAssetAlias(input: {
 }): Promise<void> {
   const alias = input.alias.trim();
   if (!alias) return;
+  // GAP-310: the column is written in THE one grammar (tagKey — the same
+  // key assets.tag_normalized uses and every reader looks up with; the
+  // database's normalize_tag() trigger enforces it too, 20261127). An alias
+  // with no letter or digit has no key and could never be found again.
+  const key = tagKey(alias);
+  if (!key) throw new Error("An alias needs at least one letter or digit.");
   const { error } = await supabase.from("asset_aliases").insert({
     org_id: input.orgId,
     asset_id: input.assetId,
     alias,
-    alias_normalized: normalizeTag(alias),
+    alias_normalized: key,
     origin: input.origin ?? "human",
     note: input.note?.trim() || null,
     created_by: input.userId ?? null,
@@ -73,14 +79,20 @@ export async function addAssetAlias(input: {
 }
 
 export async function removeAssetAlias(id: string): Promise<void> {
-  const { error } = await supabase.from("asset_aliases").delete().eq("id", id);
+  // IRLS-10: a delete RLS refuses returns zero rows and no error — say so
+  // instead of reporting a removal that did not happen.
+  const { data, error } = await supabase.from("asset_aliases").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error("The alias was not removed — only Admin, Document Control, Manager or Supervisor can change equipment aliases.");
+  }
 }
 
 /** Resolve a spoken/typed name to asset ids. Punctuation-blind, same
- *  normalization as tags, so "North Furnace" and "north-furnace" agree. */
+ *  normalization as tags (tagKey), so "North Furnace" and "north-furnace"
+ *  agree. */
 export async function resolveAliasToAssetIds(orgId: string, text: string): Promise<string[]> {
-  const key = normalizeTag(text);
+  const key = tagKey(text);
   if (key.length < 2) return [];
   const { data, error } = await supabase
     .from("asset_aliases").select("asset_id")

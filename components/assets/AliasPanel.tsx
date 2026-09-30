@@ -77,7 +77,7 @@ export default function AliasPanel({
                 <Icon className="w-3 h-3 text-[var(--color-text-faint)]" />
                 {a.alias}
                 {canManage && (
-                  <button onClick={() => void removeAssetAlias(a.id).then(refresh)}
+                  <button onClick={() => { setError(null); void removeAssetAlias(a.id).then(refresh, (e) => setError((e as Error).message)); }}
                     aria-label={`Remove alias ${a.alias}`}
                     className="p-0.5 rounded-full text-[var(--color-text-faint)] hover:text-rose-600 opacity-50 group-hover:opacity-100">
                     <X className="w-2.5 h-2.5" />

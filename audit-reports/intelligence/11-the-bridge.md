@@ -125,7 +125,7 @@ lib/equipmentBridgeServer.ts:59 — `if (!kdoc?.source_document_id) return null;
 ## BR-4 · A master equipment list can never be filed to an operating area by the codebook alone — CSV import cannot set unit_code or code, and unit filing keys off code
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/assets/AssetCsvImportModal.tsx:22-27`, `components/assets/AssetCsvImportModal.tsx:124-133`, `lib/assets.ts:172-204`, `lib/assetCategorize.ts:48-56`, `components/assets/UnitOpsPanels.tsx:46-56`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a CSV-imported asset has code NULL, so `!a.unit_code && a.code` is false for every row and plan.unitAssignments is empty — applyCategorization's `filedToUnits` (assetCategorize.ts:117-123) counts 0 while `categorized` counts the type assignments. No other automatic code-setter exists: the only tagToCode callers are admin/assets/page.tsx:1018 (UnassignedAssignPanel, human-driven), :1313 (the edit drawer, human-driven) and equipmentBridgeServer.ts:117.
@@ -148,6 +148,16 @@ AssetCsvImportModal.tsx:130-133 — `await createAsset({ orgId, tag, description
 - [ ] planCategorization can derive a unit from tag + an explicitly supplied unit column, and can derive `code` via tagToCode once a unit is known
 - [ ] importing a master list with a Unit column results in filedToUnits > 0 on the first auto-categorize
 - [ ] the importer preview shows which rows will land in which operating area before commit
+
+**Resolution (2026-09-30, intelligence Round G).** The master-list door files what it imports. `components/assets/AssetCsvImportModal.tsx` maps an operating-unit column (a codebook unit by code or by name) and a site-code column; the pure planner `lib/assetCategorize.ts` `planAssetImport` resolves each row before anything is written — the unit from the unit column, or read from the site code when only the code is given (`codeToTag`), and the code derived once the unit is known (`tagToCode`) — and the preview shows, per row, the action, the operating area it lands in and the site code, with notes (unknown unit left unassigned, never guessed; a code naming a different unit than the unit column flagged). Rows are created with `unit_code` and `code` set. `planCategorization` also fills a blank code for an asset already filed to a unit (`codeAssignments`, fill-blank only). Spreadsheets come in through `POST /api/assets/parse-workbook` (the hardened `lib/xlsxData.ts` parseWorkbook, writer tier by collection). Tests: `lib/__tests__/assetCategorize.test.ts` ("BR-4 / AREA-7 / BR-6"), `lib/__tests__/assetWorkbookRoute.test.ts`.
+
+**Done-when.**
+1. ✓ The importer maps unit / site-code columns and passes them to createAsset.
+2. ✓ A unit is derived from an explicit unit column (or the code), and `code` via tagToCode once the unit is known — in the importer and, for already-filed assets, in planCategorization. *Review fix:* the categorize banner (`components/assets/UnitOpsPanels.tsx`, I-09's file) hides when blank codes are the only thing left, and never reports `codesDerived`, so the fill never ran by itself. The Operating Areas page now runs it on its own: "N pieces of filed equipment without a site code → Fill site codes from codebook", with the result counted (filled, already carried, failed). The plan is computed against every identity, archived included (`planCategorization(assets, types, book, codeHolders)`), so a code an archived asset holds is never proposed. A code taken at apply counts as `codesTaken`, listed under the identity review, and never as a failure (tests: `lib/__tests__/intelRoundGRegistry.test.ts` "filling blank codes never proposes a taken code", `lib/__tests__/assetCategorize.test.ts`).
+3. ✓ A master list with a Unit column lands filed on import, with no auto-categorize step: the planner test files 3,000 of 3,000. A list imported with site codes only is filed at import from the code. After the review fix, a row whose derived or given code another asset (or an earlier row) already carries still lands filed. The code is dropped with a note in the preview, the commit writes with the code optional in case a collision appears after the preview, and the result lists the rows that landed without a code (see `CB-10`).
+4. ✓ The preview shows which operating area each row lands in. After the review fix, row numbers are the sheet's own. `lib/xlsxData.ts` `parseWorkbook` reports each data row's real sheet row, counting the title block and skipped blank rows, and `/api/assets/parse-workbook` returns it as `rowNumbers`. "Row 10" in the preview or the failure list is therefore row 10 of the spreadsheet (route test with a title block and blank rows).
+
+**Scope / residual.** None beyond applying 20261128.
 
 ---
 
@@ -187,7 +197,7 @@ lib/equipmentBridgeServer.ts:181-182 — `const wanted = suggested.filter((s) =>
 ## BR-6 · CSV import cannot update existing assets — a re-import of a corrected master list produces one raw Postgres error per row and changes nothing
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/assets/AssetCsvImportModal.tsx:109-143`, `lib/assets.ts:196-203`, `supabase/migrations/20260603_asset_registry.sql:46`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed down to the '+N more' detail in the summary. Notably the codebase already has `translatePostgresError` (used at admin/assets/page.tsx:1391 and :1406) and this modal does not use it, so the raw constraint name reaches the user.
@@ -209,6 +219,15 @@ components/assets/AssetCsvImportModal.tsx:130-137 — `await createAsset({ orgId
 - [ ] the preview step reports how many rows already exist and offers create-only / create-and-update
 - [ ] matched rows update the mapped fields instead of erroring
 - [ ] duplicate-key failures are translated to plain language (translatePostgresError already exists and is used at admin/assets/page.tsx:1391)
+
+**Resolution (2026-09-30, intelligence Round G).** Before anything is written, the importer looks up every tag in the file by the one grammar (`lib/assets.ts` `findAssetsByTagKeys`, chunked, archived rows included) and the preview says how many rows already exist, offering "Skip them (create new only)" or "Update them from this file". Update writes only the cells the file supplies (and never overwrites an existing code with a derived one — that is the identity review's job, AREA-11 / CB-6); a tag repeated inside the file is refused with the row it duplicates; every failure is translated (`translatePostgresError`, plus the site-code collision message) — no raw constraint names. The result reports created / updated / skipped / filed. Tests: `lib/__tests__/assetCategorize.test.ts`, `lib/__tests__/intelRoundGRegistry.test.ts`.
+
+**Done-when.**
+1. ✓ The preview reports how many rows already exist and offers create-only / create-and-update.
+2. ✓ Matched rows update the mapped fields.
+3. ✓ Failures are translated to plain language.
+
+**Scope / residual.** None.
 
 ---
 
@@ -270,6 +289,16 @@ lib/equipmentBridgeServer.ts:213-215 — `origin: "drawing", discovered_from: { 
 - [ ] discovered assets can be confirmed (promoted to origin='manual') or rejected in bulk from one screen
 - [ ] the auto-apply path records a real service identity rather than the nil UUID, or leaves created_by resolvable
 - [ ] EquipmentSweepModal's 'provenance recorded' copy links to the surface that shows it
+
+**Partial (2026-09-30, intelligence Round G).** The registry now reads the provenance it was already writing. On the Operating Areas page a "Discovered from drawings (N)" filter narrows to `origin = 'drawing'`; every discovered asset's card carries a "Discovered" badge; with the filter on, a review panel lists each discovered asset with its source drawing (resolved from `discovered_from.documentId`, linked to the document) and pages, and bulk-confirms the good rows (`origin` → 'manual'; `discovered_from` stays, so where it came from is still recorded) or archives the misreads (the writer tier's reversible removal — deleting is a controller act, 20261128), up to 100 at a time.
+
+**Done-when.**
+1. ✓ Filter to origin='drawing' and a visible badge with its source drawing and pages.
+2. ✓ Bulk confirm (promote to origin='manual') or reject (archive) from one screen.
+3. ✗ Not done here — the auto-apply identity (`created_by` nil UUID) is written by `lib/equipmentBridgeServer.ts`, I-11's file.
+4. ✗ Not done here — EquipmentSweepModal's "provenance recorded" copy is `components/documents/EquipmentSweepModal.tsx`, I-11's file; the surface to link to is `/admin/assets` with the Discovered filter.
+
+**Scope / residual.** Limbs 3 and 4 are handed to I-11.
 
 ---
 

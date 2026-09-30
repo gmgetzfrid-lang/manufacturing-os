@@ -5,6 +5,9 @@
 // What it does:
 //  - Fuzzy/typesense search across documents, tickets, projects,
 //    assets, notes (lib/globalSearch.ts). 200ms debounced.
+//  - GAP-311: a tag (any format), site code or alias answers first — the
+//    asset hub, its operating area and the drawings it appears on — from
+//    indexed identity reads, never an AI call.
 //  - "g+letter" quick navigation when query starts with `g `:
 //        g d  → /documents
 //        g p  → /projects
@@ -23,7 +26,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, usePathname } from "next/navigation";
 import {
   Search, FileText, Briefcase, KeyRound, StickyNote, Hash,
-  CornerDownLeft, Loader2, X, Command, ArrowUp, ArrowDown, Send,
+  CornerDownLeft, Loader2, X, Command, ArrowUp, ArrowDown, Send, Factory,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
@@ -216,7 +219,7 @@ export default function GlobalCommandPalette() {
 
   // Compose the visible items: context + actions + quick-nav, then resource hits.
   const visible = useMemo(() => {
-    const items: Array<{ key: string; label: string; subtitle?: string; href?: string; kind?: GlobalHitKind; badge?: string; isAction?: boolean; run?: () => void | Promise<void> }> = [];
+    const items: Array<{ key: string; label: string; subtitle?: string; href?: string; kind?: GlobalHitKind; badge?: string; isAction?: boolean; facet?: "unit"; run?: () => void | Promise<void> }> = [];
     const trimmed = query.trim();
     // Contextual actions always lead (when empty or matching).
     for (const c of contextActions) {
@@ -241,6 +244,16 @@ export default function GlobalCommandPalette() {
         }
       }
     } else {
+      // GAP-311: a query that NAMES equipment (a tag in any format, a site
+      // code, an alias) answers first — the asset, its operating area, the
+      // drawings it is on — above every action and place.
+      for (const h of hits) {
+        if (!h.exact) continue;
+        items.push({
+          key: `${h.kind}-${h.id}`, label: h.title, subtitle: h.subtitle, href: h.href,
+          kind: h.kind, badge: h.badge, facet: h.facet,
+        });
+      }
       // Typed query → matching actions first, then search results.
       const q = trimmed.toLowerCase();
       for (const a of ACTIONS) {
@@ -258,6 +271,7 @@ export default function GlobalCommandPalette() {
         });
       }
       for (const h of hits) {
+        if (h.exact) continue;
         items.push({
           key: `${h.kind}-${h.id}`, label: h.title, subtitle: h.subtitle, href: h.href,
           kind: h.kind, badge: h.badge,
@@ -325,7 +339,7 @@ export default function GlobalCommandPalette() {
               </li>
             ) : (
               visible.map((it, i) => {
-                const Icon = it.kind ? KIND_ICON[it.kind] : Command;
+                const Icon = it.facet === "unit" ? Factory : it.kind ? KIND_ICON[it.kind] : Command;
                 const tone = it.kind ? KIND_TONE[it.kind] : "text-slate-600 bg-slate-50 border-slate-200";
                 const isActive = i === activeIdx;
                 return (

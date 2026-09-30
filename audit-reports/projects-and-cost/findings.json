@@ -18,8 +18,8 @@
       "LOW": 12
     },
     "by_status": {
-      "OPEN": 47,
-      "RESOLVED": 23
+      "OPEN": 45,
+      "RESOLVED": 25
     }
   },
   "status_vocabulary": [
@@ -91,7 +91,7 @@
       "id": "COST-1",
       "title": "CPI is measured over milestone-pinned accounts only but applied to the whole-project budget; the close-out report silently reports no CPI at all",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -753,7 +753,7 @@
       "id": "COST-4",
       "title": "An approved change order never revises the budget, so approved scope growth permanently reads as over-budget and collapses earned value and CPI",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

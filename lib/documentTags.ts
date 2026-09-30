@@ -10,6 +10,8 @@
 // ribbon and the book viewer's tag search work for every library, whatever the
 // column is named or typed.
 
+import { tagKey } from "@/lib/codebook";
+
 export interface TagColumnDef {
   key: string;
   label: string;
@@ -126,10 +128,11 @@ export function indexMatches(index: string, query: string): boolean {
 // a near-miss still surfaces the right tag — but only when it's genuinely close,
 // so a query that matches nothing stays "no match".
 
-/** Lowercase + strip everything but [a-z0-9], so "P-34"/"p 34" → "p34". */
-export function normalizeTag(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
+/** Lowercase + strip everything but [a-z0-9], so "P-34"/"p 34" → "p34".
+ *  GAP-310: this IS the one tag grammar — lib/codebook.ts `tagKey`,
+ *  re-exported — so the book viewer's typo-tolerant ranking and the
+ *  registry's identity columns can never drift apart. */
+export const normalizeTag: (s: string) => string = tagKey;
 
 // Levenshtein distance with an early-exit ceiling (returns max+1 once exceeded).
 function boundedLevenshtein(a: string, b: string, max: number): number {

@@ -26,11 +26,37 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import {
   loadCodebook, upsertEntry, deleteEntry, saveConfig, applyImport, diffImport, parseDrawingNumber,
+  codeProblem, codebookProblems, prefixClaimsElsewhere, explainDrawingNumberMiss, unitFlowReferenceCount,
   type Codebook, type CodebookEntry, type CodebookKind, type DrawingSegment, type ProposedEntry, type ImportDiff,
 } from "@/lib/codebook";
+import { listAssetIdentities } from "@/lib/assets";
+import { entryAssetReferences, rederivationImpact } from "@/lib/assetCategorize";
+
+/** CB-6 / CB-7: the confirm a codebook edit shows BEFORE it is saved when
+ *  existing assets carry codes the current rule derived that the edited rule
+ *  derives differently. The edit never rewrites them. */
+async function confirmRederivation(orgId: string, before: Codebook, after: Codebook, what: string): Promise<boolean> {
+  let impact: ReturnType<typeof rederivationImpact>;
+  try {
+    impact = rederivationImpact(await listAssetIdentities(orgId), before, after);
+  } catch {
+    return appConfirm({
+      title: `Save ${what}?`,
+      message: "Existing site codes could not be counted just now. Saving never rewrites them — review them afterwards under Operating areas → Identity review.",
+      confirmLabel: "Save anyway",
+    });
+  }
+  if (impact.changed === 0) return true;
+  const eg = impact.examples.map((e) => `${e.tag}: ${e.from} → ${e.to ?? "no code"}`).join(", ");
+  return appConfirm({
+    title: `${impact.changed} existing asset${impact.changed === 1 ? "" : "s"} carry codes derived under the current rule`,
+    message: `Saving ${what} does NOT rewrite them (e.g. ${eg}). They will show under Operating areas → Identity review, where each can be re-derived or kept.`,
+    confirmLabel: "Save",
+  });
+}
 
 const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -52,6 +78,8 @@ export default function CodebookPage() {
   const [tab, setTab] = useState<Tab>("units");
   const [importOpen, setImportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const problems = useMemo(() => (book ? codebookProblems(book) : []), [book]);
+  const problemIds = useMemo(() => new Set(problems.flatMap((p) => p.entryIds)), [problems]);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -82,6 +110,17 @@ export default function CodebookPage() {
       {!canWrite && (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
           Read-only — only Admins and Document Controllers edit the codebook.
+        </div>
+      )}
+
+      {/* CB-3 / CB-8 / CB-10: what in this codebook makes the decoder degrade
+          silently — said out loud, never repaired behind the user's back. */}
+      {problems.length > 0 && (
+        <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+          <div className="font-black flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> The decoder cannot use everything here</div>
+          <ul className="list-disc ml-5 space-y-0.5">
+            {problems.map((pr, i) => <li key={i}>{pr.message}</li>)}
+          </ul>
         </div>
       )}
 
@@ -132,17 +171,17 @@ export default function CodebookPage() {
 
       {tab === "units" && (
         <EntryTable kind="unit" title="Operating areas / units" entries={book.units} canWrite={canWrite}
-          codeHint='Unit number — "20"' labelHint='Name — "Crude Unit"'
+          codeHint='Unit number — "20"' labelHint='Name — "Crude Unit"' book={book} problemIds={problemIds}
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "equipment" && (
         <EntryTable kind="equipment_type" title="Equipment type codes" entries={book.equipmentTypes} canWrite={canWrite}
-          codeHint='Type code — "30"' labelHint='Label — "Exchangers"' withPrefixes
+          codeHint='Type code — "30"' labelHint='Label — "Exchangers"' withPrefixes book={book} problemIds={problemIds}
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "drawings" && (
         <EntryTable kind="drawing_type" title="Drawing / document type codes" entries={book.drawingTypes} canWrite={canWrite}
-          codeHint='Type code — "02"' labelHint='Label — "P&ID"'
+          codeHint='Type code — "02"' labelHint='Label — "P&ID"' book={book} problemIds={problemIds}
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "numbering" && (
@@ -183,21 +222,40 @@ function SetupStep({ done, n, label, onGo, goLabel, optional }: {
 
 // ─── Vocabulary tables (units / equipment types / drawing types) ────────────
 
-function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withPrefixes, orgId, uid, onChanged, onError }: {
+function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withPrefixes, book, problemIds, orgId, uid, onChanged, onError }: {
   kind: CodebookKind; title: string; entries: CodebookEntry[]; canWrite: boolean;
   codeHint: string; labelHint: string; withPrefixes?: boolean;
+  book: Codebook; problemIds: Set<string>;
   orgId: string; uid: string; onChanged: () => void; onError: (m: string | null) => void;
 }) {
   const [draft, setDraft] = useState({ code: "", label: "", prefixes: "" });
   const [busy, setBusy] = useState(false);
+  const draftProblem = draft.code.trim() ? codeProblem(kind, draft.code) : null;
 
   const add = async () => {
     if (!draft.code.trim() || !draft.label.trim() || busy) return;
+    const code = draft.code.trim();
+    // CB-3: the shared shape guard, at the door.
+    const shape = codeProblem(kind, code);
+    if (shape) { onError(shape); return; }
+    // CB-5: re-adding an existing code is an edit, never a silent overwrite.
+    const existing = entries.find((e) => e.code.trim() === code);
+    if (existing) {
+      onError(`${code} already exists (${existing.label}) — edit its label in place instead of adding it again.`);
+      return;
+    }
+    const tagPrefixes = withPrefixes ? draft.prefixes.split(",").map((p) => p.trim().toUpperCase()).filter(Boolean) : [];
+    // CB-8: one prefix, one equipment type.
+    const clash = withPrefixes ? prefixClaimsElsewhere(entries, { code, tagPrefixes }) : [];
+    if (clash.length > 0) {
+      onError(`Prefix ${clash[0].prefix}- is already claimed by ${clash[0].code} ${clash[0].label} — two types on one prefix leave every ${clash[0].prefix}- tag uncategorized.`);
+      return;
+    }
     setBusy(true); onError(null);
     try {
       await upsertEntry(orgId, {
-        kind, code: draft.code, label: draft.label,
-        meta: withPrefixes ? { tagPrefixes: draft.prefixes.split(",").map((p) => p.trim().toUpperCase()).filter(Boolean) } : {},
+        kind, code, label: draft.label,
+        meta: withPrefixes ? { tagPrefixes } : {},
         sort: entries.length, origin: "manual",
       }, uid);
       setDraft({ code: "", label: "", prefixes: "" });
@@ -206,10 +264,41 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
     finally { setBusy(false); }
   };
 
+  // CB-5: a removal names exactly what it strands. A unit or type that
+  // registry equipment (or a process flow) still references is REFUSED with
+  // the counts — refile first; the code is not editable in place yet.
   const remove = async (e: CodebookEntry) => {
+    onError(null);
+    let assetRefs = 0;
+    let flowRefs = 0;
+    try {
+      if (e.kind !== "drawing_type") assetRefs = entryAssetReferences(e, await listAssetIdentities(orgId), book);
+      if (e.kind === "unit") flowRefs = await unitFlowReferenceCount(orgId, e.code);
+    } catch (err) {
+      onError(`Could not count what references ${e.code} (${(err as Error).message}) — nothing was removed.`);
+      return;
+    }
+    if (assetRefs > 0 || flowRefs > 0) {
+      const parts = [
+        assetRefs > 0 ? `${assetRefs} asset${assetRefs === 1 ? "" : "s"} ${e.kind === "unit" ? "filed under it or coded into it" : "typed or coded by it"}` : null,
+        flowRefs > 0 ? `${flowRefs} process flow${flowRefs === 1 ? "" : "s"} ending at it` : null,
+      ].filter(Boolean).join(" and ");
+      await appAlert({
+        title: `${e.code} — ${e.label} is still in use`,
+        message: `${parts}. Removing the code would strand them under a code the decoder no longer knows. Refile them first (Operating areas), then remove it.`,
+        tone: "danger",
+      });
+      return;
+    }
+    const links = e.meta.links?.length ?? 0;
+    const bound = !!e.meta.knowledgeLibraryId;
+    const lost = [
+      links > 0 ? `unpins ${links} librar${links === 1 ? "y" : "ies"}` : null,
+      bound ? "unbinds its knowledge library" : null,
+    ].filter(Boolean).join(" and ");
     const ok = await appConfirm({
       title: `Remove ${e.code} — ${e.label}?`,
-      message: "Features stop recognizing this code. Nothing else is deleted.",
+      message: `No asset${e.kind === "unit" ? " or process flow" : ""} references it. Features stop recognizing the code${lost ? `, and removing it ${lost}` : ""}.`,
       confirmLabel: "Remove",
     });
     if (!ok) return;
@@ -233,6 +322,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
           <tbody className="divide-y divide-[var(--color-border)]">
             {entries.map((e) => (
               <EntryRow key={e.id} entry={e} withPrefixes={withPrefixes} canWrite={canWrite}
+                flagged={problemIds.has(e.id)} book={book} siblings={entries}
                 orgId={orgId} uid={uid} onChanged={onChanged} onError={onError} onRemove={() => void remove(e)} />
             ))}
             {entries.length === 0 && (
@@ -245,22 +335,26 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
       </div>
       {canWrite && (
         <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface-2)]/50">
-          <Input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint} className="w-32 font-mono" />
+          <Input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint}
+            className={`w-32 font-mono ${draftProblem ? "border-rose-400" : ""}`} title={draftProblem ?? undefined} />
           <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder={labelHint} className="w-56" />
           {withPrefixes && (
             <Input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder='Prefixes — "E" or "EA, E"' className="w-40 font-mono" />
           )}
-          <Button size="sm" onClick={() => void add()} disabled={busy || !draft.code.trim() || !draft.label.trim()}>
+          <Button size="sm" onClick={() => void add()} disabled={busy || !draft.code.trim() || !draft.label.trim() || !!draftProblem}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
           </Button>
+          {draftProblem && <span className="text-[11px] text-rose-700 font-bold basis-full">{draftProblem}</span>}
         </div>
       )}
     </div>
   );
 }
 
-function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onError, onRemove }: {
+function EntryRow({ entry, withPrefixes, canWrite, flagged, book, siblings, orgId, uid, onChanged, onError, onRemove }: {
   entry: CodebookEntry; withPrefixes?: boolean; canWrite: boolean;
+  /** CB-3 / CB-8 / CB-10: this row is named in the problems banner. */
+  flagged: boolean; book: Codebook; siblings: CodebookEntry[];
   orgId: string; uid: string; onChanged: () => void; onError: (m: string | null) => void; onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -268,19 +362,37 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
   const [prefixes, setPrefixes] = useState((entry.meta.tagPrefixes ?? []).join(", "));
 
   const save = async () => {
+    onError(null);
+    const tagPrefixes = prefixes.split(",").map((p) => p.trim().toUpperCase()).filter(Boolean);
+    const meta = withPrefixes ? { ...entry.meta, tagPrefixes } : entry.meta;
+    if (withPrefixes) {
+      // CB-8: one prefix, one equipment type.
+      const clash = prefixClaimsElsewhere(siblings, { code: entry.code, tagPrefixes });
+      if (clash.length > 0) {
+        onError(`Prefix ${clash[0].prefix}- is already claimed by ${clash[0].code} ${clash[0].label} — two types on one prefix leave every ${clash[0].prefix}- tag uncategorized.`);
+        return;
+      }
+      // CB-6: a prefix edit re-types tags — say how many existing codes it
+      // strands before saving (nothing is rewritten).
+      const same = [...(entry.meta.tagPrefixes ?? [])].map((x) => x.toUpperCase()).sort().join(",") === [...tagPrefixes].sort().join(",");
+      if (!same) {
+        const after: Codebook = { ...book, equipmentTypes: book.equipmentTypes.map((t) => (t.id === entry.id ? { ...t, meta } : t)) };
+        if (!(await confirmRederivation(orgId, book, after, `the prefixes of ${entry.code} ${entry.label}`))) return;
+      }
+    }
     try {
-      await upsertEntry(orgId, {
-        ...entry, label,
-        meta: withPrefixes ? { tagPrefixes: prefixes.split(",").map((p) => p.trim().toUpperCase()).filter(Boolean) } : entry.meta,
-      }, uid);
+      await upsertEntry(orgId, { ...entry, label, meta }, uid);
       setEditing(false);
       onChanged();
     } catch (e) { onError((e as Error).message); }
   };
 
   return (
-    <tr className="hover:bg-[var(--color-surface-2)]/50">
-      <td className="px-4 py-1.5 font-mono font-black text-[var(--color-text)]">{entry.code}</td>
+    <tr className={`hover:bg-[var(--color-surface-2)]/50 ${flagged ? "bg-amber-50/60" : ""}`}>
+      <td className="px-4 py-1.5 font-mono font-black text-[var(--color-text)]">
+        {entry.code}
+        {flagged && <AlertTriangle className="inline w-3 h-3 ml-1 text-amber-600" aria-label="See the problems above" />}
+      </td>
       <td className="px-2 py-1.5">
         {editing
           ? <Input value={label} onChange={(e) => setLabel(e.target.value)} className="h-7" />
@@ -330,6 +442,9 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 }) {
   const [segments, setSegments] = useState<DrawingSegment[]>(book.drawingNumber?.segments ?? []);
   const [padTo, setPadTo] = useState(book.iterableRule.padTo);
+  // CB-7: the rule round-trips — the saved value is what the org has, never
+  // a literal; a site whose code iterable does not mirror the tag says so here.
+  const [mirrorsTag, setMirrorsTag] = useState(book.iterableRule.mirrorsTag);
   const [sample, setSample] = useState("2002-D-10001 SHT.4");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -338,13 +453,23 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
     () => ({ ...book, drawingNumber: segments.length > 0 ? { segments } : null }),
     [book, segments]);
   const parsed = useMemo(() => sample.trim() ? parseDrawingNumber(sample, previewBook) : null, [sample, previewBook]);
+  // CB-3: a miss names its reason ("segment 1 (unit) expects 2 digits but
+  // found "CU"") instead of a bare "doesn't match".
+  const missReason = useMemo(() => (sample.trim() && !parsed ? explainDrawingNumberMiss(sample, previewBook) : null), [sample, parsed, previewBook]);
 
   const save = async () => {
+    const nextRule = { mirrorsTag, padTo: Math.max(0, Math.min(6, padTo)) };
+    // CB-6 / CB-7: a padding or mirroring change re-derives every code —
+    // count the existing codes it strands before saving; nothing is rewritten.
+    if (nextRule.padTo !== book.iterableRule.padTo || nextRule.mirrorsTag !== book.iterableRule.mirrorsTag) {
+      const after: Codebook = { ...book, iterableRule: nextRule };
+      if (!(await confirmRederivation(orgId, book, after, "the code rule"))) return;
+    }
     setSaving(true); onError(null);
     try {
       await saveConfig(orgId, {
         drawingNumber: segments.length > 0 ? { segments } : null,
-        iterableRule: { mirrorsTag: true, padTo: Math.max(0, Math.min(6, padTo)) },
+        iterableRule: nextRule,
       }, uid);
       setSaved(true); setTimeout(() => setSaved(false), 1800);
       onChanged();
@@ -407,7 +532,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
           {segments.length === 0 ? (
             <span className="text-[var(--color-text-muted)] italic">Add segments above to see the decode.</span>
           ) : !parsed ? (
-            <span className="inline-flex items-center gap-1 text-rose-700 font-bold"><AlertTriangle className="w-3.5 h-3.5" /> Doesn&apos;t match the segments — adjust the map or the sample.</span>
+            <span className="inline-flex items-center gap-1 text-rose-700 font-bold"><AlertTriangle className="w-3.5 h-3.5" /> {missReason ?? "Doesn't match the segments"} — adjust the map or the sample.</span>
           ) : (
             <>
               <PreviewChip label="Unit" value={parsed.unitCode} extra={parsed.unitLabel} />
@@ -421,9 +546,19 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
       </div>
 
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-center gap-4 flex-wrap">
+        <label className="flex items-start gap-2 basis-full">
+          <input type="checkbox" checked={mirrorsTag} disabled={!canWrite}
+            onChange={(e) => setMirrorsTag(e.target.checked)} className="mt-0.5 w-3.5 h-3.5 accent-[var(--color-accent)]" />
+          <span>
+            <span className="block text-xs font-black text-[var(--color-text)]">Site codes mirror the tag number</span>
+            <span className="block text-[11px] text-[var(--color-text-muted)]">
+              On: E-22 in unit 20 becomes 2030.22 automatically. Off: your code iterables are assigned per asset, so the app never derives a site code — you type each one.
+            </span>
+          </span>
+        </label>
         <div>
           <div className="text-xs font-black text-[var(--color-text)]">Code iterable padding</div>
-          <p className="text-[11px] text-[var(--color-text-muted)]">E-5 → .5 with no padding; set 2 for .05 style.</p>
+          <p className="text-[11px] text-[var(--color-text-muted)]">E-5 → .5 with no padding; set 2 for .05 style. Existing codes are not rewritten when this changes.</p>
         </div>
         <label className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           pad to <Input type="number" value={padTo} disabled={!canWrite} min={0} max={6}
@@ -787,7 +922,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           {diff && (
             <>
               <div className="text-xs text-[var(--color-text-muted)]">
-                <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match — check what to apply.
+                <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match{diff.rejected.length > 0 ? <> · <b className="text-rose-700">{diff.rejected.length}</b> can&apos;t be used</> : null} — check what to apply.
               </div>
               {notes && (
                 <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-[11px] text-sky-900">
@@ -817,9 +952,20 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                     </label>
                   );
                 })}
-                {diff.adds.length === 0 && diff.changes.length === 0 && (
+                {diff.adds.length === 0 && diff.changes.length === 0 && diff.rejected.length === 0 && (
                   <div className="px-3 py-4 text-xs text-[var(--color-text-muted)] italic">Nothing new — the codebook already matches this document.</div>
                 )}
+                {/* CB-3 / CB-8: proposals the decoder could never use — shown
+                    with the reason, never checkable, never applied. */}
+                {diff.rejected.map(({ proposed: p, reason }) => (
+                  <div key={`rej-${keyOf(p)}`} className="flex items-center gap-2.5 px-3 py-2 text-xs bg-rose-50/60">
+                    <input type="checkbox" checked={false} disabled aria-label="Cannot be applied" className="w-3.5 h-3.5" />
+                    <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
+                    <span className="font-mono font-black text-rose-800 w-14">{p.code}</span>
+                    <span className="font-bold text-[var(--color-text)] flex-1">{p.label}</span>
+                    <span className="text-[10px] font-bold text-rose-700 max-w-[45%]" title={reason}>Can&apos;t apply: {reason}</span>
+                  </div>
+                ))}
               </div>
             </>
           )}
