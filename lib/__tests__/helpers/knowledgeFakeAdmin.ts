@@ -53,8 +53,10 @@ export function makeFakeAdmin(state: FakeAdminState) {
     const matched = () => rows().filter((r) => filters.every((f) => f(r)));
 
     const run = (): { data: unknown; error: unknown; count?: number } => {
-      if (op !== "select" && state.failWrites[table]) return { data: null, error: state.failWrites[table] };
-      if (op === "select" && state.failReads[table]) return { data: null, error: state.failReads[table] };
+      // Each failure hook is read exactly once per statement (a test may
+      // count reads to fail the n-th write).
+      if (op !== "select") { const fw = state.failWrites[table]; if (fw) return { data: null, error: fw }; }
+      if (op === "select") { const fr = state.failReads[table]; if (fr) return { data: null, error: fr }; }
       if (op === "insert") {
         const out = payload.map((p) => ({ id: p.id ?? `${table}-${++state.seq}`, ...p }));
         rows().push(...out);

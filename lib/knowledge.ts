@@ -128,6 +128,10 @@ export interface KnowledgeAnswer {
    *  It's stated so an answer can never IMPLY a meaning-based search that
    *  didn't run. */
   retrieval?: "keyword" | "hybrid";
+  /** Meaning-index coverage over the libraries this answer searched, when
+   *  the ask route reports it. Absent, the page falls back to the asked
+   *  library's own coverage (describeRetrieval). */
+  retrievalCoverage?: { embedded: number; total: number };
   /** Clarify round (opt-in feature): no answer yet — the AI found the
    *  question's answer across several distinct aspects and asks which to
    *  cover. Re-ask with `focus` to get the actual answer. */
@@ -501,6 +505,53 @@ export async function askKnowledgeLibrary(
   });
 }
 
+/** SEM-12: what an answer's retrieval flag means, in words, for every reader.
+ *  "keyword" is not a degraded state to hide — it is what this product has
+ *  always done well — but an answer must never IMPLY a meaning search that
+ *  did not run, and a 3%-built index must never read like a 100% one. */
+export const MEANING_COVERAGE_NOTE_BELOW = 95;
+export function describeRetrieval(
+  retrieval: KnowledgeAnswer["retrieval"],
+  coverage: { embedded: number; total: number } | null | undefined,
+): { label: string; note: string | null; keywordOnly: boolean } | null {
+  if (!retrieval) return null;
+  const pct = coverage && coverage.total > 0 ? Math.floor((coverage.embedded / coverage.total) * 100) : null;
+  if (retrieval === "keyword") {
+    return {
+      label: "Keyword search only",
+      keywordOnly: true,
+      note: "Meaning search did not run for this answer"
+        + (pct === null || pct === 0 ? " — this library has no meaning index yet" : ` — the meaning index covers ${pct}% of this library`)
+        + ". A passage that says the same thing in other words may be missing.",
+    };
+  }
+  return {
+    label: "Keyword + meaning search",
+    keywordOnly: false,
+    note: pct !== null && pct < MEANING_COVERAGE_NOTE_BELOW
+      ? `Meaning search covers ${pct}% of this library — passages without a meaning vector were found by keyword only.`
+      : null,
+  };
+}
+
+/** ASK-6: text the MODEL wrote that the page would otherwise put in front
+ *  of an input box or on a button. It is shown as the assistant's words —
+ *  never as the app's — and it is refused outright when it reaches for
+ *  something this app never collects: a password, a key, an account or
+ *  identity number, or a link. The server-side screen is the ask route's
+ *  (I-03); this is the last line at the point of entry. */
+export const ASSISTANT_REQUEST_MAX = 600;
+const ASSISTANT_SECRET_RE = /\b(?:pass(?:word|code|phrase)s?|pwd|api[\s_-]?keys?|secret(?:s| key)?|access[\s_-]?tokens?|bearer|credentials?|log[\s-]?in|sign[\s-]?in|sso|mfa|2fa|otp|one[\s-]time (?:code|password)|social security|ssn|credit card|card number|cvv|bank account|routing number|iban|date of birth)\b/i;
+const ASSISTANT_LINK_RE = /\b(?:https?:\/\/|www\.)\S+|\b[\w.-]+\.(?:com|net|org|io|ai|co|app|dev|ru|cn)(?:\/\S*)?\b/i;
+export function screenAssistantRequest(text: string): { ok: true } | { ok: false; reason: string } {
+  const t = (text ?? "").trim();
+  if (!t) return { ok: false, reason: "it was empty" };
+  if (t.length > ASSISTANT_REQUEST_MAX) return { ok: false, reason: "it was far longer than a request for a value" };
+  if (ASSISTANT_SECRET_RE.test(t)) return { ok: false, reason: "it asks for a credential, account or identity detail" };
+  if (ASSISTANT_LINK_RE.test(t)) return { ok: false, reason: "it contains a link" };
+  return { ok: true };
+}
+
 /** A calculation answer that stopped because it needs user-specific values
  *  (test temperature, design pressure…) starts with a **Need:** line —
  *  detect it so the UI can ask instead of showing a dead-end answer. */
@@ -826,8 +877,12 @@ export async function setDocumentAiExclusion(
 export interface SemanticProgress {
   /** Passages embedded by THIS call. */
   embedded: number;
+  /** Retrievable passages — those of documents that are indexed and
+   *  searchable (SEM-5: the same population meaning search returns). */
   total: number;
   coveredNow: number;
+  /** Still to embed. Passages the provider refused are NOT counted here —
+   *  they are `failed`, and do not hold the library below done (SEM-4). */
   remaining: number;
   done: boolean;
   error: string | null;
@@ -835,6 +890,30 @@ export interface SemanticProgress {
   /** Provider said "slow down" (free-tier RPM/TPM). Pacing, not failure. */
   rateLimited?: boolean;
   retryAfterMs?: number;
+  /** Passages the provider refused every time — skipped, with where they are. */
+  failed?: number;
+  failedSamples?: Array<{ documentName: string; page: number; error: string | null }>;
+  /** Passages another run is embedding right now (SEM-7: the queue is a claim). */
+  busy?: number;
+  /** Passages the provider refused during THIS call (an attempt recorded). */
+  refused?: number;
+  /** Vectors per embedding model, and whether the library holds more than
+   *  one (then meaning search is off for it until rebuilt — SEM-1). */
+  models?: Record<string, number>;
+  mixed?: boolean;
+  /** The viewer's embedding setup (never the key). */
+  connection?: { provider: string; model: string } | null;
+  /** Why building with the viewer's setup would mix two vector spaces. */
+  conflict?: string | null;
+  /** SEM-13: the price, from the ledger's own table, for the viewer's model. */
+  estimate?: { model: string; remainingUsd: number; fullUsd: number; placeholderRate: boolean } | null;
+  /** The background continuation, and why it is holding off (SEM-11). */
+  background?: {
+    mine: boolean; standing: boolean; startedAt: string | null; lastDrainAt: string | null;
+    blockedUntil: string | null; blockedReason: string | null; lastError: string | null;
+  } | null;
+  /** The background continuation could not be recorded this time. */
+  backgroundNote?: string;
 }
 
 /** Coverage only — spends nothing, so it's safe to call on page load. */
@@ -851,12 +930,24 @@ export async function semanticStatus(orgId: string, libraryId: string): Promise<
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "status" });
 }
 
+/** One nudge per tab per this long: navigating between libraries must not
+ *  fan out a 300-second drain per page view (SEM-7). The server skips a
+ *  library drained in the last two minutes as well. */
+const NUDGE_DEBOUNCE_MS = 10 * 60_000;
+let lastNudgeAt = 0;
+
 /** Fire-and-forget: ask the server to continue any pending meaning-index
  *  build in the background (up to ~4 minutes of server-side embedding).
  *  Called on library page load so merely OPENING the app advances a large
  *  build — the browser tab stopped being the engine. Never awaited, never
- *  surfaces errors: the hourly cron covers whatever this misses. */
+ *  surfaces errors: the daily cron covers whatever this misses. */
 export function nudgeEmbedDrain(): void {
+  const now = Date.now();
+  let last = lastNudgeAt;
+  try { last = Math.max(last, Number(window.sessionStorage.getItem("kl-embed-nudge-at")) || 0); } catch { /* no storage */ }
+  if (now - last < NUDGE_DEBOUNCE_MS) return;
+  lastNudgeAt = now;
+  try { window.sessionStorage.setItem("kl-embed-nudge-at", String(now)); } catch { /* no storage */ }
   void (async () => {
     try {
       const token = await authToken();
@@ -878,6 +969,32 @@ export function nudgeEmbedDrain(): void {
  *  regimes at once. */
 export async function resetSemanticIndex(orgId: string, libraryId: string): Promise<SemanticProgress> {
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "reset" });
+}
+
+/** Give the passages the provider refused another chance (controllers). */
+export async function retryFailedPassages(orgId: string, libraryId: string): Promise<{ requeued: number }> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "retry-failed" });
+}
+
+/** SEM-8: the standing consent — keep this library's meaning index current
+ *  as documents are added, on the caller's own key and monthly cap. */
+export async function setKeepIndexCurrent(orgId: string, libraryId: string, on: boolean): Promise<{ standing: boolean }> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "keep-current", on });
+}
+
+/** Stop the background build (its payer, or a controller). */
+export async function releaseBackgroundBuild(orgId: string, libraryId: string): Promise<{ released: boolean }> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "release" });
+}
+
+/** SEM-8: the one-line drift statement every reader sees on the library page
+ *  — null when the index is complete, not built at all, or unknown. */
+export function meaningIndexDrift(status: Pick<SemanticProgress, "total" | "coveredNow" | "remaining"> | null): string | null {
+  if (!status || status.total <= 0) return null;
+  const covered = status.coveredNow ?? 0;
+  if (covered <= 0 || status.remaining <= 0) return null;
+  const pct = Math.floor((covered / status.total) * 100);
+  return `Meaning search covers ${pct}% of this library — ${status.remaining.toLocaleString()} passage${status.remaining === 1 ? "" : "s"} added since the last build ${status.remaining === 1 ? "is" : "are"} found by keyword only.`;
 }
 
 /** Embed one batch. The server stops on a time budget rather than trying to
@@ -936,18 +1053,30 @@ export async function buildSemanticIndex(
 
   let last = await embedBatchWithRetry();
   onProgress?.(last);
+  // Rounds in a row where every remaining passage was claimed by another
+  // run (the background drain): wait for it rather than calling that stuck.
+  let busyRounds = 0;
   for (;;) {
     if (last.done || last.error || shouldStop?.()) break;
     if (last.rateLimited) {
       // Pacing, not failure: wait out the provider's per-minute window and
       // continue with a batch small enough to fit inside it.
       paced = true;
+      busyRounds = 0;
       await sleepUnlessStopped(last.retryAfterMs ?? 65_000);
       if (shouldStop?.()) break;
-    } else if (last.embedded === 0) {
-      // Embedded nothing, not done, not rate-limited — stuck. Hand back
-      // what happened rather than spinning forever.
+    } else if (last.embedded === 0 && (last.busy ?? 0) > 0 && (last.busy ?? 0) >= last.remaining) {
+      // Another run holds the rest (SEM-7): the passages are being embedded,
+      // just not by this tab. Give it a moment, a bounded number of times.
+      if (++busyRounds > 6) break;
+      await sleepUnlessStopped(20_000);
+      if (shouldStop?.()) break;
+    } else if (last.embedded === 0 && (last.refused ?? 0) === 0) {
+      // Embedded nothing, refused nothing, not done, not rate-limited —
+      // stuck. Hand back what happened rather than spinning forever.
       break;
+    } else {
+      busyRounds = 0;
     }
     last = await embedBatchWithRetry(paced ? RATE_LIMITED_BATCH : undefined);
     onProgress?.(last);

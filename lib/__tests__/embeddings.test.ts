@@ -188,3 +188,113 @@ describe("toVectorLiteral", () => {
     expect(toVectorLiteral([1, 2.5, -3])).toBe("[1,2.5,-3]");
   });
 });
+
+// ── intelligence Round G (I-02) ─────────────────────────────────────────────
+// One vector space per corpus (SEM-1 / SEM-3 / SEM-6), passage vs key
+// refusals (SEM-4), and a price quoted from the ledger's own table (SEM-13).
+import {
+  embeddingProviderForModel, resolveCorpusModel, planQueryEmbedding, buildModelConflict,
+  isPassageRefusal, estimateEmbeddingCostUsd, estimateEmbeddingTokens, embeddingRateIsPlaceholder,
+  EMBEDDING_PROVIDERS, CHARS_PER_TOKEN_ESTIMATE, HEADING_TOKENS_PER_PASSAGE,
+} from "@/lib/ai/embeddings";
+import { estimateCostUsd, modelPricePerMTok } from "@/lib/ai/pricing";
+
+describe("SEM-4 — the provider's own status rides on the error", () => {
+  const fail = async (status: number) => {
+    vi.stubGlobal("fetch", mockFetch(() => ({ detail: "nope" }), status));
+    return embedPassages({ provider: "voyage", model: "voyage-3.5-lite", apiKey: "k", passages: ["x"], kind: "document" })
+      .then(() => null, (e: unknown) => e);
+  };
+  it("400 / 413 / 422 are passage refusals; the key, the model, the provider and pacing are not", async () => {
+    expect(isPassageRefusal(await fail(400))).toBe(true);
+    expect(isPassageRefusal(await fail(413))).toBe(true);
+    expect(isPassageRefusal(await fail(422))).toBe(true);
+    for (const s of [401, 403, 404, 429, 500, 503]) expect(isPassageRefusal(await fail(s))).toBe(false);
+    expect(isPassageRefusal(new Error("network"))).toBe(false);
+  });
+  it("the friendly message and the app status are unchanged (a 404 is still 'doesn't recognise that model', 400)", async () => {
+    const e = await fail(404) as { message: string; status: number; providerStatus: number };
+    expect(e.message).toMatch(/doesn't recognise that embedding model/);
+    expect(e.status).toBe(400);
+    expect(e.providerStatus).toBe(404);
+  });
+});
+
+describe("SEM-1 / SEM-3 / SEM-6 — resolving a corpus's model is deterministic and per library", () => {
+  it("the provider follows from the model stamp", () => {
+    expect(embeddingProviderForModel("voyage-3-large")).toBe("voyage");
+    expect(embeddingProviderForModel("text-embedding-3-small")).toBe("openai");
+    expect(embeddingProviderForModel("mystery-embed")).toBeNull();
+    for (const p of EMBEDDING_PROVIDERS) for (const m of p.models) expect(embeddingProviderForModel(m)).toBe(p.id);
+  });
+  it("one stamp is single; two stamps are MIXED (never 'whichever row came back first'); none is empty", () => {
+    expect(resolveCorpusModel({})).toEqual({ state: "empty" });
+    expect(resolveCorpusModel({ "voyage-3.5-lite": 0 })).toEqual({ state: "empty" });
+    expect(resolveCorpusModel({ "voyage-3.5-lite": 12 })).toEqual({ state: "single", model: "voyage-3.5-lite", provider: "voyage", vectors: 12 });
+    const mixed = resolveCorpusModel({ "voyage-3.5": 3, "voyage-3.5-lite": 12 });
+    expect(mixed).toEqual({ state: "mixed", models: [{ model: "voyage-3.5-lite", vectors: 12 }, { model: "voyage-3.5", vectors: 3 }] });
+    // the same input always resolves the same way, whatever the key order
+    expect(resolveCorpusModel({ "voyage-3.5-lite": 12, "voyage-3.5": 3 })).toEqual(mixed);
+  });
+  it("a question is embedded with the CORPUS's model on the corpus's provider — or a reportable reason, never an empty result", () => {
+    const voyageKey = { provider: "voyage" as const, model: "voyage-3.5", apiKey: "pa" };
+    const openaiKey = { provider: "openai" as const, model: "text-embedding-3-small", apiKey: "sk" };
+    // SEM-3: the corpus is OpenAI; the member's current key is Voyage
+    expect(planQueryEmbedding(resolveCorpusModel({ "text-embedding-3-small": 9 }), voyageKey))
+      .toMatchObject({ ok: false, reason: "provider_mismatch" });
+    // same provider, the corpus's model wins over the saved one
+    expect(planQueryEmbedding(resolveCorpusModel({ "voyage-3.5-lite": 9 }), voyageKey))
+      .toEqual({ ok: true, provider: "voyage", model: "voyage-3.5-lite" });
+    expect(planQueryEmbedding(resolveCorpusModel({ "voyage-3.5-lite": 1, "voyage-3.5": 1 }), voyageKey)).toMatchObject({ ok: false, reason: "mixed" });
+    expect(planQueryEmbedding(resolveCorpusModel({}), voyageKey)).toMatchObject({ ok: false, reason: "no_vectors" });
+    expect(planQueryEmbedding(resolveCorpusModel({ "voyage-3.5-lite": 1 }), null)).toMatchObject({ ok: false, reason: "no_key" });
+    expect(planQueryEmbedding(resolveCorpusModel({ "odd-model": 1 }), voyageKey)).toMatchObject({ ok: false, reason: "unknown_model" });
+    // SEM-6: resolved PER LIBRARY — two libraries on two stamps each get their own plan
+    const governing = planQueryEmbedding(resolveCorpusModel({ "voyage-3.5-lite": 50 }), voyageKey);
+    const reference = planQueryEmbedding(resolveCorpusModel({ "voyage-3.5": 80 }), voyageKey);
+    expect(governing).toEqual({ ok: true, provider: "voyage", model: "voyage-3.5-lite" });
+    expect(reference).toEqual({ ok: true, provider: "voyage", model: "voyage-3.5" });
+    expect(planQueryEmbedding(resolveCorpusModel({ "text-embedding-3-small": 5 }), openaiKey)).toMatchObject({ ok: true, model: "text-embedding-3-small" });
+  });
+  it("a build may add vectors only under the corpus's model; the refusal names both ways out", () => {
+    const conn = { provider: "voyage" as const, model: "voyage-3.5", apiKey: "pa" };
+    expect(buildModelConflict(resolveCorpusModel({}), conn)).toBeNull();
+    expect(buildModelConflict(resolveCorpusModel({ "voyage-3.5": 4 }), conn)).toBeNull();
+    const c = buildModelConflict(resolveCorpusModel({ "voyage-3.5-lite": 4 }), conn)!;
+    expect(c.stamped).toEqual(["voyage-3.5-lite"]);
+    expect(c.message).toMatch(/Use Rebuild index to switch the whole library to voyage-3.5, or set your embedding model back to voyage-3.5-lite/);
+    const m = buildModelConflict(resolveCorpusModel({ "voyage-3.5-lite": 4, "voyage-3.5": 2 }), conn)!;
+    expect(m.message).toMatch(/already mixes .* meaning search is off for it until it is rebuilt/);
+  });
+});
+
+describe("SEM-13 — the quoted price and the ledger come from one function", () => {
+  it("the estimate IS estimateCostUsd over the estimated tokens, for every offered model (exact agreement at equal tokens)", () => {
+    const chars = 1_400_000, passages = 1_000;
+    const tokens = estimateEmbeddingTokens(chars, passages);
+    expect(tokens).toBe(Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE) + passages * HEADING_TOKENS_PER_PASSAGE);
+    for (const p of EMBEDDING_PROVIDERS) {
+      for (const model of p.models) {
+        expect(estimateEmbeddingCostUsd(model, chars, passages)).toBe(estimateCostUsd(model, { inputTokens: tokens, outputTokens: 0 }));
+        // never the frontier-model fallback: every offered model has its own embeddings rate
+        expect(modelPricePerMTok(model)[0]).toBeLessThan(1);
+      }
+    }
+  });
+  it("the tolerance, stated: the pre-build figure uses ~4 characters a token; the ledger then bills the provider's own count — within 30% for ordinary prose (3.5 to 5 characters a token)", () => {
+    // 1,000 passages of ~1,400 characters: ~350 tokens of text + the heading each.
+    const est = estimateEmbeddingTokens(1_400_000, 1_000);
+    const providerCountLow = 1_000 * (1_400 / 5 + 12);            // a denser tokenizer
+    const providerCountHigh = 1_000 * (1_400 / 3.5 + 20);         // a sparser one
+    for (const actual of [providerCountLow, providerCountHigh]) {
+      expect(Math.abs(est - actual) / actual).toBeLessThan(0.3);
+    }
+  });
+  it("different models quote different prices (no flat 1¢ per 1,000 passages any more); Voyage figures are marked estimates", () => {
+    const small = estimateEmbeddingCostUsd("text-embedding-3-small", 1_400_000, 1_000);
+    const large = estimateEmbeddingCostUsd("text-embedding-3-large", 1_400_000, 1_000);
+    expect(large).toBeGreaterThan(small * 5);
+    expect(embeddingRateIsPlaceholder("voyage-3.5-lite")).toBe(true);
+    expect(embeddingRateIsPlaceholder("text-embedding-3-small")).toBe(false);
+  });
+});
