@@ -1750,13 +1750,21 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    canned text — checked in the client data layer (`reasonProblem` in
    `lib/checklists.ts` / `lib/turnover.ts`), mirrored by `appPrompt({ required,
    minLength })`, and ENFORCED by the database (`quality_reason_ok()` and the
-   20261091 rails on waive / reject / reopen, punch void, and a person's N/A;
-   the service pass — restores, server routes, the SQL editor — passes). No
+   20261091 rails on waive / reject / reopen, punch void, and every checklist
+   decision a person makes — satisfied, N/A, item reopen; the service pass —
+   restores, server routes, the SQL editor — passes). A decision needs its
+   OWN reason: the note already on the row belongs to the earlier decision,
+   and a standing decision keeps its reason (and a turnover decision its
+   reviewer) until the next one; a checklist note is never cleared. No
    placeholder is ever written. Waived is its own bucket.
 5. **Completion basis** (`QUAL-2`): `project_checklists.completed_basis` is
-   `'human'` only when no green rests on the sweep alone, no N/A lacks a
-   person's reason, and at least one green was decided by a person (a note or
-   a person-attached chip); otherwise `'auto'`. Only a `'human'` MI completion
+   `'human'` only when every applicable item is green or N/A, no green rests
+   on the sweep alone, no N/A lacks a person's reason, and at least one green
+   was decided by a person (a note that meets the reason bar — `x` is not
+   one — or a person-attached chip); otherwise `'auto'`. The completion
+   itself is refused by the database while the checklist has no items or an
+   applicable item is neither green nor N/A, and a completed checklist's
+   items are frozen until it is reopened (which clears the basis). Only a `'human'` MI completion
    is citable by another checklist. The DATABASE records it
    (`checklist_completion_basis()`, the same rule as `completionBasis()`,
    computed by a rail when the status moves to complete; a client value is
@@ -1765,7 +1773,13 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    N/A** (reason on the record; the sweep's chip kept; the sweep hands-off from
    then on).
 6. **Machine actor** (`QUAL-6`, `DEC-35`): `updated_by = NULL` + a sentinel
-   name. Provenance is carried by the existing `updated_by` / `updated_by_name`
+   name. The sweep and the assessment run in the browser under the user's
+   token, so the database bounds what a machine-stamped write may do — a
+   sentinel name, never on an item a person decided (a note or a person
+   chip), no note, no person chip, a green carries its auto citation — and
+   stamps every other signed-in write with the caller's uid and profile name;
+   all a machine write can produce is `'auto'`. A server-side sweep (service
+   role) would make the actor unforgeable — a follow-on. Provenance is carried by the existing `updated_by` / `updated_by_name`
    pair and `evidence[].source` / `documentId`; no `satisfied_by` /
    `satisfied_how` columns were added (a column the sweep must write breaks
    the sweep until the migration is applied — `DEC-30`).
@@ -1773,9 +1787,14 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    written only by the database — a trigger on `turnover_items` appends one row
    per status change in the same statement (no client INSERT); the decisions
    made before it existed are backfilled. A rejection is a `nonconformance`
-   event, a reopen of an accepted / waived item is a `reopen` event whose reason
-   the database requires; there is no separate NCR module (a follow-on
-   capability if a facility wants disposition / corrective-action tracking).
+   event, a reopen of an accepted / waived item is a `reopen` event whose OWN
+   reason (a new note that meets the bar) the database requires. Each row
+   carries the note its decision set and the reviewer's name from the users
+   profile, never the client's; a history row outlives a deleted item
+   (`item_id` is a plain column); a restore never imports the history
+   (`IMMUTABLE_TABLES`) and writes one row per restored decided item. There is
+   no separate NCR module (a follow-on capability if a facility wants
+   disposition / corrective-action tracking).
 8. **Punch record** (`QUAL-7`): `closed_by_name`, `description`, `location`,
    `closure_note` as nullable text; photos / attachments deferred.
 9. **Checked writes** (`SAF-3` / `GAP-402` narrow): `lib/checkedWrite.ts` is the
@@ -1789,6 +1808,21 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
     to a pending migration. A single-statement apply (one request per
     assessment) is the follow-on that closes PERF-7; it must keep the per-row
     guard.
+
+**Verification fix (2026-09-30, projects Round G).** An independent verifier
+(Postgres 16, RLS on, as the project owner) showed items 4, 5, 6 and 7 claimed
+more than 20261091 did at 13fcd5e: a machine-stamped write with the note `x`
+laundered an MI completion to `'human'`; a checklist with open items completed
+by a direct PATCH; a reopen, a waive or a void reused the note already on the
+row, and a note-only update cleared a waiver's reason; a direct reject's note
+never reached its history row, deleting a decided item deleted its history,
+and the reviewer's name was the client's. Each is now enforced as written
+above (`checklist_items_decision_rail`, `project_checklists_completion_basis_rail`,
+`checklist_completion_basis`, `turnover_items_decision_rail`,
+`punch_items_void_rail`, `turnover_items_record_review_event`,
+`quality_actor_name`; `lib/__tests__/qualityRailsMigration.test.ts`), with the
+lib mirroring the own-reason rule and keeping the sweep and the assessment off
+human territory.
 
 **Rationale.** A pre-startup safety review is signed. The audit found the
 green could come from a contractor's filename, survive the document's voiding,
