@@ -452,7 +452,7 @@ once. Hoist the `toLocaleString` formatters out of the row components.
 - `buildCostSeries` parses each entry date once.
 - List rows do not construct a formatter per render.
 
-**Partial (2026-09-23, projects Round G — `fmtMoney` and the list rows; the `costSeries` parse-once is P5/J5's limb).** Joint J3 MONEY-LEDGER. `lib/costs.ts` `fmtMoney` reuses one `Intl.NumberFormat` per (currency, precision) from a module-level `Map` (`moneyFormatter`). `components/projects/CostsTab.tsx` hoists one `Intl.DateTimeFormat` (`entryDateFmt`) for the entry rows in place of `new Date(…).toLocaleDateString()` per row per render.
+**Partial (2026-09-29, projects Round G — `fmtMoney` and the list rows; the `costSeries` parse-once is P5/J5's limb).** Joint J3 MONEY-LEDGER. `lib/costs.ts` `fmtMoney` reuses one `Intl.NumberFormat` per (currency, precision) from a module-level `Map` (`moneyFormatter`). `components/projects/CostsTab.tsx` hoists one `Intl.DateTimeFormat` (`entryDateFmt`) for the entry rows in place of `new Date(…).toLocaleDateString()` per row per render.
 - Tests: `lib/__tests__/costs.test.ts` "reuses one formatter per currency and precision" (counts constructions through a stand-in `Intl.NumberFormat`).
 
 **Done-when.**

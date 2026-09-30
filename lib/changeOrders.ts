@@ -583,7 +583,7 @@ async function lookalikeEntries(co: ChangeOrder): Promise<{ rows: Array<{ id: st
 
 /**
  * Repair an approved change order that "Ledger needs attention" lists — its
- * linked entry is missing, void, or unfindable (COST-11 dw3 / DEC-48 rule 7
+ * linked entry is missing, void, or unfindable (COST-11 dw3 / DEC-50 rule 7
  * for change orders). Two audited actions, never a delete:
  *   link    — sets posted_entry_id to a chosen POSTED commitment on the CO's
  *             budget line whose reference is the CO number and that no other

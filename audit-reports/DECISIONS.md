@@ -497,7 +497,7 @@ pre-emptively.
 **Risk:** high — changes what is possible on every ticket in orgs above the
 threshold.
 
-*Landed 2026-09-23 (projects Round G): the same derivation on change orders — `decideChangeOrder` (`lib/changeOrders.ts`) refuses a proposer's own decision while the org has another eligible decider (active controller-tier holders plus the project owner, minus the actor), allows and MARKS it when nobody else can, and `enforce_change_order_decision_guard` (`20261094`) applies the rule at the database for the SIGNED-IN caller (`auth.uid()`, which must be the recorded `decided_by`; the recorded decider only for a service write) against a proposer pinned at insert (`created_by = auth.uid()`) and never rewritten. Counted from the eligible-decider set rather than the raw active-member count, since only controllers and the owner can decide a CO. See `COST-6`, `DEC-48`.*
+*Landed 2026-09-29 (projects Round G): the same derivation on change orders — `decideChangeOrder` (`lib/changeOrders.ts`) refuses a proposer's own decision while the org has another eligible decider (active controller-tier holders plus the project owner, minus the actor), allows and MARKS it when nobody else can, and `enforce_change_order_decision_guard` (`20261094`) applies the rule at the database for the SIGNED-IN caller (`auth.uid()`, which must be the recorded `decided_by`; the recorded decider only for a service write) against a proposer pinned at insert (`created_by = auth.uid()`) and never rewritten. Counted from the eligible-decider set rather than the raw active-member count, since only controllers and the owner can decide a CO. See `COST-6`, `DEC-50`.*
 
 <a id="dec-13"></a>
 ## DEC-13 · Does `policyAllows` gain a resource dimension?
@@ -1294,7 +1294,7 @@ facility with no configuration must keep working exactly as it does today.
 
 **Risk:** medium — wide, but mechanical.
 
-*Landed 2026-09-23 (projects Round G): the change-order approval threshold is configuration — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }`, read by `loadApprovalThreshold` and by the `20261094` trigger; the decider tier above it is the controller collection (`memberHoldsAny(m, ["Admin","DocCtrl"])` / the `is_org_controller` predicate), never a facility role name. Default: no threshold until an org sets one; a malformed amount (anything but a plain non-negative number) means no threshold, in the lib and the trigger alike. See `COST-6`, `DEC-48`.*
+*Landed 2026-09-29 (projects Round G): the change-order approval threshold is configuration — `org_configurations` key `change_order_approval_threshold` = `{ "amount": N }`, read by `loadApprovalThreshold` and by the `20261094` trigger; the decider tier above it is the controller collection (`memberHoldsAny(m, ["Admin","DocCtrl"])` / the `is_org_controller` predicate), never a facility role name. Default: no threshold until an org sets one; a malformed amount (anything but a plain non-negative number) means no threshold, in the lib and the trigger alike. See `COST-6`, `DEC-50`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -1705,8 +1705,8 @@ the `Admin` branch, and an unscoped controller keeps today's behaviour.
 
 **Risk:** low.
 
-<a id="dec-48"></a>
-## DEC-48 · The money ledger's derived figures and rails
+<a id="dec-50"></a>
+## DEC-50 · The money ledger's derived figures and rails
 
 **Decision. The cost rollup's headline is what is still UNCOMMITTED; approved
 change orders revise the budget without touching the baseline, but only while
@@ -1714,13 +1714,11 @@ their money is on the ledger; CPI forecasts only what CPI measured; the
 ledger is never deleted; and a refusal is always a sentence with a repair
 path, never a silent success.**
 
-> Made during projects Round G (2026-09-23) by the joint J3 MONEY-LEDGER
+> Made during projects Round G (2026-09-29) by the joint J3 MONEY-LEDGER
 > package, taking the briefs' stated defaults. Each rule below is the fail-safe
 > reading of its evidence, chosen so the packages that consume these figures
-> (health, report, charts) can proceed. *Numbered DEC-44 on the package branch
-> until the review renumbering: DEC-44/45 are the integration branch's,
-> DEC-46 is DC-P1's, DEC-47 is J7's. The J2 / J4 / J6a branches still carry
-> their own DEC-44 and need their own numbers (49 onward) at merge.*
+> (health, report, charts) can proceed. *Numbered DEC-50 at merge (DEC-44 to DEC-49 were already taken on the
+> integration branch).*
 
 **Rules.**
 1. **Exposure** = spent + open commitments, where a commitment is drawn down
