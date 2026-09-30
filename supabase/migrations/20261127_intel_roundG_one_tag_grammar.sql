@@ -41,7 +41,7 @@ UNION ALL
 SELECT 'aliases with no letter or digit (no key; left untouched)', COUNT(*)
   FROM asset_aliases WHERE normalize_tag(alias) = ''
 UNION ALL
-SELECT 'duplicate spellings: extra rows sharing one (asset, key) — the extras stay inert', COUNT(*)
+SELECT 'duplicate spellings: (asset, key) groups holding more than one row — one row per group carries the key, the rest stay inert', COUNT(*)
   FROM (SELECT asset_id, normalize_tag(alias) AS k, COUNT(*) AS c
           FROM asset_aliases WHERE normalize_tag(alias) <> ''
          GROUP BY asset_id, normalize_tag(alias) HAVING COUNT(*) > 1) g;
