@@ -202,7 +202,7 @@ async function claimDocTransition(
   fromStatuses: CostDocStatus[],
   to: CostDocStatus,
   actorUid: string,
-  /** Award / post stamp posted_at + posted_by; a void does not (it moved no money). */
+  /** Award / post stamp posted_at + posted_by; a void or a decline does not (it moved no money). */
   stampPosted = true,
 ): Promise<{ ok: true; fresh: CostDocument } | { ok: false; error: string }> {
   const { data: row, error: readErr } = await supabase
@@ -376,17 +376,20 @@ export async function awardQuote(input: {
     });
   }
 
-  // Rivals (MON-10): every still-open quote competing for this scope becomes
-  // "not selected" — the same RFQ group when the award is grouped; every
-  // other UNGROUPED open quote on the project when it is not (an ungrouped
-  // award has no narrower scope to decline within; group quotes to keep
-  // them apart). The DB-side status guard means a rival someone awarded
-  // meanwhile is never clobbered. CHECKED (COST-11): a failed decline is a
-  // partial outcome the caller hears about, never an unconditional success.
-  const rivals = input.siblings.filter((d) =>
-    d.id !== doc.id && d.kind === "quote" && (d.status === "draft" || d.status === "parsed")
-    && (fresh.rfqGroup ? d.rfqGroup === fresh.rfqGroup : !d.rfqGroup));
-  let warning: string | undefined;
+  // Rivals (MON-10): every still-open quote in the SAME RFQ group becomes
+  // "not selected". An UNGROUPED award declines nothing on its own —
+  // ungrouped quotes tabulate alone (quoteGroups gives each its own
+  // "Ungrouped — <vendor>" heading) and may be for unrelated work, so the
+  // caller is TOLD which other ungrouped quotes stay open and declines the
+  // ones that competed through declineQuote. The DB-side status guard means
+  // a rival someone awarded meanwhile is never clobbered. CHECKED (COST-11):
+  // a failed decline is a partial outcome the caller hears about, never an
+  // unconditional success.
+  const open = (d: CostDocument) =>
+    d.id !== doc.id && d.kind === "quote" && (d.status === "draft" || d.status === "parsed");
+  const rivals = fresh.rfqGroup ? input.siblings.filter((d) => open(d) && d.rfqGroup === fresh.rfqGroup) : [];
+  const ungroupedOpen = fresh.rfqGroup ? [] : input.siblings.filter((d) => open(d) && !d.rfqGroup);
+  const warnings: string[] = [];
   let declined = 0;
   if (rivals.length > 0) {
     const { data: hit, error } = await supabase.from("cost_documents").update({ status: "declined" })
@@ -395,17 +398,40 @@ export async function awardQuote(input: {
       .select("id");
     declined = hit?.length ?? 0;
     if (error || declined < rivals.length) {
-      warning = `Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${error.message})` : ""} — refresh and decline them by hand.`;
+      warnings.push(`Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${error.message})` : ""} — refresh and decline them by hand.`);
     }
+  }
+  if (ungroupedOpen.length > 0) {
+    const names = ungroupedOpen.map((d) => d.vendorName ?? d.fileName ?? "quote");
+    warnings.push(`Awarded. ${ungroupedOpen.length} other ungrouped quote${ungroupedOpen.length === 1 ? "" : "s"} stay${ungroupedOpen.length === 1 ? "s" : ""} open (${names.join(", ")}) — decline ${ungroupedOpen.length === 1 ? "it" : "them"} if ${ungroupedOpen.length === 1 ? "it" : "they"} competed for this scope.`);
   }
 
   await audit("COST_DOC_AWARDED", fresh.orgId, doc.id, input.actor, {
     vendor: fresh.vendorName, total, rfqGroup: fresh.rfqGroup, rivalsConsidered: rivals.map((d) => d.vendorName ?? d.id),
-    rivalsDeclined: declined, costAccountId: input.costAccountId, postedEntryId: posted.entryId ?? null,
+    rivalsDeclined: declined, ungroupedLeftOpen: ungroupedOpen.length,
+    costAccountId: input.costAccountId, postedEntryId: posted.entryId ?? null,
     companyId: company?.id ?? null, override,
   });
   await notifyAward(fresh, total, input.actor, input.costAccountId);
-  return warning ? { ok: true, warning } : { ok: true };
+  return warnings.length ? { ok: true, warning: warnings.join(" ") } : { ok: true };
+}
+
+/** MON-10: decline a quote by hand — the explicit, audited "not selected"
+ *  for an ungrouped bid that competed with an award (an ungrouped award
+ *  declines nothing on its own; awardQuote's warning names the quotes that
+ *  stay open). draft|parsed → declined through the same compare-and-swap as
+ *  every other status write; no posted_at stamp (it moved no money). */
+export async function declineQuote(input: {
+  doc: CostDocument; actor: Actor; reason?: string | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { doc } = input;
+  if (doc.kind !== "quote") return { ok: false, error: "Only quotes are declined — void an invoice that should not post." };
+  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "declined", input.actor.uid, false);
+  if (!claim.ok) return { ok: false, error: claim.error };
+  await audit("COST_DOC_DECLINED", claim.fresh.orgId, doc.id, input.actor, {
+    vendor: claim.fresh.vendorName, rfqGroup: claim.fresh.rfqGroup, reason: input.reason?.trim() || null,
+  });
+  return { ok: true };
 }
 
 /** Confirm a parsed invoice: post its total as an ACTUAL and mark it.
@@ -457,14 +483,20 @@ export async function postInvoice(input: {
 
 const MOVED_MONEY = "This document already moved money — void the cost entry itself if the amount is wrong.";
 
+/** The statuses that moved no money — the only ones a void or a typed
+ *  total may touch (MON-3 / COST-14). `declined` is here: a bid that was
+ *  not selected moved nothing, and a wrongly declined or junk document
+ *  needs a terminal (void) and a correction (total) path. */
+const MOVED_NO_MONEY: CostDocStatus[] = ["draft", "parsed", "declined"];
+
 /** Void an unposted document. Awarded/posted paper stays — void the cost
  *  entry instead if the money itself was wrong. MON-3 / COST-14: the
  *  decision is made against the DATABASE row through claimDocTransition
- *  (draft|parsed → void), never against the caller's snapshot. */
+ *  (draft|parsed|declined → void), never against the caller's snapshot. */
 export async function voidCostDoc(input: { doc: CostDocument; actor: Actor }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
   if (doc.status === "awarded" || doc.status === "posted") return { ok: false, error: MOVED_MONEY };
-  const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "void", input.actor.uid, false);
+  const claim = await claimDocTransition(doc.id, MOVED_NO_MONEY, "void", input.actor.uid, false);
   if (!claim.ok) return { ok: false, error: claim.error };
   await audit("COST_DOC_VOIDED", doc.orgId, doc.id, input.actor, { fileName: claim.fresh.fileName, vendor: claim.fresh.vendorName });
   return { ok: true };
@@ -472,20 +504,29 @@ export async function voidCostDoc(input: { doc: CostDocument; actor: Actor }): P
 
 /** Manual total entry for when the AI can't read a scan — the human types
  *  what the paper says, and that becomes the awardable number. MON-3 /
- *  COST-14: only an unposted document takes a new total — the UPDATE
- *  carries the status predicate and a zero-row match is reported with the
- *  row's real status, re-read. */
+ *  COST-14: only a document that moved no money takes a new total — each
+ *  UPDATE carries its status predicate and a zero-row match is reported
+ *  with the row's real status, re-read. A draft/parsed document becomes
+ *  (stays) parsed; a DECLINED bid takes the corrected total for its
+ *  tabulation and stays declined — a correction is not a reopen. */
 export async function setManualTotal(input: {
   doc: CostDocument; total: number; vendorName?: string | null; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!Number.isFinite(input.total) || input.total <= 0) return { ok: false, error: "Enter the document's total as a positive number." };
   if (input.doc.status === "awarded" || input.doc.status === "posted") return { ok: false, error: MOVED_MONEY };
-  const patch: Record<string, unknown> = { total_amount: input.total, status: "parsed" };
+  const patch: Record<string, unknown> = { total_amount: input.total };
   if (input.vendorName?.trim()) patch.vendor_name = input.vendorName.trim();
-  const { data: hit, error } = await supabase.from("cost_documents").update(patch)
+  const open = await supabase.from("cost_documents").update({ ...patch, status: "parsed" })
     .eq("id", input.doc.id).in("status", ["draft", "parsed"]).select("id");
-  if (error) return { ok: false, error: error.message };
-  if (!hit || hit.length === 0) {
+  if (open.error) return { ok: false, error: open.error.message };
+  let hit = open.data ?? [];
+  if (hit.length === 0) {
+    const dec = await supabase.from("cost_documents").update(patch)
+      .eq("id", input.doc.id).eq("status", "declined").select("id");
+    if (dec.error) return { ok: false, error: dec.error.message };
+    hit = dec.data ?? [];
+  }
+  if (hit.length === 0) {
     const { data: row } = await supabase.from("cost_documents").select("status").eq("id", input.doc.id).maybeSingle();
     const status = (row as { status?: string } | null)?.status;
     return {
@@ -502,7 +543,9 @@ export async function setManualTotal(input: {
 // ── reconciliation + repair (MON-1 / COST-11 dw3 — GAP-406's repair path) ──
 
 export interface LedgerOrphans {
-  /** awarded / posted documents with no posted cost entry pointing at them. */
+  /** awarded / posted documents with NO cost entry pointing at them. An
+   *  entry that was voided by hand still counts as attended: voiding the
+   *  entry is the documented correction for a wrong amount (MOVED_MONEY). */
   docs: CostDocument[];
   /** approved change orders whose posted_entry_id is null. */
   changeOrders: Array<{ id: string; coNumber: string; title: string; amount: number }>;
@@ -510,13 +553,16 @@ export interface LedgerOrphans {
 
 /** The two orphan states the claim-then-post design can produce. Read-only;
  *  the SQL view `cost_ledger_orphans` (20261093) answers the same question
- *  from the database side. A failed read throws (REL-2). */
+ *  from the database side. A document whose linked entry exists in ANY
+ *  status is attended — its entry was posted and, if void, voided on
+ *  purpose — so it is never offered a re-post of its locked total. A failed
+ *  read throws (REL-2). */
 export async function listLedgerOrphans(orgId: string, projectId: string): Promise<LedgerOrphans> {
   const [docsRes, entriesRes, cosRes] = await Promise.all([
     supabase.from("cost_documents").select("*").eq("org_id", orgId).eq("project_id", projectId)
       .in("status", ["awarded", "posted"]).limit(500),
     supabase.from("cost_entries").select("source_document_id").eq("org_id", orgId).eq("project_id", projectId)
-      .eq("status", "posted").not("source_document_id", "is", null).limit(2000),
+      .not("source_document_id", "is", null).limit(2000),
     supabase.from("change_orders").select("id, co_number, title, amount").eq("org_id", orgId).eq("project_id", projectId)
       .eq("status", "approved").is("posted_entry_id", null).limit(500),
   ]);
@@ -538,7 +584,10 @@ export async function listLedgerOrphans(orgId: string, projectId: string): Promi
  *   revert  — puts the document back to parsed/draft so it can be decided
  *             again (rivals it declined stay declined; decide them by hand).
  * Controller / owner writes only (RLS); the entry check is re-done here so
- * a repair on a document that has since been made whole is refused.
+ * a repair on a document that has since been made whole is refused. A
+ * document whose linked entry was VOIDED by hand is not re-posted (the void
+ * was the correction, and its total is locked); it may still be reverted,
+ * since no money of its own remains on the ledger.
  */
 export async function repairCostDoc(input: {
   doc: CostDocument; action: "repost" | "revert"; costAccountId?: string | null; actor: Actor;
@@ -549,12 +598,16 @@ export async function repairCostDoc(input: {
   if (fresh.status !== "awarded" && fresh.status !== "posted") {
     return { ok: false, error: `This document is ${costDocStatusLabel(fresh.status).toLowerCase()} — nothing to repair.` };
   }
-  const { data: linked, error: linkErr } = await supabase.from("cost_entries").select("id")
-    .eq("source_document_id", fresh.id).eq("status", "posted").limit(1);
+  const { data: linked, error: linkErr } = await supabase.from("cost_entries").select("id, status")
+    .eq("source_document_id", fresh.id).limit(50);
   if (linkErr) return { ok: false, error: linkErr.message };
-  if (linked && linked.length > 0) return { ok: false, error: "This document already has its cost entry — nothing to repair. Refresh." };
+  const links = (linked ?? []) as Array<{ id: string; status: string | null }>;
+  if (links.some((e) => e.status === "posted")) return { ok: false, error: "This document already has its cost entry — nothing to repair. Refresh." };
 
   if (input.action === "repost") {
+    if (links.length > 0) {
+      return { ok: false, error: "This document's cost entry was voided by hand — that void was the correction, so its locked total is not re-posted. Post the corrected amount on the budget line instead." };
+    }
     if (!input.costAccountId) return { ok: false, error: "Pick the budget line the money posts to." };
     const mismatch = await currencyMismatch(fresh, input.costAccountId);
     if (mismatch) return { ok: false, error: mismatch };

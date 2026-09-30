@@ -10,9 +10,14 @@
 --     `app.record_purge = 'project:<id>'` for the project it is tearing down
 --     (the GUC contract shared with projects-and-cost PC-2 — whichever lands
 --     first defines it, the other reuses it), and the service role, whose
---     delete is written to audit_logs FIRST. Note the cascade: deleting a
---     project through PostgREST now fails while it has cost rows — that is
---     the rail; the purge RPC is the door.
+--     delete is written to audit_logs FIRST. An FK CASCADE from the parent's
+--     own delete passes: when the row's project (or org) is already gone in
+--     the trigger's snapshot, the delete is the parent's, and whether a
+--     project that holds money may be deleted at all is the PROJECT's rail
+--     (J8 / PC-2: the projects BEFORE DELETE guard + delete_project_record).
+--     So the app's existing Delete-project action keeps working exactly as
+--     before this migration, while a direct DELETE on a cost row — its
+--     project still present — is refused.
 --   PT MON-8 dw3 / REL-4: CHECK constraints on cost_documents.status and kind,
 --     NOT VALID so a live row outside the set never aborts the apply — new
 --     writes are bound immediately; the inventory below counts the old ones.
@@ -33,10 +38,10 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TEMP TABLE prj_g_money_inventory AS
-SELECT 'inventory (before): awarded/posted documents with no posted cost entry linked to them (MON-1 damage already done + COST-9 unlinked)' AS check,
+SELECT 'inventory (before): awarded/posted documents with no cost entry linked to them (MON-1 damage already done + COST-9 unlinked)' AS check,
        (SELECT COUNT(*) FROM cost_documents d
          WHERE d.status IN ('awarded', 'posted')
-           AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id AND e.status = 'posted'))::text AS n
+           AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id))::text AS n
 UNION ALL
 SELECT 'inventory (before): approved change orders with posted_entry_id NULL',
        (SELECT COUNT(*) FROM change_orders WHERE status = 'approved' AND posted_entry_id IS NULL)::text
@@ -91,13 +96,20 @@ BEGIN
             jsonb_build_object('table', TG_TABLE_NAME, 'project_id', OLD.project_id, 'path', 'service_role'));
     RETURN OLD;
   END IF;
+  -- An FK cascade from the parent's own delete: the parent row is already
+  -- gone in this snapshot. The parent's delete rail decides (the project
+  -- purge / the projects guard); a direct DELETE still sees its project.
+  IF NOT EXISTS (SELECT 1 FROM projects WHERE id = OLD.project_id)
+     OR NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'Financial records are never deleted — void the % row instead. (COST-10, 20261093)', TG_TABLE_NAME
     USING ERRCODE = 'check_violation';
 END;
 $$;
 
 COMMENT ON FUNCTION enforce_cost_ledger_delete_guard() IS
-  'COST-10: BEFORE DELETE guard on the money tables. Refuses every DELETE except the project purge (app.record_purge = project:<id>) and the service role, which is audited first (COST_ROW_PURGED).';
+  'COST-10: BEFORE DELETE guard on the money tables. Refuses every direct DELETE except the project purge (app.record_purge = project:<id>) and the service role, which is audited first (COST_ROW_PURGED); an FK cascade from the parent project/org delete passes (the parent''s rail decides).';
 
 DROP TRIGGER IF EXISTS trg_cost_entries_delete_guard ON cost_entries;
 CREATE TRIGGER trg_cost_entries_delete_guard
@@ -156,7 +168,7 @@ SELECT 'cost_document'::text AS kind, d.id, d.org_id, d.project_id, d.status,
        COALESCE(d.vendor_name, d.file_name, d.id::text) AS label, d.total_amount AS amount
   FROM cost_documents d
  WHERE d.status IN ('awarded', 'posted')
-   AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id AND e.status = 'posted')
+   AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id)
 UNION ALL
 SELECT 'change_order'::text, c.id, c.org_id, c.project_id, c.status,
        c.co_number || ' — ' || c.title, c.amount
@@ -164,7 +176,7 @@ SELECT 'change_order'::text, c.id, c.org_id, c.project_id, c.status,
  WHERE c.status = 'approved' AND c.posted_entry_id IS NULL;
 
 COMMENT ON VIEW cost_ledger_orphans IS
-  'MON-1 / COST-11: awarded/posted cost documents with no posted entry linked to them, and approved change orders with no posted_entry_id. Repair through lib/costDocs.repairCostDoc (audited), never a delete.';
+  'MON-1 / COST-11: awarded/posted cost documents with no entry linked to them (an entry voided by hand counts as attended), and approved change orders with no posted_entry_id. Repair through lib/costDocs.repairCostDoc (audited), never a delete.';
 
 COMMIT;
 
@@ -177,8 +189,9 @@ SELECT 'delete guard is SECURITY DEFINER with search_path pinned to public' AS c
           FROM pg_proc WHERE proname = 'enforce_cost_ledger_delete_guard' AND pronargs = 0) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'delete guard honours ONLY the purge GUC and the audited service-role path',
+SELECT 'delete guard honours ONLY the purge GUC, the audited service-role path and a parent''s FK cascade',
        (SELECT prosrc LIKE '%app.record_purge%' AND prosrc LIKE '%service_role%' AND prosrc LIKE '%COST_ROW_PURGED%'
+               AND prosrc LIKE '%NOT EXISTS (SELECT 1 FROM projects WHERE id = OLD.project_id)%'
           FROM pg_proc WHERE proname = 'enforce_cost_ledger_delete_guard' AND pronargs = 0),
        NULL
 UNION ALL

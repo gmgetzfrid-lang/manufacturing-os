@@ -102,8 +102,10 @@ export interface Forecast {
  *
  * COST-1: CPI is measured over the milestone-PINNED accounts only, so the
  * CPI branch divides only the pinned budget by it; the unpinned remainder is
- * carried at the run-rate when the schedule allows one, else at budget —
- * never below what it has already spent. The EAC can therefore never fall
+ * carried at the run-rate when the schedule allows one AND it has started
+ * spending, else at budget (an unstarted remainder has no pace to project —
+ * carrying it at 0 would drop it from the EAC) — never below what it has
+ * already spent. The EAC can therefore never fall
  * below money already spent. When the caller does not say how much of the
  * budget is pinned, CPI is applied to the whole budget as before, floored at
  * spent, and the note says so.
@@ -143,14 +145,15 @@ export function computeForecast(input: {
       const rest = budget - pinnedBudget;
       const restSpent = spent - pinnedSpent;
       const eacPinned = Math.max(pinnedBudget / cpi, pinnedSpent);
+      const restByPace = runRateUsable && restSpent > 0;
       const eacRest = rest <= 0
         ? Math.max(0, restSpent)
-        : runRateUsable ? Math.max(restSpent / elapsed, restSpent) : Math.max(rest, restSpent);
+        : restByPace ? Math.max(restSpent / elapsed, restSpent) : Math.max(rest, restSpent);
       eac = eacPinned + eacRest;
       const share = Math.round((pinnedBudget / budget) * 100);
       scopeNote = rest <= 0
         ? "CPI covers the whole budget — every account is pinned to a schedule task."
-        : `CPI applies to the ${share}% of budget pinned to schedule tasks (${fmt(pinnedBudget)}); the other ${fmt(rest)} is carried ${runRateUsable ? "at the current spend pace" : "at budget"}.`;
+        : `CPI applies to the ${share}% of budget pinned to schedule tasks (${fmt(pinnedBudget)}); the other ${fmt(rest)} is carried ${restByPace ? "at the current spend pace" : restSpent <= 0 ? "at budget (nothing spent on it yet)" : "at budget"}.`;
     }
     const vac = eac - budget;
     return {

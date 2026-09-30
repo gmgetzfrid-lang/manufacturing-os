@@ -7,7 +7,9 @@
 //                    rival-decline is checked; orphans are listed and repaired
 //   MON-8            an unmapped status reads as itself, never a throw
 //   MON-9            CO numbering retries on 23505, then a human message
-//   MON-10           every open rival on the awarded scope is declined
+//   MON-10           a grouped award declines its group's open rivals; an
+//                    ungrouped award declines nothing and names the open
+//                    ungrouped quotes; declineQuote is the explicit decline
 //   MON-11           award + CO approval notify through lib/notify
 //   MON-12           do-not-use / inactive companies need a reasoned, audited override
 //   COST-6           self-decision refused while another decider exists; org threshold
@@ -111,7 +113,7 @@ vi.mock("@/lib/storage", () => ({
 }));
 
 import {
-  awardQuote, postInvoice, voidCostDoc, setManualTotal, listLedgerOrphans, repairCostDoc, costDocStatusLabel,
+  awardQuote, declineQuote, postInvoice, voidCostDoc, setManualTotal, listLedgerOrphans, repairCostDoc, costDocStatusLabel,
   uploadCostDoc, listCostDocs, type CostDocument,
 } from "@/lib/costDocs";
 import { proposeChangeOrder, decideChangeOrder, unwindChangeOrder, listChangeOrders, type ChangeOrder } from "@/lib/changeOrders";
@@ -195,6 +197,30 @@ describe("void + manual total decide against the DATABASE row (MON-3 / COST-14)"
     expect(ok.ok).toBe(true);
     expect(db.tables.cost_documents[1]).toMatchObject({ status: "parsed", total_amount: 250 });
   });
+
+  it("a DECLINED document moved no money: it can be voided, and a typed total corrects it WITHOUT reopening it", async () => {
+    db.tables.cost_documents.push(docRow({ status: "declined", total_amount: 1000 }), docRow({ id: "d2", status: "declined" }));
+    const fixed = await setManualTotal({ doc: doc({ status: "declined" }), total: 900, actor });
+    expect(fixed.ok).toBe(true);
+    expect(db.tables.cost_documents[0]).toMatchObject({ status: "declined", total_amount: 900 });
+    expect(auditRows("COST_DOC_MANUAL_TOTAL")).toHaveLength(1);
+
+    const voided = await voidCostDoc({ doc: doc({ id: "d2", status: "declined" }), actor });
+    expect(voided.ok).toBe(true);
+    expect(db.tables.cost_documents[1].status).toBe("void");
+    expect(auditRows("COST_DOC_VOIDED")).toHaveLength(1);
+  });
+
+  it("a posted invoice still refuses both, whatever the snapshot says (the allowed set is every status that moved no money)", async () => {
+    db.tables.cost_documents.push(docRow({ kind: "invoice", status: "posted", total_amount: 700 }));
+    const v = await voidCostDoc({ doc: doc({ kind: "invoice", status: "declined" }), actor });
+    expect(v.ok).toBe(false);
+    expect(v.error).toMatch(/already posted to budget/);
+    const t = await setManualTotal({ doc: doc({ kind: "invoice", status: "declined" }), total: 5, actor });
+    expect(t.ok).toBe(false);
+    expect(t.error).toMatch(/already posted to budget — its total is locked/);
+    expect(db.tables.cost_documents[0]).toMatchObject({ status: "posted", total_amount: 700 });
+  });
 });
 
 // ── MON-8 ───────────────────────────────────────────────────────────────────
@@ -233,19 +259,54 @@ describe("awardQuote — the award as a checked transaction (MON-1 / MON-10 / MO
     expect((emitted[0].audience as { involved: string[] }).involved).toEqual(["u-owner"]);
   });
 
-  it("MON-10: an UNGROUPED award declines every other open ungrouped quote on the project, and leaves grouped ones alone", async () => {
+  it("MON-10: an UNGROUPED award declines NOTHING — unrelated ungrouped bids stay awardable and the caller is told which stay open", async () => {
+    // Two intake-link quotes with a null group (the common case): Acme Electrical
+    // and Bravo Plumbing are different scopes. Awarding Acme must not kill Bravo.
     db.tables.cost_documents.push(
-      docRow({ rfq_group: null }),
-      docRow({ id: "r1", status: "parsed", rfq_group: null }),
-      docRow({ id: "r2", status: "draft", rfq_group: null }),
+      docRow({ rfq_group: null, vendor_name: "Acme Electrical" }),
+      docRow({ id: "r1", status: "parsed", rfq_group: null, vendor_name: "Bravo Plumbing" }),
+      docRow({ id: "r2", status: "draft", rfq_group: null, vendor_name: "Cole Paint" }),
       docRow({ id: "r3", status: "parsed", rfq_group: "G9" }),
       docRow({ id: "r4", status: "declined", rfq_group: null }),
     );
-    const siblings = [doc({ rfqGroup: null }), doc({ id: "r1", rfqGroup: null }), doc({ id: "r2", rfqGroup: null, status: "draft" }),
+    const siblings = [doc({ rfqGroup: null, vendorName: "Acme Electrical" }), doc({ id: "r1", rfqGroup: null, vendorName: "Bravo Plumbing" }),
+      doc({ id: "r2", rfqGroup: null, status: "draft", vendorName: "Cole Paint" }),
       doc({ id: "r3", rfqGroup: "G9" }), doc({ id: "r4", rfqGroup: null, status: "declined" })];
-    const res = await awardQuote({ doc: doc({ rfqGroup: null }), siblings, costAccountId: "a1", actor });
+    const res = await awardQuote({ doc: doc({ rfqGroup: null, vendorName: "Acme Electrical" }), siblings, costAccountId: "a1", actor });
     expect(res.ok).toBe(true);
-    expect(db.tables.cost_documents.map((d) => d.status)).toEqual(["awarded", "declined", "declined", "parsed", "declined"]);
+    expect(db.tables.cost_documents.map((d) => d.status)).toEqual(["awarded", "parsed", "draft", "parsed", "declined"]);
+    expect(res.warning).toBe("Awarded. 2 other ungrouped quotes stay open (Bravo Plumbing, Cole Paint) — decline them if they competed for this scope.");
+    expect(auditRows("COST_DOC_AWARDED")[0].details).toMatchObject({ rivalsDeclined: 0, ungroupedLeftOpen: 2 });
+
+    // Bravo is still awardable on its own budget line.
+    const bravo = await awardQuote({ doc: doc({ id: "r1", rfqGroup: null, vendorName: "Bravo Plumbing" }), siblings: [], costAccountId: "a1", actor });
+    expect(bravo).toEqual({ ok: true });
+    expect(db.tables.cost_documents[1].status).toBe("awarded");
+  });
+
+  it("MON-10: declineQuote is the explicit, audited decline — draft|parsed only, no posted_at stamp, never an awarded bid", async () => {
+    db.tables.cost_documents.push(docRow({ id: "r1", rfq_group: null, status: "parsed" }), docRow({ id: "r2", status: "awarded" }));
+    const ok = await declineQuote({ doc: doc({ id: "r1", rfqGroup: null }), actor, reason: "Competed with the Acme award" });
+    expect(ok).toEqual({ ok: true });
+    expect(db.tables.cost_documents[0].status).toBe("declined");
+    expect(db.tables.cost_documents[0].posted_at).toBeUndefined();
+    expect(auditRows("COST_DOC_DECLINED")[0].details).toMatchObject({ reason: "Competed with the Acme award", rfqGroup: null });
+
+    const stale = await declineQuote({ doc: doc({ id: "r2", status: "parsed" }), actor });
+    expect(stale.ok).toBe(false);
+    expect(stale.error).toMatch(/already awarded/);
+    expect(db.tables.cost_documents[1].status).toBe("awarded");
+
+    db.tables.cost_documents.push(docRow({ id: "i1", kind: "invoice" }));
+    expect((await declineQuote({ doc: doc({ id: "i1", kind: "invoice" }), actor })).ok).toBe(false);
+    expect(auditRows("COST_DOC_DECLINED")).toHaveLength(1);
+  });
+
+  it("MON-10: a grouped award names no ungrouped quotes — they are not its scope", async () => {
+    db.tables.cost_documents.push(docRow({}), docRow({ id: "u1", rfq_group: null }));
+    const res = await awardQuote({ doc: doc(), siblings: [doc(), doc({ id: "u1", rfqGroup: null })], costAccountId: "a1", actor });
+    expect(res).toEqual({ ok: true });
+    expect(db.tables.cost_documents[1].status).toBe("parsed");
   });
 
   it("MON-1: post failure + revert failure is reported as STUCK with the document id, never silence", async () => {
@@ -337,6 +398,24 @@ describe("orphans are listed and repaired, never deleted (MON-1 / COST-11 dw3)",
     const o = await listLedgerOrphans("o1", "p1");
     expect(o.docs.map((d) => d.id)).toEqual(["stuck"]);
     expect(o.changeOrders.map((c) => c.id)).toEqual(["co-orphan"]);
+  });
+
+  it("a document whose linked entry was VOIDED by hand is attended — not listed, and never re-posted at its locked total", async () => {
+    // Award posted $1000; the controller found the quote was wrong, voided the
+    // entry (the MOVED_MONEY instruction) and hand-posted the right amount.
+    db.tables.cost_documents.push(docRow({ id: "d1", status: "awarded" }));
+    db.tables.cost_entries.push({ id: "e1", org_id: "o1", project_id: "p1", status: "void", source_document_id: "d1" });
+    const o = await listLedgerOrphans("o1", "p1");
+    expect(o.docs).toEqual([]);
+    const res = await repairCostDoc({ doc: doc({ status: "awarded" }), action: "repost", costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/voided by hand/);
+    expect(entries()).toHaveLength(1);
+    expect(auditRows("COST_DOC_REPAIRED")).toHaveLength(0);
+    // …but it can still be put back to parsed: none of its money is on the ledger.
+    const back = await repairCostDoc({ doc: doc({ status: "awarded" }), action: "revert", actor });
+    expect(back.ok).toBe(true);
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
   });
 
   it("re-post posts the missing commitment with the document as source and audits; a second repair is refused", async () => {

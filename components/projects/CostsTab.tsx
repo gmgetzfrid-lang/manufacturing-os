@@ -368,10 +368,14 @@ function LedgerHealth({ orphans, accounts, canManage, actor, busy, setBusy, onCh
   onChanged: () => void; setErr: (m: string | null) => void;
 }) {
   const [accountPick, setAccountPick] = useState<Record<string, string>>({});
+  // A quote is un-awarded; an invoice is un-posted — the button says which.
+  const revertLabel = (doc: CostDocument) => (doc.kind === "quote" ? "Revert award" : "Revert posting");
   const repair = async (doc: CostDocument, action: "repost" | "revert") => {
     const costAccountId = accountPick[doc.id] || null;
     if (action === "repost" && !costAccountId) { setErr("Pick the budget line the money posts to before re-posting."); return; }
-    const verb = action === "repost" ? `Re-post ${doc.kind === "quote" ? "the commitment" : "the actual"} for` : "Revert";
+    const verb = action === "repost"
+      ? `Re-post ${doc.kind === "quote" ? "the commitment" : "the actual"} for`
+      : `${revertLabel(doc)} for`;
     if (!(await appConfirm({ message: `${verb} ${doc.vendorName ?? doc.fileName ?? "this document"}? The action is audited.`, tone: action === "revert" ? "danger" : undefined }))) return;
     setBusy(doc.id); setErr(null);
     const res = await repairCostDoc({ doc, action, costAccountId, actor });
@@ -397,7 +401,7 @@ function LedgerHealth({ orphans, accounts, canManage, actor, busy, setBusy, onCh
               <button onClick={() => void repair(d, "repost")} disabled={busy === d.id}
                 className="px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Re-post</button>
               <button onClick={() => void repair(d, "revert")} disabled={busy === d.id}
-                className="px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50">Revert award</button>
+                className="px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50">{revertLabel(d)}</button>
             </span>
           )}
         </div>

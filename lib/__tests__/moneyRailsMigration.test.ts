@@ -1,7 +1,8 @@
 // projects Round G — J3 MONEY-LEDGER: shape pins on the two migrations.
 //
 //   20261093 — COST-10 delete guards (four money tables, purge GUC + audited
-//              service-role path), MON-8/REL-4 CHECKs on cost_documents,
+//              service-role path; a parent's FK cascade passes, a direct
+//              DELETE is refused), MON-8/REL-4 CHECKs on cost_documents,
 //              COST-9 unambiguous backfill, the cost_ledger_orphans view, the
 //              DEC-30 inventory captured BEFORE the transaction.
 //   20261094 — COST-6: change_orders_write split into INSERT (proposed only)
@@ -46,7 +47,9 @@ describe("20261093 — money rails", () => {
   it("captures the DEC-30 inventory in a temp table BEFORE the transaction, aggregate counts only", () => {
     const before = m93.slice(0, m93.indexOf("BEGIN;"));
     expect(before).toContain("CREATE TEMP TABLE prj_g_money_inventory AS");
-    expect(before).toMatch(/awarded\/posted documents with no posted cost entry/);
+    expect(before).toMatch(/awarded\/posted documents with no cost entry linked/);
+    // the inventory asks the view's question: an entry voided by hand counts as attended
+    expect(before).toContain("AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id))::text AS n");
     expect(before).toMatch(/approved change orders with posted_entry_id NULL/);
     expect(before).toMatch(/status outside the CHECK set/);
     expect(before).toMatch(/kind outside the CHECK set/);
@@ -73,6 +76,22 @@ describe("20261093 — money rails", () => {
     // same refusal shape as the legal-hold guard
     expect(m26).toContain("USING ERRCODE = 'check_violation'");
     expect(fn).toMatch(/RAISE EXCEPTION\s+'Financial records are never deleted/);
+  });
+
+  it("a parent's FK cascade passes the guard; the check sits after the audited paths and before the refusal", () => {
+    // Deleting a project (or org) cascades to its cost rows; inside the
+    // cascade the parent row is already gone in the trigger's snapshot, so
+    // the parent's own rail decides (J8 / PC-2's projects guard). A direct
+    // DELETE on a cost row still sees its project and is refused.
+    const fn = between(m93, "CREATE OR REPLACE FUNCTION enforce_cost_ledger_delete_guard()", "COMMENT ON FUNCTION");
+    const cascade = "IF NOT EXISTS (SELECT 1 FROM projects WHERE id = OLD.project_id)\n     OR NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN\n    RETURN OLD;";
+    expect(fn).toContain(cascade);
+    expect(fn.indexOf("v_jwt_role = 'service_role'")).toBeLessThan(fn.indexOf(cascade));
+    expect(fn.indexOf(cascade)).toBeLessThan(fn.indexOf("RAISE EXCEPTION"));
+    // the header no longer promises a broken project delete
+    const header = m93.slice(0, m93.indexOf("CREATE TEMP TABLE"));
+    expect(header).toContain("An FK CASCADE from the parent's");
+    expect(header).not.toMatch(/deleting a\s+--\s+project through PostgREST now fails/);
   });
 
   it("BEFORE DELETE row triggers on all four money tables", () => {
@@ -103,7 +122,9 @@ describe("20261093 — money rails", () => {
     const view = between(m93, "CREATE OR REPLACE VIEW cost_ledger_orphans", "COMMENT ON VIEW");
     expect(view).toContain("WITH (security_invoker = true)");
     expect(view).toContain("d.status IN ('awarded', 'posted')");
-    expect(view).toContain("NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id AND e.status = 'posted')");
+    // any linked entry — a VOID one included — attends the document (MON-1 / COST-11 minor)
+    expect(view).toContain("AND NOT EXISTS (SELECT 1 FROM cost_entries e WHERE e.source_document_id = d.id)\nUNION ALL");
+    expect(view).not.toContain("e.source_document_id = d.id AND e.status = 'posted'");
     expect(view).toContain("c.status = 'approved' AND c.posted_entry_id IS NULL");
   });
 
@@ -114,6 +135,7 @@ describe("20261093 — money rails", () => {
     expect(fin).toContain('SELECT "check", NULL::boolean, n FROM prj_g_money_inventory');
     expect(fin).toMatch(/proname = 'enforce_cost_ledger_delete_guard' AND pronargs = 0/);
     expect(fin).toContain("prosrc LIKE '%app.record_purge%'");
+    expect(fin).toContain("prosrc LIKE '%NOT EXISTS (SELECT 1 FROM projects WHERE id = OLD.project_id)%'");
     expect(fin).toContain("COUNT(*) = 4 FROM pg_trigger");
     expect(fin).toContain("COUNT(*) = 2 FROM pg_constraint");
     expect(fin).toContain("viewname = 'cost_ledger_orphans'");

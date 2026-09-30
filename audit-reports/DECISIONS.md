@@ -1730,9 +1730,17 @@ a sentence with a repair path, never a silent success.**
    and the forecast use the revised figure; the health score's "change
    control" part keeps scoring growth against the baseline and says so
    (`COST-4`). No stored `budget_revised` column — derived from the ledger.
+   Every consumer must pass the approved-changes map: today only the Costs
+   tab does; `lib/projectSnapshot.ts:55` and `lib/projectReport.ts:59` call
+   `computeCostRollup` without it, so health and the lessons-learned draft
+   agree with the tab only while no change order is approved — J7 passes
+   `approvedChangesByAccount(await listChangeOrders(projectId))` (`MON-4`
+   dw3, `COST-4` dw2).
 3. **CPI scope.** The CPI-based EAC applies to the milestone-pinned subset;
    the unpinned remainder is carried at the run-rate when the schedule gives
-   one, else at budget; every part is floored at its own spend, so an EAC is
+   one and the remainder has started spending, else at budget (an unstarted
+   remainder has no pace — a zero pace would drop it from the EAC); every
+   part is floored at its own spend, so an EAC is
    never below money already spent; the split is labelled wherever the EAC is
    printed (`COST-1`).
 4. **Change-order authority.** Self-decision is refused while another
@@ -1743,18 +1751,32 @@ a sentence with a repair path, never a silent success.**
    strand real approvals; the marker + audit make the gap visible (`COST-6`).
 5. **No FX.** A document in another currency than its budget line is refused
    at posting; no conversion is built (`COST-8`).
-6. **Never delete.** Every DELETE on the four money tables is refused at the
-   database except the audited project purge (`app.record_purge =
+6. **Never delete.** Every direct DELETE on the four money tables is refused
+   at the database except the audited project purge (`app.record_purge =
    'project:<id>'`, the GUC contract shared with the project-purge RPC) and
-   the service role, audited first (`COST-10`). A project with cost rows
-   cannot be deleted through PostgREST — the purge RPC is the door.
+   the service role, audited first (`COST-10`). An FK cascade from the
+   parent project's (or org's) own delete passes the money-table guard:
+   whether a project that holds money may be deleted is the PROJECT's rail
+   (J8's `projects` guard + `delete_project_record`), so the app's existing
+   Delete-project action is never broken by this guard; until J8 lands, a
+   project delete still takes its ledger with it, as before.
 7. **Repair, not correction.** A claimed-but-unposted document or an approved
    change order with no linked entry is surfaced on the Costs tab and repaired
    by an audited re-post or revert, never rewritten silently (`MON-1` /
-   `COST-11`).
-8. **Declined rivals.** An award declines every still-open quote on its
-   scope: the RFQ group when grouped, every other open ungrouped quote on the
-   project when not. Group quotes to keep different scopes apart (`MON-10`).
+   `COST-11`). A document whose linked entry was voided by hand is attended
+   (voiding the entry is the correction for a wrong amount) and is never
+   offered a re-post of its locked total.
+8. **Declined rivals.** A grouped award declines every still-open quote in
+   its RFQ group. An ungrouped award declines NOTHING automatically —
+   ungrouped quotes tabulate alone and are often for unrelated work (the
+   intake-link case copies a null group), and there is no declined → open
+   path — so the award's `warning` names the ungrouped quotes that stay open
+   and a competing one is declined by hand through `declineQuote` (audited,
+   `COST_DOC_DECLINED`). `declined` moved no money, so it can still be voided
+   or have its total corrected (it stays declined). The RFQ group is the
+   scope handle (`MON-10`). *(Amended in the fix pass: the first cut declined
+   every open ungrouped quote on the project, which marked unrelated scopes
+   "not selected" with no way back.)*
 9. **Do-not-use.** Awarding a company flagged `do_not_use` or `inactive`
    needs a reasoned override, audited by company id (`MON-12`).
 
@@ -1763,8 +1785,8 @@ a sentence with a repair path, never a silent success.**
 
 **Reversal.** Per rule: 1 and 2 are label + formula changes in `lib/costs.ts`;
 3 is `computeForecast`'s pinned branch; 4's threshold is per-org
-configuration; 6 is the two trigger functions; 8 is one filter in
-`awardQuote`.
+configuration; 6 is the two trigger functions; 8 is `awardQuote`'s group
+filter plus `declineQuote`.
 
 **Risk:** medium — the headline money figure changes meaning on every Costs
 tab (from budget − spent to budget − exposure); the previous figure stays

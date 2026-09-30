@@ -179,6 +179,19 @@ describe("computeForecast — COST-1: CPI applies to the pinned subset only", ()
     expect(f.scopeNote).toContain("current spend pace");
   });
 
+  it("an unpinned remainder that has not started spending is carried at BUDGET, not at a zero pace", () => {
+    // Revised budget 2000: pinned 1000 (spent 400, CPI 1.0) + an unpinned
+    // subcontract line 1000 not yet invoiced; the schedule is 50% elapsed.
+    const f = computeForecast({
+      budget: 2000, spent: 400, cpi: 1.0, pinnedBudget: 1000, pinnedSpent: 400,
+      scheduleStart: "2026-01-01", scheduleEnd: "2026-03-02", today: "2026-01-31", fmt,
+    });
+    expect(f.eac).toBeCloseTo(2000);                 // not 1000 — the unstarted $1000 is still owed
+    expect(f.varianceAtCompletion).toBeCloseTo(0);
+    expect(f.sentence).not.toMatch(/\$1000 under budget/);
+    expect(f.scopeNote).toContain("the other $1000 is carried at budget (nothing spent on it yet)");
+  });
+
   it("every account pinned → the note says CPI covers the whole budget", () => {
     const f = computeForecast({ budget: 1000, spent: 400, cpi: 1.25, pinnedBudget: 1000, pinnedSpent: 400, today: "2026-02-01", fmt });
     expect(f.eac).toBeCloseTo(800);
