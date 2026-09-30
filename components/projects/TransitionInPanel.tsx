@@ -8,8 +8,10 @@
 // provenance untouched. Only CLEAN sheets (every check ran, nothing found)
 // are bulk-adopted. A sheet with a number collision cannot be adopted until
 // it is renumbered to a clear number — adoptDocument re-checks at the click
-// and refuses otherwise. A sheet still awaiting review (or rejected) cannot
-// be adopted at all. A sheet whose checks could not run (no number, no
+// and refuses otherwise — where the number identifies a document in the
+// destination library; in a multi-sheet library (a tuple beyond the number)
+// sheets share numbers and the full key decides at the click. A sheet still
+// awaiting review (or never approved and rejected) cannot be adopted at all. A sheet whose checks could not run (no number, no
 // recognised equipment) is "unverifiable": single adopt only, after an
 // explicit confirmation. Adopting moves documents between folders, which
 // the database reserves for Admin / Document Control — the controls are
@@ -25,6 +27,7 @@ import {
   TransitionCandidate, TransitionImpact, UnverifiableReason,
   listTransitionCandidates, scanTransitionImpact, adoptDocument,
 } from "@/lib/transitionIn";
+import { numberIsTheKey } from "@/lib/intakeLinks";
 import { useRole } from "@/components/providers/RoleContext";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -50,7 +53,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   const [open, setOpen] = useState<string | null>(null);
 
   // Destination
-  const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
+  const [libs, setLibs] = useState<Array<{ id: string; name: string; uniqueness_keys?: string[] | null }>>([]);
   const [cols, setCols] = useState<Array<{ id: string; name: string }>>([]);
   const [destLib, setDestLib] = useState("");
   const [destCol, setDestCol] = useState("");
@@ -66,10 +69,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     try {
       const [cands, { data: ls }] = await Promise.all([
         listTransitionCandidates(orgId, intakeCollectionId),
-        supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
+        supabase.from("libraries").select("id, name, uniqueness_keys").eq("org_id", orgId).order("name"),
       ]);
       setCandidates(cands);
-      setLibs(((ls ?? []) as Array<{ id: string; name: string }>));
+      setLibs(((ls ?? []) as Array<{ id: string; name: string; uniqueness_keys?: string[] | null }>));
       // Scan with bounded concurrency — the sequential loop was up to ~800
       // round trips for a big intake batch.
       setScanning(true);
@@ -101,6 +104,12 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     return () => { alive = false; };
   }, [destLib]);
 
+  // INTK-5: does the number alone identify a document in the destination?
+  // Not in a multi-sheet library — there a same-numbered sheet is expected,
+  // and adoptDocument checks the full key at the click.
+  const numberDecides = numberIsTheKey(libs.find((l) => l.id === destLib)?.uniqueness_keys ?? null);
+  const blocksOnNumber = (impact: TransitionImpact | undefined) => !!impact?.numberCollision && numberDecides;
+
   // Bulk adoption takes only sheets that are approved AND scanned clean.
   const bulkable = (c: TransitionCandidate) => !c.awaitingReview && !!impacts.get(c.docId)?.clean;
   const cleanCount = useMemo(
@@ -116,11 +125,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     if (!destLib) { setMsg("Pick the destination library first."); return; }
     const impact = impacts.get(c.docId);
     const renum = (renumber.get(c.docId) ?? "").trim();
-    if (impact && impact.unverifiable.length > 0 && !impact.numberCollision) {
+    if (impact && impact.unverifiable.length > 0 && !blocksOnNumber(impact)) {
       const what = impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ");
       if (!(await appConfirm({ message: `${c.label} could not be fully checked (${what}). Adopt it into the controlled register anyway?`, tone: "danger" }))) return;
     }
-    if (impact?.numberCollision && !renum) { setMsg(`${c.label} collides with ${impact.numberCollision.label} — renumber it before adopting.`); return; }
+    if (impact?.numberCollision && blocksOnNumber(impact) && !renum) { setMsg(`${c.label} collides with ${impact.numberCollision.label} — renumber it before adopting.`); return; }
     setBusy(c.docId); setMsg(null);
     try {
       const res = await adoptDocument({
@@ -131,7 +140,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         actorId: uid, actorEmail: userEmail ?? null,
       });
       if (!res.ok) throw new Error(res.error);
-      setMsg(`${c.label} adopted into the controlled register.`);
+      setMsg(res.note ?? `${c.label} adopted into the controlled register.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -142,7 +151,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     const clean = candidates.filter(bulkable);
     if (!clean.length) return;
     setBusy("bulk"); setMsg(null);
-    let ok = 0; const failed: string[] = [];
+    let ok = 0; const failed: string[] = []; const unkeyed: string[] = [];
     for (const c of clean) {
       const res = await adoptDocument({
         orgId, projectId, docId: c.docId,
@@ -151,12 +160,15 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         linkAssets: impacts.get(c.docId)?.matchedAssets ?? [],
         actorId: uid, actorEmail: userEmail ?? null,
       });
-      if (res.ok) ok++; else failed.push(c.label);
+      if (res.ok) { ok++; if (res.note) unkeyed.push(c.label); } else failed.push(c.label);
     }
     setBusy(null);
-    setMsg(failed.length
+    const unkeyedText = unkeyed.length
+      ? ` ${unkeyed.length} adopted without a uniqueness key (the library's key names a field the sheet does not carry — set it in the document's properties): ${unkeyed.join(", ")}.`
+      : "";
+    setMsg((failed.length
       ? `Adopted ${ok} of ${clean.length} — failed: ${failed.join(", ")}`
-      : `Adopted ${ok} clean document${ok === 1 ? "" : "s"} into the controlled register. ${flaggedCount ? `${flaggedCount} flagged sheet${flaggedCount === 1 ? "" : "s"} stayed for resolution.` : ""}`);
+      : `Adopted ${ok} clean document${ok === 1 ? "" : "s"} into the controlled register. ${flaggedCount ? `${flaggedCount} flagged sheet${flaggedCount === 1 ? "" : "s"} stayed for resolution.` : ""}`) + unkeyedText);
     await refresh();
   };
 
@@ -244,7 +256,9 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                     <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.06] px-2.5 py-1.5">
                       <b className="text-rose-700 dark:text-rose-300">Number collision:</b>{" "}
                       <span className="text-[var(--color-text)]">{impact.numberCollision.label} (Rev {impact.numberCollision.rev ?? "—"}) already exists in the register.</span>{" "}
-                      <span className="text-[var(--color-text-muted)]">Renumber this sheet below, or resolve which one is the source of truth before adopting.</span>
+                      <span className="text-[var(--color-text-muted)]">{numberDecides || !destLib
+                        ? "Renumber this sheet below, or resolve which one is the source of truth before adopting."
+                        : "The destination library numbers sheets separately, so a shared number is expected — adoption checks the sheet's full key."}</span>
                     </div>
                   )}
                   {impact.overlapDocs.length > 0 && (
@@ -269,6 +283,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       Not fully checked: {impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ")}. It is left out of bulk adoption; adopt it on its own once you have looked at it.
                     </div>
                   )}
+                  {!c.awaitingReview && c.latestRejected && (
+                    <div className="text-[var(--color-text-muted)] italic">
+                      The newest proposal for this sheet was rejected — adoption moves its approved Rev {c.rev ?? "—"}.
+                    </div>
+                  )}
                   {c.awaitingReview && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-1.5 text-[var(--color-text)]">
                       {c.pendingReview ? "This submission is still in review" : "This sheet has no approved revision yet"} — approve or reject it in the review queue above before it can be adopted.
@@ -285,10 +304,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                         className="h-7 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
                       />
                       <button onClick={() => void adoptOne(c)}
-                        disabled={busy === c.docId || !destLib || !!c.awaitingReview || (!!impact.numberCollision && !(renumber.get(c.docId) ?? "").trim())}
+                        disabled={busy === c.docId || !destLib || !!c.awaitingReview || (blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim())}
                         title={!destLib ? "Pick the destination library above"
                           : c.awaitingReview ? "Approve or reject the submission first"
-                          : impact.numberCollision && !(renumber.get(c.docId) ?? "").trim() ? "Renumber it to a number that isn't in use first"
+                          : blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim() ? "Renumber it to a number that isn't in use first"
                           : undefined}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">
                         {busy === c.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />} Adopt

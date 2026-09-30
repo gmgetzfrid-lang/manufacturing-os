@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
-import { INTAKE_TOKEN_RE, CLOSED_PROJECT_STATUSES } from "@/lib/intakeLinks";
+import { INTAKE_TOKEN_RE, CLOSED_PROJECT_STATUSES, LINK_INVALID_MESSAGE } from "@/lib/intakeLinks";
 
 export const runtime = "nodejs";
 
@@ -43,7 +43,10 @@ export async function GET(req: NextRequest) {
     .eq("token", token)
     .maybeSingle();
   if (linkErr) return NextResponse.json({ error: "unavailable" }, { status: 503 });
-  if (!link) return NextResponse.json({ error: "notfound" }, { status: 404 });
+  // PM-2 dw2: a deleted project's links are DELETED (20261104's
+  // trg_projects_close_intake_links), so a link the database does not hold
+  // is answered definitely — "no longer valid", never "mistyped".
+  if (!link) return NextResponse.json({ error: "notfound", message: LINK_INVALID_MESSAGE }, { status: 404 });
   if (link.revoked_at) return NextResponse.json({ error: "revoked" }, { status: 410 });
   if (link.expires_at && Date.parse(link.expires_at as string) < Date.now()) {
     return NextResponse.json({ error: "expired" }, { status: 410 });

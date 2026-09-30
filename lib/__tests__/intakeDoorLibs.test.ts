@@ -14,10 +14,12 @@ import { sniffKind, validateIntakeFile, acceptedLabel, KIND_CONTENT_TYPE } from 
 import {
   INTAKE_TOKEN_RE, intakeTokenFromRequest, validateIntakeText, intakeExpiryFor, REV_LABEL_RE,
   revokeProjectIntakeLinks, CLOSED_PROJECT_STATUSES,
+  completeUniquenessKey, numberIsTheKey, uniquenessTuple, INTAKE_SUPPLIED_KEY_PARTS,
 } from "@/lib/intakeLinks";
+import { computeUniquenessKey } from "@/lib/uniqueness";
 import {
-  intakeLimits, DEFAULT_INTAKE_LIMITS, checkIntakeRate, linkBudgetRefusal, clientIp, sha256Hex, noticeSentRecently,
-  suppressedSinceLastNotice, ATTEMPT_OUTCOME,
+  intakeLimits, DEFAULT_INTAKE_LIMITS, checkIntakeRate, linkBudgetRefusal, clientIp, sha256Hex, noticesInWindow,
+  foldedSinceLastNotice, foldedNoticeSentence, noticeGoesOut, FORCED_NOTICES_PER_WINDOW, ATTEMPT_OUTCOME,
 } from "@/lib/intakeRateLimit";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -50,9 +52,21 @@ describe("fileSniff — the bytes decide", () => {
     expect(validateIntakeFile({ branch: "document", fileName: "plan.PDF", declaredType: "application/pdf; charset=binary", head: enc("%PDF-1.7") }).ok).toBe(true);
     expect(validateIntakeFile({ branch: "document", fileName: "x.html.pdf", declaredType: "application/pdf", head: enc("%PDF-1.7") }).ok).toBe(true);
   });
-  it("per-branch allowlists: quotes PDF only; drawings and redlines PDF, DWG, DXF or ZIP — refusals name the list", () => {
+  it("per-branch allowlists: quotes PDF only; drawings PDF, DWG, DXF or ZIP; redlines add PNG and JPEG — refusals name the list", () => {
     expect(acceptedLabel("quote")).toBe("PDF");
     expect(acceptedLabel("document")).toBe("PDF, DWG, DXF or ZIP");
+    expect(acceptedLabel("redline")).toBe("PDF, DWG, DXF, ZIP, PNG or JPEG");
+    const png = bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+    const jpg = bytes(0xff, 0xd8, 0xff, 0xe1);
+    expect(sniffKind(png)).toBe("png");
+    expect(sniffKind(jpg)).toBe("jpeg");
+    expect(sniffKind(bytes(0x89, 0x50, 0x4e, 0x47))).toBeNull(); // a truncated signature is not a PNG
+    expect(validateIntakeFile({ branch: "redline", fileName: "m.png", declaredType: "image/png", head: png })).toEqual({ ok: true, kind: "png", contentType: "image/png" });
+    expect(validateIntakeFile({ branch: "redline", fileName: "m.jpeg", declaredType: "", head: jpg })).toEqual({ ok: true, kind: "jpeg", contentType: "image/jpeg" });
+    expect(validateIntakeFile({ branch: "redline", fileName: "m.png", declaredType: "image/svg+xml", head: png }).ok).toBe(false);
+    expect(validateIntakeFile({ branch: "redline", fileName: "m.jpg", declaredType: "image/png", head: png }).ok).toBe(false);
+    expect(validateIntakeFile({ branch: "document", fileName: "m.png", declaredType: "image/png", head: png }).ok).toBe(false);
+    expect(validateIntakeFile({ branch: "quote", fileName: "m.jpg", declaredType: "image/jpeg", head: jpg }).ok).toBe(false);
     const q = validateIntakeFile({ branch: "quote", fileName: "q.zip", declaredType: "application/zip", head: bytes(0x50, 0x4b, 0x03, 0x04) });
     expect(q).toEqual({ ok: false, message: "This file type isn't accepted here — upload a PDF file." });
     expect(validateIntakeFile({ branch: "redline", fileName: "m.zip", declaredType: "application/zip", head: bytes(0x50, 0x4b, 0x03, 0x04) }).ok).toBe(true);
@@ -106,6 +120,27 @@ describe("intakeLinks — the credential's rules", () => {
     expect(span).toBeGreaterThan(91 * DAY);
     expect(span).toBeLessThanOrEqual(ceilingMs);
   });
+  it("INTK-5: a key only when EVERY tuple part is supplied and filled — never a partial key that makes sheet 2 collide with sheet 1", () => {
+    const door = { documentNumber: "P-100", title: "P&ID", rev: null, status: "Draft", customFields: {} };
+    // the default tuple and number + title: exactly lib/uniqueness.ts's key
+    expect(completeUniquenessKey(door, null, INTAKE_SUPPLIED_KEY_PARTS)).toEqual({ key: "p-100", missing: [] });
+    expect(completeUniquenessKey(door, ["documentNumber", "title"], INTAKE_SUPPLIED_KEY_PARTS))
+      .toEqual({ key: computeUniquenessKey(door, ["documentNumber", "title"]), missing: [] });
+    // a multi-sheet library: the door has no sheet → NULL (the column's opt-out), where the plain helper gives 'p-100::'
+    expect(computeUniquenessKey(door, ["documentNumber", "sheet"])).toBe("p-100::");
+    expect(completeUniquenessKey(door, ["documentNumber", "sheet"], INTAKE_SUPPLIED_KEY_PARTS)).toEqual({ key: null, missing: ["sheet"] });
+    // …even when the caller somehow holds the field: the door can only supply number and title
+    expect(completeUniquenessKey({ ...door, customFields: { sheet: "2" } }, ["documentNumber", "sheet"], INTAKE_SUPPLIED_KEY_PARTS).key).toBeNull();
+    // adoption supplies anything the sheet carries: a sheet value keys it in full, a blank one does not
+    expect(completeUniquenessKey({ ...door, customFields: { sheet: " 2 " } }, ["documentNumber", "sheet"])).toEqual({ key: "p-100::2", missing: [] });
+    expect(completeUniquenessKey({ ...door, customFields: { sheet: "  " } }, ["documentNumber", "sheet"])).toEqual({ key: null, missing: ["sheet"] });
+    // no number under the default tuple: null, as before
+    expect(completeUniquenessKey({ ...door, documentNumber: null }, [], INTAKE_SUPPLIED_KEY_PARTS)).toEqual({ key: null, missing: ["documentNumber"] });
+    expect(uniquenessTuple([])).toEqual(["documentNumber"]);
+    expect(numberIsTheKey(null)).toBe(true);
+    expect(numberIsTheKey(["documentNumber"])).toBe(true);
+    expect(numberIsTheKey(["documentNumber", "sheet"])).toBe(false);
+  });
   it("closed projects: completed, cancelled, archived — not paused", () => {
     expect([...CLOSED_PROJECT_STATUSES].sort()).toEqual(["archived", "cancelled", "completed"]);
   });
@@ -149,14 +184,16 @@ describe("intakeRateLimit — the window", () => {
     expect(await checkIntakeRate(throwing, { tokenHash: "h", ip: "1.2.3.4", limits: DEFAULT_INTAKE_LIMITS })).toEqual({ limited: false });
     const erroring = { from: () => new Proxy({}, { get: (_t, p) => p === "then" ? (r: (v: unknown) => void) => r({ count: null, error: { message: "x" } }) : () => erroring.from() }) };
     expect(await checkIntakeRate(erroring, { tokenHash: "h", ip: "1.2.3.4", limits: DEFAULT_INTAKE_LIMITS })).toEqual({ limited: false });
-    expect(await noticeSentRecently(throwing, { tokenHash: "h", windowMinutes: 15 })).toBe(false);
+    expect(await noticesInWindow(throwing, { tokenHash: "h", windowMinutes: 15 })).toBe(0);
   });
-  it("a folded notice is counted: suppressed rows since the link's LAST notice, never rate-window attempts", async () => {
+  it("a folded notice is counted BY KIND: suppressed rows since the link's LAST notice, never rate-window attempts", async () => {
     const rows = [
       { token_hash: "h", outcome: "notified", created_at: "2026-09-30T10:00:00.000Z" },
       { token_hash: "h", outcome: "suppressed", created_at: "2026-09-30T09:59:00.000Z" }, // before the last notice
       { token_hash: "h", outcome: "suppressed", created_at: "2026-09-30T10:05:00.000Z" },
       { token_hash: "h", outcome: "suppressed", created_at: "2026-09-30T10:09:00.000Z" },
+      { token_hash: "h", outcome: "suppressed_published", created_at: "2026-09-30T10:10:00.000Z" },
+      { token_hash: "h", outcome: "suppressed_displaced", created_at: "2026-09-30T10:11:00.000Z" },
       { token_hash: "h", outcome: "attempt", created_at: "2026-09-30T10:09:00.000Z" },
       { token_hash: "other", outcome: "suppressed", created_at: "2026-09-30T10:09:00.000Z" },
     ];
@@ -182,12 +219,23 @@ describe("intakeRateLimit — the window", () => {
         return self;
       },
     };
-    expect(await suppressedSinceLastNotice(client, { tokenHash: "h", now: Date.parse("2026-09-30T10:20:00Z") })).toBe(2);
+    const folded = await foldedSinceLastNotice(client, { tokenHash: "h", now: Date.parse("2026-09-30T10:20:00Z") });
+    expect(folded).toEqual({ total: 4, published: 1, displaced: 1 });
+    expect(foldedNoticeSentence(folded, "Intake")).toBe("4 more submissions arrived on this link since the last notice (1 published without review, 1 replacing an earlier submission in review) — see the project's Intake tab.");
+    expect(foldedNoticeSentence({ total: 2, published: 0, displaced: 0 }, "Costs")).toBe("2 more submissions arrived on this link since the last notice — see the project's Costs tab.");
+    expect(foldedNoticeSentence({ total: 0, published: 0, displaced: 0 }, "Intake")).toBe("");
+    expect(await noticesInWindow(client, { tokenHash: "h", windowMinutes: 15, now: Date.parse("2026-09-30T10:10:00Z") })).toBe(1);
     expect(ATTEMPT_OUTCOME.suppressed).toBe("suppressed");
     // the rate window counts attempts only — a folded notice never throttles the contractor
     const src = (await import("node:fs")).readFileSync((await import("node:path")).join(process.cwd(), "lib/intakeRateLimit.ts"), "utf8");
     expect(src).toMatch(/\.eq\(col, value\)\.eq\("outcome", ATTEMPT_OUTCOME\.attempt\)/);
-    expect(await suppressedSinceLastNotice({ from: () => { throw new Error("down"); } }, { tokenHash: "h" })).toBe(0);
+    expect(await foldedSinceLastNotice({ from: () => { throw new Error("down"); } }, { tokenHash: "h" })).toEqual({ total: 0, published: 0, displaced: 0 });
+  });
+  it("SEC-8 dw2: an ordinary notice only into an empty window; a forced one (published / displaced) only while fewer than the cap went — a burst is never one notice per upload", () => {
+    expect(FORCED_NOTICES_PER_WINDOW).toBe(3);
+    expect(noticeGoesOut(0, false)).toBe(true);
+    expect(noticeGoesOut(1, false)).toBe(false);
+    expect([0, 1, 2, 3, 4].map((n) => noticeGoesOut(n, true))).toEqual([true, true, true, false, false]);
   });
   it("the per-link budget: submissions, then bytes", () => {
     const b = { submissionCount: 10, maxSubmissions: 10, bytesReceived: 0, maxTotalBytes: 100 };

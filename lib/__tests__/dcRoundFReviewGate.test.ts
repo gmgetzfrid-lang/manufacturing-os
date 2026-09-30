@@ -115,9 +115,10 @@ function chain(table: string) {
 }
 vi.mock("@/lib/supabase", () => ({
   supabase: { from: (t: string) => chain(t), rpc: async () => ({ data: null, error: null }) },
-  // The intake route binds the shared client to the service role around the
-  // post-publish pipeline and emit() (projects Round G J1).
-  __setServerSupabaseClient: vi.fn(), __resetServerSupabaseClient: vi.fn(),
+  // The intake route scopes the shared client to the service role around the
+  // post-publish pipeline and emit() (projects Round G J1,
+  // lib/serverClientScope.ts registers its request-scoped reader here).
+  __registerScopedServerClient: vi.fn(),
 }));
 vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: { from: (t: string) => chain(t), rpc: () => Promise.resolve({ data: null, error: null }) } }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => undefined) }, R2_BUCKET: "test-bucket" }));

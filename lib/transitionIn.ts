@@ -25,7 +25,7 @@ import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { buildSourceDocumentRef, unitOfDocumentMetadata } from "@/lib/sourceDocRef";
 import { defaultSlaTargetDate } from "@/lib/notifications";
-import { computeUniquenessKey } from "@/lib/uniqueness";
+import { completeUniquenessKey, numberIsTheKey, uniquenessTuple } from "@/lib/intakeLinks";
 
 /** Global variant of the entity-tag pattern (lib/notes.ts keeps the
  *  single-match one): FE-201, P-101A, PSV-1002 … The trailing lookahead
@@ -48,6 +48,10 @@ export interface TransitionCandidate {
   awaitingReview?: boolean;
   /** A submission sits in the review queue right now. */
   pendingReview?: boolean;
+  /** The sheet HAS an approved revision, but its newest proposal was
+   *  rejected. The approved revision is what adoption moves; the refusal is
+   *  shown as a note. */
+  latestRejected?: boolean;
 }
 
 /** Why a sheet's collision check could not say "clean" (INTK-7). */
@@ -101,9 +105,12 @@ const RETIRED = "(Archived,Superseded)";
 
 /** Documents still sitting in the project's intake folder — the un-adopted
  *  set. Company comes from the latest external version. INTK-3 / SAF-11: a
- *  sheet whose latest intake submission was REJECTED is not a candidate
- *  (the organisation refused it); one with no approved revision yet is
- *  listed, marked, and blocked from adoption. */
+ *  sheet that was NEVER approved and whose latest intake submission was
+ *  REJECTED is not a candidate (the organisation refused it); one with no
+ *  approved revision yet is listed, marked, and blocked from adoption. A
+ *  sheet with an approved revision stays a candidate even when a later
+ *  proposal was rejected — the approved revision is the controlled content,
+ *  and the rejection is shown as a note. */
 export async function listTransitionCandidates(
   orgId: string,
   intakeCollectionId: string,
@@ -134,7 +141,7 @@ export async function listTransitionCandidates(
     }
   }
   return rows
-    .filter((d) => latestState.get(String(d.id)) !== "rejected")
+    .filter((d) => !(latestState.get(String(d.id)) === "rejected" && !d.current_version_id))
     .map((d) => ({
       docId: String(d.id),
       label: String(d.document_number || d.title || d.name || "Document"),
@@ -146,6 +153,7 @@ export async function listTransitionCandidates(
       submittedAt: (d.created_at as string | null) ?? null,
       awaitingReview: !d.current_version_id,
       pendingReview: !!d.pending_version_id,
+      latestRejected: latestState.get(String(d.id)) === "rejected",
     }));
 }
 
@@ -277,12 +285,18 @@ export interface AdoptInput {
  *
  *  INTK-3 / SAF-12: the impact is RE-CHECKED here, at the click, never
  *  trusted from the panel's page-load scan: a sheet still in review or never
- *  approved is refused, a rejected one is refused, and a number that
- *  collides with a live document is refused unless the sheet is renumbered
- *  to a number that is itself clear. INTK-5: the uniqueness key is computed
- *  for the destination library, so the database's unique index sees the
- *  adopted sheet — and its refusal reaches the operator as a sentence. */
-export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; error?: string }> {
+ *  approved is refused, a never-approved rejected one is refused (an
+ *  APPROVED sheet whose newer proposal was rejected is adopted at its
+ *  approved revision), and a number that collides with a live document is
+ *  refused unless the sheet is renumbered to a number that is itself clear
+ *  — where the number identifies a document in the destination library. In
+ *  a library whose tuple is more than the number (a multi-sheet set) the
+ *  full key decides instead. INTK-5: the uniqueness key is computed for the
+ *  destination library, so the database's unique index sees the adopted
+ *  sheet — and its refusal reaches the operator as a sentence. A tuple part
+ *  the sheet does not carry (an intake sheet has no sheet field) leaves the
+ *  key NULL, and `note` tells the operator what to set. */
+export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; error?: string; note?: string }> {
   const nowIso = new Date().toISOString();
   const { data: before, error: readErr } = await supabase
     .from("documents")
@@ -293,10 +307,9 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
   if (readErr) return { ok: false, error: "Couldn't read the sheet — try again." };
   if (!before) return { ok: false, error: "Document not found." };
   const label = String(before.document_number || before.title || before.name || "This sheet");
-  if (before.pending_version_id || !before.current_version_id) {
-    return { ok: false, error: `${label} is still awaiting review — approve or reject its submission on the Intake tab before adopting it.` };
-  }
-  {
+  if (!before.current_version_id) {
+    // Never approved: a rejected sheet is refused outright; anything else is
+    // still awaiting a decision.
     const { data: latest, error: lErr } = await supabase
       .from("document_versions").select("review_state")
       .eq("record_id", input.docId).not("intake_link_id", "is", null)
@@ -305,7 +318,19 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     if ((((latest ?? []) as Array<{ review_state: string | null }>)[0]?.review_state) === "rejected") {
       return { ok: false, error: `${label}'s latest submission was rejected — it can't be adopted into the controlled register.` };
     }
+    return { ok: false, error: `${label} is still awaiting review — approve or reject its submission on the Intake tab before adopting it.` };
   }
+  if (before.pending_version_id) {
+    return { ok: false, error: `${label} is still awaiting review — approve or reject its submission on the Intake tab before adopting it.` };
+  }
+
+  // INTK-5: the destination library's key tuple — read first, because it
+  // decides what a same-numbered document means.
+  const { data: lib, error: libErr } = await supabase
+    .from("libraries").select("uniqueness_keys").eq("id", input.libraryId).eq("org_id", input.orgId).maybeSingle();
+  if (libErr || !lib) return { ok: false, error: "Couldn't read the destination library — try again." };
+  const keys = ((lib as { uniqueness_keys?: string[] | null }).uniqueness_keys ?? null);
+  const numberDecides = numberIsTheKey(keys);
 
   const newNumber = (input.newNumber ?? "").trim() || null;
   const effectiveNumber = newNumber ?? ((before.document_number as string | null) ?? null);
@@ -318,7 +343,7 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
   if (impact.unverifiable.includes("check_failed")) {
     return { ok: false, error: `Couldn't confirm ${effectiveNumber ?? label} is free in the register — try again.` };
   }
-  if (impact.numberCollision) {
+  if (impact.numberCollision && numberDecides) {
     return {
       ok: false,
       error: newNumber
@@ -327,17 +352,35 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     };
   }
 
-  // INTK-5: the destination library's key tuple.
-  const { data: lib, error: libErr } = await supabase
-    .from("libraries").select("uniqueness_keys").eq("id", input.libraryId).eq("org_id", input.orgId).maybeSingle();
-  if (libErr || !lib) return { ok: false, error: "Couldn't read the destination library — try again." };
-  const uniquenessKey = computeUniquenessKey({
+  // The key — only when the sheet carries every part of the tuple. A
+  // partial key ('p-100::' for a sheet with no sheet value) would refuse
+  // sheet 2 of a same-numbered set as a duplicate of sheet 1.
+  const { key: uniquenessKey, missing } = completeUniquenessKey({
     documentNumber: effectiveNumber,
     title: ((before.title ?? null) as string | null),
     rev: (before.rev as string | null) ?? null,
     status: (before.status as string | null) ?? null,
     customFields: (before.metadata as Record<string, unknown> | null) ?? null,
-  }, ((lib as { uniqueness_keys?: string[] | null }).uniqueness_keys ?? null));
+  }, keys);
+  const tupleText = uniquenessTuple(keys).map(keyPartName).join(" + ");
+  if (!numberDecides && uniquenessKey) {
+    // The full key decides in a multi-part library: a live document in the
+    // destination already carrying it is the collision.
+    const { data: same, error: sameErr } = await supabase
+      .from("documents").select("id, document_number, title, name, rev")
+      .eq("library_id", input.libraryId).eq("uniqueness_key", uniquenessKey)
+      .neq("id", input.docId).not("status", "in", RETIRED).limit(1);
+    if (sameErr) return { ok: false, error: `Couldn't confirm ${label} is free in the destination library — try again.` };
+    const hit = ((same ?? []) as Array<Record<string, unknown>>)[0];
+    if (hit) {
+      return { ok: false, error: `${String(hit.document_number || hit.title || hit.name || "A document")} (Rev ${(hit.rev as string | null) ?? "—"}) already carries the same ${tupleText} in that library — change the sheet's ${tupleText} before adopting it.` };
+    }
+  }
+  // (The default tuple's only possible gap is a sheet with no number, which
+  // the scan already reported as unverifiable.)
+  const note = !numberDecides && missing.length > 0
+    ? `${label} was adopted without a uniqueness key: that library identifies a document by ${tupleText}, and the sheet carries no ${missing.map(keyPartName).join(" or ")}. Set it in the document's properties — the key is written when they are saved.`
+    : undefined;
 
   const patch: Record<string, unknown> = {
     library_id: input.libraryId,
@@ -349,7 +392,12 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
   const { data: moved, error } = await supabase.from("documents").update(patch).eq("id", input.docId).select("id");
   if (error) {
     if (String(error.code ?? "") === "23505") {
-      return { ok: false, error: `Another live document in that library already carries ${effectiveNumber ?? "this number"} — renumber the sheet before adopting it.` };
+      return {
+        ok: false,
+        error: numberDecides
+          ? `Another live document in that library already carries ${effectiveNumber ?? "this number"} — renumber the sheet before adopting it.`
+          : `Another live document in that library already carries the same ${tupleText} — change the sheet's ${tupleText} before adopting it.`,
+      };
     }
     if (/requires Admin or Document Control/i.test(error.message ?? "")) {
       return { ok: false, error: "Adopting into the controlled register moves the document between folders, which needs Admin or Document Control." };
@@ -391,10 +439,16 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
       after: { number: newNumber ?? before.document_number, libraryId: input.libraryId, collectionId: input.collectionId },
       linkedAssetTags: input.linkAssets.map((a) => a.tag),
       unverifiable: impact.unverifiable,
+      ...(missing.length > 0 ? { uniquenessKeyNotSet: missing } : {}),
     },
   }).then(() => undefined, () => undefined);
 
-  return { ok: true };
+  return note ? { ok: true, note } : { ok: true };
+}
+
+/** A uniqueness-tuple part as the operator reads it. */
+function keyPartName(k: string): string {
+  return k === "documentNumber" ? "number" : k;
 }
 
 export interface FlagCollisionInput {

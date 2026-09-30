@@ -22,6 +22,7 @@
 // Client-safe: no service-role import. The server passes its own client.
 
 import { supabase } from "@/lib/supabase";
+import { computeUniquenessKey, type DocFieldsForUniqueness } from "@/lib/uniqueness";
 
 /** The token format both public routes accept. */
 export const INTAKE_TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
@@ -53,7 +54,11 @@ export const INTAKE_LINK_MAX_DAYS = 90;
  *  closed — a paused project still takes its contractors' drawings. */
 export const CLOSED_PROJECT_STATUSES: ReadonlySet<string> = new Set(["completed", "cancelled", "archived"]);
 
-/** The portal's answers for a link that no longer opens anything. */
+/** The portal's answers for a link that no longer opens anything. A link
+ *  the database does not hold at all is answered DEFINITELY too (PM-2 dw2):
+ *  20261104's trg_projects_close_intake_links DELETES a deleted project's
+ *  links, so "not found" is usually a withdrawn link, not a typo. */
+export const LINK_INVALID_MESSAGE = "This link is no longer valid — it may have been withdrawn or mistyped. Contact your project contact for a new link.";
 export const LINK_GONE_MESSAGE = "This link is no longer valid — the project it belonged to no longer exists. Contact your project contact for a new link.";
 export const PROJECT_CLOSED_MESSAGE = "This project is closed — the link no longer accepts submissions. Contact your project contact if you still need to send something.";
 
@@ -94,6 +99,47 @@ export function intakeExpiryFor(dateInput: string, now: Date = new Date()): { ok
     return { ok: false, message: `A link can live at most ${INTAKE_LINK_MAX_DAYS} days — pick an earlier date and issue a new link later if needed.` };
   }
   return { ok: true, iso: at.toISOString() };
+}
+
+// ── INTK-5: the uniqueness key a partial writer may set ────────────────────
+// A library's uniqueness tuple (lib/uniqueness.ts, 20260619) can name fields
+// the external door never collects — ["documentNumber","sheet"] exists so
+// P&ID sheets 1..8 may all carry the same number. A key computed from what
+// the door does have ('p-100::') would make sheet 2 collide with sheet 1.
+// So a writer that cannot fill EVERY part of the tuple writes NULL — the
+// column's documented opt-out — and skips the pre-check; the database's
+// partial unique index then sees the sheet only once the missing part is
+// set (the library's properties editor recomputes the key on save).
+
+/** The tuple parts the external door itself collects. */
+export const INTAKE_SUPPLIED_KEY_PARTS: ReadonlySet<string> = new Set(["documentNumber", "title"]);
+
+/** A library's uniqueness tuple, with lib/uniqueness.ts's default. */
+export function uniquenessTuple(keys: string[] | null | undefined): string[] {
+  return keys && keys.length > 0 ? keys : ["documentNumber"];
+}
+
+/** Does the drawing number ALONE identify a document in this library? Only
+ *  for the default tuple. In any other (a multi-sheet set, number + rev …)
+ *  a second live document with the same number is expected, and the full
+ *  key — not the number — decides a collision. */
+export function numberIsTheKey(keys: string[] | null | undefined): boolean {
+  const t = uniquenessTuple(keys);
+  return t.length === 1 && t[0] === "documentNumber";
+}
+
+/** The key lib/uniqueness.ts computes — but only when EVERY part of the
+ *  library's tuple is one the caller supplies (`supplied`, when given) and
+ *  non-empty. Otherwise `key` is null and `missing` names the parts that
+ *  could not be filled. */
+export function completeUniquenessKey(
+  fields: DocFieldsForUniqueness,
+  keys: string[] | null | undefined,
+  supplied?: ReadonlySet<string>,
+): { key: string | null; missing: string[] } {
+  const tuple = uniquenessTuple(keys);
+  const missing = tuple.filter((k) => (supplied && !supplied.has(k)) || computeUniquenessKey(fields, [k]) === null);
+  return { key: missing.length > 0 ? null : computeUniquenessKey(fields, tuple), missing };
 }
 
 /** Any client with `.from()` — the shared browser client, or a server

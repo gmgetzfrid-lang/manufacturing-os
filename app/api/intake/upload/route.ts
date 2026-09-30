@@ -10,13 +10,14 @@
 // The door as a boundary (projects Round G, J1 — GAP-401):
 //   * The token travels in the `x-intake-token` header (or `?token=`) and is
 //     checked — format, rate window, existence, revocation, expiry, the
-//     link's lifetime budget, the declared Content-Length — BEFORE the body
-//     is read (INTK-8 / SEC-8 / SEC-6). The multipart body is parsed only for
-//     a live link.
+//     project's existence and status, the declared Content-Length, the
+//     link's lifetime budget — BEFORE the body is read (INTK-8 / SEC-8 /
+//     SEC-6 / PM-2). The multipart body is parsed only for a live link.
 //   * The bytes decide the type (lib/fileSniff.ts): an allowlist per branch,
 //     the stored ContentType is the sniffed one, never the uploader's claim
 //     (SEC-1 / SEC-6 / INTK-11).
-//   * The project must still exist and be open (PM-2 / PM-1's route limb).
+//   * The project must still exist and be open (PM-2 / PM-1's route limb) —
+//     checked from the link, before the body.
 //   * Authorship is a fact fixed at creation — documents.authored_by_link_id
 //     (20261104) — never the version chain this route appends to (INTK-1 /
 //     SEC-3 / SEC-12). A document the link was ASSIGNED always goes through
@@ -55,18 +56,18 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
-import { __setServerSupabaseClient, __resetServerSupabaseClient } from "@/lib/supabase";
+import { runWithServerClient } from "@/lib/serverClientScope";
 import { readActiveHolds, decideHoldGate } from "@/lib/holdGate";
-import { computeUniquenessKey } from "@/lib/uniqueness";
 import { matchCompanyByName } from "@/lib/bidTab";
 import { validateIntakeFile, type IntakeBranch } from "@/lib/fileSniff";
 import {
   INTAKE_TOKEN_RE, intakeTokenFromRequest, CLOSED_PROJECT_STATUSES,
-  LINK_GONE_MESSAGE, PROJECT_CLOSED_MESSAGE, INTAKE_NOTE_MAX, validateIntakeText,
+  LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE, INTAKE_NOTE_MAX, validateIntakeText,
+  completeUniquenessKey, INTAKE_SUPPLIED_KEY_PARTS,
 } from "@/lib/intakeLinks";
 import {
   intakeLimits, sha256Hex, clientIp, checkIntakeRate, recordIntakeAttempt,
-  noticeSentRecently, suppressedSinceLastNotice, readLinkBudget, linkBudgetRefusal, ATTEMPT_OUTCOME,
+  noticesInWindow, noticeGoesOut, foldedSinceLastNotice, foldedNoticeSentence, readLinkBudget, linkBudgetRefusal, ATTEMPT_OUTCOME,
 } from "@/lib/intakeRateLimit";
 
 export const runtime = "nodejs";
@@ -89,27 +90,16 @@ function missingColumn(e: PgError, col: string): boolean {
 }
 
 // ── The shared client, bound to the service role for the pipeline ──────────
-// lib/postPublish.ts and lib/notify/dispatch.ts are written against the
-// shared `supabase` client (a browser session in the app). This route has
-// no session, so it binds the shared client to the service role while they
-// run — exactly as the maintenance cron does for the compliance scans — and
-// always unbinds (reference-counted: two uploads on one warm instance never
-// unbind each other's pipeline). Nothing else in this route uses the shared
-// client.
-// DEPLOY CONSTRAINT (DEC-50): the binding is module-wide. It is safe only
-// where each route runs in its own module instance (one serverless function
-// per route — the Vercel model lib/supabase.ts assumes). On a long-lived
-// shared Node process (`next start`, grouped functions) any other code
-// using the shared client during the window would run as the service role;
-// such a deploy must thread an explicit client through the pipeline first.
-let serviceClientHolds = 0;
-async function asServiceRole<T>(fn: () => Promise<T>): Promise<T> {
-  if (serviceClientHolds++ === 0) __setServerSupabaseClient(supabaseAdmin);
-  try {
-    return await fn();
-  } finally {
-    if (--serviceClientHolds === 0) __resetServerSupabaseClient();
-  }
+// lib/postPublish.ts, lib/notify/dispatch.ts and lib/intents.ts are written
+// against the shared `supabase` client (a browser session in the app). This
+// route has no session, so they run with the shared client resolving to the
+// service role — REQUEST-SCOPED (lib/serverClientScope.ts, AsyncLocalStorage):
+// only the async context of `fn` sees it. Another request served by the
+// same instance meanwhile (grouped routes, in-instance concurrency) keeps
+// its own client — the binding never leaks past this upload (DEC-50).
+// Nothing else in this route uses the shared client.
+function asServiceRole<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithServerClient(supabaseAdmin, fn);
 }
 
 /** INTK-13: the portal gets a plain sentence and a reference id; any
@@ -325,27 +315,63 @@ async function publishThroughContract(input: {
   }
 }
 
-/** INTK-4 / SAF-10: the submission a new one displaces is RESOLVED, not left
- *  'in_review' with nothing pointing at it. Pre-20261105 databases (the
+/** INTK-4 / SAF-10: the submission a new one displaces is RESOLVED —
+ *  'superseded' + superseded_at — BEFORE its replacement is inserted, so
+ *  the replacement may carry the same revision label (the active-label
+ *  index counts only rows with superseded_at NULL) and a failed retire
+ *  refuses the upload instead of leaving an orphan behind. Compare-and-set
+ *  on a still-undecided row: a draft a reviewer decided meanwhile is not
+ *  touched ("decided"). Checked, retried once. Pre-20261105 databases (the
  *  review_state CHECK does not know 'superseded' yet) keep the older
  *  retire-by-superseded_at shape. */
-async function retireDisplaced(ref: string, input: {
-  orgId: string; documentId: string; displacedId: string; byVersionId: string;
-  company: string; projectId: string; nowIso: string; contactEmail: string | null;
+async function retireDisplacedFirst(input: { displacedId: string; nowIso: string }): Promise<"retired" | "decided" | { error: string }> {
+  const attempt = async () => {
+    let r = await supabaseAdmin.from("document_versions")
+      .update({ review_state: "superseded", superseded_at: input.nowIso })
+      .eq("id", input.displacedId).eq("review_state", "in_review").is("superseded_at", null)
+      .select("id");
+    if (r.error && String(r.error.code ?? "") === "23514") {
+      r = await supabaseAdmin.from("document_versions")
+        .update({ superseded_at: input.nowIso })
+        .eq("id", input.displacedId).eq("review_state", "in_review").is("superseded_at", null)
+        .select("id");
+    }
+    return r;
+  };
+  let r = await attempt();
+  if (r.error) r = await attempt();
+  if (r.error) return { error: `displaced submission retire: ${r.error.message}` };
+  return ((r.data as unknown[] | null)?.length ?? 0) > 0 ? "retired" : "decided";
+}
+
+/** Undo retireDisplacedFirst when the replacement did not land (its insert
+ *  or its pointer write failed): the stamp this request wrote is cleared —
+ *  whatever a reviewer did meanwhile (an approval that promoted the draft
+ *  keeps its 'approved') — and the state goes back to 'in_review' only if
+ *  it is still 'superseded'. Checked, retried once; a restore that cannot
+ *  land is recorded as INTAKE_DISPLACE_UNRESOLVED (the maintenance cron's
+ *  review-health line surfaces it) — the document's pending revision then
+ *  names a draft the door retired, and a controller must resolve it. */
+async function restoreDisplaced(ref: string, input: {
+  orgId: string; documentId: string; displacedId: string; nowIso: string; projectId: string; contactEmail: string | null;
 }): Promise<void> {
-  let { error } = await supabaseAdmin.from("document_versions")
-    .update({ review_state: "superseded", superseded_at: input.nowIso })
-    .eq("id", input.displacedId).eq("review_state", "in_review");
-  if (error && String(error.code ?? "") === "23514") {
-    ({ error } = await supabaseAdmin.from("document_versions")
-      .update({ superseded_at: input.nowIso }).eq("id", input.displacedId).is("superseded_at", null));
-  }
-  if (error) console.error(`[intake/upload] ref=${ref} displaced submission ${input.displacedId} not resolved: ${error.message}`);
+  const attempt = async () => {
+    const a = await supabaseAdmin.from("document_versions")
+      .update({ superseded_at: null }).eq("id", input.displacedId).eq("superseded_at", input.nowIso);
+    if (a.error) return a.error;
+    const b = await supabaseAdmin.from("document_versions")
+      .update({ review_state: "in_review" }).eq("id", input.displacedId).eq("review_state", "superseded");
+    return b.error;
+  };
+  let err = await attempt();
+  if (err) err = await attempt();
+  if (!err) return;
+  console.error(`[intake/upload] ref=${ref} displaced submission ${input.displacedId} could not be restored: ${err.message}`);
   await audit(ref, {
-    action: "INTAKE_SUBMISSION_DISPLACED",
+    action: "INTAKE_DISPLACE_UNRESOLVED",
     resource_type: "document", resource_id: input.documentId,
     org_id: input.orgId, user_id: null, user_email: input.contactEmail,
-    details: { displacedVersionId: input.displacedId, byVersionId: input.byVersionId, company: input.company, projectId: input.projectId },
+    details: { displacedVersionId: input.displacedId, projectId: input.projectId, error: err.message },
   });
 }
 
@@ -373,7 +399,7 @@ export async function POST(req: NextRequest) {
     .eq("token", token)
     .maybeSingle();
   if (linkErr) return fail("This link could not be checked right now — try again shortly.", 503, `link read: ${linkErr.message}`);
-  if (!link) return fail("notfound", 404);
+  if (!link) return fail(LINK_INVALID_MESSAGE, 404, undefined, { code: "notfound" });
   if (link.revoked_at) return fail("This link has been revoked.", 410, undefined, { code: "revoked" });
   if (link.expires_at && Date.parse(link.expires_at as string) < Date.now()) return fail("This link has expired.", 410, undefined, { code: "expired" });
 
@@ -382,6 +408,17 @@ export async function POST(req: NextRequest) {
   const projectId = String(link.project_id);
   const company = String(link.company_name);
   const contactEmail = (link.contact_email as string | null) ?? null;
+
+  // ── The project must exist and be open (PM-2 / PM-1) — read from the
+  //    link alone, so it is answered BEFORE the body is received, on every
+  //    branch. ────────────────────────────────────────────────────────────
+  const { data: project, error: projErr } = await supabaseAdmin
+    .from("projects").select("id, name, status, owner_user_id, intake_library_id, intake_collection_id")
+    .eq("id", projectId).eq("org_id", orgId).maybeSingle();
+  if (projErr) return fail("This link could not be checked right now — try again shortly.", 503, `project read: ${projErr.message}`);
+  if (!project) return fail(LINK_GONE_MESSAGE, 410, undefined, { code: "link_gone" });
+  if (CLOSED_PROJECT_STATUSES.has(String(project.status ?? ""))) return fail(PROJECT_CLOSED_MESSAGE, 410, undefined, { code: "project_closed" });
+  const ownerUid = (project.owner_user_id as string | null) ?? null;
 
   // ── 2. Size and the link's lifetime budget, before the body ───────────
   const declaredLength = Number(req.headers.get("content-length") ?? NaN);
@@ -414,16 +451,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── 4. The project must exist and be open (PM-2 / PM-1) — before any
-  //       byte is stored, on every branch. ─────────────────────────────────
-  const { data: project, error: projErr } = await supabaseAdmin
-    .from("projects").select("id, name, status, owner_user_id, intake_library_id, intake_collection_id")
-    .eq("id", projectId).eq("org_id", orgId).maybeSingle();
-  if (projErr) return fail("This link could not be checked right now — try again shortly.", 503, `project read: ${projErr.message}`);
-  if (!project) return fail(LINK_GONE_MESSAGE, 410, undefined, { code: "link_gone" });
-  if (CLOSED_PROJECT_STATUSES.has(String(project.status ?? ""))) return fail(PROJECT_CLOSED_MESSAGE, 410, undefined, { code: "project_closed" });
-  const ownerUid = (project.owner_user_id as string | null) ?? null;
-
   const docId = String(form.get("docId") ?? "").trim() || null;
   const ticketId = String(form.get("ticketId") ?? "").trim() || null;
   const branch: IntakeBranch = purpose === "quote" ? "quote" : ticketId ? "redline" : "document";
@@ -443,24 +470,28 @@ export async function POST(req: NextRequest) {
 
   /** One notice to the project team per link per window (SEC-8 dw2) — a
    *  burst of uploads is one notice, not N. A folded submission is COUNTED
-   *  ('suppressed'), and the next notice on the link says how many more
-   *  arrived since the last one. `force` for a notice that must never be
-   *  folded into a burst: a controlled revision published without review,
-   *  and a pending review that was displaced. */
+   *  (by kind), and the next notice on the link says how many more arrived
+   *  since the last one. `force` for a notice that should not wait for the
+   *  window — a controlled revision published without review, a pending
+   *  review that was displaced — still bounded: at most
+   *  FORCED_NOTICES_PER_WINDOW notices per link per window, so a burst from
+   *  a trusted (or leaked) token is never one notice per upload. */
   const notifyTeam = async (n: {
     kind: "review_requested" | "doc_superseded"; title: string; body: string; link: string;
     resource: { type: "document" | "project"; id: string }; followers: boolean; extraInvolved?: string[];
-    metadata: Record<string, unknown>; force?: boolean;
+    metadata: Record<string, unknown>; force?: "published" | "displaced";
   }) => {
-    if (!n.force && await noticeSentRecently(supabaseAdmin, { tokenHash, windowMinutes: limits.noticeWindowMinutes })) {
-      await recordIntakeAttempt(supabaseAdmin, { tokenHash, ip, outcome: ATTEMPT_OUTCOME.suppressed, linkId });
+    const sent = await noticesInWindow(supabaseAdmin, { tokenHash, windowMinutes: limits.noticeWindowMinutes });
+    if (!noticeGoesOut(sent, !!n.force)) {
+      const outcome = n.force === "published" ? ATTEMPT_OUTCOME.suppressedPublished
+        : n.force === "displaced" ? ATTEMPT_OUTCOME.suppressedDisplaced
+        : ATTEMPT_OUTCOME.suppressed;
+      await recordIntakeAttempt(supabaseAdmin, { tokenHash, ip, outcome, linkId });
       return;
     }
-    const folded = await suppressedSinceLastNotice(supabaseAdmin, { tokenHash });
+    const folded = await foldedSinceLastNotice(supabaseAdmin, { tokenHash });
     const where = n.link.includes("tab=costs") ? "Costs" : "Intake";
-    const body = folded > 0
-      ? `${n.body} ${folded} more submission${folded === 1 ? "" : "s"} arrived on this link since the last notice — see the project's ${where} tab.`
-      : n.body;
+    const body = folded.total > 0 ? `${n.body} ${foldedNoticeSentence(folded, where)}` : n.body;
     const { data: controllers, error: ctlErr } = await supabaseAdmin
       .from("org_members").select("uid").eq("org_id", orgId).eq("status", "active").or(roleFilter(["Admin", "DocCtrl"]));
     if (ctlErr) console.error(`[intake/upload] ref=${ref} controller pool read failed: ${ctlErr.message}`);
@@ -624,7 +655,10 @@ export async function POST(req: NextRequest) {
       }],
       last_modified: nowIso,
     }).eq("id", ticketId);
-    if (updErr) return fail("Couldn't attach the redline — try again shortly.", 500, `ticket update: ${updErr.message}`);
+    if (updErr) {
+      await deleteObject(ref, key);
+      return fail("Couldn't attach the redline — try again shortly.", 500, `ticket update: ${updErr.message}`);
+    }
 
     const involved = [...new Set([
       ...(ticket.assigned_drafter_id ? [String(ticket.assigned_drafter_id)] : []),
@@ -876,11 +910,17 @@ export async function POST(req: NextRequest) {
       .from("libraries").select("uniqueness_keys").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
     if (libErr || !lib) return fail("This link isn't fully configured yet — ask your contact to check the intake library.", libErr ? 503 : 409, libErr ? `library read: ${libErr.message}` : undefined);
     // INTK-5: the same key every other creation path writes, so the partial
-    // unique index sees an intake-born number from the moment it exists.
-    uniquenessKey = computeUniquenessKey(
+    // unique index sees an intake-born number from the moment it exists —
+    // but ONLY when the door can fill every part of the library's tuple.
+    // The door collects a number and a title; a tuple naming anything else
+    // (["documentNumber","sheet"]: sheets 1..N share a number) gets NULL,
+    // the column's opt-out, and no pre-check — a partial key would refuse
+    // sheet 2 as a duplicate of sheet 1.
+    uniquenessKey = completeUniquenessKey(
       { documentNumber: number, title, rev: null, status: "Draft", customFields: {} },
       ((lib as { uniqueness_keys?: string[] | null }).uniqueness_keys ?? null),
-    );
+      INTAKE_SUPPLIED_KEY_PARTS,
+    ).key;
     if (uniquenessKey) {
       const { data: clash, error: clashErr } = await supabaseAdmin
         .from("documents").select("id")
@@ -1008,8 +1048,10 @@ export async function POST(req: NextRequest) {
    *  pre-20261105 CHECK keeps the superseded_at-only shape) — so it never
    *  sits 'in_review' with nothing pointing at it, never reads as "already
    *  received" to the contractor's resend, and never holds the in-flight
-   *  index against it. */
-  const withdraw = async (msg: string, detail?: string) => {
+   *  index against it. `then` runs after the new version is resolved — a
+   *  displaced draft is restored only once the replacement no longer holds
+   *  its revision label. */
+  const withdraw = async (msg: string, detail?: string, then?: () => Promise<void>) => {
     if (versionId) {
       let { error: wErr } = await supabaseAdmin.from("document_versions")
         .update({ review_state: "superseded", superseded_at: nowIso }).eq("id", versionId);
@@ -1018,6 +1060,7 @@ export async function POST(req: NextRequest) {
       }
       if (wErr) console.error(`[intake/upload] ref=${ref} withdrawn submission ${versionId} not resolved: ${wErr.message}`);
     }
+    if (then) await then();
     if (createdDocId) await discard();
     return fail(msg, 409, detail);
   };
@@ -1054,6 +1097,26 @@ export async function POST(req: NextRequest) {
       console.error(`[intake/upload] ref=${ref} post-publish pipeline failed: ${(e as Error).message}`);
     }
   } else {
+    // INTK-4: the link's own pending draft (a trusted replace, checked above)
+    // is retired BEFORE the replacement exists — see retireDisplacedFirst.
+    let displacedRetired = false;
+    if (priorPending) {
+      const retired = await retireDisplacedFirst({ displacedId: priorPending, nowIso });
+      if (typeof retired === "object") {
+        await discard();
+        return fail("Your earlier submission could not be replaced right now — try again shortly.", 503, retired.error);
+      }
+      if (retired === "decided") {
+        await discard();
+        return fail("Your previous submission for this document was just decided — reload the portal and submit again.", 409);
+      }
+      displacedRetired = true;
+    }
+    const undoDisplace = async () => {
+      if (!displacedRetired || !priorPending) return;
+      displacedRetired = false;
+      await restoreDisplaced(ref, { orgId, documentId: theDocId, displacedId: priorPending, nowIso, projectId, contactEmail });
+    };
     const { data: ver, error: verErr } = await supabaseAdmin
       .from("document_versions")
       .insert({
@@ -1075,6 +1138,7 @@ export async function POST(req: NextRequest) {
       })
       .select("id").single();
     if (verErr && String(verErr.code ?? "") === "23505") {
+      await undoDisplace();
       const msg = `${verErr.message ?? ""} ${verErr.details ?? ""}`;
       // REL-8: the same bytes are already live on this link — the original
       // (a concurrent retry that won) answers; anything else is refused.
@@ -1083,6 +1147,7 @@ export async function POST(req: NextRequest) {
       return fail(`Rev ${revLabel || "A"} already exists on this document — submit it with a new revision label.`, 409, `version insert: ${verErr.message}`);
     }
     if (verErr || !ver) {
+      await undoDisplace();
       await discard();
       return fail("Couldn't record the submission — try again shortly.", 500, `version insert: ${verErr?.message ?? "no row"}`);
     }
@@ -1097,10 +1162,17 @@ export async function POST(req: NextRequest) {
       .eq("id", theDocId);
     point = priorPending ? point.eq("pending_version_id", priorPending) : point.is("pending_version_id", null);
     const { data: pointed, error: pointErr } = await point.select("id");
-    if (pointErr) return withdraw("Couldn't queue the submission for review — try again shortly.", `pending pointer write: ${pointErr.message}`);
-    if (!pointed || pointed.length === 0) return withdraw("Another revision of this document just went into review — your submission was not taken. Try again once it is approved or rejected.");
+    if (pointErr) return withdraw("Couldn't queue the submission for review — try again shortly.", `pending pointer write: ${pointErr.message}`, undoDisplace);
+    if (!pointed || pointed.length === 0) {
+      return withdraw("Another revision of this document just went into review — your submission was not taken. Try again once it is approved or rejected.", undefined, undoDisplace);
+    }
     if (priorPending) {
-      await retireDisplaced(ref, { orgId, documentId: theDocId, displacedId: priorPending, byVersionId: versionId, company, projectId, nowIso, contactEmail });
+      await audit(ref, {
+        action: "INTAKE_SUBMISSION_DISPLACED",
+        resource_type: "document", resource_id: theDocId,
+        org_id: orgId, user_id: null, user_email: contactEmail,
+        details: { displacedVersionId: priorPending, byVersionId: versionId, company, projectId },
+      });
     }
   }
 
@@ -1129,9 +1201,10 @@ export async function POST(req: NextRequest) {
       // pipeline's stale-copy signal already.
       followers: false,
       metadata: { versionId },
-      // A controlled revision published without review is ALWAYS told —
-      // never folded into a burst of review notices.
-      force: true,
+      // A controlled revision published without review does not wait for
+      // the window (up to the per-window cap; beyond it, it is counted by
+      // kind into the next notice).
+      force: "published",
     });
   } else {
     let intentHolders: string[] = [];
@@ -1155,7 +1228,7 @@ export async function POST(req: NextRequest) {
       followers: !!docId,
       extraInvolved: intentHolders,
       metadata: { versionId },
-      force: !!priorPending,
+      force: priorPending ? "displaced" : undefined,
     });
   }
 

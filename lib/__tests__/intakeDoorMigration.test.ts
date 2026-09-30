@@ -146,7 +146,7 @@ describe("20261105 — the review side of the door", () => {
     expect(keys).toContain("WHEN 'documentNumber' THEN d.document_number");
     expect(keys).toContain("ELSE d.metadata->>k.key");
     expect(keys).toContain("string_agg(p.v, '::' ORDER BY p.ord)");
-    expect(keys).toContain("CASE WHEN bool_and(p.v = '') THEN NULL");
+    expect(keys).toContain("CASE WHEN bool_or(p.v = '') THEN NULL");
     const upd = between(B, "UPDATE documents d\n   SET uniqueness_key = c.key", ";");
     expect(upd).toContain("AND NOT (c.live AND (");
   });

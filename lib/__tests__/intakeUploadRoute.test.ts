@@ -62,10 +62,14 @@ const db = vi.hoisted(() => ({
   r2Deletes: [] as Array<Record<string, unknown>>,
   emits: [] as Array<Record<string, unknown>>,
   pipeline: [] as Array<{ input: Record<string, unknown>; boundToServiceRole: boolean }>,
-  bound: false,
+  /** lib/serverClientScope.ts's reader, registered on the (mocked) shared
+   *  client module — "bound" means the CURRENT async context resolves the
+   *  shared client to the service role. */
+  scopeRead: null as null | (() => unknown),
   seq: 0,
   user: null as null | { id: string; email: string },
 }));
+const scopedToAdmin = () => (db.scopeRead?.() as { __admin?: boolean } | undefined)?.__admin === true;
 
 function parseOr(expr: string): (r: Row) => boolean {
   const parts = expr.split(/,(?![^(]*\))(?![^{]*\})/);
@@ -178,6 +182,7 @@ function chain(table: string) {
 
 vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
+    __admin: true,
     from: (t: string) => chain(t),
     rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
       db.rpcCalls.push({ fn, args });
@@ -191,17 +196,16 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 }));
 vi.mock("@/lib/supabase", () => ({
   supabase: { from: (t: string) => chain(t), rpc: async () => ({ data: null, error: null }) },
-  __setServerSupabaseClient: vi.fn(() => { db.bound = true; }),
-  __resetServerSupabaseClient: vi.fn(() => { db.bound = false; }),
+  __registerScopedServerClient: vi.fn((read: () => unknown) => { db.scopeRead = read; }),
 }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async (cmd: { input: Row; op: string }) => { (cmd.op === "delete" ? db.r2Deletes : db.r2Puts).push(cmd.input); }) }, R2_BUCKET: "bucket" }));
 vi.mock("@aws-sdk/client-s3", () => ({
   PutObjectCommand: class { op = "put"; constructor(public input: unknown) {} },
   DeleteObjectCommand: class { op = "delete"; constructor(public input: unknown) {} },
 }));
-vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (e: Row) => { db.emits.push({ ...e, boundToServiceRole: db.bound }); }) }));
+vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (e: Row) => { db.emits.push({ ...e, boundToServiceRole: scopedToAdmin() }); }) }));
 vi.mock("@/lib/postPublish", () => ({
-  runPostPublishSideEffects: vi.fn(async (input: Row) => { db.pipeline.push({ input, boundToServiceRole: db.bound }); }),
+  runPostPublishSideEffects: vi.fn(async (input: Row) => { db.pipeline.push({ input, boundToServiceRole: scopedToAdmin() }); }),
 }));
 vi.mock("@/lib/intents", () => ({ listLiveIntents: vi.fn(async () => [{ userId: "intent-holder" }]) }));
 
@@ -251,7 +255,7 @@ const docWrites = () => db.writes.filter((w) => w.table === "documents" || w.tab
 
 beforeEach(() => {
   db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.r2Deletes = []; db.emits = []; db.pipeline = [];
-  db.bound = false; db.seq = 0; db.user = null;
+  db.seq = 0; db.user = null;
   db.rpc = {
     review_control_mode_for: () => ({ data: "none", error: null }),
     user_can_publish_on_library: () => ({ data: false, error: null }),
@@ -339,6 +343,32 @@ describe("the door checks the credential before it reads a byte", () => {
     const res = await upload({ title: "Skid GA" });
     expect(res.status).toBe(410);
     expect((await res.json()).code).toBe("project_closed");
+  });
+  it("a closed or gone project is answered BEFORE the body is received — an unparseable body still reads 410, never 400 (PC brief)", async () => {
+    seed();
+    db.tables.projects[0].status = "cancelled";
+    const closed = await POST(new NextRequest("http://x/api/intake/upload", { method: "POST", body: "not multipart at all", headers: { "x-intake-token": TOKEN } }));
+    expect(closed.status).toBe(410);
+    expect((await closed.json()).code).toBe("project_closed");
+    db.tables.projects = [];
+    const gone = await POST(new NextRequest("http://x/api/intake/upload", { method: "POST", body: "not multipart at all", headers: { "x-intake-token": TOKEN } }));
+    expect(gone.status).toBe(410);
+    expect((await gone.json()).code).toBe("link_gone");
+    // and the project is read before the budget and the body in the source order
+    const r = readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8");
+    const post = r.slice(r.indexOf("export async function POST"));
+    expect(post.indexOf('.from("projects").select("id, name, status')).toBeLessThan(post.indexOf("readLinkBudget(supabaseAdmin, linkId)"));
+    expect(post.indexOf("readLinkBudget(supabaseAdmin, linkId)")).toBeLessThan(post.indexOf("await req.formData()"));
+  });
+  it("a link the database does not hold (a deleted project's links are DELETED by the trigger) answers a definite sentence, never the bare token 'notfound' (PM-2 dw2)", async () => {
+    seed();
+    db.tables.project_intake_links = [];
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    const { LINK_INVALID_MESSAGE } = await import("@/lib/intakeLinks");
+    expect(body).toMatchObject({ error: LINK_INVALID_MESSAGE, code: "notfound" });
+    expect(body.error).toMatch(/no longer valid — it may have been withdrawn or mistyped/);
   });
 });
 
@@ -542,7 +572,7 @@ describe("the trusted promote is the publish contract plus the pipeline", () => 
     expect(db.pipeline).toHaveLength(1);
     expect(db.pipeline[0].boundToServiceRole).toBe(true);
     expect(db.pipeline[0].input).toMatchObject({ orgId: ORG, documentId: D1, libraryId: "lib1", docLabel: "V-100", newRev: "C", actorUserId: "creator1", actorName: "Vendor Co (intake)", settle: true });
-    expect(db.bound).toBe(false); // always unbound afterwards
+    expect(scopedToAdmin()).toBe(false); // bound only inside the request's async context
   });
   it.each([
     ["an active hold", () => { db.tables.document_holds = [{ id: "h1", document_id: D1, released_at: null, reason: "MOC" }]; }, /active hold/],
@@ -615,6 +645,85 @@ describe("a displaced submission is resolved, never orphaned", () => {
     const fallback = db.writes.filter((w) => w.table === "document_versions" && w.method === "update" && w.filters.some(([, c, v]) => c === "id" && v === "v-pend"));
     expect(fallback.map((w) => Object.keys(w.args[0] as Row).sort())).toEqual([["review_state", "superseded_at"], ["superseded_at"]]);
   });
+  it("the displaced draft is retired BEFORE the replacement is inserted — so a corrected resubmission under the SAME label is taken (INTK-4 b)", async () => {
+    withOwnPending();
+    db.tables.document_versions[1].revision_label = "C";
+    // the active-label index (record_id, revision_label) WHERE superseded_at IS NULL
+    const origPush = db.writes.push.bind(db.writes);
+    db.writes.push = (w) => {
+      if (w.table === "document_versions" && w.method === "insert") {
+        const row = w.args[0] as Row;
+        if (db.tables.document_versions.some((v) => v.record_id === row.record_id && v.revision_label === row.revision_label && v.superseded_at == null)) {
+          db.errors["document_versions.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "document_versions_active_label_uniq_v2"' }];
+        }
+      }
+      return origPush(w);
+    };
+    const res = await upload({ docId: D1, revLabel: "C" });
+    db.writes.push = origPush;
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("in_review");
+    const order = db.writes.filter((w) => w.table === "document_versions" && (w.method === "insert" || w.filters.some(([, c, v]) => c === "id" && v === "v-pend")));
+    expect(order[0].method).toBe("update"); // the retire
+    expect(order[0].filters).toEqual(expect.arrayContaining([["eq", "review_state", "in_review"], ["is", "superseded_at", null]]));
+    expect(order[1].method).toBe("insert");
+    expect(db.tables.documents[0].pending_version_id).toBe(body.versionId);
+  });
+  it("a replacement that fails after the retire RESTORES the displaced draft — still in review, still pointed at, stamp cleared", async () => {
+    withOwnPending();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    db.errors["document_versions.insert"] = [{ message: "boom" }];
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(500);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review", superseded_at: null });
+    expect(db.tables.documents[0].pending_version_id).toBe("v-pend");
+    expect((db.tables.audit_logs ?? []).find((a) => a.action === "INTAKE_SUBMISSION_DISPLACED")).toBeUndefined();
+    expect(db.r2Deletes).toHaveLength(1);
+    spy.mockRestore();
+  });
+  it("a lost pointer race after the retire withdraws the replacement FIRST, then restores the displaced draft (its label is free again)", async () => {
+    withOwnPending();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    db.errors["documents.update"] = [{ message: "could not serialize access" }];
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(409);
+    const vs = db.writes.filter((w) => w.table === "document_versions" && w.method === "update");
+    const withdrawIdx = vs.findIndex((w) => (w.args[0] as Row).review_state === "superseded" && !w.filters.some(([, c, v]) => c === "id" && v === "v-pend"));
+    const restoreIdx = vs.findIndex((w) => (w.args[0] as Row).superseded_at === null);
+    expect(withdrawIdx).toBeGreaterThan(-1);
+    expect(restoreIdx).toBeGreaterThan(withdrawIdx);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review", superseded_at: null });
+    spy.mockRestore();
+  });
+  it("a draft a reviewer decided meanwhile is not retired — the upload is refused with a sentence, nothing stored", async () => {
+    withOwnPending();
+    db.tables.document_versions[1].review_state = "approved"; // decided, pointer not yet cleared
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/was just decided — reload the portal/);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "approved" });
+    expect(db.r2Deletes).toHaveLength(1);
+  });
+  it("a retire that errors is retried once, then refuses (503) — never a displacement recorded over a live draft", async () => {
+    withOwnPending();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    db.errors["document_versions.update"] = [{ message: "network" }, { message: "network" }];
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(503);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review" });
+    expect(db.writes.filter((w) => w.table === "document_versions" && w.method === "insert")).toEqual([]);
+    spy.mockRestore();
+  });
+  it("a restore that cannot land is recorded as INTAKE_DISPLACE_UNRESOLVED (the cron surfaces it)", async () => {
+    withOwnPending();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    db.errors["document_versions.insert"] = [{ message: "boom" }];
+    db.errors["document_versions.update"] = [null, { message: "down" }, { message: "down" }];
+    await upload({ docId: D1, revLabel: "C" });
+    expect(db.tables.audit_logs.find((a) => a.action === "INTAKE_DISPLACE_UNRESOLVED")).toMatchObject({ details: expect.objectContaining({ displacedVersionId: "v-pend" }) });
+    spy.mockRestore();
+  });
   it("a NON-trusted link cannot displace its pending submission — 409, stated for every link it reaches", async () => {
     withOwnPending();
     db.tables.project_intake_links[0].allow_auto_supersede = false;
@@ -647,6 +756,39 @@ describe("a new document", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("number_in_use");
     expect(db.r2Puts).toEqual([]);
+  });
+  it("a multi-sheet library (['documentNumber','sheet']): two same-numbered sheets are BOTH accepted — unkeyed, no pre-check — and both adopt into a multi-sheet library (INTK-5 blocker)", async () => {
+    seed({ doc: null });
+    db.tables.libraries[0].uniqueness_keys = ["documentNumber", "sheet"];
+    // a live sheet 1 of the same number already in the intake library, keyed the way the plain helper would
+    db.tables.documents = [{ id: "sheet0", org_id: ORG, library_id: "lib1", document_number: "P-100", uniqueness_key: "p-100::", status: "Issued" }];
+    const s1 = await upload({ title: "P&ID sheet 1", number: "P-100" }, { bytes: enc("%PDF-1.7 sheet one"), name: "s1.pdf" });
+    const s2 = await upload({ title: "P&ID sheet 2", number: "P-100" }, { bytes: enc("%PDF-1.7 sheet two"), name: "s2.pdf" });
+    expect(s1.status).toBe(200);
+    expect(s2.status).toBe(200);
+    const inserts = db.writes.filter((w) => w.table === "documents" && w.method === "insert");
+    expect(inserts.map((w) => (w.args[0] as Row).uniqueness_key)).toEqual([null, null]);
+    // (a partial key 'p-100::' would have met sheet0 in the pre-check and refused both)
+    // the team approves both; a controller adopts both into a multi-sheet destination
+    const ids = [(await s1.json()).documentId, (await s2.json()).documentId];
+    for (const d of db.tables.documents.filter((x) => ids.includes(x.id))) Object.assign(d, { current_version_id: `v-${d.id}`, pending_version_id: null, status: "Issued", metadata: {} });
+    db.tables.libraries.push({ id: "lib-dest", org_id: ORG, uniqueness_keys: ["documentNumber", "sheet"] });
+    db.tables.assets = []; db.tables.document_assets = [];
+    const { adoptDocument } = await import("@/lib/transitionIn");
+    for (const id of ids) {
+      const res = await adoptDocument({ orgId: ORG, projectId: "p1", docId: id, libraryId: "lib-dest", collectionId: null, newNumber: null, linkAssets: [], actorId: "ctl2", actorEmail: "a@x" });
+      expect(res.ok, res.error).toBe(true);
+      expect(res.note).toMatch(/without a uniqueness key/);
+    }
+    expect(db.tables.documents.filter((d) => ids.includes(d.id)).map((d) => [d.library_id, d.uniqueness_key])).toEqual([["lib-dest", null], ["lib-dest", null]]);
+  });
+  it("a number + title library is still keyed and pre-checked in full at the door", async () => {
+    seed({ doc: null });
+    db.tables.libraries[0].uniqueness_keys = ["documentNumber", "title"];
+    db.tables.documents = [{ id: "other", org_id: ORG, library_id: "lib1", uniqueness_key: "v-300::skid ga", status: "Issued" }];
+    const res = await upload({ title: "Skid GA", number: "V-300" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("number_in_use");
   });
   it("a pre-20261104 database without authored_by_link_id still creates the document", async () => {
     seed({ doc: null });
@@ -800,6 +942,30 @@ describe("a retry returns the original; an error names no internals", () => {
     expect(spy.mock.calls.some((c) => String(c[0]).includes(body.ref) && String(c[0]).includes("documents_insert_guard"))).toBe(true);
     spy.mockRestore();
   });
+  it("a redline may be a phone photo or a scan: PNG and JPEG are accepted and stored as the sniffed image type", async () => {
+    seed();
+    const T = "00000000-0000-4000-8000-00000000cccc";
+    db.tables.tickets = [{ id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [], history: [], metadata: { intake_collision: { intakeLinkId: LINK } } }];
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46]);
+    expect((await upload({ ticketId: T }, { bytes: png, name: "markup.png", type: "image/png" })).status).toBe(200);
+    expect((await upload({ ticketId: T }, { bytes: jpg, name: "photo.JPG", type: "image/jpeg" })).status).toBe(200);
+    expect(db.r2Puts.map((p) => p.ContentType)).toEqual(["image/png", "image/jpeg"]);
+    // a drawing submission still refuses an image
+    const doc = await upload({ title: "Photo" }, { bytes: png, name: "markup.png", type: "image/png" });
+    expect(doc.status).toBe(415);
+  });
+  it("a redline whose ticket update fails removes the object it stored", async () => {
+    seed();
+    const T = "00000000-0000-4000-8000-00000000dddd";
+    db.tables.tickets = [{ id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [], history: [], metadata: { intake_collision: { intakeLinkId: LINK } } }];
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    db.errors["tickets.update"] = [{ message: "boom" }];
+    const res = await upload({ ticketId: T });
+    expect(res.status).toBe(500);
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual([db.r2Puts[0].Key]);
+    spy.mockRestore();
+  });
   it("the redline branch answers the same for a ticket that is not this link's and one that does not exist", async () => {
     seed();
     db.tables.tickets = [{ id: "00000000-0000-4000-8000-00000000aaaa", org_id: ORG, ticket_id: "T-1", metadata: { intake_collision: { intakeLinkId: "another-link" } } }];
@@ -833,7 +999,7 @@ describe("notices and attribution", () => {
     expect(db.emits).toHaveLength(1);
     expect(db.tables.intake_attempts.filter((a) => a.outcome === "notified")).toHaveLength(1);
   });
-  it("a controlled revision published without review is ALWAYS told — never folded into a burst of review notices", async () => {
+  it("a controlled revision published without review is told even inside a burst's window (under the per-window cap)", async () => {
     seed();
     const { sha256Hex } = await import("@/lib/intakeRateLimit");
     db.tables.intake_attempts = [{ token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "notified", created_at: new Date().toISOString() }];
@@ -841,6 +1007,29 @@ describe("notices and attribution", () => {
     const told = db.emits.find((e) => e.kind === "doc_superseded") as Row & { audience: { involved: string[] } };
     expect(told).toBeDefined();
     expect(new Set(told.audience.involved)).toEqual(new Set(["creator1", "ctl2", "owner1"]));
+  });
+  it("SEC-8 dw2: a burst of trusted publishes is NOT one notice per upload — at most three notices per window; the rest are counted by kind into the next notice", async () => {
+    seed();
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    db.tables.intake_attempts = [{ token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "notified", created_at: new Date().toISOString() }];
+    for (const [i, rev] of ["C", "D", "E", "F"].entries()) {
+      const b = await (await upload({ docId: D1, revLabel: rev }, { bytes: enc(`%PDF-1.7 rev ${rev} ${i}`), name: `${rev}.pdf` })).json();
+      expect(b.status).toBe("published");
+    }
+    // one notice already in the window: two more go out, then the cap folds
+    expect(db.emits.filter((e) => e.kind === "doc_superseded")).toHaveLength(2);
+    expect(db.tables.intake_attempts.filter((a) => a.outcome === "suppressed_published")).toHaveLength(2);
+    // the window passes; the next notice names what was folded, by kind
+    for (const a of db.tables.intake_attempts) if (a.outcome === "notified") a.created_at = new Date(Date.now() - 20 * 60_000).toISOString();
+    seed({ link: { assigned_doc_ids: [D1] }, doc: { authored_by_link_id: null } });
+    db.tables.intake_attempts = [
+      { token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "notified", created_at: new Date(Date.now() - 20 * 60_000).toISOString() },
+      { token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "suppressed_published", created_at: new Date(Date.now() - 10 * 60_000).toISOString() },
+      { token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "suppressed_published", created_at: new Date(Date.now() - 9 * 60_000).toISOString() },
+    ];
+    db.emits = [];
+    await upload({ docId: D1, revLabel: "G" }, { bytes: enc("%PDF-1.7 rev G"), name: "g.pdf" });
+    expect(String(db.emits[0].body)).toMatch(/2 more submissions arrived on this link since the last notice \(2 published without review\) — see the project's Intake tab\./);
   });
   it("a folded submission is COUNTED, and the next notice on the link says how many more arrived", async () => {
     seed({ doc: null });
@@ -915,12 +1104,33 @@ describe("what the door files where", () => {
 // `current_version_id` to anything but null — an inline literal, a
 // `{ current_version_id }` shorthand, a spread, or a patch object built
 // earlier in the same function (`const patch = { … }`, `patch.current_version_id
-// = …`) — must run `runPostPublishSideEffects` in the SAME function, or be
-// pinned below by file:function with the reason it is exempt. A new writer
-// anywhere, or a new pointer write added to an exempt function's file under
-// another name, fails the build.
+// = …`) — and every call of an RPC that moves the pointer in the database
+// (`.rpc("publish_revision", …)`, or a call of a pinned wrapper of it) must
+// run `runPostPublishSideEffects` in the SAME function — a real CALL, found
+// in the syntax tree (a comment or a string naming it does not count) — or
+// be pinned below by file:function with the reason it is exempt. A new
+// writer anywhere, or a new pointer write added to an exempt function's file
+// under another name, fails the build.
 const KEY = "current_version_id";
+/** SQL functions that set documents.current_version_id themselves. */
+const POINTER_RPCS = new Set(["publish_revision"]);
 type Writer = { site: string; method: string; line: number; pipeline: boolean };
+/** Does this function CALL the pipeline? Syntax-tree calls only. */
+function callsPipeline(body: ts.Node | null): boolean {
+  if (!body) return false;
+  let hit = false;
+  const scan = (n: ts.Node): void => {
+    if (hit) return;
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      if ((ts.isIdentifier(callee) && callee.text === "runPostPublishSideEffects")
+        || (ts.isPropertyAccessExpression(callee) && callee.name.text === "runPostPublishSideEffects")) { hit = true; return; }
+    }
+    ts.forEachChild(n, scan);
+  };
+  scan(body);
+  return hit;
+}
 function enclosingFn(node: ts.Node): { name: string; body: ts.Node | null } {
   for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
     if ((ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)) && n.name) return { name: n.name.getText(), body: n };
@@ -967,19 +1177,24 @@ function argSetsKey(arg: ts.Expression | undefined, scope: ts.Node): boolean {
   scan(scope);
   return hit;
 }
-function pointerWriters(file: string, src: string): Writer[] {
+function pointerWriters(file: string, src: string, rpcWrappers: ReadonlySet<string> = new Set()): Writer[] {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const out: Writer[] = [];
+  const push = (node: ts.CallExpression, method: string) => {
+    const { name, body } = enclosingFn(node);
+    out.push({ site: `${file}:${name}`, method, line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1, pipeline: callsPipeline(body) });
+  };
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ["update", "insert", "upsert"].includes(node.expression.name.text)) {
-      const { name, body } = enclosingFn(node);
-      if (argSetsKey(node.arguments[0], body ?? sf)) {
-        out.push({
-          site: `${file}:${name}`, method: node.expression.name.text,
-          line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1,
-          pipeline: /\brunPostPublishSideEffects\s*\(/.test(body ? body.getText() : ""),
-        });
-      }
+      const { body } = enclosingFn(node);
+      if (argSetsKey(node.arguments[0], body ?? sf)) push(node, node.expression.name.text);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "rpc"
+        && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]) && POINTER_RPCS.has(node.arguments[0].text)) {
+      push(node, `rpc ${node.arguments[0].text}`);
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && rpcWrappers.has(node.expression.text)) {
+      push(node, `rpc via ${node.expression.text}`);
     }
     ts.forEachChild(node, visit);
   };
@@ -991,7 +1206,9 @@ describe("census — every writer of current_version_id runs the post-publish pi
   const ROOTS = ["app", "lib", "components"];
   // Pinned exemptions, by file:function, each with its reason. Remove an
   // entry when its function runs the pipeline (or stops writing the pointer).
-  const EXEMPT: Record<string, { reason: string; via?: string }> = {
+  const EXEMPT: Record<string, { reason: string; via?: string; wrapper?: boolean }> = {
+    "lib/revisions.ts:callPublishRevisionRpc": { reason: "the one wrapper of rpc('publish_revision') in lib/revisions.ts — every call of it is censused as a writer in its caller", wrapper: true },
+    "app/api/intake/upload/route.ts:publishThroughContract": { reason: "the intake door's trusted promote — POST runs the pipeline after it returns a published outcome", via: "app/api/intake/upload/route.ts:POST" },
     "lib/revisions.ts:createDocumentWithFile": { reason: "first-version seed of a brand-new document — nothing is superseded; the review clock and ack roster are seeded inline" },
     "lib/revisions.ts:legacyRevUpAfterUpload": { reason: "revUpDocument's legacy leg — revUpDocument runs the pipeline after it returns", via: "lib/revisions.ts:revUpDocument" },
     "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion": { reason: "first-version seed (document-control P3 LIFECYCLE converts it)" },
@@ -1004,8 +1221,10 @@ describe("census — every writer of current_version_id runs the post-publish pi
   });
   const sources = new Map(ROOTS.flatMap((r) => walk(join(process.cwd(), r)))
     .map((p) => [relative(process.cwd(), p).split("\\").join("/"), readFileSync(p, "utf8")] as const)
-    .filter(([, src]) => src.includes(KEY)));
-  const writers = [...sources].flatMap(([file, src]) => pointerWriters(file, src));
+    .filter(([, src]) => src.includes(KEY) || [...POINTER_RPCS].some((f) => src.includes(f))));
+  // A pinned wrapper of a pointer RPC makes every call of it a writer site.
+  const wrappers = new Set(Object.entries(EXEMPT).filter(([, e]) => e.wrapper).map(([site]) => site.split(":")[1]));
+  const writers = [...sources].flatMap(([file, src]) => pointerWriters(file, src, wrappers));
 
   it("the detector sees inline, shorthand, spread and prebuilt-patch writes — and ignores clears and reads", () => {
     const probe = (body: string) => pointerWriters("probe.ts", `async function f(v: string, supabase: any) {\n${body}\n}`).length;
@@ -1017,10 +1236,21 @@ describe("census — every writer of current_version_id runs the post-publish pi
     expect(probe(`const patch = {}; Object.assign(patch, { current_version_id: v }); await supabase.from("documents").update(patch);`)).toBe(1);
     expect(probe(`await supabase.from("documents").update({ current_version_id: null });`)).toBe(0);
     expect(probe(`const { data } = await supabase.from("documents").select("current_version_id"); await supabase.from("x").update({ id: data.current_version_id ? 1 : 0 });`)).toBe(0);
+    // an RPC that moves the pointer in the database is a writer too; another RPC is not
+    expect(probe(`await supabase.rpc("publish_revision", { p_doc: v });`)).toBe(1);
+    expect(probe(`await supabase.rpc("review_control_mode_for", {});`)).toBe(0);
+    expect(pointerWriters("probe.ts", `async function g(v: string) { await callPublishRevisionRpc({ p_doc: v }); }`, new Set(["callPublishRevisionRpc"]))).toHaveLength(1);
+    // only a real CALL of the pipeline satisfies the census — never a comment or a string naming it
+    const piped = (body: string) => pointerWriters("probe.ts", `async function f(v: string, supabase: any) {\n${body}\n}`)[0]?.pipeline;
+    expect(piped(`await supabase.rpc("publish_revision", {}); await runPostPublishSideEffects({});`)).toBe(true);
+    expect(piped(`await supabase.rpc("publish_revision", {}); const { runPostPublishSideEffects: run } = await import("x"); await mod.runPostPublishSideEffects({});`)).toBe(true);
+    expect(piped(`await supabase.rpc("publish_revision", {}); // then runPostPublishSideEffects(input) — someday`)).toBe(false);
+    expect(piped(`await supabase.rpc("publish_revision", {}); const note = "runPostPublishSideEffects(";`)).toBe(false);
   });
   it("finds the known writers (the census is not vacuous)", () => {
     const sites = new Set(writers.map((w) => w.site));
-    for (const s of ["lib/reviewControl.ts:finalizeReviewedRevision", "lib/revisions.ts:revertToVersion", "lib/revisions.ts:legacyRevUpAfterUpload", "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion"]) {
+    for (const s of ["lib/reviewControl.ts:finalizeReviewedRevision", "lib/revisions.ts:revertToVersion", "lib/revisions.ts:legacyRevUpAfterUpload", "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion",
+      "lib/revisions.ts:callPublishRevisionRpc", "app/api/intake/upload/route.ts:publishThroughContract"]) {
       expect(sites.has(s), s).toBe(true);
     }
   });
@@ -1032,20 +1262,26 @@ describe("census — every writer of current_version_id runs the post-publish pi
     const sites = new Set(writers.map((w) => w.site));
     for (const [site, e] of Object.entries(EXEMPT)) {
       expect(sites.has(site), `stale exemption: ${site} no longer writes the pointer — remove it`).toBe(true);
+      if (e.wrapper) {
+        // a wrapper's callers are censused — there must be some, each seen as a writer
+        const name = site.split(":")[1];
+        expect(writers.some((w) => w.method === `rpc via ${name}`), `${site}: no censused caller`).toBe(true);
+      }
       if (e.via) {
         const [viaFile, viaFn] = e.via.split(":");
         const sf = ts.createSourceFile(viaFile, sources.get(viaFile) ?? "", ts.ScriptTarget.Latest, true);
-        let body = "";
-        sf.forEachChild((n) => { if (ts.isFunctionDeclaration(n) && n.name?.text === viaFn) body = n.getText(); });
+        let fn: ts.Node | null = null;
+        sf.forEachChild((n) => { if (ts.isFunctionDeclaration(n) && n.name?.text === viaFn) fn = n; });
         const callee = site.split(":")[1];
-        expect(body, `${e.via} must call ${callee}`).toMatch(new RegExp(`\\b${callee}\\(`));
-        expect(body, `${e.via} must run the pipeline`).toMatch(/\brunPostPublishSideEffects\s*\(/);
+        expect((fn as ts.Node | null)?.getText() ?? "", `${e.via} must call ${callee}`).toMatch(new RegExp(`\\b${callee}\\(`));
+        expect(callsPipeline(fn), `${e.via} must run the pipeline`).toBe(true);
       }
     }
   });
   it("the intake route no longer writes the pointer itself — it publishes through the contract and runs the pipeline", () => {
     const r = readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8");
-    expect(pointerWriters("app/api/intake/upload/route.ts", r)).toEqual([]);
+    // its only pointer mover is the contract RPC in publishThroughContract (pinned, via POST)
+    expect(pointerWriters("app/api/intake/upload/route.ts", r).map((w) => `${w.site} ${w.method}`)).toEqual(["app/api/intake/upload/route.ts:publishThroughContract rpc publish_revision"]);
     expect(r).toMatch(/await import\("@\/lib\/postPublish"\)/);
     expect(readFileSync(join(process.cwd(), "lib/postPublish.ts"), "utf8")).toMatch(/app\/api\/intake\/upload\/route\.ts/);
   });
@@ -1068,6 +1304,14 @@ describe("the portal's resolve route", () => {
     seed();
     db.tables.projects[0].status = "cancelled";
     expect((await (await resolve()).json()).error).toBe("project_closed");
+  });
+  it("a link the database no longer holds (the project-delete trigger deleted it) answers notfound WITH the definite sentence (PM-2 dw2)", async () => {
+    seed();
+    db.tables.project_intake_links = [];
+    const res = await resolve();
+    expect(res.status).toBe(404);
+    const { LINK_INVALID_MESSAGE } = await import("@/lib/intakeLinks");
+    expect(await res.json()).toEqual({ error: "notfound", message: LINK_INVALID_MESSAGE });
   });
   it("an assigned id from ANOTHER org lists nothing; the link's own authored document lists even without a version stamp", async () => {
     seed({ link: { assigned_doc_ids: ["foreign-doc"] }, versions: [] });
@@ -1111,6 +1355,15 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect(approve).not.toMatch(/requireRosterComplete: false/);
     expect(approve).toMatch(/await effectiveDocClassForDocument\(/);
     expect(approve).toMatch(/\.update\(\{ moc_reference: moc\.trim\(\) \}\)/);
+    // SEC-14 on the roster path too: the MOC is captured BEFORE the roster
+    // opens (the review panel that publishes later has no MOC prompt)
+    expect(approve.indexOf("await effectiveDocClassForDocument(")).toBeLessThan(approve.indexOf("await openReviewRoster({"));
+    expect(approve.indexOf(".update({ moc_reference: moc.trim() })")).toBeLessThan(approve.indexOf("await openReviewRoster({"));
+    // SEC-13: the roster's sign-offs are bound to the submitted bytes
+    expect(approve).toContain('.select("moc_reference, file_hash").eq("id", p.pendingVersionId)');
+    expect(approve).toContain("contentHash: ((ver as { file_hash?: string | null } | null)?.file_hash ?? null),");
+    expect(approve).not.toContain("contentHash: null");
+    expect(approve).toContain("it publishes when the last of them signs off on the document's review panel (in the document library), not from this tab.");
     expect(approve).toContain("throw new Error(finalizeReasonMessage(res.reason));");
     // the success message names what actually became current
     expect(approve).toMatch(/String\(after\?\.current_version_id \?\? ""\) === p\.pendingVersionId/);
@@ -1141,7 +1394,11 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
   it("TransitionInPanel: adopt controls for the controller tier only; a collision or an unapproved sheet cannot be adopted (SAF-13 / SAF-12 / INTK-3)", () => {
     const t = src("components/projects/TransitionInPanel.tsx");
     expect(t).toContain("const canAdopt = canManage && isControllerPrincipal({ role: activeRole, roles });");
-    expect(t).toMatch(/disabled=\{busy === c\.docId \|\| !destLib \|\| !!c\.awaitingReview \|\| \(!!impact\.numberCollision && !\(renumber\.get\(c\.docId\) \?\? ""\)\.trim\(\)\)\}/);
+    expect(t).toMatch(/disabled=\{busy === c\.docId \|\| !destLib \|\| !!c\.awaitingReview \|\| \(blocksOnNumber\(impact\) && !\(renumber\.get\(c\.docId\) \?\? ""\)\.trim\(\)\)\}/);
+    // INTK-5: a same number blocks only where the number IS the destination's key
+    expect(t).toContain("const numberDecides = numberIsTheKey(libs.find((l) => l.id === destLib)?.uniqueness_keys ?? null);");
+    expect(t).toContain("const blocksOnNumber = (impact: TransitionImpact | undefined) => !!impact?.numberCollision && numberDecides;");
+    expect(t).toContain('supabase.from("libraries").select("id, name, uniqueness_keys")');
     expect(t).toContain("const bulkable = (c: TransitionCandidate) => !c.awaitingReview && !!impacts.get(c.docId)?.clean;");
     expect(t).toContain("const clean = candidates.filter(bulkable);");
   });
@@ -1152,6 +1409,10 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect(s).toContain('${body.ref ? ` (reference ${body.ref})` : ""}');
     expect(s).toContain('state === "link_gone" ? LINK_GONE_MESSAGE');
     expect(s).toContain('state === "project_closed" ? PROJECT_CLOSED_MESSAGE');
+    // PM-2 dw2: a link the database no longer holds is answered definitely
+    expect(s).toContain('state === "notfound" ? LINK_INVALID_MESSAGE');
+    expect(s).not.toContain("it may have been mistyped.\"");
+    expect(s).toContain('accept=".pdf,.dwg,.dxf,.zip,.png,.jpg,.jpeg"');
     expect(s).toContain("Reviewer&apos;s reason: {i.rejectionReason}");
     expect(s).not.toMatch(/`HTTP \$\{res\.status\}`/);
   });
@@ -1162,6 +1423,8 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     // the remedy it names is one a person can run — no screen lists a version nothing points at
     expect(c).toContain("that no document points at and nothing withdrew — a document controller must resolve each one");
     expect(c).not.toMatch(/resolve them from the Intake tab/);
+    // INTK-4: a displaced draft that could not be restored is surfaced too
+    expect(c).toContain('.eq("action", "INTAKE_DISPLACE_UNRESOLVED").gte("timestamp", since)');
     const vercel = JSON.parse(src("vercel.json")) as { crons?: unknown[] };
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });

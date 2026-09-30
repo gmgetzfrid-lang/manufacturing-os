@@ -22,10 +22,16 @@ const db = vi.hoisted(() => ({
   r2Puts: [] as Array<Record<string, unknown>>,
   emits: [] as Array<Record<string, unknown>>,
   pipeline: [] as Array<{ input: Record<string, unknown>; boundToServiceRole: boolean }>,
-  bound: false,
+  scopeRead: null as null | (() => unknown),
+  /** A concurrent request's sample of the shared client, taken while the
+   *  upload's pipeline is mid-flight (INTK-2 / DEC-50: request-scoped). */
+  concurrentSawAdmin: null as null | boolean,
+  pipelineEntered: null as null | (() => void),
+  pipelineRelease: null as null | Promise<void>,
   seq: 0,
   user: null as null | { id: string; email: string },
 }));
+const scopedToAdmin = () => (db.scopeRead?.() as { __admin?: boolean } | undefined)?.__admin === true;
 
 function parseOr(expr: string): (r: Row) => boolean {
   const parts = expr.split(/,(?![^(]*\))(?![^{]*\})/);
@@ -123,6 +129,7 @@ function chain(table: string) {
 
 vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
+    __admin: true,
     from: (t: string) => chain(t),
     rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
       db.rpcCalls.push({ fn, args });
@@ -132,19 +139,20 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     auth: { getUser: vi.fn(async () => ({ data: { user: null }, error: { message: "none" } })) },
   },
 }));
-// The shared client: a DIFFERENT view of the same tables, usable only while
-// the route has bound it to the service role — an unbound (anon) call sees
-// nothing, as RLS would show an anonymous caller.
+// The shared client: a DIFFERENT view of the same tables, usable only in an
+// async context the route has scoped to the service role (the REAL
+// lib/serverClientScope.ts registers its AsyncLocalStorage reader here) —
+// an unscoped (anon) call sees nothing, as RLS would show an anonymous caller.
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: (t: string) => {
-      if (t === "document_acknowledgments") db.sharedBoundAtAckWrite.push(db.bound);
-      return db.bound ? chain(t) : chain("__anon_sees_nothing__");
+      const bound = scopedToAdmin();
+      if (t === "document_acknowledgments") db.sharedBoundAtAckWrite.push(bound);
+      return bound ? chain(t) : chain("__anon_sees_nothing__");
     },
     rpc: async () => ({ data: null, error: null }),
   },
-  __setServerSupabaseClient: vi.fn(() => { db.bound = true; }),
-  __resetServerSupabaseClient: vi.fn(() => { db.bound = false; }),
+  __registerScopedServerClient: vi.fn((read: () => unknown) => { db.scopeRead = read; }),
 }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async (cmd: { input: Row }) => { db.r2Puts.push(cmd.input); }) }, R2_BUCKET: "bucket" }));
 vi.mock("@aws-sdk/client-s3", () => ({ PutObjectCommand: class { constructor(public input: unknown) {} } }));
@@ -156,7 +164,13 @@ vi.mock("@/lib/staleCopies", () => ({ getDocumentRecall: vi.fn(async () => ({ ho
 vi.mock("@/lib/workPackages", () => ({ notifyPackagesOfRevUp: vi.fn(async () => undefined) }));
 vi.mock("@/lib/revisionImpact", () => ({ notifyConnectedWork: vi.fn(async () => undefined) }));
 vi.mock("@/lib/linkProposals", () => ({ staleProposalsForDocument: vi.fn(async () => undefined) }));
-vi.mock("@/lib/reviewCycles", () => ({ onDocumentIssued: vi.fn(async () => undefined) }));
+vi.mock("@/lib/reviewCycles", () => ({
+  onDocumentIssued: vi.fn(async () => {
+    // A hook for the concurrency test: hold the pipeline mid-flight while
+    // another request samples the shared client.
+    if (db.pipelineEntered) { db.pipelineEntered(); await db.pipelineRelease; }
+  }),
+}));
 vi.mock("@/lib/retention", () => ({ recomputeRetention: vi.fn(async () => undefined) }));
 vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => 0) }));
 
@@ -167,7 +181,8 @@ const D1 = "00000000-0000-4000-8000-0000000000d1";
 
 beforeEach(() => {
   db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.emits = []; db.pipeline = [];
-  db.bound = false; db.seq = 0; db.user = null; db.sharedBoundAtAckWrite = [];
+  db.seq = 0; db.user = null; db.sharedBoundAtAckWrite = [];
+  db.concurrentSawAdmin = null; db.pipelineEntered = null; db.pipelineRelease = null;
   db.tables.project_intake_links = [{
     id: "lnk1", org_id: "o1", project_id: "p1", company_name: "Vendor Co", contact_email: null, allow_auto_supersede: true,
     expires_at: null, revoked_at: null, assigned_doc_ids: [], created_by: "creator1", token: TOKEN, purpose: "documents",
@@ -215,7 +230,34 @@ describe("INTK-2 dw2 — an intake auto-publish opens a fresh acknowledgment ros
     expect(acks.find((a) => a.document_version_id === "v-pub")).toMatchObject({ assignee_user_id: "fitter1", status: "pending", revision_label: "C" });
     expect(db.sharedBoundAtAckWrite.length).toBeGreaterThan(0);
     expect(db.sharedBoundAtAckWrite.every(Boolean)).toBe(true);
-    expect(db.bound).toBe(false);
+    // outside the request's async context nothing stays bound
+    expect(scopedToAdmin()).toBe(false);
+  });
+  it("the binding is REQUEST-SCOPED: a concurrent request in the same instance, sampled while the pipeline is mid-flight, still sees the anonymous client (DEC-50)", async () => {
+    let entered!: () => void;
+    const inPipeline = new Promise<void>((r) => { entered = r; });
+    let release!: () => void;
+    db.pipelineRelease = new Promise<void>((r) => { release = r; });
+    db.pipelineEntered = entered;
+    const fd = new FormData();
+    fd.set("file", new File([new TextEncoder().encode("%PDF-1.7\nrev C\n") as BlobPart], "c.pdf", { type: "application/pdf" }));
+    fd.set("docId", D1);
+    fd.set("revLabel", "C");
+    const upload = POST(new NextRequest("http://x/api/intake/upload", { method: "POST", body: fd, headers: { "x-intake-token": TOKEN } }));
+    // "another request": started outside the upload's context, it runs while
+    // the upload holds the service-role binding
+    const other = (async () => {
+      await inPipeline;
+      db.concurrentSawAdmin = scopedToAdmin();
+      const { supabase } = await import("@/lib/supabase");
+      const { data } = await supabase.from("documents").select("id");
+      release();
+      return data;
+    })();
+    const [res, otherRows] = await Promise.all([upload, other]);
+    expect((await res.json()).status).toBe("published");
+    expect(db.concurrentSawAdmin).toBe(false);
+    expect(otherRows).toEqual([]); // the anonymous view — never the service role's
   });
   it("control: without the service-role binding the same pipeline would have touched nothing (why the route binds it)", async () => {
     const { runPostPublishSideEffects } = await import("@/lib/postPublish");

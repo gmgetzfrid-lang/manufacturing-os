@@ -158,7 +158,7 @@ describe("INTK-7 — the collision scan checks every sheet, exactly", () => {
 });
 
 describe("INTK-3 / SAF-11 — the candidate list", () => {
-  it("drops a sheet whose latest intake submission was rejected; marks one still in review or never approved", async () => {
+  it("drops a NEVER-APPROVED sheet whose latest intake submission was rejected; marks one still in review or never approved", async () => {
     db.tables.documents = [
       { id: "rej", org_id: "o1", collection_id: INTAKE, status: "Draft", document_number: "R-1", current_version_id: null, pending_version_id: null, created_at: "3" },
       { id: "pend", org_id: "o1", collection_id: INTAKE, status: "Draft", document_number: "P-1", current_version_id: null, pending_version_id: "vp", created_at: "2" },
@@ -172,7 +172,19 @@ describe("INTK-3 / SAF-11 — the candidate list", () => {
     const list = await listTransitionCandidates("o1", INTAKE);
     expect(list.map((c) => c.docId)).toEqual(["pend", "ok"]);
     expect(list.find((c) => c.docId === "pend")).toMatchObject({ awaitingReview: true, pendingReview: true });
-    expect(list.find((c) => c.docId === "ok")).toMatchObject({ awaitingReview: false, pendingReview: false });
+    expect(list.find((c) => c.docId === "ok")).toMatchObject({ awaitingReview: false, pendingReview: false, latestRejected: false });
+  });
+  it("keeps an APPROVED sheet whose newest proposal was rejected — its approved revision is the controlled content (a note, not a block)", async () => {
+    db.tables.documents = [
+      { id: "appr", org_id: "o1", collection_id: INTAKE, status: "Issued", document_number: "A-1", rev: "A", current_version_id: "va", pending_version_id: null, created_at: "1" },
+    ];
+    db.tables.document_versions = [
+      { record_id: "appr", review_state: "rejected", intake_link_id: "l1", created_at: "9" },
+      { record_id: "appr", review_state: "approved", intake_link_id: "l1", created_at: "1" },
+    ];
+    const list = await listTransitionCandidates("o1", INTAKE);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ docId: "appr", awaitingReview: false, latestRejected: true });
   });
   it("an unreadable list throws — never an empty 'nothing to adopt'", async () => {
     db.errors["documents.select"] = [{ message: "boom" }];
@@ -201,11 +213,17 @@ describe("INTK-3 / INTK-5 / SAF-12 — adoption re-checks at the click", () => {
     seedAdopt({ current_version_id: null });
     expect((await adopt()).error).toMatch(/still awaiting review/);
   });
-  it("refuses a sheet whose latest submission was rejected", async () => {
+  it("refuses a never-approved sheet whose latest submission was rejected", async () => {
+    seedAdopt({ current_version_id: null });
+    db.tables.document_versions = [{ record_id: "sheet1", review_state: "rejected", intake_link_id: "l1", created_at: "2" }];
+    expect((await adopt()).error).toMatch(/was rejected/);
+  });
+  it("adopts an APPROVED sheet at its approved revision even when a newer proposal was rejected (INTK-3 — the base allowed it)", async () => {
     seedAdopt();
     db.tables.document_versions.push({ record_id: "sheet1", review_state: "rejected", intake_link_id: "l1", created_at: "2" });
     db.tables.document_versions.reverse();
-    expect((await adopt()).error).toMatch(/was rejected/);
+    expect(await adopt()).toEqual({ ok: true });
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-dest", current_version_id: "v1" });
   });
   it("refuses a live collision; refuses a renumber onto another live number; accepts a clear renumber and writes its key", async () => {
     const live = { id: "live", org_id: "o1", document_number: "D-25-1042", rev: "3", status: "Issued", collection_id: "c-lib" };
@@ -216,6 +234,45 @@ describe("INTK-3 / INTK-5 / SAF-12 — adoption re-checks at the click", () => {
     const ok = await adopt("D-25-3000");
     expect(ok).toEqual({ ok: true });
     expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-dest", document_number: "D-25-3000", uniqueness_key: "d-25-3000" });
+  });
+  it("a multi-sheet library (['documentNumber','sheet']): two same-numbered sheets with no sheet value are BOTH adopted, unkeyed, and the operator is told what to set (INTK-5)", async () => {
+    seedAdopt({ id: "sheet1", document_number: "P-100", title: "P&ID sheet 1", metadata: {} }, [
+      { id: "sheet2", org_id: "o1", document_number: "P-100", title: "P&ID sheet 2", rev: "A", status: "Issued", metadata: null, library_id: "lib-intake", collection_id: INTAKE, current_version_id: "v2", pending_version_id: null },
+    ]);
+    db.tables.document_versions.push({ record_id: "sheet2", review_state: "approved", intake_link_id: "l1", created_at: "1" });
+    db.tables.libraries[0].uniqueness_keys = ["documentNumber", "sheet"];
+    const first = await adopt();
+    expect(first.ok).toBe(true);
+    expect(first.note).toMatch(/adopted without a uniqueness key: that library identifies a document by number \+ sheet, and the sheet carries no sheet/);
+    // sheet 1 now lives in the destination — the same number is NOT a
+    // collision there, and no partial key ('p-100::') refuses sheet 2
+    const second = await adoptDocument({
+      orgId: "o1", projectId: "p1", docId: "sheet2", libraryId: "lib-dest", collectionId: null,
+      newNumber: null, linkAssets: [], actorId: "u1", actorEmail: "u1@x",
+    });
+    expect(second.ok).toBe(true);
+    expect(db.tables.documents.map((d) => [d.id, d.library_id, d.uniqueness_key])).toEqual([["sheet1", "lib-dest", null], ["sheet2", "lib-dest", null]]);
+  });
+  it("a multi-sheet library: a sheet that carries its sheet value is keyed in full, and the FULL key — not the number — decides a collision", async () => {
+    const sibling = { id: "sib", org_id: "o1", document_number: "P-100", rev: "B", status: "Issued", library_id: "lib-dest", collection_id: null, uniqueness_key: "p-100::1" };
+    seedAdopt({ document_number: "P-100", metadata: { sheet: "2" } }, [sibling]);
+    db.tables.libraries[0].uniqueness_keys = ["documentNumber", "sheet"];
+    expect(await adopt()).toEqual({ ok: true });
+    expect(db.tables.documents[0]).toMatchObject({ uniqueness_key: "p-100::2" });
+    seedAdopt({ document_number: "P-100", metadata: { sheet: "1" } }, [sibling]);
+    db.tables.libraries[0].uniqueness_keys = ["documentNumber", "sheet"];
+    const clash = await adopt();
+    expect(clash.error).toMatch(/P-100 \(Rev B\) already carries the same number \+ sheet in that library/);
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-intake" });
+    // the database's refusal in a multi-part library names the tuple, not "renumber"
+    seedAdopt({ document_number: "P-100", metadata: { sheet: "3" } });
+    db.tables.libraries[0].uniqueness_keys = ["documentNumber", "sheet"];
+    db.errors["documents.update"] = [{ message: "duplicate key value violates unique constraint", code: "23505" }];
+    expect((await adopt()).error).toMatch(/already carries the same number \+ sheet — change the sheet's number \+ sheet/);
+  });
+  it("the default tuple keeps the number rule: a same-numbered live document is a collision", async () => {
+    seedAdopt({}, [{ id: "live", org_id: "o1", document_number: "D-25-1042", rev: "3", status: "Issued", library_id: "lib-dest", collection_id: null }]);
+    expect((await adopt()).error).toMatch(/collides with D-25-1042/);
   });
   it("the database's unique refusal and the move guard reach the operator as sentences", async () => {
     seedAdopt();

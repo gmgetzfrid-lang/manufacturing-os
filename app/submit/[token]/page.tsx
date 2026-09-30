@@ -12,7 +12,7 @@ import {
   UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Building2, Pen,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { INTAKE_TOKEN_HEADER, LINK_GONE_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
+import { INTAKE_TOKEN_HEADER, LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
 
 interface IntakeItem {
   docId: string; label: string; rev: string | null; status: string | null;
@@ -157,7 +157,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       : state === "expired" ? "This link has expired. Contact your project contact for a fresh one."
       : state === "link_gone" ? LINK_GONE_MESSAGE
       : state === "project_closed" ? PROJECT_CLOSED_MESSAGE
-      : state === "notfound" ? "This link doesn't exist — it may have been mistyped."
+      : state === "notfound" ? LINK_INVALID_MESSAGE
       : "Something went wrong opening this link. Try again shortly.";
     return <Shell><div className="text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-[var(--color-text-muted)]">{text}</p></div></Shell>;
   }
@@ -303,7 +303,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
                 <label className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 font-black cursor-pointer hover:bg-amber-500/10 ${redlineBusy === r.ticketRef ? "opacity-50 pointer-events-none" : ""}`}>
                   {redlineBusy === r.ticketRef ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
                   Upload redlines
-                  <input type="file" accept=".pdf,.dwg,.dxf,.zip" className="hidden" onChange={(e) => { void submitRedline(r.ticketRef, e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                  <input type="file" accept=".pdf,.dwg,.dxf,.zip,.png,.jpg,.jpeg" className="hidden" onChange={(e) => { void submitRedline(r.ticketRef, e.target.files?.[0] ?? null); e.target.value = ""; }} />
                 </label>
               </li>
             ))}

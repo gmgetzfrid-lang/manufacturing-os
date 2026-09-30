@@ -9,11 +9,13 @@
 //
 // Pure (no I/O), so the route, the tests and any future door share one
 // rule. The allowlist is deliberately short (fail-safe: fewer types) —
-// quotes are PDF only; drawings and redlines are PDF, DWG, DXF or ZIP
-// (the projects-and-cost default; anything else is refused naming the
-// accepted list).
+// quotes are PDF only; drawings are PDF, DWG, DXF or ZIP (the
+// projects-and-cost default); redlines add PNG and JPEG — a phone photo or
+// a scan of a marked-up print is the common redline (the projects-tab
+// default), and a raster image carries no script. Anything else is refused
+// naming the accepted list.
 
-export type SniffedKind = "pdf" | "dwg" | "dxf" | "zip";
+export type SniffedKind = "pdf" | "dwg" | "dxf" | "zip" | "png" | "jpeg";
 
 export type IntakeBranch = "quote" | "document" | "redline";
 
@@ -23,6 +25,8 @@ export const KIND_CONTENT_TYPE: Record<SniffedKind, string> = {
   dwg: "image/vnd.dwg",
   dxf: "image/vnd.dxf",
   zip: "application/zip",
+  png: "image/png",
+  jpeg: "image/jpeg",
 };
 
 /** The filename extension each kind must carry. */
@@ -31,6 +35,8 @@ export const KIND_EXTENSIONS: Record<SniffedKind, readonly string[]> = {
   dwg: ["dwg"],
   dxf: ["dxf"],
   zip: ["zip"],
+  png: ["png"],
+  jpeg: ["jpg", "jpeg"],
 };
 
 /** Declared types a browser or OS plausibly sends for each kind. An empty
@@ -42,15 +48,17 @@ export const KIND_DECLARED_TYPES: Record<SniffedKind, readonly string[]> = {
   dwg: ["image/vnd.dwg", "image/x-dwg", "application/acad", "application/x-acad", "application/autocad_dwg", "application/dwg", "application/x-dwg", "drawing/dwg"],
   dxf: ["image/vnd.dxf", "image/x-dxf", "application/dxf", "application/x-dxf", "text/plain"],
   zip: ["application/zip", "application/x-zip", "application/x-zip-compressed", "multipart/x-zip"],
+  png: ["image/png"],
+  jpeg: ["image/jpeg", "image/pjpeg"],
 };
 
 export const BRANCH_ALLOWLIST: Record<IntakeBranch, readonly SniffedKind[]> = {
   quote: ["pdf"],
   document: ["pdf", "dwg", "dxf", "zip"],
-  redline: ["pdf", "dwg", "dxf", "zip"],
+  redline: ["pdf", "dwg", "dxf", "zip", "png", "jpeg"],
 };
 
-const KIND_LABEL: Record<SniffedKind, string> = { pdf: "PDF", dwg: "DWG", dxf: "DXF", zip: "ZIP" };
+const KIND_LABEL: Record<SniffedKind, string> = { pdf: "PDF", dwg: "DWG", dxf: "DXF", zip: "ZIP", png: "PNG", jpeg: "JPEG" };
 
 /** "PDF", "PDF, DWG, DXF or ZIP" — the accepted list, named in refusals. */
 export function acceptedLabel(branch: IntakeBranch): string {
@@ -71,10 +79,13 @@ function ascii(head: Uint8Array, n: number): string {
  *  Magic numbers only — PDF `%PDF-` at offset 0 (strict: no leading junk),
  *  DWG `AC10nn`, ZIP local-file header `PK\x03\x04` (an empty archive's
  *  end-of-directory `PK\x05\x06` is not a file), DXF the binary sentinel or
- *  the ASCII `0 / SECTION` opening (after an optional 999 comment). */
+ *  the ASCII `0 / SECTION` opening (after an optional 999 comment), PNG its
+ *  eight-byte signature, JPEG `FF D8 FF`. */
 export function sniffKind(head: Uint8Array): SniffedKind | null {
   const s = ascii(head, SNIFF_BYTES);
   if (s.startsWith("%PDF-")) return "pdf";
+  if (s.startsWith("\x89PNG\r\n\x1a\n")) return "png";
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "jpeg";
   if (/^AC10\d\d/.test(s)) return "dwg";
   if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) return "zip";
   if (s.startsWith("AutoCAD Binary DXF\r\n\x1a\x00")) return "dxf";

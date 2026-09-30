@@ -301,17 +301,43 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         libraryId,
       });
       const rosterRequired = control.mode === "require";
+      // The submission as stored: its file hash binds reviewers' sign-offs
+      // to the bytes they reviewed; its MOC reference is SEC-14's.
+      const { data: ver, error: verErr } = await supabase.from("document_versions")
+        .select("moc_reference, file_hash").eq("id", p.pendingVersionId).maybeSingle();
+      if (verErr) throw new Error(`Couldn't read the submission: ${verErr.message}`);
+      // SEC-14: a drawing-class document's external revision carries its
+      // management-of-change reference (the database refuses it otherwise).
+      // Captured HERE, before either path — on the roster path the publish
+      // happens later from the review panel, which has no MOC prompt, so a
+      // reference missing now would refuse the reviewers' final sign-off.
+      const docClass = await effectiveDocClassForDocument({ id: p.docId, collectionId: (doc.collection_id as string | null) ?? null, libraryId });
+      if (docClass === "drawing" && String((ver as { moc_reference?: string | null } | null)?.moc_reference ?? "").trim().length < 3) {
+        const moc = await appPrompt({
+          title: "MOC reference required",
+          message: `${p.label} is a drawing — PSM (OSHA 1910.119(l)) requires the management-of-change reference for this revision before it can become current.`,
+          placeholder: "MOC reference",
+          confirmLabel: rosterRequired ? "Record and continue" : "Record and approve",
+        });
+        if (moc == null) return;
+        if (moc.trim().length < 3) throw new Error("An MOC reference is at least 3 characters.");
+        const { data: set, error: setErr } = await supabase.from("document_versions")
+          .update({ moc_reference: moc.trim() }).eq("id", p.pendingVersionId).eq("review_state", "in_review").select("id");
+        if (setErr) throw new Error(`Couldn't record the MOC reference: ${setErr.message}`);
+        if (!set || set.length === 0) throw new Error("Couldn't record the MOC reference: the write was refused.");
+      }
       if (rosterRequired) {
         // A roster is its PRIMARY slots (the guard counts primaries; a
         // standby alternate alone reviews nothing).
         const hasPrimary = (rows: Awaited<ReturnType<typeof listDraftRoster>>) => rows.some((r) => r.slot === "primary");
         const roster = await listDraftRoster(p.docId, p.pendingVersionId);
         if (!hasPrimary(roster)) {
-          if (!(await appConfirm({ message: `${p.label}'s review policy requires reviewer sign-off. Send Rev ${p.revLabel ?? ""} to its reviewers? It publishes once they have signed.` }))) return;
+          if (!(await appConfirm({ message: `${p.label}'s review policy requires reviewer sign-off. Send Rev ${p.revLabel ?? ""} to its reviewers? It publishes from the document's review panel once they have signed.` }))) return;
           await openReviewRoster({
             orgId, documentId: p.docId, libraryId, versionId: p.pendingVersionId,
-            revisionLabel: p.revLabel ?? "", contentHash: null, control,
-            actorId: uid, actorName: userEmail ?? null,
+            revisionLabel: p.revLabel ?? "",
+            contentHash: ((ver as { file_hash?: string | null } | null)?.file_hash ?? null),
+            control, actorId: uid, actorName: userEmail ?? null,
           });
           // Say what actually happened: a policy that resolves nobody opens
           // no roster (the owner and Document Control are told of the gap),
@@ -319,32 +345,10 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           // same prompt.
           const opened = await listDraftRoster(p.docId, p.pendingVersionId);
           setMsg(hasPrimary(opened)
-            ? `${p.label} Rev ${p.revLabel ?? ""} was sent to its reviewers — it publishes once they sign off on the document's review panel.`
+            ? `${p.label} Rev ${p.revLabel ?? ""} was sent to its reviewers — it publishes when the last of them signs off on the document's review panel (in the document library), not from this tab.`
             : `No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.`);
           await refresh();
           return;
-        }
-      }
-      // SEC-14: a drawing-class document's external revision carries its
-      // management-of-change reference (the database refuses it otherwise).
-      const docClass = await effectiveDocClassForDocument({ id: p.docId, collectionId: (doc.collection_id as string | null) ?? null, libraryId });
-      if (docClass === "drawing") {
-        const { data: ver, error: verErr } = await supabase.from("document_versions")
-          .select("moc_reference").eq("id", p.pendingVersionId).maybeSingle();
-        if (verErr) throw new Error(`Couldn't read the submission: ${verErr.message}`);
-        if (String((ver as { moc_reference?: string | null } | null)?.moc_reference ?? "").trim().length < 3) {
-          const moc = await appPrompt({
-            title: "MOC reference required",
-            message: `${p.label} is a drawing — PSM (OSHA 1910.119(l)) requires the management-of-change reference for this revision before it can become current.`,
-            placeholder: "MOC reference",
-            confirmLabel: "Record and approve",
-          });
-          if (moc == null) return;
-          if (moc.trim().length < 3) throw new Error("An MOC reference is at least 3 characters.");
-          const { data: set, error: setErr } = await supabase.from("document_versions")
-            .update({ moc_reference: moc.trim() }).eq("id", p.pendingVersionId).eq("review_state", "in_review").select("id");
-          if (setErr) throw new Error(`Couldn't record the MOC reference: ${setErr.message}`);
-          if (!set || set.length === 0) throw new Error("Couldn't record the MOC reference: the write was refused.");
         }
       }
       // A roster-free policy: this click IS the review (the publish guard

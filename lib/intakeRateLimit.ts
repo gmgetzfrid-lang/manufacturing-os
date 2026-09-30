@@ -13,7 +13,12 @@
 //   * a 429 whose message the portal renders as-is;
 //   * at most one "new submission" notice per link per window, so a burst
 //     is one notice, not N (SEC-8 dw2) — each folded submission is counted
-//     ('suppressed'), and the next notice says how many more arrived;
+//     ('suppressed'), and the next notice says how many more arrived. A
+//     notice that must not wait for the window (a revision published
+//     without review, a submission that replaced one in review) still goes
+//     out — but at most FORCED_NOTICES_PER_WINDOW notices of any kind per
+//     link per window; beyond that it is folded too, counted BY KIND, and
+//     the next notice names how many were published or replaced;
 //   * a per-link lifetime cap (submissions and bytes) read from the link
 //     row (20261104), so one leaked token cannot grow storage without end.
 //
@@ -63,9 +68,19 @@ export function clientIp(req: { headers: Headers }): string {
 type AttemptClient = { from: (table: string) => any };
 
 /** `attempt` counts toward the rate window; `notified` marks a team
- *  notice; `suppressed` marks a submission whose notice was folded into
- *  the window's earlier one (never counted toward the rate window). */
-export const ATTEMPT_OUTCOME = { attempt: "attempt", notified: "notified", suppressed: "suppressed" } as const;
+ *  notice; `suppressed*` marks a submission whose notice was folded into
+ *  the window's earlier one (never counted toward the rate window) — by
+ *  kind: a submission for review, a revision published without review, a
+ *  submission that replaced the link's earlier one in review. */
+export const ATTEMPT_OUTCOME = {
+  attempt: "attempt", notified: "notified", suppressed: "suppressed",
+  suppressedPublished: "suppressed_published", suppressedDisplaced: "suppressed_displaced",
+} as const;
+
+/** SEC-8 dw2: the most notices one link sends the team per window, forced
+ *  ones included. An ordinary notice goes only when the window is empty; a
+ *  forced one (published / displaced) while fewer than this many went. */
+export const FORCED_NOTICES_PER_WINDOW = 3;
 
 export type RateVerdict = { limited: false } | { limited: true; retryAfterSec: number; message: string };
 
@@ -118,49 +133,82 @@ export async function recordIntakeAttempt(client: AttemptClient, input: {
   }
 }
 
-/** Was a submission notice already sent for this link inside the window?
- *  An unreadable log answers false — a notice too many beats a submission
- *  nobody hears about. */
-export async function noticeSentRecently(client: AttemptClient, input: {
+/** How many team notices this link sent inside the window (any kind). An
+ *  unreadable log answers 0 — a notice too many beats a submission nobody
+ *  hears about. */
+export async function noticesInWindow(client: AttemptClient, input: {
   tokenHash: string; windowMinutes: number; now?: number;
-}): Promise<boolean> {
+}): Promise<number> {
   try {
     const since = new Date((input.now ?? Date.now()) - input.windowMinutes * 60_000).toISOString();
     const { count, error } = await client.from("intake_attempts")
       .select("id", { count: "exact", head: true })
       .eq("token_hash", input.tokenHash).eq("outcome", ATTEMPT_OUTCOME.notified)
       .gte("created_at", since);
-    if (error) return false;
-    return (count ?? 0) > 0;
+    if (error) return 0;
+    return typeof count === "number" ? count : 0;
   } catch {
-    return false;
+    return 0;
   }
 }
 
+/** Pure: does this notice go out, given how many the window already holds?
+ *  An ordinary notice only into an empty window; a forced one (a revision
+ *  published without review, a submission that replaced one in review)
+ *  while the window holds fewer than FORCED_NOTICES_PER_WINDOW. */
+export function noticeGoesOut(sentInWindow: number, forced: boolean): boolean {
+  return forced ? sentInWindow < FORCED_NOTICES_PER_WINDOW : sentInWindow === 0;
+}
+
+export interface FoldedCounts {
+  /** Every folded submission since the link's last notice. */
+  total: number;
+  /** …of which revisions published without review. */
+  published: number;
+  /** …of which submissions that replaced the link's earlier one in review. */
+  displaced: number;
+}
+
 /** How many submissions on this link were folded into a notice window
- *  since the link's last notice — the count the next notice carries, so a
- *  burst of N uploads is never reported as one. Looks back at most two days
- *  (the attempt log's retention). An unreadable log answers 0. */
-export async function suppressedSinceLastNotice(client: AttemptClient, input: {
+ *  since the link's last notice, by kind — the count the next notice
+ *  carries, so a burst of N uploads is never reported as one. Looks back at
+ *  most two days (the attempt log's retention). An unreadable log answers
+ *  zeros. */
+export async function foldedSinceLastNotice(client: AttemptClient, input: {
   tokenHash: string; now?: number;
-}): Promise<number> {
+}): Promise<FoldedCounts> {
+  const none: FoldedCounts = { total: 0, published: 0, displaced: 0 };
   try {
     const horizon = new Date((input.now ?? Date.now()) - 2 * 24 * HOUR_MS).toISOString();
     const { data: sent, error: sentErr } = await client.from("intake_attempts")
       .select("created_at")
       .eq("token_hash", input.tokenHash).eq("outcome", ATTEMPT_OUTCOME.notified)
       .gte("created_at", horizon);
-    if (sentErr) return 0;
+    if (sentErr) return none;
     const last = (((sent ?? []) as Array<{ created_at: string }>)).map((r) => String(r.created_at)).sort().pop() ?? horizon;
-    const { count, error } = await client.from("intake_attempts")
-      .select("id", { count: "exact", head: true })
-      .eq("token_hash", input.tokenHash).eq("outcome", ATTEMPT_OUTCOME.suppressed)
-      .gte("created_at", last);
-    if (error) return 0;
-    return typeof count === "number" ? count : 0;
+    const countOf = async (outcome: string): Promise<number> => {
+      const { count, error } = await client.from("intake_attempts")
+        .select("id", { count: "exact", head: true })
+        .eq("token_hash", input.tokenHash).eq("outcome", outcome)
+        .gte("created_at", last);
+      return error || typeof count !== "number" ? 0 : count;
+    };
+    const review = await countOf(ATTEMPT_OUTCOME.suppressed);
+    const published = await countOf(ATTEMPT_OUTCOME.suppressedPublished);
+    const displaced = await countOf(ATTEMPT_OUTCOME.suppressedDisplaced);
+    return { total: review + published + displaced, published, displaced };
   } catch {
-    return 0;
+    return none;
   }
+}
+
+/** Pure: the sentence the next notice carries for what was folded. */
+export function foldedNoticeSentence(f: FoldedCounts, tab: string): string {
+  if (f.total <= 0) return "";
+  const kinds: string[] = [];
+  if (f.published > 0) kinds.push(`${f.published} published without review`);
+  if (f.displaced > 0) kinds.push(`${f.displaced} replacing an earlier submission in review`);
+  return `${f.total} more submission${f.total === 1 ? "" : "s"} arrived on this link since the last notice${kinds.length ? ` (${kinds.join(", ")})` : ""} — see the project's ${tab} tab.`;
 }
 
 export interface LinkBudget {

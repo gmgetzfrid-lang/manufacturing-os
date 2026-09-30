@@ -35,10 +35,16 @@
 --   4. uniqueness_key backfill (INTK-5): rows with a document number and no
 --      key get the key lib/uniqueness.ts computes — the library's
 --      uniqueness_keys tuple (default: the number), each part trimmed and
---      lower-cased, joined with '::'. A row whose key would collide with a
---      LIVE row (or with another backfilled live row) is SKIPPED and
---      counted: the database never guesses which of two same-numbered
---      drawings is the real one.
+--      lower-cased, joined with '::' — but ONLY when EVERY part of the
+--      tuple is filled (lib/intakeLinks.ts completeUniquenessKey, the rule
+--      the door and adoption use). A row missing a part — an intake sheet
+--      in a ["documentNumber","sheet"] library carries no sheet — stays
+--      NULL, the column's opt-out, as it was: a partial key ('p-100::')
+--      would make sheets 2..N of a same-numbered set collide with sheet 1.
+--      Those rows are counted. A row whose key would collide with a LIVE
+--      row (or with another backfilled live row) is SKIPPED and counted:
+--      the database never guesses which of two same-numbered drawings is
+--      the real one.
 --   5. orphaned_in_review_versions_count() — the health signal SAF-10 asks
 --      for: in-review versions no document points at and nothing withdrew
 --      (superseded_at NULL — a withdrawn draft is resolved, not orphaned).
@@ -76,7 +82,7 @@ DROP TABLE IF EXISTS pg_temp.prj_g_j1b_keys;
 CREATE TEMP TABLE prj_g_j1b_keys AS
 SELECT d.id, d.library_id,
        (d.status IS NOT NULL AND d.status NOT IN ('Archived', 'Superseded')) AS live,
-       (SELECT CASE WHEN bool_and(p.v = '') THEN NULL ELSE string_agg(p.v, '::' ORDER BY p.ord) END
+       (SELECT CASE WHEN bool_or(p.v = '') THEN NULL ELSE string_agg(p.v, '::' ORDER BY p.ord) END
           FROM (SELECT k.ord,
                        lower(btrim(COALESCE(CASE k.key
                                                WHEN 'documentNumber' THEN d.document_number
@@ -98,6 +104,9 @@ SELECT 'inventory: documents with a number and NO uniqueness_key (backfill candi
   FROM prj_g_j1b_keys
 UNION ALL
 SELECT 'inventory: …in how many libraries', COUNT(DISTINCT library_id)::text FROM prj_g_j1b_keys
+UNION ALL
+SELECT 'inventory: …left NULL because a part of their library''s tuple is empty (a sheet with no sheet value — never a partial key)', COUNT(*)::text
+  FROM prj_g_j1b_keys WHERE key IS NULL
 UNION ALL
 SELECT 'inventory: …LIVE candidates whose key collides with another live document (SKIPPED — two sources of truth to resolve by hand)', COUNT(*)::text
   FROM prj_g_j1b_keys c

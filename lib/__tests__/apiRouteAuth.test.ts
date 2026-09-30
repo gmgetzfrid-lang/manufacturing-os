@@ -921,6 +921,9 @@ describe("POST /api/intake/upload — the token is the only credential (REL-6; t
 
   it("a live link passes the gate — the next refusal is about the payload, not the credential", async () => {
     mockState.tables.project_intake_links = { data: LINK };
+    // projects Round G J1 (PM-2): the link's project — open — is part of the
+    // gate, checked before the body.
+    mockState.tables.projects = { data: { id: "p1", name: "Unit 4", status: "active", owner_user_id: null, intake_library_id: null, intake_collection_id: null } };
     const { POST } = await load();
     const res = await POST(upload({ token: TOKEN, title: "x" }));
     expect(res.status).toBe(400);
