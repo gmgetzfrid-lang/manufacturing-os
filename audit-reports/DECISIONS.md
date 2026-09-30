@@ -80,6 +80,7 @@ about the system.
 | [DEC-44](#dec-44) | Content egress rails: `download_audits` append-only, presigned windows ≤ 1 h, the service worker caches no API response | low | `DIST-9`, `DRLS-8`, `EGR-4`, `PKG-11`, `XEDGE-6` |
 | [DEC-45](#dec-45) | Bearer columns never leave the database in an export and never come back from a backup | low | `EGR-7`, `XEDGE-10`, `BKP-1`, `INTK-6` |
 | [DEC-47](#dec-47) | Imported schedule rows are **commitments everywhere** — one liveness predicate (`lib/milestoneLiveness.ts`) for health, coach, report and EV | low | `MON-6`, `PM-3`, `SCH-5` |
+| [DEC-48](#dec-48) | The equipment registry: writer tier edits and archives, controller tier deletes; a site code identifies the **type**, one code is one asset; codebook edits never rewrite codes | medium | `AREA-1`, `IRLS-5`, `CB-3`, `CB-5`, `CB-6`, `CB-10`, `GAP-310` |
 
 ---
 
@@ -1305,6 +1306,8 @@ facility with no configuration must keep working exactly as it does today.
 
 *Landed 2026-09-23 (document-control Round F): the hold-change and hold-aging audience is the org's `holds.release` pool read from the capability policy (`lib/holds.ts` `holdPoolFromMembers` — tokens expanded against the held collection, per-person grants included), never a literal list; the shipped wildcard is read as "no dedicated pool" and falls back to the controller tier (`isControllerRole`, what `is_org_controller` means) rather than an org-wide broadcast, so an unconfigured org's fan-out is unchanged. Which controls a person sees on the two hold surfaces is the same policy through `holdControlsFor`. See `HLD-8`, `HLD-10`, `HLD-14`.*
 
+*Landed 2026-09-30 (intelligence Round G, I-10): the equipment registry adds no role list. Its delete tier is the controller tier (`isControllerRole` from `lib/permissions.ts` on the client, `is_org_controller` in `20261128`), and the master-list workbook route reads the registry writer tier from `ADMIN_SURFACES` "assets" `writes` through `memberHoldsAny`, which checks the whole role collection. See `AREA-1`, `IRLS-5`, `BR-4` and `DEC-48`.*
+
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
 
@@ -1893,3 +1896,24 @@ same predicate, and the Schedule tab's copy changes with it.
 **Risk:** low.
 
 *Landed 2026-09-29 (projects Round G; review fix 2026-09-30): counting every row only helps if every consumer reads the same rows. `lib/milestoneLiveness.ts` also exports `PROJECT_MILESTONE_READ_LIMIT` (1,000). The health snapshot and the printed report both read `order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)`, which is the subset the Costs tab's unbounded `order("planned_at")` read gets under the API's default row cap. So EV, CPI and overdue agree across surfaces, and the report discloses "first N of M" above the bound (projects-tab `MON-5`). A new project-level milestone reader imports the same bound rather than choosing its own.*
+
+<a id="dec-48"></a>
+## DEC-48 · The equipment registry's tiers, and what a site code identifies
+
+**Decision. Five calls about the registry and its codebook. They were made together because each one is where the others would otherwise leak.**
+
+1. **Authority is decided by the role collection.** The registry writer tier creates, edits and archives equipment. That tier is Admin, DocCtrl, Manager and Supervisor: `ADMIN_SURFACES` "assets" `writes`, enforced by `20261045`. The writer tier may also edit the identity columns `unit_code`, `code` and `origin`, which is what the Operating Areas page promises. Only the controller tier (`is_org_controller`) may **delete** assets, asset types or photos, because a deletion cascades into photos, aliases, mentions and document links. Photos follow the asset. `asset_files` is a document link rather than a registry record, so it keeps the writer tier. The database writes an audit row (`ASSET_DELETED`) whenever a person deletes an asset, in the same transaction. The writer tier's way to remove equipment is to archive it, which can be reversed.
+2. **A site code identifies the equipment TYPE, not the tag prefix.** When one type is registered with several prefixes (Vessels: V, D), those prefixes share its number space by the site's own standard. The app neither writes the prefix into the code nor forbids multi-prefix types, because either would impose a numbering convention on the site (the DEC-35 spirit). Instead, the registry refuses a second asset carrying the same code: a unique index on `(org_id, code)` for non-blank codes, created once no duplicate exists. The inverse (`codeToTag`) reports ambiguity rather than picking a prefix.
+3. **Unit and equipment-type codes are digits.** Site codes are built from these digits and read back the same way, so a letter code can be written but never decoded. This is enforced by a CHECK constraint (`20261128`), which becomes NOT VALID if legacy rows violate it. Drawing-type codes keep their free shape.
+4. **A codebook edit never rewrites stored codes.** Before saving, it warns with the number of existing codes the edit would derive differently. The identity review is the re-decode plan: each asset's change is accepted one at a time, under the user's RLS. A unit or type that assets or process flows still reference cannot be removed; the refusal shows the counts. This round adds neither a code rename with cascade nor a version stamp (`CB-5` and `CB-6` stay partial).
+5. **There is one tag grammar: the registry key.** `tagKey` is the database's `normalize_tag()`, a lowercase key with alphanumerics only. `assets.tag_normalized` and `asset_aliases.alias_normalized` both use it. The codebook's `normalizeTag` is the canonical display spelling that the codec parses. It is not an identity key.
+
+> Made during intelligence Round G (2026-09-30) under the protocol's fail-safe rule, closing `AREA-1`, `IRLS-5`, `CB-3`, `CB-10` and `GAP-310` and recording the partial calls on `CB-5` and `CB-6`. It is numbered DEC-48 because DEC-44 to DEC-47 are already taken on the integration branch. The integrator renumbers it if this number collides at merge.
+
+**Rationale.** In a PSM registry, a deletion that cascades destroys evidence. Nobody else was stopping it, so the delete sits at the tier that also governs the codebook. Editing does not destroy anything and is audited, so it stays with the tier the page already names. The owner warned against baking in conventions. Forcing one prefix per type, or a prefix inside the code, would do exactly that. Refusing a collision at the registry instead keeps each site's own standard while never letting two assets share an identity. The codebook is the identity authority, and for that reason it must never silently re-file the plant. A person accepts every rewrite.
+
+**Acceptance.** A Manager holding no controller role can archive equipment but gets an explicit refusal when deleting it. An `ASSET_DELETED` row exists for every deletion a person makes. `codeToTag("2010.1")` answers ambiguous for Vessels [V, D]. A second asset on a code already held is refused with the code named. `tagToCode` returns nothing for a letter unit code. Saving a padding change shows the count before anything is written. An alias taught as "the north furnace" is found by `getAssetByTag`, by search and by ⌘K under any spelling. See `lib/__tests__/intelRoundGRegistry.test.ts`, `lib/__tests__/codebook.test.ts`, `lib/__tests__/assetCategorize.test.ts`, `lib/__tests__/intelRoundGGrammar.test.ts` and `lib/__tests__/globalSearchTags.test.ts`.
+
+**Reversal.** (1) If a facility states that Managers delete equipment, `is_org_controller` in the DELETE overlay becomes `caller_holds_any_role(org_id, writes)`. (2) If a site's standard encodes the prefix, the code format becomes an org setting read by `tagToCode` and `codeToTag`; there is still no default. (4) A server-side re-decode job and a version stamp are additive to the plan and replace nothing.
+
+**Risk:** medium. The only narrowing is DELETE for Manager and Supervisor; everything else is either a warning or a refusal of data that would otherwise be corrupted.

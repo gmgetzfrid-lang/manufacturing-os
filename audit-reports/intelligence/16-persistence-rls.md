@@ -150,7 +150,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 ## IRLS-5 · assets is FOR ALL to any active member — the equipment registry can be rewritten or deleted by a Requester over PostgREST
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:25-30`, `lib/assets.ts:206-220`, `app/(protected)/admin/assets/page.tsx:56`, `lib/roleCapabilities.ts:48-61`, `supabase/migrations/20260807_link_proposals.sql:119-123`, `supabase/migrations/20260929_mention_engine.sql:28`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The only gate is UI-side — app/(protected)/admin/assets/page.tsx:56 `const ADMIN_ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor"];` — while lib/assets.ts:217-220 deleteAsset issues a bare `supabase.from("assets").delete().eq("id", id)` over the user's JWT. Unlike documents (20260814:41 `documents_delete_controllers … AS RESTRICTIVE FOR DELETE USING (is_org_controller(org_id))`), no restrictive policy exists on assets — grep over all migrations returns no other assets policy. Cascade impact is real: entity_mentions.asset_id and asset_aliases.asset_id are both `REFERENCES assets(id) ON DELETE CASCADE`.
@@ -172,6 +172,17 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] a RESTRICTIVE FOR DELETE (and FOR UPDATE on unit_code/code/origin) policy on assets requires is_org_controller(org_id), mirroring documents_delete_controllers (20260814)
 - [ ] deleteAsset writes an audit_logs row, or is replaced by an archive flip on the existing `archived` column
 - [ ] asset_types, asset_photos and asset_files get the same treatment — all four carry the identical unrestricted *_member_all policy
+
+**Resolution (2026-09-30, intelligence Round G).** `20261128_intel_roundG_registry_authority.sql`: the RESTRICTIVE DELETE overlay on `assets` (and `asset_types`, `asset_photos`) now requires `is_org_controller(org_id)` — the collection-aware controller bar that `documents_delete_controllers` uses; an AFTER DELETE trigger (`assets_audit_delete`, SECURITY DEFINER, `search_path` pinned) writes an `ASSET_DELETED` audit row with the tag, code, unit, origin and discovery provenance in the same transaction for every person-initiated deletion (the service role's cascades — org purge, restore — are skipped). The writer tier's removal is `archiveAsset` (the existing `archived` column; photos, aliases, mentions and file links stay). `deleteAsset` / `updateAsset` / `deletePhoto` are checked writes. Tests: `lib/__tests__/intelRoundGRegistry.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261128_intel_roundG_registry_authority.sql`.
+
+**Done-when.**
+1. ✓ RESTRICTIVE FOR DELETE requires `is_org_controller(org_id)`. The FOR UPDATE limb on `unit_code` / `code` / `origin` is decided as the registry WRITER tier, not the controller tier (`DEC-48`, the package's decision: those columns are what the Operating Areas page promises Manager/Supervisor may edit) — it is already enforced at the database by `assets_guard_registry` (20261045: any registry-column change by a non-writer raises), so a Requester cannot change them.
+2. ✓ Both: deletion writes an audit row (database trigger, not a best-effort client call), and the writer tier archives instead.
+3. ✓ asset_types and asset_photos get the controller DELETE; asset_files keeps the writer-tier overlay from 20261045 — it is a document link, not a registry record, and un-linking is the everyday act of the File Reference modal (`DEC-48`).
+
+**Scope / residual.** None; apply 20261128.
 
 ---
 
@@ -240,7 +251,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 ## IRLS-8 · document_equipment_suggestions — the Bridge's applied-tag ledger — is writable by any active member
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260928_site_codebook.sql:104-111`, `supabase/migrations/20260928_site_codebook.sql:89-102`, `lib/equipmentBridgeServer.ts:140-155`, `lib/equipmentBridgeServer.ts:174-181`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: `applied` is read straight back from the member-writable row and used as the idempotence base, so a forged applied[] array makes every recompute stamp status 'applied' with zero tags ever written to the document column. applyForDocument (lib/equipmentBridgeServer.ts:174-179) reads the same row's `suggested`/`applied` with the same trust. Contrast the sibling policies in the same file at :65-73, where codebook_entries_write and codebook_config_write DO carry `AND role IN ('Admin','DocCtrl')`.
@@ -259,6 +270,16 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 
 - [ ] doc_equip_sugg_write is dropped (all writers are service-role) or narrowed to is_org_controller(org_id)
 - [ ] a repo-wide grep confirms no browser-client write path to document_equipment_suggestions exists — today there is none, so removing the policy is behavior-neutral
+
+**Resolution (2026-09-30, intelligence Round G).** `20261128_intel_roundG_registry_authority.sql` §3 re-creates `doc_equip_sugg_write` with the same name and shape as 20260928, changing only the predicate to `is_org_controller(org_id)` (USING and WITH CHECK) — the service role (every app writer: `upsertSuggestions`, the apply status update) bypasses RLS, members keep SELECT. Line-diffed against the live 20260928 statement in `lib/__tests__/intelRoundGRegistry.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261128_intel_roundG_registry_authority.sql`.
+
+**Done-when.**
+1. ✓ Narrowed to `is_org_controller(org_id)`.
+2. ✓ A repo walk (app, components, lib, hooks) asserts no browser-client write to `document_equipment_suggestions` exists — every writer is the service-role Bridge (`lib/__tests__/intelRoundGRegistry.test.ts`); the narrowing is behaviour-neutral for the app.
+
+**Scope / residual.** None; apply 20261128.
 
 ---
 
@@ -319,6 +340,15 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] is_org_controller, my_org_ids and the other 20 SECURITY DEFINER functions flagged without SET search_path get `SET search_path = public`
 - [ ] every intelligence write policy that spells out `m.role IN (...)` is rewritten to call is_org_controller(org_id) (or an is_org_member_with_roles helper) so one definition of authority serves the whole layer
 - [ ] a client write that RLS silently drops surfaces as an error — check affected-row counts on codebook/related-resource/alias updates rather than assuming success
+
+**Partial (2026-09-30, intelligence Round G).** Verified and closed where this package owns the code. The search_path half is closed by R&P `DB-6` (`20261020` pins `is_org_controller`, `my_org_ids` and the historical definer set; `lib/__tests__/searchPathPin.test.ts` refuses a new unpinned definer — the plan's record-only close). The roles[] policy half is closed by R&P `ADD-4` (`20261046` rewrote all eight hand-rolled intelligence write policies — org_ai_instructions, document_related_resources, library_numbering, proposed_links, asset_aliases, codebook_entries, codebook_config, entity_mentions — to `caller_holds_any_role(org_id, …)`; the codebook / playbook limbs are pinned by census in `lib/__tests__/intelRoundGRegistry.test.ts`, and 20261128's probes verify them live). This round makes the codebook writes (`lib/codebook.ts`: upsertEntry, deleteEntry, saveUnitLinks, saveConfig) and the alias removal (`removeAssetAlias`) checked writes.
+
+**Done-when.**
+1. ✓ `SET search_path = public` on is_org_controller, my_org_ids and the flagged definers (R&P DB-6, 20261020; enforced by searchPathPin).
+2. ✓ Every intelligence write policy that spelled `m.role IN (...)` calls the collection helper (R&P ADD-4, 20261046).
+3. Partly — codebook and alias writes now check affected rows ✓; the related-resource writes (`lib/relatedResources.ts`) are I-08's file and still unchecked.
+
+**Scope / residual.** The related-resource limb of done-when 3 is I-08's (`lib/relatedResources.ts`).
 
 ---
 

@@ -506,6 +506,19 @@ person types.**
 2. Aliases resolve in ⌘K search and on the old-tag URL path.
 3. A test asserts every call site agrees on a table of awkward inputs.
 
+**Status: RESOLVED (2026-09-30, intelligence Round G, 99 Phase 0).**
+
+**Resolution (2026-09-30, intelligence Round G).** The one grammar is the registry's identity key, not the codebook's display spelling: `lib/codebook.ts` exports `tagKey` (lowercase, alphanumerics only) — exactly the database's `normalize_tag()` (20260609) and what `assets.tag_normalized` already holds, so choosing it rewrites no registry key and no trigger. It is the projection of the canonical spelling (`tagKey(normalizeTag(x)) === tagKey(x)`, and `splitTag(tagKey(x))` agrees with `splitTag(x)` wherever the codec places the tag), which is what "round-trips through the codebook" means here; the codebook's `normalizeTag` stays as the display/codec spelling and is documented as NOT an identity key. Picking the codebook spelling instead would have been wrong on the evidence: it is not punctuation-blind (`NORTH-FURNACE` ≠ `NORTHFURNACE`), which the table's own comment (`20260807`: "Same normalization as tags, so matching is punctuation-blind") and `lib/assetAliases.ts`'s promise both rule out. `lib/assets.ts` `normalizeTag` and `lib/documentTags.ts` `normalizeTag` are now `= tagKey` (re-exports, not copies); `lib/pidTrace.ts` keeps its uppercase trace key with a comment that it is a different identity. The column migrates and the readers flip in ONE commit (`2675323`, the Do-not): `addAssetAlias` writes `tagKey(alias)` (and refuses an alias with no key), `resolveAliasToAssetIds` and `lib/search.ts` look up with it, and `20261127_intel_roundG_one_tag_grammar.sql` rewrites every `asset_aliases.alias_normalized` to `normalize_tag(alias)` — collision-safe under the `(asset_id, alias_normalized)` unique index (one row per (asset, key) carries the key; other spellings of the same alias stay inert, never deleted) — and installs a BEFORE INSERT/UPDATE trigger so every future writer (a restore of an older export included) lands in the grammar. Tests: `lib/__tests__/codebook.test.ts` ("GAP-310 — the one tag grammar": the awkward-input table), `lib/__tests__/intelRoundGGrammar.test.ts` (round trips + the migration's shape).
+
+**Pending migration:** `supabase/migrations/20261127_intel_roundG_one_tag_grammar.sql` (hand-applied; its result set carries the pre-apply inventory: rows to rewrite, keyless aliases, duplicate spellings).
+
+**Done-when.**
+1. ✓ One exported normalizer (`tagKey`); `lib/assets.ts` and `lib/documentTags.ts` re-export it. The fourth copy, `lib/equipmentBridgeServer.ts` `assetNorm`, is I-11's file (its flip is planned at I-11's claim); it is byte-identical today and the agreement test transcribes it, accepting either the import or the identical body.
+2. ✓ Aliases resolve on the old-tag URL path (`getAssetByTag` fallback — proven by test) and in ⌘K (`lookupTag`, GAP-311 — proven by `lib/__tests__/globalSearchTags.test.ts`), and in document search (`searchDocuments` via the alias key).
+3. ✓ A test asserts every call site agrees on a table of awkward inputs: codebook, registry, documentTags, the Bridge's copy, the SQL function (transcribed from its only definition, pinned), and the trace key modulo case.
+
+**Scope / residual.** The Bridge's `assetNorm` flips to an import of `tagKey` when I-11 claims `lib/equipmentBridgeServer.ts` (behaviour-neutral). The column is fully in the grammar only after `20261127` is pasted.
+
 ---
 
 <a id="gap-311"></a>
@@ -529,6 +542,15 @@ Note `lib/globalSearch.ts:79` sends an asset hit to
 1. Typing a tag returns the asset, its unit, and its sheets, ranked first.
 2. No AI call. Sub-second.
 3. It resolves aliases and every tag-format variant.
+
+**Partial (2026-09-30, intelligence Round G).** The lookup ships; the sheets arrive with I-11's relation, as 99 Phase 5 and the plan say. `lib/search.ts` `lookupTag(orgId, query)` resolves what someone typed — a tag in any format (the one grammar on `assets.tag_normalized`), an exact site code, or a taught alias (the alias key) — to the asset, its operating area (the codebook unit label) and the documents it appears on (`document_assets`, then `documents` under RLS, so an unreadable drawing does not come back). Indexed equality reads only; no AI call, no text search; archived equipment is not an answer; a one-character or paragraph-length query returns nothing. `lib/globalSearch.ts` runs it beside the other searches and emits its answers FIRST, flagged `exact` — asset (badge Tag / Site code / Alias), its operating area (an asset-kind hit with `facet: "unit"`, linking `/admin/assets?unit=…`), then the drawings — and de-duplicates the fuzzy results against them; every asset hit (exact or fuzzy) now lands on the asset hub `/assets/<tag>` instead of `/admin/assets?tag=`. `components/navigation/GlobalCommandPalette.tsx` renders exact hits above actions and places. Tests: `lib/__tests__/globalSearchTags.test.ts`.
+
+**Done-when (acceptance).**
+1. Partly — typing a tag returns the asset and its unit ranked first ✓, and the documents the relation already links ✓; the Bridge-found sheets (and a sheet label such as SHT 4) appear only once I-11's `GAP-301`/`GAP-304` write `document_assets` rows with the sheet address — `lookupTag` already reads that relation, so no change is needed here when they land.
+2. ✓ No AI call; indexed equality reads only (pinned by test).
+3. ✓ Aliases and every tag-format variant resolve (pinned by test).
+
+**Scope / residual.** Remaining limb: the sheet address, owned by I-11 (`GAP-301`, `GAP-304`). The search page (`app/(protected)/search/page.tsx`) groups the unit hit with Assets — no new hit kind was added, so that page is unchanged.
 
 ---
 
