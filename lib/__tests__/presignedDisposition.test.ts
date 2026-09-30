@@ -1,8 +1,8 @@
-// projects Round G — SEC-7 and the egress limb of SEC-1 (DEC-48): a
+// projects Round G — SEC-7 and the egress limb of SEC-1 (DEC-49): a
 // presigned download arrives as an ATTACHMENT unless an in-app viewer asks
 // for inline AND the key is a PDF or a raster image; an inline URL pins its
-// Content-Type; the in-app viewer frames only a PDF or a raster image,
-// re-typed to exactly that, and the image frame is sandboxed.
+// Content-Type; the in-app viewer renders only a PDF (its one frame) or a
+// raster image (an <img>, never a frame), re-typed to exactly that.
 //
 // The route tests sign with the REAL presigner (a real S3 client with inert
 // credentials — presigning is local), so the assertions read the actual
@@ -252,29 +252,35 @@ describe("lib/storage — attachment by default, inline only where a caller opts
   });
 });
 
-describe("census — every presigned GET issuer under app/api signs a disposition", () => {
+describe("census — every presigned GET issuer under app/api and lib signs a disposition", () => {
   function walk(dir: string): string[] {
     return readdirSync(dir).flatMap((f) => {
       const p = join(dir, f);
-      return statSync(p).isDirectory() ? walk(p) : p.endsWith("route.ts") ? [p] : [];
+      if (statSync(p).isDirectory()) return f === "__tests__" || f === "node_modules" ? [] : walk(p);
+      return /\.tsx?$/.test(p) ? [p] : [];
     });
   }
-  // /api/storage/resolve (the archive-aware opener) is owned by the
-  // drafting-flow package that re-checks its ACL after document-control P2;
-  // it adopts presignedGetDisposition there. Named here so it stays visible
-  // and nothing joins it.
-  const KNOWN_UNSIGNED = new Set(["app/api/storage/resolve/route.ts"]);
+  // The two known bare issuers, both SEC-18 and both owned elsewhere:
+  // /api/storage/resolve (the archive-aware opener — drafting-flow DF-P11,
+  // which re-checks its ACL after document-control P2) and
+  // lib/dataExport.ts (the data-export envelope's per-file URLs —
+  // admin-and-org P2, the export contract). Each adopts
+  // presignedGetDisposition in its own package. Named here so they stay
+  // visible and nothing joins them.
+  const KNOWN_UNSIGNED = new Set(["app/api/storage/resolve/route.ts", "lib/dataExport.ts"]);
   it("download-url and transmittal carry one; nothing new signs a bare GetObjectCommand", () => {
     const issuers: string[] = [];
     const bare: string[] = [];
-    for (const file of walk(join(root, "app", "api"))) {
+    for (const file of [...walk(join(root, "app", "api")), ...walk(join(root, "lib"))]) {
       const src = readFileSync(file, "utf8");
       if (!/getSignedUrl\(/.test(src) || !/new GetObjectCommand\(/.test(src)) continue;
       const rel = file.replace(root + "/", "");
       issuers.push(rel);
       if (!/ResponseContentDisposition|\.\.\.disposition\.overrides/.test(src) && !KNOWN_UNSIGNED.has(rel)) bare.push(rel);
     }
-    expect(issuers).toEqual(expect.arrayContaining(["app/api/storage/download-url/route.ts", "app/api/transmittal/route.ts"]));
+    expect(issuers).toEqual(expect.arrayContaining([
+      "app/api/storage/download-url/route.ts", "app/api/transmittal/route.ts", ...KNOWN_UNSIGNED,
+    ]));
     expect(bare).toEqual([]);
   });
 });
@@ -292,12 +298,23 @@ describe("source pins — the viewer (SEC-1 egress limb) and the reviewed inline
     expect(viewer).not.toMatch(/setBlobUrl\(resolvedUrl\);/);
     expect(viewer).toMatch(/blobUrl && blobKind === 'pdf' \?/);
   });
-  it("the image frame is sandboxed with no allow-same-origin and no allow-scripts — anywhere in the viewer", () => {
-    expect(viewer).toMatch(/blobUrl && blobKind === 'image' \? \([\s\S]*?<iframe\s+sandbox=""/);
+  it("an image is an <img>, never a frame — the PDF frame is the viewer's only frame", () => {
+    expect(viewer).toMatch(/blobUrl && blobKind === 'image' \? \([\s\S]*?<img\s+src=\{blobUrl\}/);
+    expect((viewer.match(/<iframe/g) ?? []).length).toBe(1);
+    expect(viewer).toMatch(/blobUrl && blobKind === 'pdf' \? \([\s\S]*?<iframe\s/);
     // No sandbox token is granted anywhere — not same-origin, not scripts.
     expect(viewer).not.toMatch(/sandbox=["{][^"}]*allow-/);
-    expect(viewer).not.toMatch(/sandbox=\{/);
-    expect((viewer.match(/<iframe/g) ?? []).length).toBe(2);
+  });
+  it("a legacy cross-origin URL is shown only when its path NAMES a PDF or a raster image — never framed blind", () => {
+    expect(viewer).toMatch(/return viewerRenderKind\(inlineTypeForKey\(u\.pathname\)\)\?\.kind \?\? null;/);
+    expect(viewer).not.toMatch(/return 'pdf';/);
+    // What that rule admits, by name: a .pdf or an image — not .html / .svg / no extension.
+    const kindFor = (path: string) => viewerRenderKind(inlineTypeForKey(new URL(path, "https://r2.example").pathname))?.kind ?? null;
+    expect(kindFor("/bucket/orgs/o/P-101.pdf")).toBe("pdf");
+    expect(kindFor("/bucket/orgs/o/photo.JPG")).toBe("image");
+    for (const p of ["/bucket/orgs/o/payload.html", "/bucket/orgs/o/d.svg", "/bucket/orgs/o/noext", "/bucket/orgs/o/x.pdf/"]) {
+      expect(kindFor(p), p).toBeNull();
+    }
   });
   it("the framing callers outside the viewer opt in explicitly; the lib's viewer resolvers ask for inline", () => {
     expect(read("app/(protected)/requests/[id]/page.tsx")).toMatch(/getSignedUrlForPath\(file\.url, undefined, \{ inline: true \}\)/);

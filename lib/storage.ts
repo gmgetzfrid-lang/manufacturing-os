@@ -135,7 +135,7 @@ function signedUrlMargin(seconds: number): number {
 const RESIGN_RETRY_MIN_MS = 15_000;
 const RESIGN_RETRY_MAX_MS = 60_000;
 
-/** SEC-7 / DEC-48: an INLINE URL and an ATTACHMENT URL for the same path
+/** SEC-7 / DEC-49: an INLINE URL and an ATTACHMENT URL for the same path
  *  are different URLs (the route signs the disposition into them), so they
  *  are cached apart. The inline entry's key starts with a NUL, which no
  *  storage key can contain (assertSafeStorageKey refuses control bytes). */
@@ -332,7 +332,7 @@ export async function resolveFileUrlDetailed(value: string, expiresIn = 3600): P
  *  granted (at most `expiresIn`, itself capped at the shared ceiling — the
  *  server clamps, the client caches what was granted). Cached + deduped.
  *
- *  SEC-7 / DEC-48: the URL is an ATTACHMENT by default. That is right for
+ *  SEC-7 / DEC-49: the URL is an ATTACHMENT by default. That is right for
  *  an <img>, a CSS background, fetch(), pdf.js and a download — none of them
  *  honours the disposition. A caller that puts the URL in a FRAME or a new
  *  TAB (a PDF preview, "open in new tab") opts in with `{ inline: true }`;
@@ -350,7 +350,7 @@ export async function getSignedUrlForPath(
  *  R2 storage path — to a usable, cached presigned URL. Viewers should use this
  *  instead of each rolling their own getSession + fetch on every open.
  *
- *  SEC-7 / DEC-48: this is the VIEWERS' resolver, so it asks for an INLINE
+ *  SEC-7 / DEC-49: this is the VIEWERS' resolver, so it asks for an INLINE
  *  URL (its callers — MultiDocViewer, CompareRevisionsModal, the review
  *  gate's draft preview — frame or open the document). The route grants
  *  inline only for a PDF or a raster image; anything else still arrives as

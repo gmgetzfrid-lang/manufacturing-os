@@ -8,22 +8,25 @@ import { supabase } from '@/lib/supabase';
 import { recordIntent } from '@/lib/intents';
 import { appAlert } from '@/components/providers/DialogProvider';
 import BackupViewer from '@/components/archive/BackupViewer';
-import { viewerRenderKind } from '@/lib/presignedDisposition';
+import { inlineTypeForKey, viewerRenderKind } from '@/lib/presignedDisposition';
 
 type RenderKind = 'pdf' | 'image';
 type Granted = { disposition?: string; contentType?: string | null };
 
 /** SEC-1: when the bytes could not be fetched here (CORS, the network), may
- *  the URL itself be framed? Only when its type is known to be viewable:
- *  the route's own INLINE grant (the type is pinned on the URL), or a legacy
- *  absolute URL on ANOTHER origin, framed as before — it cannot reach this
- *  origin's storage. Never an attachment, never a same-origin URL of
- *  unknown type. */
+ *  the URL itself be shown? Only when its type is known to be viewable: the
+ *  route's own INLINE grant (the type is pinned on the URL), or a legacy
+ *  absolute URL on ANOTHER origin whose path NAMES a PDF or a raster image
+ *  (a `.pdf` goes to the PDF frame, an image to an <img>). Never an
+ *  attachment, never a same-origin URL, never a legacy URL whose name is
+ *  anything else — an `.html` there would render as a page in the frame. */
 function directStreamKind(resolved: string, granted: Granted | null): RenderKind | null {
   if (granted) return granted.disposition === 'inline' ? viewerRenderKind(granted.contentType)?.kind ?? null : null;
   try {
     const u = new URL(resolved);
-    if ((u.protocol === 'https:' || u.protocol === 'http:') && u.origin !== window.location.origin) return 'pdf';
+    if ((u.protocol === 'https:' || u.protocol === 'http:') && u.origin !== window.location.origin) {
+      return viewerRenderKind(inlineTypeForKey(u.pathname))?.kind ?? null;
+    }
   } catch { /* not an absolute URL */ }
   return null;
 }
@@ -130,7 +133,7 @@ export default function SecureDocViewer({
         if (url && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('blob:')) {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.access_token) {
-            // SEC-7 / DEC-48: the viewer is a reviewed inline caller — the
+            // SEC-7 / DEC-49: the viewer is a reviewed inline caller — the
             // route grants inline only for a PDF or a raster image.
             const res = await fetch(
               `/api/storage/download-url?path=${encodeURIComponent(url)}&expiresIn=3600&inline=1`,
@@ -329,22 +332,24 @@ export default function SecureDocViewer({
           // (re-typed to exactly that), so the browser's PDF viewer renders
           // it and no HTML parser ever does. It carries no `sandbox`:
           // Chromium blocks its PDF viewer in any sandboxed frame, which
-          // would blank every controlled drawing. Nothing else is framed here.
+          // would blank every controlled drawing. It is the ONLY frame here.
           <iframe 
             src={`${blobUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=${zoomLevel}`} 
             className="w-full h-full border-none bg-slate-200" 
             title={`Secure View - ${docNumber}`}
           />
         ) : blobUrl && blobKind === 'image' ? (
-          // SEC-1: a raster image, in a frame with every sandbox restriction
-          // on — no scripts, an opaque origin (no allow-same-origin), no
-          // forms, no navigation.
-          <iframe
-            sandbox=""
-            src={blobUrl}
-            className="w-full h-full border-none bg-slate-200"
-            title={`Secure View - ${docNumber}`}
-          />
+          // SEC-1: a raster image is an <img>, never a frame — an image
+          // element runs no script whatever the bytes are, and has no
+          // document or origin of its own.
+          <div className="w-full h-full flex items-center justify-center bg-slate-200 overflow-auto">
+            {/* eslint-disable-next-line @next/next/no-img-element -- a blob: URL of fetched bytes the optimizer cannot process */}
+            <img
+              src={blobUrl}
+              alt={`Secure View - ${docNumber}`}
+              className="max-w-full max-h-full object-contain"
+            />
+          </div>
         ) : unviewable ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-400 px-6 text-center">
             <XCircle className="w-12 h-12 mb-2 opacity-40" />

@@ -207,7 +207,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // SEC-7 / SEC-1 (DEC-48): the URL is an ATTACHMENT unless the caller asks
+  // SEC-7 / SEC-1 (DEC-49): the URL is an ATTACHMENT unless the caller asks
   // for inline (`?inline=1` — the in-app viewers) AND the key names a PDF or
   // a raster image; an inline URL also pins that Content-Type, so what the
   // uploader declared is never what the browser renders. The answer says
