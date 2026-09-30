@@ -424,3 +424,21 @@ describe("20261120 — the paste contract, the predicates, byte fidelity, the ce
     expect(strip(repo("supabase/schema.sql"))).not.toMatch(/knowledge_questions_select|knowledge_documents_select|entity_mentions_source_readable/);
   });
 });
+
+describe("the history route never judges a turn on a partial conversation", () => {
+  it("when the conversation read comes back full, a listed turn later than what was read is withheld (fail-safe)", async () => {
+    admin.state.user = { id: V };
+    const T3 = "1a000000-0000-4000-8000-000000000003";
+    // 1,001 readable turns in one thread: the context read (1,000, oldest
+    // first) cannot see the last one's predecessors in full.
+    admin.state.tables.knowledge_questions = Array.from({ length: 1001 }, (_, i) => ({
+      id: `3a000000-0000-4000-8000-${String(i).padStart(12, "0")}`, org_id: ORG, library_id: LIB, thread_id: T3,
+      user_id: V, user_name: "v", question: `turn ${i}`, answer: "a", citations: [cite(K_UP)], mode: "library",
+      created_at: `2026-09-01T00:00:00.${String(i).padStart(4, "0")}Z`,
+    }));
+    const body = await (await post({ orgId: ORG, libraryId: LIB, action: "list", limit: 3 })).json();
+    // the three newest turns: the 1,000th read row is turn 999, so turn 1000 is withheld
+    expect(body.rows.map((r: { question: string }) => r.question)).toEqual(["turn 999", "turn 998"]);
+    expect(body.withheld).toBe(1);
+  });
+});

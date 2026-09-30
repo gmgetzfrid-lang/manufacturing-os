@@ -27,19 +27,25 @@ const page = repo("app/(protected)/knowledge/[id]/page.tsx");
 const panel = repo("components/knowledge/SemanticIndexPanel.tsx");
 
 describe("SEM-12 — the retrieval mode reaches every reader, with the coverage behind it", () => {
-  it("keyword-only says meaning search did not run, and why", () => {
+  it("keyword-only says meaning search did not run, and why; the note box is for a library that HAS an index", () => {
     expect(describeRetrieval("keyword", { embedded: 0, total: 400 })).toEqual({
-      label: "Keyword search only", keywordOnly: true,
+      label: "Keyword search only", keywordOnly: true, emphasize: false,
       note: "Meaning search did not run for this answer — this library has no meaning index yet. A passage that says the same thing in other words may be missing.",
     });
-    expect(describeRetrieval("keyword", { embedded: 100, total: 400 })!.note).toMatch(/covers 25% of this library/);
+    const partial = describeRetrieval("keyword", { embedded: 100, total: 400 })!;
+    expect(partial.note).toMatch(/covers 25% of this library/);
+    expect(partial.emphasize).toBe(true);
+    // coverage unknown (status not loaded, or pre-migration): no coverage claim at all
+    expect(describeRetrieval("keyword", null)!.note).toBe("Meaning search did not run for this answer. A passage that says the same thing in other words may be missing.");
   });
   it("hybrid over a 3% index is NOT the same as hybrid over 100%", () => {
     const three = describeRetrieval("hybrid", { embedded: 1_200, total: 40_000 })!;
     const full = describeRetrieval("hybrid", { embedded: 40_000, total: 40_000 })!;
     expect(three.label).toBe(full.label);
     expect(three.note).toBe("Meaning search covers 3% of this library — passages without a meaning vector were found by keyword only.");
+    expect(three.emphasize).toBe(true);
     expect(full.note).toBeNull();
+    expect(full.emphasize).toBe(false);
     expect(describeRetrieval("hybrid", { embedded: MEANING_COVERAGE_NOTE_BELOW, total: 100 })!.note).toBeNull();
     expect(describeRetrieval("hybrid", { embedded: MEANING_COVERAGE_NOTE_BELOW - 1, total: 100 })!.note).not.toBeNull();
   });
@@ -50,7 +56,7 @@ describe("SEM-12 — the retrieval mode reaches every reader, with the coverage 
     expect(page).toContain("const retrieval = describeRetrieval(answer.retrieval, answer.retrievalCoverage ?? coverage ?? null);");
     expect(page).toContain("<span data-retrieval={answer.retrieval}");
     expect(page).toContain("{retrieval.label}");
-    expect(page).toMatch(/\{retrieval\?\.note && \(\s*<div[^>]*data-retrieval-note="true">/);
+    expect(page).toMatch(/\{retrieval\?\.note && retrieval\.emphasize && \(\s*<div[^>]*data-retrieval-note="true">/);
     // the note sits immediately before the sources strip
     expect(page.indexOf('data-retrieval-note="true"')).toBeLessThan(page.indexOf("Sources — most load-bearing documents first"));
     // every rendered answer gets the library's coverage

@@ -513,22 +513,28 @@ export const MEANING_COVERAGE_NOTE_BELOW = 95;
 export function describeRetrieval(
   retrieval: KnowledgeAnswer["retrieval"],
   coverage: { embedded: number; total: number } | null | undefined,
-): { label: string; note: string | null; keywordOnly: boolean } | null {
+): { label: string; note: string | null; keywordOnly: boolean; emphasize: boolean } | null {
   if (!retrieval) return null;
   const pct = coverage && coverage.total > 0 ? Math.floor((coverage.embedded / coverage.total) * 100) : null;
   if (retrieval === "keyword") {
     return {
       label: "Keyword search only",
       keywordOnly: true,
+      // A library that never built a meaning index answers by keyword as it
+      // always has: the chip says so; the note box is for a library that HAS
+      // an index this answer did not use.
+      emphasize: pct !== null && pct > 0,
       note: "Meaning search did not run for this answer"
-        + (pct === null || pct === 0 ? " — this library has no meaning index yet" : ` — the meaning index covers ${pct}% of this library`)
+        + (pct === null ? "" : pct === 0 ? " — this library has no meaning index yet" : ` — the meaning index covers ${pct}% of this library`)
         + ". A passage that says the same thing in other words may be missing.",
     };
   }
+  const partial = pct !== null && pct < MEANING_COVERAGE_NOTE_BELOW;
   return {
     label: "Keyword + meaning search",
     keywordOnly: false,
-    note: pct !== null && pct < MEANING_COVERAGE_NOTE_BELOW
+    emphasize: partial,
+    note: partial
       ? `Meaning search covers ${pct}% of this library — passages without a meaning vector were found by keyword only.`
       : null,
   };

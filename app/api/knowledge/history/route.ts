@@ -109,22 +109,35 @@ export async function POST(req: NextRequest) {
   let withheld = 0;
   if (!principal.isController) {
     try {
-      // Earlier turns of the same conversations decide later ones.
+      // Earlier turns of the same conversations decide later ones. Read
+      // oldest first; if a read comes back full, the turns after its last
+      // row were not seen, so a listed turn later than that is withheld
+      // (fail-safe) rather than judged on a partial conversation.
       const threadIds = [...new Set(rows.map((r) => r.thread_id).filter((t): t is string => isUuid(t)))];
       const threadRows: StoredAnswerRow[] = [];
-      for (let i = 0; i < threadIds.length; i += 50) {
+      const unseenAfter = new Map<string, string>(); // thread → last created_at read
+      const CONTEXT_PAGE = 1000;
+      for (let i = 0; i < threadIds.length; i += 10) {
+        const chunk = threadIds.slice(i, i + 10);
         const { data, error } = await supabaseAdmin.from("knowledge_questions").select(COLUMNS)
           .eq("org_id", orgId).eq("library_id", libraryId)
-          .in("thread_id", threadIds.slice(i, i + 50))
-          .order("created_at", { ascending: true }).limit(1000);
+          .in("thread_id", chunk)
+          .order("created_at", { ascending: true }).limit(CONTEXT_PAGE);
         if (error) throw new Error(error.message);
-        threadRows.push(...((data ?? []) as unknown as StoredAnswerRow[]));
+        const got = (data ?? []) as unknown as StoredAnswerRow[];
+        threadRows.push(...got);
+        if (got.length >= CONTEXT_PAGE) {
+          const last = got[got.length - 1].created_at;
+          for (const t of chunk) unseenAfter.set(t, last);
+        }
       }
       const cited = [...rows, ...threadRows].flatMap((r) => citedKnowledgeDocIds(r.citations));
       const readable = await readableKnowledgeDocIds(principal, cited);
       const plan = planVisibleHistory(rows, threadRows, readable);
-      visible = plan.visible;
-      withheld = plan.withheld.length;
+      const unchecked = (r: StoredAnswerRow) =>
+        !!r.thread_id && unseenAfter.has(r.thread_id) && r.created_at > (unseenAfter.get(r.thread_id) as string);
+      visible = plan.visible.filter((r) => !unchecked(r));
+      withheld = plan.withheld.length + (plan.visible.length - visible.length);
     } catch (e) {
       return bad(`Couldn't check access to the cited documents: ${(e as Error).message}`, 500);
     }

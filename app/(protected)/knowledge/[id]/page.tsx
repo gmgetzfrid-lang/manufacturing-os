@@ -959,7 +959,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
             {retrieval && (
               <span data-retrieval={answer.retrieval}
                 title={retrieval.note ?? undefined}
-                className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border ${retrieval.keywordOnly
+                className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border ${retrieval.emphasize
                   ? "border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/20"
                   : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                 <Search className="w-3 h-3" /> {retrieval.label}
@@ -1011,7 +1011,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
           used to render 60 equal flat cards — a pile nobody could
           prioritize. Now: the top documents lead, each group opens on tap,
           and the long tail waits behind "Show all". */}
-      {retrieval?.note && (
+      {retrieval?.note && retrieval.emphasize && (
         <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2" data-retrieval-note="true">
           <Search className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span>{retrieval.note}</span>
         </div>
