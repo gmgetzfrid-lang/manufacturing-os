@@ -21,20 +21,29 @@
 //      honest answer for a retired document is to stop serving it.
 //   5. holds: assertNotOnHold (lib/holdGate.ts, HLD-1) with the route's own
 //      service-role client. FAILS CLOSED — an unreadable hold set refuses
-//      (423 "on_hold", unreadable: true).
-//   6. the version: the current_version_id row must be published (review_state
-//      null/approved), not a branch, not superseded, and carry a file. The
-//      fallback (no current pointer, or its row has no file) applies the SAME
-//      filters. A current row that fails the filter is NOT served and NOT
-//      fallen past — the pointer names an unpublished row, which is an
-//      anomaly to refuse, not to paper over.
+//      (423 "on_hold", unreadable: true). This surface is UNAUTHENTICATED:
+//      the refusal publishes only the hold's predefined CATEGORY
+//      (publicHoldReason, the rule /api/verify-hold follows — HLD-7 /
+//      VFY-6), never the operator's free-text reason and never a database
+//      error; the detail of an unreadable hold set is logged server-side.
+//   6. the version: lib/shareRules.ts resolveServedVersion — the
+//      current_version_id row must be published (review_state null /
+//      approved), not a branch, not superseded, and carry a file; the
+//      fallback applies the SAME filters; a current row that fails the
+//      filter is NOT served and NOT fallen past. The modal's "resolves to"
+//      runs the same function.
+//
+// Every refusal AFTER the share row is known leaves one access row (kind
+// "refused" + the reason, SHR-10) when the route passes the request's
+// meta — bounded to one per share per minute by 20261081's unique index.
 //
 // Pure of Next: it takes any client with `.from()` and returns a
 // discriminated result the routes turn into responses.
 
-import { assertNotOnHold, isHoldBlockedError, type HoldGateClient } from "@/lib/holdGate";
+import { assertNotOnHold, isHoldBlockedError, type HoldBlockedError, type HoldGateClient } from "@/lib/holdGate";
+import { publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK } from "@/lib/holds";
 import { shareStillAuthorized } from "@/lib/shareAuthorization";
-import { shareStatusRefusal, versionServable } from "@/lib/shareRules";
+import { resolveServedVersion, shareStatusRefusal, versionServable, type ServableVersion } from "@/lib/shareRules";
 
 /** A service-role client (createClient(...) in the route) — anything with `.from()`. */
 export type ShareServeClient = HoldGateClient;
@@ -61,13 +70,7 @@ export interface ShareDocument {
   current_version_id: string | null;
 }
 
-export interface ServableVersion {
-  id: string;
-  storagePath: string;
-  /** document_versions.revision_label of the row actually served (SHR-7);
-   *  falls back to documents.rev only when the row carries no label. */
-  revLabel: string | null;
-}
+export type { ServableVersion };
 
 export type ShareRefusal = {
   ok: false;
@@ -83,9 +86,23 @@ const refuse = (status: number, body: ShareRefusal["body"]): ShareRefusal => ({ 
 
 export { shareStatusRefusal, versionServable };
 
-const VERSION_COLUMNS = "id, file_url, revision_label, review_state, is_branch, superseded_at";
+/** What an outsider holding the link is told about a hold: the predefined
+ *  category (or no category) — never the operator's free text, never the
+ *  database's error. HLD-7 / VFY-6, the same rule as /api/verify-hold. */
+export function publicShareHoldReason(e: Pick<HoldBlockedError, "holds" | "unreadable">): string {
+  if (e.unreadable) {
+    return "This document's hold status could not be confirmed, so it is being treated as on hold.";
+  }
+  const categories = [...new Set(e.holds.map((h) => publicHoldReason(h.reason)))].filter((c) => c !== PUBLIC_HOLD_REASON_FALLBACK);
+  return categories.length
+    ? `This document is under an active hold (${categories.join(", ")}).`
+    : "This document is under an active hold.";
+}
 
-export async function resolveShareForServing(sb: ShareServeClient, token: string): Promise<ShareServeResult> {
+/** The request facts a refused attempt is recorded with (requestMeta). */
+export type ShareAccessMeta = { ip: string | null; userAgent: string | null };
+
+export async function resolveShareForServing(sb: ShareServeClient, token: string, access?: ShareAccessMeta): Promise<ShareServeResult> {
   if (!SHARE_TOKEN_RE.test(token)) return refuse(400, { error: "invalid" });
 
   const { data: share } = await sb
@@ -95,8 +112,16 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
     .maybeSingle();
   if (!share) return refuse(404, { error: "notfound" });
   const s = share as unknown as ShareRow;
-  if (s.revoked_at) return refuse(410, { error: "revoked" });
-  if (s.expires_at && new Date(s.expires_at).getTime() < Date.now()) return refuse(410, { error: "expired" });
+  // From here the share is known: a refusal is an attempt worth a row (SHR-10)
+  // — someone still using a revoked link is the attempt a controller needs to see.
+  const refuseKnown = async (status: number, body: ShareRefusal["body"], reason: string): Promise<ShareRefusal> => {
+    if (access) {
+      await recordShareAccess(sb, { share: s, documentId: s.document_id, versionId: null, kind: "refused", reason, ...access });
+    }
+    return refuse(status, body);
+  };
+  if (s.revoked_at) return refuseKnown(410, { error: "revoked" }, "revoked");
+  if (s.expires_at && new Date(s.expires_at).getTime() < Date.now()) return refuseKnown(410, { error: "expired" }, "expired");
 
   // Join document to the share's org — a cross-org share (EGRESS-1) yields no
   // document and 404s before any byte is fetched.
@@ -106,59 +131,31 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
     .eq("id", s.document_id)
     .eq("org_id", s.org_id)
     .maybeSingle();
-  if (!doc) return refuse(404, { error: "notfound" });
+  if (!doc) return refuseKnown(404, { error: "notfound" }, "notfound");
   const d = doc as unknown as ShareDocument;
 
   // Serve only on the creator's CURRENT authority (EGRESS-1 dw4): if they
   // left the org or lost read access to this document, the link is dead.
-  if (!(await shareStillAuthorized(s.org_id, s.created_by, d.id))) return refuse(410, { error: "revoked" });
+  if (!(await shareStillAuthorized(s.org_id, s.created_by, d.id))) return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
 
   const withdrawn = shareStatusRefusal(d);
-  if (withdrawn) return refuse(410, { error: "withdrawn", reason: withdrawn, documentStatus: d.status ?? undefined });
+  if (withdrawn) return refuseKnown(410, { error: "withdrawn", reason: withdrawn, documentStatus: d.status ?? undefined }, "withdrawn");
 
   try {
     await assertNotOnHold(d.id, { client: sb, action: "sharing it outside the organisation" });
   } catch (e) {
     if (isHoldBlockedError(e)) {
-      return refuse(423, { error: "on_hold", reason: e.message, unreadable: e.unreadable, documentStatus: d.status ?? undefined });
+      // The internal message names the operator's free-text reason (or the
+      // raw read error): logged here when it is an error, never sent out.
+      if (e.unreadable) console.error("[share] hold state unreadable — share refused as held", { share: s.id, document: d.id, detail: e.message });
+      return refuseKnown(423, { error: "on_hold", reason: publicShareHoldReason(e), unreadable: e.unreadable, documentStatus: d.status ?? undefined }, "on_hold");
     }
     throw e;
   }
 
-  // The version: current pointer first, under the published/not-branch/not-
-  // superseded filter; fallback under the same filter.
-  let version: ServableVersion | null = null;
-  if (d.current_version_id) {
-    const { data: v } = await sb.from("document_versions").select(VERSION_COLUMNS).eq("id", d.current_version_id).maybeSingle();
-    const row = v as { id: string; file_url: string | null; revision_label: string | null; review_state: string | null; is_branch: boolean | null; superseded_at: string | null } | null;
-    if (row) {
-      if (versionServable(row)) {
-        version = { id: row.id, storagePath: row.file_url as string, revLabel: row.revision_label ?? null };
-      } else if (row.file_url) {
-        // The current pointer names an unpublished / branch / superseded row
-        // that HAS a file: refuse rather than serve it or walk past it.
-        return { ok: true, share: s, doc: d, version: null };
-      }
-    }
-  }
-  // No current pointer, its row is gone, or it carries no file (legacy):
-  // the newest row that passes the SAME filter.
-  if (!version) {
-    const { data: latest } = await sb
-      .from("document_versions")
-      .select(VERSION_COLUMNS)
-      .eq("record_id", d.id)
-      .or("review_state.is.null,review_state.eq.approved")
-      .eq("is_branch", false)
-      .is("superseded_at", null)
-      .not("file_url", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(1);
-    const rows = (latest as Array<{ id: string; file_url: string | null; revision_label: string | null; review_state: string | null; is_branch: boolean | null; superseded_at: string | null }> | null) ?? [];
-    if (rows.length && versionServable(rows[0])) {
-      version = { id: rows[0].id, storagePath: rows[0].file_url as string, revLabel: rows[0].revision_label ?? null };
-    }
-  }
+  // The version — the one rule (lib/shareRules.ts), shared with the modal.
+  const { version, error: versionError } = await resolveServedVersion(sb, d);
+  if (versionError) console.error("[share] document_versions read failed — nothing served", { share: s.id, document: d.id, message: versionError });
 
   return { ok: true, share: s, doc: d, version };
 }
@@ -193,18 +190,23 @@ export function requestMeta(req: { headers: { get(name: string): string | null }
   return { ip: ip ? ip.slice(0, 64) : null, userAgent: ua ? ua.slice(0, 512) : null };
 }
 
-/** One row per access (SHR-10): who-can-be-known (IP, UA), when, what kind.
- *  Checked write; a failure is logged loudly and reported to the caller —
- *  the download route treats the download_audits row as the record that
- *  must land, this row as the access trail. */
+/** One row per access (SHR-10): who-can-be-known (IP, UA), when, what kind
+ *  — including a REFUSED attempt, with its reason. Checked write; a failure
+ *  is logged loudly and reported to the caller — the download route treats
+ *  the download_audits row as the record that must land, this row as the
+ *  access trail. Refused rows carry the minute they fell in: 20261081's
+ *  unique (share_id, refused_minute) keeps them to one per share per
+ *  minute, and that unique violation is the bound working, not a failure. */
 export async function recordShareAccess(
   sb: ShareServeClient,
   input: {
     share: ShareRow; documentId: string; versionId: string | null;
-    kind: "resolve" | "download"; ip: string | null; userAgent: string | null;
+    kind: "resolve" | "download" | "refused"; reason?: string;
+    ip: string | null; userAgent: string | null; now?: Date;
   },
-): Promise<{ error: string | null }> {
-  const { error } = await sb.from("document_share_accesses").insert({
+): Promise<{ error: string | null; bounded?: true }> {
+  const at = input.now ?? new Date();
+  const row: Record<string, unknown> = {
     share_id: input.share.id,
     org_id: input.share.org_id,
     document_id: input.documentId,
@@ -212,9 +214,15 @@ export async function recordShareAccess(
     kind: input.kind,
     ip: input.ip,
     user_agent: input.userAgent,
-    created_at: new Date().toISOString(),
-  });
+    created_at: at.toISOString(),
+  };
+  if (input.kind === "refused") {
+    row.reason = input.reason || "refused";
+    row.refused_minute = new Date(Math.floor(at.getTime() / 60_000) * 60_000).toISOString();
+  }
+  const { error } = await sb.from("document_share_accesses").insert(row);
   if (error) {
+    if (input.kind === "refused" && error.code === "23505") return { error: null, bounded: true };
     console.error("[share] document_share_accesses insert failed", { kind: input.kind, share: input.share.id, message: error.message });
     return { error: error.message || "access row not written" };
   }

@@ -22,6 +22,11 @@
 // DEC-44 §1) so recall can tell an outside holder from the sharer. It is
 // checked and FAILS CLOSED: a controlled copy does not leave the building
 // unrecorded (DIST-7 / EGR-3 / SHR-5 / PHYS-8).
+//
+// ⚠ DEPLOY GATE: the record needs 20261068's columns (share_id, source,
+// nullable user_id). Until 20261068 is applied every share download is
+// refused 503 "unrecorded" — apply 20261068 → 20261080 → 20261081 BEFORE
+// this route deploys. A missing column is logged as exactly that.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -45,10 +50,14 @@ export async function GET(req: NextRequest) {
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-  const resolved = await resolveShareForServing(sb, token);
+  const meta = requestMeta(req);
+  const resolved = await resolveShareForServing(sb, token, meta);
   if (!resolved.ok) return NextResponse.json(resolved.body, { status: resolved.status });
   const { share, doc, version } = resolved;
-  if (!version) return NextResponse.json({ error: "nofile" }, { status: 404 });
+  if (!version) {
+    await recordShareAccess(sb, { share, documentId: doc.id, versionId: null, kind: "refused", reason: "nofile", ...meta });
+    return NextResponse.json({ error: "nofile" }, { status: 404 });
+  }
 
   // Pull the bytes server-side — an absolute URL (legacy rows) via fetch, a
   // storage key straight from the bucket. No CORS on either path.
@@ -115,10 +124,13 @@ export async function GET(req: NextRequest) {
     console.error("[share/file] download_audits insert failed — share download refused, nothing left the building", {
       share: share.id, document: doc.id, version: version.id, message: auditError.message,
     });
+    if (missingRecordColumn(auditError)) {
+      console.error("[share/file] DEPLOY ORDER: download_audits lacks the 20261068 columns (share_id / source) — apply 20261068 → 20261080 → 20261081; every share download is refused until then");
+    }
+    await recordShareAccess(sb, { share, documentId: doc.id, versionId: version.id, kind: "refused", reason: "unrecorded", ...meta });
     return NextResponse.json({ error: "unrecorded" }, { status: 503 });
   }
 
-  const meta = requestMeta(req);
   await recordShareAccess(sb, { share, documentId: doc.id, versionId: version.id, kind: "download", ...meta });
 
   const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");
@@ -130,4 +142,14 @@ export async function GET(req: NextRequest) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+/** A refused record write that is the unapplied 20261068, not a transient:
+ *  PostgREST's unknown-column (PGRST204) / Postgres' undefined_column (42703),
+ *  a message naming one of the columns 20261068 adds, or the pre-20261068
+ *  NOT NULL on user_id refusing a share's (user-less) row. */
+function missingRecordColumn(e: { code?: string; message?: string }): boolean {
+  const msg = e.message ?? "";
+  return e.code === "PGRST204" || e.code === "42703" || /\b(share_id|source)\b/.test(msg)
+    || (e.code === "23502" && /\buser_id\b/.test(msg));
 }

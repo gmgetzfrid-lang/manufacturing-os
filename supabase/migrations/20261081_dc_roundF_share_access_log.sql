@@ -5,9 +5,15 @@
 --            integer that went up: document_shares.access_last_ip was a dead
 --            column nothing wrote, and neither public route read a request
 --            header. document_share_accesses is one row per access — the
---            kind (resolve = link opened, download = bytes left), the first
---            forwarded-for hop and the user agent, the document and the
---            version served. No recipient identification: possession of
+--            kind (resolve = link opened, download = bytes left, refused =
+--            an attempt the routes turned away, with the reason: revoked,
+--            expired, withdrawn, on hold, lapsed authority, no file), the
+--            first forwarded-for hop and the user agent, the document and
+--            the version served. Refused rows are BOUNDED: one per share per
+--            minute (a partial unique index — anyone holding a dead token
+--            can call the route, and must not be able to grow the table at
+--            will). Pruning the trail is the retention owner's (RET-*), not
+--            this migration's. No recipient identification: possession of
 --            the token is the whole authorization, and the record says so
 --            rather than pretending a name. Attribution columns are plain
 --            uuids, not foreign keys (the record outlives the share — the
@@ -37,15 +43,24 @@ CREATE TABLE IF NOT EXISTS document_share_accesses (
   org_id      UUID NOT NULL,
   document_id UUID NOT NULL,
   version_id  UUID,
-  kind        TEXT NOT NULL CHECK (kind IN ('resolve', 'download')),
+  kind        TEXT NOT NULL CHECK (kind IN ('resolve', 'download', 'refused')),
+  reason      TEXT,
   ip          TEXT,
   user_agent  TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  refused_minute TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT document_share_accesses_refused_shape
+    CHECK ((kind = 'refused') = (reason IS NOT NULL AND refused_minute IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS document_share_accesses_share_idx ON document_share_accesses(share_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS document_share_accesses_doc_idx   ON document_share_accesses(document_id, created_at DESC);
+-- The bound on refused attempts: one row per share per minute. The route
+-- writes refused_minute (the minute the attempt fell in) and treats a
+-- unique violation as "already recorded this minute".
+CREATE UNIQUE INDEX IF NOT EXISTS document_share_accesses_refused_bound
+  ON document_share_accesses(share_id, refused_minute) WHERE kind = 'refused';
 COMMENT ON TABLE document_share_accesses IS
-  'P1 SHARE (SHR-10): one row per share-link access — kind (resolve / download), IP, user agent, document and version. Service-role writes only; controllers read; append-only for members. share_id is attribution, not a foreign key.';
+  'P1 SHARE (SHR-10): one row per share-link access — kind (resolve / download / refused with the reason; refused rows bounded to one per share per minute), IP, user agent, document and version. Service-role writes only; controllers read; append-only for members. share_id is attribution, not a foreign key.';
 
 ALTER TABLE document_share_accesses ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS document_share_accesses_controller_select ON document_share_accesses;
@@ -86,10 +101,21 @@ SELECT 'exactly one policy on document_share_accesses: controller SELECT (no mem
                     AND qual LIKE '%is_org_controller(org_id)%'),
        NULL
 UNION ALL
-SELECT 'the kind CHECK admits resolve and download only',
+SELECT 'the kind CHECK admits resolve, download and refused; a refused row carries its reason and minute',
        EXISTS (SELECT 1 FROM pg_constraint
                 WHERE conrelid = 'document_share_accesses'::regclass AND contype = 'c'
-                  AND pg_get_constraintdef(oid) LIKE '%resolve%' AND pg_get_constraintdef(oid) LIKE '%download%'),
+                  AND pg_get_constraintdef(oid) LIKE '%resolve%' AND pg_get_constraintdef(oid) LIKE '%download%'
+                  AND pg_get_constraintdef(oid) LIKE '%refused%')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'document_share_accesses'::regclass AND contype = 'c'
+                      AND conname = 'document_share_accesses_refused_shape'),
+       NULL
+UNION ALL
+SELECT 'refused attempts are bounded: unique (share_id, refused_minute) where kind = refused',
+       EXISTS (SELECT 1 FROM pg_indexes
+                WHERE tablename = 'document_share_accesses' AND indexname = 'document_share_accesses_refused_bound'
+                  AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%(share_id, refused_minute)%'
+                  AND indexdef LIKE '%refused%'),
        NULL
 UNION ALL
 SELECT 'bump_share_access(uuid) is gone; bump_share_access(uuid, text) exists, SECURITY DEFINER, search_path pinned',

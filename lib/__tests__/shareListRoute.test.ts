@@ -178,8 +178,12 @@ describe("the client lists through the route and renders no link it cannot use",
     expect(listFn).toContain("return { readable: out.readable === true, shares: (out.shares ?? []).map(rowToShare) };");
     expect(lib).toMatch(/token: string \| null;/);
     expect(lib).toContain("token: (r.token as string | null) ?? null,");
-    // the only client-side reads of document_shares left are the creator's own insert-returning row and the checked revoke
-    expect(lib.match(/from\("document_shares"\)/g)).toHaveLength(2);
+    // the only client-side touches of document_shares left are the creator's own insert-returning row, the checked
+    // revoke, and (P1 SHARE) the revoke's zero-row re-read — which selects revoked_at, never the token
+    expect(lib.match(/from\("document_shares"\)/g)).toHaveLength(3);
+    const reread = lib.slice(lib.indexOf("export async function revokeShareLink"), lib.indexOf("function rowToShare"));
+    expect(reread).toContain('.select("id, revoked_at")');
+    expect(reread).not.toMatch(/select\([^)]*token/);
   });
 
   it("ShareLinkModal: no URL / copy / QR / open without a token; no Create panel when the document is unreadable; Revoke stays", () => {

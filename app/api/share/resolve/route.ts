@@ -15,8 +15,10 @@
 // or held document is refused with the reason (DRLS-5 / EGR-5 / REV-10).
 //
 // Every resolve records one access row (IP + user agent, no recipient
-// identification — SHR-10) and bumps the share's counter; the
-// download_audits row is written by /api/share/file (an actual download).
+// identification — SHR-10) and bumps the share's counter; a refused attempt
+// on a known share records a "refused" row with the reason (bounded, one per
+// share per minute). The download_audits row is written by /api/share/file
+// (an actual download).
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -33,7 +35,8 @@ export async function GET(req: NextRequest) {
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-  const resolved = await resolveShareForServing(sb, token);
+  const meta = requestMeta(req);
+  const resolved = await resolveShareForServing(sb, token, meta);
   if (!resolved.ok) return NextResponse.json(resolved.body, { status: resolved.status });
   const { share, doc, version } = resolved;
 
@@ -44,7 +47,6 @@ export async function GET(req: NextRequest) {
   // verify QR) before any byte leaves and writes the download_audits row.
   const fileUrl: string | null = version ? `/api/share/file?token=${encodeURIComponent(token)}` : null;
 
-  const meta = requestMeta(req);
   await recordShareAccess(sb, { share, documentId: doc.id, versionId: version?.id ?? null, kind: "resolve", ...meta });
 
   // The counter is a convenience the modal shows; a missing function or a

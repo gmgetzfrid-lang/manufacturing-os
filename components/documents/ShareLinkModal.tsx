@@ -10,7 +10,9 @@
 // Draft / Superseded / Void / Archived or held document is refused with the
 // reason before anything is inserted (and by the database if not). A share
 // always serves the CURRENT revision — stated here and on the landing page;
-// every link row says which revision it resolves to today.
+// every link row says which revision it resolves to today, resolved by the
+// same rule the public routes run (lib/shareRules resolveServedVersion), or
+// that it is not serving and why.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -19,7 +21,7 @@ import {
 } from "lucide-react";
 import {
   createShareLink, listShareLinks, revokeShareLink, loadShareDocumentContext, canMintShare,
-  describeShareRefusal, SHARE_MAX_DAYS, type DocumentShare,
+  describeShareRefusal, SHARE_MAX_DAYS, type DocumentShare, type ShareServedState,
 } from "@/lib/documentShares";
 import { useRole } from "@/components/providers/RoleContext";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -61,31 +63,52 @@ export default function ShareLinkModal({
   const [refusal, setRefusal] = useState<string | null>(null);
   const [currentRev, setCurrentRev] = useState<string | null>(null);
   const [docStatus, setDocStatus] = useState<string | null>(null);
+  // What a link serves right now, by the routes' own rule (SHR-7).
+  const [served, setServed] = useState<ShareServedState | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The listing's own failure, kept apart from the document context: a list
+  // error says nothing about who may mint.
+  const [listError, setListError] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [days, setDays] = useState<number>(30);
   const [copied, setCopied] = useState<string | null>(null);
   const [qrFor, setQrFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setListError(null);
     try {
-      const listing = await listShareLinks(documentId);
-      setReadable(listing.readable);
-      setShares(listing.shares);
-      const ctx = await loadShareDocumentContext(documentId);
-      setCurrentRev(ctx.rev);
-      setDocStatus(ctx.status);
-      const [allowed, why] = await Promise.all([
-        canMintShare({ orgId, uid: createdBy, libraryId: ctx.libraryId, isController }),
-        describeShareRefusal(documentId),
-      ]);
-      setCanMint(allowed);
-      setRefusal(why);
-    } catch (e) { setError((e as Error).message); setCanMint(false); }
-    finally { setLoading(false); }
+      let readableNow = true;
+      try {
+        const listing = await listShareLinks(documentId);
+        readableNow = listing.readable;
+        setReadable(listing.readable);
+        setShares(listing.shares);
+      } catch (e) { setListError((e as Error).message); }
+      if (!readableNow) {
+        // EGRESS-8: the caller cannot read the document, so the documents
+        // read would come back empty ("Document not found") — there is no
+        // context to load and nothing to mint. The amber notice says so.
+        setCanMint(null); setRefusal(null); setCurrentRev(null); setDocStatus(null); setServed(null);
+        return;
+      }
+      try {
+        const ctx = await loadShareDocumentContext(documentId);
+        setCurrentRev(ctx.rev);
+        setDocStatus(ctx.status);
+        setServed(ctx.served);
+        const [allowed, why] = await Promise.all([
+          canMintShare({ orgId, uid: createdBy, libraryId: ctx.libraryId, isController }),
+          describeShareRefusal(documentId),
+        ]);
+        setCanMint(allowed);
+        setRefusal(why);
+      } catch (e) {
+        // Unknown document state: neither "you may not mint" nor a Create box.
+        setError((e as Error).message); setCanMint(null); setServed(null);
+      }
+    } finally { setLoading(false); }
   }, [documentId, orgId, createdBy, isController]);
 
   useEffect(() => { if (isOpen) void refresh(); }, [isOpen, refresh]);
@@ -119,6 +142,15 @@ export default function ShareLinkModal({
   const origin = publicOrigin();
   const baseUrl = origin ? `${origin}/share/` : "/share/";
   const showCreate = readable && canMint === true && refusal === null;
+  // What every live link resolves to today — the same answer for every row
+  // (a share always serves the current revision), stated the way the public
+  // routes would decide it: refused with the reason, no published file, or
+  // the served revision's own label.
+  const resolvesTo: string | null = !readable || served === null ? null
+    : refusal ? "not serving now — see above"
+    : served.kind === "served" ? `resolves to Rev ${served.rev || "0"}`
+    : served.kind === "none" ? "no published file to serve"
+    : "couldn't confirm which revision it serves";
 
   return (
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
@@ -145,6 +177,12 @@ export default function ShareLinkModal({
             </div>
           )}
 
+          {listError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&rsquo;t load the existing links: {listError}
+            </div>
+          )}
+
           {!readable && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -165,10 +203,10 @@ export default function ShareLinkModal({
             </div>
           )}
 
-          {readable && !loading && canMint === true && refusal && (
+          {readable && !loading && refusal && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>No new link can be created: {refusal}</span>
+              <span>No new link can be created, and existing links are not serving: {refusal}</span>
             </div>
           )}
 
@@ -203,8 +241,8 @@ export default function ShareLinkModal({
             </div>
             <div className="text-[10px] text-[var(--color-text-muted)]">
               Anyone with the resulting URL can download a stamped, uncontrolled copy until the link expires (at most {SHARE_MAX_DAYS} days) or you revoke it.
-              A share always serves the <b>current</b> revision &mdash; today Rev {currentRev || "0"}; if the document is revved, the same link serves the new revision.
-              It stops serving while the document is on hold and permanently once it is superseded, voided or archived. Every download is recorded on the distribution record.
+              A share always serves the <b>current</b> revision &mdash; today {served?.kind === "served" ? <>Rev {served.rev || "0"}</> : served?.kind === "none" ? <>no published file</> : <>unconfirmed</>}; if the document is revved, the same link serves the new revision.
+              It does not serve while the document is on hold, voided or archived (and serves again if that is undone); superseding the document revokes it. Every download is recorded on the distribution record.
             </div>
           </div>}
 
@@ -282,7 +320,7 @@ export default function ShareLinkModal({
                       <div className="mt-2 text-[10px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-3 gap-y-1">
                         {s.note && <span className="italic text-[var(--color-text-muted)]">&ldquo;{s.note}&rdquo;</span>}
                         {s.createdByName && <span>by {s.createdByName}</span>}
-                        {!dead && currentRev !== null && <span title="A share always serves the current revision">resolves to Rev {currentRev || "0"}</span>}
+                        {!dead && resolvesTo && <span title="A share always serves the current revision">{resolvesTo}</span>}
                         {s.expiresAt && (
                           <span>{isExpired ? "expired" : "expires"} {new Date(s.expiresAt).toLocaleDateString()}</span>
                         )}

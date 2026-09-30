@@ -21,7 +21,7 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { assertNotOnHold, isHoldBlockedError } from "@/lib/holdGate";
-import { SHARE_DEFAULT_DAYS, SHARE_MAX_DAYS, shareExpiryFor, shareStatusRefusal } from "@/lib/shareRules";
+import { SHARE_DEFAULT_DAYS, SHARE_MAX_DAYS, resolveServedVersion, shareExpiryFor, shareStatusRefusal } from "@/lib/shareRules";
 
 export { SHARE_DEFAULT_DAYS, SHARE_MAX_DAYS };
 
@@ -52,25 +52,47 @@ function randomToken(len = 32): string {
     .slice(0, len);
 }
 
+/** What a link to this document serves right now, by the SAME rule the
+ *  public routes run (lib/shareRules resolveServedVersion — SHR-7):
+ *  `served` is the revision label a download would carry, `none` means no
+ *  published file can be served, `unknown` means the version read failed. */
+export type ShareServedState =
+  | { kind: "served"; rev: string | null }
+  | { kind: "none" }
+  | { kind: "unknown"; error: string };
+
 /** What the modal needs to know about the document before offering a link:
- *  the revision a new link would resolve to today, its control status, and
- *  the library whose publish grants decide who may mint. Throws on a read
- *  error — an unknown state must not render as "shareable". */
+ *  the revision a link serves today (resolved as the routes resolve it), its
+ *  control status, and the library whose publish grants decide who may
+ *  mint. Throws on a read error — an unknown state must not render as
+ *  "shareable". */
 export async function loadShareDocumentContext(documentId: string): Promise<{
   rev: string | null; status: string | null; archivedAt: string | null; libraryId: string | null;
+  served: ShareServedState;
 }> {
   const { data, error } = await supabase
     .from("documents")
-    .select("rev, status, archived_at, library_id")
+    .select("rev, status, archived_at, library_id, current_version_id")
     .eq("id", documentId)
     .maybeSingle();
   if (error) throw new Error(error.message || "Couldn't read the document");
   if (!data) throw new Error("Document not found");
+  const rev = (data.rev as string | null) ?? null;
+  const resolved = await resolveServedVersion(supabase, {
+    id: documentId, current_version_id: (data.current_version_id as string | null) ?? null,
+  });
+  const served: ShareServedState = resolved.error
+    ? { kind: "unknown", error: resolved.error }
+    : resolved.version
+      // the label a download carries: the served row's own, documents.rev only as the fallback (servedLabels)
+      ? { kind: "served", rev: resolved.version.revLabel ?? rev }
+      : { kind: "none" };
   return {
-    rev: (data.rev as string | null) ?? null,
+    rev,
     status: (data.status as string | null) ?? null,
     archivedAt: (data.archived_at as string | null) ?? null,
     libraryId: (data.library_id as string | null) ?? null,
+    served,
   };
 }
 
@@ -118,6 +140,13 @@ export async function describeShareRefusal(documentId: string): Promise<string |
 const isPolicyRefusal = (e: { code?: string; message?: string }) =>
   e.code === "42501" || /row-level security|violates row-level/i.test(e.message ?? "");
 
+/** 20261080's anchor guard refusing the expiry: the database measures the
+ *  90-day ceiling on ITS clock and clamps up to an hour of browser-clock
+ *  skew, so reaching this means the expiry was missing or far past it. */
+export const SHARE_EXPIRY_REFUSED =
+  `This link was not created: a share link must expire within ${SHARE_MAX_DAYS} days of being created, measured on the server's clock. If this computer's clock is set well ahead, correct it and try again.`;
+const isExpiryRefusal = (e: { message?: string }) => /must expire within 90 days of its creation/.test(e.message ?? "");
+
 export async function createShareLink(input: {
   orgId: string;
   documentId: string;
@@ -139,7 +168,13 @@ export async function createShareLink(input: {
     expires_at: expiry.expiresAt,
     note: input.note ?? null,
   }).select("*").single();
-  if (error) throw new Error(isPolicyRefusal(error) ? SHARE_MINT_REFUSED : (error.message || "Failed to create the share link"));
+  if (error) {
+    throw new Error(
+      isPolicyRefusal(error) ? SHARE_MINT_REFUSED
+        : isExpiryRefusal(error) ? SHARE_EXPIRY_REFUSED
+        : (error.message || "Failed to create the share link"),
+    );
+  }
   const share = rowToShare(data as Record<string, unknown>);
   await logAuditAction({
     action: "SHARE_LINK_CREATED",
@@ -182,12 +217,23 @@ export async function revokeShareLink(id: string, actorUserId: string): Promise<
   // non-match into a 0-row success — error === null while the public token
   // keeps serving bytes. Zero rows here MUST throw, or the modal reports a
   // revocation that never happened (EGRESS-7).
+  // Only a LIVE row is touched (.is revoked_at null): 20261080 refuses any
+  // change to revoked_at once set, so a double click, a stale modal or a
+  // second controller revoking concurrently would otherwise hit the guard.
   const { data, error } = await supabase.from("document_shares").update({
     revoked_at: new Date().toISOString(),
     revoked_by: actorUserId,
-  }).eq("id", id).select("id, org_id, document_id");
+  }).eq("id", id).is("revoked_at", null).select("id, org_id, document_id");
   if (error) throw error;
   if (!data || data.length === 0) {
+    // Zero rows: already revoked (the outcome asked for — a no-op, and no
+    // second audit row), or the policy refused the caller.
+    const { data: current, error: readError } = await supabase
+      .from("document_shares")
+      .select("id, revoked_at")
+      .eq("id", id)
+      .maybeSingle();
+    if (!readError && (current as { revoked_at?: string | null } | null)?.revoked_at) return;
     throw new Error("This link was not revoked — only its creator or a Document Control/Admin can revoke it.");
   }
   const row = data[0] as { org_id?: string; document_id?: string };

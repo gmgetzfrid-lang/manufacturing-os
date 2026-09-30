@@ -11,12 +11,21 @@
 --                   database's own evaluator, so the app and the rail agree).
 --                   "Never expires" is gone: a live share must carry an
 --                   expiry no later than 90 days after its creation, on
---                   INSERT and on any later change to expires_at.
+--                   INSERT and on any later change to expires_at. The
+--                   ceiling is measured from the DATABASE's clock: a live
+--                   INSERT is stamped created_at := now() (a client-supplied
+--                   created_at is ignored), created_at is immutable after,
+--                   and an expiry up to one hour past the ceiling — a
+--                   browser clock running ahead of the server's on a
+--                   "90 days (maximum)" pick — is clamped to the ceiling
+--                   rather than refused.
 --   EGR-5 / SHR-3   A share could be minted on a Draft, a Superseded / Void /
 --   REV-10 / DRLS-5 Archived document, or one under an active hold, and both
 --                   public routes then served it. document_share_refusal()
 --                   names why a document cannot be shared (draft / withdrawn /
 --                   archived / on_hold) and the INSERT policy requires NULL.
+--                   It answers only for the caller's own orgs (anything else
+--                   reads 'not_found'), so it is no cross-tenant oracle.
 --                   The routes refuse the same set at serve time
 --                   (lib/shareServe.ts) — this is the rail behind the mint.
 --   DRLS-7 / SHR-13 Revocation was not durable: the creator (or any
@@ -24,9 +33,10 @@
 --                   or DELETE the row and its access trail. The anchor guard
 --                   (20261026, BEFORE UPDATE) is re-created as BEFORE INSERT
 --                   OR UPDATE: revoked_at, once set, never clears and never
---                   moves; a revoked share cannot be re-dated; expiry is
---                   capped. DELETE becomes controller-only (retention) — a
---                   creator revokes, never erases.
+--                   moves; a revoked share cannot be re-dated; created_at
+--                   never moves; expiry is capped. DELETE becomes
+--                   controller-only (retention) — a creator revokes, never
+--                   erases.
 --
 -- Policies after apply (document_shares):
 --   document_shares_org_select  (20261066, untouched)
@@ -72,6 +82,10 @@ SELECT 'BEFORE: live rows whose expiry exceeds created_at + 90 days (capped belo
  WHERE revoked_at IS NULL AND expires_at IS NOT NULL
    AND expires_at > COALESCE(created_at, now()) + interval '90 days'
 UNION ALL
+SELECT 'BEFORE: share rows with no created_at (no anchor for the ceiling: capped at apply time + 90 days, and their expiry may only move earlier after)', COUNT(*)::text
+  FROM document_shares
+ WHERE created_at IS NULL
+UNION ALL
 SELECT 'BEFORE: live rows on a Draft / Superseded / Void / Archived or archived-record document (the routes refuse these at serve time; rows kept for the record)', COUNT(*)::text
   FROM document_shares s JOIN documents d ON d.id = s.document_id
  WHERE s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > now())
@@ -97,7 +111,12 @@ BEGIN;
 
 -- ── 1. Why a document cannot be shared: one answer for the rail and the app ─
 -- SECURITY DEFINER so the policy's answer does not depend on the caller's
--- own read access to document_holds; STABLE, search_path pinned.
+-- own read access to document_holds; STABLE, search_path pinned. It answers
+-- only for an org the caller is an active member of (the policy always
+-- passes the row's own org, which the INSERT policy already requires the
+-- caller to belong to); any other org reads 'not_found', so a signed-in
+-- member of org A learns nothing about org B's documents by calling it.
+-- The service role (auth.uid() IS NULL) is not org-scoped.
 -- Returns NULL when shareable, else: not_found | draft | withdrawn:<status>
 -- | archived | on_hold. The status set is the app's NOT_CURRENT_STATUSES
 -- (Superseded, Void, Archived) plus Draft — lib/shareRules.ts states the
@@ -113,7 +132,8 @@ RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
     ELSE NULL
   END
   FROM (SELECT 1) AS one
-  LEFT JOIN documents d ON d.id = p_doc AND d.org_id = p_org;
+  LEFT JOIN documents d ON d.id = p_doc AND d.org_id = p_org
+                       AND (auth.uid() IS NULL OR p_org IN (SELECT my_org_ids()));
 $$;
 REVOKE ALL ON FUNCTION document_share_refusal(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION document_share_refusal(uuid, uuid) FROM anon;
@@ -165,11 +185,22 @@ RETURNS TRIGGER LANGUAGE plpgsql SET search_path = public AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
     -- SHR-4: a LIVE share must expire within 90 days of its creation. A row
-    -- born revoked (a restore, DEC-45) can never serve and is exempt.
-    IF NEW.revoked_at IS NULL
-       AND (NEW.expires_at IS NULL
-            OR NEW.expires_at > COALESCE(NEW.created_at, now()) + interval '90 days') THEN
-      RAISE EXCEPTION 'document_shares: a share must expire within 90 days of its creation';
+    -- born revoked (a restore, DEC-45) can never serve and is exempt, and
+    -- keeps the created_at it was restored with.
+    IF NEW.revoked_at IS NULL THEN
+      -- The ceiling is measured from the DATABASE's clock: a live share is
+      -- born now(), whatever created_at the client sent.
+      NEW.created_at := now();
+      IF NEW.expires_at IS NULL
+         OR NEW.expires_at > NEW.created_at + interval '90 days' + interval '1 hour' THEN
+        RAISE EXCEPTION 'document_shares: a share must expire within 90 days of its creation';
+      END IF;
+      -- The expiry is computed on the minting browser's clock; one running
+      -- ahead of the server's lands a "90 days (maximum)" pick just past the
+      -- ceiling. Clamp it to the ceiling rather than refuse a legitimate mint.
+      IF NEW.expires_at > NEW.created_at + interval '90 days' THEN
+        NEW.expires_at := NEW.created_at + interval '90 days';
+      END IF;
     END IF;
     RETURN NEW;
   END IF;
@@ -177,6 +208,10 @@ BEGIN
      OR NEW.org_id      IS DISTINCT FROM OLD.org_id
      OR NEW.created_by  IS DISTINCT FROM OLD.created_by THEN
     RAISE EXCEPTION 'document_shares: document_id, org_id and created_by are immutable — revoke this share and create a new one';
+  END IF;
+  -- SHR-4: the 90-day ceiling is measured from created_at, so it never moves.
+  IF NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'document_shares: created_at is immutable — the 90-day expiry ceiling is measured from it';
   END IF;
   -- DRLS-7: revocation is durable. Once set, revoked_at never clears and
   -- never moves, and a revoked share cannot be re-dated back to life.
@@ -188,9 +223,11 @@ BEGIN
   END IF;
   -- SHR-4: any change to the expiry lands within 90 days of creation, never
   -- NULL. A legacy never-expiring row is untouched until its expiry moves.
+  -- A legacy row with no created_at has no anchor: its ceiling is its
+  -- current expiry, so the expiry may only move earlier.
   IF NEW.expires_at IS DISTINCT FROM OLD.expires_at
      AND (NEW.expires_at IS NULL
-          OR NEW.expires_at > COALESCE(OLD.created_at, now()) + interval '90 days') THEN
+          OR NEW.expires_at > COALESCE(OLD.created_at + interval '90 days', OLD.expires_at)) THEN
     RAISE EXCEPTION 'document_shares: a share must expire within 90 days of its creation';
   END IF;
   RETURN NEW;
@@ -228,6 +265,11 @@ UNION ALL
 SELECT 'document_share_refusal names the four refusals (draft / withdrawn / archived / on_hold)',
        (SELECT prosrc LIKE '%''draft''%' AND prosrc LIKE '%''withdrawn:'' || lower(d.status)%'
            AND prosrc LIKE '%''archived''%' AND prosrc LIKE '%''on_hold''%'
+          FROM pg_proc WHERE proname = 'document_share_refusal'),
+       NULL
+UNION ALL
+SELECT 'document_share_refusal answers only for the caller''s own orgs (service role excepted)',
+       (SELECT prosrc LIKE '%auth.uid() IS NULL OR p_org IN (SELECT my_org_ids())%'
           FROM pg_proc WHERE proname = 'document_share_refusal'),
        NULL
 UNION ALL
@@ -274,6 +316,15 @@ SELECT 'anchor guard body carries the immutable anchor, the durable revocation a
            AND prosrc LIKE '%a revoked share cannot be re-dated%'
            AND prosrc LIKE '%must expire within 90 days of its creation%'
            AND prosrc LIKE '%TG_OP = ''INSERT''%'
+          FROM pg_proc WHERE proname = 'document_shares_anchor_immutable'),
+       NULL
+UNION ALL
+SELECT 'anchor guard measures the ceiling from the database clock (live INSERT stamps created_at := now(), clamps up to 1 hour of skew) and created_at is immutable',
+       (SELECT prosrc LIKE '%NEW.created_at := now();%'
+           AND prosrc LIKE '%NEW.expires_at := NEW.created_at + interval ''90 days'';%'
+           AND prosrc LIKE '%NEW.created_at + interval ''90 days'' + interval ''1 hour''%'
+           AND prosrc LIKE '%IF NEW.created_at IS DISTINCT FROM OLD.created_at THEN%'
+           AND prosrc LIKE '%created_at is immutable%'
           FROM pg_proc WHERE proname = 'document_shares_anchor_immutable'),
        NULL
 UNION ALL
