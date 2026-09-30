@@ -183,6 +183,14 @@ describe("20261098 — apply_milestone_moves (PC SCHED-4 + PT SCH-7 + PC SCHED-9
     ]) expect(next.split("\n")).toContain(l);
   });
 
+  it("DEC-35 funnel alignment is stated and inventoried: members admitted now but refused by 20260907's COALESCE(roles, ARRAY[role]) read", () => {
+    const inventory = between(m98, "CREATE TEMP TABLE prj_roundg_moves_inventory AS", "BEGIN;");
+    expect(inventory).toMatch(/FROM org_members\s*\n\s*WHERE status = 'active' AND roles IS NOT NULL\s*\n\s*AND role = ANY\(ARRAY\['Admin','DocCtrl','Manager','Supervisor'\]\)\s*\n\s*AND NOT roles && ARRAY\['Admin','DocCtrl','Manager','Supervisor'\]/);
+    expect(inventory).toMatch(/COUNT\(\*\)::text/);
+    expect(m98).not.toMatch(/No widening: same set as before/);
+    expect(m98).toMatch(/That is the one\s*\n--\s+widening, deliberate/);
+  });
+
   it("probes print anon's EXECUTE before (inventory) and after (probe), and the SCHED-9 recompute candidates", () => {
     expect(m98).toMatch(/has_function_privilege\('anon', 'public\.apply_milestone_moves\(uuid,uuid,jsonb\)', 'EXECUTE'\)::text END AS n/);
     expect(m98).toMatch(/NOT has_function_privilege\('anon', 'public\.apply_milestone_moves\(uuid,uuid,jsonb\)', 'EXECUTE'\),/);
@@ -203,7 +211,14 @@ describe("20261099 — baseline authority, atomicity, history, audit (PC SCHED-3
       expect(fn).toMatch(/IF v_uid IS NULL THEN\s*\n\s*IF auth\.role\(\) IS DISTINCT FROM 'service_role' THEN/);
       expect(fn).toMatch(/IF NOT caller_is_active_member\(p_org\) THEN/);
       expect(fn).toMatch(/IF NOT can_edit_project_schedule\(p_org, p_project\) THEN\s*\n\s*RAISE EXCEPTION 'You do not have schedule-editing rights on this project' USING ERRCODE = '42501';/);
-      expect(fn).toMatch(/PERFORM set_config\('app\.baseline_rpc', '1', true\);/);
+      // The guard's pass: the project id, set immediately before the RPC's
+      // one UPDATE and cleared immediately after it — a later statement in
+      // the same transaction (a pg_graphql multi-field mutation) gets none.
+      expect(fn).toMatch(/PERFORM set_config\('app\.baseline_rpc', p_project::text, true\);\s*\n\s*UPDATE milestones\b/);
+      expect(fn).toMatch(/GET DIAGNOSTICS v_count = ROW_COUNT;\s*\n\s*PERFORM set_config\('app\.baseline_rpc', '', true\);/);
+      expect(fn.match(/set_config\('app\.baseline_rpc'/g)).toHaveLength(2);
+      expect(fn.indexOf("PERFORM set_config('app.baseline_rpc', '', true);")).toBeLessThan(fn.indexOf("INSERT INTO audit_logs"));
+      expect(fn).not.toMatch(/set_config\('app\.baseline_rpc', '1', true\)/);
       expect(fn).toMatch(/INSERT INTO milestone_baseline_history \(org_id, project_id, taken_by, reason, row_count, rows\)/);
       expect(fn).toMatch(/INSERT INTO audit_logs \(action, resource_type, resource_id, org_id, user_id, user_email, details\)/);
     }
@@ -235,7 +250,10 @@ describe("20261099 — baseline authority, atomicity, history, audit (PC SCHED-3
     for (const c of ["baseline_start_at", "baseline_finish_at", "baseline_set_at", "baseline_set_by"]) {
       expect(guard).toMatch(new RegExp(`NEW\\.${c}\\s+IS DISTINCT FROM OLD\\.${c}`));
     }
-    expect(guard).toMatch(/IF COALESCE\(current_setting\('app\.baseline_rpc', true\), ''\) <> '1' THEN\s*\n\s*RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline \/ clear_project_baseline only\.'\s*\n\s*USING ERRCODE = '42501';/);
+    // The pass names the row's project (IS DISTINCT FROM, so a NULL project_id
+    // is refused, never waved through by a NULL comparison).
+    expect(guard).toMatch(/IF COALESCE\(current_setting\('app\.baseline_rpc', true\), ''\) IS DISTINCT FROM NEW\.project_id::text THEN\s*\n\s*RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline \/ clear_project_baseline only\.'\s*\n\s*USING ERRCODE = '42501';/);
+    expect(guard).not.toMatch(/<> '1'/);
     expect(m99).toMatch(/DROP TRIGGER IF EXISTS trg_milestones_baseline_write_guard ON milestones;\s*\nCREATE TRIGGER trg_milestones_baseline_write_guard\s*\n\s*BEFORE INSERT OR UPDATE ON milestones\s*\n\s*FOR EACH ROW EXECUTE FUNCTION milestones_baseline_write_guard\(\);/);
   });
 
@@ -244,12 +262,15 @@ describe("20261099 — baseline authority, atomicity, history, audit (PC SCHED-3
     for (const c of ["baseline_start_at", "baseline_finish_at", "baseline_set_at", "baseline_set_by"]) {
       expect(insert).toMatch(new RegExp(`NEW\\.${c} IS NOT NULL`));
     }
-    expect(insert).toMatch(/AND COALESCE\(current_setting\('app\.baseline_rpc', true\), ''\) <> '1'\s*\n\s*AND auth\.role\(\) IS DISTINCT FROM 'service_role' THEN\s*\n\s*RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline \/ clear_project_baseline only\.'\s*\n\s*USING ERRCODE = '42501';/);
+    expect(insert).toMatch(/AND COALESCE\(current_setting\('app\.baseline_rpc', true\), ''\) IS DISTINCT FROM NEW\.project_id::text\s*\n\s*AND auth\.role\(\) IS DISTINCT FROM 'service_role' THEN\s*\n\s*RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline \/ clear_project_baseline only\.'\s*\n\s*USING ERRCODE = '42501';/);
     // The INSERT branch returns before the UPDATE comparison reads OLD (NULL on INSERT).
     expect(guard.indexOf("IF TG_OP = 'INSERT' THEN")).toBeLessThan(guard.indexOf("OLD.baseline_start_at"));
     // The probe checks the trigger's timing bits and the INSERT branch.
     expect(m99).toMatch(/AND \(t\.tgtype & 23\) = 23\)/);
     expect(m99).toMatch(/p\.prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%'/);
+    // …and the project-scoped pass and its clearing, verbatim (apostrophes doubled).
+    expect(m99).toMatch(/p\.prosrc LIKE '%current_setting\(''app\.baseline_rpc'', true\), ''''\) IS DISTINCT FROM NEW\.project_id::text%'/);
+    expect(m99).toMatch(/p\.prosrc LIKE '%set_config\(''app\.baseline_rpc'', p_project::text, true\);%UPDATE milestones%set_config\(''app\.baseline_rpc'', '''', true\);%INSERT INTO audit_logs%'/);
   });
 
   it("history: org + project scoped, RLS on, members read, no write policy at all", () => {

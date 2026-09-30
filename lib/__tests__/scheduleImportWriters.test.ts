@@ -29,7 +29,7 @@ const db = vi.hoisted(() => ({
   rpcImpl: null as null | ((fn: string, args: Record<string, unknown>) => { data: unknown; error: unknown }),
   failInsert: null as null | ((table: string, row: Row) => string | null),
   failUpdate: null as null | ((table: string, payload: Row) => string | null),
-  failSelect: null as null | ((table: string) => string | null),
+  failSelect: null as null | ((table: string, columns: string) => string | null),
   nextId: 1,
 }));
 
@@ -54,7 +54,7 @@ function asStored(table: string, r: Row): Row {
 const MILESTONE_NOT_NULL = ["org_id", "name", "weight", "planned_at", "status", "source", "created_by", "percent_complete", "is_summary", "depends_on", "attributes"];
 
 function builder(table: string) {
-  const state = { op: "select" as "select" | "insert" | "upsert" | "update", payload: null as unknown, filters: [] as Array<[string, string, unknown]>, range: null as null | [number, number], single: false, upsertOpts: null as unknown };
+  const state = { op: "select" as "select" | "insert" | "upsert" | "update", payload: null as unknown, filters: [] as Array<[string, string, unknown]>, range: null as null | [number, number], single: false, upsertOpts: null as unknown, columns: "*" };
   const match = (r: Row) => state.filters.every(([col, op, val]) => {
     switch (op) {
       case "eq": return r[col] === val;
@@ -67,7 +67,7 @@ function builder(table: string) {
   const exec = () => {
     const t = (db.tables[table] ??= []);
     if (state.op === "select") {
-      const selErr = db.failSelect?.(table);
+      const selErr = db.failSelect?.(table, state.columns);
       if (selErr) return { data: null, error: { message: selErr } };
       let out = t.filter(match);
       if (state.range) out = out.slice(state.range[0], state.range[1] + 1);
@@ -115,6 +115,7 @@ function builder(table: string) {
           case "is": state.filters.push([args[0] as string, "is", args[1]]); break;
           case "not": state.filters.push([args[0] as string, `not-${args[1] as string}`, args[2]]); break;
           case "range": state.range = [args[0] as number, args[1] as number]; break;
+          case "select": if (state.op === "select" && typeof args[0] === "string") state.columns = args[0]; break;
           case "maybeSingle": case "single": state.single = true; return Promise.resolve(exec());
           default: break; // select / order / other modifiers
         }
@@ -140,12 +141,12 @@ vi.mock("@/lib/audit", () => ({
   logMilestoneEvent: vi.fn(async () => {}),
 }));
 
-import { importMilestonesFromParsed, applyMilestoneMoves, updateMilestone, setBaseline, clearBaseline, type ImportPlan as ImportPlanT } from "@/lib/milestones";
+import { importMilestonesFromParsed, applyMilestoneMoves, updateMilestone, setBaseline, clearBaseline, MoveConflictError, type ImportPlan as ImportPlanT } from "@/lib/milestones";
 import { parseScheduleFile } from "@/lib/scheduleParsers";
 import { shiftForStart, shiftAfterMove, filterMilestones, EMPTY_FILTER } from "@/lib/scheduleFilter";
 import type { Milestone } from "@/types/schema";
 import { countPastBaseline } from "@/components/projects/MovePreviewSheet";
-import { planChangeCount, progressChangeLabel, structureSummary } from "@/components/projects/ScheduleImportModal";
+import { planChangeCount, progressChangeLabel, structureSummary, rekeyedSummary } from "@/components/projects/ScheduleImportModal";
 import { isImmutableTable, isSkippedTable } from "@/lib/dataRestore";
 
 const ORG = "org-1", PROJECT = "proj-1", USER = "user-1";
@@ -324,6 +325,72 @@ describe("SCH-3 · a row inserted at the top leaves every other row's identity A
   });
 });
 
+describe("SCH-3 · rows imported by POSITION before content keys are adopted and re-keyed, never duplicated", () => {
+  // What the pre-Round-G parser + importer stored for a keyless file: its
+  // position, `msp-row:<index>` (a "Task Name" header is an MS Project CSV) or
+  // `csv-row:<index>` (generic CSV), date-only starts at 00:00Z labelled
+  // 'night' — read back as PostgREST renders them.
+  const legacyRow = (i: number, name: string, start: string, finish: string, tag = "msp"): Row => ({
+    id: `old${i}`, org_id: ORG, project_id: PROJECT, document_id: null, source: "csv", external_ref: `${tag}-row:${i}`,
+    name, description: null, weight: 1, outline_level: null, wbs: null, is_summary: false, shift: "night",
+    work_order_ref: null, responsible_party: null, responsible_kind: null, responsible_org: null, location: null,
+    duration_hours: null, attributes: {}, status: "planned", percent_complete: 0, actual_at: null, actual_start_at: null,
+    planned_at: `${finish}T00:00:00+00:00`, planned_start_at: `${start}T00:00:00+00:00`, parent_id: null, depends_on: [],
+    created_by: "someone", created_by_name: "Earlier import",
+  });
+  const seedLegacy = (lines = fileA.split("\n").slice(1), tag = "msp") => {
+    db.tables.milestones = lines.map((l, i) => { const [name, start, finish] = l.split(","); return legacyRow(i, name, start, finish, tag); });
+  };
+
+  it("an unchanged re-import reads Unchanged 3 / Added 0, re-keys every row in place and keeps ids, provenance and the crew's progress", async () => {
+    seedLegacy();
+    Object.assign(milestones()[1], { percent_complete: 60, status: "in_progress", actual_start_at: "2026-01-03T00:00:00+00:00" }); // Scaffold
+    const dry = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA), dryRun: true });
+    expect(dry.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3, notInFile: 0, rekeyed: 3, rekeyedOnly: 3 });
+    expect(planChangeCount(dry.plan!)).toBe(3); // the button never reads "Import 0 changes" while keys will be written
+
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
+    expect(res.errors).toEqual([]);
+    expect(res).toMatchObject({ inserted: 0, updated: 3 });
+    expect(milestones().map((r) => r.id)).toEqual(["old0", "old1", "old2"]);
+    expect(milestones().every((r) => /^msp-key:[0-9a-f]{8}$/.test(String(r.external_ref)))).toBe(true);
+    expect(byName("Scaffold")).toMatchObject({ percent_complete: 60, status: "in_progress", created_by: "someone", shift: "night" });
+
+    // From now on the rows match on their content keys directly: nothing to write.
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
+    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3, notInFile: 0, rekeyed: 0, rekeyedOnly: 0 });
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+  });
+
+  it("the fail-safe: a keyless row whose dates changed is NOT adopted — it is added, and the old one is reported as not in this file", async () => {
+    seedLegacy();
+    const moved = fileA.replace("Scaffold,2026-01-03,2026-01-05,0", "Scaffold,2026-01-03,2026-01-09,0");
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(moved), dryRun: true });
+    expect(res.plan).toMatchObject({ added: 1, changed: 0, unchanged: 2, notInFile: 1, notInFileNames: ["Scaffold"], rekeyed: 2, rekeyedOnly: 2 });
+  });
+
+  it("a generic CSV (csv-row:) is adopted the same way; identical rows pair in file order, so each keeps its own progress", async () => {
+    seedLegacy(["Inspect,2026-01-01,2026-01-02", "Inspect,2026-01-01,2026-01-02"], "csv");
+    Object.assign(milestones()[1], { percent_complete: 100, status: "completed" });
+    const twice = ["Name,Start,Finish", "Inspect,2026-01-01,2026-01-02", "Inspect,2026-01-01,2026-01-02"].join("\n");
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(twice) });
+    expect(res.plan).toMatchObject({ added: 0, notInFile: 0, rekeyed: 2 });
+    const [first, second] = milestones();
+    expect(String(first.external_ref)).toMatch(/^csv-key:[0-9a-f]{8}$/);
+    expect(String(second.external_ref)).toBe(`${String(first.external_ref)}#2`);
+    expect(second).toMatchObject({ id: "old1", percent_complete: 100, status: "completed" });
+  });
+
+  it("a name that differs only in case or surrounding space still matches (and the new spelling is a change)", async () => {
+    seedLegacy(["  mobilize ,2026-01-01,2026-01-02"]);
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(["Task Name,Start,Finish", "Mobilize,2026-01-01,2026-01-02"].join("\n")) });
+    expect(res.plan).toMatchObject({ added: 0, changed: 1, rekeyed: 1, rekeyedOnly: 0 });
+    expect(milestones()).toHaveLength(1);
+    expect(milestones()[0]).toMatchObject({ id: "old0", name: "Mobilize" });
+  });
+});
+
 describe("SCH-16 · structure is set to exactly what the file says for the rows it carries", () => {
   const linked = ["ID,Task Name,Start,Finish,Outline Level,Predecessors", "1,Phase,2026-01-01,2026-01-10,1,", "2,Design,2026-01-01,2026-01-05,2,", "3,Build,2026-01-06,2026-01-10,2,2"].join("\n");
   it("removing a predecessor upstream and re-importing clears it locally; un-parenting clears the local parent", async () => {
@@ -386,8 +453,84 @@ describe("SCH-14 · caps, chunks, progress and cancel", () => {
     const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
     expect(res.inserted).toBe(3);
     expect(hits).toBe(1);
-    expect(byName("Scaffold")).toMatchObject({ planned_start_at: "2026-01-03T00:00:00+00:00", shift: "night" });
+    expect(byName("Scaffold")).toMatchObject({ planned_start_at: "2026-01-03T00:00:00+00:00", shift: null }); // a date-only start is not night work
     expect("import_batch_id" in byName("Scaffold")).toBe(false);
+  });
+});
+
+describe("SCH-14 / SCH-16 · an older database: the existing-row read steps down a tier and the degrade paths run", () => {
+  it("without 20260715 (no depends_on): the rows land, the hierarchy is wired, the links are dropped with a heads-up, and a re-import does not count links it cannot write", async () => {
+    db.failSelect = (t, cols) => (t === "milestones" && /\bdepends_on\b/.test(cols) ? "column milestones.depends_on does not exist" : null);
+    db.failUpdate = (t, p) => (t === "milestones" && "depends_on" in p ? "column \"depends_on\" of relation \"milestones\" does not exist" : null);
+    const linked = ["ID,Task Name,Start,Finish,Outline Level,Predecessors", "1,Phase,2026-01-01,2026-01-10,1,", "2,Design,2026-01-01,2026-01-05,2,", "3,Build,2026-01-06,2026-01-10,2,2"].join("\n");
+    const res = await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(linked, "plan.csv") });
+    expect(res.inserted).toBe(3);
+    expect(byName("Build").parent_id).toBe(byName("Phase").id);
+    expect("depends_on" in byName("Build")).toBe(false);
+    expect(res.errors).toEqual([expect.stringMatching(/^Heads up: migration 20260715_milestone_dependencies\.sql hasn't been applied/)]);
+    const again = await importMilestonesFromParsed({ ...scope, source: "msproject", rows: rowsOf(linked, "plan.csv"), dryRun: true });
+    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3 });
+    expect(again.plan!.structure).toEqual({ rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 });
+  });
+
+  it("without 20260703 (no hierarchy columns): the rows land with the legacy columns only, the hierarchy heads-up is shown, and a re-import compares only what the database has", async () => {
+    const HIERARCHY = /\b(planned_start_at|outline_level|is_summary|percent_complete|parent_id|attributes)\b/;
+    db.failSelect = (t, cols) => (t === "milestones" && HIERARCHY.test(cols) ? "column milestones.planned_start_at does not exist" : null);
+    const LEGACY = new Set(["id", "org_id", "project_id", "document_id", "source", "name", "description", "weight", "planned_at", "status", "actual_at", "external_ref", "created_by", "created_by_name", "updated_at", "updated_by"]);
+    db.failInsert = (t, r) => {
+      if (t !== "milestones") return null;
+      const bad = Object.keys(r).find((k) => !LEGACY.has(k));
+      return bad ? `column "${bad}" of relation "milestones" does not exist` : null;
+    };
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
+    expect(res.inserted).toBe(3);
+    expect(res.errors).toEqual([expect.stringMatching(/^Heads up: hierarchy migration 20260703_milestones_hierarchy\.sql hasn't been applied/)]);
+    expect(Object.keys(byName("Scaffold")).every((k) => LEGACY.has(k))).toBe(true);
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
+    expect(again.plan).toMatchObject({ added: 0, changed: 0, unchanged: 3 });
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+  });
+
+  it("any other read failure still stops the import before a write", async () => {
+    db.failSelect = (t) => (t === "milestones" ? "permission denied for table milestones" : null);
+    const res = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA) });
+    expect(res.errors).toEqual(["Could not read the existing schedule: permission denied for table milestones. Nothing was written."]);
+    expect(db.writes).toEqual([]);
+  });
+});
+
+describe("SCHED-9 · a date-only start is not night work", () => {
+  it("a new row whose start has no time of day gets no label; a start with a time does (CSV and direct rows)", async () => {
+    const csv = ["ID,Name,Start,Finish", "1,Date only,2026-06-01,2026-06-02", "2,Morning,2026-06-01 08:00,2026-06-01 17:00", "3,Evening,6/13/2026 7:00 PM,6/14/2026 5:00 AM", "4,Slash date only,6/13/2026,6/14/2026"].join("\n");
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(csv) });
+    expect(["Date only", "Morning", "Evening", "Slash date only"].map((n) => byName(n).shift)).toEqual([null, "day", "night", null]);
+    // A caller that passes rows directly: a bare YYYY-MM-DD start reads the same way.
+    await importMilestonesFromParsed({ ...scope, source: "manual", rows: [
+      { name: "Direct date", plannedAt: "2026-06-02", plannedStartAt: "2026-06-01", externalRef: "ai:1" },
+      { name: "Direct time", plannedAt: "2026-06-02T17:00:00Z", plannedStartAt: "2026-06-02T08:00:00Z", externalRef: "ai:2" },
+    ] });
+    expect(byName("Direct date").shift).toBeNull();
+    expect(byName("Direct time").shift).toBe("day");
+  });
+
+  it("a date-only re-import keeps a label set in the app (no band to read), and writes nothing", async () => {
+    const csv = ["ID,Name,Start,Finish", "1,Date only,2026-06-01,2026-06-02"].join("\n");
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(csv) });
+    byName("Date only").shift = "day";
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, rows: rowsOf(csv) });
+    expect(again.plan).toMatchObject({ changed: 0, unchanged: 1 });
+    expect(db.writes.filter((w) => w.table === "milestones")).toEqual([]);
+    expect(byName("Date only").shift).toBe("day");
+  });
+
+  it("MS Project XML carries a time of day: 08:00 is day (the positive path stays pinned)", async () => {
+    const xml = `<?xml version="1.0"?><Project xmlns="http://schemas.microsoft.com/project"><SaveDate>2026-01-01T00:00:00</SaveDate><Tasks>
+      <Task><UID>1</UID><Name>Morning pour</Name><Start>2026-06-01T08:00:00</Start><Finish>2026-06-01T17:00:00</Finish><OutlineLevel>1</OutlineLevel></Task>
+    </Tasks></Project>`;
+    await importMilestonesFromParsed({ ...scope, source: "msproject", rows: parseScheduleFile("plan.xml", xml).rows });
+    expect(byName("Morning pour").shift).toBe("day");
   });
 });
 
@@ -478,11 +621,26 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
   it("passes each row's expected updated_at (the caller's, else the row as read) and surfaces the RPC's unmatched ids", async () => {
     seed();
     db.rpcImpl = () => ({ data: { count: 1, matched: ["a"], unmatched: ["b"] }, error: null });
-    const res = await applyMilestoneMoves({ ...actor, moves });
+    const res = await applyMilestoneMoves({ ...actor, moves, onUnmatched: "return" });
     expect(db.rpcCalls[0].fn).toBe("apply_milestone_moves");
     expect((db.rpcCalls[0].args.p_moves as Row[]).map((m) => m.expected_updated_at)).toEqual(["2026-05-01T00:00:00+00:00", "2026-04-30T00:00:00+00:00"]);
     expect(res).toMatchObject({ matched: ["a"], unmatched: ["b"], count: 1, via: "rpc" });
     expect(res.auditError).toBeUndefined();
+  });
+
+  it("by default a rejected move is an ERROR, never a silent success: MoveConflictError after the trail is written, with both lists", async () => {
+    seed();
+    db.rpcImpl = () => ({ data: { count: 1, matched: ["a"], unmatched: ["b"] }, error: null });
+    const err = await applyMilestoneMoves({ ...actor, moves }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(MoveConflictError);
+    expect((err as Error).message).toBe("1 task was changed by someone else and was not moved (the other 1 moved). Reload the schedule and try again.");
+    expect((err as MoveConflictError).result).toMatchObject({ matched: ["a"], unmatched: ["b"], count: 1 });
+    // The move that matched is recorded like any other.
+    expect((db.tables.milestone_notes ?? []).map((n) => n.milestone_id)).toEqual(["a"]);
+    expect((db.tables.audit_logs ?? [])[0]).toMatchObject({ action: "MILESTONES_RESCHEDULED", details: { count: 1, unmatched: 1 } });
+    // Nothing rejected: no error.
+    seed(); db.rpcImpl = () => ({ data: { count: 2, matched: ["a", "b"], unmatched: [] }, error: null });
+    await expect(applyMilestoneMoves({ ...actor, moves })).resolves.toMatchObject({ unmatched: [] });
   });
 
   it("writes a 'reschedule' breadcrumb per moved row (updateMilestone's shape) and a checked audit row with before/after dates", async () => {
@@ -590,12 +748,16 @@ describe("SCHED-3 · baseline is one RPC call each; the legacy path only when th
 describe("SCH-2 / SCH-16 · the review panel's numbers", () => {
   const plan = (over: Partial<ImportPlanT> = {}): ImportPlanT => ({
     added: 0, changed: 0, unchanged: 3, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
-    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rowCap: 5000, ...over,
+    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0, rowCap: 5000, ...over,
   });
   it("a file that only removes a predecessor does not read 'Import 0 changes'", () => {
     expect(planChangeCount(plan())).toBe(0);
     expect(planChangeCount(plan({ added: 1, changed: 2, structure: { rows: 3, onlyStructure: 2, parents: 1, linksAdded: 0, linksRemoved: 2 } }))).toBe(5);
     expect(structureSummary({ rows: 3, onlyStructure: 2, parents: 1, linksAdded: 0, linksRemoved: 2 })).toBe("1 parent changed, 2 links removed");
+  });
+  it("rows that only need their new key count toward the button, and the panel says what re-keying means", () => {
+    expect(planChangeCount(plan({ unchanged: 3, rekeyed: 3, rekeyedOnly: 3 }))).toBe(3);
+    expect(rekeyedSummary({ rekeyed: 2 })).toMatch(/^2 tasks imported earlier were matched by name and dates and will be re-keyed — they keep their progress and history\. A task whose name or dates changed in the file cannot be matched this way: it is added, and the earlier one is listed as not in this file\.$/);
   });
   it("progress at risk is worded by direction, never as a 'reset' when the file is higher", () => {
     expect(progressChangeLabel(60, 80)).toBe("60% on the board → 80% in the file (higher)");

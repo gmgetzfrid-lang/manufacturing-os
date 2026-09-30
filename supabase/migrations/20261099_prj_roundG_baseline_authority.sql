@@ -16,7 +16,12 @@
 --     direct write to any baseline_* column outside those RPCs — an UPDATE
 --     that changes one, or an INSERT that carries one (the service-role
 --     restore excepted) — because milestones_member_all is a permissive
---     FOR ALL, so a second policy would be decorative (DRLS-1).
+--     FOR ALL, so a second policy would be decorative (DRLS-1). The RPC's
+--     pass is the transaction-local flag app.baseline_rpc, set to the
+--     PROJECT id immediately before the RPC's one UPDATE and cleared
+--     immediately after it; the trigger admits only a row of that project.
+--     A later statement in the same transaction (pg_graphql runs a
+--     multi-field mutation in one) is refused like any other direct write.
 --
 -- NOT widening: nobody gains a write they did not have; every active member
 -- LOSES the direct baseline write (on UPDATE and on INSERT). Apply after
@@ -76,7 +81,7 @@ BEGIN
     -- server code (the service-role restore) may insert one that carries it.
     IF (NEW.baseline_start_at IS NOT NULL OR NEW.baseline_finish_at IS NOT NULL
         OR NEW.baseline_set_at IS NOT NULL OR NEW.baseline_set_by IS NOT NULL)
-       AND COALESCE(current_setting('app.baseline_rpc', true), '') <> '1'
+       AND COALESCE(current_setting('app.baseline_rpc', true), '') IS DISTINCT FROM NEW.project_id::text
        AND auth.role() IS DISTINCT FROM 'service_role' THEN
       RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline / clear_project_baseline only.'
         USING ERRCODE = '42501';
@@ -87,8 +92,9 @@ BEGIN
   OR NEW.baseline_finish_at IS DISTINCT FROM OLD.baseline_finish_at
   OR NEW.baseline_set_at    IS DISTINCT FROM OLD.baseline_set_at
   OR NEW.baseline_set_by    IS DISTINCT FROM OLD.baseline_set_by THEN
-    -- The RPCs set this transaction-local flag before their UPDATE.
-    IF COALESCE(current_setting('app.baseline_rpc', true), '') <> '1' THEN
+    -- The RPCs set this transaction-local flag to the project id around their
+    -- one UPDATE only; any other statement, project or row is refused.
+    IF COALESCE(current_setting('app.baseline_rpc', true), '') IS DISTINCT FROM NEW.project_id::text THEN
       RAISE EXCEPTION 'The baseline is set and cleared through set_project_baseline / clear_project_baseline only.'
         USING ERRCODE = '42501';
     END IF;
@@ -126,8 +132,6 @@ BEGIN
     END IF;
   END IF;
 
-  PERFORM set_config('app.baseline_rpc', '1', true);
-
   -- Keep the prior snapshot before overwriting it.
   SELECT COUNT(*),
          COALESCE(jsonb_agg(jsonb_build_object(
@@ -142,7 +146,9 @@ BEGIN
     RETURNING id INTO v_history;
   END IF;
 
-  -- One statement: the whole project or nothing.
+  -- One statement: the whole project or nothing. The guard's pass is scoped
+  -- to this project and to this statement: set just before, cleared just after.
+  PERFORM set_config('app.baseline_rpc', p_project::text, true);
   UPDATE milestones
      SET baseline_start_at  = COALESCE(planned_start_at, planned_at),
          baseline_finish_at = planned_at,
@@ -150,6 +156,7 @@ BEGIN
          baseline_set_by    = v_uid
    WHERE org_id = p_org AND project_id = p_project;
   GET DIAGNOSTICS v_count = ROW_COUNT;
+  PERFORM set_config('app.baseline_rpc', '', true);
 
   INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, details)
   VALUES ('SCHEDULE_BASELINED', 'project', p_project::text, p_org, v_uid, NULLIF(auth.jwt() ->> 'email', ''),
@@ -183,8 +190,6 @@ BEGIN
     END IF;
   END IF;
 
-  PERFORM set_config('app.baseline_rpc', '1', true);
-
   SELECT COUNT(*),
          COALESCE(jsonb_agg(jsonb_build_object(
            'id', id, 'baseline_start_at', baseline_start_at, 'baseline_finish_at', baseline_finish_at,
@@ -199,10 +204,12 @@ BEGIN
   VALUES (p_org, p_project, v_uid, 'clear', v_prior_count, v_prior)
   RETURNING id INTO v_history;
 
+  PERFORM set_config('app.baseline_rpc', p_project::text, true);
   UPDATE milestones
      SET baseline_start_at = NULL, baseline_finish_at = NULL, baseline_set_at = NULL, baseline_set_by = NULL
    WHERE org_id = p_org AND project_id = p_project AND baseline_finish_at IS NOT NULL;
   GET DIAGNOSTICS v_count = ROW_COUNT;
+  PERFORM set_config('app.baseline_rpc', '', true);
 
   INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, details)
   VALUES ('SCHEDULE_BASELINE_CLEARED', 'project', p_project::text, p_org, v_uid, NULLIF(auth.jwt() ->> 'email', ''),
@@ -239,26 +246,28 @@ SELECT 'trg_milestones_baseline_write_guard is a BEFORE INSERT OR UPDATE row tri
                   AND (t.tgtype & 23) = 23),
        NULL
 UNION ALL
-SELECT 'the guard refuses a direct write (UPDATE, or an INSERT carrying a baseline) unless the RPC flag is set',
+SELECT 'the guard refuses a direct write (UPDATE, or an INSERT carrying a baseline) unless the RPC flag names the row''s project',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'milestones_baseline_write_guard'
-                  AND p.prosrc LIKE '%current_setting(''app.baseline_rpc'', true)%'
-                  AND p.prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%'),
+                  AND p.prosrc LIKE '%current_setting(''app.baseline_rpc'', true), '''') IS DISTINCT FROM NEW.project_id::text%'
+                  AND p.prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%'
+                  AND p.prosrc NOT LIKE '%<> ''1''%'),
        NULL
 UNION ALL
-SELECT 'set_project_baseline: one UPDATE, sets the RPC flag, writes history + audit, enforces can_edit_project_schedule',
+SELECT 'set_project_baseline: one UPDATE, the RPC flag set to the project around it and cleared after, history + audit, can_edit_project_schedule',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'set_project_baseline'
-                  AND p.prosrc LIKE '%set_config(''app.baseline_rpc'', ''1'', true)%'
+                  AND p.prosrc LIKE '%set_config(''app.baseline_rpc'', p_project::text, true);%UPDATE milestones%set_config(''app.baseline_rpc'', '''', true);%INSERT INTO audit_logs%'
                   AND p.prosrc LIKE '%INSERT INTO milestone_baseline_history%'
                   AND p.prosrc LIKE '%''SCHEDULE_BASELINED''%'
                   AND p.prosrc LIKE '%can_edit_project_schedule(p_org, p_project)%'
                   AND p.prosrc LIKE '%auth.role() IS DISTINCT FROM ''service_role''%'),
        NULL
 UNION ALL
-SELECT 'clear_project_baseline: audited, history first, same predicate',
+SELECT 'clear_project_baseline: audited, history first, same predicate, flag scoped to its UPDATE',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'clear_project_baseline'
+                  AND p.prosrc LIKE '%set_config(''app.baseline_rpc'', p_project::text, true);%UPDATE milestones%set_config(''app.baseline_rpc'', '''', true);%INSERT INTO audit_logs%'
                   AND p.prosrc LIKE '%''SCHEDULE_BASELINE_CLEARED''%'
                   AND p.prosrc LIKE '%INSERT INTO milestone_baseline_history%'
                   AND p.prosrc LIKE '%can_edit_project_schedule(p_org, p_project)%'),

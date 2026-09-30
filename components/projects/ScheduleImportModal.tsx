@@ -107,6 +107,14 @@ export default function ScheduleImportModal({
     return Array.from(keys);
   }, [parseResult, INTERNAL_KEYS]);
 
+  // A reviewed plan describes one exact change set: any change to the column
+  // review (include / rename / map-to) invalidates it, so the user reviews
+  // again before "Import N changes" can write (GAP-403 acceptance 2).
+  const updateColumn = useCallback((k: string, cfg: { include: boolean; rename: string; mapTo: string }) => {
+    setColConfig((p) => ({ ...p, [k]: cfg }));
+    setPlan(null);
+  }, []);
+
   // Seed/refresh config whenever a new file is parsed.
   useEffect(() => {
     setColConfig((prev) => {
@@ -205,6 +213,7 @@ export default function ScheduleImportModal({
           name: r.name,
           plannedAt: r.plannedAt,
           plannedStartAt: r.plannedStartAt,
+          startHasTime: r.startHasTime,
           weight: r.weight,
           // Source progress (MS Project %Complete / P6 physical % / CSV %): the
           // importer derives status + percent_complete from it so a
@@ -357,7 +366,7 @@ export default function ScheduleImportModal({
                   <div className="text-[11px] text-[var(--color-text-muted)]">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"} found</div>
                 </div>
                 <button
-                  onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); }}
+                  onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); setPlan(null); }}
                   className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-slate-200 transition-colors"
                   disabled={importing}
                 >
@@ -407,19 +416,19 @@ export default function ScheduleImportModal({
                       const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
-                          <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-accent)] shrink-0" title="Include this column" />
+                          <input type="checkbox" checked={cfg.include} onChange={(e) => updateColumn(k, { ...cfg, include: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)] shrink-0" title="Include this column" />
                           <span className="font-mono text-[11px] text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
                           <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
                           <input
                             value={cfg.rename}
-                            onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, rename: e.target.value } }))}
+                            onChange={(e) => updateColumn(k, { ...cfg, rename: e.target.value })}
                             disabled={!cfg.include || !!cfg.mapTo}
                             placeholder={k}
                             className="flex-1 min-w-0 h-7 px-2 rounded-md border border-[var(--color-border)] text-xs disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)]"
                           />
                           <Select
                             value={cfg.mapTo}
-                            onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, mapTo: e.target.value } }))}
+                            onChange={(e) => updateColumn(k, { ...cfg, mapTo: e.target.value })}
                             disabled={!cfg.include}
                             className="shrink-0"
                           >
@@ -489,6 +498,11 @@ export default function ScheduleImportModal({
                   {plan.notInFile > 0 && (
                     <div className="text-[11px] text-[var(--color-text-muted)]">
                       {plan.notInFile} task{plan.notInFile === 1 ? " is" : "s are"} on the board but not in this file ({plan.notInFileNames.slice(0, 5).join(", ")}{plan.notInFile > 5 ? ", …" : ""}). They are left as they are — an import never deletes.
+                    </div>
+                  )}
+                  {plan.rekeyed > 0 && (
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                      {rekeyedSummary(plan)}
                     </div>
                   )}
                   {plan.structure.rows > 0 && (
@@ -646,7 +660,14 @@ export default function ScheduleImportModal({
  *  structure (parent / links) — the button never reads "0 changes" when the
  *  structure pass will rewrite links. */
 export function planChangeCount(plan: ImportPlan): number {
-  return plan.added + plan.changed + plan.structure.onlyStructure;
+  return plan.added + plan.changed + plan.structure.onlyStructure + plan.rekeyedOnly;
+}
+
+/** Rows imported before content keys (by position) that this file's rows
+ *  matched on name and dates: they keep their id and progress (PT SCH-3). */
+export function rekeyedSummary(plan: Pick<ImportPlan, "rekeyed">): string {
+  const n = plan.rekeyed;
+  return `${n} task${n === 1 ? "" : "s"} imported earlier ${n === 1 ? "was" : "were"} matched by name and dates and will be re-keyed — ${n === 1 ? "it keeps its" : "they keep their"} progress and history. A task whose name or dates changed in the file cannot be matched this way: it is added, and the earlier one is listed as not in this file.`;
 }
 
 /** "60% → 80%" / "60% → 0%" — the direction the file would move progress. */

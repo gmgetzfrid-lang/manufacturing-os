@@ -205,7 +205,7 @@ describe("placeholder (<New Task>) handling", () => {
 
 // ─── projects Round G (PT SCH-1 / SCH-3 / SCH-8, PC SCHED-2 / SCHED-6 / SCHED-8 / SCHED-9) ───
 
-import { detectDateConvention, coerceIso, contentKey, durationTextToHours, SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
+import { detectDateConvention, coerceIso, contentKey, durationTextToHours, hasTimeOfDay, SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
 
 describe("SCH-1 · day/month is decided once from the whole file, never per row", () => {
   it("a file with any day-part > 12 reads EVERY row as D/M/Y (15/08/2026 fixes it)", () => {
@@ -353,6 +353,56 @@ describe("SCHED-9 · offset-less datetimes are read as wall-clock-as-UTC", () =>
     expect(coerceIso("2026-06-01T19:00:00+05:30")).toBe("2026-06-01T19:00:00+05:30");
     expect(coerceIso("2026-03-01 08:00")).toBe("2026-03-01T08:00:00Z");
   });
+
+  const inZone = <T,>(zone: string, fn: () => T): T => {
+    const tz = process.env.TZ;
+    try { process.env.TZ = zone; return fn(); } finally { process.env.TZ = tz; }
+  };
+
+  it("year-first dates (ja / zh / ko MS Project exports) read Y/M/D as wall-clock-as-UTC — not a day early east of UTC", () => {
+    inZone("Asia/Kolkata", () => {
+      // Date() would read this browser-local: 2026-05-31T18:30Z in Kolkata.
+      expect(new Date("2026/06/01").toISOString()).toBe("2026-05-31T18:30:00.000Z");
+      expect(coerceIso("2026/06/01")).toBe("2026-06-01T00:00:00Z");
+      expect(coerceIso("2026/06/01 8:00")).toBe("2026-06-01T08:00:00Z");
+      expect(coerceIso("2026/6/1 5:30 PM")).toBe("2026-06-01T17:30:00Z");
+      expect(coerceIso("2026.06.01")).toBe("2026-06-01T00:00:00Z");
+      expect(coerceIso("2026-6-1 8:00")).toBe("2026-06-01T08:00:00Z");
+      expect(coerceIso("2026/13/01")).toBe(""); // no month 13 — counted, not guessed
+      // Year-first is never a day/month question.
+      const csv = ["Task Name,Start,Finish", "A,2026/06/01 8:00,2026/06/02 17:00", "B,2026/06/03 19:00,2026/06/04 5:00"].join("\n");
+      const res = parseScheduleFile("plan.csv", csv);
+      expect(res.needsDateConvention).toBeUndefined();
+      expect(res.rows.map((r) => [r.plannedStartAt, r.plannedAt])).toEqual([
+        ["2026-06-01T08:00:00Z", "2026-06-02T17:00:00Z"],
+        ["2026-06-03T19:00:00Z", "2026-06-04T05:00:00Z"],
+      ]);
+    });
+  });
+
+  it("a written-out month goes through Date() but its WALL CLOCK is re-emitted as UTC; a value naming its zone keeps its instant", () => {
+    for (const zone of ["Asia/Kolkata", "America/Los_Angeles", "Pacific/Auckland", "UTC"]) {
+      inZone(zone, () => {
+        expect(coerceIso("June 1, 2026")).toBe("2026-06-01T00:00:00.000Z");
+        expect(coerceIso("Mon June 1, 2026 8:00 AM")).toBe("2026-06-01T08:00:00.000Z");
+        expect(coerceIso("June 1, 2026 10:30 PM")).toBe("2026-06-01T22:30:00.000Z");
+        expect(coerceIso("1-Jun-2026")).toBe("2026-06-01T00:00:00.000Z");
+        expect(coerceIso("Mon, 01 Jun 2026 08:00:00 GMT")).toBe("2026-06-01T08:00:00.000Z");
+        expect(coerceIso("June 1, 2026 08:00 GMT+0200")).toBe("2026-06-01T06:00:00.000Z");
+      });
+    }
+  });
+
+  it("a start's time of day is reported (a date-only start is not a shift reading)", () => {
+    expect(hasTimeOfDay("2026-06-01")).toBe(false);
+    expect(hasTimeOfDay("6/1/2026")).toBe(false);
+    expect(hasTimeOfDay("June 1, 2026")).toBe(false);
+    expect(hasTimeOfDay("6/1/2026 7:00 PM")).toBe(true);
+    expect(hasTimeOfDay("2026-06-01T08:00:00")).toBe(true);
+    const csv = ["Task Name,Start,Finish", "Date only,2026-06-01,2026-06-02", "Timed,2026-06-01 08:00,2026-06-01 17:00", "No start,,2026-06-03"].join("\n");
+    const res = parseScheduleFile("plan.csv", csv);
+    expect(res.rows.map((r) => [r.name, r.startHasTime])).toEqual([["Date only", false], ["Timed", true], ["No start", undefined]]);
+  });
 });
 
 describe("SCH-3 · row identity is content, not position", () => {
@@ -483,6 +533,15 @@ describe("SCH-8 · relationship type + lag are captured; only FS becomes an edge
     expect(res.warnings.some((w) => /1 predecessor reference pointed at a row that is not in this file/.test(w))).toBe(true);
   });
 
+  it("an estimated lag ('1FS+1 day?', MS Project's '?' marker) is read as 8 h, not counted as unreadable", () => {
+    const csv = ["ID,Task Name,Finish,Duration,Predecessors", "1,A,2026-01-05,5 days?,", "2,B,2026-01-10,1 day?,1FS+1 day?"].join("\n");
+    const res = parseScheduleFile("plan.csv", csv);
+    const b = res.rows.find((r) => r.name === "B")!;
+    expect(b.links).toEqual([{ predecessorExternalRef: "msp:1", type: "FS", lagHours: 8 }]);
+    expect(res.links).toEqual({ fs: 1, notEnforced: 0, withLag: 1, unresolved: 0, lagUnread: 0 });
+    expect(res.rows.map((r) => r.durationHours)).toEqual([40, 8]);
+  });
+
   it("XER TASKPRED: pred_type + lag_hr_cnt survive; an SS + FF pair does not become a cycle", () => {
     const xer = [
       "ERMHDR\t19.12\t2026-01-01\tProject\tadmin",
@@ -520,6 +579,11 @@ describe("SCHED-2 · work hours reach durationHours", () => {
     expect(durationTextToHours("90 mins")).toBe(1.5);
     expect(durationTextToHours("12")).toBe(12);
     expect(durationTextToHours("")).toBeNull();
+    // MS Project's estimated-duration marker ("?") does not lose the value.
+    expect(durationTextToHours("5 days?")).toBe(40);
+    expect(durationTextToHours("1 day?")).toBe(8);
+    expect(durationTextToHours("16 hrs?")).toBe(16);
+    expect(durationTextToHours("5 days??")).toBeNull();
     const res = parseScheduleFile("msp.csv", ["ID,Task Name,Finish,Work", "1,Weld,2026-01-05,40 hrs", "2,Sign,2026-01-06,"].join("\n"));
     expect(res.rows[0].durationHours).toBe(40);
     expect(res.rows[1].durationHours).toBeNull();

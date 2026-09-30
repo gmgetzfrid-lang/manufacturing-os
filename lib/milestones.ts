@@ -315,6 +315,22 @@ export interface MoveBatchResult {
   auditError?: string;
 }
 
+/** Thrown by applyMilestoneMoves (by default) when the optimistic lock
+ *  rejected some moves: the caller's optimistic dates for those rows were
+ *  never saved, so a silent success would leave the board showing them. The
+ *  moves that matched ARE saved (breadcrumbs and audit written); `result`
+ *  carries both lists. */
+export class MoveConflictError extends Error {
+  readonly result: MoveBatchResult;
+  constructor(result: MoveBatchResult) {
+    const n = result.unmatched.length;
+    const moved = result.matched.length;
+    super(`${n} task${n === 1 ? " was" : "s were"} changed by someone else and ${n === 1 ? "was" : "were"} not moved${moved > 0 ? ` (the other ${moved} moved)` : ""}. Reload the schedule and try again.${result.auditError ? ` Also: ${result.auditError}.` : ""}`);
+    this.name = "MoveConflictError";
+    this.result = result;
+  }
+}
+
 /** Persist a batch of reflowed date changes ATOMICALLY via the
  *  apply_milestone_moves RPC (20260907, re-created in 20261098) — all rows
  *  move or none do (a cascading drag used to fire N browser writes; a
@@ -326,7 +342,12 @@ export interface MoveBatchResult {
  *  else since then is left alone and reported in `unmatched` (PT SCH-7). Every
  *  moved row gets a 'reschedule' breadcrumb with its before/after finish,
  *  matching updateMilestone's shape, and the batch audit row carries the
- *  before/after dates and is a CHECKED write (PC SCHED-11). */
+ *  before/after dates and is a CHECKED write (PC SCHED-11).
+ *
+ *  Rejected moves THROW a MoveConflictError by default (after the trail is
+ *  written), so a caller that applied its dates optimistically and reads only
+ *  success / failure shows an error and refreshes instead of a success. A
+ *  caller that renders `unmatched` itself passes `onUnmatched: "return"`. */
 export async function applyMilestoneMoves(input: {
   orgId: string;
   projectId: string;
@@ -335,6 +356,9 @@ export async function applyMilestoneMoves(input: {
   actorUserName?: string;
   actorUserEmail?: string;
   actorUserRole?: string;
+  /** "throw" (default): a MoveConflictError when any move was rejected.
+   *  "return": hand the rejected ids back in `unmatched` for the caller to show. */
+  onUnmatched?: "throw" | "return";
 }): Promise<MoveBatchResult> {
   if (input.moves.length === 0) return { matched: [], unmatched: [], count: 0, via: "rpc" };
   const ids = input.moves.map((m) => m.id);
@@ -438,6 +462,7 @@ export async function applyMilestoneMoves(input: {
   if (auditRes.error) auditRes = await supabase.from("audit_logs").insert(auditRow); // one retry
   if (auditRes.error) errs.push(`audit: ${auditRes.error.message}`);
   if (errs.length) result.auditError = errs.join("; ");
+  if (unmatched.length > 0 && (input.onUnmatched ?? "throw") === "throw") throw new MoveConflictError(result);
   return result;
 }
 
@@ -979,6 +1004,10 @@ export interface ParsedMilestoneRow {
   name: string;
   plannedAt: string;
   plannedStartAt?: string | null;
+  /** False when the source's start had no time of day (stored at 00:00Z):
+   *  a new row then gets no day / night label (PC SCHED-9). When absent, a
+   *  bare "YYYY-MM-DD" start is read the same way. */
+  startHasTime?: boolean;
   weight?: number;
   /** Source schedule's progress (MS Project %Complete, P6 physical %, CSV
    *  "% complete"). Drives the imported status + percent_complete. */
@@ -1042,6 +1071,14 @@ export interface ImportPlan {
    *  the app to an imported row is removed if the file does not carry it).
    *  `onlyStructure` counts rows whose plan fields are otherwise unchanged. */
   structure: { rows: number; onlyStructure: number; parents: number; linksAdded: number; linksRemoved: number };
+  /** Existing rows keyed by POSITION before content keys (`csv-row:N` /
+   *  `msp-row:N`), or by an earlier content key, that this file's row matches
+   *  on name + planned start + planned finish: adopted and re-keyed instead of
+   *  added beside themselves (PT SCH-3). `rekeyedOnly` counts those whose
+   *  plan and structure are otherwise unchanged — they are still written, to
+   *  carry the new key. */
+  rekeyed: number;
+  rekeyedOnly: number;
   /** The per-file row cap the importer enforces. */
   rowCap: number;
 }
@@ -1060,14 +1097,14 @@ function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null 
   return shiftForStart(plannedStartIso);
 }
 
-/** Set the hierarchy migration (20260703) has applied. Determined
- *  lazily on first INSERT failure caused by an unknown column —
- *  once we hit it, every subsequent row in the same import drops
- *  the new fields so we don't keep re-trying schema we know is
- *  missing. The whole batch still lands; the hierarchy just isn't
- *  preserved until the user runs the migration. */
+/** Set the hierarchy migrations (20260703 / 20260705 / 20260731) added.
+ *  Determined by the existing-row read (its legacy tier) or, failing that,
+ *  on the first chunk refused for an unknown column — from then on every
+ *  row in the same import drops these fields so we don't keep re-trying
+ *  schema we know is missing. The whole batch still lands; the hierarchy
+ *  just isn't preserved until the user runs the migration. */
 const NEW_SCHEMA_FIELDS = [
-  "planned_start_at", "outline_level", "wbs", "is_summary", "shift",
+  "planned_start_at", "actual_start_at", "outline_level", "wbs", "is_summary", "shift",
   "work_order_ref", "responsible_party", "responsible_kind", "responsible_org",
   "location", "duration_hours", "attributes", "percent_complete",
 ] as const;
@@ -1175,28 +1212,56 @@ function samePlanValue(column: string, stored: unknown, next: unknown): boolean 
   return a === b;
 }
 
+/** The existing-row read, by schema tier: everything; without `depends_on`
+ *  (20260715 not applied); without the 20260703 / 20260705 / 20260731
+ *  columns. The tier the database answers decides which writes degrade. */
+const EXISTING_READ = {
+  full: "id, external_ref, name, description, weight, outline_level, wbs, is_summary, shift, work_order_ref, responsible_party, responsible_kind, responsible_org, location, duration_hours, attributes, status, percent_complete, actual_at, actual_start_at, planned_at, planned_start_at, parent_id, depends_on, created_by, created_by_name",
+  noDeps: "id, external_ref, name, description, weight, outline_level, wbs, is_summary, shift, work_order_ref, responsible_party, responsible_kind, responsible_org, location, duration_hours, attributes, status, percent_complete, actual_at, actual_start_at, planned_at, planned_start_at, parent_id, created_by, created_by_name",
+  legacy: "id, external_ref, name, description, weight, status, actual_at, planned_at, created_by, created_by_name",
+} as const;
+type ExistingReadTier = keyof typeof EXISTING_READ;
+
 /** Every existing row of this source in the import scope, in one query per
- *  page (PostgREST caps a page at 1,000 rows; the row cap is 5,000). */
-async function fetchExistingImportRows(input: ImportParsedInput): Promise<{ rows: ExistingImportRow[]; error?: string }> {
-  const out: ExistingImportRow[] = [];
+ *  page (PostgREST caps a page at 1,000 rows; the row cap is 5,000). An
+ *  unknown-column refusal steps down a tier and the whole read restarts, so
+ *  the degrade paths below are reachable on an older database. */
+async function fetchExistingImportRows(input: ImportParsedInput): Promise<{ rows: ExistingImportRow[]; tier: ExistingReadTier; error?: string }> {
+  const tiers: ExistingReadTier[] = ["full", "noDeps", "legacy"];
   const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    let q = supabase
-      .from("milestones")
-      .select("id, external_ref, name, description, weight, outline_level, wbs, is_summary, shift, work_order_ref, responsible_party, responsible_kind, responsible_org, location, duration_hours, attributes, status, percent_complete, actual_at, actual_start_at, planned_at, planned_start_at, parent_id, depends_on, created_by, created_by_name")
-      .eq("org_id", input.orgId)
-      .eq("source", input.source)
-      .not("external_ref", "is", null);
-    if (input.projectId) q = q.eq("project_id", input.projectId);
-    else if (input.documentId) q = q.eq("document_id", input.documentId);
-    else q = q.is("project_id", null).is("document_id", null);
-    const { data, error } = await q.order("id").range(from, from + PAGE - 1);
-    if (error) return { rows: out, error: error.message };
-    const page = (data ?? []) as ExistingImportRow[];
-    out.push(...page);
-    if (page.length < PAGE) break;
+  let lastError = "";
+  for (const tier of tiers) {
+    const out: ExistingImportRow[] = [];
+    let stepDown = false;
+    for (let from = 0; ; from += PAGE) {
+      let q = supabase
+        .from("milestones")
+        .select(EXISTING_READ[tier])
+        .eq("org_id", input.orgId)
+        .eq("source", input.source)
+        .not("external_ref", "is", null);
+      if (input.projectId) q = q.eq("project_id", input.projectId);
+      else if (input.documentId) q = q.eq("document_id", input.documentId);
+      else q = q.is("project_id", null).is("document_id", null);
+      const { data, error } = await q.order("id").range(from, from + PAGE - 1);
+      if (error) {
+        if (looksLikeUnknownColumn(error.message)) { stepDown = true; lastError = error.message; break; }
+        return { rows: out, tier, error: error.message };
+      }
+      const page = (data ?? []) as unknown as ExistingImportRow[];
+      out.push(...page);
+      if (page.length < PAGE) break;
+    }
+    if (!stepDown) return { rows: out, tier };
   }
-  return { rows: out };
+  return { rows: [], tier: "legacy", error: lastError };
+}
+
+/** A keyless CSV row's content key, or a position key from before content
+ *  keys: `csv-key:…` / `msp-row:12` → { tag: "csv" | "msp", kind }. */
+function keylessRef(ref: string | null | undefined): { tag: string; kind: "row" | "key" } | null {
+  const m = ref?.match(/^([a-z0-9]+)-(row|key):/i);
+  return m ? { tag: m[1].toLowerCase(), kind: m[2].toLowerCase() as "row" | "key" } : null;
 }
 
 /**
@@ -1230,12 +1295,15 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     name: string;
     plannedIso: string;
     plannedStartIso: string | null;
+    dateOnlyStart: boolean;
     planFields: Record<string, unknown>;
     /** What the file says about progress — undefined when it says nothing. */
     actualFields: Record<string, unknown> | undefined;
     filePercent: number | null;
     existing: ExistingImportRow | null;
     id: string | null;
+    /** The existing row's old external_ref when this row adopted it (SCH-3). */
+    rekeyedFrom: string | null;
   };
   const prepared: Prepared[] = [];
   for (let i = 0; i < input.rows.length; i++) {
@@ -1246,6 +1314,10 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     if (!planned) { result.skipped++; continue; }
     const plannedIso = coerceIsoMaybe(planned)!;
     const plannedStartIso = coerceIsoMaybe(r.plannedStartAt ?? null);
+    // A start with no time of day is stored at 00:00Z; that midnight is not a
+    // shift reading, so it earns no day / night label (PC SCHED-9).
+    const dateOnlyStart = !!plannedStartIso && (r.startHasTime === false
+      || (r.startHasTime === undefined && /^\d{4}-\d{2}-\d{2}$/.test((r.plannedStartAt ?? "").trim())));
     const weight = Number(r.weight ?? 1);
 
     // Carry the source schedule's progress through: MS Project %Complete, P6
@@ -1270,7 +1342,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       outline_level: r.outlineLevel ?? null,
       wbs: r.wbs ?? null,
       is_summary: !!r.isSummary,
-      shift: shiftFromStart(plannedStartIso),
+      shift: dateOnlyStart ? null : shiftFromStart(plannedStartIso),
       work_order_ref: r.workOrderRef ?? null,
       responsible_party: r.responsibleParty ?? null,
       responsible_kind: r.responsibleKind ?? null,
@@ -1280,41 +1352,92 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       attributes: r.attributes && Object.keys(r.attributes).length > 0 ? r.attributes : {},
       import_batch_id: batchId,
     };
-    prepared.push({ index: i, row: r, name, plannedIso, plannedStartIso, planFields, actualFields: fileClaims ? actualFields : undefined, filePercent: fileClaims ? importPct : null, existing: null, id: null });
+    prepared.push({ index: i, row: r, name, plannedIso, plannedStartIso, dateOnlyStart, planFields, actualFields: fileClaims ? actualFields : undefined, filePercent: fileClaims ? importPct : null, existing: null, id: null, rekeyedFrom: null });
   }
 
   // ── One read of what is already there ────────────────────────────
-  const { rows: existingRows, error: readErr } = await fetchExistingImportRows(input);
+  const { rows: existingRows, tier: readTier, error: readErr } = await fetchExistingImportRows(input);
   if (readErr) {
     result.errors.push(`Could not read the existing schedule: ${readErr}. Nothing was written.`);
     return result;
   }
+  // The tier the read answered decides the writes up front: no 20260703 →
+  // the hierarchy fields are dropped; no 20260715 → links are not written.
+  let degradeRoundG = false;   // 20261097 not applied: drop import_batch_id
+  let degradeToLegacy = readTier === "legacy"; // 20260703 not applied: drop the hierarchy fields
+  let depsColumnMissing = readTier !== "full"; // 20260715 not applied: keep the hierarchy, drop the links
   const existingByRef = new Map<string, ExistingImportRow>();
   for (const e of existingRows) if (e.external_ref) existingByRef.set(e.external_ref, e);
   const refToId = new Map<string, string>();
   const fileRefs = new Set<string>();
+  const claimed = new Set<string>();
+  const attach = (p: Prepared, e: ExistingImportRow) => {
+    p.existing = e; p.id = e.id; claimed.add(e.id);
+    if (p.row.externalRef) refToId.set(p.row.externalRef, e.id);
+    // An existing row's shift follows the same rule as a drag (PC SCHED-9):
+    // re-labelled only when its start moves into the other band; a
+    // hand-set label, swing or an unlabelled row is not recomputed, and a
+    // date-only start (no band to read) keeps what is stored.
+    p.planFields.shift = p.dateOnlyStart
+      ? (e.shift ?? null)
+      : shiftAfterMove(e.shift ?? null, e.planned_start_at, p.plannedStartIso);
+  };
   for (const p of prepared) {
     if (!p.row.externalRef) continue;
     fileRefs.add(p.row.externalRef);
     const e = existingByRef.get(p.row.externalRef);
-    if (e) {
-      p.existing = e; p.id = e.id; refToId.set(p.row.externalRef, e.id);
-      // An existing row's shift follows the same rule as a drag (PC SCHED-9):
-      // re-labelled only when its start moves into the other band; a
-      // hand-set label, swing or an unlabelled row is not recomputed.
-      p.planFields.shift = shiftAfterMove(e.shift ?? null, e.planned_start_at, p.plannedStartIso);
-    }
+    if (e) attach(p, e);
+  }
+  // Adoption (PT SCH-3): a keyless row whose content key matches nothing may
+  // be a row imported before content keys — keyed by its POSITION
+  // (`csv-row:N`) — or under an earlier content key. An unclaimed row of the
+  // same tag with the same name (trimmed, case-folded), planned finish and
+  // planned start (as instants) is that row: it is adopted and re-keyed,
+  // keeping its id and the crew's progress, instead of a duplicate being
+  // added beside it. Candidates pair in file order (position rows by index).
+  const candidates = new Map<string, ExistingImportRow[]>();
+  const rowIndex = (ref: string) => Number(ref.slice(ref.indexOf(":") + 1)) || 0;
+  for (const e of existingRows) {
+    const k = keylessRef(e.external_ref);
+    if (!k || claimed.has(e.id) || fileRefs.has(e.external_ref!)) continue;
+    const bucket = `${k.tag}|${String(e.name ?? "").trim().toLowerCase()}`;
+    const list = candidates.get(bucket) ?? [];
+    list.push(e);
+    candidates.set(bucket, list);
+  }
+  for (const list of candidates.values()) {
+    list.sort((a, b) => {
+      const ka = keylessRef(a.external_ref)!, kb = keylessRef(b.external_ref)!;
+      if (ka.kind !== kb.kind) return ka.kind === "row" ? -1 : 1;
+      return ka.kind === "row" ? rowIndex(a.external_ref!) - rowIndex(b.external_ref!) : String(a.external_ref).localeCompare(String(b.external_ref));
+    });
+  }
+  for (const p of prepared) {
+    if (p.existing) continue;
+    const k = keylessRef(p.row.externalRef);
+    if (!k || k.kind !== "key") continue;
+    const list = candidates.get(`${k.tag}|${p.name.toLowerCase()}`);
+    const e = list?.find((c) => !claimed.has(c.id)
+      && samePlanValue("planned_at", c.planned_at, p.plannedIso)
+      && (degradeToLegacy || samePlanValue("planned_start_at", c.planned_start_at, p.plannedStartIso)));
+    if (!e) continue;
+    p.rekeyedFrom = e.external_ref;
+    attach(p, e);
   }
 
   // ── The plan ──────────────────────────────────────────────────────
   const plan: ImportPlan = {
     added: 0, changed: 0, unchanged: 0, notInFile: 0, notInFileNames: [], localProgressAtRisk: [],
-    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rowCap,
+    structure: { rows: 0, onlyStructure: 0, parents: 0, linksAdded: 0, linksRemoved: 0 }, rekeyed: 0, rekeyedOnly: 0, rowCap,
   };
+  // On a legacy database only the columns it has are compared (and written).
+  const compareColumns = degradeToLegacy
+    ? PLAN_COMPARE_COLUMNS.filter((c) => !(NEW_SCHEMA_FIELDS as readonly string[]).includes(c))
+    : PLAN_COMPARE_COLUMNS;
   const planChanged = (p: Prepared, e: ExistingImportRow): boolean =>
-    PLAN_COMPARE_COLUMNS.some((c) => !samePlanValue(c, (e as unknown as Record<string, unknown>)[c], p.planFields[c]));
+    compareColumns.some((c) => !samePlanValue(c, (e as unknown as Record<string, unknown>)[c], p.planFields[c]));
   const progressWouldChange = (p: Prepared, e: ExistingImportRow): boolean =>
-    !!p.actualFields && (Number(e.percent_complete ?? 0) !== (p.filePercent ?? 0) || e.status !== p.actualFields.status);
+    !!p.actualFields && ((!degradeToLegacy && Number(e.percent_complete ?? 0) !== (p.filePercent ?? 0)) || e.status !== p.actualFields.status);
   const writeActuals = (p: Prepared): boolean => {
     if (!p.actualFields) return false;                 // the file says nothing about progress
     if (!p.existing) return true;                      // a new row takes the file's progress
@@ -1328,29 +1451,39 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     if (progressAtRisk) plan.localProgressAtRisk.push({ id: p.existing.id, name: p.existing.name, localPercent: Number(p.existing.percent_complete ?? 0), localStatus: p.existing.status, filePercent: p.filePercent });
     const changed = planChanged(p, p.existing) || (writeActuals(p) && progressWouldChange(p, p.existing));
     if (changed) plan.changed++; else plan.unchanged++;
-    toWrite.push({ p, changed });
+    // A re-keyed row is written even when nothing else changed: it carries
+    // the new key.
+    toWrite.push({ p, changed: changed || !!p.rekeyedFrom });
     // Structure the file would set on this row (a ref the file adds resolves
     // once inserted — counted as a change here, since it cannot equal a
-    // stored id).
-    const planRef = (ref: string): string | null => refToId.get(ref) ?? (fileRefs.has(ref) ? `new:${ref}` : null);
-    const e = p.existing;
-    const wantParentRaw = p.row.parentExternalRef ? planRef(p.row.parentExternalRef) : null;
-    const wantParent = wantParentRaw && wantParentRaw !== e.id ? wantParentRaw : null;
-    const wantDeps = Array.from(new Set((p.row.dependsOnExternalRefs ?? []).map(planRef).filter((x): x is string => !!x && x !== e.id)));
-    const haveDeps = Array.isArray(e.depends_on) ? e.depends_on : [];
-    const parentMoves = (e.parent_id ?? null) !== wantParent;
-    const added = wantDeps.filter((d) => !haveDeps.includes(d)).length;
-    const removed = haveDeps.filter((d) => !wantDeps.includes(d)).length;
-    if (parentMoves || added > 0 || removed > 0) {
-      plan.structure.rows++;
-      if (!changed) plan.structure.onlyStructure++;
-      if (parentMoves) plan.structure.parents++;
-      plan.structure.linksAdded += added;
-      plan.structure.linksRemoved += removed;
+    // stored id). None on a legacy database: the structure pass is skipped.
+    let structureChanges = false;
+    if (!degradeToLegacy) {
+      const planRef = (ref: string): string | null => refToId.get(ref) ?? (fileRefs.has(ref) ? `new:${ref}` : null);
+      const e = p.existing;
+      const wantParentRaw = p.row.parentExternalRef ? planRef(p.row.parentExternalRef) : null;
+      const wantParent = wantParentRaw && wantParentRaw !== e.id ? wantParentRaw : null;
+      const wantDeps = depsColumnMissing ? [] : Array.from(new Set((p.row.dependsOnExternalRefs ?? []).map(planRef).filter((x): x is string => !!x && x !== e.id)));
+      const haveDeps = !depsColumnMissing && Array.isArray(e.depends_on) ? e.depends_on : [];
+      const parentMoves = (e.parent_id ?? null) !== wantParent;
+      const added = wantDeps.filter((d) => !haveDeps.includes(d)).length;
+      const removed = haveDeps.filter((d) => !wantDeps.includes(d)).length;
+      if (parentMoves || added > 0 || removed > 0) {
+        structureChanges = true;
+        plan.structure.rows++;
+        if (!changed) plan.structure.onlyStructure++;
+        if (parentMoves) plan.structure.parents++;
+        plan.structure.linksAdded += added;
+        plan.structure.linksRemoved += removed;
+      }
+    }
+    if (p.rekeyedFrom) {
+      plan.rekeyed++;
+      if (!changed && !structureChanges) plan.rekeyedOnly++;
     }
   }
   for (const e of existingRows) {
-    if (e.external_ref && !fileRefs.has(e.external_ref)) {
+    if (e.external_ref && !fileRefs.has(e.external_ref) && !claimed.has(e.id)) {
       plan.notInFile++;
       if (plan.notInFileNames.length < 10) plan.notInFileNames.push(e.name);
     }
@@ -1359,8 +1492,6 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   if (input.dryRun) return result;
 
   // ── Writes: chunked, cancellable, degrade-aware ───────────────────
-  let degradeRoundG = false;   // 20261097 not applied: drop import_batch_id
-  let degradeToLegacy = false; // 20260703 not applied: drop the hierarchy fields
   const stripForSchema = (fields: Record<string, unknown>): Record<string, unknown> => {
     const out = { ...fields };
     if (degradeRoundG || degradeToLegacy) for (const f of ROUND_G_FIELDS) delete out[f];
@@ -1375,6 +1506,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   });
   const updateFields = (p: Prepared) => stripForSchema({
     ...p.planFields, ...(writeActuals(p) ? p.actualFields : {}),
+    ...(p.rekeyedFrom ? { external_ref: p.row.externalRef } : {}),
     updated_at: new Date().toISOString(), updated_by: input.createdBy,
   });
   // The upsert's INSERT half must be a complete row (NOT NULL columns), so the
@@ -1476,11 +1608,10 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       .map((ref) => refToId.get(ref))
       .filter((x): x is string => !!x && x !== id);
     if (p.existing) {
-      if ((p.existing.parent_id ?? null) === parent_id && sameDeps(p.existing.depends_on, depends_on)) continue;
-    } else if (!parent_id && depends_on.length === 0) continue; // a fresh row is already NULL / []
+      if ((p.existing.parent_id ?? null) === parent_id && (depsColumnMissing || sameDeps(p.existing.depends_on, depends_on))) continue;
+    } else if (!parent_id && (depsColumnMissing || depends_on.length === 0)) continue; // a fresh row is already NULL / []
     structure.push({ id, parent_id, depends_on });
   }
-  let depsColumnMissing = false;
   for (let i = 0; i < structure.length; i += STRUCTURE_CONCURRENCY) {
     if (cancelled()) { result.cancelled = true; result.errors.push(`Import cancelled while wiring structure (${i} of ${structure.length} done). Rows are tagged with batch ${batchId}; re-import the same file to finish.`); return result; }
     const chunk = structure.slice(i, i + STRUCTURE_CONCURRENCY);
@@ -1494,6 +1625,11 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       if (res.error) result.errors.push(`Structure for ${u.id}: ${res.error.message}`);
     }));
     input.onProgress?.({ done: Math.min(i + chunk.length, structure.length), total: structure.length, phase: "structure" });
+  }
+  if (depsColumnMissing && prepared.some((p) => (p.row.dependsOnExternalRefs?.length ?? 0) > 0)) {
+    result.errors.push(
+      "Heads up: migration 20260715_milestone_dependencies.sql hasn't been applied to your database, so the file's predecessor links were not imported (the hierarchy was). Run the migration in Supabase SQL Editor and re-import to get the links.",
+    );
   }
 
   return result;

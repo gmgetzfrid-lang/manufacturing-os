@@ -10,7 +10,16 @@
 --   * DEC-35: the schedule-editing predicate lives in ONE helper,
 --     can_edit_project_schedule (caller_holds_any_role over the same four
 --     roles 20260907 listed, OR the project owner) — the baseline RPCs in
---     20261099 enforce the same predicate. No widening: same set as before.
+--     20261099 enforce the same predicate. The four roles and the owner are
+--     unchanged, but the READ is aligned to the DEC-35 funnel: 20260907 read
+--     COALESCE(roles, ARRAY[role]) — the headline role only when roles[] is
+--     NULL — while caller_holds_any_role reads role = ANY(...) OR roles &&
+--     (...). A member whose headline role is one of the four but whose
+--     roles[] is set and holds none of them (role 'Supervisor', roles
+--     {'Engineer'}) was refused before and is admitted now. That is the one
+--     widening, deliberate (the additive-roles rule: the headline role is a
+--     held role); the inventory counts those members BEFORE the apply. The
+--     anon key loses EXECUTE (a narrowing).
 --   * SCH-7: each move may carry expected_updated_at; the UPDATE adds it to
 --     the WHERE, so a row edited since the caller loaded it is left alone and
 --     returned in `unmatched`. The count is ROW_COUNT, not the request size.
@@ -29,6 +38,13 @@ CREATE TEMP TABLE prj_roundg_moves_inventory AS
 SELECT 'inventory: anon could EXECUTE apply_milestone_moves before this migration' AS check,
        CASE WHEN to_regprocedure('public.apply_milestone_moves(uuid,uuid,jsonb)') IS NULL THEN 'function absent'
             ELSE has_function_privilege('anon', 'public.apply_milestone_moves(uuid,uuid,jsonb)', 'EXECUTE')::text END AS n
+UNION ALL
+SELECT 'inventory: active members admitted by the DEC-35 funnel but refused by 20260907 (headline role Admin/DocCtrl/Manager/Supervisor, roles[] set and holding none of them)',
+       COUNT(*)::text
+  FROM org_members
+ WHERE status = 'active' AND roles IS NOT NULL
+   AND role = ANY(ARRAY['Admin','DocCtrl','Manager','Supervisor'])
+   AND NOT roles && ARRAY['Admin','DocCtrl','Manager','Supervisor']
 UNION ALL
 SELECT 'inventory: imported rows carrying a stored shift (SCHED-9 recompute candidates; recompute is opt-in per project)',
        COUNT(*)::text

@@ -21,6 +21,11 @@ export interface ParsedMilestone {
   plannedAt: string;            // ISO
   /** Scheduled START — optional but populated by every modern source. */
   plannedStartAt?: string | null;
+  /** False when the source's start carried a date but no time of day (a CSV
+   *  "2026-01-03" / "1/3/26" / "June 1, 2026"): it is stored at 00:00Z, and
+   *  that midnight is not a shift reading, so a new row gets no day / night
+   *  label (PC SCHED-9). Undefined when the parser does not say. */
+  startHasTime?: boolean;
   weight?: number;
   description?: string | null;
   /** Stable id from the source file so re-imports upsert. */
@@ -167,10 +172,12 @@ export function isoDurationToHours(raw: string | null | undefined): number | nul
 }
 
 /** "40 hrs" / "5 days" / "2 wks" / "480 mins" / "40" (CSV Work / Duration)
- *  → hours. Days are 8-hour working days, weeks 40. */
+ *  → hours. Days are 8-hour working days, weeks 40. A trailing "?" is MS
+ *  Project's estimated-duration marker ("5 days?") — the value is read, the
+ *  marker is not a reason to drop it. */
 export function durationTextToHours(raw: string | null | undefined): number | null {
   if (!raw) return null;
-  const m = raw.trim().match(/^(-?\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?|eeks?)?|h(?:rs?|ours?)?|m(?:ins?|inutes?)?)?\.?$/i);
+  const m = raw.trim().match(/^(-?\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?|eeks?)?|h(?:rs?|ours?)?|m(?:ins?|inutes?)?)?\??\.?$/i);
   if (!m) return null;
   const n = Number(m[1]);
   const u = (m[2] ?? "h").toLowerCase();
@@ -1006,7 +1013,8 @@ function parsePredToken(tok: string): { id: string; type: RelationshipType; lagH
   const rest = m[3].trim();
   if (!rest) return { id: m[1], type, lagHours: 0 };
   if (!/^[+-]/.test(rest)) return null; // not a lag at all — the token is unreadable
-  const lag = rest.match(/^([+-])\s*(\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?|eeks?)?|h(?:rs?|ours?)?|m(?:ins?|inutes?)?)?\.?$/i);
+  // A trailing "?" is MS Project's estimated-duration marker ("1FS+1 day?").
+  const lag = rest.match(/^([+-])\s*(\d+(?:\.\d+)?)\s*(e?d(?:ays?)?|e?w(?:ks?|eeks?)?|h(?:rs?|ours?)?|m(?:ins?|inutes?)?)?\??\.?$/i);
   const hours = lag ? (Number(lag[2]) === 0 ? 0 : durationTextToHours(`${lag[2]}${lag[3] ?? "h"}`)) : null;
   if (!lag || hours === null) return { id: m[1], type, lagHours: 0, lagRaw: rest };
   return { id: m[1], type, lagHours: hours * (lag[1] === "-" ? -1 : 1) };
@@ -1084,6 +1092,7 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
     if (!plannedIso) { unreadableDates++; continue; }
     const startRaw = cell(iStart);
     const startIso = startRaw ? (coerceIso(startRaw, ctx.conv) || null) : null;
+    const startHasTime = startIso ? hasTimeOfDay(startRaw) : undefined;
     const id     = cell(iKey);
     const pctRaw = iPct >= 0 ? cells[iPct]?.trim().replace(/[%"]/g, "") : "";
     const desc   = cell(iDesc);
@@ -1115,6 +1124,7 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
       name,
       plannedAt: plannedIso,
       plannedStartAt: startIso,
+      ...(startHasTime !== undefined ? { startHasTime } : {}),
       weight: isNaN(weight) ? 1 : weight,
       externalRef,
       description: desc || null,
@@ -1349,10 +1359,17 @@ function childText(parent: Element, tag: string): string {
 //                                 whole file by detectDateConvention — never per row)
 //   Mon 6/1/26 / Tue. 15/08/2026 (MS Project's default display: the day name is
 //                                 dropped, the rest read per the file's convention)
+//   2026/06/01 8:00 / 2026.6.1   (year-first, as ja / zh / ko exports write it:
+//                                 always year / month / day, no question to ask)
+//   June 1, 2026 8:00 AM         (written-out month: read by Date(), then its
+//                                 WALL CLOCK re-emitted as UTC — never the
+//                                 browser's zone)
 // Returns "" when the value cannot be a date under the file's convention, so
 // the caller can count and report it instead of handing Postgres a month 15.
 // A value holding a d/m/y triple is NEVER handed to `new Date()`, which always
 // reads month-first in the browser's zone whatever the file decided (PT SCH-1).
+// Every branch emits wall-clock-as-UTC ("…Z"), so the same file reads the same
+// on every machine (PC SCHED-9).
 export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
   const raw = s.trim();
   // The day name is dropped for the numeric forms only; the Date() fallback
@@ -1384,13 +1401,44 @@ export function coerceIso(s: string, conv: DateConvention = "mdy"): string {
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${y.toString().padStart(4, "0")}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:${pad(ss)}Z`;
   }
+  // Year-first ("2026/06/01 8:00", "2026.6.1", "2026-6-1"): always Y/M/D.
+  const m3 = trimmed.match(YEAR_FIRST);
+  if (m3) {
+    const y = Number(m3[1]); const month = Number(m3[2]); const day = Number(m3[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+    let hh = m3[4] ? Number(m3[4]) : 0;
+    const mm = m3[5] ? Number(m3[5]) : 0;
+    const ss = m3[6] ? Number(m3[6]) : 0;
+    if (m3[7]) { const pm = /p/i.test(m3[7]); if (pm && hh < 12) hh += 12; if (!pm && hh === 12) hh = 0; }
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${y.toString().padStart(4, "0")}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:${pad(ss)}Z`;
+  }
   // A d/m/y triple that did not match above (trailing text, a stray token):
   // unreadable under the file's convention — counted, never guessed.
   if (SLASH_TRIPLE.test(raw)) return "";
   // Last resort — let Date try (written-out months such as "June 1, 2026").
+  // Date() reads an offset-less value in the BROWSER's zone, so its local
+  // wall clock is re-emitted as UTC; a value that names its own zone (GMT,
+  // UTC, ±hh:mm) keeps the instant it names.
   const d = new Date(raw);
-  if (!isNaN(d.getTime())) return d.toISOString();
+  if (!isNaN(d.getTime())) {
+    if (NAMES_ITS_ZONE.test(raw)) return d.toISOString();
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds())).toISOString();
+  }
   return raw; // hand it to the importer; if invalid, Supabase will reject.
+}
+
+/** Year / month / day with any of / . - and an optional time ("2026/06/01",
+ *  "2026.6.1 8:00", "2026/06/01 5:30 PM"). */
+const YEAR_FIRST = /^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?$/;
+/** A date string that names its own zone: "… GMT", "… UTC", or a time
+ *  followed by "Z" / "±hh:mm" ("08:00+02:00"). A bare "-2026" is a year. */
+const NAMES_ITS_ZONE = /\b(?:GMT|UTC)\b|\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:Z|[+-]\d{2}:?\d{2})\b/i;
+
+/** True when a date cell carries a time of day ("8:00", "2026-06-01T08:00").
+ *  A date-only start is stored at 00:00Z, which is not a shift reading. */
+export function hasTimeOfDay(raw: string | null | undefined): boolean {
+  return !!raw && /\d{1,2}:\d{2}/.test(raw);
 }
 
 // Same minimal CSV split as before, but parameterizable by delim.

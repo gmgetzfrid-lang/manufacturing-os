@@ -1292,7 +1292,7 @@ facility with no configuration must keep working exactly as it does today.
 
 **Risk:** medium — wide, but mechanical.
 
-*Landed 2026-09-23 (projects Round G): the schedule-editing predicate — `can_edit_project_schedule(p_org, p_project)` in `20261098`, `caller_holds_any_role` over the four roles `20260907` listed inline, or the project owner — is read by `apply_milestone_moves`, `set_project_baseline` and `clear_project_baseline` (`20261099`) instead of a fresh literal in each; registered as a collection funnel in `authorityCensus.test.ts`. See `SCHED-4`, `SCHED-3`.*
+*Landed 2026-09-23 (projects Round G): the schedule-editing predicate — `can_edit_project_schedule(p_org, p_project)` in `20261098`, `caller_holds_any_role` over the four roles `20260907` listed inline, or the project owner — is read by `apply_milestone_moves`, `set_project_baseline` and `clear_project_baseline` (`20261099`) instead of a fresh literal in each; registered as a collection funnel in `authorityCensus.test.ts`. Aligning the read to the funnel admits one member class `20260907`'s `COALESCE(roles, ARRAY[role])` refused — a headline role among the four with a `roles[]` that holds none of them — inventoried before the apply in `20261098`'s result set. See `SCHED-4`, `SCHED-3`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -1716,22 +1716,32 @@ file" and left alone — removal is a separate explicit action; (3) progress,
 status and actual dates recorded in the app survive a re-import unless the
 user opts in per import; (4) identity is the source system's id where one
 exists, otherwise a hash of the row's own content — never its position and
-never its name alone; (5) relationship type and lag are captured on every
+never its name alone; a row imported before content keys (keyed by its
+position) is adopted when its name and planned dates match, never added
+beside itself; and a keyless row whose name or dates change becomes a new
+row, the old one reported as "not in this file" — the fail-safe, said in
+words in the review panel; (5) relationship type and lag are captured on every
 link; the engine honours finish-to-start, and everything else is stored on
 the task and reported as "not enforced" until the reflow has its own test;
 (6) a file that holds several projects asks which one and never merges; (7)
 MS Project's Predecessors resolve through the ID column, and an unresolvable
 token is counted, not guessed; (8) a level-0 summary row is the root parent,
-not a sibling leaf; (9) a day / night shift label follows its task when the
+not a sibling leaf; (9) every date form is read as wall-clock-as-UTC (never
+the importer's zone), and a day / night shift label follows its task when the
 start moves into the other band (every date-writing path, one rule) — an
-unlabelled row stays unlabelled, a hand-set swing is kept, and existing rows
-are recomputed in bulk only on request; (10) the approved baseline is set and
-cleared only through RPCs that enforce the schedule-editing predicate, keep
-every prior snapshot, and audit themselves — a guard refuses a direct
-baseline write on UPDATE and on INSERT; (11) a batch move
+unlabelled row stays unlabelled, a hand-set swing is kept, a date-only start
+(stored at 00:00Z) earns no label, and existing rows are recomputed in bulk
+only on request; (10) the approved baseline is set and cleared only through
+RPCs that enforce the schedule-editing predicate, keep every prior snapshot,
+and audit themselves — a guard refuses a direct baseline write on UPDATE and
+on INSERT, and the RPCs' pass names the project and lasts only for their own
+UPDATE; (11) a batch move
 leaves a per-row reschedule breadcrumb, the same one a single edit leaves;
 (12) an import is capped at 5 MB / 5,000 rows, shows progress, can be
-cancelled, and tags every row it touched with its batch id.**
+cancelled, and tags every row it touched with its batch id; (13) what is
+written is what was reviewed — a change to the column review discards the
+plan — and a batch move the lock rejected is reported as an error, never a
+success.**
 
 > Made during projects Round G (2026-09-23) under the protocol's fail-safe
 > rule, taking the defaults the fleet plan proposed for `GAP-403`, `SCH-1`,
@@ -1746,9 +1756,10 @@ flattening SS / FF to FS — each looked cheaper and each was a data-integrity
 defect in the audit.
 
 **Implementation.** `lib/scheduleParsers.ts` (`detectDateConvention`,
-`contentKey`, `ParsedLink`, `ParseOptions`, `SCHEDULE_IMPORT_LIMITS`),
-`lib/milestones.ts` (`importMilestonesFromParsed` with `dryRun` /
-`overwriteProgress` / `signal` / `onProgress`, `applyMilestoneMoves`,
+`contentKey`, `hasTimeOfDay`, `ParsedLink`, `ParseOptions`,
+`SCHEDULE_IMPORT_LIMITS`), `lib/milestones.ts` (`importMilestonesFromParsed`
+with `dryRun` / `overwriteProgress` / `signal` / `onProgress` and the
+position-row adoption, `applyMilestoneMoves` / `MoveConflictError`,
 `setBaseline` / `clearBaseline`), `lib/scheduleFilter.ts` (`shiftForStart`,
 `shiftAfterMove`),
 `components/projects/ScheduleImportModal.tsx`, migrations `20261097`,
@@ -1757,7 +1768,8 @@ defect in the audit.
 **Acceptance.** Inserting a row at the top of a source file leaves every
 other row's identity and progress intact; a genuinely ambiguous date file
 imports nothing until asked; a re-import with no changes issues no write
-(against PostgREST's `+00:00` timestamp rendering); an
+(against PostgREST's `+00:00` timestamp rendering); the first re-import of
+an unchanged keyless file imported by position adds nothing; an
 SS + FF ladder creates no cycle; the anon key cannot call the batch-move or
 baseline RPCs.
 
