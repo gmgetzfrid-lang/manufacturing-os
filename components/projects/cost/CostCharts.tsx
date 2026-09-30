@@ -47,18 +47,20 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
   const { series, forecast, manpower } = useMemo(() => {
     if (!hasRealData) return { series: [], forecast: null, manpower: [] };
     const { commitments, actuals } = entriesToDated(entries);
+    // The planned line and the forecast plan against the same (revised) budget.
     const series = buildCostSeries({
-      budget: rollup.budget, scheduleStart, scheduleEnd, commitments, actuals,
+      budget: rollup.revisedBudget, scheduleStart, scheduleEnd, commitments, actuals,
     });
     const forecast = computeForecast({
-      budget: rollup.budget, spent: rollup.spent, cpi: rollup.cpi,
+      budget: rollup.revisedBudget, spent: rollup.spent, cpi: rollup.cpi,
+      pinnedBudget: rollup.pinnedBudget, pinnedSpent: rollup.pinnedSpent,
       scheduleStart, scheduleEnd, today: todayIso, fmt,
     });
     const manpower = awardedLaborHours && scheduleStart && scheduleEnd
       ? plannedManpowerSeries({ laborHours: awardedLaborHours, scheduleStart, scheduleEnd })
       : [];
     return { series, forecast, manpower };
-  }, [hasRealData, entries, rollup.budget, rollup.spent, rollup.cpi, scheduleStart, scheduleEnd, awardedLaborHours, todayIso, fmt]);
+  }, [hasRealData, entries, rollup.revisedBudget, rollup.spent, rollup.cpi, rollup.pinnedBudget, rollup.pinnedSpent, scheduleStart, scheduleEnd, awardedLaborHours, todayIso, fmt]);
 
   // ── Example preview: the same components, stand-in data, watermarked ──
   if (!hasRealData) {
@@ -119,7 +121,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
           )}
         </div>
       )}
-      {forecast?.sentence && <ForecastSentence sentence={forecast.sentence} basis={forecast.basis} />}
+      {forecast?.sentence && <ForecastSentence sentence={forecast.sentence} basis={forecast.basis} scopeNote={forecast.scopeNote} />}
       {manpower.length > 0 && (
         <div>
           <SectionLabel icon={<Users className="w-3.5 h-3.5" />} text="Planned crew size by week (from the awarded bid's hours)" />
@@ -139,7 +141,7 @@ function SectionLabel({ icon, text }: { icon?: React.ReactNode; text: string }) 
   );
 }
 
-function ForecastSentence({ sentence, basis }: { sentence: string; basis: "cpi" | "run_rate" | "none" }) {
+function ForecastSentence({ sentence, basis, scopeNote }: { sentence: string; basis: "cpi" | "run_rate" | "none"; scopeNote?: string | null }) {
   const over = /over budget/.test(sentence);
   return (
     <div className={`rounded-xl border px-3 py-2.5 text-sm font-bold ${
@@ -148,6 +150,8 @@ function ForecastSentence({ sentence, basis }: { sentence: string; basis: "cpi" 
       {sentence}
       <span className="ml-2 text-[10px] font-bold text-[var(--color-text-muted)]">
         {basis === "cpi" ? "Based on cost performance so far (CPI)." : "Based on the spending pace against the schedule."}
+        {/* COST-1 dw2: which portion of the budget the CPI-based EAC covers. */}
+        {scopeNote ? ` ${scopeNote}` : ""}
       </span>
     </div>
   );

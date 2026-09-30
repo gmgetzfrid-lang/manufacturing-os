@@ -258,6 +258,51 @@ describe("BID-10 / BID-7 / COST-13 at award time", () => {
     expect(text).toMatch(/read pages 1–8 of 14/);
     expect(`${opts.title} ${text} ${opts.placeholder}`).not.toMatch(/140[,.]?000/);
     expect(cd.awardQuote).toHaveBeenCalledTimes(1);   // the typed figure matched the row
+    // Integration (J3 x J4): the typed figure itself reaches the lib as
+    // confirmedTotal — the lib's truncated-read refusal needs it.
+    expect(cd.awardQuote.mock.calls[0][0].confirmedTotal).toBe(140000);
+  });
+
+  it("the override reason reaches the lib with the award (J3 x J4: the lib refuses a flagged company without it)", async () => {
+    reg.listCompanies.mockResolvedValue([apex]);
+    reg.listBarredCompanies.mockResolvedValue([apex]);
+    dlg.appPrompt.mockResolvedValue("Sole qualified bidder");
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+    await render();
+    await awardOn(/Apex/);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe("Sole qualified bidder");
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+  });
+
+  it("a flag the lib finds and the table did not (an inactive company) asks for a reason, records the intent, and retries with it", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    dlg.appConfirm.mockResolvedValue(true);
+    dlg.appPrompt.mockResolvedValue("Reactivated vendor, paperwork pending");
+    cd.awardQuote
+      .mockResolvedValueOnce({ ok: false, error: "Bayline is marked inactive in the company registry.", needsOverride: { companyId: "c-bay", companyName: "Bayline", status: "inactive" } })
+      .mockResolvedValueOnce({ ok: true });
+    await render();
+    await awardOn(/Bayline/);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(2);
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason ?? null).toBeNull();
+    expect(cd.awardQuote.mock.calls[1][0].overrideReason).toBe("Reactivated vendor, paperwork pending");
+    expect(String(dlg.appPrompt.mock.calls.at(-1)![0].title)).toMatch(/Bayline is marked INACTIVE/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(db.inserts[0].row.details).toMatchObject({ companyId: "c-bay", companyStatus: "inactive", reason: "Reactivated vendor, paperwork pending" });
+  });
+
+  it("no reason for a lib-found flag stops the award and records nothing", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    dlg.appConfirm.mockResolvedValue(true);
+    dlg.appPrompt.mockResolvedValue(null);
+    cd.awardQuote.mockResolvedValueOnce({ ok: false, error: "flagged", needsOverride: { companyId: "c-bay", companyName: "Bayline", status: "inactive" } });
+    await render();
+    await awardOn(/Bayline/);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(auditActions()).toEqual([]);
+    expect(errors.at(-1)).toMatch(/no override reason was given/);
   });
 });
 

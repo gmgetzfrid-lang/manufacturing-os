@@ -73,7 +73,7 @@ to `app/(protected)/companies/`, modelled on the projects route's.
 ## REL-2 · A broken Costs tab is pixel-identical to a brand-new one
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** diagnosability / trust
 - **Locations:**
@@ -103,6 +103,16 @@ the bytes, or clean up the orphan on insert failure.
 **Done when.**
 - A failed read renders a failure state, not an empty state.
 - A failed insert does not leave an orphaned R2 object.
+
+**Resolution (2026-09-29, projects Round G).** Joint J3 MONEY-LEDGER. The list readers throw on a failed read and the tab renders the failure: `lib/costs.ts` `listParties` / `listAccounts` / `listEntries` and `lib/costDocs.ts` `listCostDocs` destructure `{ data, error }` and throw `Couldn't load <thing>: <message>`; `components/projects/CostsTab.tsx` `refresh` drops the dead `.catch(() => [])` "pre-migration tolerance", also throws on a milestones read error, loads change orders and the ledger orphans in the same `Promise.all`, and the existing `try/catch` now sets the banner — so a broken tab shows the rose failure banner instead of four `$0` tiles and EXAMPLE charts. `lib/projectSnapshot.ts` / `lib/projectReport.ts` already wrap these readers in `safe(…, [])` (unchanged). `uploadCostDoc`: a failed row insert after the R2 upload now calls `deleteFile(key)` (best effort) so the object is not orphaned.
+- Tests: `lib/__tests__/costDocs.test.ts` — "a failed read THROWS instead of returning an empty list" (`listAccounts`, `listCostDocs`), "a failed insert after the upload removes the orphaned object".
+- Reproduced at the base commit: `const { data } = await …` at all four sites.
+
+**Done-when.**
+1. ✓ A failed read renders a failure state, not an empty state.
+2. ✓ A failed insert does not leave an orphaned R2 object (best-effort delete; the orphan collector ILIFE-1 / BKP-2 remains the backstop).
+
+**Scope / residual.** The `{ data }`-only reads in `lib/companies.ts`, `lib/checklists.ts` and `lib/turnover.ts` (the "8 sites") belong to J4 / J2 and are not touched here; `UX-10` / `REL-10` are PT's component-wide packages.
 
 ---
 
@@ -181,6 +191,17 @@ but the three above remove the user-visible damage for far less work.
 - No label lookup can return `undefined`.
 - `fmtMoney(NaN)` never renders "$NaN".
 - The database rejects an unmapped status or kind.
+
+**Partial (2026-09-29, projects Round G — the money tables + `fmtMoney`; the quality-table CHECKs are P2/J2's migration).** Joint J3 MONEY-LEDGER. (1) Migration `20261093` adds `cost_documents_status_check` and `cost_documents_kind_check` (NOT VALID; inventory of rows outside either set before apply). (2) Label lookups on the money surfaces are total: `costDocStatusLabel(status)` in `lib/costDocs.ts` (used by every status message and the data-health line), `CO_REASON_LABEL[co.reasonCode] ?? co.reasonCode` in `ChangeOrdersPanel.tsx`. (3) `lib/costs.ts` `num()` guards every `Number(…)` in `mapParty` / `mapAccount` / `mapEntry` with `Number.isFinite` (0 otherwise); `lib/changeOrders.ts` `rowToCo` and `lib/costDocs.ts` `mapDoc` guard `amount` / `total_amount` the same way; `fmtMoney` renders an em-dash for a non-finite input.
+- Tests: `lib/__tests__/costs.test.ts` "never renders $NaN"; `lib/__tests__/costDocs.test.ts` "a non-numeric amount enters the model as 0…"; `lib/__tests__/moneyRailsMigration.test.ts` pins both CHECKs.
+- Pending migration: `20261093_prj_roundG_money_rails.sql`.
+
+**Done-when.**
+1. ✓ for the money surfaces (cost-doc status, CO reason); the turnover-status / checklist-kind / company-kind lookups are J2's / J4's files.
+2. ✓ `fmtMoney(NaN)` never renders "$NaN".
+3. ✓ The database rejects an unmapped cost-document status or kind (once `20261093` is applied); the quality tables are J2's migration.
+
+**Scope / residual.** OPEN for the other areas' lookups and CHECKs. A zod row-validation layer is not attempted (DEC-31).
 
 ---
 
@@ -382,6 +403,20 @@ also pure cost, per report `09`).
 - The remaining dead declarations are removed.
 
 *Landed 2026-09-29 (projects Round G, J4 limb): `companies.status = 'inactive'` now has one visible effect: the bid tab shows an "inactive" chip beside a bidder resolved to an inactive registry row (`QuotesPanel.tsx`), and 20261095 guards the status CHECK. Whether `inactive` should filter or block closes in P3.*
+
+**Partial (2026-09-29, projects Round G — the change-order unwind and the dead cost states; the checklist void is P2/J2's, companies `inactive` is P9's).** Joint J3 MONEY-LEDGER (projects-and-cost pair `COST-9`). `lib/changeOrders.ts`: `ChangeOrder` maps `postedEntryId` (and `createdBy` / `decidedBy` / `selfDecided`); `unwindChangeOrder({ co, note, actorId })` reverses an approved CO in one action — voids EXACTLY `posted_entry_id` through `lib/costs.voidEntry`, then claims the CO approved → void, and records `CHANGE_ORDER_VOIDED` with `reversedEntryId` (the outcome that could never be emitted). *(As first shipped it claimed the CO first and put it back when the entry void failed; that order and its put-back were replaced in the verification fixes below — the current flow is the second and third passes.)* `components/projects/cost/ChangeOrdersPanel.tsx` renders "Reverse" on approved rows (reason prompt; the parent's rollup refreshes). A CO with no linked entry is refused and pointed at the "Ledger needs attention" line. `posted_entry_id` is now read by the unwind, the orphans query and the Costs tab's entry-row source label. `CostEntry.sourceDocumentId` is populated by award / post (`COST-9`).
+- Review fix pass 2: at the base the only unwind was voiding the CO's entry by hand on the Costs tab, which left the CO "approved"; the first cut's Reverse then failed on exactly those rows (`voidEntry` matched zero rows on an already-void entry and the CO was put back) and nothing listed them. Now `unwindChangeOrder` re-reads the entry on a zero-row void and, when it is already `void`, completes — the CO goes void and `CHANGE_ORDER_VOIDED` records `alreadyVoided: true` (no second void, no second audit row on the entry). Such approvals stop revising the budget (`COST-4`), are listed under "Ledger needs attention", and `repairChangeOrder` links or reverses them (`COST-11` dw3). A reversal's note names the reverser and the date ("Reversed by bob on 2026-09-30: …") while `decided_by` keeps the approver, and the CO row reads "approved by <approver> on <date> · reversed" instead of crediting the approver with the void.
+- Tests: `lib/__tests__/costDocs.test.ts` — "the unwind voids EXACTLY posted_entry_id, marks the CO void and records the entry id" (now also pins the reverser's note and the approver kept), "an unwind with no linked entry is refused …; a failed void changes nothing" (as first shipped: "… a failed void puts the CO back"), "Reverse on an approved CO whose entry is ALREADY void voids the CO (alreadyVoided) instead of putting it back".
+- **Verification fix (2026-09-30, projects Round G).** An independent verification pass found Reverse on a CO whose entry is already void skipped the look-alike check `repairChangeOrder`'s reverse enforces — a CO whose entry was voided and its money re-posted by hand (a posted, unlinked commitment carrying the CO number on its line) could be voided while that money stayed on the ledger with no change order behind it. `lib/changeOrders.ts` `unwindChangeOrder` now reads the linked entry BEFORE the claim: already void → the same `lookalikeEntries` check, refused while such a commitment remains ("… link it under "Ledger needs attention" … or void it by hand first"); missing → refused before anything is written, pointing at "Ledger needs attention". Tests: "REL-9 (verification fix): Reverse on an already-void entry applies the repair's look-alike check …"; "an unwind with no linked entry is refused …" pins the missing-entry refusal.
+- **Verification fix, second pass (2026-09-30, projects Round G).** The claim-first unwind needed a void → approved put-back when the entry void failed, and the `20261094` branch that admitted it was exploitable (a CO inserted with a preset link could be withdrawn and "put back" to approved — `COST-6`). `unwindChangeOrder` now moves the money FIRST: it voids exactly `posted_entry_id` (a failed void changes nothing — the CO stays approved, and the error says so), then claims the CO approved → void with the compare-and-swap. There is no put-back, and void is terminal at the database for signed-in callers (the CO in `20261094`, the entry in `20261093`). If the CO claim fails after the entry was voided, the error says so and the CO — approved, its entry void — no longer revises the budget and is listed under "Ledger needs attention", where Reverse finishes it (`alreadyVoided`); a concurrent reversal that won is named ("Someone else just reversed CO-…"). An entry found void when the void was attempted (a concurrent unwind or a hand void) gets the look-alike check too, before the CO is claimed. Tests: "an unwind with no linked entry is refused …; a failed void changes nothing", "second verification fix: the unwind voids the entry BEFORE the CO — a CO claim that then fails is said out loud and leaves a listed orphan …".
+- **Verification fix, third pass (2026-09-30, projects Round G).** The money-first claim matched only `status = 'approved'`: between the entry void and the claim a second user could repair-link the CO to a posted look-alike (the guard allows repointing away from a void entry), and the claim still voided the CO — void over a posted entry that `cost_ledger_orphans` does not list. The claim now also carries `.eq("posted_entry_id", entryId)` (the link it voided); on zero rows the lib re-reads and says whether someone else reversed it or it was re-linked ("… was re-linked to another cost entry while it was being reversed — its old entry is void, and it stays approved on the new one"). Test: "third verification fix: the unwind's claim is pinned to the link it voided …"; the second-pass test's title no longer claims "never a void CO over posted money" (a posted look-alike the unwind was not asked about can still remain beside a reversed CO).
+
+**Done-when.**
+1. ✗ NOT DONE HERE — a mistaken checklist's void is J2's (`lib/checklists.ts` / QualityTab).
+2. ✓ An approved change order can be unwound in one action that voids exactly its entry — including one whose entry was already voided by hand.
+3. ✗ Partly — `posted_entry_id` is no longer dead. `kind: "po"` is RETAINED (the `20261093` CHECK admits it so a restored row cannot violate it; there is still no creator) and `companies.status: 'inactive'` gained behaviour in `MON-12` instead of being removed; `trend`, `equipmentTags`, `HistoryPanels`' `scorecard`, `setup_state` and `addEvidence` are other packages' files.
+
+**Scope / residual.** OPEN for J2's checklist void and the remaining dead declarations outside the money files.
 
 ---
 

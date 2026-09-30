@@ -89,53 +89,93 @@ export interface Forecast {
   basis: "cpi" | "run_rate" | "none";
   /** Plain-English one-liner ready to render. */
   sentence: string | null;
+  /** COST-1: which portion of the budget the CPI covers, in words — the
+   *  label the Costs tab and the report print beside a CPI-based EAC. Null
+   *  when the basis is not CPI. */
+  scopeNote: string | null;
 }
 
 /**
  * Forecast in words. Preferred basis: CPI (budget / CPI — the AACE-standard
  * EAC when performance continues). Fallback: straight run-rate against the
  * schedule span. No data → honest null, never a fabricated number.
+ *
+ * COST-1: CPI is measured over the milestone-PINNED accounts only, so the
+ * CPI branch divides only the pinned budget by it. The unpinned remainder
+ * has no earned-value evidence, so it is carried AT ITS BUDGET — a spend
+ * pace (when the schedule gives one) may raise it above budget, never lower
+ * it below: a barely-started line ($1 at 50% elapsed) projects a pace of
+ * $2, and carrying that would drop the rest of its budget from the EAC and
+ * print "under budget" in emerald. Every part is floored at what it has
+ * already spent, so the EAC can never fall below money already spent. When
+ * the caller does not say how much of the budget is pinned, CPI is applied
+ * to the whole budget as before, floored at spent, and the note says so.
  */
 export function computeForecast(input: {
   budget: number;
   spent: number;
   cpi: number | null;
+  /** The pinned subset `cpi` was measured on (ProjectCostRollup.pinnedBudget / pinnedSpent). */
+  pinnedBudget?: number | null;
+  pinnedSpent?: number | null;
   scheduleStart?: string | null;
   scheduleEnd?: string | null;
   today: string;
   fmt: (n: number) => string;
 }): Forecast {
   const { budget, spent, cpi, fmt } = input;
-  if (budget <= 0 || spent <= 0) {
-    return { eac: null, varianceAtCompletion: null, basis: "none", sentence: null };
-  }
+  const none: Forecast = { eac: null, varianceAtCompletion: null, basis: "none", sentence: null, scopeNote: null };
+  if (budget <= 0 || spent <= 0) return none;
+
+  const s = input.scheduleStart ? toMs(input.scheduleStart) : NaN;
+  const e = input.scheduleEnd ? toMs(input.scheduleEnd) : NaN;
+  const now = toMs(input.today);
+  const elapsed = Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(now) && now > s && e > s
+    ? Math.min((now - s) / (e - s), 1) : NaN;
+  const runRateUsable = Number.isFinite(elapsed) && elapsed >= 0.05;
+
   if (cpi != null && cpi > 0) {
-    const eac = budget / cpi;
+    let eac: number;
+    let scopeNote: string;
+    if (input.pinnedBudget == null) {
+      eac = Math.max(budget / cpi, spent);
+      scopeNote = "CPI is measured on the schedule-pinned accounts and applied to the whole budget here.";
+    } else {
+      const pinnedBudget = Math.max(0, Math.min(input.pinnedBudget, budget));
+      const pinnedSpent = Math.max(0, Math.min(input.pinnedSpent ?? 0, spent));
+      const rest = budget - pinnedBudget;
+      const restSpent = spent - pinnedSpent;
+      const eacPinned = Math.max(pinnedBudget / cpi, pinnedSpent);
+      const pace = runRateUsable && restSpent > 0 ? restSpent / elapsed : null;
+      const restByPace = pace != null && pace > Math.max(rest, restSpent);
+      const eacRest = rest <= 0
+        ? Math.max(0, restSpent)
+        : Math.max(rest, restSpent, pace ?? 0);
+      eac = eacPinned + eacRest;
+      const share = Math.round((pinnedBudget / budget) * 100);
+      scopeNote = rest <= 0
+        ? "CPI covers the whole budget — every account is pinned to a schedule task."
+        : `CPI applies to the ${share}% of budget pinned to schedule tasks (${fmt(pinnedBudget)}); the other ${fmt(rest)} is carried ${restByPace ? "at the current spend pace, which runs above its budget" : restSpent <= 0 ? "at budget (nothing spent on it yet)" : restSpent > rest ? "at what it has already spent (above its budget)" : "at budget (no earned-value evidence to project it lower)"}.`;
+    }
     const vac = eac - budget;
     return {
-      eac, varianceAtCompletion: vac, basis: "cpi",
+      eac, varianceAtCompletion: vac, basis: "cpi", scopeNote,
       sentence: vac > 0
         ? `At this performance you'll finish around ${fmt(eac)} — ${fmt(vac)} over budget.`
         : `At this performance you'll finish around ${fmt(eac)} — ${fmt(Math.abs(vac))} under budget.`,
     };
   }
-  const s = input.scheduleStart ? toMs(input.scheduleStart) : NaN;
-  const e = input.scheduleEnd ? toMs(input.scheduleEnd) : NaN;
-  const now = toMs(input.today);
-  if (Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(now) && now > s && e > s) {
-    const elapsed = Math.min((now - s) / (e - s), 1);
-    if (elapsed >= 0.05) {
-      const eac = spent / elapsed;
-      const vac = eac - budget;
-      return {
-        eac, varianceAtCompletion: vac, basis: "run_rate",
-        sentence: vac > 0
-          ? `At the current spend pace you'll finish around ${fmt(eac)} — ${fmt(vac)} over budget.`
-          : `At the current spend pace you'll finish around ${fmt(eac)} — on track against budget.`,
-      };
-    }
+  if (runRateUsable) {
+    const eac = spent / elapsed;
+    const vac = eac - budget;
+    return {
+      eac, varianceAtCompletion: vac, basis: "run_rate", scopeNote: null,
+      sentence: vac > 0
+        ? `At the current spend pace you'll finish around ${fmt(eac)} — ${fmt(vac)} over budget.`
+        : `At the current spend pace you'll finish around ${fmt(eac)} — on track against budget.`,
+    };
   }
-  return { eac: null, varianceAtCompletion: null, basis: "none", sentence: null };
+  return none;
 }
 
 /** Planned manpower loading: the awarded quote's labor hours spread evenly

@@ -328,7 +328,10 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
    *  expected figure — the point is to look at the document, not to copy
    *  the screen — and a mismatch offers to record the paper's figure as
    *  the corrected total instead (the money then waits for a fresh click). */
-  const confirmFromPaper = async (doc: CostDocument, total: number, cur: string, lead: string, what: string): Promise<boolean> => {
+  // Returns the figure typed from the paper when it matches the row's total
+  // (the lib requires it as `confirmedTotal` on a truncated or unknown-extent
+  // read — COST-13), or null when nothing may be posted.
+  const confirmFromPaper = async (doc: CostDocument, total: number, cur: string, lead: string, what: string): Promise<number | null> => {
     const typed = await appPrompt({
       title: `Check the total on the paper — ${doc.vendorName ?? doc.fileName ?? "this document"}`,
       message: (
@@ -339,11 +342,11 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       ),
       placeholder: "Total as printed on the paper",
     });
-    if (typed == null) return false;
+    if (typed == null) return null;
     const parsed = parseTypedAmount(String(typed));
-    if (parsed.problem) { setErr(`Nothing was posted — ${parsed.problem}`); return false; }
-    if (parsed.amount == null) { setErr("That didn't read as a number — nothing was posted."); return false; }
-    if (Math.round(parsed.amount) === Math.round(total) && (!parsed.currency || parsed.currency === cur)) return true;
+    if (parsed.problem) { setErr(`Nothing was posted — ${parsed.problem}`); return null; }
+    if (parsed.amount == null) { setErr("That didn't read as a number — nothing was posted."); return null; }
+    if (Math.round(parsed.amount) === Math.round(total) && (!parsed.currency || parsed.currency === cur)) return parsed.amount;
     const paper = fmtMoney(parsed.amount, parsed.currency ?? cur);
     const fix = await appConfirm({
       message: `The figure you typed (${paper}) doesn't match this row's total. Record ${paper} as the corrected total now? Nothing is posted — check the row, then try again.`,
@@ -352,7 +355,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     });
     if (fix) await saveTotal(doc, parsed.amount, parsed.currency);
     else setErr("Nothing was posted — the figure typed from the paper didn't match this row's total.");
-    return false;
+    return null;
   };
 
   return (
@@ -447,12 +450,14 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                       // from the paper — never copied from the screen.
                       const ext = readExtent(extras.get(doc.id)?.pagesRead, extras.get(doc.id)?.pagesTotal);
                       const total = doc.totalAmount ?? 0;
+                      let confirmedTotal: number | null = null;
                       if (ext.truncated || !ext.known) {
                         const lead = `${ext.truncated ? `The AI ${ext.label}` : "The read extent of this invoice is unknown"} — the amount may come from an incomplete read.`;
-                        if (!(await confirmFromPaper(doc, total, isoCurrency(doc.currency) ?? "USD", lead, "post it as an actual"))) return;
+                        confirmedTotal = await confirmFromPaper(doc, total, isoCurrency(doc.currency) ?? "USD", lead, "post it as an actual");
+                        if (confirmedTotal == null) return;
                       }
                       setBusy(doc.id);
-                      const res = await postInvoice({ doc, costAccountId: accountId, actor });
+                      const res = await postInvoice({ doc, costAccountId: accountId, actor, confirmedTotal });
                       setBusy(null);
                       if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
                     }} label="Post as actual" />
@@ -486,7 +491,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
   readDoc: (d: CostDocument) => Promise<void>;
   typeTotal: (d: CostDocument) => Promise<void>;
   linkCompany: (d: CostDocument, companyId: string | null, current: Company | null) => Promise<void>;
-  confirmFromPaper: (doc: CostDocument, total: number, cur: string, lead: string, what: string) => Promise<boolean>;
+  confirmFromPaper: (doc: CostDocument, total: number, cur: string, lead: string, what: string) => Promise<number | null>;
   onChanged: () => void; setErr: (m: string | null) => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -623,24 +628,31 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
 
     // COST-13: a truncated (or unknown-extent) read requires the total to
     // be typed back from the paper, not just clicked through.
+    let confirmedTotal: number | null = null;
     if (extent.truncated || (!extent.known && quote && !quote.priceOnly)) {
-      if (!(await confirmFromPaper(doc, total, cur, warnings.join(" "), `award "${group}" on "${account?.name ?? "the budget line"}"`))) return;
+      confirmedTotal = await confirmFromPaper(doc, total, cur, warnings.join(" "), `award "${group}" on "${account?.name ?? "the budget line"}"`);
+      if (confirmedTotal == null) return;
     } else if (!(await appConfirm({
       message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this vendor"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
       tone: warnings.length ? "danger" : undefined,
     }))) return;
 
-    // The override is recorded once every confirmation has passed and
-    // BEFORE money moves (fail-closed); an award that then fails closes it
-    // with an explicit abandonment row.
-    if (barred) {
+    // The override's INTENT is recorded once every confirmation has passed
+    // and BEFORE money moves (fail-closed); an award that then fails closes
+    // it with an explicit abandonment row. The lib records the completed
+    // override (COST_DOC_AWARD_OVERRIDE) after the commitment posts, so the
+    // trail reads intent → completed, or intent → abandoned.
+    const recordIntent = async (who: { id: string; name: string }, reason: string, status: string): Promise<boolean> => {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", resource_type: "cost", resource_id: doc.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: barred.id, company: barred.name, reason: overrideReason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
+        details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
       });
-      if (error) { setErr(`The override could not be recorded (${error.message}) — award stopped.`); return; }
-    }
+      if (error) { setErr(`The override could not be recorded (${error.message}) — award stopped.`); return false; }
+      return true;
+    };
+    let overridden: { id: string; name: string } | null = barred ? { id: barred.id, name: barred.name } : null;
+    if (barred && overrideReason && !(await recordIntent(overridden!, overrideReason, "do_not_use"))) return;
 
     // BID-10: every spelling of this merged field is one field, so its
     // rivals are handed to the award under one spelling and all decline.
@@ -649,17 +661,34 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     setBusy(doc.id);
     let failure: string | null = null;
     try {
-      const res = await awardQuote({ doc, siblings, costAccountId: accountId, actor });
+      let res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, confirmedTotal });
+      // The lib found a flag this table did not (an inactive company, or a
+      // registry link read differently): ask for the reason, record the
+      // intent, and try once more with it.
+      if (!res.ok && res.needsOverride && !overrideReason) {
+        const flag = res.needsOverride;
+        setBusy(null);
+        const reason = (await appPrompt({
+          title: `${flag.companyName} is ${flag.status === "inactive" ? "marked INACTIVE" : "flagged DO NOT USE"}`,
+          message: "The company registry flags the company behind this quote. To award anyway, state the reason — it is recorded against this award and the company's record.",
+          placeholder: "Override reason (required)",
+        }))?.trim() || null;
+        if (!reason) { setErr(`Award stopped — ${flag.companyName} is flagged and no override reason was given.`); return; }
+        overridden = { id: flag.companyId, name: flag.companyName };
+        if (!(await recordIntent(overridden, reason, flag.status))) return;
+        setBusy(doc.id);
+        res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal });
+      }
       if (!res.ok) failure = res.error ?? "Couldn't award.";
     } catch (err) {
       failure = (err as Error).message;
     } finally { setBusy(null); }
     if (failure == null) { onChanged(); return; }
-    if (barred) {
+    if (overridden) {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: barred.id, company: barred.name, why: failure },
+        details: { companyId: overridden.id, company: overridden.name, why: failure },
       });
       if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${error.message}.)`;
     }

@@ -23,8 +23,8 @@
       "LOW": 2
     },
     "by_status": {
-      "OPEN": 106,
-      "RESOLVED": 27,
+      "OPEN": 102,
+      "RESOLVED": 31,
       "REFUTED": 2
     }
   },
@@ -697,7 +697,7 @@
       "id": "MON-1",
       "title": "A failed award leaves the document permanently awarded with no commitment, and nothing can repair it",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "data-integrity / financial",
@@ -751,7 +751,7 @@
       "id": "MON-3",
       "title": "Void and manual-total have no compare-and-swap, in the one file that preaches the discipline",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "data-integrity / financial",
@@ -884,7 +884,7 @@
       "id": "REL-2",
       "title": "A broken Costs tab is pixel-identical to a brand-new one",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "diagnosability / trust",
@@ -3553,7 +3553,7 @@
       "id": "MON-9",
       "title": "Two simultaneous change-order proposals collide on the generated number",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "ux",

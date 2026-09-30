@@ -580,7 +580,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
             <select value={status} onChange={(e) => setStatus(e.target.value as Company["status"])}
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
-              title="'Do not use' keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). The refusal at posting is pending (P3 / PC-7).">
+              title="'Do not use' keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). 'Inactive' needs the same override to be awarded.">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="do_not_use">Do not use</option>

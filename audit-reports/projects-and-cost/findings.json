@@ -9,17 +9,17 @@
     "audit-reports/projects-and-cost/05-intake-door.md"
   ],
   "totals": {
-    "findings": 69,
+    "findings": 70,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 22,
       "MEDIUM": 34,
-      "LOW": 11
+      "LOW": 12
     },
     "by_status": {
-      "OPEN": 65,
-      "RESOLVED": 4
+      "OPEN": 61,
+      "RESOLVED": 9
     }
   },
   "status_vocabulary": [
@@ -833,7 +833,7 @@
       "id": "COST-8",
       "title": "Currency is discarded at every point where money moves or is compared — a foreign-currency quote posts into a USD budget line at face value",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -922,7 +922,7 @@
       "id": "COST-13",
       "title": "The number posted to the ledger is the model's reading of at most 8 pages, and the page-truncation signal is returned then thrown away",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -952,7 +952,7 @@
       "id": "COST-14",
       "title": "voidCostDoc decides from a stale client snapshot, so an awarded or posted document can be voided while its cost entry stays on the budget",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1640,7 +1640,7 @@
       "id": "COST-9",
       "title": "Dead and write-only FK columns on the cost tables: cost_entries.source_document_id is never written, change_orders.posted_entry_id is never read, and the unwind path both were meant to support does not exist",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1668,7 +1668,7 @@
       "id": "COST-11",
       "title": "Money-path writes whose errors are swallowed: a failed rival-decline still reports a successful award, leaving every losing bid awardable",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1687,6 +1687,31 @@
       ],
       "refuted": false,
       "summary": "Three bids are grouped under one RFQ group. A controller awards the first; the commitment posts; the rival-decline UPDATE fails (a transient network error, or an RLS evaluation the client cannot see). awardQuote returns ok and the panel refreshes. The other two still read 'parsed', so the Award button stays live on both. A second controller — or the same one on a different day — awards a second bi",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
+    },
+    {
+      "id": "COST-15",
+      "title": "A quote whose total was typed before any read can never have its line items read",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/projects/cost-docs/route.ts:100",
+        "components/projects/cost/QuotesPanel.tsx:437",
+        "components/projects/cost/QuotesPanel.tsx:694"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A controller types the total on a new quote before anyone reads it. The row is parsed, scored on price alone, and its line items, manpower and exclusions can never be extracted from the UI.",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/04-cost-and-bids.md"
     },
