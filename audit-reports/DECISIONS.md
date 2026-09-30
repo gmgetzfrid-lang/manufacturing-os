@@ -2080,6 +2080,8 @@ same predicate, and the Schedule tab's copy changes with it.
 
 *Verification fix (2026-09-30, projects Round G): the sentence above held only under the API's default row cap and with no planned-date tie at the cut, because the Costs tab ordered by `planned_at` alone. Its read now carries the same `.order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)` (`components/projects/CostsTab.tsx:95-96`), so the snapshot, the report and the Costs tab read the same first rows by construction (source pin in `lib/__tests__/projectReport.test.ts`). The Schedule tab reads through `listMilestones` (`lib/milestones.ts`), with no `id` tiebreak and no explicit bound, so it agrees only for a schedule within the API's row cap. Bounding that read belongs to the owner of `lib/milestones.ts` (PC-3 / J6); `lib/milestoneLiveness.ts` now says so instead of claiming the Schedule tab reads the same rows.*
 
+*Landed 2026-09-30 (projects Round G — J6b): "read-only in the UI" is now true and enforced below it. An imported row's dates, place in the outline, links and planned fields are locked in `lib/milestones.ts` (`updateMilestone`, `applyMilestoneMoves`, `setTaskDuration`, `groupTasksUnderParent` refuse a change with `ImportedRowLockedError`); its status, % complete, actuals and who did the work stay editable; the reflow engine treats it as pinned. The "Imported rows" toggle is a display filter on the Execution board too — every figure there reads the full list (PT `SCH-6`, `SCH-13`; see `DEC-44`, J6b's).*
+
 <a id="dec-48"></a>
 ## DEC-48 · Bid scoring honesty and the registry's evidence floor
 
@@ -2653,6 +2655,8 @@ repeats is added again rather than matched (its old row and progress kept
 and listed), and a unique-named one is matched by name even when the file
 moved it.
 
+*Landed 2026-09-30 (projects Round G — J6b): item (5)'s engine half — the reflow and the critical path now APPLY each finish-to-start link's recorded lag (read from `attributes.source_links`); SS / FF / SF stay recorded and not enforced. The importer's heads-up "the lag is recorded on the task but not applied by the reflow" and the MS Project refusal's "other link types and lag are recorded but not enforced" (`lib/scheduleParsers.ts`, J6a's) need one wording change each; not edited by J6b. Item (13): a batch move now carries the loaded row's `updated_at` from the board, and rejected moves are named (PT `SCH-7`).*
+
 <a id="dec-52"></a>
 
 ## DEC-52 · The quality record's evidence contract
@@ -2872,3 +2876,32 @@ and siblings included), without blocking a document or party delete.
 **Reversal.** (1) If a facility states that Managers delete equipment, `is_org_controller` in the DELETE overlay becomes `caller_holds_any_role(org_id, writes)`. (2) If a site's standard encodes the prefix, the code format becomes an org setting read by `tagToCode` and `codeToTag`; there is still no default. (4) A server-side re-decode job and a version stamp are additive to the plan and replace nothing.
 
 **Risk:** medium. The only narrowing is DELETE for Manager and Supervisor; everything else is either a warning or a refusal of data that would otherwise be corrupted.
+
+<a id="dec-44-j6b"></a>
+## DEC-44 · The schedule engine's rules: links, actuals, imported rows, the critical path, weights and baselines
+
+**Decision. Nine calls about the schedule engine, made together because each one is where another would leak.**
+
+1. **A loop is refused, never absorbed.** A cascade that would push a task through its own chain of links (a sub-task carried with its phase counts as a hop) is refused with the loop named in task names; nothing is written. A backstop refuses any push further than an acyclic cascade could ever go. The dependency picker and `updateMilestone` refuse a link that would close a loop, checked over EVERY milestone of the project — never over a filtered view.
+2. **Finish-to-start means ready-then-start.** A successor may start once its predecessor is ready plus the link's recorded lag: a date-only finish (00:00 UTC, the storage convention) is ready at the next midnight, a timed finish at its own instant. A pushed task moves by whole days and keeps its clock time. Lag is elapsed hours (no working calendar); SS / FF / SF stay recorded and not enforced (`DEC-51` (5)).
+3. **Actuals never move.** A completed row, a row with an actual finish, or a pinned row is never moved by any batch engine, including inside a subtree that moves; the parent re-envelopes around it. `computeTreeMove` was the reference and is unchanged.
+4. **Imported rows are the scheduling tool's plan.** Their dates, place in the outline, links and planned fields are locked below the UI (the next import writes them back); status, progress, actuals and who did the work are recorded in the app and survive a re-import. Delete stays available (removal is its own action, `DEC-51` (2)) and says the row returns with the next import that carries it; Rebase (whole-schedule, Verified sound) still shifts them. The "Imported rows" toggle only changes what is drawn (`DEC-47`).
+5. **The critical path is the link chain.** The heuristic date walk is retired. A backward pass over the scheduled network gives each unfinished leaf its total float; the path is the chain of DRIVING links traced back from the finish (a link drives when its successor starts within a day of the predecessor being ready + lag — Primavera's "longest path"), in calendar days. With no links, only the tasks ending at the finish are shown, and the screen says so. Remaining hours count only the work left.
+6. **One weighting basis per list.** Rollups weigh by planned work hours only when EVERY leaf carries them; otherwise by task weight (1 unless set) for all — never a blend — and the basis is named on screen. A missed task earns nothing; missed bubbles up to its phase, ranked after blocked and before on hold.
+7. **One overdue rule.** `isOverdueMilestone` (UTC day, `lib/milestoneLiveness.ts`) at every surface: due today is not overdue, in any timezone.
+8. **Estimates are labelled as estimates.** The forecast finish is the completion rate carried forward, named ("at the current rate of N tasks/day"), and withheld below 10% of tasks done; the Work-hours figure says "Not supplied" when no task carries hours.
+9. **Every baseline is kept and comparable; nothing is orphaned.** A re-baseline or a clear keeps what it replaces (`20261099`, J6a); the confirm names the baseline being replaced; the Report measures drift against the newest by default and against any earlier capture on request. Deleting a phase promotes its children to its parent, removes every link to it, and records the prior structure in the audit row.
+
+> Made during projects Round G (2026-09-30) under the protocol's fail-safe rule, taking the defaults the fleet plan proposed for projects-tab `SCH-4`, `SCH-5`, `SCH-6`, `SCH-7`, `SCH-9`, `SCH-13`, `SCH-15`, `SCH-17`, `SAF-7`, `SAF-8`, `PERF-5` and projects-and-cost `SCHED-5`, `SCHED-7`, `SCHED-10`, `SCHED-12`, `SCHED-13`, `SCHED-14`.
+>
+> **Numbering.** DEC-44 on the J6b branch; the integrator renumbers on merge (DEC-44 to DEC-53 are taken on the integration branch).
+
+**Rationale.** Every one of these replaces a silent guess with the schedule's own evidence or a refusal a person can act on. A loop absorbed into the guard wrote dates years out; a phantom day per link inflated every chain; a cascade rewrote completed work; an in-app edit to an imported date vanished at the next import; a "critical path" drawn from date contiguity pointed crews at work with float; a few hour-tagged tasks re-weighted a whole project; and a re-baseline erased the only evidence of a slip. The alternatives — keeping the heuristic under a new name, weighting per node, letting imported rows be edited "at your own risk" — each left a confident wrong number on screen.
+
+**Implementation.** `lib/scheduleReflow.ts` (`planCascade`, `CascadeRefusedError`, `fsReadyMs`, `wholeDaysToClear`, `fsLagHours`, `reflowNodesFromMilestones`, `dependentsClosure`, `linkCyclePath`, the UTC date helpers), `lib/criticalPath.ts` (`computeCriticalPath`), `lib/scheduleProgress.ts` (`chooseWeightBasis`, `weightFor`, the missed rules), `lib/executionReport.ts`, `lib/milestones.ts` (`ImportedRowLockedError`, `DependencyCycleError`, `deleteMilestone` / `planMilestoneDelete`, `listBaselineCaptures`, the read-back in `applyMilestoneMoves`), `lib/rowWindow.ts`, the Schedule tab's components, migration `20261106`.
+
+**Acceptance.** A 2-node cycle is a refusal naming both links; a completed grandchild never moves; a same-day 08:00 / 17:00 chain is not pushed and a pushed successor keeps 08:00; an imported row's date cannot be changed through the library; a delivery whose lagged link drives the install is on the critical path, and a parallel chain with float is not; eight 40-hour tasks among 392 untagged ones read 2%, not 45%; a task due today is not overdue in Los Angeles, UTC or Tokyo; the Report compares drift with an earlier baseline (`lib/__tests__/dependencies.test.ts`, `scheduleReflowLocks.test.ts`, `criticalPath.test.ts`, `scheduleProgress.test.ts`, `overdue.test.ts`, `scheduleEngineWriters.test.ts`, `scheduleEngineUi.test.ts`, `executionReport.test.ts`).
+
+**Reversal.** (2) A working calendar (shifts, weekends) replaces elapsed-hour lag and calendar-day float in one place — `fsReadyMs` / `wholeDaysToClear` and the path's tolerance. (4) A facility that wants imported rows editable in the app makes it a per-import choice stored on the row, read by the same predicate — and the next import must then leave those fields alone. (5) SS / FF enforcement is additive to the pass.
+
+**Risk:** medium — the board's drag is now refused on imported rows (the plan belongs to the tool), and a stored loop that used to "work" (with runaway dates) now refuses the move until a link is removed.

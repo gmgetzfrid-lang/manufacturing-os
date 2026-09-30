@@ -390,7 +390,7 @@ summarizers then start working with no further change.
 ## SAF-7 · Re-baselining destroys the approved plan irreversibly, and the confirmation invites it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / commercial
 - **Locations:**
@@ -429,12 +429,18 @@ and not having a delay claim.
 - The confirm dialog states which baseline is being replaced.
 - Drift can be computed against any captured baseline, not only the newest.
 
+**Resolution (2026-09-30, projects Round G — J6b; the history half is J6a's `20261099`).** Re-baselining is non-destructive: `set_project_baseline` / `clear_project_baseline` (migration `20261099`, J6a — see projects-and-cost `SCHED-3`) write the prior snapshot to `milestone_baseline_history` before overwriting, and audit themselves; a clear is a retirement that keeps its snapshot the same way. This package makes the history usable and the confirm honest. The confirm (`components/projects/ScheduleTab.tsx`) names what it replaces: "Replace the baseline set on 1 Jun 2026 (48 tasks) with the current plan? The one you replace is kept — the Report can still measure drift against it — but from now on every "vs plan" figure is measured against the new snapshot." (`currentBaselineSummary` — the newest `baseline_set_at` and the row count), and the button's tooltip says the replaced one is kept. Drift against any capture: `lib/milestones.ts` `listBaselineCaptures` returns the live baseline and every capture in `milestone_baseline_history`, newest first (when it was set, when and why it was retired, its rows' finishes); `computeExecutionReport(…, { baselineFinishById })` measures drift against the one chosen; `ExecutionReportView` shows a "Compare with" picker (the newest by default) and labels the drift line with the capture's date. A database without the history table says "Earlier baselines are kept once the baseline-history migration (20261099) is applied."; any other read failure is shown as an error, never as "no history". Tests: `scheduleEngineWriters.test.ts` "SAF-7 ·" (the live summary; captures newest first with their set / retired dates and rows, another project's excluded; missing table vs. a real error); `executionReport.test.ts` "measures against an older capture" (a re-baselined task reads on plan against the live baseline and 60 days late against the original); `scheduleEngineMigration.test.ts` pins the confirm text.
+
+**Done-when.** 1 ✓ (pending `20261099`). 2 ✓. 3 ✓ (any capture, from the Report).
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261099_prj_roundG_baseline_authority.sql` (J6a). The picker lives on the Report; the Planning list's "+Nd vs plan" chip and the detail panel still compare with the live baseline.
+
 ---
 
 ## SAF-8 · A task can be Missed and one-hundred-percent earned at the same time
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -463,6 +469,12 @@ for imported rows too.
 - A `missed` task contributes no earned value.
 - A test pins the 100%-then-missed transition.
 - The Schedule tab's "Missed" count and the EV rollup cannot disagree.
+
+**Resolution (2026-09-30, projects Round G).** `lib/scheduleProgress.ts` `leafPercent` returns 0 for `missed` (as for `planned`), whatever percent is stored — in the reader, so it holds for imported rows too; `blocked` / `on_hold` keep the progress genuinely logged, and the stored percent is left alone (un-missing a task gives it back). Every rollup reads `leafPercent`: `computeScheduleMetrics` (earned value, SPI), `buildProgressIndex`, `overallPercent`, `computeExecutionReport`, and the critical path's remaining hours. Tests: `scheduleProgress.test.ts` "SAF-8 ·" — `leafPercent({ missed, 100 }) = 0`; the 100%-then-missed transition: earned value 1 → 0, `byStatus.missed = 1` with earned value 0 (the Missed count and the EV rollup agree), `overallPercent` 0, the phase over it 0%.
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓.
+
+**Scope / residual.** A missed leaf's slider still shows 0% (its earned share) while its stored percent is kept; see projects-and-cost `SCHED-7` for how a phase of missed work now reads.
 
 ---
 

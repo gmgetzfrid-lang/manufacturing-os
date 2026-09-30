@@ -68,7 +68,7 @@ lib/scheduleParsers.ts:247 verbatim: `const outlineLevel = Number(outlineLevelRa
 ## SCHED-2 · No parser ever populates durationHours, so every "effort-weighted" number on an imported schedule is really a task count — and MS Project's Work value is captured as an unparsed string
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleParsers.ts:52`, `lib/scheduleParsers.ts:295-296`, `lib/scheduleParsers.ts:304-320`, `lib/scheduleParsers.ts:402-412`, `lib/scheduleParsers.ts:546-556`, `lib/milestones.ts:981`, `lib/scheduleProgress.ts:44-50`, `lib/executionReport.ts:106`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence with a repo-wide search. The user-visible end of it is real: ExecutionReportView.tsx:62-68 prints a 'Work hours' card whose big number is silently pctComplete over a `0 / 0 h` sub-line. Only a hand edit in TaskDetailPanel.tsx:467 can ever populate the column.
@@ -98,6 +98,12 @@ lib/scheduleParsers.ts:247 verbatim: `const outlineLevel = Number(outlineLevelRa
 
 **Scope / residual.** Item 3 stays with the projects-tab report package; once the importer populates hours the card stops printing `0 / 0 h` for new imports of files that carry work, but a file without work values still reaches it. Effort-weighting itself (`effectiveWeight`) is `SCHED-14`'s.
 
+**Resolution (2026-09-30, projects Round G — J6b closes done-when 3).** `lib/executionReport.ts` reports `pctHours` as `null` (not `pctComplete` in disguise) when no leaf carries planned hours, plus `leavesWithHours`; `components/projects/ExecutionReportView.tsx`'s "Work hours" card then reads "Not supplied — No task in this schedule carries planned work hours." instead of `0 / 0 h`, and when only some tasks carry hours it says "hours on N of M tasks". Test: `executionReport.test.ts` "reports its weighting basis; pctHours is null when no leaf carries hours".
+
+**Done-when.** 1 ✓ (J6a). 2 ✓ (J6a). 3 ✓. 4 ✓ (J6a).
+
+**Scope / residual.** None beyond `SCHED-14` (the rollups' weighting basis).
+
 ---
 
 <a id="sched-3"></a>
@@ -105,7 +111,7 @@ lib/scheduleParsers.ts:247 verbatim: `const outlineLevel = Number(outlineLevelRa
 ## SCHED-3 · The approved baseline is writable and erasable by any active org member, can half-apply, is never shown on the timeline, and every batch move rewrites past it without a word
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/milestones.ts:1462-1502`, `lib/milestones.ts:1504-1514`, `supabase/migrations/20260614_phase7_milestones.sql (milestones_member_all policy)`, `supabase/migrations/20260706_milestones_baseline.sql:1-12`, `components/projects/TaskDetailPanel.tsx:480-483`, `components/projects/ScheduleTab.tsx:201-215`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four sub-claims verified. Sharpest point the finding understates: setBaseline is audited but clearBaseline is not, so any active member can erase the approved plan silently. ScheduleTab.tsx:206 promises 'Every view will then show how far the schedule drifts from it' while the timeline draws no baseline bar; drift appears only in the execution report and the task detail panel.
@@ -136,6 +142,12 @@ lib/milestones.ts:1509-1511 verbatim — `const { error } = await supabase.from(
 **Done-when.** 1 ✓ (pending migration; UPDATE and INSERT). 2 ✓ (audited on both paths — it still has no UI caller, kept because the RPC now has one path to it). 3 ✓ (one statement; the legacy fallback reports partial). 4 NOT DONE: the sheet counts over the change set it is handed, but `components/projects/ExecutionView.tsx` (a projects-tab surface outside this package) still hands it only the selection, so a cascaded dependent or a dragged phase's descendant pushed past its baseline is not counted. The remaining change is one prop at the `<MovePreviewSheet … />` call: factor `commitMove`'s `computeTreeMove` + `withCascade` into `changesFor(mode)` and pass `changeSetFor={(mode) => changesFor(mode).map((c) => ({ plannedAt: c.plannedAt, baselineFinishAt: byId.get(c.id)?.baselineFinishAt }))}` — the same input PT `SCH-4` dw2 wants.
 
 **Scope / residual.** Done-when 4 closes with the `ExecutionView` prop above (PT surface). On a database without the migration the button keeps working through the legacy path with today's semantics (no rail, per-row writes) — the rail is the migration. Pending migration: `supabase/migrations/20261099_prj_roundG_baseline_authority.sql` (after `20261098`, which defines `can_edit_project_schedule`).
+
+**Resolution (2026-09-30, projects Round G — J6b closes done-when 4).** `components/projects/ExecutionView.tsx` now hands `MovePreviewSheet` the computed change set: `planFor(mode)` — each target's `computeTreeMove` plus the cascade, the SAME `changesFor` the commit writes (PT `SCH-4`) — with each row's new finish and its baseline finish, so the sheet's "N tasks would finish past the approved baseline." counts a cascaded dependent or a dragged phase's descendant pushed past its own baseline (the prop is `planFor`, which carries the rows J6a's `changeSetFor` described plus the refusal and the held dependents; `changeSetFor` still works for any other caller). Tests: `scheduleEngineUi.test.ts` "PC SCHED-3 (dw4)" (a dependent pushed past its baseline is counted though the dragged task has none) and the source pin that the sheet and the commit share `changesFor`.
+
+**Done-when.** 1 ✓ (J6a, pending `20261099`). 2 ✓ (J6a). 3 ✓ (J6a). 4 ✓.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261099_prj_roundG_baseline_authority.sql` (J6a). Baseline history is now usable for drift from the Report (PT `SAF-7`).
 
 ---
 
@@ -180,7 +192,7 @@ Migration text, verbatim: `IF v_uid IS NULL THEN\n    -- service role: trusted s
 ## SCHED-5 · cascadeDependents and sequenceSiblings rewrite the planned dates of COMPLETED work, contradicting the module's own "actuals never move" contract
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleReflow.ts:38-43`, `lib/scheduleReflow.ts:49-52`, `lib/scheduleReflow.ts:345-363`, `lib/scheduleReflow.ts:433-447`, `lib/scheduleReflow.ts:159-168`, `lib/__tests__/scheduleReflowLocks.test.ts:56-92`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Holds. The cited tests confirm the gap rather than close it: every case in scheduleReflowLocks.test.ts (:56-92) locks a DIRECT successor or a DIRECT sibling — none places a completed task beneath an unlocked parent that moves. Nor does the persistence path filter: ExecutionView.tsx:449-461 withCascade merges cascade output straight into the batch with no lock check.
@@ -209,6 +221,12 @@ b1 is `status: "completed"` and moved nine days. sequenceSiblings with a complet
 - [ ] sequenceSiblings skips locked descendants, not just the direct child
 - [ ] A test fixture places a completed task one level below the node being cascaded and below the node being sequenced, and asserts it does not appear in the change set
 - [ ] A row whose actual_at is set can never receive a planned-date change from a batch engine
+
+**Resolution (2026-09-30, projects Round G).** Reproduced first against `fdb51b1` (the completed `b1` moved nine days under a cascaded parent; a completed grandchild moved under a sequenced child). `lib/scheduleReflow.ts`: `cascadeDependents` and `sequenceSiblings` now match `computeTreeMove` (unchanged, the reference): inside a shifted subtree every locked node stays put and the parents re-envelope around it. `isLocked` also locks a row that carries an ACTUAL finish (`actualAt`), whatever its status reads, and the one node mapping every caller uses (`reflowNodesFromMilestones`) passes `actual_at` through — so no batch engine (tree move, cascade, sequence, summary resize, edge resize) can rewrite the plan of a row with an actual. Tests: `scheduleReflowLocks.test.ts` "SCHED-5 ·" (a completed child of a cascaded successor is not in the change set and its phase still covers it; a completed grandchild under a sequenced child stays put; a row with `actualAt` and status `in_progress` is untouched by cascade, tree move and edge resize).
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓. 4 ✓.
+
+**Scope / residual.** `rebaseSchedule` deliberately shifts planned dates of every row (actuals untouched) — Verified sound, unchanged.
 
 ---
 
@@ -253,7 +271,7 @@ b1 is `status: "completed"` and moved nine days. sequenceSiblings with a complet
 ## SCHED-7 · A phase whose tasks are all MISSED rolls up as "planned, 0%" — missed is the one exception state that never bubbles
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleProgress.ts:55-64`, `lib/scheduleProgress.ts:110-118`, `lib/scheduleProgress.ts:139-146`, `lib/__tests__/scheduleProgress.test.ts:46-50`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: buildProgressIndex is the only rollup used by the timeline, calendar and detail panel (ExecutionView.tsx:249, ScheduleTab.tsx:178, TaskDetailPanel.tsx:69) and none of them re-checks for missed descendants, so an all-missed phase renders 'planned, 0%'. The only escape is a missed task that had a non-zero percent_complete logged before it was missed, which flips the parent to in_progress — still not 'missed'.
@@ -275,6 +293,12 @@ Executed against the real module: `deriveSummaryStatus({ total: 3, done: 0, bloc
 - [ ] Agg carries a missed counter and deriveSummaryStatus returns a state that surfaces it (ranked with blocked/on_hold)
 - [ ] STATUS_META already has a rose 'Missed' treatment (ScheduleProgress.tsx:34) — the summary row uses it
 - [ ] A test asserts an all-missed phase does not render as planned
+
+**Resolution (2026-09-30, projects Round G).** `lib/scheduleProgress.ts`: `Agg` carries `missed`; `deriveSummaryStatus` returns `missed` when any leaf below is missed, ranked after `blocked` and before `on_hold` (the brief's default), so an all-missed phase reads Missed — the rose treatment `StatusControl` / `STATUS_META` / the timeline already have — on the timeline, the calendar tiles, the planning list and the detail panel (all read `buildProgressIndex`). A missed leaf also earns nothing (PT `SAF-8`), so the phase reads 0% Missed, not "planned, 0%". Tests: `scheduleProgress.test.ts` "SCHED-7 ·" (an all-missed phase → missed; one missed among open work → missed; blocked outranks it; it outranks on hold; two levels up; a caller without the tally unchanged).
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓.
+
+**Scope / residual.** None.
 
 ---
 
@@ -358,7 +382,7 @@ lib/milestones.ts:905-909 verbatim: `const d = new Date(plannedStartIso); if (is
 ## SCHED-10 · The "critical path" walk includes tasks that have float, merges parallel chains, truncates at any gap over 14 days, and its remaining-hours figure ignores progress
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/criticalPath.ts:56`, `lib/criticalPath.ts:63-79`, `lib/criticalPath.ts:81-85`, `components/projects/ExecutionReportView.tsx:86-87`, `components/projects/ExecutionView.tsx:1503-1504`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four sub-claims verified verbatim. Mitigating context worth noting: ExecutionReportView.tsx:88 does print 'heuristic — based on schedule shape, not dependency links' next to the number, so the report surface is labelled; the timeline surface (ExecutionView.tsx:723-731, 1503-1504) is not.
@@ -380,6 +404,12 @@ Executed against the real module. (a) Long-lead: leaves `order` (Jan 1–5) and 
 - [ ] Either a real forward/backward CPM pass over dependsOn replaces the date walk, or the control is renamed to what it computes
 - [ ] If the heuristic is kept, the backward step follows each frontier task's own seam rather than one global minimum, and the 14-day cutoff is removed or justified
 - [ ] remainingHours multiplies each chain task's hours by (100 - leafPercent)/100, or the label stops saying "remaining"
+
+**Resolution (2026-09-30, projects Round G — decision `DEC-44`, J6b's; subsumes PT `SCH-15`).** The date-walk heuristic is retired, not renamed: `lib/criticalPath.ts` `computeCriticalPath` works on the dependency links. A backward pass over the scheduled network (a link to or from a phase applies to every leaf inside it; each FS link's lag from `attributes.source_links`) gives every unfinished leaf its total float; the path is the chain of DRIVING links traced back from the finish — a link drives when its successor starts within a day of the predecessor being ready (+ lag) — Primavera's "longest path". Per-link rather than "total float < 1 day" because, with no working calendar, a chain of 08:00–17:00 tasks accrues an overnight gap of float at every hand-off. A leaf with no links counts only when it ends at the finish (and the screen says so); a loop in the links is reported and left out. `remainingHours` is Σ hours × (100 − % complete) / 100. Tests: `criticalPath.test.ts` — the auditor's three measured cases as their CPM answers: (a) a delivery three weeks before install IS on the path when its link's lag makes it the driver (float 0), and has 21 days of float without the lag; (b) two parallel chains are not merged — the chain with 3 days of float is off the path and an unlinked date-contiguous task is not pulled in; (c) a 100 h task at 90% contributes 10 h; plus an overnight hand-off chain through a phase link, a schedule with no links, and a loop.
+
+**Done-when.** 1 ✓ (a real pass over `dependsOn` replaces the walk). 2 n/a (the heuristic is not kept — no seam, no 14-day window). 3 ✓.
+
+**Scope / residual.** Calendar days, no working calendar: a weekend gap between two linked tasks is not driving. Only finish-to-start is modelled (SS / FF / SF are recorded, not enforced — `DEC-51` (5)).
 
 ---
 
@@ -424,7 +454,7 @@ lib/milestones.ts:326 verbatim: `}).then(() => undefined, () => undefined);`. li
 ## SCHED-12 · Three schedule numbers are presented as record when they are estimates, including in the printable end-of-job report and in a refusal message that promises a "true 1:1 copy"
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleParsers.ts:144-152`, `components/projects/ExecutionReportView.tsx:70-78`, `components/projects/ExecutionView.tsx:723-731`, `components/projects/ExecutionView.tsx:1503-1504`, `lib/executionReport.ts:179-190`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The core observation — a heuristic forecast, an unlabelled timeline 'critical path', and an over-promising '1:1 copy' message — is real, but two of the three headline items are wrong as written: the end-of-job report is the one surface that IS labelled heuristic, and pctComplete is effort-weighted and partial-aware (its degeneracy on imported schedules is SCHED-2's point about durationHours never being populated, not 'a task count'). Presentational wording only; LOW.
@@ -447,6 +477,12 @@ scheduleParsers.ts:151 verbatim: `... The XML import is a true 1:1 copy (every d
 - [ ] The Forecast finish card names its basis ("at the current rate of N tasks/day") or is suppressed when fewer than a threshold of tasks are complete
 - [ ] The Timeline critical-path control carries the same caveat the Report already carries
 
+**Resolution (2026-09-30, projects Round G).** Limb (a) landed with J6a (the refusal message now says what the XML path carries). Limb (b): `lib/executionReport.ts`'s forecast is the completion RATE carried forward and says so — `forecastBasis` (`rate` / `complete` / `too-early`) and `forecastRatePerDay`; it is withheld (`null`) until at least 10% of tasks are done (`FORECAST_MIN_DONE_FRACTION`), where it used to print the PLANNED finish as the forecast; `ExecutionReportView`'s card reads "estimate at the current rate of 0.40 tasks/day (task count, not effort or links)" or "shown once 10% of tasks are done". Limb (c): the timeline's control is now the link-derived critical path (`SCHED-10`), and its button tooltip and legend say what it is — "the chain of finish-to-start links that drives the finish date (calendar days — no working calendar)", or, with no links, that only the finishing tasks are shown; the Report's caveat says the same. Tests: `executionReport.test.ts` "forecast: withheld below 10% done, otherwise at the current rate of N tasks/day"; `scheduleEngineUi.test.ts` "SCHED-12 (limb c)" (the rendered button and legend).
+
+**Done-when.** 1 ✓ (J6a). 2 ✓. 3 ✓.
+
+**Scope / residual.** J6a's refusal message says "other link types and lag are recorded but not enforced"; finish-to-start lag is now applied by the reflow (`SCHED-13`), so that clause (and the importer's "the lag is recorded on the task but not applied by the reflow" heads-up) needs one wording change in `lib/scheduleParsers.ts` — J6a's file, not edited here; left for the integrator.
+
 ---
 
 <a id="sched-13"></a>
@@ -454,7 +490,7 @@ scheduleParsers.ts:151 verbatim: `... The XML import is a true 1:1 copy (every d
 ## SCHED-13 · cascadeDependents hardcodes a full calendar day between finish and start, so every FS link inflates the chain and pins successors to the predecessor's clock time
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleReflow.ts:350-356`, `lib/scheduleReflow.ts:438`, `lib/__tests__/dependencies.test.ts:28-49`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. There is no lag/relationship-type field anywhere in ReflowNode (only `dependsOn: string[]`), and no calendar/working-hours awareness, so the hardcoded 24h is the only spacing rule; it is reached on every drag through ExecutionView.tsx:449-461 `withCascade`.
@@ -477,6 +513,12 @@ lib/scheduleReflow.ts:352 verbatim: `if (finish.has(pred)) req = Math.max(req, f
 - [ ] Cascaded successors keep their original time-of-day rather than inheriting the predecessor's finish time
 - [ ] A dependency test fixture uses 08:00/17:00 times and asserts the successor's clock time is unchanged
 
+**Resolution (2026-09-30, projects Round G — decision `DEC-44`, J6b's).** Reproduced first against `fdb51b1` (a successor pushed to 17:00 the next day). `lib/scheduleReflow.ts`: the FS constraint is `successor.start >= predecessor ready + lag` — "ready" (`fsReadyMs`) is the finish instant for a timed finish and the next midnight for a date-only one (a date-only finish covers its whole day on the board), so a date-only chain behaves exactly as before and an imported 08:00 / 17:00 chain that already satisfies FS is not pushed; lag is the source schedule's own, read from `attributes.source_links` (`fsLagHours`, J6a's capture), default 0, a negative lag a lead. A pushed task moves by WHOLE days (`wholeDaysToClear`), so it keeps its own clock time — 08:00 the next morning, not the predecessor's 17:00. `sequenceSiblings` uses the same rule. Tests: `dependencies.test.ts` "SCHED-13 ·" (a same-day 08:00 / 17:00 chain is not pushed; a pushed successor keeps its 08:00 start and the chain absorbs no extra day per link; +24 h lag, no lag and a −16 h lead; lag read from `source_links` through the predecessor's external ref); the existing midnight fixtures still pass unchanged.
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓.
+
+**Scope / residual.** Lag is applied as elapsed hours (no working calendar): an 8 h lag after a 17:00 finish lands the successor on the next morning's clock time. The shift label follows a moved start through the RPC (J6a, `SCHED-9`).
+
 ---
 
 <a id="sched-14"></a>
@@ -484,7 +526,7 @@ lib/scheduleReflow.ts:352 verbatim: `if (finish.has(pred)) req = Math.max(req, f
 ## SCHED-14 · effectiveWeight mixes work hours and unit weights in the same denominator, so tagging a few tasks with hours silently re-weights the whole project
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/scheduleProgress.ts:41-50`, `lib/scheduleProgress.ts:141`, `lib/scheduleProgress.ts:159-165`, `lib/executionReport.ts:158-159`, `lib/milestones.ts:663-669`, `components/projects/TaskDetailPanel.tsx:520`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Premise verified: no parser populates durationHours (grep of lib/scheduleParsers.ts shows only the type declaration at line 52 and `weight: 1` literals at 308/359/406/495/550), so the only source is the manual 'Work hours' field at components/projects/TaskDetailPanel.tsx:520 — exactly the 'tag a few tasks' scenario the finding describes, and nothing warns that doing so re-weights every other rollup.
@@ -506,5 +548,11 @@ lib/scheduleProgress.ts:44-50 verbatim, showing the per-node fallback chain; lib
 - [ ] The weighting basis is chosen once per list: use hours only if every leaf has them, otherwise use weight for all
 - [ ] When the basis falls back, the UI says which basis is in use
 - [ ] A test mixes an hours-bearing leaf with a weight-only leaf and asserts the chosen basis is uniform
+
+**Resolution (2026-09-30, projects Round G — decision `DEC-44`, J6b's).** `lib/scheduleProgress.ts`: `chooseWeightBasis(list)` decides the basis ONCE per list — `hours` only when every leaf carries planned work hours, otherwise `weight` (the explicit weight, else 1) for all of them — and `weightFor(m, basis)` weighs a leaf on it; `buildProgressIndex`, `overallPercent`, `computeExecutionReport` (top line and groups) and `computeScheduleMetrics` (`lib/milestones.ts:~810`, SPI and earned value) all use it, and the last two report `weightBasis`. The UI names the basis: the Report's Complete card ("weighted by planned work hours" / "weighted by task weight (not every task carries work hours)") and `ScheduleProgress` ("Earned work hours" / "Earned task weight" with the fallback explained). The `lib/milestones.ts` call site the plan delegated to PC-3 was switched here: PC-3 (J6a) merged without switching it, and that region of the file is this package's. Tests: `scheduleProgress.test.ts` "SCHED-14 ·" (hours only when every leaf has them; summaries never decide it; 8 tasks at 40 h among 392 unit-weight rows read 2%, not the blend's 45%; `computeScheduleMetrics` reports and uses its basis); `executionReport.test.ts` (the report's basis, and a mixed list's 50% on the uniform basis).
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓.
+
+**Scope / residual.** `effectiveWeight` (per node) stays exported for any other caller; no rollup uses it.
 
 ---

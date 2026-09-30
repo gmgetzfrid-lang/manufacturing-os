@@ -94,7 +94,7 @@ the checklist card. Three components, one pattern.
 ## A11Y-3 · Milestone row tints make the row unreadable in dark mode
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (computed contrast)
 - **Blast radius:** accessibility
 - **Locations:**
@@ -137,6 +137,12 @@ both grounds.
 **Done when.**
 - Every milestone row's text clears 4.5:1 in both themes.
 - No hardcoded `-50`/`-300` tint remains in the row renderer.
+
+**Resolution (2026-09-30, projects Round G).** `components/projects/ScheduleTab.tsx` `MilestoneRow`: the light-mode tints are replaced with the codebase's theme-safe recipe — low-alpha status colour over the surface with a half-alpha border (`bg-emerald-500/[0.08] border-emerald-500/50`, rose for missed / overdue, amber for blocked / on hold) — and the coloured text on the row gets its dark variant (`text-rose-700 dark:text-rose-300`, emerald likewise). Text that sits on the tint uses `text-slate-600` (#475569, which `app/globals.css` maps to #cbd5e1 under `.dark`) instead of `--color-text-muted`: the muted token (#64748b) measures 4.29–4.48 : 1 on any light tint. The Done button, the delete button's hover, the "vs plan" chip and the status chips use the same recipe. Test: `scheduleEngineUi.test.ts` "A11Y-3 ·" — no `-50` / `-300` tint (and no light-palette `bg-` / `border-` step) remains anywhere in the row renderer, and every tint the renderer uses × every text colour on it (text, secondary, rose, emerald) × both themes clears 4.5 : 1, computed by the WCAG formula over the composited background (lowest: 4.72 light — emerald-700 on the Done button's hover tint — and 7.27 dark; the audit's measured 1.39–3.32 : 1 in dark mode are gone).
+
+**Done-when.** 1 ✓ (computed; Tailwind's v3 sRGB steps — v4's oklch steps render within a few units). 2 ✓.
+
+**Scope / residual.** The source badge and WBS chip sit on their own `--color-surface-2` chips and were not changed.
 
 ---
 

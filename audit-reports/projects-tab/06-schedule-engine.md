@@ -167,7 +167,7 @@ keys on is the outline position, which renumbers on every insert — only
 ## SCH-4 · A dependency cycle launches tasks years into the future, and the move is persisted
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured against a verbatim port)
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -210,12 +210,18 @@ rows in `all`.
 - The preview sheet's count matches what will actually be written.
 - A test asserts the 2-node cycle produces a refusal, not a 240-day shift.
 
+**Resolution (2026-09-30, projects Round G).** Reproduced first against `fdb51b1`: the 2-node cycle moved A from 2026-06-01 to 2026-07-11 in a two-row project (guard 40). `lib/scheduleReflow.ts`: `cascadeDependents` is now `planCascade(…).changes`; every push records its cause — the predecessor link, or the ancestor a sub-task was carried with — and a push whose cause chain already contains the task being pushed is a loop: `CascadeRefusedError("cycle", edges)` names every edge in order (`a → b, b → a`; a loop through a carried sub-task reads `X → P (link), P → p1 (contains), p1 → X`) and nothing is written. The displacement backstop refuses (`"runaway"`) any push further than an acyclic cascade could ever go — the schedule's span plus every task laid end to end, a day per link and every positive lag — and so does a step count past `(nodes + links) × 4 + 32`; neither can trigger on a legitimate move. A pushed task's own sub-tasks now re-queue too, so their successors are cascaded (the old loop re-queued only the pushed node). `components/projects/ExecutionView.tsx`: `withCascade` catches the refusal for every caller (drag / nudge / keyboard via the sheet, edge resize, summary resize, sequencing) and says it in task names — "These links go round in a loop: “A” → “B” → “A”. Nothing was moved — remove one of these links first." The preview: `changesFor(pendingMove, mode)` (each target's `computeTreeMove` plus the cascade) is the ONE computation both `MovePreviewSheet`'s new `planFor(mode)` and `commitMove` use, so the sheet's "Writes N tasks — K moved, M more follow (dependents and the phases around them)" and its button ("Shift N tasks") count exactly the rows the batch writes; a refusal replaces Confirm (disabled) with the loop named; locked dependents the move cannot push (done / imported) are listed by name. Tests: `dependencies.test.ts` "SCH-4 ·" (the 2-node cycle is a refusal naming both links, not a shift; the same cycle in a 200-row project; the carried-child loop with every edge; a diamond is not a loop; a pushed task's sub-task's successor follows); `scheduleEngineUi.test.ts` "SCH-4 ·" (Writes 3 tasks — 1 moved, 2 more follow; "Shift 3 tasks"; a loop → an alert and a disabled Confirm; the sheet and the commit share `changesFor`).
+
+**Done-when.** 1 ✓ (refused, edges named, nothing written). 2 ✓ (the sheet counts the computed write set). 3 ✓.
+
+**Scope / residual.** Remediation 3 is a provable backstop rather than "the project span": the span alone refused legitimate cascades in small schedules (a lag or a long chain pushes past today's envelope). A cycle already in stored data (an old import) is refused at move time, not repaired; new ones can no longer be created (`SCH-9`).
+
 ---
 
 ## SCH-5 · Three contradictory overdue rules, one of which marks every task overdue on its own due date
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
 - **Locations:**
@@ -260,12 +266,18 @@ through it. Delete the other two rules.
 
 **Verification fix (2026-09-30, projects Round G).** The storage-edge note above first said creators at "UTC+12…+14" land a day early. Local noon in UTC is 12:00 minus the offset, so only an offset above +12 crosses into the previous UTC day. At +12 it is 00:00Z on the same day. Corrected in place; the pointer to P6b is unchanged.
 
+**Resolution (2026-09-30, projects Round G).** The remaining five schedule sites now call `isOverdueMilestone` (`lib/milestoneLiveness.ts`, by UTC day) — no second predicate was authored, per the ordering note above: `components/projects/ScheduleTab.tsx` `MilestoneRow` (was `planned < now`), `lib/executionReport.ts` (feeds `SchedulePulse`, the Report's "Overdue" and each group's "late"; was `finishMs(m) < now`), `lib/scheduleFilter.ts` `overdueOnly` (was `planned >= now`), `components/projects/ScheduleProgress.tsx` (was LOCAL midnight; now the UTC day, over leaves only — the population the pulse and the summary strip count — and its "Next 14 days" window is UTC days too), `components/projects/ExecutionView.tsx` `SummaryStrip` (was `startOfDayUTC` inline). Tests: `lib/__tests__/overdue.test.ts` — the finding's measured case (now `2026-08-21T16:00Z`, due `2026-08-21`) in America/Los_Angeles, UTC and Asia/Tokyo: not overdue; overdue from `2026-08-22T00:00Z`; the report (the pulse) and the filter give the same answer; a source pin over all seven files (the six sites plus `projectReport.ts`) asserts each imports `isOverdueMilestone` and that no `planned / finish < now | Date.now() | today`, `plannedAt >= now` or local `setHours(0,0,0,0)` rule remains (the pin matches all five retired rules at `fdb51b1`). `executionReport.test.ts` "flags overdue by UTC day" replaces a test that pinned the defect (a task due Mar 2 counted overdue at Mar 2 noon); `scheduleFilter.test.ts` "SCH-5 ·".
+
+**Done-when.** 1 ✓ (every site resolves to `isOverdueMilestone`). 2 ✓ (the pulse and the strip call the same predicate over the same leaves). 3 ✓ (three zones).
+
+**Scope / residual.** The storage edge recorded above — the wizard's milestones insert writes local noon (`lib/projectWizardWrites.ts`), which lands on the previous UTC day for a creator above UTC+12 — is NOT fixed here: that file is J7's (merged) and outside this package's list. The fix is one line (`${date}T00:00:00Z`, the convention `lib/milestones.ts` applies); left for its owner / the integrator.
+
 ---
 
 ## SCH-6 · Hiding imported rows changes almost every number, and the tooltip says it doesn't
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness
 - **Locations:**
@@ -308,12 +320,18 @@ from the unfiltered list so a summary can never present as a leaf.
 - A parent with hidden children never renders a Done button.
 - A test asserts leaf-ness is computed from the unfiltered set.
 
+**Resolution (2026-09-30, projects Round G).** The toggle is a display filter. `components/projects/ScheduleTab.tsx` hands `ExecutionView` the FULL list with `hideImported={!showGhost}`; `ExecutionView` computes everything — `SchedulePulse`, `SummaryStrip`, `overallPercent`, the critical path, the date domain, the progress index, the Report, the cascade, the cycle check — over the full list and only leaves imported rows out of the rows drawn (a hidden row's visible children are drawn in its place) and the calendar tiles. The Planning list's progress index reads the full list too, so a manual parent whose imported children are hidden is still a phase ("rolls up", no Done button or status menu), and `planLeafStats` decides leaf-ness from the full list. The Planning search filter no longer leaks into the Execution board's figures either (the board used to receive `visible`). Tooltips rewritten: "Hide the rows imported from your scheduling tool from the list and the board. Every number, rollup, the critical path and the cycle check still count them." and the HelpTooltip (see `SCH-13`). Tests: `scheduleEngineUi.test.ts` "SCH-6 ·" — the summary strip reads identically with the toggle on and off (1 / 3 tasks complete: the hidden imported leaves still count), the imported rows are not drawn, and the manual phase over them keeps the read-only "Phase status — rolls up from sub-tasks" control; `scheduleEngineMigration.test.ts` pins the full list to the board and the full-list planning rollup.
+
+**Done-when.** 1 ✓ (no metric changes; the tooltip says so). 2 ✓. 3 ✓ (the render test asserts the parent of hidden children stays a phase — leaf-ness from the unfiltered set).
+
+**Scope / residual.** None.
+
 ---
 
 ## SCH-7 · The batch-move RPC has no optimistic lock, and the live-sync meant to cover it was never switched on
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** (a) CONFIRMED. (b) CONFIRMED from the migration set — verify against the live publication before treating as final.
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -357,6 +375,12 @@ view."
 
 **Scope / residual.** `ScheduleTab.tsx` and the realtime subscription are P6b surfaces; nothing in them was changed here.
 
+**Resolution (2026-09-30, projects Round G — completes J6a's partial above).** Client: `components/projects/ScheduleTab.tsx` `onMoveMany` sends each row's `updated_at` as this view loaded it (a ref over the loaded rows) — or, for an Undo, the value the move being undone reported (`SCH-18`) — and passes `onUnmatched: "return"`: rejected moves are NAMED ("2 tasks were changed by someone else and were not moved: A, B (the other 3 moved). The schedule has been reloaded — check those dates and try again.") and the board reloads. After a move that saved, the rows' new `updated_at` (read back by `applyMilestoneMoves`, `result.updatedAt`) replace the loaded values, so the next drag of the same row is not falsely rejected; when the read-back fails the tab reloads instead. Realtime: migration `20261106_prj_roundG_milestones_realtime.sql` adds `milestones` to `supabase_realtime` — idempotent, a no-op when the publication is absent, with a DEC-30 inventory captured before the transaction recording whether the table was already published by hand (the finding's caveat) and whether the publication exists; no REPLICA IDENTITY change (INSERT / UPDATE carry the new row; under RLS a DELETE carries only the key whatever the identity). The subscription listens to INSERT and UPDATE filtered on `project_id`, and to DELETE matched by id against the rows on screen; the comment says the channel needs `20261106` and that the lock is what stops a silent overwrite either way. Checked on PostgreSQL 16 (a throwaway cluster, a stub `milestones` with RLS): with `supabase_realtime` present the script adds the table and every probe reads `t`; a second run is a no-op and its inventory reads 1 ("already published"); with no publication nothing changes and the probe reads `f`. Tests: `scheduleEngineMigration.test.ts` (the one-script shape, the idempotent add and nothing else, aggregate inventory, the RLS probe; ScheduleTab's lock value, `onUnmatched: "return"`, the named rejection, the `updated_at` refresh, the three listeners); `scheduleEngineWriters.test.ts` "SCH-18 / SCH-7 ·" (the read-back).
+
+**Done-when.** 1 ✓ (a move from a stale view is rejected by the lock and named). 2 ✓ (J6a: `ROW_COUNT`). 3 ✓ (the table is published once `20261106` is applied; the comment says so).
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261106_prj_roundG_milestones_realtime.sql` (and J6a's `20261098` for the lock). Until `20261106` is applied no event arrives; the lock still refuses the stale write.
+
 ---
 
 ## SCH-8 · Every P6 relationship type is imported as finish-to-start, and lag is discarded
@@ -398,12 +422,14 @@ neither.
 
 **Scope / residual.** Option (b) of the remediation, made honest: non-FS links are stored on the task rather than dropped, so the engine half (PC-4 / P6b honouring lag and, after its own test, SS/FF) can read them back without a re-import. FS lag is recorded but not applied until that lands.
 
+**Engine half landed (2026-09-30, projects Round G — J6b).** The reflow now applies each finish-to-start link's recorded lag: `lib/scheduleReflow.ts` `fsLagHours` reads `FS <ref> ±Nh` from `attributes.source_links`, `reflowNodesFromMilestones` maps it to the predecessor's id, and `cascadeDependents` / `computeCriticalPath` honour it (projects-and-cost `SCHED-13`). The parser's heads-up "the lag is recorded on the task but not applied by the reflow" (`lib/scheduleParsers.ts` `linkWarnings`) is therefore out of date; that file is J6a's and was not edited here — the one-string change is left for the integrator. SS / FF / SF links are still recorded and not enforced (`DEC-51` (5)).
+
 ---
 
 ## SCH-9 · The cycle guard is defeated by the imported-rows toggle
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -428,12 +454,18 @@ filter", not "removed".
 - The cycle check sees every milestone regardless of the toggle.
 - A dependency on a filtered-out task is labelled correctly.
 
+**Resolution (2026-09-30, projects Round G).** The cycle check always reasons over every milestone. `ExecutionView` hands `TaskDetailPanel` the full list (the display filter only changes the rows drawn — `SCH-6`); the dependency picker drops every task in `dependentsClosure(fullNodes, task)` — one O(n + e) walk instead of a DFS per candidate (`PERF-5`). Below the UI, `updateMilestone` checks a new `depends_on` against EVERY row of the project read from the database (paged past PostgREST's 1,000-row cap) and refuses with the loop named: `DependencyCycleError` — "That link would make a loop: Fit-up → Weld (imported) → NDE → Fit-up. …". A link to a row the display filter hides reads "Weld (hidden by filter)"; a link to an id that no longer exists reads "(deleted task)" — "(removed task)" is gone. Tests: `dependencies.test.ts` "SCH-9 ·" (`dependentsClosure` agrees with `wouldCreateCycle` for every candidate; `linkCyclePath` names the loop through the hidden middle row; the filtered node list IS the defect); `scheduleEngineUi.test.ts` "SCH-9 ·" (the labels; NDE is not offered as Fit-up's predecessor through the hidden Weld); `scheduleEngineWriters.test.ts` "SCH-9 ·" (the loop through an imported middle row refused from the database; on a 2,500-row project the loop through row 2,400 is still caught).
+
+**Done-when.** 1 ✓. 2 ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## SCH-10 · Rebase lands the schedule on the wrong day for every negative-offset timezone
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
 - **Locations:**
@@ -468,12 +500,18 @@ keep it in UTC throughout and render it as UTC in the preview.
 - The preview and the board show the same date.
 - A test covers UTC-8, UTC, and UTC+9.
 
+**Resolution (2026-09-30, projects Round G).** `components/projects/RebaseScheduleModal.tsx`: the target instant is built as wall-clock-as-UTC — `rebaseTargetIso(date, time)` → `fromWallClock` (`${date}T${time}:00.000Z`, an impossible date refused) — the time is pre-filled from the anchor's UTC clock (`rebasePrefill` → `toWallClock`; a midnight-UTC anchor pre-fills 00:00, not "17:00" in Los Angeles), and the preview renders both ends in UTC ("schedule time"), like the board. The same local-parse mistake in `TaskDetailPanel`'s edit form (a `datetime-local` filled from `getHours()` and saved through a local parse, so a US user saw and saved the wrong day) uses the same helpers, and a date is written only when the user changed it. The helpers live in `lib/scheduleReflow.ts` with `SCH-12`'s. Tests: `scheduleEngineUi.test.ts` "SCH-10 ·" in America/Los_Angeles, UTC and Asia/Tokyo — the midnight anchor pre-fills 00:00, 1 September at 00:00 is `2026-09-01T00:00:00.000Z` and at 08:00 `2026-09-01T08:00:00.000Z`, 30 February is refused — and a source pin that the modal no longer reads local hours or parses locally and renders its preview with `timeZone: "UTC"`.
+
+**Done-when.** 1 ✓ (three zones). 2 ✓ (both render in UTC). 3 ✓.
+
+**Scope / residual.** The default target DATE is still the viewer's calendar "today" (their intent); only the instant built from it changed. `rebaseSchedule` is unchanged (Verified sound).
+
 ---
 
 ## SCH-11 · Resizing a summary snaps every child to UTC midnight, moving tasks by a day
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** data-integrity
 - **Locations:** `lib/scheduleReflow.ts:531, 542` — `snap = (ms) => Math.round(ms / DAY_MS) * DAY_MS`
@@ -502,12 +540,18 @@ consistently; the current half-way state is what produces the drift.
 - A +1 day summary resize moves every child exactly one day.
 - A test pins the 08:00/17:00 fixture.
 
+**Resolution (2026-09-30, projects Round G).** Reproduced against `fdb51b1` exactly as measured. `lib/scheduleReflow.ts` `computeSummaryResize` rounds each leaf's MOVE to whole days (`orig + round((scaled − orig) / day) × day`) instead of rounding the instant to UTC midnight; a pair that rounding would cross keeps the leaf's own span. Tests: `scheduleReflow.test.ts` "SCH-11 ·" — the 08:00 / 17:00 fixture resized +1 day on the finish edge: the phase ends exactly one day later (`06-06T17:00`), L2's finish moves one day and stays 17:00, its start does not move, L1 does not move, every clock time is kept; the start-edge mirror; date-only children unchanged.
+
+**Done-when.** 1 ✓, read as the resize the user made: the phase moves exactly one day and no child moves more than one day. The stretch is proportional from the fixed edge (the module's documented rule), so the child at the moving edge moves exactly one day and a child near the fixed edge may move none; nothing moves two (the measured defect). 2 ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## SCH-12 · Setting a duration does local-calendar arithmetic on UTC dates, so a task gains a day across DST
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (measured)
 - **Blast radius:** correctness
 - **Locations:** `lib/milestones.ts:1410` — `const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1));`
@@ -536,12 +580,18 @@ subtract `(days - 1) * DAY_MS` from the epoch value directly.
 - A 3-day task ending 2 November starts 31 October, in every timezone.
 - A test runs the duration helper at both DST boundaries in a negative-offset zone.
 
+**Resolution (2026-09-30, projects Round G).** `lib/milestones.ts` `setTaskDuration` computes the start with `startForDuration(finish, days)` — `finish − (days − 1) × 24 h` in UTC — instead of `setDate(getDate() − …)` on a local calendar; `addUtcDays` / `startForDuration` in `lib/scheduleReflow.ts` are the shared helpers (`SCH-10` uses their wall-clock siblings). Tests: `scheduleReflow.test.ts` "SCH-12 ·" in America/Los_Angeles, UTC, Asia/Tokyo and Pacific/Auckland at both DST boundaries (a 3-day task ending 2 Nov starts 31 Oct; ending 10 Mar starts 8 Mar); `scheduleEngineWriters.test.ts` "SCH-12 ·" runs `setTaskDuration` itself in Los Angeles and Auckland (`2026-10-31T00:00:00.000Z`).
+
+**Done-when.** 1 ✓. 2 ✓.
+
+**Scope / residual.** None.
+
 ---
 
 ## SCH-13 · "Read-only imported rows" are fully editable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (grep for `source` in the three views returns nothing)
 - **Blast radius:** ux / data-integrity
 - **Locations:**
@@ -569,6 +619,12 @@ editable, plan does not.
 **Done when.**
 - The tooltip's claim matches the behaviour.
 - Whichever rule is chosen is enforced below the UI.
+
+**Resolution (2026-09-30, projects Round G — decision `DEC-44`, J6b's, renumbered at merge).** "Read-only imported rows" now means exactly: an imported row's dates, place in the outline, links and planned fields belong to the scheduling tool — the next import writes them back (`DEC-51`) — so they are locked; its status, % complete, actual dates and who actually did the work are recorded here and survive a re-import. Enforced below the UI in `lib/milestones.ts`: `updateMilestone` refuses a CHANGED import-owned field (name, description, weight, start, finish, shift, work order, planned responsible, location, work hours, source columns, links) on an imported row with `ImportedRowLockedError` ("“Hydrotest” comes from Primavera P6: its finish is set there and the next import writes it back — change it in the scheduling tool and re-import. …"), drops unchanged ones an edit form resends, and lets app-owned fields through; `applyMilestoneMoves` refuses a batch that touches an imported row (nothing is moved); `setTaskDuration` and `groupTasksUnderParent` refuse before any write. The engine treats imported rows as locked (`reflowNodesFromMilestones`), so a drag of a manual predecessor holds an imported successor in place and the sheet names it. UI: no drag / nudge / resize handles on an imported bar (its tooltip says why), no "Set duration" on an imported row, the detail panel's Move section, dependency editor and plan fields are read-only with a note, and a drag or arrow key on one says why. Delete stays available (removal is its own explicit action, `DEC-51`); its confirm says the next import of a file that still carries the row adds it back. `rebaseSchedule` (Verified sound, unchanged) still shifts the whole schedule including imported rows; the tooltip says so. HelpTooltip rewritten to say exactly this. Tests: `scheduleEngineWriters.test.ts` "SCH-13 ·" (a changed date refused with nothing written; an unchanged resend plus a performer change saves only the performer; a manual row edits as before; a batch touching an imported row is refused before the RPC; duration and grouping refused before any write); `scheduleEngineUi.test.ts` "SCH-13 ·" (only the manual bar carries the grab handle; the imported bar's tooltip names the tool).
+
+**Done-when.** 1 ✓ (the tooltip states the rule the code enforces). 2 ✓ (`lib/milestones.ts`, below every UI path).
+
+**Scope / residual.** The lock is in the library, not the database: a direct PostgREST write with a member's session can still change an imported row's plan (the importer's own writes are client upserts, so a trigger could not tell them apart). Rebase is the documented exception.
 
 ---
 
@@ -615,7 +671,7 @@ rather than firing them all at once.
 ## SCH-15 · The critical path ignores the real dependency edges
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** decision-quality
 - **Locations:** `lib/criticalPath.ts` — `computeCriticalPathLite` never reads `dependsOn`
@@ -635,6 +691,12 @@ is the right answer now that the edges exist.
 
 **Done when.**
 - The highlighted path is derived from the dependency graph, or the label no longer says "critical path".
+
+**Resolution (2026-09-30, projects Round G).** Closed with projects-and-cost `SCHED-10`, which subsumes it: `lib/criticalPath.ts` `computeCriticalPath` derives the path from the stored finish-to-start links (a backward pass giving each leaf's total float, lag honoured, and the chain of driving links traced back from the finish); the date-contiguity heuristic is retired. The timeline's button and legend and the Report say what it is ("the chain of finish-to-start links that drives the finish date — calendar days, no working calendar"), and a schedule with no links says only the finishing tasks are shown. Tests: `criticalPath.test.ts`.
+
+**Done-when.** 1 ✓ (derived from the dependency graph).
+
+**Scope / residual.** See `SCHED-10`: calendar days, no working calendar.
 
 ---
 
@@ -674,7 +736,7 @@ Leave rows absent from the file untouched.
 ## SCH-17 · Deleting a phase silently orphans its entire subtree
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Locations:**
@@ -700,12 +762,18 @@ delete.
 - The prior structure is recorded in the audit row.
 - No dangling dependency references remain after a delete.
 
+**Resolution (2026-09-30, projects Round G).** `lib/milestones.ts` `deleteMilestone` no longer orphans: it reads the row's direct children and every row whose `depends_on` names it, moves the children up to the row's own parent (the top level when it has none) in one checked update, removes the id from each dependent's links (checked, per row), then deletes — a refused step stops the delete and says what already happened — and the `MILESTONE_DELETED` audit row records the prior structure: the prior parent, where the children went, each promoted child, each dependent's links before, and the row's own dates and links. Returns `{ reparented, unlinked }`. `planMilestoneDelete(list, id)` (pure) gives the confirm its numbers: `ScheduleTab` and `TaskDetailPanel` now say "Delete “Phase 1”? … Its 2 sub-tasks (3 tasks in all) will move up to “Unit 200” — none is deleted. 1 task that depends on it will lose that link." (and, for an imported row, that the next import adds it back). A database without the hierarchy or links columns deletes as before. Tests: `scheduleEngineWriters.test.ts` "SCH-17 ·" (the plan; children promoted to the phase's parent, grandchildren keep theirs, the link removed so no dangling id, the audit row's prior structure; a refused re-parent leaves the phase in place and deletes nothing).
+
+**Done-when.** 1 ✓. 2 ✓. 3 ✓.
+
+**Scope / residual.** The brief's default was taken: promote, not cascade-delete (no "delete the phase and its N tasks" choice was added). The steps are separate PostgREST writes: a failure part-way through the dependents leaves the earlier links removed (the error says so) — the phase itself is never deleted with its children still pointing at it.
+
 ---
 
 ## SCH-18 · A failed Undo reports success
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / ux
 - **Locations:**
@@ -734,6 +802,12 @@ lands. Clear the dropped toast's timer.
 **Done when.**
 - A failed undo shows "Couldn't undo" and leaves the toast, or offers a retry.
 - The timers map does not grow unbounded.
+
+**Resolution (2026-09-30, projects Round G).** The handlers still report a refusal as `false`; the undo closures in `ExecutionView` now inspect it and THROW (status, progress, bulk status — naming how many could not be set back — and every batch move, which also clears the optimistic overlay). `components/projects/useUndoableActions.ts` `runUndo` keeps the toast until the undo has actually worked: a throw turns the SAME toast into "Couldn't undo: … — <what it was>" with its Undo button kept as a retry (15 s), a retry that works dismisses it, and a second click while one runs is ignored. Version check (the remediation's `SCH-7a` item): an Undo of a batch move sends the `updated_at` values the move reported (`applyMilestoneMoves` reads them back), so it is refused — and says so — if someone changed those rows in between, instead of blindly writing the old dates over them. Timers: a toast dropped off the top of the three takes its timer with it, and every timer is cleared on unmount, so the map only ever holds the toasts on screen. Tests: `scheduleEngineUi.test.ts` "SCH-18 ·" (a throwing undo keeps its toast as "Couldn't undo: the schedule changed since that move — Moved “Weld”" with Undo still there; the retry succeeds and dismisses; ten toasts leave three on screen and three timers; source pins that the closures throw on `false` and the move undo sends the reported lock).
+
+**Done-when.** 1 ✓ (shows "Couldn't undo", leaves the toast, offers a retry). 2 ✓.
+
+**Scope / residual.** None.
 
 ---
 
