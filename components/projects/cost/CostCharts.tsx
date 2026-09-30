@@ -52,6 +52,39 @@ export function entriesToDated(entries: CostEntry[]): { commitments: DatedAmount
  *  the accounts table below. */
 export const BURN_LINES_SHOWN = 8;
 
+/** One budget line as the burn list reads it. */
+interface BurnLine { label: string; spent: number; committed: number; budget: number; overBudget: boolean }
+
+/** REL-11: the burn order — the lines furthest through their own budgets
+ *  first (then the most committed of their budgets); lines with no budget,
+ *  which have no burn to measure, after them, those with money on them first.
+ *  A share of the line's own budget compares across currencies; a raw amount
+ *  would not. */
+function byBurn(a: BurnLine, b: BurnLine): number {
+  const aHas = a.budget > 0, bHas = b.budget > 0;
+  if (aHas !== bHas) return aHas ? -1 : 1;
+  if (!aHas) return Number(b.spent > 0 || b.committed > 0) - Number(a.spent > 0 || a.committed > 0);
+  return b.spent / b.budget - a.spent / a.budget || b.committed / b.budget - a.committed / a.budget;
+}
+
+/** REL-11: one row of the burn list — the line's spent against its OWN
+ *  budget (the account bars' scale in the table below), what is committed as
+ *  the paler bar behind it, and every figure in the line's own currency
+ *  (`f`). Over budget on exposure, the bar takes the alarm colour, as the
+ *  account bar does. */
+function burnItem(line: BurnLine, f: (n: number) => string, example = false): BarItem {
+  const tag = example ? " (example)" : "";
+  return {
+    label: line.label,
+    value: line.spent, valueLabel: f(line.spent), slot: 0,
+    of: line.budget, ghost: { value: line.committed, slot: 1 }, alarm: line.overBudget,
+    sublabel: line.budget > 0
+      ? `${f(line.committed)} committed · of ${f(line.budget)} budget${tag}`
+      : `${f(line.committed)} committed · no budget set${tag}`,
+    flag: line.budget > 0 && line.spent > line.budget ? "over budget" : line.overBudget ? "over-committed" : undefined,
+  };
+}
+
 export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd, awardedLaborHours }: {
   rollup: ProjectCostRollup;
   entries: CostEntry[];
@@ -112,11 +145,14 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
         <CostPictures example series={exSeries} fmt={fmt} tickFmt={tickFmt} todayIso={ex.today}
           budget={ex.budget} budgetLabel="Budget" plannedHint={null}
           forecast={exForecast} crew={exCrew}
-          burn={ex.accounts.map((a) => ({
-            label: `${a.code} ${a.name}`, value: a.spent, slot: 0,
-            sublabel: `${fmt(a.committed)} committed · of ${fmt(a.budget)} budget (example)`,
-            flag: a.spent > a.budget ? "over budget" : undefined,
-          }))}
+          burn={ex.accounts
+            .map((a): BurnLine => ({
+              label: `${a.code} ${a.name}`, spent: a.spent, committed: a.committed, budget: a.budget,
+              // The rollup's exposure for a line with one party: spent plus
+              // the commitment not yet invoiced.
+              overBudget: a.budget > 0 && Math.max(a.spent, a.committed) > a.budget,
+            }))
+            .sort(byBurn).map((l) => burnItem(l, fmt, true))}
           burnTotal={ex.accounts.length} />
       </ExampleFrame>
     );
@@ -138,27 +174,32 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
         : "No schedule dates yet, so there's no planned-pace line — import or add milestones and it appears."
     : null;
 
-  // REL-11: burn by budget line, for real — the lines that have spent most first.
-  const burnLines = [...rollup.accounts].sort((a, b) => b.spent - a.spent || b.revisedBudget - a.revisedBudget);
-  const burn: BarItem[] = burnLines.slice(0, BURN_LINES_SHOWN).map((r) => ({
-    label: [r.account.code, r.account.name].filter(Boolean).join(" "),
-    value: r.spent, slot: 0,
-    sublabel: `${fmt(r.committed)} committed · of ${fmt(r.revisedBudget)} budget`,
-    flag: r.revisedBudget > 0 && r.spent > r.revisedBudget ? "over budget" : r.overBudget ? "over-committed" : undefined,
-  }));
+  // REL-11: burn by budget line, for real — each line against its own
+  // (revised) budget and in its own currency, as the accounts table below
+  // formats it; the lines furthest through their budgets first.
+  const burnLines = rollup.accounts
+    .map((r) => ({
+      label: [r.account.code, r.account.name].filter(Boolean).join(" "),
+      spent: r.spent, committed: r.committed, budget: r.revisedBudget, overBudget: r.overBudget,
+      currency: r.account.currency ?? cur,
+    }))
+    .sort(byBurn);
+  const burn: BarItem[] = burnLines.slice(0, BURN_LINES_SHOWN)
+    .map((l) => burnItem(l, (n) => fmtMoney(n, l.currency)));
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm">
       <CostPictures series={noMoney ? [] : series} emptyReason={series.length >= 2 ? "no-money" : "no-dates"}
         fmt={fmt} tickFmt={tickFmt} todayIso={todayIso}
         budget={rollup.revisedBudget} budgetLabel={rollup.approvedChanges !== 0 ? "Revised budget" : "Budget"}
-        plannedHint={plannedHint} forecast={forecast} crew={crew} burn={burn} burnTotal={burnLines.length} />
+        plannedHint={plannedHint} forecast={forecast} crew={crew} burn={burn} burnTotal={burnLines.length}
+        mixedCurrency={rollup.currencies.length > 1} />
     </div>
   );
 }
 
 /** The one layout both the real picture and the example draw through. */
-function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso, budget, budgetLabel, plannedHint, forecast, crew, burn, burnTotal, example = false }: {
+function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso, budget, budgetLabel, plannedHint, forecast, crew, burn, burnTotal, mixedCurrency = false, example = false }: {
   series: SCurvePoint[];
   /** Why `series` is empty: no dates to draw across, or dates but no money
    *  (no budget, nothing posted). */
@@ -173,6 +214,8 @@ function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso
   crew: PlannedCrew | null;
   burn: BarItem[];
   burnTotal: number;
+  /** The budget lines are in more than one currency: each burn row is in its own. */
+  mixedCurrency?: boolean;
   example?: boolean;
 }) {
   return (
@@ -213,9 +256,14 @@ function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso
             <div>
               <SectionLabel icon={<BarChart3 className="w-3.5 h-3.5" />} text="Burn by budget line" />
               <BarList fmt={fmt} items={burn} example={example} />
+              {/* The scale, said: each bar is a share of its own line's budget. */}
+              <div data-burn-scale className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
+                Each bar is the line&apos;s spent against its own budget; the paler bar behind it is what&apos;s committed.
+                {mixedCurrency ? " Each line is in its own currency." : ""}
+              </div>
               {burnTotal > burn.length && (
-                <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
-                  The {burn.length} lines with the most spent, of {burnTotal} — every line is in the accounts table below.
+                <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                  The {burn.length} lines furthest through their budgets, of {burnTotal} — every line is in the accounts table below.
                 </div>
               )}
             </div>

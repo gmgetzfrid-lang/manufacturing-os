@@ -89,17 +89,36 @@ export function sCurveTodayX(points: SCurvePoint[], todayIso: string | null | un
 // makes them unreadable.
 const HALO = { stroke: "var(--color-surface)", strokeWidth: 3, paintOrder: "stroke" } as const;
 
-/** A generous estimate of a 9-unit label's advance: about 0.62 em for Latin
- *  digits and letters, a full em for CJK and full-width glyphs. The top
- *  gridline's label comes from Intl in the viewer's locale ("$300K",
- *  "300.000 $", "CA$1.5M", "30万 US$"), so its width is measured, not assumed. */
+// Glyphs a full em wide in the Latin range (the rest of the full-em class is
+// everything from Greek on: other scripts, signs such as ₩ and ₹, CJK).
+const FULL_EM = new Set(["m", "w", "M", "W", "%", "@"]);
+
+/** An upper bound on a 9-unit label's advance, glyph by glyph: a full em for
+ *  m, w, M, W, % and @ and for anything from U+0370 on (Greek, Cyrillic,
+ *  Arabic, Indic and CJK text; the ₩ and ₹ signs; full-width forms); 0.8 em
+ *  for the other capitals and the rest of Latin-1 and Latin Extended
+ *  (no-break spaces, £, ¥, accented letters); 0.65 em for digits, lowercase,
+ *  "$" and punctuation. Checked against every compact currency label Intl
+ *  writes for 37 locales × 21 currencies (5,259 labels) in Inter, the app's
+ *  face, and in DejaVu Sans, Liberation Sans and FreeSans, the fallbacks: it
+ *  is never below the real advance ("CA$3M" is 32.3 units in Inter and 31.7
+ *  in DejaVu Sans; this gives 35.1). The top gridline's label comes from Intl
+ *  in the viewer's locale ("$300K", "300.000 $", "CA$1.5M", "30万 US$"), so
+ *  its width is taken from the text, not assumed. */
 export function sCurveLabelWidth(text: string): number {
   let w = 0;
-  for (const ch of text) w += (ch.codePointAt(0) ?? 0) >= 0x2e80 ? 9 : 5.6;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    w += cp >= 0x370 || FULL_EM.has(ch) ? 9 : (cp >= 0x41 && cp <= 0x5a) || cp > 0x7f ? 7.2 : 5.85;
+  }
   return w;
 }
-/** Half the width of the centred 9-unit bold "Today". */
-const TODAY_HALF_W = 14;
+/** Half the advance of the centred 9-unit bold "Today", rounded up: 27.8
+ *  units in Inter Bold, 30.7 in DejaVu Sans Bold (the widest fallback). */
+const TODAY_HALF_W = 16;
+/** The clear space between the top label's end and "Today": 2 units, plus
+ *  both labels' haloes, each reaching half its stroke width past the glyphs. */
+const TODAY_LABEL_GAP = 2 + HALO.strokeWidth;
 
 /** Where the "Today" label goes: above the plot, centred on the marker —
  *  or, when that would overlap the top gridline's label (drawn at
@@ -108,7 +127,7 @@ const TODAY_HALF_W = 14;
  *  that gridline label actually shows; empty when no label sits at the top. */
 export function sCurveTodayLabel(todayX: number, topLabel = ""): { x: number; y: number; anchor: "start" | "middle" | "end" } {
   const topLabelEnd = PAD_L + 2 + sCurveLabelWidth(topLabel);
-  if (todayX - TODAY_HALF_W < topLabelEnd + 2) return { x: todayX + 3, y: PAD_T + 10, anchor: "start" };
+  if (todayX - TODAY_HALF_W < topLabelEnd + TODAY_LABEL_GAP) return { x: todayX + 3, y: PAD_T + 10, anchor: "start" };
   return { x: todayX, y: PAD_T - 3, anchor: todayX > VB_W - PAD_R - 20 ? "end" : "middle" };
 }
 
@@ -290,13 +309,33 @@ export function SCurveChart({ points, fmt, tickFmt, todayIso, budget, budgetLabe
 export interface BarItem {
   label: string;
   value: number;
+  /** The value as text, already formatted — e.g. in the line's own currency.
+   *  Preferred over the list's `fmt(value)`. */
+  valueLabel?: string;
   sublabel?: string;
   /** Slot for vizCat color; omit for accent. */
   slot?: number;
+  /** Scale this bar against its OWN whole (e.g. the line's budget), capped
+   *  at full width, instead of against the list's largest value. A whole of
+   *  zero or less draws no bar. */
+  of?: number;
+  /** A paler bar behind the first on the same scale (e.g. committed). */
+  ghost?: { value: number; slot: number };
+  /** Draw the bar in the alarm colour (e.g. over budget). */
+  alarm?: boolean;
   /** Highlight ring (e.g. best-value bid). */
   highlight?: boolean;
   /** Small red flag text (e.g. "over budget"). */
   flag?: string;
+}
+
+/** A bar's width in %: nothing for nothing (draw only what the data holds —
+ *  a zero or negative value, or no whole to measure it against, draws no
+ *  stub), at least 2% for any positive value so it stays visible, capped at
+ *  the full track. */
+export function barPct(value: number, whole: number): number {
+  if (!(value > 0) || !(whole > 0)) return 0;
+  return Math.max(2, Math.min(100, (value / whole) * 100));
 }
 
 export function BarList({ items, fmt, example = false, className = "" }: {
@@ -305,25 +344,33 @@ export function BarList({ items, fmt, example = false, className = "" }: {
   example?: boolean;
   className?: string;
 }) {
-  const money = (v: number) => (example ? `${fmt(v)} (example)` : fmt(v));
+  const money = (it: BarItem) => {
+    const v = it.valueLabel ?? fmt(it.value);
+    return example ? `${v} (example)` : v;
+  };
   const max = Math.max(1, ...items.map((i) => i.value));
   return (
     <div className={`space-y-2 ${className}`}>
       {items.map((it, i) => (
-        <div key={`${it.label}-${i}`} title={`${it.label} · ${money(it.value)}`}>
+        <div key={`${it.label}-${i}`} title={`${it.label} · ${money(it)}`}>
           <div className="flex items-baseline justify-between gap-2 text-[11px]">
             <span className={`truncate font-bold ${it.highlight ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
               {it.label}
               {it.flag && <span className="ml-1.5 font-black text-[10px] text-rose-600 dark:text-rose-400">{it.flag}</span>}
             </span>
-            <span className="tabular-nums font-black text-[var(--color-text)] shrink-0">{money(it.value)}</span>
+            <span className="tabular-nums font-black text-[var(--color-text)] shrink-0">{money(it)}</span>
           </div>
-          <div className="mt-0.5 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
-            <div className="h-full rounded-full transition-[width] duration-500"
+          <div className="relative mt-0.5 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
+            {it.ghost && (
+              <div data-bar="ghost" className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
+                style={{ width: `${barPct(it.ghost.value, it.of ?? max)}%`, background: vizCat(it.ghost.slot), opacity: 0.4 }} />
+            )}
+            <div data-bar="value" className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
               style={{
-                width: `${Math.max(2, (it.value / max) * 100)}%`,
-                background: it.slot != null ? vizCat(it.slot) : "var(--color-accent)",
-                opacity: it.highlight ? 1 : 0.75,
+                width: `${barPct(it.value, it.of ?? max)}%`,
+                background: it.alarm ? "var(--viz-down)" : it.slot != null ? vizCat(it.slot) : "var(--color-accent)",
+                // Opaque over a ghost, so the two never blend into a third colour.
+                opacity: it.highlight || it.ghost ? 1 : 0.75,
               }} />
           </div>
           {it.sublabel && <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{it.sublabel}</div>}

@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  SCurveChart, sCurveScale, sCurveTodayX, sCurveTodayLabel, sCurveLabelWidth, SCURVE_VIEWBOX, scoreBandColor, ScoreDial, BarList,
+  SCurveChart, sCurveScale, sCurveTodayX, sCurveTodayLabel, sCurveLabelWidth, SCURVE_VIEWBOX, scoreBandColor, ScoreDial, BarList, barPct,
   type SCurvePoint,
 } from "@/components/ui/ChartKit";
 import { vizCat, MiniBars } from "@/components/dashboard/viz";
@@ -256,11 +256,12 @@ describe("CHART-5 · draw only what the data holds: the axis and labels say noth
         const t = doc.querySelector('[data-mark="today"] text')!;
         const tx = Number(t.getAttribute("x"));
         if (Number(t.getAttribute("y")) === Number(top.getAttribute("y"))) {
-          // Same baseline: the centred "Today" (±14) starts right of the label's end.
+          // Same baseline: the centred "Today" (±16) starts 2 units plus both
+          // haloes (1.5 each) right of the label's end.
           centred++;
           const topEnd = Number(top.getAttribute("x")) + sCurveLabelWidth(top.textContent ?? "");
           expect(t.getAttribute("text-anchor")).not.toBe("start");
-          expect(tx - 14).toBeGreaterThanOrEqual(topEnd + 2);
+          expect(tx - 16).toBeGreaterThanOrEqual(topEnd + 2 + 3);
         } else {
           // Dropped inside the plot: a full line below the top label.
           dropped++;
@@ -277,6 +278,51 @@ describe("CHART-5 · draw only what the data holds: the axis and labels say noth
       .querySelector('[data-mark="today"] text')!.getAttribute("text-anchor");
     expect(at(shortTick)).toBe("middle");
     expect(at(deTick)).toBe("start");
+  });
+
+  // Advance widths (hmtx advance ÷ unitsPerEm 2048) of the glyphs below, read
+  // from the font files: Inter 400/700 (the app's face, @fontsource/inter
+  // 5.3.0) and DejaVu Sans / DejaVu Sans Bold (the widest fallback measured).
+  const ADVANCE: Record<string, Record<string, number>> = {
+    "Inter": { C: 1496, A: 1413, M: 1850, X: 1397, $: 1314, "3": 1265 },
+    "DejaVu Sans": { C: 1430, A: 1401, M: 1767, X: 1403, $: 1303, "3": 1303 },
+    "Inter Bold": { T: 1367, o: 1256, d: 1291, a: 1189, y: 1233 },
+    "DejaVu Sans Bold": { T: 1397, o: 1407, d: 1466, a: 1382, y: 1335 },
+  };
+  const realWidth = (font: string, text: string) =>
+    [...text].reduce((w, ch) => w + (ADVANCE[font][ch] / 2048) * 9, 0);
+
+  it("capital-heavy labels: the estimate is never below the real advance ('CA$3M', 'MX$3M')", () => {
+    // The second review measured 'CA$3M' at 31.7 and 'MX$3M' at 33.1 units in
+    // DejaVu Sans, where the 0.62-em estimate gave 28.0 for both.
+    for (const label of ["CA$3M", "MX$3M"]) {
+      for (const font of ["Inter", "DejaVu Sans"]) {
+        expect(sCurveLabelWidth(label)).toBeGreaterThanOrEqual(realWidth(font, label));
+      }
+    }
+    expect(realWidth("DejaVu Sans", "CA$3M")).toBeCloseTo(31.66, 1);
+    expect(realWidth("DejaVu Sans", "MX$3M")).toBeCloseTo(33.15, 1);
+    // Wide glyphs count a full em; other scripts and CJK too.
+    expect(sCurveLabelWidth("M")).toBe(9);
+    expect(sCurveLabelWidth("C")).toBeCloseTo(7.2, 6);
+    expect(sCurveLabelWidth("3")).toBeCloseTo(5.85, 6);
+    expect(sCurveLabelWidth("万")).toBe(9);
+    expect(sCurveLabelWidth("₹")).toBe(9);
+  });
+
+  it("at the threshold, the real 'Today' clears the real top label and both haloes", () => {
+    for (const label of ["CA$3M", "MX$3M", "$3M"]) {
+      // The first marker position that keeps "Today" centred above the plot.
+      let x = 8;
+      while (sCurveTodayLabel(x, label).anchor !== "middle") x += 0.25;
+      expect(sCurveTodayLabel(x - 0.25, label).anchor).toBe("start");
+      for (const [face, bold] of [["Inter", "Inter Bold"], ["DejaVu Sans", "DejaVu Sans Bold"]]) {
+        const labelEnd = 8 + 2 + realWidth(face, label); // drawn at x = PAD_L + 2
+        const todayStart = x - realWidth(bold, "Today") / 2;
+        // Each label's halo (stroke 3) reaches 1.5 units past its glyphs.
+        expect(todayStart - 1.5).toBeGreaterThanOrEqual(labelEnd + 1.5);
+      }
+    }
   });
 });
 
@@ -388,6 +434,29 @@ describe("REL-10 · stand-in data is marked in the figure itself", () => {
     const doc = render(React.createElement(BarList, { fmt: usd, example: true, items: [{ label: "01-100 Piping", value: 121_300 }] }));
     expect(doc.body.textContent).toContain("$121,300 (example)");
     expect(render(React.createElement(BarList, { fmt: usd, items: [{ label: "01-100 Piping", value: 121_300 }] })).body.textContent).not.toContain("example");
+    // A preformatted value (the line's own currency) is marked too.
+    const own = render(React.createElement(BarList, { fmt: usd, example: true, items: [{ label: "01-200 Scaffolding", value: 30_400, valueLabel: "CA$30,400" }] }));
+    expect(own.body.textContent).toContain("CA$30,400 (example)");
+    expect(own.body.textContent).not.toMatch(/(?<!CA)\$30,400/); // never re-formatted by the list's fmt
+  });
+
+  it("BarList draws nothing for nothing: no stub for a zero value or a zero whole", () => {
+    expect(barPct(0, 100)).toBe(0);
+    expect(barPct(-5, 100)).toBe(0);
+    expect(barPct(5, 0)).toBe(0);
+    expect(barPct(1, 1_000)).toBe(2); // any positive value stays visible
+    expect(barPct(150, 100)).toBe(100); // capped at the track
+    const doc = render(React.createElement(BarList, { fmt: usd, items: [
+      { label: "Nothing yet", value: 0, slot: 0 },
+      { label: "Spent", value: 100, slot: 0 },
+      { label: "Own budget", value: 30, of: 120, ghost: { value: 60, slot: 1 }, slot: 0 },
+    ] }));
+    const w = (label: string, kind = "value") =>
+      parseFloat(doc.querySelector<HTMLElement>(`[title^="${label} · "] [data-bar="${kind}"]`)!.style.width);
+    expect(w("Nothing yet")).toBe(0);
+    expect(w("Spent")).toBe(100);
+    expect(w("Own budget")).toBe(25);
+    expect(w("Own budget", "ghost")).toBe(50);
   });
 });
 

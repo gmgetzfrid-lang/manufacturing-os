@@ -3,9 +3,10 @@
 // projects Round G (J5 charts) — the Costs tab's picture layer as RENDERED:
 // example data appears only on a project with no accounts and no entries, and
 // every figure inside it is marked (REL-10); burn by budget line renders for
-// real projects, a budget-only project gets an explanation instead of a blank
-// region, and the missing-planned-line hint fires whenever the line is absent
-// (REL-11); the planned crew is one stated number with its inputs, not a flat
+// real projects — each line in its own currency and against its own budget,
+// as the accounts table below draws it — a budget-only project gets an
+// explanation instead of a blank region, and the missing-planned-line hint
+// fires whenever the line is absent (REL-11); the planned crew is one stated number with its inputs, not a flat
 // "curve" announced as "Daily activity" (CHART-3, A11Y-11); the CPI scope note
 // and the glossary say what the forecast covers (COST-1 chart half, MON-4 dw2).
 
@@ -46,6 +47,15 @@ function textNodes(root: Node): Text[] {
   return out;
 }
 
+/** The burn list's row for a budget line (its title starts with the label). */
+function burnRow(doc: Document, label: string): HTMLElement {
+  const row = doc.querySelector<HTMLElement>(`[title^="${label} · "]`);
+  if (!row) throw new Error(`no burn row for ${label}`);
+  return row;
+}
+const bar = (row: HTMLElement, kind: "value" | "ghost") => row.querySelector<HTMLElement>(`[data-bar="${kind}"]`)!;
+const width = (row: HTMLElement, kind: "value" | "ghost") => parseFloat(bar(row, kind).style.width);
+
 describe("REL-10 · example data only on an empty project, and every figure in it marked", () => {
   it("a project with no accounts and no entries sees the example; every money figure says so", () => {
     const doc = charts([], []);
@@ -82,7 +92,7 @@ describe("REL-10 · example data only on an empty project, and every figure in i
 });
 
 describe("REL-11 · the real interface draws what the example promises", () => {
-  it("burn by budget line renders for a real project, the most-spent lines first", () => {
+  it("burn by budget line renders for a real project, the lines furthest through their budgets first", () => {
     const accounts = [
       account({ id: "a1", code: "01-100", name: "Piping", budget: 190_000 }),
       account({ id: "a2", code: "01-200", name: "Scaffolding", budget: 42_000 }),
@@ -99,13 +109,87 @@ describe("REL-11 · the real interface draws what the example promises", () => {
     expect(text).toContain("$150,000 committed · of $190,000 budget");
     expect(text).toContain("01-200 Scaffoldingover budget"); // the flag rides the label
     expect(text).not.toMatch(/example/i);
-    expect(text.indexOf("01-100 Piping")).toBeLessThan(text.indexOf("01-200 Scaffolding"));
+    // Scaffolding is 107% through its budget, Piping 26%: Scaffolding first.
+    expect(text.indexOf("01-200 Scaffolding")).toBeLessThan(text.indexOf("01-100 Piping"));
+  });
+
+  it("each bar is the line's spent against its OWN budget — the account bars' scale — with committed behind it", () => {
+    // The review's case: Piping $50k of $190k (26%), Scaffolding $45k of $42k
+    // (107%, over budget). Scaled to the biggest spender, Piping drew full
+    // width and Scaffolding 90% — the over-budget line read as the less burned.
+    const accounts = [
+      account({ id: "a1", code: "01-100", name: "Piping", budget: 190_000 }),
+      account({ id: "a2", code: "01-200", name: "Scaffolding", budget: 42_000 }),
+    ];
+    const entries = [
+      entry({ id: "e1", costAccountId: "a1", amount: 50_000 }),
+      entry({ id: "e2", costAccountId: "a2", amount: 45_000 }),
+      entry({ id: "e3", costAccountId: "a1", entryType: "commitment", amount: 150_000 }),
+    ];
+    const doc = charts(accounts, entries, { start: "2026-06-01", end: "2026-08-30" });
+    const piping = burnRow(doc, "01-100 Piping");
+    const scaffold = burnRow(doc, "01-200 Scaffolding");
+    expect(width(piping, "value")).toBeCloseTo((50_000 / 190_000) * 100, 6);
+    expect(width(piping, "ghost")).toBeCloseTo((150_000 / 190_000) * 100, 6);
+    expect(bar(piping, "value").style.background).toBe("var(--viz-cat-1)");
+    expect(bar(piping, "ghost").style.background).toBe("var(--viz-cat-2)");
+    // Over budget: capped at the full track, in the alarm colour, as the account bar is.
+    expect(width(scaffold, "value")).toBe(100);
+    expect(bar(scaffold, "value").style.background).toBe("var(--viz-down)");
+    // The scale is said under the list.
+    expect(doc.querySelector("[data-burn-scale]")!.textContent).toContain("the line's spent against its own budget");
+  });
+
+  it("a line with nothing spent, or no budget to measure against, draws no stub", () => {
+    const accounts = [
+      account({ id: "a1", code: "01-100", name: "Piping", budget: 190_000 }),
+      account({ id: "a2", code: "01-200", name: "Scaffolding", budget: 42_000 }),
+      account({ id: "a3", code: "01-300", name: "Unbudgeted", budget: 0 }),
+    ];
+    const doc = charts(accounts, [entry({ id: "e1", costAccountId: "a3", amount: 7_500 })]);
+    for (const label of ["01-100 Piping", "01-200 Scaffolding", "01-300 Unbudgeted"]) {
+      expect(width(burnRow(doc, label), "value")).toBe(0);
+      expect(width(burnRow(doc, label), "ghost")).toBe(0);
+    }
+    // The unbudgeted line still states its money, and why it has no bar.
+    expect(burnRow(doc, "01-300 Unbudgeted").textContent).toContain("$7,500.00");
+    expect(burnRow(doc, "01-300 Unbudgeted").textContent).toContain("$0.00 committed · no budget set");
+  });
+
+  it("each line is in its OWN currency, as the accounts table formats it — never the project's first currency", () => {
+    // The review's case: a USD line first, then a CAD line with CA$45,000
+    // spent. The table below prints CA$45,000; the list printed $45,000.
+    const accounts = [
+      account({ id: "a1", code: "01-100", name: "Piping", budget: 190_000, currency: "USD" }),
+      account({ id: "a2", code: "01-200", name: "Scaffolding", budget: 42_000, currency: "CAD" }),
+      account({ id: "a3", code: "01-300", name: "Valves", budget: 10_000_000, currency: "JPY" }),
+    ];
+    const entries = [
+      entry({ id: "e1", costAccountId: "a1", amount: 50_000 }),
+      entry({ id: "e2", costAccountId: "a2", amount: 45_000 }),
+      entry({ id: "e3", costAccountId: "a3", amount: 5_000_000 }),
+    ];
+    const doc = charts(accounts, entries);
+    const scaffold = burnRow(doc, "01-200 Scaffolding");
+    expect(scaffold.textContent).toContain("CA$45,000");
+    expect(scaffold.textContent).toContain("of CA$42,000 budget");
+    expect(scaffold.getAttribute("title")).toBe("01-200 Scaffolding · CA$45,000");
+    const piping = burnRow(doc, "01-100 Piping");
+    expect(piping.textContent).toContain("$50,000");
+    expect(piping.textContent).not.toContain("CA$");
+    expect(burnRow(doc, "01-300 Valves").textContent).toContain("¥5,000,000");
+    // A ¥5,000,000 line no longer dwarfs the rest: it is half its own budget.
+    expect(width(burnRow(doc, "01-300 Valves"), "value")).toBe(50);
+    expect(doc.querySelector("[data-burn-scale]")!.textContent).toContain("Each line is in its own currency.");
+    // One currency: no such note.
+    const single = charts([accounts[0]], [entries[0]]);
+    expect(single.querySelector("[data-burn-scale]")!.textContent).not.toContain("its own currency");
   });
 
   it("more lines than the list shows point at the accounts table", () => {
     const accounts = Array.from({ length: BURN_LINES_SHOWN + 3 }, (_, i) => account({ id: `a${i}`, code: `0${i}`, name: `Line ${i}`, budget: 1_000 * (i + 1) }));
     const doc = charts(accounts, []);
-    expect(doc.body.textContent).toContain(`The ${BURN_LINES_SHOWN} lines with the most spent, of ${BURN_LINES_SHOWN + 3}`);
+    expect(doc.body.textContent).toContain(`The ${BURN_LINES_SHOWN} lines furthest through their budgets, of ${BURN_LINES_SHOWN + 3}`);
   });
 
   it("a budget-only project (no schedule, no entries) gets an explanation, not a blank region", () => {

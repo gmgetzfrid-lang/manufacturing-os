@@ -205,6 +205,34 @@ describe("CHART-2 · the tab's bars wear the S-curve's series colours", () => {
     expect(host.querySelector('svg [data-series="committed"]')?.getAttribute("stroke")).toBe("var(--viz-cat-2)");
   });
 
+  it("the burn list and the accounts table agree on every line: the same currency, the same scale", async () => {
+    // REL-11 (third review): the list printed a CAD line in the project's
+    // first currency and scaled every bar to the biggest spender, while the
+    // table below prints the line's own currency and scales to its budget.
+    reads.listAccounts.mockResolvedValueOnce([
+      { ...account, budget: 190_000 },
+      { ...account, id: "a2", code: "01-200", name: "Scaffolding", budget: 42_000, currency: "CAD" },
+    ]);
+    reads.listEntries.mockResolvedValueOnce([
+      entry({ id: "x1", amount: 50_000 }),
+      entry({ id: "x2", costAccountId: "a2", amount: 45_000 }),
+    ]);
+    await mount();
+    const tableRow = (name: string) =>
+      [...host.querySelectorAll("button")].find((b) => b.querySelector("span.font-bold")?.textContent === name)!;
+    const listRow = (label: string) => host.querySelector<HTMLElement>(`[title^="${label} · "]`)!;
+    for (const [name, label, money] of [["Piping", "01-100 Piping", "$50,000"], ["Scaffolding", "01-200 Scaffolding", "CA$45,000"]]) {
+      const t = tableRow(name), l = listRow(label);
+      expect(t.textContent).toContain(money);
+      expect(l.getAttribute("title")).toBe(`${label} · ${money}`);
+      const tableW = parseFloat(t.querySelector<HTMLElement>('div[data-series="spent"]')!.style.width);
+      const listW = parseFloat(l.querySelector<HTMLElement>('[data-bar="value"]')!.style.width);
+      expect(listW).toBeCloseTo(tableW, 6);
+    }
+    expect(listRow("01-200 Scaffolding").textContent).toContain("of CA$42,000 budget");
+    expect(listRow("01-100 Piping").textContent).not.toContain("CA$");
+  });
+
   it("over budget, Spent turns rose on both bars (the alarm wins over the series colour)", async () => {
     reads.listAccounts.mockResolvedValueOnce([account]);
     reads.listEntries.mockResolvedValueOnce([entry({ id: "x1", entryType: "actual", amount: 2_400_000 })]);
