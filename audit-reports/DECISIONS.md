@@ -1768,20 +1768,27 @@ path, never a silent success.**
    error). At the database the decider is the SIGNED-IN caller — never a
    client-written `decided_by` / `created_by`: a session records itself as
    the decider, the proposer is pinned at insert and never rewritten, and
-   `decided_by` changes only by the decision or its revert (`COST-6`). A
-   signed-in caller may make exactly the app's writes and no others
-   *(verification fix, 2026-09-30)*: the decision out of proposed
-   (approved / rejected / void, recording the caller; void runs neither
-   rule — it moves no money), the entry link, the unwind and the repair
-   reverse (approved → void), the failed-post revert (approved → proposed,
-   only by the approver while no money of the CO is on the ledger) and the
-   unwind's put-back (void → approved, only while its linked entry is still
-   posted). Rejected and void are otherwise TERMINAL; approved → rejected
+   `decided_by` changes only by the decision or its revert (`COST-6`).
+   *(Verification fix, 2026-09-30, two passes.)* A signed-in caller's
+   INSERT is only the app's proposal: proposed, proposer = caller, no
+   decision and no link (`posted_entry_id`, `decided_by`, `decided_at`,
+   `decided_by_name`, `decision_note` NULL), `org_id` = the project's org.
+   A signed-in caller's UPDATE is only the app's updates: the decision out
+   of proposed (approved / rejected / void, recording the caller; void runs
+   neither rule — it moves no money; an approval needs a row with no link
+   yet), the entry link, the unwind and the repair reverse (approved →
+   void), and the failed-post revert (approved → proposed, only by the
+   approver while no money of the CO is on the ledger). Rejected and void
+   are TERMINAL — void → approved does not exist (the unwind voids the
+   entry first, so it never needs a put-back) — and approved → rejected
    does not exist; org, project and number never change; amount and budget
    line freeze once decided; `posted_entry_id` links only the CO's own
    posted commitment (same project and line, its number, no source
    document, no other CO linked) and is never repointed away from a posted
-   entry. The service role keeps its pass on the transitions and the link.
+   entry. A void cost entry stays void (`20261093`). The service role keeps
+   its pass (it bypasses the insert policy; the guards let it through). Not
+   pinned at the database: a decided CO's reason code, party, title and
+   description, and a posted entry's own columns.
 5. **No FX.** A document in another currency than its budget line is refused
    at posting; no conversion is built. A stored "$" / "US$" is USD, a
    non-code is unstated, an account with no currency is USD (as rendered),
