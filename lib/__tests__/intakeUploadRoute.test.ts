@@ -1420,7 +1420,13 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect(t).toContain("() => candidates.filter((c) => !candidateInReview(c) && !!impacts.get(c.docId)?.clean).length,");
     expect(t).toContain("return candidateInReview(c) || (i && !i.clean);");
     expect(t).toContain("{impact?.clean && !candidateInReview(c) && <span");
-    expect(t).toContain('{candidateInReview(c) && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingReview ? "in review" : "not approved"}</span>}');
+    expect(t).toContain('{candidateInReview(c) && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingRetired ? "stuck" : c.pendingReview ? "in review" : "not approved"}</span>}');
+    // verification fix: a pending pointer on a RETIRED draft is never sent to
+    // the review queue (the queue lists in-review drafts only) — the note and
+    // the Adopt title come from the lib, which says Document Control clears it
+    expect(t).toContain("{candidateReviewNote(c)}");
+    expect(t).not.toContain("— approve or reject it in the review queue above before it can be adopted.");
+    expect(t).toContain('candidateInReview(c) ? (c.pendingRetired ? "Document Control must clear its retired pending revision first" : "Approve or reject the submission first")');
     expect(t).not.toMatch(/!c\.awaitingReview && !!impacts/);
     expect(t).toContain("const clean = candidates.filter(bulkable);");
   });
@@ -1452,10 +1458,31 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect(c).toContain("document(s) whose pending revision names a retired draft");
     // INTK-10 / SEC-8 (fix pass 3): folded publishes a quiet link never
     // announced get one digest per link, request-scoped service role, drained at 6c
-    expect(c).toContain('import { flushFoldedIntakeNotices } from "@/lib/intakeRateLimit";');
-    expect(c).toMatch(/const flushed = await flushFoldedIntakeNotices\(sb, \{\n\s+send: \(d\) => runWithServerClient\(sb, \(\) => emit\(\{/);
-    expect(c).toContain("audience: { involved: d.involved, followers: false },");
+    expect(c).toMatch(/import \{\n\s+flushFoldedIntakeNotices, deliverFoldedDigest, foldedDigestKind, foldedDigestMetadata,/);
+    // verification fix (item 1): the digest's send REPORTS what landed — the
+    // bell rows are inserted and checked by deliverFoldedDigest; emit() is
+    // the email leg only (it swallows its failures, so it cannot report)
+    expect(c).toMatch(/const flushed = await flushFoldedIntakeNotices\(sb, \{\n\s+send: \(d\) => deliverFoldedDigest\(sb, d, \(dd\) => runWithServerClient\(sb, \(\) => emit\(\{/);
+    expect(c).toContain("audience: { involved: dd.involved, followers: false },");
+    expect(c).toContain('channels: ["email"],');
+    // item 2: one digest per project, keyed on the project
+    expect(c).toContain('resource: { type: "project", id: dd.projectId }, actorName: dd.actorName,');
+    expect(c).toContain("if (flushed.unrecorded > 0) {");
     expect(c.indexOf("flushFoldedIntakeNotices(sb")).toBeLessThan(c.indexOf("// 6c. Drain anything"));
+    // item 3: every intake line is logged (the cron's log shows console
+    // output, not the JSON body); an RPC error is reported unless the
+    // function does not exist yet — never matched on the function's name
+    expect(c).toContain("const intakeLine = (line: string) => { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); };");
+    expect(c).not.toMatch(/result\.errors\.push\(`review-health:/);
+    expect(c).not.toMatch(/if \(!orphanErr\) \{|if \(!stuckErr\) \{/);
+    expect(c).toContain("if (!isMissingFunction(orphanErr)) intakeLine(`intake-door: health count unavailable (orphaned_in_review_versions_count)");
+    expect(c).toContain("if (!isMissingFunction(stuckErr)) intakeLine(`intake-door: health count unavailable (pending_on_retired_version_count)");
+    expect(c).toContain("if (!isMissingFunction(pruneErr)) intakeLine(`intake-attempts: ${pruneErr.message}`);");
+    expect(c).not.toMatch(/prune_intake_attempts\|PGRST202/);
+    // …and a per-org nudge to each controller pool, once a day, through emit()
+    expect(c).toMatch(/sb\.rpc\("intake_review_health_by_org"\)/);
+    expect(c).toContain("const nudged = await nudgeReviewHealth(sb, {");
+    expect(c).toContain('audience: { roles: ["Admin", "DocCtrl"] },');
     const vercel = JSON.parse(src("vercel.json")) as { crons?: unknown[] };
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });

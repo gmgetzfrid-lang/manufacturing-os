@@ -240,6 +240,32 @@ describe("20261105 — the review side of the door", () => {
     expect(tail).toContain("AND NOT has_function_privilege('anon', 'pending_on_retired_version_count()', 'EXECUTE')");
     expect(tail).toContain("pending_on_retired_version_count()::text");
   });
+  it("verification fix (item 3): intake_review_health_by_org — the two health predicates VERBATIM, per org; SECURITY DEFINER, search_path pinned, service-role only, probed and inventoried", () => {
+    const fn = between(B, "CREATE OR REPLACE FUNCTION intake_review_health_by_org()", "\n$$;");
+    expect(fn).toContain("RETURNS TABLE (org_id uuid, orphaned_in_review bigint, pending_on_retired bigint, example_document_id text)");
+    expect(fn).toContain("LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$");
+    // the same predicates as the two count functions — so a nudge and a count never disagree
+    const orphan = between(B, "CREATE OR REPLACE FUNCTION orphaned_in_review_versions_count()", "\n$$;");
+    const stuck = between(B, "CREATE OR REPLACE FUNCTION pending_on_retired_version_count() RETURNS bigint", "\n$$;");
+    expect(orphan).toContain("WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL\n     AND d.pending_version_id IS DISTINCT FROM v.id;");
+    expect(fn).toContain("WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL\n         AND d.pending_version_id IS DISTINCT FROM v.id");
+    expect(stuck).toContain("WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded';");
+    expect(fn).toContain("WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded'\n    ) h");
+    expect(fn).toContain("GROUP BY h.org_id;");
+    expect(fn).not.toMatch(/NOW\(\)|INTERVAL/i); // state, not a time window
+    expect(B).toContain("REVOKE ALL ON FUNCTION intake_review_health_by_org() FROM PUBLIC, anon, authenticated;");
+    expect(B).toContain("GRANT EXECUTE ON FUNCTION intake_review_health_by_org() TO service_role;");
+    expect(B.indexOf("CREATE OR REPLACE FUNCTION intake_review_health_by_org()")).toBeGreaterThan(B.indexOf("\nBEGIN;"));
+    expect(B.indexOf("CREATE OR REPLACE FUNCTION intake_review_health_by_org()")).toBeLessThan(B.lastIndexOf("\nCOMMIT;"));
+    const tail = B.slice(B.lastIndexOf("\nCOMMIT;"));
+    expect(tail).toContain("(SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'");
+    expect(tail).toContain("prosrc LIKE '%WHERE v.review_state = ''in_review'' AND v.superseded_at IS NULL%'");
+    expect(tail).toContain("FROM pg_proc WHERE proname = 'intake_review_health_by_org')");
+    expect(tail).toContain("AND NOT has_function_privilege('anon', 'intake_review_health_by_org()', 'EXECUTE'), NULL");
+    expect(tail).toContain("(SELECT COUNT(*)::text FROM intake_review_health_by_org())");
+    // the attempt log names the cron's marker
+    expect(B).toContain("-- 'attempt' | 'notified' | 'suppressed' | 'suppressed_published' | 'suppressed_displaced' | 'digested'");
+  });
   it("probes read prosrc verbatim (doubled quotes for a quote inside the body) and never cast inside a deparsed LIKE", () => {
     expect(B).toContain("prosrc LIKE '%IN (''in_review'', ''rejected'', ''superseded'')%'");
     expect(B).toContain("prosrc LIKE '%NULLIF(p_version->>''related_ticket_id'','''')::uuid%'");

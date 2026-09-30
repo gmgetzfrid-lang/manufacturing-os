@@ -14,7 +14,10 @@
 // click, while a same-numbered live document in any other library still
 // blocks. A sheet still awaiting review — never approved, or an approved
 // sheet with a newer submission in review — cannot be adopted until it is
-// decided (a never-approved rejected sheet is not listed). A sheet whose
+// decided (a never-approved rejected sheet is not listed); one whose
+// pending revision names a RETIRED draft is marked "stuck" and the operator
+// is told Document Control must clear it — the review queue never lists a
+// retired draft, so it is never pointed at. A sheet whose
 // checks could not run (no number, no
 // recognised equipment) is "unverifiable": single adopt only, after an
 // explicit confirmation. Adopting moves documents between folders, which
@@ -30,6 +33,7 @@ import { supabase } from "@/lib/supabase";
 import {
   TransitionCandidate, TransitionImpact, UnverifiableReason,
   listTransitionCandidates, scanTransitionImpact, adoptDocument, blockingNumberCollision, candidateInReview,
+  candidateReviewNote,
 } from "@/lib/transitionIn";
 import { numberIsTheKey } from "@/lib/intakeLinks";
 import { useRole } from "@/components/providers/RoleContext";
@@ -251,7 +255,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {impact && impact.overlapDocs.length > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
                   )}
-                  {candidateInReview(c) && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingReview ? "in review" : "not approved"}</span>}
+                  {candidateInReview(c) && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">{c.pendingRetired ? "stuck" : c.pendingReview ? "in review" : "not approved"}</span>}
                   {impact && !impact.numberCollision && impact.unverifiable.length > 0 && (
                     <span className="text-[10px] font-bold text-[var(--color-text-muted)]" title={impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ")}>unverifiable</span>
                   )}
@@ -303,9 +307,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   )}
                   {candidateInReview(c) && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-1.5 text-[var(--color-text)]">
-                      {c.awaitingReview
-                        ? (c.pendingReview ? "This submission is still in review" : "This sheet has no approved revision yet")
-                        : `A newer submission for this sheet is still in review (Rev ${c.rev ?? "—"} is approved)`} — approve or reject it in the review queue above before it can be adopted.
+                      {candidateReviewNote(c)}
                     </div>
                   )}
 
@@ -321,7 +323,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       <button onClick={() => void adoptOne(c)}
                         disabled={busy === c.docId || !destLib || candidateInReview(c) || (blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim())}
                         title={!destLib ? "Pick the destination library above"
-                          : candidateInReview(c) ? "Approve or reject the submission first"
+                          : candidateInReview(c) ? (c.pendingRetired ? "Document Control must clear its retired pending revision first" : "Approve or reject the submission first")
                           : blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim() ? "Renumber it to a number that isn't in use first"
                           : undefined}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">

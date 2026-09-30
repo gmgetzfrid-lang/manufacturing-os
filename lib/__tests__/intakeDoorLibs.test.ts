@@ -20,7 +20,9 @@ import { computeUniquenessKey } from "@/lib/uniqueness";
 import {
   intakeLimits, DEFAULT_INTAKE_LIMITS, checkIntakeRate, linkBudgetRefusal, clientIp, sha256Hex, noticesInWindow,
   foldedSinceLastNotice, foldedNoticeSentence, noticeGoesOut, FORCED_NOTICES_PER_WINDOW, ATTEMPT_OUTCOME,
-  flushFoldedIntakeNotices, foldedDigestText, type FoldedDigest,
+  flushFoldedIntakeNotices, foldedDigestText, foldedProjectDigestText, foldedCandidateLinks, deliverFoldedDigest,
+  foldedDigestKind, foldedDigestMetadata, nudgeReviewHealth, reviewHealthNudgeText, REVIEW_HEALTH_KIND, recordIntakeAttempt,
+  isMissingFunction, type FoldedDigest, type ReviewHealthOrg,
 } from "@/lib/intakeRateLimit";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -201,17 +203,20 @@ describe("intakeRateLimit — the window", () => {
     const client = {
       from: () => {
         const f: Array<[string, unknown]> = [];
+        const within: Array<[string, unknown[]]> = [];
         let head = false;
         const q: Record<string, unknown> = {};
         const self: Record<string, unknown> = new Proxy(q, {
           get(_t, prop: string) {
             if (prop === "then") {
-              const hit = rows.filter((r) => f.every(([op, v]) => op === "gte" ? r.created_at >= String(v) : (r as Record<string, unknown>)[op] === v));
+              const hit = rows.filter((r) => f.every(([op, v]) => op === "gte" ? r.created_at >= String(v) : (r as Record<string, unknown>)[op] === v)
+                && within.every(([col, vs]) => vs.includes((r as Record<string, unknown>)[col])));
               return (res: (v: unknown) => void) => res(head ? { count: hit.length, error: null } : { data: hit, error: null });
             }
             return (...args: unknown[]) => {
               if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
               if (prop === "eq") f.push([String(args[0]), args[1]]);
+              if (prop === "in") within.push([String(args[0]), args[1] as unknown[]]);
               if (prop === "gte") f.push(["gte", args[1]]);
               return self;
             };
@@ -253,20 +258,41 @@ describe("intakeRateLimit — the window", () => {
             { uid: "eng", org_id: "o1", status: "active", controller: false },
             { uid: "dc-gone", org_id: "o1", status: "inactive", controller: true },
           ] as Row[],
+          notifications: [] as Row[],
         } as Record<string, Row[]>,
         errors: {} as Record<string, { message: string } | undefined>,
+        insertErrors: {} as Record<string, { message: string } | undefined>,
+        /** PostgREST's max-rows: no response carries more, whatever was asked. */
+        maxRows: 1000,
+        pageReads: 0,
       };
+      let seq = 0;
       const client = {
         from: (table: string) => {
           const f: Array<(r: Row) => boolean> = [];
-          let head = false; let lim: number | null = null; let insert: Row | null = null;
+          const orders: Array<[string, boolean]> = [];
+          let head = false; let lim: number | null = null; let off = 0; let insert: Row[] | null = null; let ranged = false;
           const run = () => {
+            if (insert) {
+              const err = db.insertErrors[table] ?? db.errors[table];
+              if (err) return { data: null, error: err };
+              const added = insert.map((r) => ({ id: `${table}-${++seq}`, created_at: "2026-09-30T12:00:00.000Z", ...r }));
+              db.tables[table] = [...(db.tables[table] ?? []), ...added];
+              return { data: added, error: null };
+            }
             const err = db.errors[table];
             if (err) return { data: null, count: null, error: err };
-            if (insert) { db.tables[table].push({ ...insert, created_at: insert.created_at ?? "2026-09-30T12:00:00.000Z" }); return { data: null, error: null }; }
+            if (ranged) db.pageReads++;
             let hit = (db.tables[table] ?? []).filter((r) => f.every((fn) => fn(r)));
-            if (lim != null) hit = hit.slice(0, lim);
-            return head ? { count: hit.length, error: null } : { data: hit, error: null };
+            if (orders.length) {
+              hit = [...hit].sort((a, b) => {
+                for (const [c, asc] of orders) { const x = String(a[c] ?? ""), y = String(b[c] ?? ""); if (x !== y) return (x < y ? -1 : 1) * (asc ? 1 : -1); }
+                return 0;
+              });
+            }
+            if (head) return { count: hit.length, error: null };
+            hit = hit.slice(off, lim != null ? off + lim : undefined).slice(0, db.maxRows);
+            return { data: hit, error: null };
           };
           const self: Record<string, unknown> = new Proxy({}, {
             get(_t, prop: string) {
@@ -277,8 +303,11 @@ describe("intakeRateLimit — the window", () => {
                 if (prop === "in") f.push((r) => (a[1] as unknown[]).includes(r[String(a[0])]));
                 if (prop === "gte") f.push((r) => String(r[String(a[0])]) >= String(a[1]));
                 if (prop === "or") f.push((r) => r.controller === true); // roleFilter(["Admin","DocCtrl"])
+                if (prop === "contains") f.push((r) => Object.entries(a[1] as Row).every(([k, v]) => ((r[String(a[0])] ?? {}) as Row)[k] === v));
+                if (prop === "order") orders.push([String(a[0]), (a[1] as { ascending?: boolean } | undefined)?.ascending !== false]);
                 if (prop === "limit") lim = Number(a[0]);
-                if (prop === "insert") insert = a[0] as Row;
+                if (prop === "range") { ranged = true; off = Number(a[0]); lim = Number(a[1]) - Number(a[0]) + 1; }
+                if (prop === "insert") insert = (Array.isArray(a[0]) ? a[0] : [a[0]]) as Row[];
                 if (prop === "maybeSingle") { const r = run() as { data: Row[] | null; error: unknown }; return Promise.resolve({ data: r.data?.[0] ?? null, error: r.error }); }
                 return self;
               };
@@ -291,6 +320,9 @@ describe("intakeRateLimit — the window", () => {
     };
     const now = Date.parse("2026-09-30T12:00:00Z");
     const att = (token_hash: string, outcome: string, created_at: string, link_id: string | null = "L1") => ({ token_hash, outcome, created_at, link_id, ip: "203.0.113.5" });
+    /** A send that lands: one bell row per recipient, the way deliverFoldedDigest reports. */
+    const landing = (sent: FoldedDigest[]) => async (d: FoldedDigest) => { sent.push(d); return d.involved.length; };
+    const noDelivery = { digests: 0, announced: 0, unrecorded: 0, failed: 0, gone: 0 };
 
     it("the reviewer's case: three notices went, publishes 4 and 5 were folded, the link went quiet — ONE digest to the controllers and the owner, then never again", async () => {
       const { db, client } = mkDb();
@@ -299,19 +331,22 @@ describe("intakeRateLimit — the window", () => {
         att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"), att("h1", "suppressed_published", "2026-09-30T10:08:00.000Z"),
       );
       const sent: FoldedDigest[] = [];
-      const res = await flushFoldedIntakeNotices(client, { now, send: async (d) => { sent.push(d); } });
-      expect(res).toEqual({ digests: 1, failed: 0, gone: 0 });
+      const res = await flushFoldedIntakeNotices(client, { now, send: landing(sent) });
+      expect(res).toEqual({ ...noDelivery, digests: 1, announced: 1 });
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({ orgId: "o1", projectId: "p1", linkId: "L1", company: "Acme", link: "/projects/p1", folded: { total: 2, published: 2, displaced: 0 } });
+      expect(sent[0]).toMatchObject({
+        orgId: "o1", projectId: "p1", actorName: "Acme", link: "/projects/p1", folded: { total: 2, published: 2, displaced: 0 },
+        links: [{ linkId: "L1", company: "Acme", folded: { total: 2, published: 2, displaced: 0 } }],
+      });
       expect(sent[0].involved.sort()).toEqual(["dc1", "owner"]); // controllers (active) + owner — not every member
       expect(sent[0].title).toBe("Intake: Acme published 2 revisions without review — not announced yet");
       expect(sent[0].body).toMatch(/^Acme's intake link on Unit 7 published 2 revisions without review after the team's last notice/);
-      // a 'notified' row is written for the link — the next notice never counts them twice
-      expect(db.tables.intake_attempts.filter((r) => r.outcome === ATTEMPT_OUTCOME.notified && r.ip === "maintenance-cron")).toEqual([
-        expect.objectContaining({ token_hash: "h1", link_id: "L1" }),
+      // a 'digested' marker is written for the link — the next notice never counts them twice
+      expect(db.tables.intake_attempts.filter((r) => r.ip === "maintenance-cron")).toEqual([
+        expect.objectContaining({ token_hash: "h1", link_id: "L1", outcome: ATTEMPT_OUTCOME.digested }),
       ]);
       // the next run finds nothing left to announce
-      const again = await flushFoldedIntakeNotices(client, { now: now + 60_000, send: async (d) => { sent.push(d); } });
+      const again = await flushFoldedIntakeNotices(client, { now: now + 60_000, send: landing(sent) });
       expect(again.digests).toBe(0);
       expect(sent).toHaveLength(1);
     });
@@ -322,7 +357,7 @@ describe("intakeRateLimit — the window", () => {
         att("h2", "suppressed", "2026-09-30T10:06:00.000Z", "L2"),
       );
       const sent: FoldedDigest[] = [];
-      expect(await flushFoldedIntakeNotices(client, { now, send: async (d) => { sent.push(d); } })).toEqual({ digests: 0, failed: 0, gone: 0 });
+      expect(await flushFoldedIntakeNotices(client, { now, send: landing(sent) })).toEqual(noDelivery);
       expect(sent).toEqual([]);
     });
     it("a replacement is announced too, with the review folds counted in the same digest", async () => {
@@ -333,23 +368,145 @@ describe("intakeRateLimit — the window", () => {
         att("h2", "suppressed_displaced", "2026-09-30T10:04:00.000Z", "L2"),
       );
       const sent: FoldedDigest[] = [];
-      await flushFoldedIntakeNotices(client, { now, send: async (d) => { sent.push(d); } });
-      expect(sent[0]).toMatchObject({ linkId: "L2", company: "Beta", folded: { total: 2, published: 0, displaced: 1 } });
+      await flushFoldedIntakeNotices(client, { now, send: landing(sent) });
+      expect(sent[0]).toMatchObject({ actorName: "Beta", links: [{ linkId: "L2", company: "Beta", folded: { total: 2, published: 0, displaced: 1 } }] });
+      expect(foldedDigestKind(sent[0])).toBe("review_requested");
       expect(sent[0].body).toMatch(/replaced 1 submission that was awaiting review, and sent 1 more for review after the team's last notice/);
     });
-    it("a send that fails writes no 'notified' row — the next run retries; a link that no longer exists is counted as gone", async () => {
+    it("a send that throws writes no marker — the next run retries; a link that no longer exists is counted as gone", async () => {
       const { db, client } = mkDb();
       db.tables.intake_attempts.push(att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"), att("h9", "suppressed_published", "2026-09-30T10:06:00.000Z", "L-deleted"));
       const failed = await flushFoldedIntakeNotices(client, { now, send: async () => { throw new Error("mail down"); } });
-      expect(failed).toEqual({ digests: 0, failed: 1, gone: 1 });
-      expect(db.tables.intake_attempts.some((r) => r.outcome === "notified")).toBe(false);
-      const retried = await flushFoldedIntakeNotices(client, { now, send: async () => undefined });
-      expect(retried).toEqual({ digests: 1, failed: 0, gone: 1 });
+      expect(failed).toEqual({ ...noDelivery, failed: 1, gone: 1 });
+      expect(db.tables.intake_attempts.some((r) => r.ip === "maintenance-cron")).toBe(false);
+      const retried = await flushFoldedIntakeNotices(client, { now, send: async (d) => d.involved.length });
+      expect(retried).toEqual({ ...noDelivery, digests: 1, announced: 1, gone: 1 });
+    });
+    // ── verification fix (projects Round G): delivery must be REPORTED ────
+    it("item 1: a send that resolves but lands nothing (emit's shape — it swallows every failure) is a FAILED digest: no marker, retried", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"));
+      const res = await flushFoldedIntakeNotices(client, { now, send: async () => 0 });
+      expect(res).toEqual({ ...noDelivery, failed: 1 });
+      expect(db.tables.intake_attempts.some((r) => r.ip === "maintenance-cron")).toBe(false);
+      // the cron's real send: the bell rows are inserted and checked — a refused insert lands nothing
+      db.insertErrors.notifications = { message: "new row violates row-level security policy" };
+      const refused = await flushFoldedIntakeNotices(client, { now, send: (d) => deliverFoldedDigest(client, d) });
+      expect(refused).toEqual({ ...noDelivery, failed: 1 });
+      expect(db.tables.notifications).toEqual([]);
+      expect(db.tables.intake_attempts.some((r) => r.ip === "maintenance-cron")).toBe(false);
+      // once the insert lands, the digest counts and the link is marked
+      db.insertErrors.notifications = undefined;
+      const landed = await flushFoldedIntakeNotices(client, { now, send: (d) => deliverFoldedDigest(client, d) });
+      expect(landed).toEqual({ ...noDelivery, digests: 1, announced: 1 });
+      expect(db.tables.notifications.map((n) => n.user_id).sort()).toEqual(["dc1", "owner"]);
+      expect(db.tables.intake_attempts.filter((r) => r.outcome === "digested")).toHaveLength(1);
+    });
+    it("item 1: a digest whose 'digested' marker does not land is counted UNRECORDED (it will repeat) — never reported as a clean digest", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z"));
+      db.insertErrors.intake_attempts = { message: "timeout" };
+      const res = await flushFoldedIntakeNotices(client, { now, send: async (d) => d.involved.length });
+      expect(res).toEqual({ ...noDelivery, digests: 1, announced: 1, unrecorded: 1 });
+      expect(await recordIntakeAttempt(client, { tokenHash: "h1", ip: "x", outcome: "attempt" })).toBe(false);
+      db.insertErrors.intake_attempts = undefined;
+      expect(await recordIntakeAttempt(client, { tokenHash: "h1", ip: "x", outcome: "attempt" })).toBe(true);
+    });
+    it("item 1: deliverFoldedDigest inserts one bell row per recipient in ONE statement, reports the count, and runs the email leg only after — its failure is not counted", async () => {
+      const { db, client } = mkDb();
+      const d: FoldedDigest = {
+        orgId: "o1", projectId: "p1", links: [{ linkId: "L1", company: "Acme", folded: { total: 2, published: 1, displaced: 1 } }],
+        folded: { total: 2, published: 1, displaced: 1 }, actorName: "Acme", involved: ["dc1", "owner"],
+        title: "t", body: "b", link: "/projects/p1",
+      };
+      const email = vi.fn(async () => { throw new Error("queue down"); });
+      const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(await deliverFoldedDigest(client, d, email)).toBe(2);
+      err.mockRestore();
+      expect(email).toHaveBeenCalledTimes(1);
+      expect(db.tables.notifications).toEqual([
+        expect.objectContaining({ org_id: "o1", user_id: "dc1", kind: "doc_superseded", resource_type: "project", resource_id: "p1", link: "/projects/p1", actor_name: "Acme" }),
+        expect.objectContaining({ user_id: "owner" }),
+      ]);
+      expect(db.tables.notifications[0].metadata).toEqual(foldedDigestMetadata(d));
+      expect(foldedDigestMetadata(d)).toMatchObject({ intake: true, foldedDigest: true, published: 1, displaced: 1, total: 2, links: [{ linkId: "L1", company: "Acme", total: 2, published: 1, displaced: 1 }] });
+      // nobody to tell is nothing landed; a refused insert throws (the flush counts it failed) and skips the email
+      expect(await deliverFoldedDigest(client, { ...d, involved: [] }, email)).toBe(0);
+      db.insertErrors.notifications = { message: "refused" };
+      await expect(deliverFoldedDigest(client, d, email)).rejects.toThrow(/the digest's notices were refused: refused/);
+      expect(email).toHaveBeenCalledTimes(1);
+    });
+    it("item 2: two links on ONE project are ONE digest listing each link's counts — no second email for queueEmail's 60-second dedupe to drop", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(
+        att("h1", "suppressed_published", "2026-09-30T10:06:00.000Z", "L1"), att("h1", "suppressed_published", "2026-09-30T10:07:00.000Z", "L1"),
+        att("h2", "suppressed_displaced", "2026-09-30T10:08:00.000Z", "L2"), att("h2", "suppressed", "2026-09-30T10:09:00.000Z", "L2"),
+      );
+      const sent: FoldedDigest[] = [];
+      const res = await flushFoldedIntakeNotices(client, { now, send: landing(sent) });
+      expect(res).toEqual({ ...noDelivery, digests: 1, announced: 2 });
+      expect(sent).toHaveLength(1);
+      expect(sent[0].links.map((l) => l.linkId)).toEqual(["L1", "L2"]);
+      expect(sent[0].folded).toEqual({ total: 4, published: 2, displaced: 1 });
+      expect(sent[0].actorName).toBe("2 contractor links");
+      expect(sent[0].title).toBe("Intake: 2 contractor links published 2 revisions without review and replaced 1 submission that was awaiting review — not announced yet");
+      expect(sent[0].body).toContain("Acme published 2 revisions without review; Beta replaced 1 submission that was awaiting review, and sent 1 more for review.");
+      expect(db.tables.intake_attempts.filter((r) => r.outcome === "digested").map((r) => r.link_id).sort()).toEqual(["L1", "L2"]);
+      // one link reads exactly as the single-link digest
+      expect(foldedProjectDigestText("Unit 7", [sent[0].links[0]])).toEqual(foldedDigestText("Acme", "Unit 7", sent[0].links[0].folded));
+    });
+    it("item 4: the digest's marker is a fold BOUNDARY, not a notice — the link's next ordinary submission is told at once", async () => {
+      const { db, client } = mkDb();
+      db.tables.intake_attempts.push(
+        att("h1", "notified", "2026-09-30T02:40:00.000Z"),
+        att("h1", "suppressed_published", "2026-09-30T02:45:00.000Z"),
+      );
+      const at = Date.parse("2026-09-30T03:00:10Z");
+      await flushFoldedIntakeNotices(client, { now: at, send: landing([]) });
+      const marker = db.tables.intake_attempts.find((r) => r.ip === "maintenance-cron")!;
+      expect(marker.outcome).toBe("digested");
+      marker.created_at = "2026-09-30T03:00:10.000Z";
+      // 03:06 — a new submission for review: the window holds NO notice, so it goes out
+      const later = Date.parse("2026-09-30T03:06:00Z");
+      const inWindow = await noticesInWindow(client, { tokenHash: "h1", windowMinutes: 15, now: later });
+      expect(inWindow).toBe(0);
+      expect(noticeGoesOut(inWindow, false)).toBe(true);
+      // and what the digest announced is never counted into that notice
+      expect(await foldedSinceLastNotice(client, { tokenHash: "h1", now: later })).toEqual({ total: 0, published: 0, displaced: 0 });
+      db.tables.intake_attempts.push(att("h1", "suppressed", "2026-09-30T03:07:00.000Z"));
+      expect(await foldedSinceLastNotice(client, { tokenHash: "h1", now: later })).toEqual({ total: 1, published: 0, displaced: 0 });
+    });
+    it("item 5: candidates are read to the horizon, page by page — two bursting tokens never push a quiet link's older folds out of view (even under a server row cap)", async () => {
+      const { db, client } = mkDb();
+      const ts = (i: number) => new Date(Date.parse("2026-09-30T08:00:00Z") + i * 1000).toISOString();
+      // the quiet link folded 2 publishes 30 hours earlier
+      db.tables.intake_attempts.push(
+        att("hq", "notified", "2026-09-29T05:59:00.000Z", "L2"),
+        att("hq", "suppressed_published", "2026-09-29T06:00:00.000Z", "L2"), att("hq", "suppressed_published", "2026-09-29T06:01:00.000Z", "L2"),
+      );
+      // two leaked trusted tokens: 1,500 newer folds, each followed by a notice (announced already)
+      for (let i = 0; i < 750; i++) {
+        db.tables.intake_attempts.push({ ...att("hx", "suppressed_published", ts(2 * i), "L1"), id: `x${i}` }, { ...att("hy", "suppressed_published", ts(2 * i + 1), "L1"), id: `y${i}` });
+      }
+      db.tables.intake_attempts.push(att("hx", "notified", ts(1600), "L1"), att("hy", "notified", ts(1601), "L1"));
+      db.maxRows = 600; // the API caps every page below what was asked
+      const links = await foldedCandidateLinks(client, { now });
+      expect([...links.keys()].sort()).toEqual(["hq", "hx", "hy"]);
+      expect(db.pageReads).toBeGreaterThanOrEqual(4); // 1,502 rows at ≤600 a page, then the empty page
+      const sent: FoldedDigest[] = [];
+      const res = await flushFoldedIntakeNotices(client, { now, send: landing(sent) });
+      expect(res).toEqual({ ...noDelivery, digests: 1, announced: 1 });
+      expect(sent[0].links).toEqual([{ linkId: "L2", company: "Beta", folded: { total: 2, published: 2, displaced: 0 } }]);
+      // the page query is ordered oldest-first and bounded by the two-day horizon
+      const src = (await import("node:fs")).readFileSync((await import("node:path")).join(process.cwd(), "lib/intakeRateLimit.ts"), "utf8");
+      expect(src).not.toMatch(/\.limit\(1000\)/);
+      expect(src).toContain('.order("created_at", { ascending: true })');
+      expect(src).toContain(".range(from, from + pageSize - 1);");
     });
     it("an unreadable attempt log throws (the cron reports it) — never a silent 'nothing to announce'", async () => {
       const { db, client } = mkDb();
       db.errors.intake_attempts = { message: "relation does not exist" };
-      await expect(flushFoldedIntakeNotices(client, { now, send: async () => undefined })).rejects.toThrow(/intake attempt log unreadable/);
+      await expect(flushFoldedIntakeNotices(client, { now, send: async () => 1 })).rejects.toThrow(/intake attempt log unreadable/);
     });
     it("foldedDigestText names each kind", () => {
       expect(foldedDigestText("Acme", null, { total: 1, published: 1, displaced: 0 })).toEqual({
@@ -357,6 +514,40 @@ describe("intakeRateLimit — the window", () => {
         body: "Acme's intake link published 1 revision without review after the team's last notice from that link (the per-link notice cap folded them, and the link has sent nothing since). See the project's Intake tab and each document's revision history.",
       });
       expect(foldedDigestText("Acme", "U7", { total: 3, published: 1, displaced: 2 }).title).toBe("Intake: Acme published 1 revision without review and replaced 2 submissions that were awaiting review — not announced yet");
+    });
+    // ── item 3: the review-health counts reach a person ───────────────────
+    it("item 3: nudgeReviewHealth tells each org with a count above 0 ONCE a day, deduped on its own notice; an org at 0 is not told", async () => {
+      const { db, client } = mkDb();
+      const orgs: ReviewHealthOrg[] = [
+        { orgId: "o1", orphanedInReview: 0, pendingOnRetired: 1, exampleDocumentId: "d1" },
+        { orgId: "o2", orphanedInReview: 2, pendingOnRetired: 0, exampleDocumentId: "d2" },
+        { orgId: "o3", orphanedInReview: 0, pendingOnRetired: 0, exampleDocumentId: null },
+      ];
+      const told: Array<{ org: string; title: string; metadata: Record<string, unknown> }> = [];
+      const send = async (h: ReviewHealthOrg, text: { title: string }, metadata: Record<string, unknown>) => {
+        told.push({ org: h.orgId, title: text.title, metadata });
+        db.tables.notifications.push({ org_id: h.orgId, kind: REVIEW_HEALTH_KIND, metadata });
+      };
+      expect(await nudgeReviewHealth(client, { orgs, day: "2026-09-30", send })).toEqual({ nudged: 2, skipped: 0, failed: 0 });
+      expect(told.map((t) => t.org)).toEqual(["o1", "o2"]);
+      expect(told[0].title).toBe("Review health: 1 document whose pending revision names a retired draft");
+      expect(told[0].metadata).toMatchObject({ reviewHealth: true, reviewHealthDay: "2026-09-30", pendingOnRetired: 1 });
+      // a second run the same day tells no one again; the next day it does
+      expect(await nudgeReviewHealth(client, { orgs, day: "2026-09-30", send })).toEqual({ nudged: 0, skipped: 2, failed: 0 });
+      expect(await nudgeReviewHealth(client, { orgs, day: "2026-10-01", send })).toEqual({ nudged: 2, skipped: 0, failed: 0 });
+      // a send that throws is counted, not swallowed
+      expect(await nudgeReviewHealth(client, { orgs: [orgs[0]], day: "2026-10-02", send: async () => { throw new Error("x"); } })).toEqual({ nudged: 0, skipped: 0, failed: 1 });
+      const both = reviewHealthNudgeText({ orgId: "o", orphanedInReview: 2, pendingOnRetired: 3, exampleDocumentId: "d" });
+      expect(both.title).toBe("Review health: 3 documents whose pending revision names a retired draft and 2 in-review versions no document points at");
+      expect(both.body).toMatch(/pending_on_retired_version_count\(\).*orphaned_in_review_versions_count\(\).*repeats daily until the counts reach 0/);
+      expect(REVIEW_HEALTH_KIND).toBe("review_overdue");
+    });
+    it("item 3: only a MISSING function (the migration not applied) is quiet — a permission error that names the function is reported", () => {
+      expect(isMissingFunction({ code: "PGRST202", message: "Could not find the function public.pending_on_retired_version_count without parameters in the schema cache" })).toBe(true);
+      expect(isMissingFunction({ code: "42883", message: "function pending_on_retired_version_count() does not exist" })).toBe(true);
+      expect(isMissingFunction({ message: "Could not find the function public.intake_review_health_by_org" })).toBe(true);
+      expect(isMissingFunction({ code: "42501", message: "permission denied for function pending_on_retired_version_count" })).toBe(false);
+      expect(isMissingFunction({ code: "57014", message: "canceling statement due to statement timeout" })).toBe(false);
     });
   });
   it("the per-link budget: submissions, then bytes", () => {

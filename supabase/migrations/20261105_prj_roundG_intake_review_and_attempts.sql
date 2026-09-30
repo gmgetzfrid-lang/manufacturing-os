@@ -53,7 +53,9 @@
 --      (superseded_at stamped, or review_state 'superseded'), e.g. a
 --      displaced draft the door could not restore. Both count STATE, so
 --      the maintenance cron reports them on every run until they reach 0.
---      Service role only.
+--      intake_review_health_by_org() — the same two predicates per org
+--      (SECURITY DEFINER, search_path pinned), so the cron can nudge each
+--      org's controller pool. Service role only.
 --   6. enforce_document_publish_guard, re-created from its live body
 --      (20261070) with two additions for EXTERNAL submissions only
 --      (versions carrying an intake_link_id), promoted by a signed-in user:
@@ -174,7 +176,7 @@ CREATE TABLE IF NOT EXISTS intake_attempts (
   token_hash TEXT NOT NULL,           -- sha256 of the presented token, never the token
   ip         TEXT NOT NULL,
   link_id    UUID,
-  outcome    TEXT NOT NULL,           -- 'attempt' | 'notified'
+  outcome    TEXT NOT NULL,           -- 'attempt' | 'notified' | 'suppressed' | 'suppressed_published' | 'suppressed_displaced' | 'digested'
   bytes      BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -279,6 +281,35 @@ REVOKE ALL ON FUNCTION pending_on_retired_version_count() FROM PUBLIC, anon, aut
 GRANT EXECUTE ON FUNCTION pending_on_retired_version_count() TO service_role;
 COMMENT ON FUNCTION pending_on_retired_version_count() IS
   'INTK-4: documents whose pending revision names a retired draft. Find them: SELECT d.id, d.document_number, v.id AS version_id, v.review_state, v.superseded_at FROM documents d JOIN document_versions v ON v.id = d.pending_version_id WHERE v.superseded_at IS NOT NULL OR v.review_state = ''superseded''; — then re-open the draft (review_state ''in_review'', superseded_at NULL) or clear the document''s pending_version_id.';
+
+-- Both signals PER ORG, for the maintenance cron's once-a-day nudge to each
+-- org's controller pool (a count in a cron response reaches no one). The
+-- predicates are the two functions' above, verbatim; one document per org
+-- (a stuck one first) gives the notice something to point at.
+CREATE OR REPLACE FUNCTION intake_review_health_by_org()
+RETURNS TABLE (org_id uuid, orphaned_in_review bigint, pending_on_retired bigint, example_document_id text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT h.org_id,
+         COUNT(*) FILTER (WHERE h.kind = 'orphaned'),
+         COUNT(*) FILTER (WHERE h.kind = 'pending_on_retired'),
+         COALESCE(MIN(h.document_id) FILTER (WHERE h.kind = 'pending_on_retired'),
+                  MIN(h.document_id) FILTER (WHERE h.kind = 'orphaned'))
+    FROM (
+      SELECT v.org_id, 'orphaned'::text AS kind, v.record_id::text AS document_id
+        FROM document_versions v
+        LEFT JOIN documents d ON d.id = v.record_id
+       WHERE v.review_state = 'in_review' AND v.superseded_at IS NULL
+         AND d.pending_version_id IS DISTINCT FROM v.id
+      UNION ALL
+      SELECT d.org_id, 'pending_on_retired'::text, d.id::text
+        FROM documents d
+        JOIN document_versions v ON v.id = d.pending_version_id
+       WHERE v.superseded_at IS NOT NULL OR v.review_state = 'superseded'
+    ) h
+   GROUP BY h.org_id;
+$$;
+REVOKE ALL ON FUNCTION intake_review_health_by_org() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION intake_review_health_by_org() TO service_role;
 
 -- ── 6. the publish guard: intake submissions meet the review policy and the
 --       MOC rule (SEC-13 / SEC-14) — 20261070 body + two blocks ──────────
@@ -778,6 +809,14 @@ UNION ALL SELECT 'pending_on_retired_version_count counts pending pointers on re
        AND has_function_privilege('service_role', 'pending_on_retired_version_count()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'pending_on_retired_version_count()', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'pending_on_retired_version_count()', 'EXECUTE'), NULL
+UNION ALL SELECT 'intake_review_health_by_org: the two health predicates per org; SECURITY DEFINER, search_path pinned; service_role only',
+       (SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+               AND prosrc LIKE '%WHERE v.review_state = ''in_review'' AND v.superseded_at IS NULL%'
+               AND prosrc LIKE '%WHERE v.superseded_at IS NOT NULL OR v.review_state = ''superseded''%'
+          FROM pg_proc WHERE proname = 'intake_review_health_by_org')
+       AND has_function_privilege('service_role', 'intake_review_health_by_org()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'intake_review_health_by_org()', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'intake_review_health_by_org()', 'EXECUTE'), NULL
 UNION ALL SELECT 'publish guard binds intake submissions to a required review policy (SEC-13) and the drawing-class MOC rule (SEC-14)',
        (SELECT prosrc LIKE '%send the external submission to its reviewers before publishing it%'
                AND prosrc LIKE '%publish an external submission of a drawing-class document%'
@@ -801,4 +840,6 @@ UNION ALL SELECT 'inventory: in-review versions no document points at and nothin
        orphaned_in_review_versions_count()::text
 UNION ALL SELECT 'inventory: documents whose pending revision names a retired draft, after apply (resolve by hand; the cron reports it daily)', NULL::boolean,
        pending_on_retired_version_count()::text
+UNION ALL SELECT 'inventory: orgs whose controllers the cron nudges about review health, after apply', NULL::boolean,
+       (SELECT COUNT(*)::text FROM intake_review_health_by_org())
 UNION ALL SELECT inventory, NULL::boolean, n FROM prj_g_j1b_inventory;

@@ -46,8 +46,14 @@ export interface TransitionCandidate {
    *  submission is still in review (or was never decided). Shown, marked,
    *  and never adoptable until someone approves it. */
   awaitingReview?: boolean;
-  /** A submission sits in the review queue right now. */
+  /** The sheet has an open pending revision (`pending_version_id`). */
   pendingReview?: boolean;
+  /** …and it names a RETIRED draft (`superseded_at` stamped, or
+   *  review_state 'superseded' — what pending_on_retired_version_count()
+   *  counts). The review queue lists in-review drafts only, so nobody can
+   *  approve or reject it there: Document Control must clear the pointer or
+   *  re-open the draft. */
+  pendingRetired?: boolean;
   /** The sheet HAS an approved revision, but its newest proposal was
    *  rejected. The approved revision is what adoption moves; the refusal is
    *  shown as a note. */
@@ -136,6 +142,18 @@ export async function listTransitionCandidates(
   if (error) throw new Error(`Couldn't list the intake sheets: ${error.message}`);
   const rows = ((docs ?? []) as Array<Record<string, unknown>>);
   const ids = rows.map((d) => String(d.id));
+  // INTK-3 / INTK-4: an open pending revision that names a RETIRED draft is
+  // not in the review queue — the panel must not send the operator there.
+  const retiredPending = new Set<string>();
+  const pendingIds = [...new Set(rows.map((d) => d.pending_version_id).filter((v) => v != null && v !== "").map(String))];
+  if (pendingIds.length) {
+    const { data: pv, error: pErr } = await supabase
+      .from("document_versions").select("id, review_state, superseded_at").in("id", pendingIds);
+    if (pErr) throw new Error(`Couldn't read the pending submissions: ${pErr.message}`);
+    for (const v of ((pv ?? []) as Array<{ id: string; review_state: string | null; superseded_at: string | null }>)) {
+      if (pendingDraftRetired(v)) retiredPending.add(String(v.id));
+    }
+  }
   // The latest intake submission per sheet (newest first).
   const latestState = new Map<string, string | null>();
   if (ids.length) {
@@ -163,8 +181,33 @@ export async function listTransitionCandidates(
       submittedAt: (d.created_at as string | null) ?? null,
       awaitingReview: !d.current_version_id,
       pendingReview: !!d.pending_version_id,
+      pendingRetired: !!d.pending_version_id && retiredPending.has(String(d.pending_version_id)),
       latestRejected: latestState.get(String(d.id)) === "rejected",
     }));
+}
+
+/** Pure: is this pending draft RETIRED — the state
+ *  pending_on_retired_version_count() counts (superseded_at stamped, or
+ *  review_state 'superseded')? */
+export function pendingDraftRetired(v: { review_state?: string | null; superseded_at?: string | null } | null | undefined): boolean {
+  return !!v && (v.superseded_at != null || v.review_state === "superseded");
+}
+
+/** The sentence a pending draft that is retired gets, wherever it is shown. */
+export const RETIRED_PENDING_NOTE =
+  "Its pending revision names a retired draft, which the review queue does not list — Document Control must clear the document's pending revision or re-open the draft (the maintenance cron counts it in pending_on_retired_version_count) before it can be adopted.";
+
+/** Pure: what the panel tells the operator about a sheet that is not yet
+ *  adoptable for review reasons — or null. A pending revision that names a
+ *  RETIRED draft is never sent to the review queue (the queue never lists
+ *  it). */
+export function candidateReviewNote(c: Pick<TransitionCandidate, "awaitingReview" | "pendingReview" | "pendingRetired" | "rev">): string | null {
+  if (!candidateInReview(c)) return null;
+  if (c.pendingRetired) return RETIRED_PENDING_NOTE;
+  const what = c.awaitingReview
+    ? (c.pendingReview ? "This submission is still in review" : "This sheet has no approved revision yet")
+    : `A newer submission for this sheet is still in review (Rev ${c.rev ?? "—"} is approved)`;
+  return `${what} — approve or reject it in the review queue above before it can be adopted.`;
 }
 
 /** INTK-3 — a sheet with a submission still undecided: never approved, or
@@ -376,6 +419,14 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     return { ok: false, error: `${label} is still awaiting review — approve or reject its submission on the Intake tab before adopting it.` };
   }
   if (before.pending_version_id) {
+    // A pending revision naming a RETIRED draft is not on the Intake tab —
+    // say what clears it. (An unreadable draft keeps the ordinary refusal.)
+    const { data: pv } = await supabase
+      .from("document_versions").select("review_state, superseded_at")
+      .eq("id", String(before.pending_version_id)).maybeSingle();
+    if (pendingDraftRetired(pv as { review_state: string | null; superseded_at: string | null } | null)) {
+      return { ok: false, error: `${label}: ${RETIRED_PENDING_NOTE}` };
+    }
     return { ok: false, error: `${label} is still awaiting review — approve or reject its submission on the Intake tab before adopting it.` };
   }
 

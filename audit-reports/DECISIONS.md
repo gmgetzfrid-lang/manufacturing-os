@@ -2412,8 +2412,9 @@ narrow privilege, both enforced where the write happens:**
    most THREE notices of any kind; every folded submission is counted, by
    kind, into the next notice — and a folded publish or replacement that no
    later notice announces (the link went quiet) goes to the controllers and
-   the owner in the maintenance cron's daily digest, one per link, never
-   repeated; a per-link lifetime cap of 500 submissions
+   the owner in the maintenance cron's daily digest, one per project (each
+   link listed), repeated only when its marker failed to land (verification
+   fix, below); a per-link lifetime cap of 500 submissions
    and 5 GB. Links expire: 14 days by default, 90 at most (the database CHECK
    allows 92 days: an end-of-day LOCAL expiry picked from a UTC date lands up
    to ~91.5 days out west of UTC). A retry of the same bytes answers with the
@@ -2489,6 +2490,24 @@ compliance scans is unchanged and not this decision's.)
 > owner. Opened: `INTK-15`, `SEC-19`. Not this package's: `SEC-7`, `SEC-9`,
 > `SEC-10`, `SAF-14`. Numbered DEC-50 on the package branch (DEC-44 … DEC-49
 > were taken); the integrator renumbers if needed.
+>
+> **Verification fix (2026-09-30, projects Round G).** Item 4's digest was
+> "one per link, never repeated"; neither held. It is now ONE digest per
+> PROJECT listing each link's counts (a second link's email on the same
+> project was dropped by `queueEmail`'s 60-second dedupe). Delivery is the
+> digest's bell rows, inserted by the cron and checked; a link is marked
+> only when they landed, and its marker is `digested` — a boundary for the
+> fold count, not a notice in the window. A marker that fails to land is
+> counted and reported, and that link is announced again the next day — a
+> repeat, never a loss. The email leg is best-effort. Item 3's health
+> signals are now logged on every run, an unavailable count is reported
+> (quiet only before the migration is applied), and each affected org's
+> controller pool is nudged once a day (best-effort, through `emit()`).
+> Item 6: a sheet whose pending revision names a retired draft is marked
+> "stuck" and sent to Document Control, not the review queue; the
+> adoption re-check is the controller's browser's, not the server's
+> (projects-and-cost `INTK-3` done-when 1 is partial, pending `SAF-13`'s
+> server-side adopt).
 
 **Rationale.** The door is the one place an outside party writes into document
 control. Every earlier defect had the same shape: a fact the route itself

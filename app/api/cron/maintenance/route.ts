@@ -27,9 +27,12 @@
 //      every document whose pending revision still names a RETIRED draft —
 //      a state count, reported on every run until it reaches 0 (INTK-4: the
 //      door's unrestorable displacement, audit action
-//      INTAKE_DISPLACE_UNRESOLVED, is one way to get there). Folded intake
-//      publishes / replacements no notice announced get one digest per link
-//      (INTK-10 / SEC-8 — flushFoldedIntakeNotices).
+//      INTAKE_DISPLACE_UNRESOLVED, is one way to get there). Each count
+//      above 0 is logged (console.error) and nudges that org's controller
+//      pool once a day (nudgeReviewHealth); an RPC that fails is reported,
+//      unless the function does not exist yet (20261105 not applied).
+//      Folded intake publishes / replacements no notice announced get one
+//      digest per project (INTK-10 / SEC-8 — flushFoldedIntakeNotices).
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -53,7 +56,10 @@ import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
 import { rebuildAclIndexes, type RebuildCounts } from "@/lib/aclIndexRebuild";
 import { roleFilter } from "@/lib/roleHeld";
-import { flushFoldedIntakeNotices } from "@/lib/intakeRateLimit";
+import {
+  flushFoldedIntakeNotices, deliverFoldedDigest, foldedDigestKind, foldedDigestMetadata,
+  nudgeReviewHealth, REVIEW_HEALTH_KIND, isMissingFunction, type ReviewHealthOrg,
+} from "@/lib/intakeRateLimit";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { emit } from "@/lib/notify/dispatch";
 
@@ -97,6 +103,7 @@ async function handler(req: NextRequest) {
     orphanedInReviewVersions?: number;
     pendingOnRetiredVersions?: number;
     intakeFoldedDigests?: number;
+    reviewHealthNudges?: number;
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -163,24 +170,28 @@ async function handler(req: NextRequest) {
 
   // 4c. INTAKE DOOR housekeeping (INTK-8 dw4, SAF-10 dw3) — one step, on
   //     this cron (a third vercel.json cron entry fails deployment). No-op
-  //     on a database without 20261105.
+  //     on a database without 20261105 — and only then: an RPC that exists
+  //     and fails is reported, never read as a count of 0.
+  // Every line this step writes is also logged — the platform's cron log
+  // shows console output, not this route's JSON body.
+  const intakeLine = (line: string) => { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); };
   try {
     const { data: pruned, error: pruneErr } = await sb.rpc("prune_intake_attempts");
     if (pruneErr) {
-      if (!/prune_intake_attempts|PGRST202|42883/i.test(`${pruneErr.code ?? ""} ${pruneErr.message}`)) {
-        result.errors.push(`intake-attempts: ${pruneErr.message}`);
-      }
+      if (!isMissingFunction(pruneErr)) intakeLine(`intake-attempts: ${pruneErr.message}`);
     } else {
       result.intakeAttemptsPruned = Number(pruned ?? 0);
     }
     const { data: orphans, error: orphanErr } = await sb.rpc("orphaned_in_review_versions_count");
-    if (!orphanErr) {
+    if (orphanErr) {
+      if (!isMissingFunction(orphanErr)) intakeLine(`intake-door: health count unavailable (orphaned_in_review_versions_count): ${orphanErr.message}`);
+    } else {
       result.orphanedInReviewVersions = Number(orphans ?? 0);
       if (result.orphanedInReviewVersions > 0) {
         // No screen lists a version nothing points at (the Intake tab and
         // the review panel both follow the pending pointer), so the remedy
         // named is the one a document controller can actually run.
-        result.errors.push(`review-health: ${result.orphanedInReviewVersions} in-review version(s) that no document points at and nothing withdrew — a document controller must resolve each one (mark it 'superseded' or 'rejected', or re-point its document's pending revision); find them with the query in orphaned_in_review_versions_count() (migration 20261105)`);
+        intakeLine(`review-health: ${result.orphanedInReviewVersions} in-review version(s) that no document points at and nothing withdrew — a document controller must resolve each one (mark it 'superseded' or 'rejected', or re-point its document's pending revision); find them with the query in orphaned_in_review_versions_count() (migration 20261105)`);
       }
     }
     // INTK-4: a document whose pending revision names a RETIRED draft
@@ -191,32 +202,69 @@ async function handler(req: NextRequest) {
     // only in the day after it happened. (The door's own unrestorable
     // displacement writes audit action INTAKE_DISPLACE_UNRESOLVED.)
     const { data: stuck, error: stuckErr } = await sb.rpc("pending_on_retired_version_count");
-    if (!stuckErr) {
+    if (stuckErr) {
+      if (!isMissingFunction(stuckErr)) intakeLine(`intake-door: health count unavailable (pending_on_retired_version_count): ${stuckErr.message}`);
+    } else {
       result.pendingOnRetiredVersions = Number(stuck ?? 0);
       if (result.pendingOnRetiredVersions > 0) {
-        result.errors.push(`review-health: ${result.pendingOnRetiredVersions} document(s) whose pending revision names a retired draft — each stays 'in review' with nothing to review until a document controller re-opens the draft (review_state 'in_review', superseded_at cleared) or clears the document's pending revision; find them with the query in the comment on pending_on_retired_version_count() (migration 20261105); the intake door's own cases are audit action INTAKE_DISPLACE_UNRESOLVED`);
+        intakeLine(`review-health: ${result.pendingOnRetiredVersions} document(s) whose pending revision names a retired draft — each stays 'in review' with nothing to review until a document controller re-opens the draft (review_state 'in_review', superseded_at cleared) or clears the document's pending revision; find them with the query in the comment on pending_on_retired_version_count() (migration 20261105); the intake door's own cases are audit action INTAKE_DISPLACE_UNRESOLVED`);
+      }
+    }
+    // The counts reach a person: each org with one above 0 nudges its
+    // controller pool once a day (bell; the compliance email at 6b carries
+    // it, REVIEW_HEALTH_KIND being a compliance kind).
+    if ((result.orphanedInReviewVersions ?? 0) + (result.pendingOnRetiredVersions ?? 0) > 0) {
+      const { data: byOrg, error: byOrgErr } = await sb.rpc("intake_review_health_by_org");
+      if (byOrgErr) {
+        intakeLine(`intake-door: per-org review-health counts unavailable — no controller was nudged: ${byOrgErr.message}`);
+      } else {
+        const orgs: ReviewHealthOrg[] = ((byOrg ?? []) as Array<Record<string, unknown>>).map((r) => ({
+          orgId: String(r.org_id), orphanedInReview: Number(r.orphaned_in_review ?? 0),
+          pendingOnRetired: Number(r.pending_on_retired ?? 0),
+          exampleDocumentId: r.example_document_id == null ? null : String(r.example_document_id),
+        }));
+        const nudged = await nudgeReviewHealth(sb, {
+          orgs, day: new Date().toISOString().slice(0, 10),
+          send: (h, text, metadata) => runWithServerClient(sb, () => emit({
+            orgId: h.orgId, category: "system", kind: REVIEW_HEALTH_KIND,
+            title: text.title, body: text.body,
+            resource: { type: "document", id: h.exampleDocumentId ?? "" }, actorName: "System",
+            audience: { roles: ["Admin", "DocCtrl"] },
+            channels: ["inapp"],
+            metadata,
+          })),
+        });
+        result.reviewHealthNudges = nudged.nudged;
+        if (nudged.failed > 0) intakeLine(`intake-door: ${nudged.failed} org(s) with review-health counts could not be nudged`);
       }
     }
     // INTK-10 / SEC-8: folded intake publishes / replacements that no
     // notice announced (the link went quiet after its burst) — one digest
-    // per link to the controllers and the owner, drained at 6c.
+    // per PROJECT to the controllers and the owner. deliverFoldedDigest
+    // inserts the bell rows itself and reports how many landed (emit()
+    // swallows its failures, so it cannot say); the email leg is emit() on
+    // the email channel, best-effort, drained at 6c.
     if (!pruneErr) {
       const flushed = await flushFoldedIntakeNotices(sb, {
-        send: (d) => runWithServerClient(sb, () => emit({
-          orgId: d.orgId, category: "watched", kind: d.folded.published > 0 ? "doc_superseded" : "review_requested",
-          title: d.title, body: d.body, link: d.link,
-          resource: { type: "project", id: d.projectId }, actorName: d.company,
-          audience: { involved: d.involved, followers: false },
-          metadata: { intake: true, foldedDigest: true, linkId: d.linkId, published: d.folded.published, displaced: d.folded.displaced, total: d.folded.total },
-        })),
+        send: (d) => deliverFoldedDigest(sb, d, (dd) => runWithServerClient(sb, () => emit({
+          orgId: dd.orgId, category: "watched", kind: foldedDigestKind(dd),
+          title: dd.title, body: dd.body, link: dd.link,
+          resource: { type: "project", id: dd.projectId }, actorName: dd.actorName,
+          audience: { involved: dd.involved, followers: false },
+          channels: ["email"],
+          metadata: foldedDigestMetadata(dd),
+        }))),
       });
       result.intakeFoldedDigests = flushed.digests;
       if (flushed.failed > 0) {
-        result.errors.push(`intake-notices: ${flushed.failed} link(s) with folded publishes or replacements could not be announced — retried on the next run`);
+        intakeLine(`intake-notices: ${flushed.failed} link(s) with folded publishes or replacements could not be announced (nothing landed) — retried on the next run`);
+      }
+      if (flushed.unrecorded > 0) {
+        intakeLine(`intake-notices: ${flushed.unrecorded} link(s) were announced but their 'digested' marker did not land — the next run announces them again`);
       }
     }
   } catch (e) {
-    result.errors.push(`intake-door: ${(e as Error).message}`);
+    intakeLine(`intake-door: ${(e as Error).message}`);
   }
 
   // 5. Stale-checkout escalation. Sessions active for 14+ days notify the

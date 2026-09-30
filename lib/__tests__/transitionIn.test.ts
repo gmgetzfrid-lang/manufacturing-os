@@ -56,7 +56,7 @@ vi.mock("@/lib/supabase", () => {
 
 import {
   extractCandidateTags, likeExact, sameNumber, scanTransitionImpact, listTransitionCandidates, adoptDocument,
-  blockingNumberCollision, candidateInReview,
+  blockingNumberCollision, candidateInReview, candidateReviewNote, pendingDraftRetired, RETIRED_PENDING_NOTE,
   type TransitionCandidate, type TransitionImpact,
 } from "@/lib/transitionIn";
 
@@ -409,5 +409,62 @@ describe("INTK-3 dw2 — a sheet with an open pending_version_id is never clean"
       newNumber: null, linkAssets: [], actorId: "u1", actorEmail: null,
     });
     expect(res.error).toMatch(/still awaiting review/);
+  });
+});
+
+describe("INTK-3 / INTK-4 (verification fix) — a pending pointer on a RETIRED draft is never sent to the review queue", () => {
+  const seedStuck = (pending: Record<string, unknown>) => {
+    db.tables.documents = [
+      { id: "s", org_id: "o1", collection_id: INTAKE, library_id: "lib-intake", status: "Issued", document_number: "S-1", title: "Tie-in FE-201", rev: "A", metadata: {}, current_version_id: "vA", pending_version_id: "vB", created_at: "1" },
+    ];
+    db.tables.document_versions = [
+      { id: "vB", record_id: "s", intake_link_id: "l1", created_at: "2", ...pending },
+      { id: "vA", record_id: "s", review_state: "approved", intake_link_id: "l1", created_at: "1", superseded_at: null },
+    ];
+    db.tables.libraries = [{ id: "lib-dest", org_id: "o1", uniqueness_keys: null }];
+    db.tables.assets = [];
+    db.tables.document_assets = [];
+  };
+  it("pendingDraftRetired: superseded_at stamped, or review_state 'superseded' — the state pending_on_retired_version_count() counts", () => {
+    expect(pendingDraftRetired({ review_state: "superseded", superseded_at: null })).toBe(true);
+    expect(pendingDraftRetired({ review_state: "in_review", superseded_at: "2026-09-30T00:00:00Z" })).toBe(true);
+    expect(pendingDraftRetired({ review_state: "in_review", superseded_at: null })).toBe(false);
+    expect(pendingDraftRetired(null)).toBe(false);
+  });
+  it("the reviewer's case: an approved sheet whose displaced draft could not be restored lists as pendingRetired, and the panel's note says Document Control must clear it — not the queue", async () => {
+    for (const retired of [{ review_state: "superseded", superseded_at: "2026-09-30T00:00:00Z" }, { review_state: "in_review", superseded_at: "2026-09-30T00:00:00Z" }]) {
+      seedStuck(retired);
+      const [c] = await listTransitionCandidates("o1", INTAKE);
+      expect(c).toMatchObject({ awaitingReview: false, pendingReview: true, pendingRetired: true });
+      expect(candidateInReview(c)).toBe(true); // still blocked from adoption
+      const note = candidateReviewNote(c)!;
+      expect(note).toBe(RETIRED_PENDING_NOTE);
+      expect(note).toMatch(/names a retired draft, which the review queue does not list — Document Control must clear/);
+      expect(note).not.toMatch(/review queue above/);
+      const res = await adoptDocument({
+        orgId: "o1", projectId: "p1", docId: "s", libraryId: "lib-dest", collectionId: null,
+        newNumber: null, linkAssets: [], actorId: "u1", actorEmail: null,
+      });
+      expect(res.ok).toBe(false);
+      expect(res.error).toBe(`S-1: ${RETIRED_PENDING_NOTE}`);
+    }
+  });
+  it("a LIVE pending draft still points at the review queue, as before", async () => {
+    seedStuck({ review_state: "in_review", superseded_at: null });
+    const [c] = await listTransitionCandidates("o1", INTAKE);
+    expect(c).toMatchObject({ pendingReview: true, pendingRetired: false });
+    expect(candidateReviewNote(c)).toBe("A newer submission for this sheet is still in review (Rev A is approved) — approve or reject it in the review queue above before it can be adopted.");
+    expect(candidateReviewNote({ awaitingReview: true, pendingReview: true, rev: null })).toBe("This submission is still in review — approve or reject it in the review queue above before it can be adopted.");
+    expect(candidateReviewNote({ awaitingReview: false, pendingReview: false, rev: "A" })).toBeNull();
+    const res = await adoptDocument({
+      orgId: "o1", projectId: "p1", docId: "s", libraryId: "lib-dest", collectionId: null,
+      newNumber: null, linkAssets: [], actorId: "u1", actorEmail: null,
+    });
+    expect(res.error).toMatch(/still awaiting review — approve or reject its submission on the Intake tab/);
+  });
+  it("an unreadable pending-draft read throws — never a sheet silently shown without its state", async () => {
+    seedStuck({ review_state: "superseded", superseded_at: null });
+    db.errors["document_versions.select"] = [{ message: "boom" }];
+    await expect(listTransitionCandidates("o1", INTAKE)).rejects.toThrow(/Couldn't read the pending submissions/);
   });
 });
