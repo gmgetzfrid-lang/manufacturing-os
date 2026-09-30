@@ -7,8 +7,14 @@
 //
 // Each hit is normalised to a GlobalHit shape so the palette can
 // render them uniformly: title, subtitle, kind chip, href.
+//
+// GAP-311: a query that NAMES equipment — any tag format, a site code, a
+// taught alias — resolves by exact identity first (lib/search.ts lookupTag,
+// no AI call): the asset, its operating area and the drawings it is on,
+// flagged `exact` so the palette ranks them above everything else. Asset
+// hits land on the asset hub (/assets/<tag>), not the admin registry table.
 
-import { searchDocuments, searchAssets, searchTickets } from "@/lib/search";
+import { searchDocuments, searchAssets, searchTickets, lookupTag } from "@/lib/search";
 import { supabase } from "@/lib/supabase";
 
 export type GlobalHitKind = "document" | "ticket" | "project" | "asset" | "note" | "transmittal";
@@ -20,7 +26,15 @@ export interface GlobalHit {
   subtitle?: string;
   badge?: string;
   href: string;
+  /** GAP-311: an exact identity answer (tag lookup) — ranked first. */
+  exact?: boolean;
+  /** GAP-311: an asset-kind hit that is the asset's OPERATING AREA (grouped
+   *  with equipment wherever hits are grouped by kind). */
+  facet?: "unit";
 }
+
+/** The asset hub for a tag — every tag-shaped hit lands here. */
+export const assetHubHref = (tag: string) => `/assets/${encodeURIComponent(tag)}`;
 
 export interface GlobalSearchInput {
   orgId: string;
@@ -32,19 +46,69 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
   const q = query.trim();
   if (q.length < 2) return [];
 
-  const results = await Promise.allSettled([
+  const [tagged, ...results] = await Promise.allSettled([
+    lookupTag(orgId, q),
     searchDocuments({ orgId, query: q, limit: perKindLimit }),
     searchTickets({ orgId, query: q, limit: perKindLimit }),
     searchAssets({ orgId, query: q, limit: perKindLimit }),
     searchProjects(orgId, q, perKindLimit),
     searchNotes(orgId, q, perKindLimit),
     searchTransmittals(orgId, q, perKindLimit),
-  ]);
+  ] as const);
 
   const hits: GlobalHit[] = [];
+  const exactAssetIds = new Set<string>();
+  const exactDocIds = new Set<string>();
+
+  // GAP-311: tag → asset → unit → drawings, first.
+  if (tagged.status === "fulfilled") {
+    const seenUnits = new Set<string>();
+    for (const t of tagged.value) {
+      exactAssetIds.add(t.asset.id);
+      hits.push({
+        id: t.asset.id,
+        kind: "asset",
+        title: t.asset.tag,
+        subtitle: [
+          t.unit ? `${t.unit.code}${t.unit.label ? ` — ${t.unit.label}` : ""}` : "No operating area",
+          t.asset.code ?? null,
+          t.asset.description ?? null,
+        ].filter(Boolean).join(" · "),
+        badge: t.via === "alias" ? "Alias" : t.via === "code" ? "Site code" : "Tag",
+        href: assetHubHref(t.asset.tag),
+        exact: true,
+      });
+      if (t.unit && !seenUnits.has(t.unit.code)) {
+        seenUnits.add(t.unit.code);
+        hits.push({
+          id: `unit:${t.unit.code}`,
+          kind: "asset",
+          facet: "unit",
+          badge: "Area",
+          title: `${t.unit.code}${t.unit.label ? ` — ${t.unit.label}` : ""}`,
+          subtitle: `Operating area of ${t.asset.tag}`,
+          href: `/admin/assets?unit=${encodeURIComponent(t.unit.code)}`,
+          exact: true,
+        });
+      }
+      for (const d of t.documents) {
+        if (exactDocIds.has(d.id)) continue;
+        exactDocIds.add(d.id);
+        hits.push({
+          id: d.id,
+          kind: "document",
+          title: d.document_number || d.title || "Untitled",
+          subtitle: `${t.asset.tag} appears on this drawing${d.title && d.document_number ? ` · ${d.title}` : ""}`,
+          href: `/documents/${d.library_id}?doc=${d.id}`,
+          exact: true,
+        });
+      }
+    }
+  }
 
   if (results[0].status === "fulfilled") {
     for (const d of results[0].value) {
+      if (exactDocIds.has(String(d.id))) continue;
       hits.push({
         id: String(d.id),
         kind: "document",
@@ -71,12 +135,13 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
 
   if (results[2].status === "fulfilled") {
     for (const a of results[2].value) {
+      if (exactAssetIds.has(String(a.id))) continue;
       hits.push({
         id: String(a.id),
         kind: "asset",
         title: a.tag,
         subtitle: a.description || undefined,
-        href: `/admin/assets?tag=${encodeURIComponent(a.tag)}`,
+        href: assetHubHref(a.tag),
       });
     }
   }
