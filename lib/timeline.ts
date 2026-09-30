@@ -196,9 +196,33 @@ export function holdIdsReferencedBy(auditRows: AuditRow[]): string[] {
 async function lookupExistingHoldIds(ids: string[], alreadyOnPage: ReadonlySet<string>): Promise<Set<string>> {
   const missing = ids.filter((id) => !alreadyOnPage.has(id));
   if (missing.length === 0) return new Set();
-  const { data, error } = await supabase.from("document_holds").select("id").in("id", missing);
-  if (error) throw new Error(error.message);
-  return new Set(((data as Array<{ id: string }>) ?? []).map((r) => r.id));
+  const rows = await readByIdChunks<{ id: string }>(missing, (part) => supabase.from("document_holds").select("id").in("id", part));
+  return new Set(rows.map((r) => r.id));
+}
+
+/** Ids per `.in()` read. A list of 100 UUIDs keeps a request line near
+ *  4 KB; a busy project (hundreds of quotes, hundreds of linked drawings)
+ *  used to put every id in ONE filter, past the gateway's URL limit, and a
+ *  refused request failed the whole Activity tab. */
+export const TIMELINE_ID_CHUNK = 100;
+
+/** One read per chunk of ids (in parallel), concatenated; any failed chunk
+ *  fails the read — a partial feed is never presented as the whole one.
+ *  Callers that cap each read at `limit` still get the newest `limit`
+ *  overall after their merged sort and slice. */
+async function readByIdChunks<T>(
+  ids: readonly string[],
+  read: (part: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<T[]> {
+  const parts: string[][] = [];
+  for (let i = 0; i < ids.length; i += TIMELINE_ID_CHUNK) parts.push(ids.slice(i, i + TIMELINE_ID_CHUNK));
+  const results = await Promise.all(parts.map((part) => read(part)));
+  const out: T[] = [];
+  for (const r of results) {
+    if (r.error) throw new Error(r.error.message);
+    out.push(...(((r.data as T[] | null) ?? [])));
+  }
+  return out;
 }
 
 /**
@@ -688,16 +712,15 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
 
   const costDocIds = ((costDocsResult.data as Array<{ id: string }>) ?? []).map((r) => r.id);
   if (costDocIds.length > 0) {
-    const costAudit = await supabase
+    const costAudit = await readByIdChunks<AuditRow>(costDocIds, (part) => supabase
       .from("audit_logs")
       .select("*")
       .eq("resource_type", "cost")
-      .in("resource_id", costDocIds)
+      .in("resource_id", part)
       .not("action", "in", hidden)
       .order("timestamp", { ascending: false })
-      .limit(limit);
-    if (costAudit.error) throw new Error(costAudit.error.message);
-    events.push(...((costAudit.data as AuditRow[]) ?? [])
+      .limit(limit));
+    events.push(...costAudit
       .filter((r) => isProjectFeedAction(r.action))
       .map(auditRowToEvent));
   }
@@ -712,47 +735,42 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
   const docIds = [...linkedDocIds, ...detachedAt.keys()];
   if (docIds.length > 0) {
     // 6. Audit + version + hold events for the linked (and detached) documents.
-    // Each source capped to `limit` so a project with many docs
-    // doesn't return 10,000 rows; the merged sort + final slice
-    // still respects the overall limit.
-    const [docAudit, docVersions, docHolds] = await Promise.all([
-      supabase
+    // Each read is chunked (TIMELINE_ID_CHUNK ids) and each chunk capped to
+    // `limit` so a project with many docs doesn't return 10,000 rows; the
+    // merged sort + final slice still respects the overall limit.
+    const [auditRows, versionRows, holdRows] = await Promise.all([
+      readByIdChunks<AuditRow>(docIds, (part) => supabase
         .from("audit_logs")
         .select("*")
         .eq("resource_type", "document")
-        .in("resource_id", docIds)
+        .in("resource_id", part)
         .order("timestamp", { ascending: false })
-        .limit(limit),
-      supabase
+        .limit(limit)),
+      readByIdChunks<VersionRow>(docIds, (part) => supabase
         .from("document_versions")
         .select("*")
-        .in("record_id", docIds)
+        .in("record_id", part)
         // SAF-16: the same rule as getDocumentTimeline and getRevisionChain.
         .or(CONTROLLED_VERSIONS_ONLY)
         .order("created_at", { ascending: false })
-        .limit(limit),
-      supabase
+        .limit(limit)),
+      readByIdChunks<HoldRow>(docIds, (part) => supabase
         .from("document_holds")
         .select("*")
-        .in("document_id", docIds)
+        .in("document_id", part)
         .order("opened_at", { ascending: false })
-        .limit(limit),
+        .limit(limit)),
     ]);
-    if (docAudit.error) throw new Error(docAudit.error.message);
-    if (docVersions.error) throw new Error(docVersions.error.message);
-    if (docHolds.error) throw new Error(docHolds.error.message);
 
     // Same dedup as getDocumentTimeline — by hold id (HLD-11), with the
     // same targeted existence check: the holds page is pooled across every
     // linked document, so a busy project pushes old rows off it fast.
-    const auditRows = (docAudit.data as AuditRow[]) ?? [];
-    const holdRows = (docHolds.data as HoldRow[]) ?? [];
     const existingHoldIds = await lookupExistingHoldIds(holdIdsReferencedBy(auditRows), new Set(holdRows.map((h) => h.id)));
     const { auditEvents, holdEvents } = mergeHoldHistory(auditRows, holdRows, existingHoldIds);
 
     const docEvents = [
       ...auditEvents,
-      ...((docVersions.data as VersionRow[]) ?? []).map(versionRowToEvent),
+      ...versionRows.map(versionRowToEvent),
       ...holdEvents,
     ];
     events.push(...docEvents.filter((e) => {

@@ -12,11 +12,14 @@
 //     policy gated on the controller / the active owner; none grants a bare
 //     org-membership read (the private-project leak); company_events (the
 //     company profile's event log) gates an event logged against a project
-//     on the same visibility;
+//     on the same visibility; turnover_review_events (projects Round G J2's
+//     20261091 review history, merged beside this package) reads through
+//     it too — replayed here with J2's statement as a fixture;
 //   · SEC-17 / PM-8 — project_documents has no FOR ALL policy (the
 //     member_all one is DROPPED, not supplemented), SELECT is
-//     visibility-gated, writes need the owner or a controller in the
-//     project's own org;
+//     visibility-gated, an attach needs a project manager
+//     (can_manage_project) or a controller, a detach or a moved link the
+//     owner or a controller, every write in the project's own org;
 //   · SEC-9 — the projects UPDATE / DELETE owner branches need an ACTIVE
 //     membership;
 //   · PM-7 — project_activity's insert binds the author, the org and the
@@ -100,13 +103,22 @@ type Policy = { file: string; cmd: string; permissive: boolean; body: string };
 const TABLES = [
   "change_orders", "project_checklists", "checklist_items", "turnover_items", "punch_items",
   "project_parties", "cost_accounts", "cost_documents", "cost_entries",
-  "project_documents", "projects", "project_activity", "company_events",
+  "project_documents", "projects", "project_activity", "company_events", "turnover_review_events",
 ];
 
-function replay(): Map<string, Map<string, Policy>> {
+/** A migration another package ships, replayed at its number (a merge fixture). */
+type Extra = { file: string; sql: string };
+
+function replay(extra: Extra[] = []): Map<string, Map<string, Policy>> {
   const byTable = new Map<string, Map<string, Policy>>(TABLES.map((t) => [t, new Map()]));
-  for (const f of files) {
-    const raw = stripComments(readFileSync(f, "utf8"));
+  const key = (file: string) => (/\/\d{8}[^/]*$/.test(file) ? file.split("/").pop()! : "");
+  const sources = [
+    ...files.map((f) => ({ file: f.replace(root + "/", ""), sql: readFileSync(f, "utf8") })),
+    ...extra,
+  ].sort((a, b) => (key(a.file) < key(b.file) ? -1 : key(a.file) > key(b.file) ? 1 : 0));
+  for (const src of sources) {
+    const f = src.file;
+    const raw = stripComments(src.sql);
     const sql = raw + expandLoops(raw);
     // Statements in file order: literal DROP / CREATE, then the loops' (appended, in loop order).
     const stmtRe = /(DROP\s+POLICY\s+IF\s+EXISTS\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?(\w+)"?)|(CREATE\s+POLICY\s+"?(\w+)"?\s+ON\s+(?:public\.)?"?(\w+)"?([\s\S]*?);)/gi;
@@ -118,14 +130,15 @@ function replay(): Map<string, Map<string, Policy>> {
       const name = m[5], table = m[6], rest = m[7];
       if (!byTable.has(table) || /%I/.test(name) || /%I/.test(table)) continue;
       const cmd = (/\bFOR\s+(ALL|SELECT|INSERT|UPDATE|DELETE)\b/i.exec(rest)?.[1] ?? "ALL").toUpperCase();
-      byTable.get(table)!.set(name, { file: f.replace(root + "/", ""), cmd, permissive: !/AS\s+RESTRICTIVE/i.test(rest), body: rest });
+      byTable.get(table)!.set(name, { file: f, cmd, permissive: !/AS\s+RESTRICTIVE/i.test(rest), body: rest });
     }
   }
   return byTable;
 }
 
 const final = replay();
-const pol = (t: string) => [...final.get(t)!.entries()];
+const pol2 = (set: Map<string, Map<string, Policy>>, t: string) => [...set.get(t)!.entries()];
+const pol = (t: string) => pol2(final, t);
 
 describe("the census replays the loops, not only the literal statements", () => {
   it("sees the policies the 20261013 and 20260906 loops generated before 20261102 replaced them", () => {
@@ -202,14 +215,55 @@ describe("SEC-2 dw2 — the company profile shows no private-project event to a 
   });
 });
 
+describe("SEC-2 after merge — projects Round G J2's turnover review history (20261091) is private with its project", () => {
+  // Verbatim from 20261091:451-453 on the integration branch (J2 is merged
+  // there, not in this package's base).
+  const J2 = {
+    file: "supabase/migrations/20261091_prj_roundG_quality_rails.sql",
+    sql: [
+      "DROP POLICY IF EXISTS turnover_review_events_member_read ON turnover_review_events;",
+      "CREATE POLICY turnover_review_events_member_read ON turnover_review_events FOR SELECT",
+      "  USING (EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = turnover_review_events.org_id AND m.uid = auth.uid() AND m.status = 'active'));",
+    ].join("\n"),
+  };
+
+  it("20261091 alone leaves the history readable by every active member — the census sees the leak", () => {
+    const saved = files.splice(0);
+    files.push(...saved.filter((f) => !/\/\d{8}/.test(f) || f.split("/").pop()! < "20261102"));
+    const before = replay([J2]);
+    files.splice(0, files.length, ...saved);
+    const p = before.get("turnover_review_events")!.get("turnover_review_events_member_read")!;
+    expect(p.file).toBe(J2.file);
+    expect(p.body).toMatch(/FROM org_members m WHERE m\.org_id = turnover_review_events\.org_id/);
+    expect(p.body).not.toMatch(/project_visible_to_me/);
+  });
+
+  it("with 20261102 after it, every permissive read of turnover_review_events goes through project_visible_to_me", () => {
+    for (const merged of [replay([J2]), final]) {
+      const leaks: string[] = [];
+      for (const [name, p] of pol2(merged, "turnover_review_events")) {
+        if (!p.permissive || (p.cmd !== "SELECT" && p.cmd !== "ALL")) continue;
+        if (!/project_visible_to_me\(/.test(p.body)) leaks.push(`${name} (${p.file})`);
+      }
+      expect(leaks).toEqual([]);
+      const read = merged.get("turnover_review_events")!.get("turnover_review_events_member_read")!;
+      expect(read.file).toBe("supabase/migrations/20261102_prj_roundG_project_rails.sql");
+      expect(read.cmd).toBe("SELECT");
+      expect(read.body).toMatch(/USING \(project_visible_to_me\(project_id\)\)/);
+    }
+  });
+});
+
 describe("SEC-17 / PM-8 — project_documents", () => {
-  it("has no FOR ALL policy; SELECT is visibility-gated; each write needs the owner or a controller", () => {
+  it("has no FOR ALL policy; SELECT is visibility-gated; an attach needs a project manager or a controller; a detach or a moved link the owner or a controller", () => {
     const ps = final.get("project_documents")!;
     expect([...ps.values()].filter((p) => p.cmd === "ALL")).toEqual([]);
     expect([...ps.keys()].sort()).toEqual(["project_documents_delete", "project_documents_insert", "project_documents_select", "project_documents_update"]);
     expect(ps.get("project_documents_select")!.body).toMatch(/USING \(project_visible_to_me\(project_id\)\)/);
-    for (const w of ["project_documents_insert", "project_documents_update", "project_documents_delete"]) {
+    expect(ps.get("project_documents_insert")!.body).toMatch(/is_org_controller\(org_id\) OR can_manage_project\(project_id\)/);
+    for (const w of ["project_documents_update", "project_documents_delete"]) {
       expect(ps.get(w)!.body, w).toMatch(/is_org_controller\(org_id\) OR is_project_owner\(project_id\)/);
+      expect(ps.get(w)!.body, w).not.toMatch(/can_manage_project/);
     }
     for (const w of ["project_documents_insert", "project_documents_update"]) {
       expect(ps.get(w)!.body, w).toMatch(/AND org_id = project_org\(project_id\)/);

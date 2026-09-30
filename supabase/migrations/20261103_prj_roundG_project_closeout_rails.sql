@@ -44,10 +44,19 @@
 --        orphan sweep (PM-6 dw5 — the collector is admin-and-org BKP-2 /
 --        intelligence ILIFE-1; this only records the keys), revokes the
 --        project's contractor intake links (PM-2's inline limb — PC-1 / J1
---        owns the shared helper), writes PROJECT_DELETED with all of it, and
---        only then deletes — children in an order that fires no ON DELETE
---        SET NULL update on a guarded row, then the schedule, then the
---        project. One transaction: a refusal strips nothing.
+--        owns the shared helper), writes TWO audit rows — PROJECT_DELETED
+--        (name, reason, counts, revoked links, storage keys: org-readable
+--        like every audit row) and PURGE_PROJECT_SNAPSHOT (the snapshot of
+--        the deleted rows: a PURGE_ action, so the audit_logs_admin_trail
+--        overlay — 20261063, admin.audit_view — shows it to the org's audit
+--        viewers only; a member who never saw a private project does not
+--        read its ledger there, SEC-2 / SEC-20) — and only then deletes:
+--        children in an order that fires no ON DELETE SET NULL update on a
+--        guarded row, then the schedule, then the project. A checklist's
+--        items are NEVER deleted directly — they go by cascade from their
+--        checklist, one trigger level down, which is the one way out the
+--        quality rail (checklist_items_decision_rail, 20261091) allows an
+--        item. One transaction: a refusal strips nothing.
 --      · project_regulated_record_count(project) — the one count both the
 --        guard and the RPC use; EXECUTE revoked from every client role.
 --
@@ -338,19 +347,30 @@ BEGIN
   GET DIAGNOSTICS v_links = ROW_COUNT;
 
   SELECT email INTO v_email FROM org_members WHERE org_id = v_proj.org_id AND uid = v_actor LIMIT 1;
+  -- What happened, for every member who reads the audit trail: no row
+  -- content (a private project's ledger is not an org record — SEC-2).
   INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
   VALUES ('PROJECT_DELETED', p_project::text, 'project', v_proj.org_id, v_actor, v_email,
           jsonb_build_object('name', v_proj.name, 'reason', v_reason, 'counts', v_counts,
                              'regulatedRecords', v_regulated, 'revokedIntakeLinks', v_links,
-                             'orphanedStorageKeys', v_keys, 'snapshot', v_snapshot,
+                             'orphanedStorageKeys', v_keys, 'snapshotAction', 'PURGE_PROJECT_SNAPSHOT',
+                             'path', 'delete_project_record'));
+  -- What was destroyed, recoverable by the org's audit viewers only: the
+  -- action is PURGE_, inside audit_logs_admin_trail's RESTRICTIVE overlay
+  -- (20261063 — admin.audit_view), so no new policy is needed.
+  INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+  VALUES ('PURGE_PROJECT_SNAPSHOT', p_project::text, 'project', v_proj.org_id, v_actor, v_email,
+          jsonb_build_object('name', v_proj.name, 'reason', v_reason, 'snapshot', v_snapshot,
                              'path', 'delete_project_record'));
 
   -- The purge: children first, in an order that fires no ON DELETE SET NULL
   -- update on a guarded row, then the schedule, then the project (its roster,
   -- feed and register cascade; checkouts, markups, notes and transmittals are
-  -- kept, unlinked).
+  -- kept, unlinked). A checklist's items are not deleted here: they leave
+  -- with their checklist (checklist_items.checklist_id ON DELETE CASCADE),
+  -- one trigger level down — the only delete of an item the quality rail
+  -- admits for a signed-in caller (checklist_items_decision_rail, 20261091).
   PERFORM set_config('app.record_purge', 'project:' || p_project::text, true);
-  DELETE FROM checklist_items i USING project_checklists c WHERE c.id = i.checklist_id AND c.project_id = p_project;
   DELETE FROM project_checklists WHERE project_id = p_project;
   DELETE FROM turnover_items WHERE project_id = p_project;
   DELETE FROM punch_items WHERE project_id = p_project;
@@ -457,6 +477,24 @@ UNION ALL SELECT 'PM-6: delete_project_record audits counts, snapshot and storag
                AND prosrc LIKE '%''orphanedStorageKeys''%' AND prosrc LIKE '%UPDATE project_intake_links SET revoked_at%'
                AND strpos(prosrc, 'INSERT INTO audit_logs') < strpos(prosrc, 'DELETE FROM projects')
           FROM pg_proc WHERE proname = 'delete_project_record' AND pronamespace = 'public'::regnamespace), NULL
+UNION ALL SELECT 'SEC-2 / PM-6: the snapshot rides only in PURGE_PROJECT_SNAPSHOT (audit viewers) — the org-readable PROJECT_DELETED row carries none',
+       (SELECT strpos(prosrc, 'VALUES (''PROJECT_DELETED''') > 0
+               AND strpos(prosrc, 'VALUES (''PROJECT_DELETED''') < strpos(prosrc, 'VALUES (''PURGE_PROJECT_SNAPSHOT''')
+               AND strpos(substr(prosrc, strpos(prosrc, 'VALUES (''PROJECT_DELETED'''),
+                                 strpos(prosrc, 'VALUES (''PURGE_PROJECT_SNAPSHOT''') - strpos(prosrc, 'VALUES (''PROJECT_DELETED''')),
+                          'v_snapshot') = 0
+               AND strpos(substr(prosrc, strpos(prosrc, 'VALUES (''PURGE_PROJECT_SNAPSHOT''')), '''snapshot'', v_snapshot') > 0
+          FROM pg_proc WHERE proname = 'delete_project_record' AND pronamespace = 'public'::regnamespace)
+       AND EXISTS (SELECT 1 FROM pg_policies
+                    WHERE schemaname = 'public' AND tablename = 'audit_logs' AND policyname = 'audit_logs_admin_trail'
+                      AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT'
+                      AND qual LIKE '%admin.audit_view%' AND qual LIKE '%PURGE_%'), NULL
+UNION ALL SELECT 'PM-6 / QUAL-3: the purge never deletes checklist items directly — they cascade with their checklist (the 20261091 quality rail admits only that)',
+       (SELECT prosrc NOT LIKE '%DELETE FROM checklist_items%' AND prosrc LIKE '%DELETE FROM project_checklists WHERE project_id = p_project%'
+          FROM pg_proc WHERE proname = 'delete_project_record' AND pronamespace = 'public'::regnamespace)
+       AND EXISTS (SELECT 1 FROM pg_constraint k
+                    WHERE k.conrelid = 'public.checklist_items'::regclass AND k.contype = 'f'
+                      AND k.confrelid = 'public.project_checklists'::regclass AND k.confdeltype = 'c'), NULL
 UNION ALL SELECT 'the two RPCs are callable by a signed-in member, not by anon — the record count is callable by neither',
        has_function_privilege('authenticated', 'public.delete_project_record(uuid, text)', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'public.delete_project_record(uuid, text)', 'EXECUTE')

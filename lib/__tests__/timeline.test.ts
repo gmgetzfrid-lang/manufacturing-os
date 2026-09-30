@@ -9,6 +9,9 @@
 //           — an in-review or rejected draft never reaches the project feed
 //   SAF-17  a detached document's history up to its detach stays on the
 //           project timeline; what happens to it afterwards does not
+//   SAF-6 / PERF-8  every id list is read TIMELINE_ID_CHUNK ids per request —
+//           a project with hundreds of quotes or drawings never sends one
+//           oversized filter — and one failed chunk fails the read
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -17,6 +20,8 @@ import { join } from "node:path";
 const state = vi.hoisted(() => ({
   rows: {} as Record<string, Array<Record<string, unknown>>>,
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  /** A read of `table` whose .in() list names `id` is refused (a 414 at the gateway, say). */
+  failIn: null as { table: string; id: string } | null,
 }));
 
 /** A filtering chain: eq / in / not-in / the PostgREST .or() over review_state
@@ -25,6 +30,7 @@ function chain(table: string) {
   const preds: Array<(r: Record<string, unknown>) => boolean> = [];
   let limit: number | null = null;
   let order: [string, boolean] | null = null;
+  let failed = false;
   const result = () => {
     let out = (state.rows[table] ?? []).filter((r) => preds.every((p) => p(r)));
     if (order) {
@@ -36,12 +42,13 @@ function chain(table: string) {
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
-      if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: result(), error: null });
+      if (prop === "then") return (resolve: (v: unknown) => void) => resolve(failed ? { data: null, error: { message: "Request-URI Too Long" } } : { data: result(), error: null });
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
         const [col, a1, a2] = args as [string, unknown, unknown];
         if (prop === "eq") preds.push((r) => r[col] === a1);
         if (prop === "in") preds.push((r) => (a1 as unknown[]).includes(r[col]));
+        if (prop === "in" && state.failIn?.table === table && (a1 as unknown[]).includes(state.failIn.id)) failed = true;
         if (prop === "not" && a1 === "in") {
           const list = String(a2).replace(/^\(|\)$/g, "").split(",").map((x) => x.replace(/^"|"$/g, ""));
           preds.push((r) => !list.includes(String(r[col])));
@@ -62,7 +69,7 @@ vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }
 
 import {
   getProjectTimeline, getDocumentTimeline, PROJECT_EVENT_VOCABULARY, hiddenProjectActions,
-  isProjectFeedAction, detachCutoffs, summarizeAudit, CONTROLLED_VERSIONS_ONLY,
+  isProjectFeedAction, detachCutoffs, summarizeAudit, CONTROLLED_VERSIONS_ONLY, TIMELINE_ID_CHUNK,
 } from "@/lib/timeline";
 
 const audit = (id: string, action: string, over: Record<string, unknown> = {}) => ({
@@ -76,7 +83,7 @@ const version = (id: string, record: string, review: string | null, created: str
   file_hash: null, source_file_name: null, review_state: review,
 });
 
-beforeEach(() => { state.rows = {}; state.calls = []; });
+beforeEach(() => { state.rows = {}; state.calls = []; state.failIn = null; });
 
 describe("SAF-6 — the controls program reaches the project's Activity tab", () => {
   it("an award, an approved change order, a turnover acceptance and a checklist ruling all appear; noise and mirrored rows do not", async () => {
@@ -177,5 +184,43 @@ describe("SAF-17 — detaching a document keeps its history on the project", () 
       { metadata: null, created_at: "2026-09-04T00:00:00Z" },
     ];
     expect([...detachCutoffs(rows, new Set(["d2"])).entries()]).toEqual([["d1", "2026-09-08T00:00:00Z"]]);
+  });
+});
+
+describe("SAF-6 / PERF-8 — a busy project's id lists are read in chunks", () => {
+  const inSizes = (table: string, col: string) => state.calls
+    .filter((c) => c.table === table && c.method === "in" && c.args[0] === col)
+    .map((c) => (c.args[1] as unknown[]).length);
+
+  it("250 quotes and 230 drawings: every .in() carries at most 100 ids, and an event from the last chunk still reaches the feed", async () => {
+    expect(TIMELINE_ID_CHUNK).toBe(100);
+    state.rows.project_activity = [];
+    state.rows.cost_documents = Array.from({ length: 250 }, (_, i) => ({ id: `q${i}`, project_id: "p1", created_at: `2026-08-${String((i % 28) + 1).padStart(2, "0")}` }));
+    state.rows.project_documents = Array.from({ length: 230 }, (_, i) => ({ project_id: "p1", document_id: `d${i}` }));
+    state.rows.audit_logs = [
+      audit("21", "COST_DOC_AWARDED", { resource_type: "cost", resource_id: "q249", details: { vendor: "Gulf Mechanical", total: 48000 } }),
+      audit("22", "REV_UP", { resource_type: "document", resource_id: "d229" }),
+    ];
+    state.rows.document_versions = [version("v1", "d228", "approved", "2026-09-23T10:00:00Z")];
+    state.rows.document_holds = [];
+    const events = await getProjectTimeline({ projectId: "p1" });
+    expect(inSizes("audit_logs", "resource_id")).toEqual([100, 100, 50, 100, 100, 30]); // cost docs, then documents
+    expect(inSizes("document_versions", "record_id")).toEqual([100, 100, 30]);
+    expect(inSizes("document_holds", "document_id")).toEqual([100, 100, 30]);
+    const ids = events.map((e) => e.id);
+    expect(ids).toContain("audit:21");
+    expect(ids).toContain("audit:22");
+    expect(ids).toContain("version:v1");
+    // The merged feed is still newest-first and capped at the limit.
+    const capped = await getProjectTimeline({ projectId: "p1", limit: 2 });
+    expect(capped.map((e) => e.id)).toEqual(["version:v1", "audit:22"]);
+  });
+
+  it("one refused chunk fails the read — a partial feed is never shown as the whole one", async () => {
+    state.rows.project_activity = [];
+    state.rows.cost_documents = [];
+    state.rows.project_documents = Array.from({ length: 150 }, (_, i) => ({ project_id: "p1", document_id: `d${i}` }));
+    state.failIn = { table: "document_versions", id: "d149" };
+    await expect(getProjectTimeline({ projectId: "p1" })).rejects.toThrow(/Request-URI Too Long/);
   });
 });

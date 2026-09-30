@@ -46,6 +46,8 @@ function chain(table: string) {
   let op = "select";
   let payload: unknown = undefined;
   let head = false;
+  /** .range(from, to) — honoured for static rows (never for queued answers). */
+  let win: [number, number] | null = null;
   const filters: Array<[string, unknown]> = [];
   const matches = (r: Row) => filters.every(([k, v]) => {
     if (k.startsWith("in:")) return (v as unknown[]).includes(r[k.slice(3)]);
@@ -66,7 +68,8 @@ function chain(table: string) {
       if (c && typeof c === "object") return { data: null, error: c.error, count: null };
       return { data: null, error: null, count: typeof c === "number" ? c : (state.rows[table] ?? []).filter(matches).length };
     }
-    return { data: err ? null : (state.rows[table] ?? []).filter(matches), error: err, count: null };
+    const hit = (state.rows[table] ?? []).filter(matches);
+    return { data: err ? null : (win ? hit.slice(win[0], win[1] + 1) : hit), error: err, count: null };
   };
   const record = () => {
     if (op === "insert" || op === "update" || op === "delete" || op === "upsert") {
@@ -88,6 +91,7 @@ function chain(table: string) {
         if (prop === "in") filters.push([`in:${String(args[0])}`, args[1]]);
         if (prop === "is") filters.push([`is:${String(args[0])}`, args[1]]);
         if (prop === "not" && args[1] === "is") filters.push([`notnull:${String(args[0])}`, true]);
+        if (prop === "range") win = [Number(args[0]), Number(args[1])];
         if (prop === "maybeSingle" || prop === "single") {
           record();
           const a = answer();
@@ -330,6 +334,27 @@ describe("PM-1 — closing closes the door; reopening is a controller's audited 
     state.queue["checkout_sessions.select"] = [{ data: [] }];
     await expect(transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "archived", actorUserId: "own" })).resolves.toMatchObject({ releaseError: null });
     expect(CLOSED_PROJECT_STATUSES).toEqual(new Set(["completed", "cancelled", "archived"]));
+  });
+
+  it("an UPDATE the policy filters to zero rows is a refusal: no feed row, no audit row, no release, no notice — and the revoked links are named", async () => {
+    state.rows.projects = [PROJECT];
+    state.rows.org_members = [OWNER];
+    state.queue["project_intake_links.update"] = [{ data: [{ id: "l1" }, { id: "l2" }] }];
+    state.queue["projects.update"] = [{ data: [] }]; // RLS filtered: no error, no row
+    state.queue["checkout_sessions.select"] = [{ data: [{ id: "s1", document_id: "d1", org_id: "o1", user_id: "own", user_name: "owen" }] }];
+    await expect(transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "completed", actorUserId: "own", gateSnapshot: snapshot() }))
+      .rejects.toThrow(/^The project's status did not change: the database did not update it.*2 contractor intake link\(s\) were revoked first/);
+    // RETURNING was asked for, so the zero-row case is seen.
+    const upd = state.calls.find((c) => c.table === "projects" && c.op === "update" && c.method === "select");
+    expect(upd?.args[0]).toBe("id");
+    expect(writesTo("project_activity")).toHaveLength(0);
+    expect(state.audits.filter((a) => String(a.action).startsWith("PROJECT_"))).toEqual([]);
+    expect(writesTo("checkout_sessions")).toHaveLength(0);
+    expect(state.emits).toEqual([]);
+    // A pause (no revocation) says nothing about links.
+    state.queue["projects.update"] = [{ data: [] }];
+    await expect(transitionProjectStatus({ projectId: "p1", orgId: "o1", toStatus: "paused", actorUserId: "own" }))
+      .rejects.toThrow(/^The project's status did not change: the database did not update it \(you may no longer be allowed to manage it\)\.$/);
   });
 
   it("reopenProject goes through the reopen_project RPC with the reason; no reason → nothing called; no migration → said so", async () => {
@@ -614,6 +639,54 @@ describe("UX-11 — the register the Documents tab shows, and its badge", () => 
     expect(reg.hiddenDocIds).toEqual(["d-secret"]);
     // checkout_sessions (org-readable) still supplies the hidden document's id: one visible row + one hidden notice = 2, not 3
     expect(documentsTabCount(reg, ["d1", "d-secret"])).toBe(2);
+  });
+
+  it("a failed project read throws — it no longer reads as 'no intake collection' and drops the approved sheets silently", async () => {
+    state.rows.project_documents = [];
+    state.errors["projects.select"] = { message: "canceling statement due to statement timeout", code: "57014" };
+    await expect(listProjectDocuments("p1")).rejects.toThrow(/^The project could not be read, so its approved intake documents cannot be listed: canceling statement/);
+    // Before 20260902 the column does not exist: then there is simply no intake collection.
+    state.errors["projects.select"] = { message: 'column projects.intake_collection_id does not exist', code: "42703" };
+    state.rows.project_documents = [{ id: "l1", project_id: "p1", document_id: "d1", source: "manual", last_seen_at: "2026-09-02" }];
+    state.rows.documents = [{ id: "d1", document_number: "ISO-100", rev: "C", status: "Issued", library_id: "lib" }];
+    await expect(listProjectDocuments("p1")).resolves.toMatchObject({ rows: [{ docId: "d1", source: "manual" }], hiddenByPermissions: 0 });
+    // A missing column that is NOT the intake column is a failure like any other.
+    state.errors["projects.select"] = { message: 'column projects.org_id does not exist', code: "42703" };
+    await expect(listProjectDocuments("p1")).rejects.toThrow(/could not be read/);
+  });
+
+  it("approved intake past 200 — and past PostgREST's 1,000-row cap — is listed in full, and the badge counts every sheet", async () => {
+    state.rows.projects = [{ id: "p1", org_id: "o1", intake_collection_id: "col-intake" }];
+    state.rows.project_documents = [];
+    state.rows.documents = Array.from({ length: 1005 }, (_, i) => ({
+      id: `in${i}`, org_id: "o1", collection_id: "col-intake", current_version_id: `v${i}`,
+      document_number: `SUB-${i}`, rev: "A", status: "Issued", library_id: "lib-intake",
+    }));
+    const reg = await listProjectDocuments("p1");
+    expect(reg.rows).toHaveLength(1005);
+    expect(reg.rows.every((r) => r.source === "intake")).toBe(true);
+    expect(documentsTabCount(reg, [])).toBe(1005);
+    const ranges = state.calls.filter((c) => c.table === "documents" && c.method === "range").map((c) => c.args);
+    expect(ranges).toEqual([[0, 999], [1000, 1999]]);
+    expect(state.calls.filter((c) => c.table === "documents" && c.method === "limit")).toEqual([]);
+  });
+
+  it("a register of 1,200 links is read in full (paged) and its documents 100 ids per request — no silent cap, no oversized filter", async () => {
+    state.rows.projects = [{ id: "p1", org_id: "o1", intake_collection_id: null }];
+    state.rows.project_documents = Array.from({ length: 1200 }, (_, i) => ({
+      id: `l${i}`, project_id: "p1", document_id: `d${i}`, source: "checkout", last_seen_at: "2026-09-01",
+    }));
+    state.rows.documents = Array.from({ length: 1200 }, (_, i) => ({ id: `d${i}`, document_number: `ISO-${i}`, rev: "A", status: "Issued", library_id: "lib" }));
+    const reg = await listProjectDocuments("p1");
+    expect(reg.rows).toHaveLength(1200);
+    expect(reg.hiddenByPermissions).toBe(0);
+    const linkRanges = state.calls.filter((c) => c.table === "project_documents" && c.method === "range").map((c) => c.args);
+    expect(linkRanges).toEqual([[0, 999], [1000, 1999]]);
+    const inSizes = state.calls.filter((c) => c.table === "documents" && c.method === "in").map((c) => (c.args[1] as string[]).length);
+    expect(inSizes).toEqual(Array(12).fill(100));
+    // A failed page is a failure, never a short register.
+    state.queue["project_documents.select"] = [{ error: { message: "timeout" } }];
+    await expect(listProjectDocuments("p1")).rejects.toThrow(/^The project's document register could not be read: timeout/);
   });
 });
 

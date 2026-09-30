@@ -19,6 +19,13 @@
 --      readable only where that project is: the company profile gather
 --      (lib/companies.ts reads company_events by company) no longer shows a
 --      private project's recordables / stop-work orders to a non-member.
+--      turnover_review_events (the turnover review history projects Round G
+--      J2 adds in 20261091 — status changes, reviewer notes,
+--      nonconformances) was created with an ORG-membership read; where that
+--      table exists its member read is re-created on
+--      project_visible_to_me(project_id) too (a guarded block — a database
+--      without 20261091 skips it). Apply this file AFTER 20261091; if
+--      20261091 is ever re-run, re-run this file (its probe says so).
 --   2. SEC-9: projects_update_owner / projects_delete_owner (20260906:60-68)
 --      admitted the owner by owner_user_id alone — an OFFBOARDED owner could
 --      still delete the project. Both now also require an ACTIVE membership
@@ -51,11 +58,18 @@
 --   4. PM-8 = SEC-17 = drafting-flow PROJ-3 — project_documents: the one
 --      FOR ALL policy (20260609:192-197, any active org member, USING = WITH
 --      CHECK) is DROPPED, not supplemented (cluster 3 / DRLS-1). SELECT is
---      project_visible_to_me(project_id); INSERT / UPDATE / DELETE need
---      is_org_controller(org_id) OR is_project_owner(project_id) — the
---      finding's contract and the register card's `canManage` (owner or
---      Admin/DocCtrl), so the UI and the database agree; every written row
---      must carry its project's org (org_id = project_org(project_id)).
+--      project_visible_to_me(project_id); INSERT needs
+--      is_org_controller(org_id) OR can_manage_project(project_id) (the
+--      fleet plan's predicate: owner / Admin / Manager / roster owner or
+--      collaborator, 20261047 — so a collaborator's adoption and a
+--      manager's split / merge carry-over still land a row); UPDATE and
+--      DELETE need is_org_controller(org_id) OR is_project_owner(project_id)
+--      — a detach, or an UPDATE that moves a link (a detach by another
+--      name), drops a document's history from the timeline (SAF-17), so it
+--      stays with the register card's `canManage` (owner or Admin/DocCtrl).
+--      The card offers Attach to the same owner-or-controller set: it never
+--      offers a write the database refuses. Every written row must carry its
+--      project's org (org_id = project_org(project_id)).
 --      checkouts_resync_project_documents (20260609:151) is re-created
 --      SECURITY DEFINER with search_path pinned, so a COLLABORATOR's checkout
 --      under the project still links its document (it runs as the invoker
@@ -157,6 +171,21 @@ SELECT 'inventory (before): projects whose last_activity_at trails their newest 
  WHERE EXISTS (SELECT 1 FROM project_activity a WHERE a.project_id = p.id
                 AND (p.last_activity_at IS NULL OR a.created_at > p.last_activity_at));
 
+-- 20261091's turnover review history exists only where that file ran; its
+-- count is read dynamically so this file applies either way.
+DO $$
+DECLARE
+  v_n bigint := 0;
+BEGIN
+  IF to_regclass('public.turnover_review_events') IS NOT NULL THEN
+    EXECUTE 'SELECT COUNT(*) FROM turnover_review_events e JOIN projects p ON p.id = e.project_id WHERE p.visibility = ''private'''
+      INTO v_n;
+  END IF;
+  INSERT INTO prj_g_j8_rails_inventory (inventory, n)
+  VALUES ('inventory (before): turnover review events on private projects, readable org-wide today (SEC-2 — 20261091''s history, 0 where that table is absent)',
+          v_n::text);
+END $$;
+
 BEGIN;
 
 -- ── 1. SEC-2: the controls and cost tables read through project visibility ──
@@ -206,6 +235,19 @@ DROP POLICY IF EXISTS company_events_member_read ON company_events;
 CREATE POLICY company_events_member_read ON company_events FOR SELECT
     USING (EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = company_events.org_id AND m.uid = auth.uid() AND m.status = 'active')
       AND (company_events.project_id IS NULL OR project_visible_to_me(company_events.project_id)));
+
+-- turnover_review_events (20261091, QUAL-11) is the quality record's review
+-- history — the same private data as turnover_items. Where the table exists
+-- its one member read is re-created in 20261091's statement shape, on the
+-- visibility rule; no write policy is added (the database writes it).
+DO $$
+BEGIN
+  IF to_regclass('public.turnover_review_events') IS NOT NULL THEN
+    DROP POLICY IF EXISTS turnover_review_events_member_read ON turnover_review_events;
+    CREATE POLICY turnover_review_events_member_read ON turnover_review_events FOR SELECT
+      USING (project_visible_to_me(project_id));
+  END IF;
+END $$;
 
 -- ── 2. SEC-9: an owner acts on the project only while an ACTIVE member ──────
 -- Each predicate is 20260906's line kept verbatim plus ONE added AND line;
@@ -296,7 +338,7 @@ CREATE POLICY project_documents_select ON project_documents
 DROP POLICY IF EXISTS project_documents_insert ON project_documents;
 CREATE POLICY project_documents_insert ON project_documents
   FOR INSERT TO authenticated
-  WITH CHECK ((is_org_controller(org_id) OR is_project_owner(project_id))
+  WITH CHECK ((is_org_controller(org_id) OR can_manage_project(project_id))
               AND org_id = project_org(project_id));
 
 DROP POLICY IF EXISTS project_documents_update ON project_documents;
@@ -434,6 +476,17 @@ UNION ALL SELECT 'SEC-2: no other SELECT policy on company_events grants a bare 
                       AND qual LIKE '%org_members%'
                       AND qual NOT LIKE '%project_visible_to_me(%'
                       AND permissive = 'PERMISSIVE'), NULL
+UNION ALL SELECT 'SEC-2: turnover review events (20261091, where present) read through project_visible_to_me — if this is false after re-running 20261091, re-run this file',
+       to_regclass('public.turnover_review_events') IS NULL
+       OR ((SELECT COUNT(*) = 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'turnover_review_events'
+               AND policyname = 'turnover_review_events_member_read' AND cmd = 'SELECT'
+               AND qual LIKE '%project_visible_to_me(%' AND qual NOT LIKE '%org_members%')
+           AND NOT EXISTS (SELECT 1 FROM pg_policies
+                            WHERE schemaname = 'public' AND tablename = 'turnover_review_events' AND cmd IN ('SELECT', 'ALL')
+                              AND qual LIKE '%org_members%'
+                              AND qual NOT LIKE '%project_visible_to_me(%'
+                              AND permissive = 'PERMISSIVE')), NULL
 UNION ALL SELECT 'SEC-9: projects UPDATE and DELETE owner branches require an active org membership',
        (SELECT COUNT(*) = 2 FROM pg_policies
          WHERE schemaname = 'public' AND tablename = 'projects'
@@ -463,11 +516,15 @@ UNION ALL SELECT 'PM-8: project_documents has exactly its four per-verb policies
        (SELECT COUNT(*) = 4 FROM pg_policies
          WHERE schemaname = 'public' AND tablename = 'project_documents'
            AND policyname IN ('project_documents_select', 'project_documents_insert', 'project_documents_update', 'project_documents_delete')), NULL
-UNION ALL SELECT 'PM-8: register writes need the owner or a controller, in the project''s own org',
-       (SELECT COUNT(*) = 2 FROM pg_policies
-         WHERE schemaname = 'public' AND tablename = 'project_documents'
-           AND policyname IN ('project_documents_insert', 'project_documents_update')
-           AND with_check LIKE '%is_project_owner(%' AND with_check LIKE '%is_org_controller(%' AND with_check LIKE '%project_org(%'), NULL
+UNION ALL SELECT 'PM-8: an attach needs a project manager or a controller, in the project''s own org',
+       (SELECT with_check LIKE '%can_manage_project(%' AND with_check LIKE '%is_org_controller(%' AND with_check LIKE '%project_org(%'
+          FROM pg_policies WHERE schemaname = 'public' AND tablename = 'project_documents' AND policyname = 'project_documents_insert'), NULL
+UNION ALL SELECT 'SAF-17 / PM-8: a detach or a moved link needs the owner or a controller (UPDATE in the project''s own org)',
+       (SELECT qual LIKE '%is_project_owner(%' AND qual LIKE '%is_org_controller(%'
+               AND with_check LIKE '%is_project_owner(%' AND with_check LIKE '%project_org(%'
+          FROM pg_policies WHERE schemaname = 'public' AND tablename = 'project_documents' AND policyname = 'project_documents_update')
+       AND (SELECT qual LIKE '%is_project_owner(%' AND qual LIKE '%is_org_controller(%' AND qual NOT LIKE '%can_manage_project(%'
+              FROM pg_policies WHERE schemaname = 'public' AND tablename = 'project_documents' AND policyname = 'project_documents_delete'), NULL
 UNION ALL SELECT 'SEC-2 / PM-8 / SEC-15: every function this file defines is SECURITY DEFINER with search_path pinned',
        (SELECT COUNT(*) = 4 FROM pg_proc
          WHERE pronamespace = 'public'::regnamespace

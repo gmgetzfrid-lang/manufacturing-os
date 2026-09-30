@@ -480,8 +480,14 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
     }
   }
 
-  const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
+  // RETURNING: an UPDATE the policy filters out matches zero rows with no
+  // error. The status did NOT change then, so nothing below — the feed row,
+  // the audit row, the release, the notice — may happen.
+  const { data: changed, error } = await supabase.from("projects").update(update).eq("id", input.projectId).select("id");
   if (error) throw new Error(error.message);
+  if (((changed ?? []) as unknown[]).length === 0) {
+    throw new Error(`The project's status did not change: the database did not update it (you may no longer be allowed to manage it).${revokedIntakeLinks > 0 ? ` Its ${revokedIntakeLinks} contractor intake link(s) were revoked first — mint new ones if the project stays open.` : ""}`);
+  }
 
   const activityError = await writeActivity({
     projectId: input.projectId,
@@ -817,6 +823,20 @@ export interface ProjectDocumentRegister {
   hiddenDocIds: string[];
 }
 
+/** Document ids per `.in()` read of the register — keeps the request line
+ *  bounded however many documents a project lists. */
+const REGISTER_DOC_CHUNK = 100;
+
+/** Before 20260902 the projects row has no intake_collection_id — then the
+ *  project simply has no intake collection. Any OTHER failure of that read
+ *  is a failure, never "no intake". */
+function isMissingIntakeColumn(error: { code?: string | null; message?: string }): boolean {
+  const msg = (error.message ?? "").toLowerCase();
+  if (!msg.includes("intake_collection_id")) return false;
+  return error.code === "42703" || error.code === "PGRST204"
+    || msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find");
+}
+
 /**
  * UX-11: the Documents tab's primary list. The project's register
  * (project_documents: checkout-linked and hand-attached) PLUS the
@@ -825,38 +845,54 @@ export interface ProjectDocumentRegister {
  * not only inside the Intake tab's transition-in panel. A pending (never
  * approved) submission is not listed. Linked rows the viewer cannot read
  * are counted in `hiddenByPermissions`.
+ *
+ * Every read is complete or fails: the register and the approved intake
+ * page to exhaustion under PostgREST's row cap, the linked documents are
+ * read 100 ids per request, and a failed project read throws (it used to
+ * read as "no intake collection", and the approved sheets vanished from
+ * the tab and the badge with no message).
  */
 export async function listProjectDocuments(projectId: string): Promise<ProjectDocumentRegister> {
-  const [linksRes, projRes] = await Promise.all([
-    supabase.from("project_documents")
+  const [linkRows, projRes] = await Promise.all([
+    readAllPages("The project's document register could not be read", (from, to) => supabase.from("project_documents")
       .select("id, document_id, source, last_seen_at")
       .eq("project_id", projectId)
-      .order("last_seen_at", { ascending: false }),
+      .order("last_seen_at", { ascending: false })
+      .order("id")
+      .range(from, to)),
     supabase.from("projects").select("org_id, intake_collection_id").eq("id", projectId).maybeSingle(),
   ]);
-  if (linksRes.error) throw new Error(linksRes.error.message);
-  const links = ((linksRes.data ?? []) as Array<{ id: string; document_id: string; source: string | null; last_seen_at: string | null }>);
+  const links = linkRows as Array<{ id: string; document_id: string; source: string | null; last_seen_at: string | null }>;
+  if (projRes.error && !isMissingIntakeColumn(projRes.error)) {
+    throw new Error(`The project could not be read, so its approved intake documents cannot be listed: ${projRes.error.message}`);
+  }
   const proj = (projRes.error ? null : projRes.data) as { org_id: string; intake_collection_id: string | null } | null;
 
   const COLS = "id, document_number, title, name, rev, status, library_id, archived_at";
   type DocRow = { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; status: string | null; library_id: string | null; archived_at?: string | null };
   const linkedIds = [...new Set(links.map((l) => String(l.document_id)))];
-  const [docsRes, intakeRes] = await Promise.all([
-    linkedIds.length
-      ? supabase.from("documents").select(COLS).in("id", linkedIds)
-      : Promise.resolve({ data: [] as DocRow[], error: null }),
-    proj?.intake_collection_id
-      ? supabase.from("documents").select(COLS)
-          .eq("org_id", proj.org_id)
-          .eq("collection_id", proj.intake_collection_id)
-          .not("current_version_id", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(200)
-      : Promise.resolve({ data: [] as DocRow[], error: null }),
-  ]);
-  if (docsRes.error) throw new Error(docsRes.error.message);
-  if (intakeRes.error) throw new Error(intakeRes.error.message);
-  const byId = new Map(((docsRes.data ?? []) as DocRow[]).map((d) => [String(d.id), d]));
+  const readLinked = async (): Promise<DocRow[]> => {
+    const out: DocRow[] = [];
+    for (let i = 0; i < linkedIds.length; i += REGISTER_DOC_CHUNK) {
+      const { data, error } = await supabase.from("documents").select(COLS).in("id", linkedIds.slice(i, i + REGISTER_DOC_CHUNK));
+      if (error) throw new Error(error.message);
+      out.push(...((data ?? []) as DocRow[]));
+    }
+    return out;
+  };
+  const readIntake = async (): Promise<DocRow[]> => {
+    if (!proj?.intake_collection_id) return [];
+    const { org_id, intake_collection_id } = proj;
+    return (await readAllPages("The project's approved intake documents could not be read", (from, to) => supabase.from("documents").select(COLS)
+      .eq("org_id", org_id)
+      .eq("collection_id", intake_collection_id)
+      .not("current_version_id", "is", null)
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, to))) as DocRow[];
+  };
+  const [linkedDocs, intakeDocs] = await Promise.all([readLinked(), readIntake()]);
+  const byId = new Map(linkedDocs.map((d) => [String(d.id), d]));
   const toRow = (d: DocRow, link: { id: string; source: string | null; last_seen_at: string | null } | null): ProjectDocumentRow => ({
     linkId: link ? String(link.id) : null,
     docId: String(d.id),
@@ -877,8 +913,9 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
     rows.push(toRow(d, l));
   }
   const inRegister = new Set(rows.map((r) => r.docId));
-  for (const d of ((intakeRes.data ?? []) as DocRow[])) {
-    if (!inRegister.has(String(d.id)) && !linkedIds.includes(String(d.id))) rows.push(toRow(d, null));
+  const linkedSet = new Set(linkedIds);
+  for (const d of intakeDocs) {
+    if (!inRegister.has(String(d.id)) && !linkedSet.has(String(d.id))) rows.push(toRow(d, null));
   }
   return { rows, hiddenByPermissions: hidden.size, hiddenDocIds: [...hidden] };
 }
@@ -1190,9 +1227,11 @@ function headQuery(table: string) {
  *    caller is a controller AND gives a reason (the default is Archive);
  *  · revokes the project's contractor intake links (PM-2's inline limb —
  *    PC-1 / J1 exports the shared intake-link revoke helper);
- *  · writes PROJECT_DELETED with the counts, a serialized snapshot of the
- *    cost and quality rows, and the storage keys of the cost documents'
- *    files for the orphan sweep;
+ *  · writes PROJECT_DELETED (org-readable) with the counts and the storage
+ *    keys of the cost documents' files for the orphan sweep, and
+ *    PURGE_PROJECT_SNAPSHOT — a serialized snapshot of the cost and quality
+ *    rows, readable by the org's audit viewers only (a PURGE_ action is
+ *    inside the audit_logs_admin_trail overlay);
  *  · then deletes the schedule and the project (the rest cascades; the
  *    purge GUC app.record_purge = 'project:<id>' is the one pass through the
  *    money and quality delete guards).
@@ -1793,19 +1832,20 @@ export async function autoReleaseExpiredAdHoc(
 /** Project ids per `.in()` read in the stranded sweep — keeps the request
  *  line bounded however many projects carry active checkouts. */
 const SWEEP_PROJECT_CHUNK = 100;
-/** PostgREST's max-rows: the sweep's reads page in windows of this size
- *  until a short page, never taking a capped read as the whole set. */
-const SWEEP_PAGE_ROWS = 1000;
+/** PostgREST's max-rows: the sweep's and the register's reads page in
+ *  windows of this size until a short page, never taking a capped read as
+ *  the whole set. */
+const PAGE_ROWS = 1000;
 
-type SweepPage = (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-async function readSweepPages(label: string, page: SweepPage): Promise<Array<Record<string, unknown>>> {
+type RowPage = (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+async function readAllPages(label: string, page: RowPage): Promise<Array<Record<string, unknown>>> {
   const rows: Array<Record<string, unknown>> = [];
-  for (let from = 0; ; from += SWEEP_PAGE_ROWS) {
-    const { data, error } = await page(from, from + SWEEP_PAGE_ROWS - 1);
+  for (let from = 0; ; from += PAGE_ROWS) {
+    const { data, error } = await page(from, from + PAGE_ROWS - 1);
     if (error) throw new Error(`${label}: ${error.message}`);
     const batch = (data ?? []) as Array<Record<string, unknown>>;
     rows.push(...batch);
-    if (batch.length < SWEEP_PAGE_ROWS) return rows;
+    if (batch.length < PAGE_ROWS) return rows;
   }
 }
 
@@ -1833,7 +1873,7 @@ async function strandedClosedProjectSessions(
   db: SupabaseLike,
   scope: { orgId: string | null; userId: string | null; nowMs: number },
 ): Promise<string[]> {
-  const sessions = await readSweepPages("Project checkouts could not be read", (from, to) => {
+  const sessions = await readAllPages("Project checkouts could not be read", (from, to) => {
     let q = db
       .from("checkout_sessions")
       .select("id, project_id")
@@ -1851,7 +1891,7 @@ async function strandedClosedProjectSessions(
   const projects: ClosedRow[] = [];
   for (let i = 0; i < projectIds.length; i += SWEEP_PROJECT_CHUNK) {
     const part = projectIds.slice(i, i + SWEEP_PROJECT_CHUNK);
-    projects.push(...(await readSweepPages("Project status could not be read for the checkout sweep", (from, to) => db
+    projects.push(...(await readAllPages("Project status could not be read for the checkout sweep", (from, to) => db
       .from("projects")
       .select("id, status, completed_at, cancelled_at, updated_at")
       .in("id", part)
@@ -1864,7 +1904,7 @@ async function strandedClosedProjectSessions(
   const feedClosedAt = new Map<string, string>();
   for (let i = 0; i < unstamped.length; i += SWEEP_PROJECT_CHUNK) {
     const part = unstamped.slice(i, i + SWEEP_PROJECT_CHUNK);
-    const feed = await readSweepPages("Project closure times could not be read for the checkout sweep", (from, to) => db
+    const feed = await readAllPages("Project closure times could not be read for the checkout sweep", (from, to) => db
       .from("project_activity")
       .select("id, project_id, created_at, metadata")
       .in("project_id", part)

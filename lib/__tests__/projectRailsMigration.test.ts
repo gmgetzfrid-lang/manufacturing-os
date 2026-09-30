@@ -9,10 +9,11 @@
 // finding changes (lineDiff).
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const read = (f: string) => readFileSync(join(process.cwd(), "supabase", "migrations", f), "utf8");
+const numbered = readdirSync(join(process.cwd(), "supabase", "migrations")).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
 const m02 = read("20261102_prj_roundG_project_rails.sql");
 const m03 = read("20261103_prj_roundG_project_closeout_rails.sql");
 const m0906 = read("20260906_projects_hardening.sql");
@@ -100,6 +101,40 @@ describe("20261102 — SEC-2: the nine read policies", () => {
   });
 });
 
+describe("20261102 — SEC-2 after merge: projects Round G J2's turnover review history (20261091) follows project visibility", () => {
+  // 20261091 (J2, on the integration branch, not in this package's base)
+  // creates this read — verbatim from 20261091:451-453:
+  const J2_READ = [
+    "DROP POLICY IF EXISTS turnover_review_events_member_read ON turnover_review_events;",
+    "CREATE POLICY turnover_review_events_member_read ON turnover_review_events FOR SELECT",
+    "  USING (EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = turnover_review_events.org_id AND m.uid = auth.uid() AND m.status = 'active'));",
+  ].join("\n");
+  const block = between(m02, "DO $$\nBEGIN\n  IF to_regclass('public.turnover_review_events') IS NOT NULL THEN", "END $$;");
+
+  it("where the table exists, its member read is re-created in 20261091's statement shape on project_visible_to_me — inside the transaction", () => {
+    const tx = m02.slice(m02.indexOf("\nBEGIN;"), m02.indexOf("COMMIT;"));
+    expect(tx).toContain(block);
+    expect(block).toContain("    DROP POLICY IF EXISTS turnover_review_events_member_read ON turnover_review_events;\n    CREATE POLICY turnover_review_events_member_read ON turnover_review_events FOR SELECT\n      USING (project_visible_to_me(project_id));");
+    // Same statements as J2's, re-indented, with only the predicate changed.
+    const ours = block.split("\n").map((l) => l.trim());
+    const theirs = J2_READ.split("\n").map((l) => l.trim());
+    const { onlyInA, onlyInB } = lineDiff(theirs.join("\n"), ours.join("\n"));
+    expect(onlyInA).toEqual([theirs[2]]);
+    expect(onlyInB.filter((l) => /USING/.test(l))).toEqual(["USING (project_visible_to_me(project_id));"]);
+    // No write policy: the database writes the history (20261091 revokes client writes).
+    expect(block).not.toMatch(/FOR (INSERT|UPDATE|DELETE|ALL)/);
+  });
+
+  it("the inventory counts the exposed rows only where the table exists (no failure where it does not), and a probe checks the read", () => {
+    const before = m02.slice(0, m02.indexOf("\nBEGIN;"));
+    expect(before).toMatch(/IF to_regclass\('public\.turnover_review_events'\) IS NOT NULL THEN\n\s+EXECUTE 'SELECT COUNT\(\*\) FROM turnover_review_events e JOIN projects p ON p\.id = e\.project_id WHERE p\.visibility = ''private'''/);
+    expect(before).toContain("INSERT INTO prj_g_j8_rails_inventory (inventory, n)");
+    const tail = finalSelect(m02);
+    expect(tail).toContain("'SEC-2: turnover review events (20261091, where present) read through project_visible_to_me — if this is false after re-running 20261091, re-run this file'");
+    expect(tail).toMatch(/to_regclass\('public\.turnover_review_events'\) IS NULL\n\s+OR \(\(SELECT COUNT\(\*\) = 1 FROM pg_policies/);
+  });
+});
+
 describe("20261102 — SEC-9: projects UPDATE / DELETE are byte-faithful to 20260906 plus one active-membership line", () => {
   const ACTIVE = "  AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = projects.org_id AND m.uid = auth.uid() AND m.status = 'active')";
   it("projects_update_owner", () => {
@@ -151,6 +186,21 @@ describe("20261102 — PM-8 / SEC-17: the register", () => {
     expect(tx).toContain('DROP POLICY IF EXISTS "project_documents_member_all" ON project_documents;');
     expect(stripComments(tx)).not.toMatch(/CREATE POLICY "?project_documents_member_all/);
     for (const v of ["select", "insert", "update", "delete"]) expect(tx).toContain(`CREATE POLICY project_documents_${v} ON project_documents`);
+  });
+  it("an attach follows the fleet plan (controller OR can_manage_project — so a collaborator's adoption and a manager's split / merge carry-over land); a detach or a moved link stays owner-or-controller (SAF-17)", () => {
+    const ins = between(m02, "CREATE POLICY project_documents_insert ON project_documents", ";");
+    expect(ins).toContain("WITH CHECK ((is_org_controller(org_id) OR can_manage_project(project_id))\n              AND org_id = project_org(project_id))");
+    const upd = between(m02, "CREATE POLICY project_documents_update ON project_documents", ";");
+    expect(upd).toContain("USING (is_org_controller(org_id) OR is_project_owner(project_id))");
+    expect(upd).toContain("WITH CHECK ((is_org_controller(org_id) OR is_project_owner(project_id))");
+    const del = between(m02, "CREATE POLICY project_documents_delete ON project_documents", ";");
+    expect(del).toContain("USING (is_org_controller(org_id) OR is_project_owner(project_id))");
+    expect(upd + del).not.toContain("can_manage_project");
+    const tail = finalSelect(m02);
+    expect(tail).toContain("'PM-8: an attach needs a project manager or a controller, in the project''s own org'");
+    expect(tail).toContain("'SAF-17 / PM-8: a detach or a moved link needs the owner or a controller (UPDATE in the project''s own org)'");
+    // The feed's register rows keep the register card's authority (PM-7 / SAF-17).
+    expect(m02).toContain("  AND (type NOT IN ('doc_added', 'doc_removed') OR is_org_controller(org_id) OR is_project_owner(project_id))");
   });
   it("checkouts_resync_project_documents is 20260609's body, now SECURITY DEFINER, plus the org-consistency guard and the caller guard", () => {
     const live = between(m0609, "CREATE OR REPLACE FUNCTION checkouts_resync_project_documents()", "END$$;");
@@ -244,17 +294,66 @@ describe("20261103 — PM-6 / QUAL-3: delete counts, audits, and only then delet
     const firstDelete = d.indexOf("DELETE FROM");
     expect(auditAt).toBeGreaterThan(0);
     expect(auditAt).toBeLessThan(firstDelete);
+    expect(d.lastIndexOf("INSERT INTO audit_logs")).toBeLessThan(firstDelete);
     expect(d.indexOf("UPDATE project_intake_links SET revoked_at = NOW()")).toBeLessThan(firstDelete);
     for (const k of ["'counts', v_counts", "'snapshot', v_snapshot", "'orphanedStorageKeys', v_keys", "'reason', v_reason", "'revokedIntakeLinks', v_links"]) expect(d).toContain(k);
     expect(d).toContain("jsonb_agg(to_jsonb(x) - 'parsed')");
   });
+
+  it("SEC-2: the org-readable PROJECT_DELETED row carries no row content; the snapshot rides in a PURGE_ row the audit overlay limits to the org's audit viewers", () => {
+    const deleted = between(d, "VALUES ('PROJECT_DELETED'", ");");
+    const purge = between(d, "VALUES ('PURGE_PROJECT_SNAPSHOT'", ");");
+    expect(deleted).not.toContain("v_snapshot");
+    for (const k of ["'counts', v_counts", "'orphanedStorageKeys', v_keys", "'reason', v_reason", "'revokedIntakeLinks', v_links", "'snapshotAction', 'PURGE_PROJECT_SNAPSHOT'"]) expect(deleted).toContain(k);
+    expect(purge).toContain("'snapshot', v_snapshot");
+    expect(d.split("v_snapshot").length - 1).toBe(3); // declared, built, written once (the PURGE_ row)
+    // The overlay: the NEWEST audit_logs_admin_trail in the sequence is a
+    // RESTRICTIVE SELECT that hides PURGE_% rows from anyone without
+    // admin.audit_view — so the snapshot needs no new policy.
+    const defs = numbered.filter((f) => /CREATE POLICY audit_logs_admin_trail ON audit_logs/.test(read(f)));
+    expect(defs.length).toBeGreaterThan(0);
+    const overlay = between(read(defs[defs.length - 1]), "CREATE POLICY audit_logs_admin_trail ON audit_logs", ");\n");
+    expect(overlay).toMatch(/AS RESTRICTIVE FOR SELECT/);
+    expect(overlay).toContain("org_capability_allows(org_id, 'admin.audit_view', auth.uid())");
+    expect(overlay).toContain("action LIKE 'PURGE_%'");
+    expect("PURGE_PROJECT_SNAPSHOT".startsWith("PURGE_")).toBe(true);
+    const tail = finalSelect(m03);
+    expect(tail).toContain("'SEC-2 / PM-6: the snapshot rides only in PURGE_PROJECT_SNAPSHOT (audit viewers) — the org-readable PROJECT_DELETED row carries none'");
+    // the probe's prosrc patterns are verbatim substrings of the function source
+    for (const pat of ["VALUES ('PROJECT_DELETED'", "VALUES ('PURGE_PROJECT_SNAPSHOT'", "'snapshot', v_snapshot"]) expect(d).toContain(pat);
+  });
+
   it("deletes children before the rows their ON DELETE SET NULL keys point at, then the schedule, then the project", () => {
-    const order = ["DELETE FROM checklist_items", "DELETE FROM project_checklists", "DELETE FROM turnover_items", "DELETE FROM punch_items",
+    const order = ["DELETE FROM project_checklists", "DELETE FROM turnover_items", "DELETE FROM punch_items",
       "DELETE FROM cost_entries", "DELETE FROM change_orders", "DELETE FROM cost_documents", "DELETE FROM cost_accounts",
       "DELETE FROM project_parties", "DELETE FROM milestones", "DELETE FROM projects"];
     const at = order.map((s) => d.indexOf(s));
     for (const i of at) expect(i).toBeGreaterThan(0);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it("QUAL-3 after merge: a checklist item is never deleted directly — it cascades with its checklist, the one delete projects Round G J2's quality rail admits", () => {
+    // J2's checklist_items_decision_rail (20261091:841-843, integration
+    // branch) refuses a signed-in caller's DELETE of an item at trigger
+    // depth 1 and passes a cascade (depth 2). delete_project_record runs as
+    // the caller (auth.uid() is theirs), so a direct item DELETE would fail
+    // the whole purge for any project with a checklist item.
+    expect(stripComments(d)).not.toMatch(/DELETE\s+FROM\s+checklist_items/i);
+    expect(stripComments(d)).toContain("DELETE FROM project_checklists WHERE project_id = p_project;");
+    // …and the cascade exists: the item's checklist key is ON DELETE CASCADE.
+    expect(m1013).toMatch(/checklist_id UUID NOT NULL REFERENCES project_checklists\(id\) ON DELETE CASCADE/);
+    // No later migration drops that cascade.
+    for (const f of numbered.filter((x) => x > "20261013")) {
+      expect(stripComments(read(f)), f).not.toMatch(/checklist_items\s+DROP\s+CONSTRAINT[^;]*checklist_id/i);
+    }
+    // J8's own record guard lets the cascaded item through: its checklist is
+    // already gone (no project found) and the purge GUC is set.
+    const g = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_record_guard()", "$$;");
+    expect(g).toContain("CONTINUE WHEN v_purge = 'project:' || v_pid::text;");
+    const tail = finalSelect(m03);
+    expect(tail).toContain("'PM-6 / QUAL-3: the purge never deletes checklist items directly — they cascade with their checklist (the 20261091 quality rail admits only that)'");
+    expect(tail).toContain("prosrc NOT LIKE '%DELETE FROM checklist_items%'");
+    expect(tail).toContain("k.confdeltype = 'c'");
   });
   it("the projects delete guard refuses a project carrying records without the purge, and the legal hold always", () => {
     const g = between(m03, "CREATE OR REPLACE FUNCTION enforce_project_delete_guard()", "$$;");
