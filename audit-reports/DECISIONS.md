@@ -1723,41 +1723,59 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    counts only once its CURRENT version is `approved` (an earlier rejected
    submission does not taint an approved current revision; a failed version
    read admits nothing); documents attached to ACCEPTED
-   turnover items are listed first. A title match inside that register is the
+   turnover items are listed first; a document whose current version the read
+   did not return is not admitted either. A title match inside that register is the
    citation; a title match outside it is nothing. Equipment-tag binding via
-   `document_assets` is a follow-on, not built.
+   `document_assets` is a follow-on, not built. **Departure from the P2 brief's
+   default, for the orchestrator to accept:** the brief rendered a title match as
+   "suggested", never green; here a title match inside the register is a
+   labelled MACHINE green — withdrawn when its document leaves the register,
+   re-checked at "Mark complete" (item 2), and never citable, since a completion
+   containing one is `'auto'` (item 5). A checklist can be completed on machine
+   greens; the basis restricts citation, not completion.
 2. **Retraction** (`QUAL-1`): an auto-only green whose probe no longer proves
    it goes to `needs_evidence` on the next sweep, stale auto chips removed,
-   one audit row per item. A human chip or note is never touched. The
-   migration lists stale greens (inventory) and never rewrites them.
+   in one audit row per sweep whose `items[]` names each item. "Mark complete"
+   re-checks at the moment it matters: a sweep green whose document has left
+   the register (or whose proof the sweep would withdraw or re-cite) refuses
+   the completion until the sweep runs. A human chip or note is never touched.
+   The migration lists stale greens (inventory) and never rewrites them.
 3. **Bulk AI action** (`SAF-2`, `QUAL-5`): per-item review, every row unticked
-   by default, apply writes only ticked ids, the audit row carries the ids.
+   by default, apply writes only ticked ids, the audit row carries the ids;
+   the bulk "tick every in-scope proposal" never ticks an N/A.
    The assessment never moves a satisfied or evidence-bearing item to N/A —
    such proposals are listed and locked; the human N/A control (with a
    reason) is the only way.
 4. **The reason bar** (`SAF-4` / `GAP-405`): 10 non-whitespace characters, no
-   canned text, enforced server-side in `lib/checklists.ts` / `lib/turnover.ts`
-   (`reasonProblem`) and mirrored by `appPrompt({ required, minLength })`.
-   No placeholder is ever written. Waived is its own bucket.
+   canned text — checked in the client data layer (`reasonProblem` in
+   `lib/checklists.ts` / `lib/turnover.ts`), mirrored by `appPrompt({ required,
+   minLength })`, and ENFORCED by the database (`quality_reason_ok()` and the
+   20261091 rails on waive / reject / reopen, punch void, and a person's N/A;
+   the service pass — restores, server routes, the SQL editor — passes). No
+   placeholder is ever written. Waived is its own bucket.
 5. **Completion basis** (`QUAL-2`): `project_checklists.completed_basis` is
-   `'human'` only when every GREEN item carries a human decision (a note or a
-   person-attached chip); only a `'human'` MI completion is citable by another
-   checklist. N/A items do not bear on it — every path to N/A is a person's
-   (the item control with a reason, or a proposal ticked in the per-item
-   review) and an N/A proves nothing. A person gives a sweep green that
-   decision with **✓ Verify** (reason on the record, the sweep's chip kept, the
-   sweep hands-off from then on). The migration's backfill applies the same
-   rule.
+   `'human'` only when no green rests on the sweep alone, no N/A lacks a
+   person's reason, and at least one green was decided by a person (a note or
+   a person-attached chip); otherwise `'auto'`. Only a `'human'` MI completion
+   is citable by another checklist. The DATABASE records it
+   (`checklist_completion_basis()`, the same rule as `completionBasis()`,
+   computed by a rail when the status moves to complete; a client value is
+   ignored), and the backfill uses the same function. A person gives a sweep
+   green their decision with **✓ Verify** and an assessment N/A with **✓ Confirm
+   N/A** (reason on the record; the sweep's chip kept; the sweep hands-off from
+   then on).
 6. **Machine actor** (`QUAL-6`, `DEC-35`): `updated_by = NULL` + a sentinel
    name. Provenance is carried by the existing `updated_by` / `updated_by_name`
    pair and `evidence[].source` / `documentId`; no `satisfied_by` /
    `satisfied_how` columns were added (a column the sweep must write breaks
    the sweep until the migration is applied — `DEC-30`).
-7. **Turnover history** (`QUAL-11`): `turnover_review_events`, append-only at
-   the database; a rejection is a `nonconformance` event, a reopen of an
-   accepted / waived item is a `reopen` event with a required reason; there is
-   no separate NCR module (a follow-on capability if a facility wants
-   disposition / corrective-action tracking).
+7. **Turnover history** (`QUAL-11`): `turnover_review_events`, append-only and
+   written only by the database — a trigger on `turnover_items` appends one row
+   per status change in the same statement (no client INSERT); the decisions
+   made before it existed are backfilled. A rejection is a `nonconformance`
+   event, a reopen of an accepted / waived item is a `reopen` event whose reason
+   the database requires; there is no separate NCR module (a follow-on
+   capability if a facility wants disposition / corrective-action tracking).
 8. **Punch record** (`QUAL-7`): `closed_by_name`, `description`, `location`,
    `closure_note` as nullable text; photos / attachments deferred.
 9. **Checked writes** (`SAF-3` / `GAP-402` narrow): `lib/checkedWrite.ts` is the
@@ -1765,11 +1783,12 @@ The defaults the projects Round G quality package (`J2 QUALITY`: `SAF-1`–`SAF-
    confirmed match; the census in `lib/__tests__/checkedWrite.test.ts` holds
    the quality files at zero raw writes and ratchets the money files until
    `J3` converts them.
-10. **Batching** (`PERF-7`): n checked, `updated_at`-guarded single-row client
-    writes, at most 50 in flight (wall-clock ≈ ceil(n/50) waves; still n
-    requests) — not a server-side RPC, which would tie both paths to a pending
-    migration. A single-statement apply (one request per assessment) is the
-    follow-on if request count ever matters; it must keep the per-row guard.
+10. **Batching** (`PERF-7`, which stays OPEN): n checked, `updated_at`-guarded
+    single-row client writes, at most 50 in flight (wall-clock ≈ ceil(n/50)
+    waves; still n requests) — not a server-side RPC, which would tie both paths
+    to a pending migration. A single-statement apply (one request per
+    assessment) is the follow-on that closes PERF-7; it must keep the per-row
+    guard.
 
 **Rationale.** A pre-startup safety review is signed. The audit found the
 green could come from a contractor's filename, survive the document's voiding,
@@ -1780,12 +1799,17 @@ one invariant that was sound — a human's note keeps every automated pass out.
 
 **Reversal.** Per default, by a facility's stated requirement: a stricter
 register (assets), a stricter bar (longer reasons, no accept-without-document),
-an NCR module. None of the defaults can be loosened below "a person or an
+an NCR module, and — the brief's own default for item 1 — a title match shown
+as "suggested" until verified, or "Mark complete" refused while the basis
+would be `'auto'`. None of the defaults can be loosened below "a person or an
 admitted document", which is the contract itself.
 
 **Risk:** low–medium — the register is narrower than before (existing intake-
-title greens retract on the next sweep, visibly, with an audit row each), and
-four writes now depend on migration `20261091` being applied (until then they
-fail with the migration message, PostgREST's schema-cache shapes included).
-The same migration ties every project-scoped quality row's `org_id` to its
-project's (`QUAL-12`, header and siblings included).
+title greens retract on the next sweep, visibly, in one audit row per sweep),
+and until migration `20261091` is applied, closing / voiding / reopening a punch
+item and adding one with a location or details fail with the migration message
+(PostgREST's schema-cache shapes included); "Mark complete", checklist void /
+reopen and turnover decisions work before it, with no basis recorded and no
+history yet — the migration's backfills record both. The same migration ties
+every project-scoped quality row's `org_id` to its project's (`QUAL-12`, header
+and siblings included), without blocking a document or party delete.
